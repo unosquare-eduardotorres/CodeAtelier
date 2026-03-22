@@ -12,10 +12,18 @@ import { conversationRepository } from '../db/repositories'
 /** Regex to detect handoff blocks emitted by the generalist. */
 const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
 
+/** Regex to detect grill-summary blocks emitted by the generalist. */
+const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
+
 export interface HandoffEvent {
   summary: string
   specialists: string[]
   mode: ConversationMode
+}
+
+export interface GrillCompleteEvent {
+  summary: string
+  proposedTasks: Array<{ title: string; description: string }>
 }
 
 /**
@@ -330,8 +338,9 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
-    // Check for handoff in accumulated text
+    // Check for handoff or grill summary in accumulated text
     this.detectHandoff()
+    this.detectGrillSummary()
 
     this.currentStatus = 'idle'
     this.emit('statusUpdate', this.getStatus())
@@ -423,6 +432,28 @@ export class GeneralistService extends AgentBaseService {
       }
     } catch (error) {
       this.log.error('Failed to parse handoff block:', error)
+    }
+  }
+
+  /**
+   * Checks the accumulated response text for a grill-summary block and emits a `grillComplete` event if found.
+   */
+  private detectGrillSummary(): void {
+    const match = this.accumulatedText.match(GRILL_SUMMARY_REGEX)
+    if (!match) return
+
+    try {
+      const data = JSON.parse(match[1].trim())
+      if (data.summary) {
+        const grillEvent: GrillCompleteEvent = {
+          summary: data.summary,
+          proposedTasks: Array.isArray(data.proposedTasks) ? data.proposedTasks : []
+        }
+        this.log.info('Grill summary detected:', grillEvent)
+        this.emit('grillComplete', grillEvent)
+      }
+    } catch (error) {
+      this.log.error('Failed to parse grill-summary block:', error)
     }
   }
 

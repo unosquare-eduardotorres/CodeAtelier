@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Send, Square, Minimize2, Trash2, HelpCircle, GitPullRequestArrow, X } from 'lucide-react';
+import { Send, Square, Minimize2, Trash2, HelpCircle, GitPullRequestArrow, X, Flame } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useChatStore, useWorkspaceStore } from '@renderer/store';
 import { ConfirmDialog } from '@renderer/components/common';
@@ -20,6 +20,7 @@ const SLASH_COMMANDS: Array<{
   { command: '/close', description: 'Close and delete this conversation', icon: X, iconColor: 'text-orange-400' },
   { command: '/compact', description: 'Compress conversation context to save tokens', icon: Minimize2, iconColor: 'text-amber-400' },
   { command: '/clear', description: 'Clear chat display (keeps AI context)', icon: Trash2, iconColor: 'text-red-400' },
+  { command: '/grillme', description: 'Deep-dive interview to clarify your plan', icon: Flame, iconColor: 'text-orange-500' },
   { command: '/help', description: 'Show available commands', icon: HelpCircle, iconColor: 'text-blue-400' }
 ];
 
@@ -30,7 +31,7 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { sendMessage, isStreaming, activeConversation, stopGeneration, clearDisplay, appendLocalMessage, completeConversation, closeConversation } = useChatStore();
+  const { sendMessage, isStreaming, activeConversation, stopGeneration, clearDisplay, appendLocalMessage, completeConversation, closeConversation, startGrillSession } = useChatStore();
   const { orchestratorStatus } = useWorkspaceStore();
   const isInitializing = orchestratorStatus === 'starting';
 
@@ -97,6 +98,15 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
         return;
       }
 
+      if (cmd === '/grillme') {
+        setText('');
+        startGrillSession();
+        const grillPrompt = `[GRILL MODE ACTIVATED]\n\nInterview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. If a question can be answered by exploring the codebase, explore the codebase instead.\n\nReview the conversation above and start grilling me about the items, pending decisions, and unclear requirements.`;
+        await sendMessage(grillPrompt, attachments.length > 0 ? attachments : undefined);
+        onClearAttachments();
+        return;
+      }
+
       if (cmd === '/help') {
         setText('');
         const helpLines = [
@@ -104,6 +114,7 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
           '❌ **/close** — Close and permanently delete this conversation',
           '🗜️ **/compact** — Compress conversation context to save tokens',
           '🗑️ **/clear** — Clear chat display (keeps AI context)',
+          '🔥 **/grillme** — Deep-dive interview to clarify your plan',
           '❓ **/help** — Show available commands'
         ];
         appendLocalMessage(`### Available Commands\n\n${helpLines.join('\n')}`);

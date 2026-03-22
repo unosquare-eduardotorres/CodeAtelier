@@ -26,7 +26,10 @@ function createWindow(): void {
     icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: true
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true
     }
   })
 
@@ -87,6 +90,22 @@ function createWindow(): void {
   }
 }
 
+// ── Security: Set application menu before ready to skip default menu construction ──
+if (!is.dev) {
+  Menu.setApplicationMenu(null)
+}
+
+// ── Security: Validate webview creation — deny all webviews ──
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (webviewEvent, webPreferences) => {
+    // Strip any preload scripts from webview
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    // Agent Studio does not use webviews — deny all
+    webviewEvent.preventDefault()
+  })
+})
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.agent-studio')
 
@@ -101,13 +120,6 @@ app.whenReady().then(() => {
     submitURL: '',
     uploadToServer: false
   })
-
-  // ── Security: Set application menu (#18) ──
-  // Remove the default menu to avoid unnecessary resource usage
-  // and prevent unintended keyboard shortcuts in production
-  if (!is.dev) {
-    Menu.setApplicationMenu(null)
-  }
 
   // ── Security: Restrict web permissions (#7) ──
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {

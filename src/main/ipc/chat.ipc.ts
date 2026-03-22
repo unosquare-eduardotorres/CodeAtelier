@@ -1,4 +1,6 @@
 import { ipcMain, app, type BrowserWindow } from 'electron'
+import { join } from 'node:path'
+import { writeFileSync, mkdirSync } from 'node:fs'
 import simpleGit from 'simple-git'
 import {
   conversationRepository,
@@ -33,6 +35,81 @@ const MAX_MESSAGE_LENGTH = 1_000_000
 /** Maximum number of attachments per message */
 const MAX_ATTACHMENTS = 20
 
+/**
+ * Shared helper to forward a StreamChunk to the renderer.
+ * Eliminates duplicated chunk-handling logic between generalist and orchestrator paths.
+ */
+function forwardChunkToRenderer(
+  mainWindow: BrowserWindow,
+  conversationId: string,
+  role: 'generalist' | 'coordinator',
+  chunk: StreamChunk,
+  contentAccumulator: { value: string }
+): void {
+  if (chunk.type === 'text' && chunk.content) {
+    contentAccumulator.value += chunk.content
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: chunk.content,
+      role
+    })
+  } else if (chunk.type === 'tool_use') {
+    // Track file changes for Write/Edit tools
+    if ((chunk.toolName === 'Write' || chunk.toolName === 'Edit') && chunk.toolInput) {
+      try {
+        fileChangeRepository.track(
+          conversationId,
+          chunk.toolInput,
+          chunk.toolName === 'Write' ? 'created' : 'modified'
+        )
+      } catch (e) {
+        log.warn('Failed to track file change:', e)
+      }
+    }
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: '',
+      role,
+      toolActivity: {
+        id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        toolName: chunk.toolName ?? 'Unknown',
+        status: 'running',
+        input: chunk.toolInput,
+        startedAt: Date.now()
+      }
+    })
+  } else if (chunk.type === 'tool_result') {
+    let toolInputSummary: string | undefined
+    if (chunk.content) {
+      try {
+        const parsed = JSON.parse(chunk.content) as Record<string, unknown>
+        toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed)
+      } catch {
+        toolInputSummary = chunk.content.slice(0, 120)
+      }
+    }
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: '',
+      role,
+      toolActivity: {
+        id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        toolName: chunk.toolName ?? 'Unknown',
+        status: 'completed',
+        input: toolInputSummary,
+        completedAt: Date.now()
+      }
+    })
+  } else if (chunk.type === 'error') {
+    contentAccumulator.value += `\n\n**Error:** ${chunk.error}`
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: `\n\n**Error:** ${chunk.error}`,
+      role
+    })
+  }
+}
+
 export function registerChatIpc(mainWindow: BrowserWindow): void {
   // Persistent listener: forward compact suggestions to the renderer
   generalistService.on('compactNeeded', (data: { level: string; inputTokens: number }) => {
@@ -43,6 +120,18 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
       compactNeeded: data
     })
   })
+
+  // Persistent listener: forward grill session complete events to the renderer
+  generalistService.on(
+    'grillComplete',
+    (data: { summary: string; proposedTasks: Array<{ title: string; description: string }> }) => {
+      mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_COMPLETE, {
+        conversationId: generalistService.getCurrentConversationId() || '',
+        summary: data.summary,
+        proposedTasks: data.proposedTasks
+      })
+    }
+  )
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_SEND,
@@ -126,164 +215,110 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
       log.info('User message saved to DB')
 
       // Route through generalist (default entry point)
-      try {
-        let streamedContent = ''
+      // Define listeners at outer scope so they're accessible in both try and catch
+      const streamedContent = { value: '' }
 
-        const onChunk = (chunk: StreamChunk): void => {
-          log.debug('Chunk received:', { type: chunk.type, len: chunk.content?.length ?? 0 })
-          if (chunk.type === 'text' && chunk.content) {
-            streamedContent += chunk.content
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-              conversationId,
-              chunk: chunk.content,
-              role: 'generalist'
-            })
-          } else if (chunk.type === 'tool_use') {
-            // Track file changes for Write/Edit tools
-            if ((chunk.toolName === 'Write' || chunk.toolName === 'Edit') && chunk.toolInput) {
-              try {
-                fileChangeRepository.track(
-                  conversationId,
-                  chunk.toolInput,
-                  chunk.toolName === 'Write' ? 'created' : 'modified'
-                )
-              } catch (e) {
-                log.warn('Failed to track file change:', e)
-              }
-            }
-            // Forward tool activity start to renderer
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-              conversationId,
-              chunk: '',
-              role: 'generalist',
-              toolActivity: {
-                id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                toolName: chunk.toolName ?? 'Unknown',
-                status: 'running',
-                input: chunk.toolInput,
-                startedAt: Date.now()
-              }
-            })
-          } else if (chunk.type === 'tool_result') {
-            // Try to extract a summary from accumulated tool input JSON
-            let toolInputSummary: string | undefined
-            if (chunk.content) {
-              try {
-                const parsed = JSON.parse(chunk.content) as Record<string, unknown>
-                toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed)
-              } catch {
-                // Not valid JSON — use raw content truncated
-                toolInputSummary = chunk.content.slice(0, 120)
-              }
-            }
-            // Forward tool activity completion to renderer
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-              conversationId,
-              chunk: '',
-              role: 'generalist',
-              toolActivity: {
-                id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                toolName: chunk.toolName ?? 'Unknown',
-                status: 'completed',
-                input: toolInputSummary,
-                completedAt: Date.now()
-              }
-            })
-          } else if (chunk.type === 'error') {
-            streamedContent += `\n\n**Error:** ${chunk.error}`
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-              conversationId,
-              chunk: `\n\n**Error:** ${chunk.error}`,
-              role: 'generalist'
-            })
-          }
-        }
+      const onChunk = (chunk: StreamChunk): void => {
+        log.debug('Chunk received:', { type: chunk.type, len: chunk.content?.length ?? 0 })
+        forwardChunkToRenderer(mainWindow, conversationId, 'generalist', chunk, streamedContent)
+      }
 
-        const onComplete = (): void => {
-          try {
-            log.info('Generalist complete — saving to DB:', { contentLen: streamedContent.length })
-            const savedMessage = messageRepository.create(
-              conversationId,
-              'generalist',
-              streamedContent || '_No response received._'
-            )
-            log.info('Generalist message saved, id:', savedMessage.id)
-
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-              conversationId,
-              messageId: savedMessage.id
-            })
-          } catch (error) {
-            log.error('Failed to save generalist message:', error)
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-              conversationId,
-              chunk: `\n\n**Error saving response:** ${(error as Error).message}`,
-              role: 'generalist'
-            })
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-              conversationId,
-              messageId: `error-${Date.now()}`
-            })
-          }
-
-          // Clean up listeners
-          generalistService.removeListener('chunk', onChunk)
-          generalistService.removeListener('complete', onComplete)
-          generalistService.removeListener('handoff', onHandoff)
-        }
-
-        // Handle handoff events — generalist detected implementation work
-        const onHandoff = async (handoff: HandoffEvent): Promise<void> => {
-          log.info('Handoff received from generalist:', handoff)
-
-          // Send visual handoff indicator to the renderer
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
-            conversationId,
-            summary: handoff.summary,
-            specialists: handoff.specialists,
-            mode: handoff.mode
+      const onComplete = (): void => {
+        try {
+          log.info('Generalist complete — saving to DB:', {
+            contentLen: streamedContent.value.length
           })
+          const savedMessage = messageRepository.create(
+            conversationId,
+            'generalist',
+            streamedContent.value || '_No response received._'
+          )
+          log.info('Generalist message saved, id:', savedMessage.id)
 
-          // Update conversation mode if needed
-          if (handoff.mode) {
-            try {
-              conversationRepository.updateMode(conversationId, handoff.mode)
-            } catch (error) {
-              log.error('Failed to update conversation mode:', error)
-            }
-          }
-
-          // Decompose the task into sub-tasks via orchestrator
-          try {
-            log.info('Decomposing task for specialists:', handoff.specialists)
-            const taskPlan = await orchestratorService.decompose(
-              handoff.summary,
-              handoff.specialists,
-              conversationId,
-              handoff.mode
-            )
-
-            log.info(`Task decomposed into ${taskPlan.tasks.length} sub-tasks`)
-
-            // Send the task plan to the renderer for user choice (sequential vs parallel)
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
-          } catch (error) {
-            log.error('Task decomposition failed, falling back to single orchestrator:', error)
-
-            // Fallback: run orchestrator in legacy single-process mode
-            await runLegacyOrchestrator(mainWindow, conversationId, handoff)
-          }
-
-          // Clean up handoff listener (one-shot)
-          generalistService.removeListener('handoff', onHandoff)
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+            conversationId,
+            messageId: savedMessage.id
+          })
+        } catch (error) {
+          log.error('Failed to save generalist message:', error)
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: `\n\n**Error saving response:** ${(error as Error).message}`,
+            role: 'generalist'
+          })
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+            conversationId,
+            messageId: `error-${Date.now()}`
+          })
         }
 
+        cleanupListeners()
+      }
+
+      // Handle handoff events — generalist detected implementation work
+      const onHandoff = async (handoff: HandoffEvent): Promise<void> => {
+        log.info('Handoff received from generalist:', handoff)
+
+        // Send visual handoff indicator to the renderer
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
+          conversationId,
+          summary: handoff.summary,
+          specialists: handoff.specialists,
+          mode: handoff.mode
+        })
+
+        // Update conversation mode if needed
+        if (handoff.mode) {
+          try {
+            conversationRepository.updateMode(conversationId, handoff.mode)
+          } catch (error) {
+            log.error('Failed to update conversation mode:', error)
+          }
+        }
+
+        // Decompose the task into sub-tasks via orchestrator
+        try {
+          log.info('Decomposing task for specialists:', handoff.specialists)
+          const taskPlan = await orchestratorService.decompose(
+            handoff.summary,
+            handoff.specialists,
+            conversationId,
+            handoff.mode
+          )
+
+          log.info(`Task decomposed into ${taskPlan.tasks.length} sub-tasks`)
+
+          // Send the task plan to the renderer for user choice (sequential vs parallel)
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
+        } catch (error) {
+          log.error('Task decomposition failed, falling back to single orchestrator:', error)
+
+          // Fallback: run orchestrator in legacy single-process mode
+          await runLegacyOrchestrator(mainWindow, conversationId, handoff)
+        }
+
+        // Clean up handoff listener (one-shot)
+        generalistService.removeListener('handoff', onHandoff)
+      }
+
+      // Cleanup helper — removes all listeners for this message cycle.
+      // Called from onComplete AND from the catch block to prevent leaks.
+      const cleanupListeners = (): void => {
+        generalistService.removeListener('chunk', onChunk)
+        generalistService.removeListener('complete', onComplete)
+        generalistService.removeListener('handoff', onHandoff)
+      }
+
+      try {
         // Register listeners before send to avoid race condition
         generalistService.on('chunk', onChunk)
         generalistService.on('complete', onComplete)
         generalistService.on('handoff', onHandoff)
         await generalistService.send(fullContent, conversationId)
       } catch (error) {
+        // Clean up listeners to prevent leaks on error
+        cleanupListeners()
+
         // If generalist isn't running, save error message
         log.error('Generalist send failed:', (error as Error).message)
         const errorMsg = `**Generalist Error:** ${(error as Error).message}\n\nMake sure Claude CLI is installed and a workspace is open.`
@@ -738,8 +773,6 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
     const buffer = Buffer.from(base64Data, 'base64')
 
     // Save to temp directory
-    const { join } = await import('node:path')
-    const { writeFileSync, mkdirSync } = await import('node:fs')
     const tempDir = join(app.getPath('userData'), 'clipboard-images')
     mkdirSync(tempDir, { recursive: true })
 
@@ -760,78 +793,17 @@ async function runLegacyOrchestrator(
   conversationId: string,
   handoff: HandoffEvent
 ): Promise<void> {
-  let orchestratorContent = ''
+  const orchestratorContent = { value: '' }
 
   const onOrchestratorChunk = (chunk: StreamChunk): void => {
-    if (chunk.type === 'text' && chunk.content) {
-      orchestratorContent += chunk.content
-      mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        chunk: chunk.content,
-        role: 'coordinator'
-      })
-    } else if (chunk.type === 'tool_use') {
-      // Track file changes for Write/Edit tools (orchestrator path)
-      if ((chunk.toolName === 'Write' || chunk.toolName === 'Edit') && chunk.toolInput) {
-        try {
-          fileChangeRepository.track(
-            conversationId,
-            chunk.toolInput,
-            chunk.toolName === 'Write' ? 'created' : 'modified'
-          )
-        } catch (e) {
-          log.warn('Failed to track file change (orchestrator):', e)
-        }
-      }
-      mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        chunk: '',
-        role: 'coordinator',
-        toolActivity: {
-          id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          toolName: chunk.toolName ?? 'Unknown',
-          status: 'running',
-          input: chunk.toolInput,
-          startedAt: Date.now()
-        }
-      })
-    } else if (chunk.type === 'tool_result') {
-      let toolInputSummary: string | undefined
-      if (chunk.content) {
-        try {
-          const parsed = JSON.parse(chunk.content) as Record<string, unknown>
-          toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed)
-        } catch {
-          toolInputSummary = chunk.content.slice(0, 120)
-        }
-      }
-      mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        chunk: '',
-        role: 'coordinator',
-        toolActivity: {
-          id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          toolName: chunk.toolName ?? 'Unknown',
-          status: 'completed',
-          input: toolInputSummary,
-          completedAt: Date.now()
-        }
-      })
-    } else if (chunk.type === 'error') {
-      orchestratorContent += `\n\n**Error:** ${chunk.error}`
-      mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        chunk: `\n\n**Error:** ${chunk.error}`,
-        role: 'coordinator'
-      })
-    }
+    forwardChunkToRenderer(mainWindow, conversationId, 'coordinator', chunk, orchestratorContent)
   }
 
   const onOrchestratorComplete = (): void => {
     const savedMsg = messageRepository.create(
       conversationId,
       'coordinator',
-      orchestratorContent || '_No response received from orchestrator._'
+      orchestratorContent.value || '_No response received from orchestrator._'
     )
 
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {

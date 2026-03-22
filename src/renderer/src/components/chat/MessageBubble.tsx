@@ -2,8 +2,9 @@ import React, { useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Bot, User, Copy, Check, MessageCircle, Wrench, Paperclip } from 'lucide-react';
-import type { Message, ToolActivity } from '../../../../shared/types';
+import type { Message, ToolActivity, GrillProposedTask } from '../../../../shared/types';
 import PlanCard from './PlanCard';
+import GrillResultCard from './GrillResultCard';
 import ToolActivityBlock from './ToolActivityBlock';
 import { useChatStore } from '@renderer/store';
 
@@ -83,7 +84,7 @@ export default function MessageBubble({
   toolActivities
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user';
-  const { updateMode, sendMessage } = useChatStore();
+  const { updateMode, sendMessage, clearGrillSession, createItemsFromGrill } = useChatStore();
   const avatar = avatarConfig[message.role] ?? avatarConfig.coordinator;
 
   // Parse attachments from JSON
@@ -103,6 +104,22 @@ export default function MessageBubble({
   const planRegex = /```plan\n([\s\S]*?)```/;
   const planMatch = !isUser ? message.contentMd.match(planRegex) : null;
 
+  // Detect grill-summary blocks
+  const grillRegex = /```grill-summary\n([\s\S]*?)```/;
+  const grillMatch = !isUser ? message.contentMd.match(grillRegex) : null;
+  let grillSummary: string | null = null;
+  let grillProposedTasks: GrillProposedTask[] = [];
+
+  if (grillMatch) {
+    try {
+      const parsed = JSON.parse(grillMatch[1].trim());
+      grillSummary = parsed.summary || null;
+      grillProposedTasks = Array.isArray(parsed.proposedTasks) ? parsed.proposedTasks : [];
+    } catch {
+      // Failed to parse grill summary — will render as normal markdown
+    }
+  }
+
   const handleBuild = (): void => {
     updateMode('build');
     sendMessage('Implement the plan we just discussed. Follow the steps exactly.');
@@ -112,10 +129,35 @@ export default function MessageBubble({
     sendMessage(`Please refine the plan: ${feedback}`);
   };
 
+  const handleGrillKeepIterating = (): void => {
+    clearGrillSession();
+    sendMessage('Let\'s keep iterating. What other aspects should we discuss or refine?');
+  };
+
+  const handleGrillCreatePlan = (): void => {
+    clearGrillSession();
+    sendMessage('Based on our grilling session and all the decisions we\'ve resolved, create a formal implementation plan. Structure it with clear sections, tasks, and dependencies.');
+  };
+
+  const handleGrillCreateItems = (): void => {
+    if (grillProposedTasks.length > 0) {
+      const tasks = grillProposedTasks.map((t) => ({
+        title: t.title,
+        context: grillSummary || 'Context from grill session',
+        description: t.description
+      }));
+      createItemsFromGrill(tasks);
+    }
+  };
+
   // Split content around plan block if found
   const beforePlan = planMatch ? message.contentMd.substring(0, planMatch.index!) : null;
   const afterPlan = planMatch ? message.contentMd.substring(planMatch.index! + planMatch[0].length) : null;
   const planContent = planMatch ? planMatch[1] : null;
+
+  // Split content around grill-summary block if found
+  const beforeGrill = grillMatch ? message.contentMd.substring(0, grillMatch.index!) : null;
+  const afterGrill = grillMatch ? message.contentMd.substring(grillMatch.index! + grillMatch[0].length) : null;
 
   const markdownComponents = {
     pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
@@ -182,7 +224,36 @@ export default function MessageBubble({
           {avatar.label}
         </span>
 
-        {planContent ? (
+        {grillSummary ? (
+          /* Message with a grill-summary block — split into before/grill/after */
+          <div className="space-y-3 max-w-full">
+            {beforeGrill?.trim() && (
+              <div className="rounded-2xl px-4 py-3 bg-gray-800 text-gray-200 border border-gray-700/50">
+                <div className="prose max-w-none prose-invert">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                    {beforeGrill}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+            <GrillResultCard
+              summary={grillSummary}
+              proposedTasks={grillProposedTasks}
+              onKeepIterating={handleGrillKeepIterating}
+              onCreatePlan={handleGrillCreatePlan}
+              onCreateItems={handleGrillCreateItems}
+            />
+            {afterGrill?.trim() && (
+              <div className="rounded-2xl px-4 py-3 bg-gray-800 text-gray-200 border border-gray-700/50">
+                <div className="prose max-w-none prose-invert">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                    {afterGrill}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : planContent ? (
           /* Message with a plan block — split into before/plan/after */
           <div className="space-y-3 max-w-full">
             {beforePlan?.trim() && (

@@ -24,7 +24,7 @@ export const useSkillStore = create<SkillState>((set) => ({
   loadSkills: async () => {
     set({ isLoading: true, error: null })
     try {
-      const skills = (await window.api.listSkills()) as Skill[]
+      const skills = await window.api.listSkills()
       set({ skills, isLoading: false })
     } catch (error) {
       console.error('Failed to load skills:', error)
@@ -35,7 +35,7 @@ export const useSkillStore = create<SkillState>((set) => ({
   importSkill: async (filePath: string) => {
     set({ importingSkill: true, error: null })
     try {
-      const skill = (await window.api.importSkill({ filePath })) as Skill
+      const skill = await window.api.importSkill({ filePath })
       set((state) => ({
         skills: [...state.skills, skill],
         importingSkill: false,
@@ -52,7 +52,7 @@ export const useSkillStore = create<SkillState>((set) => ({
 
   updateSkill: async (id: string, data: { name?: string; description?: string }) => {
     try {
-      const updated = (await window.api.updateSkill({ id, ...data })) as Skill
+      const updated = await window.api.updateSkill({ id, ...data })
       set((state) => ({
         skills: state.skills.map((s) => (s.id === id ? updated : s)),
         error: null
@@ -81,7 +81,7 @@ export const useSkillStore = create<SkillState>((set) => ({
   activateSkill: async (id: string) => {
     set({ error: null })
     try {
-      const updated = (await window.api.activateSkill({ id })) as Skill
+      const updated = await window.api.activateSkill({ id })
       set((state) => ({
         skills: state.skills.map((s) => (s.id === id ? updated : s)),
         error: null
@@ -98,7 +98,7 @@ export const useSkillStore = create<SkillState>((set) => ({
   deactivateSkill: async (id: string) => {
     set({ error: null })
     try {
-      const updated = (await window.api.deactivateSkill({ id })) as Skill
+      const updated = await window.api.deactivateSkill({ id })
       set((state) => ({
         skills: state.skills.map((s) => (s.id === id ? updated : s)),
         error: null

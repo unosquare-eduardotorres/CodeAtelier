@@ -57,7 +57,10 @@ interface SettingsState {
   readFile: (filePath: string) => Promise<void>
   saveFile: (filePath: string, content: string) => Promise<void>
   computeSyncDiff: (workspacePath: string) => Promise<void>
-  applySync: (workspacePath: string, options?: { skipRemoved?: boolean }) => Promise<SyncResult | null>
+  applySync: (
+    workspacePath: string,
+    options?: { skipRemoved?: boolean }
+  ) => Promise<SyncResult | null>
   cleanAndReactivate: (workspacePath: string) => Promise<void>
   dismissSync: () => void
   reset: () => void
@@ -92,9 +95,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   scanWorkspace: async (workspacePath: string) => {
     set({ isScanning: true })
     try {
-      const status = (await window.api.scanWorkspaceClaude({
+      const status = await window.api.scanWorkspaceClaude({
         workspacePath
-      })) as WorkspaceClaudeStatus
+      })
       set({ claudeStatus: status, isScanning: false })
     } catch (error) {
       console.error('Failed to scan workspace:', error)
@@ -113,9 +116,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     })
 
     try {
-      const result = (await window.api.activateAgents({
+      const result = await window.api.activateAgents({
         workspacePath
-      })) as ActivationResult
+      })
 
       if (!result.success) {
         set({
@@ -138,15 +141,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       }
 
       // Refresh scan and lists after activation
-      const status = (await window.api.scanWorkspaceClaude({
+      const status = await window.api.scanWorkspaceClaude({
         workspacePath
-      })) as WorkspaceClaudeStatus
-      const agents = (await window.api.scanWorkspaceAgents({
+      })
+      const agents = await window.api.scanWorkspaceAgents({
         workspacePath
-      })) as DiscoveredAgent[]
-      const skills = (await window.api.scanWorkspaceSkills({
+      })
+      const skills = await window.api.scanWorkspaceSkills({
         workspacePath
-      })) as DiscoveredSkill[]
+      })
 
       set({ claudeStatus: status, agents, skills })
       return result
@@ -178,9 +181,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       await window.api.confirmClaudeMd({ workspacePath, content })
       set({ pendingClaudeMd: null, isConfirmingClaudeMd: false })
       // Refresh scan to reflect the new CLAUDE.md
-      const status = (await window.api.scanWorkspaceClaude({
+      const status = await window.api.scanWorkspaceClaude({
         workspacePath
-      })) as WorkspaceClaudeStatus
+      })
       set({ claudeStatus: status })
     } catch (error) {
       console.error('Failed to confirm CLAUDE.md:', error)
@@ -194,9 +197,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   loadAgents: async (workspacePath: string) => {
     try {
-      const agents = (await window.api.scanWorkspaceAgents({
+      const agents = await window.api.scanWorkspaceAgents({
         workspacePath
-      })) as DiscoveredAgent[]
+      })
       set({ agents })
     } catch (error) {
       console.error('Failed to load agents:', error)
@@ -205,9 +208,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   loadSkills: async (workspacePath: string) => {
     try {
-      const skills = (await window.api.scanWorkspaceSkills({
+      const skills = await window.api.scanWorkspaceSkills({
         workspacePath
-      })) as DiscoveredSkill[]
+      })
       set({ skills })
     } catch (error) {
       console.error('Failed to load skills:', error)
@@ -225,7 +228,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   readFile: async (filePath: string) => {
     set({ isFileLoading: true, activeFilePath: filePath })
     try {
-      const content = (await window.api.readWorkspaceFile({ filePath })) as string
+      const content = await window.api.readWorkspaceFile({ filePath })
       set({ activeFileContent: content, isFileLoading: false })
     } catch (error) {
       console.error('Failed to read file:', error)
@@ -250,7 +253,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   computeSyncDiff: async (workspacePath: string) => {
     try {
-      const diff = (await window.api.computeSyncDiff({ workspacePath })) as SyncDiff
+      const diff = await window.api.computeSyncDiff({ workspacePath })
       set({ syncDiff: diff, syncError: null })
     } catch (error) {
       console.error('Failed to compute sync diff:', error)
@@ -261,14 +264,14 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   applySync: async (workspacePath: string, options?: { skipRemoved?: boolean }) => {
     set({ isSyncing: true, syncError: null })
     try {
-      const result = (await window.api.applySync({
+      const result = await window.api.applySync({
         workspacePath,
         skipRemoved: options?.skipRemoved
-      })) as SyncResult
+      })
       set({ isSyncing: false, lastSyncResult: result, syncDiff: null })
 
       // Re-compute diff to reflect new state
-      const diff = (await window.api.computeSyncDiff({ workspacePath })) as SyncDiff
+      const diff = await window.api.computeSyncDiff({ workspacePath })
       set({ syncDiff: diff })
 
       return result
@@ -284,9 +287,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     await window.api.cleanActivation({ workspacePath })
 
     // Step 2: Refresh scan (will now show needsActivation = true)
-    const status = (await window.api.scanWorkspaceClaude({
+    const status = await window.api.scanWorkspaceClaude({
       workspacePath
-    })) as WorkspaceClaudeStatus
+    })
     set({
       claudeStatus: status,
       agents: [],

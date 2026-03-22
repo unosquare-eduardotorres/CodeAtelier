@@ -280,6 +280,17 @@ export interface SyncResult {
   errors: string[]
 }
 
+// ── Grill Session Types ──
+export interface GrillProposedTask {
+  title: string
+  description: string
+}
+
+export interface GrillSummary {
+  summary: string
+  proposedTasks: GrillProposedTask[]
+}
+
 // ── IPC Channel Map (type-safe) ──
 export interface IpcChannels {
   'workspace:list': { args: void; return: Workspace[] }
@@ -378,6 +389,11 @@ export interface IpcEvents {
     summary: string
     specialists: string[]
     mode: ConversationMode
+  }
+  'chat:grillComplete': {
+    conversationId: string
+    summary: string
+    proposedTasks: GrillProposedTask[]
   }
   'chat:taskPlan': TaskPlan
   'chat:taskProgress': TaskExecutionProgress

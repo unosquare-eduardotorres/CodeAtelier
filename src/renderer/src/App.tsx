@@ -18,7 +18,8 @@ function App(): React.JSX.Element {
     updateToolActivity,
     setTaskPlan,
     updateTaskProgress,
-    setCompactSuggestion
+    setCompactSuggestion,
+    endGrillSession
   } = useChatStore()
   const { updateStatus } = useAgentStore()
 
@@ -66,6 +67,10 @@ function App(): React.JSX.Element {
       })
     })
 
+    const unsubGrillComplete = window.api.onGrillComplete((data) => {
+      endGrillSession(data.summary, data.proposedTasks)
+    })
+
     const unsubTaskPlan = window.api.onTaskPlan((data) => {
       setTaskPlan(data as TaskPlan)
     })
@@ -98,6 +103,7 @@ function App(): React.JSX.Element {
       unsubChunk()
       unsubComplete()
       unsubHandoff()
+      unsubGrillComplete()
       unsubTaskPlan()
       unsubTaskProgress()
       unsubReady()
@@ -114,7 +120,8 @@ function App(): React.JSX.Element {
     updateToolActivity,
     updateStatus,
     setOrchestratorReady,
-    setCompactSuggestion
+    setCompactSuggestion,
+    endGrillSession
   ])
 
   // Pop-out mode: render only the Pixel Office fullscreen

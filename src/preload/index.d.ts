@@ -22,7 +22,8 @@ import type {
   FileChange,
   CompleteResult,
   AgentWorktree,
-  MergeAllResult
+  MergeAllResult,
+  GrillProposedTask
 } from '../shared/types'
 
 interface Api {
@@ -88,6 +89,7 @@ interface Api {
 
   // Skills
   listSkills: () => Promise<Skill[]>
+  getSkill: (args: { id: string }) => Promise<Skill>
   importSkill: (args: { filePath: string }) => Promise<Skill>
   updateSkill: (args: { id: string; name?: string; description?: string }) => Promise<Skill>
   deleteSkill: (args: { id: string }) => Promise<void>
@@ -151,6 +153,13 @@ interface Api {
       summary: string
       specialists: string[]
       mode: string
+    }) => void
+  ) => () => void
+  onGrillComplete: (
+    callback: (data: {
+      conversationId: string
+      summary: string
+      proposedTasks: GrillProposedTask[]
     }) => void
   ) => () => void
   onTaskPlan: (callback: (data: TaskPlan) => void) => () => void

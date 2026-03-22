@@ -14,7 +14,7 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
   registerChatIpc(mainWindow)
   registerAgentIpc(mainWindow)
-  registerOrchestratorIpc()
+  registerOrchestratorIpc(mainWindow)
   registerSpecialistIpc()
   registerSkillIpc()
   registerWorkspaceDeployIpc()

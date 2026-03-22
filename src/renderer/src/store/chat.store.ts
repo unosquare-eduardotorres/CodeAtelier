@@ -4,6 +4,7 @@ import type {
   Conversation,
   ConversationMode,
   ExecutionStrategy,
+  GrillProposedTask,
   Message,
   TaskExecutionProgress,
   TaskPlan,
@@ -14,6 +15,12 @@ interface HandoffState {
   summary: string
   specialists: string[]
   mode: ConversationMode
+}
+
+interface GrillSessionState {
+  active: boolean
+  summary: string | null
+  proposedTasks: GrillProposedTask[]
 }
 
 interface ChatState {
@@ -33,6 +40,9 @@ interface ChatState {
 
   // Compact suggestion state
   compactSuggestion: { level: string; inputTokens: number } | null
+
+  // Grill session state
+  grillSession: GrillSessionState | null
 
   loadConversations: (workspaceId: string) => Promise<void>
   createConversation: (workspaceId: string, mode?: ConversationMode) => Promise<void>
@@ -62,6 +72,14 @@ interface ChatState {
   executePlan: (strategy: ExecutionStrategy) => Promise<void>
   clearTaskPlan: () => void
 
+  // Grill session actions
+  startGrillSession: () => void
+  endGrillSession: (summary: string, proposedTasks: GrillProposedTask[]) => void
+  clearGrillSession: () => void
+  createItemsFromGrill: (
+    tasks: Array<{ title: string; context: string; description: string }>
+  ) => Promise<void>
+
   // /complete and /close actions
   completeConversation: (commitMessage: string, description: string) => Promise<CompleteResult>
   closeConversation: (id: string) => Promise<void>
@@ -85,6 +103,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   taskProgress: previousChatState?.taskProgress ?? new Map(),
   isExecutingPlan: previousChatState?.isExecutingPlan ?? false,
   compactSuggestion: previousChatState?.compactSuggestion ?? null,
+  grillSession: previousChatState?.grillSession ?? null,
 
   loadConversations: async (workspaceId: string) => {
     try {
@@ -125,10 +144,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
 
     try {
-      const updated = (await window.api.updateConversationMode({
+      const updated = await window.api.updateConversationMode({
         conversationId: activeConversation.id,
         mode
-      })) as Conversation
+      })
 
       // Reconcile with DB response
       set((state) => ({
@@ -170,10 +189,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   renameConversation: async (id: string, title: string) => {
-    const updated = (await window.api.renameConversation({
+    const updated = await window.api.renameConversation({
       conversationId: id,
       title
-    })) as Conversation
+    })
     set((state) => ({
       conversations: state.conversations.map((c) => (c.id === id ? updated : c)),
       activeConversation: state.activeConversation?.id === id ? updated : state.activeConversation
@@ -275,13 +294,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .getMessages({ conversationId: activeConversation.id })
         .then((messages) => {
           set({
-            messages: messages as Message[],
+            messages,
             streamingContent: '',
             isStreaming: false,
             toolActivities: []
           })
         })
-        .catch(() => {
+        .catch((error) => {
+          console.error('Failed to reload messages after stream finalize:', error)
           set({ streamingContent: '', isStreaming: false, toolActivities: [] })
         })
     } else {
@@ -345,11 +365,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { activeConversation, conversations } = get()
     if (!activeConversation) throw new Error('No active conversation')
 
-    const result = (await window.api.completeConversation({
+    const result = await window.api.completeConversation({
       conversationId: activeConversation.id,
       commitMessage,
       description
-    })) as CompleteResult
+    })
 
     // Remove conversation from state (it's been deleted in DB)
     const newConversations = conversations.filter((c) => c.id !== activeConversation.id)
@@ -382,6 +402,53 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeConversation: activeConversation?.id === id ? null : activeConversation,
       messages: activeConversation?.id === id ? [] : get().messages
     })
+  },
+
+  startGrillSession: () => {
+    set({ grillSession: { active: true, summary: null, proposedTasks: [] } })
+  },
+
+  endGrillSession: (summary: string, proposedTasks: GrillProposedTask[]) => {
+    set({ grillSession: { active: false, summary, proposedTasks } })
+  },
+
+  clearGrillSession: () => {
+    set({ grillSession: null })
+  },
+
+  createItemsFromGrill: async (
+    tasks: Array<{ title: string; context: string; description: string }>
+  ) => {
+    const { activeConversation } = get()
+    if (!activeConversation) return
+
+    const workspaceId = activeConversation.workspaceId
+    for (const task of tasks) {
+      try {
+        const conversation = (await window.api.createConversation({
+          workspaceId,
+          title: task.title,
+          mode: 'build'
+        })) as Conversation
+
+        // Inject context + task as the first message
+        const initialMessage = `## Context\n\n${task.context}\n\n## Task\n\n${task.description}`
+        await window.api.sendMessage({
+          conversationId: conversation.id,
+          text: initialMessage
+        })
+
+        // Add to conversations list
+        set((state) => ({
+          conversations: [conversation, ...state.conversations]
+        }))
+      } catch (error) {
+        console.error(`Failed to create item conversation for "${task.title}":`, error)
+      }
+    }
+
+    // Clear the grill session after creating items
+    set({ grillSession: null })
   },
 
   setCompactSuggestion: (data) => set({ compactSuggestion: data }),
@@ -421,7 +488,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeTaskPlan: null,
       taskProgress: new Map(),
       isExecutingPlan: false,
-      compactSuggestion: null
+      compactSuggestion: null,
+      grillSession: null
     })
   }
 }))

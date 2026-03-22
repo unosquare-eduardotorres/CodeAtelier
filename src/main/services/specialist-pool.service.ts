@@ -8,6 +8,7 @@ import { specialistRepository, worktreeRepository } from '../db/repositories'
 import { SPECIALIST_TASK_SYSTEM_PROMPT } from './system-prompts'
 import { gitWorktreeService } from './git-worktree.service'
 import type { MergeResult } from './git-worktree.service'
+import { buildEnvWithPath } from './env-utils'
 
 interface SpecialistProcessInfo {
   task: DecomposedTask
@@ -32,6 +33,10 @@ export class SpecialistPoolService extends EventEmitter {
   private activeProcesses: Map<string, SpecialistProcessInfo> = new Map()
   private completedTasks: Set<string> = new Set()
   private taskResults: Map<string, string> = new Map()
+  /** Per-task NDJSON buffer for handling partial lines across data events */
+  private taskBuffers: Map<string, string> = new Map()
+  /** Track final status per task for runSpecialistTask result checking */
+  private taskStatuses: Map<string, TaskExecutionProgress['status']> = new Map()
   private aborted: boolean = false
 
   setWorkspacePath(path: string): void {
@@ -163,12 +168,20 @@ export class SpecialistPoolService extends EventEmitter {
     }
     this.activeProcesses.set(task.id, info)
 
+    // Initialize NDJSON buffer for this task
+    this.taskBuffers.set(task.id, '')
+
     childProcess.stdout?.on('data', (data: Buffer) => {
       const text = data.toString()
       info.output += text
 
-      // Try to extract text content from stream-json events
-      const lines = text.split('\n')
+      // Buffer-aware NDJSON parsing — handles partial lines across data events
+      const existingBuffer = this.taskBuffers.get(task.id) ?? ''
+      const buffered = existingBuffer + text
+      const lines = buffered.split('\n')
+      // Keep the last (possibly incomplete) line in the buffer
+      this.taskBuffers.set(task.id, lines.pop() ?? '')
+
       for (const line of lines) {
         const trimmed = line.trim()
         if (!trimmed) continue
@@ -230,12 +243,35 @@ export class SpecialistPoolService extends EventEmitter {
     })
 
     childProcess.on('exit', (code) => {
+      // Flush any remaining NDJSON buffer content
+      const remainingBuffer = this.taskBuffers.get(task.id)?.trim()
+      if (remainingBuffer) {
+        try {
+          const event = JSON.parse(remainingBuffer)
+          if (event.type === 'result' && event.result) {
+            this.emit('taskChunk', {
+              taskId: task.id,
+              specialist: task.specialist,
+              chunk: event.result as string
+            })
+          }
+        } catch {
+          this.emit('taskChunk', {
+            taskId: task.id,
+            specialist: task.specialist,
+            chunk: remainingBuffer
+          })
+        }
+      }
+      this.taskBuffers.delete(task.id)
+
       this.activeProcesses.delete(task.id)
       this.completedTasks.add(task.id)
       this.taskResults.set(task.id, info.output)
 
       if (code === 0) {
         info.status = 'completed'
+        this.taskStatuses.set(task.id, 'completed')
         this.emitProgress(task, 'completed', info.output)
 
         // Attempt to merge worktree if one was created
@@ -271,6 +307,7 @@ export class SpecialistPoolService extends EventEmitter {
         }
       } else {
         info.status = 'failed'
+        this.taskStatuses.set(task.id, 'failed')
         this.emitProgress(task, 'failed', undefined, `Process exited with code ${code}`)
 
         // Abandon worktree on failure
@@ -283,9 +320,11 @@ export class SpecialistPoolService extends EventEmitter {
     })
 
     childProcess.on('error', (err) => {
+      this.taskBuffers.delete(task.id)
       this.activeProcesses.delete(task.id)
       this.completedTasks.add(task.id)
       info.status = 'failed'
+      this.taskStatuses.set(task.id, 'failed')
       this.emitProgress(task, 'failed', undefined, err.message)
 
       // Abandon worktree on error
@@ -395,25 +434,10 @@ export class SpecialistPoolService extends EventEmitter {
 
   /**
    * Builds process environment with PATH augmented for claude CLI discovery.
+   * Delegates to shared env-utils for cross-platform PATH construction.
    */
   private buildEnvWithPath(): NodeJS.ProcessEnv {
-    const env = { ...process.env }
-    delete env.CLAUDECODE
-
-    const homeDir = process.env.HOME || process.env.USERPROFILE || ''
-    if (homeDir) {
-      const localBin = `${homeDir}/.local/bin`
-      if (env.PATH && !env.PATH.includes(localBin)) {
-        env.PATH = `${localBin}:${env.PATH}`
-      }
-    }
-    if (env.PATH && !env.PATH.includes('/opt/homebrew/bin')) {
-      env.PATH = `/opt/homebrew/bin:${env.PATH}`
-    }
-    if (env.PATH && !env.PATH.includes('/usr/local/bin')) {
-      env.PATH = `/usr/local/bin:${env.PATH}`
-    }
-    return env
+    return buildEnvWithPath()
   }
 
   /**
@@ -423,8 +447,9 @@ export class SpecialistPoolService extends EventEmitter {
     return new Promise((resolve, reject) => {
       this.startTask(task, mode, () => {
         const result = this.taskResults.get(task.id)
-        const info = this.activeProcesses.get(task.id)
-        if (info?.status === 'failed') {
+        // Check taskStatuses instead of activeProcesses (which is already deleted in exit handler)
+        const status = this.taskStatuses.get(task.id)
+        if (status === 'failed') {
           reject(new Error(`Task ${task.id} failed`))
         } else {
           resolve(result ?? '')
@@ -466,38 +491,39 @@ export class SpecialistPoolService extends EventEmitter {
    */
   async stopAll(): Promise<void> {
     this.aborted = true
+
+    const exitPromises: Promise<void>[] = []
+
     for (const [id, info] of this.activeProcesses) {
       this.log.info(`Stopping specialist process: ${id}`)
-      try {
-        info.process.kill('SIGTERM')
-      } catch {
-        /* ignore */
-      }
+
+      exitPromises.push(
+        new Promise<void>((resolve) => {
+          const timeout = setTimeout(() => {
+            try {
+              info.process.kill('SIGKILL')
+            } catch {
+              /* ignore */
+            }
+            resolve()
+          }, 5000)
+
+          info.process.on('exit', () => {
+            clearTimeout(timeout)
+            resolve()
+          })
+
+          try {
+            info.process.kill('SIGTERM')
+          } catch {
+            clearTimeout(timeout)
+            resolve()
+          }
+        })
+      )
     }
 
-    // Wait briefly for processes to exit
-    await new Promise<void>((resolve) => {
-      const check = (): void => {
-        if (this.activeProcesses.size === 0) {
-          resolve()
-        } else {
-          setTimeout(check, 200)
-        }
-      }
-      setTimeout(check, 200)
-      // Force kill after 5s
-      setTimeout(() => {
-        for (const [, info] of this.activeProcesses) {
-          try {
-            info.process.kill('SIGKILL')
-          } catch {
-            /* ignore */
-          }
-        }
-        resolve()
-      }, 5000)
-    })
-
+    await Promise.allSettled(exitPromises)
     this.activeProcesses.clear()
   }
 
@@ -520,6 +546,8 @@ export class SpecialistPoolService extends EventEmitter {
   private reset(): void {
     this.completedTasks.clear()
     this.taskResults.clear()
+    this.taskBuffers.clear()
+    this.taskStatuses.clear()
     this.activeProcesses.clear()
     this.aborted = false
     // Note: workspacePath and conversationId are preserved across resets

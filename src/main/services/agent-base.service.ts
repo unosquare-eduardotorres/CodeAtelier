@@ -2,6 +2,7 @@ import { type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type { LogFunctions } from 'electron-log'
 import type { AgentStatus } from '../../shared/types'
+import { buildEnvWithPath } from './env-utils'
 
 export interface StreamChunk {
   type: 'text' | 'tool_use' | 'tool_result' | 'error' | 'status'
@@ -64,32 +65,10 @@ export abstract class AgentBaseService extends EventEmitter {
 
   /**
    * Builds a process environment with PATH augmented for claude CLI discovery.
-   * Removes CLAUDECODE env var to avoid nested session errors.
+   * Delegates to shared env-utils for cross-platform PATH construction.
    */
   protected buildEnvWithPath(): NodeJS.ProcessEnv {
-    const env = { ...process.env }
-    delete env.CLAUDECODE
-
-    // Add common bin paths — later additions get higher priority (prepended to PATH).
-    // Order: ~/.local/bin (lowest) → /opt/homebrew/bin → /usr/local/bin (highest)
-    // This ensures /usr/local/bin (npm global) takes priority over ~/.local/bin
-    // (auto-downloaded binary that may be stale).
-    const homeDir = process.env.HOME || process.env.USERPROFILE || ''
-    if (homeDir) {
-      const localBin = `${homeDir}/.local/bin`
-      if (env.PATH && !env.PATH.includes(localBin)) {
-        env.PATH = `${localBin}:${env.PATH}`
-      }
-    }
-
-    if (env.PATH && !env.PATH.includes('/opt/homebrew/bin')) {
-      env.PATH = `/opt/homebrew/bin:${env.PATH}`
-    }
-    if (env.PATH && !env.PATH.includes('/usr/local/bin')) {
-      env.PATH = `/usr/local/bin:${env.PATH}`
-    }
-
-    return env
+    return buildEnvWithPath()
   }
 
   /**
