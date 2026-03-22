@@ -8,10 +8,13 @@ interface ModeToggleProps {
 }
 
 export default function ModeToggle({ mode, onChange, disabled }: ModeToggleProps): React.JSX.Element {
+  const isMac = navigator.platform.toUpperCase().includes('MAC');
+  const shortcut = isMac ? '⌘.' : 'Ctrl+.';
+
   return (
     <div
-      className="flex items-center bg-gray-800 rounded-lg p-0.5 border border-gray-700/50"
-      title={`Toggle mode (${navigator.platform.toUpperCase().includes('MAC') ? '⌘' : 'Ctrl+'}⇧M)`}
+      className="flex items-center gap-1.5 bg-gray-800 rounded-lg p-0.5 border border-gray-700/50"
+      title={`Toggle mode (${shortcut})`}
     >
       <button
         onClick={() => onChange('plan')}
@@ -37,6 +40,7 @@ export default function ModeToggle({ mode, onChange, disabled }: ModeToggleProps
         <Hammer size={12} />
         Build
       </button>
+      <span className="text-[10px] text-gray-500 px-1 font-mono">{shortcut}</span>
     </div>
   );
 }

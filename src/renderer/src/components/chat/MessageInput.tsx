@@ -172,7 +172,7 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
       <div className="relative flex-1 min-w-0 flex items-end gap-2">
         {/* Slash command autocomplete dropdown */}
         {showCommands && (
-          <div className="absolute bottom-full mb-1 left-0 bg-gray-800 rounded-lg border border-gray-700 py-1 w-72 shadow-xl z-50">
+          <div className="absolute bottom-full mb-1 left-0 bg-gray-800 rounded-lg border border-gray-700 py-1.5 w-96 shadow-xl z-50">
             {filteredCommands.map((cmd, index) => {
               const Icon = cmd.icon;
               return (
@@ -182,15 +182,15 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
                     setText(cmd.command);
                     textareaRef.current?.focus();
                   }}
-                  className={`w-full text-left px-3 py-2 text-sm transition-colors flex items-center gap-2.5 ${
+                  className={`w-full text-left px-4 py-2.5 text-base transition-colors flex items-center gap-3 ${
                     index === selectedCommandIndex
                       ? 'bg-gray-700 text-white'
                       : 'hover:bg-gray-700/50 text-gray-300'
                   }`}
                 >
-                  <Icon size={14} className={cmd.iconColor} />
-                  <span className="text-indigo-400 font-mono">{cmd.command}</span>
-                  <span className="text-gray-400 ml-auto text-xs">{cmd.description}</span>
+                  <Icon size={18} className={cmd.iconColor} />
+                  <span className="text-indigo-400 font-mono text-sm font-medium">{cmd.command}</span>
+                  <span className="text-gray-400 ml-auto text-sm">{cmd.description}</span>
                 </button>
               );
             })}

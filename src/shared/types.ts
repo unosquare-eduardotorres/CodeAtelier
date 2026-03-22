@@ -291,6 +291,16 @@ export interface GrillSummary {
   proposedTasks: GrillProposedTask[]
 }
 
+// ── Brain (persistent project memory) ──
+export interface BrainEntry {
+  timestamp: string
+  conversationId: string
+  conversationTitle: string
+  type: 'completion' | 'decision' | 'error' | 'milestone' | 'context'
+  summary: string
+  details?: string
+}
+
 // ── IPC Channel Map (type-safe) ──
 export interface IpcChannels {
   'workspace:list': { args: void; return: Workspace[] }
@@ -378,6 +388,11 @@ export interface IpcChannels {
   // Agent Sync
   'sync:computeDiff': { args: { workspacePath: string }; return: SyncDiff }
   'sync:apply': { args: { workspacePath: string; skipRemoved?: boolean }; return: SyncResult }
+
+  // Brain (project memory)
+  'brain:getContext': { args: { workspacePath: string }; return: string }
+  'brain:getState': { args: { workspacePath: string }; return: string }
+  'brain:logDecision': { args: { workspacePath: string; entry: BrainEntry }; return: void }
 }
 
 // ── IPC Event Channels (main → renderer streaming) ──

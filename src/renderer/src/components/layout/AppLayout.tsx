@@ -58,7 +58,7 @@ export default function AppLayout(): React.JSX.Element {
         }
       }
 
-      if (isMeta && e.shiftKey && e.key === 'm') {
+      if (isMeta && e.key === '.') {
         e.preventDefault();
         if (activeConversation && !isStreaming) {
           updateMode(activeConversation.mode === 'plan' ? 'build' : 'plan');

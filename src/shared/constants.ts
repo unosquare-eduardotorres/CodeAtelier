@@ -106,7 +106,12 @@ export const IPC_CHANNELS = {
 
   // Agent Sync
   SYNC_COMPUTE_DIFF: 'sync:computeDiff',
-  SYNC_APPLY: 'sync:apply'
+  SYNC_APPLY: 'sync:apply',
+
+  // Brain (project memory)
+  BRAIN_GET_CONTEXT: 'brain:getContext',
+  BRAIN_GET_STATE: 'brain:getState',
+  BRAIN_LOG_DECISION: 'brain:logDecision'
 } as const
 
 /**
