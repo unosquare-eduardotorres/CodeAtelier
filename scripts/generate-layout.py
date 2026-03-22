@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """Generate a custom office layout for 14 agents in Agent Studio.
 
-Layout: 34x34 grid with 3 zones connected by a central corridor:
+Layout: 34x34 grid with 3 zones connected by open passages:
   - Main Office (top-left) — 7 desks with PCs, wood floor
   - Dev Room (top-right) — 7 desks with PCs, blue carpet
-  - Break Room (full bottom) — lounge with sofas facing coffee tables
-  - Central corridor connecting ALL rooms (no dead-end hallway)
+  - Break Room (full bottom) — lounge with sofas, coffee tables, plants
+  - Wide open passages connecting all rooms (no narrow hallway)
 
-Furniture placement rules:
-  - DESK_FRONT is 3 wide × 2 tall, backgroundTiles=1 (top row is surface)
-  - PCs go ON the desk surface (same col, desk.row = surface row)
-  - Chairs go BELOW the desk (desk.row + 2), facing UP toward desk
-  - Wall art (paintings, clocks, bookshelves) go ON wall tiles (row 0)
-  - Coffee mugs go ON table surfaces, not on floor
-  - Sofas face TOWARD the adjacent coffee table
+PLACEMENT RULES:
+  - DESK_FRONT: 3w x 2h, backgroundTiles=1 (top row = surface for PCs)
+  - PC goes at same (col, row) as desk — sits on the surface row
+  - WOODEN_CHAIR_BACK: faces UP — correct for desks above the chair
+  - Chair at desk.row + 2 (right below desk bottom edge)
+  - Wall art: ON wall tiles (row=0 for offices, row=wall_row for break room)
+  - Plants: corners and wall edges ONLY, never mid-floor
+  - Coffee/mugs: ONLY on table surfaces, never on floor
+  - Sofas face INWARD toward their coffee table
 """
 
 import json
@@ -50,179 +52,191 @@ def add(ftype, col, row):
 
 
 # ═══════════════════════════════════════════════════════════
-# MAIN OFFICE (top-left): cols 0-14, rows 0-17
-# Wall = row 0, row 17, col 0, col 14
-# Floor = rows 1-16, cols 1-13 (WOOD)
+# MAIN OFFICE (top-left): cols 0-15, rows 0-18
+# Walls: row 0, row 18, col 0, col 15
+# Floor (WOOD): rows 1-17, cols 1-14
 # ═══════════════════════════════════════════════════════════
-fill_rect(0, 0, 14, 17, WALL)
-fill_rect(1, 1, 13, 16, WOOD)
+fill_rect(0, 0, 15, 18, WALL)
+fill_rect(1, 1, 14, 17, WOOD)
 
-# ── Wall decorations (ON wall tiles, row 0) ──
-add("DOUBLE_BOOKSHELF", 1, 0)    # 2x2, on wall
-add("SMALL_PAINTING", 4, 0)      # 1x2, on wall
-add("HANGING_PLANT", 6, 0)       # 1x2, on wall
-add("CLOCK", 8, 0)               # 1x2, on wall
-add("BOOKSHELF", 10, 0)          # 2x1, on wall
+# -- Wall decorations (ON the wall = row 0, col 0, or col 15) --
+add("DOUBLE_BOOKSHELF", 1, 0)    # top wall, left corner
+add("BOOKSHELF", 4, 0)           # top wall
+add("SMALL_PAINTING", 7, 0)      # top wall
+add("CLOCK", 9, 0)               # top wall
+add("BOOKSHELF", 11, 0)          # top wall
+add("HANGING_PLANT", 14, 0)      # top wall, right corner
 
-# ── Row 1: 3 workstations (desks at row 2, chairs at row 4) ──
-# DESK_FRONT = 3w × 2h. Top row (row 2) is surface for PCs.
-# Chair at row 4, facing UP toward desk
+# -- Row 1 workstations: 3 desks --
+# Desk at row 3 (surface=row3, body=row4), chair at row 5 facing UP
 for c in [1, 5, 9]:
-    add("DESK_FRONT", c, 2)           # desk occupies (c,2)-(c+2,3)
-    add("PC_FRONT_OFF", c + 1, 2)     # PC on desk surface (top row of desk)
-    add("WOODEN_CHAIR_FRONT", c + 1, 4)  # chair below desk, facing UP
+    add("DESK_FRONT", c, 3)           # 3w x 2h at (c, 3)-(c+2, 4)
+    add("PC_FRONT_OFF", c + 1, 3)     # PC on desk surface (top row)
+    add("WOODEN_CHAIR_BACK", c + 1, 5)  # chair facing UP toward desk
 
-# ── Row 2: 4 workstations (desks at row 8, chairs at row 10) ──
+# -- Row 2 workstations: 4 desks --
+# Desk at row 9, chair at row 11
 for c in [1, 5, 9, 12]:
-    add("DESK_FRONT", c, 8)
-    add("PC_FRONT_OFF", c + 1, 8)     # PC on desk surface
-    add("WOODEN_CHAIR_FRONT", c + 1, 10)
+    add("DESK_FRONT", c, 9)
+    add("PC_FRONT_OFF", c + 1, 9)
+    add("WOODEN_CHAIR_BACK", c + 1, 11)
 
-# ── Floor decor (plants, bins — NOT wall items) ──
-add("PLANT", 13, 2)
-add("PLANT_2", 1, 14)
-add("BIN", 13, 16)
+# -- Corner plants (edges only, not mid-floor) --
+add("PLANT", 14, 1)           # top-right corner of room
+add("PLANT_2", 1, 16)         # bottom-left corner
+add("BIN", 14, 17)            # bottom-right corner
 
-
-# ═══════════════════════════════════════════════════════════
-# DEV ROOM (top-right): cols 19-33, rows 0-17
-# Wall = row 0, row 17, col 19, col 33
-# Floor = rows 1-16, cols 20-32 (BLUE)
-# ═══════════════════════════════════════════════════════════
-fill_rect(19, 0, 33, 17, WALL)
-fill_rect(20, 1, 32, 16, BLUE)
-
-# ── Wall decorations (ON wall tiles, row 0) ──
-add("WHITEBOARD", 20, 0)          # 2x2, on wall
-add("SMALL_PAINTING_2", 23, 0)    # 1x2, on wall
-add("LARGE_PAINTING", 25, 0)      # 2x2, on wall
-add("HANGING_PLANT", 28, 0)       # 1x2, on wall
-
-# ── Row 1: 3 workstations ──
-for c in [20, 24, 28]:
-    add("DESK_FRONT", c, 2)
-    add("PC_FRONT_OFF", c + 1, 2)
-    add("WOODEN_CHAIR_FRONT", c + 1, 4)
-
-# ── Row 2: 4 workstations ──
-for c in [20, 24, 28, 30]:
-    add("DESK_FRONT", c, 8)
-    add("PC_FRONT_OFF", c + 1, 8)
-    add("WOODEN_CHAIR_FRONT", c + 1, 10)
-
-# ── Floor decor ──
-add("PLANT", 20, 14)
-add("PLANT_2", 32, 14)
-add("BIN", 32, 16)
+# -- Bookshelves on side walls --
+add("DOUBLE_BOOKSHELF", 1, 14)   # left wall, bottom area
+add("BOOKSHELF", 13, 14)         # right wall area
 
 
 # ═══════════════════════════════════════════════════════════
-# CENTRAL CORRIDOR: cols 15-18, rows 0-21
-# Connects offices (top) to break room (bottom)
-# No dead-end — runs full height
+# DEV ROOM (top-right): cols 18-33, rows 0-18
+# Walls: row 0, row 18, col 18, col 33
+# Floor (BLUE): rows 1-17, cols 19-32
 # ═══════════════════════════════════════════════════════════
-fill_rect(15, 0, 18, 21, WALL)
-fill_rect(16, 1, 17, 20, WOOD)
+fill_rect(18, 0, 33, 18, WALL)
+fill_rect(19, 1, 32, 17, BLUE)
 
-# ── Open doorways into offices (remove wall segments) ──
-# Left door: col 15, rows 5-9 (into main office)
-for r in range(5, 10):
+# -- Wall decorations (top wall = row 0) --
+add("WHITEBOARD", 19, 0)         # top wall, left
+add("BOOKSHELF", 22, 0)          # top wall
+add("SMALL_PAINTING_2", 25, 0)   # top wall
+add("LARGE_PAINTING", 27, 0)     # top wall (2w)
+add("BOOKSHELF", 30, 0)          # top wall
+add("HANGING_PLANT", 32, 0)      # top wall, right corner
+
+# -- Row 1 workstations: 3 desks --
+for c in [19, 23, 27]:
+    add("DESK_FRONT", c, 3)
+    add("PC_FRONT_OFF", c + 1, 3)
+    add("WOODEN_CHAIR_BACK", c + 1, 5)
+
+# -- Row 2 workstations: 4 desks --
+for c in [19, 23, 27, 30]:
+    add("DESK_FRONT", c, 9)
+    add("PC_FRONT_OFF", c + 1, 9)
+    add("WOODEN_CHAIR_BACK", c + 1, 11)
+
+# -- Corner plants --
+add("PLANT", 19, 1)           # top-left corner
+add("PLANT_2", 32, 16)        # bottom-right corner
+add("BIN", 32, 17)            # corner
+
+# -- Bookshelves on walls --
+add("DOUBLE_BOOKSHELF", 19, 14)
+add("BOOKSHELF", 31, 14)
+
+
+# ═══════════════════════════════════════════════════════════
+# OPEN PASSAGES — connect offices to break room
+# No narrow hallway — wide openings directly between rooms
+# ═══════════════════════════════════════════════════════════
+
+# Central passage (cols 15-18, rows 6-21) — connects both offices + break room
+# Clear the wall between offices and make a wide floor path
+fill_rect(15, 0, 18, 21, WALL)       # base: walls
+fill_rect(15, 6, 18, 20, WOOD)       # floor: open passage rows 6-20
+
+# Open into main office (col 15, rows 6-12)
+for r in range(6, 13):
     set_tile(15, r, WOOD)
 
-# Right door: col 18, rows 5-9 (into dev room)
-for r in range(5, 10):
+# Open into dev room (col 18, rows 6-12)
+for r in range(6, 13):
     set_tile(18, r, BLUE)
 
-# Bottom opening into break room: cols 16-17, row 20
-set_tile(16, 20, CHECK)
-set_tile(17, 20, CHECK)
-set_tile(16, 21, CHECK)
-set_tile(17, 21, CHECK)
+# Left direct passage (main office → break room): cols 6-8, rows 18-21
+fill_rect(6, 18, 8, 21, WALL)
+for r in range(18, 22):
+    for c in range(6, 9):
+        set_tile(c, r, WOOD if r <= 18 else CHECK)
+
+# Right direct passage (dev room → break room): cols 25-27, rows 18-21
+fill_rect(25, 18, 27, 21, WALL)
+for r in range(18, 22):
+    for c in range(25, 28):
+        set_tile(c, r, BLUE if r <= 18 else CHECK)
+
+# Central passage opens into break room (cols 15-18, rows 20-21)
+for c in range(15, 19):
+    set_tile(c, 20, CHECK)
+    set_tile(c, 21, CHECK)
 
 
 # ═══════════════════════════════════════════════════════════
 # BREAK ROOM (full bottom): cols 0-33, rows 21-33
-# Accessed via corridor (cols 16-17) from offices
+# Walls: row 21 (top), row 33 (bottom), col 0, col 33
+# Floor (CHECK): rows 22-32, cols 1-32
 # ═══════════════════════════════════════════════════════════
 fill_rect(0, 21, 33, 33, WALL)
 fill_rect(1, 22, 32, 32, CHECK)
 
-# ── Left doorway (main office → break room directly) ──
-# Col 6-8, rows 17-21 (stairwell from main office)
-fill_rect(6, 17, 8, 21, WALL)
-for r in range(18, 22):
-    for c in range(6, 9):
-        set_tile(c, r, WOOD if r < 21 else CHECK)
-
-# ── Right doorway (dev room → break room directly) ──
-fill_rect(25, 17, 27, 21, WALL)
-for r in range(18, 22):
-    for c in range(25, 28):
-        set_tile(c, r, BLUE if r < 21 else CHECK)
-
-# ── Wall decorations (ON wall row 21 = break room top wall) ──
-add("LARGE_PAINTING", 3, 21)
+# -- Wall decorations (top wall = row 21) --
+add("LARGE_PAINTING", 2, 21)
+add("BOOKSHELF", 5, 21)
 add("SMALL_PAINTING", 10, 21)
-add("BOOKSHELF", 13, 21)
-add("HANGING_PLANT", 20, 21)
-add("SMALL_PAINTING_2", 22, 21)
+add("HANGING_PLANT", 13, 21)
+add("SMALL_PAINTING_2", 20, 21)
+add("BOOKSHELF", 23, 21)
 add("LARGE_PAINTING", 29, 21)
 
-# ── Lounge area 1 (left) — sofas facing inward toward table ──
-add("COFFEE_TABLE", 3, 24)       # table at center
-add("SOFA_SIDE", 2, 24)          # left sofa facing RIGHT (toward table)
-add("SOFA_SIDE:left", 5, 24)     # right sofa facing LEFT (toward table)
-add("COFFEE", 4, 24)             # mug ON table
+# -- Lounge group 1 (left): sofa-table-sofa facing inward --
+# SOFA_SIDE faces RIGHT, SOFA_SIDE:left faces LEFT
+# Coffee table between them
+add("SOFA_SIDE", 2, 24)          # left sofa, faces right
+add("COFFEE_TABLE", 3, 24)       # table (2x2)
+add("SOFA_SIDE:left", 5, 24)     # right sofa, faces left
 
-# ── Lounge area 2 (center-left) — sofas facing table ──
-add("COFFEE_TABLE", 10, 24)
+# -- Lounge group 2 (center-left) --
 add("SOFA_SIDE", 9, 24)
+add("COFFEE_TABLE", 10, 24)
 add("SOFA_SIDE:left", 12, 24)
 
-# ── Lounge area 3 (center) — large table with benches ──
-add("SMALL_TABLE_FRONT", 16, 24)
+# -- Lounge group 3 (center): small table with benches --
+add("SMALL_TABLE_FRONT", 16, 24)    # 2x2 table
 add("CUSHIONED_BENCH", 16, 26)
 add("CUSHIONED_BENCH", 17, 26)
 
-# ── Lounge area 4 (center-right) — sofas facing table ──
-add("COFFEE_TABLE", 22, 24)
+# -- Lounge group 4 (center-right) --
 add("SOFA_SIDE", 21, 24)
+add("COFFEE_TABLE", 22, 24)
 add("SOFA_SIDE:left", 24, 24)
-add("COFFEE", 23, 24)            # mug ON table
 
-# ── Lounge area 5 (right) — sofas facing table ──
-add("COFFEE_TABLE", 29, 24)
+# -- Lounge group 5 (right) --
 add("SOFA_SIDE", 28, 24)
+add("COFFEE_TABLE", 29, 24)
 add("SOFA_SIDE:left", 31, 24)
 
-# ── Bottom row — more lounge groups ──
-add("COFFEE_TABLE", 4, 29)
+# -- Bottom row lounge groups --
 add("SOFA_SIDE", 3, 29)
+add("COFFEE_TABLE", 4, 29)
 add("SOFA_SIDE:left", 6, 29)
 
-add("SMALL_TABLE_FRONT", 12, 29)
 add("SOFA_SIDE", 11, 29)
+add("SMALL_TABLE_FRONT", 12, 29)
 add("SOFA_SIDE:left", 14, 29)
 
-add("COFFEE_TABLE", 21, 29)
 add("SOFA_SIDE", 20, 29)
+add("COFFEE_TABLE", 21, 29)
 add("SOFA_SIDE:left", 23, 29)
 
-add("SMALL_TABLE_FRONT", 28, 29)
 add("SOFA_SIDE", 27, 29)
+add("SMALL_TABLE_FRONT", 28, 29)
 add("SOFA_SIDE:left", 30, 29)
 
-# ── Floor decor in break room (plants at edges, not blocking paths) ──
-add("LARGE_PLANT", 1, 22)
-add("CACTUS", 8, 22)
-add("PLANT", 15, 22)
-add("PLANT_2", 19, 22)
-add("CACTUS", 26, 22)
-add("LARGE_PLANT", 31, 22)
+# -- Corner/edge plants ONLY (no mid-floor plants) --
+add("LARGE_PLANT", 1, 22)        # top-left corner
+add("CACTUS", 1, 31)             # bottom-left corner
+add("LARGE_PLANT", 32, 22)       # top-right corner
+add("PLANT", 32, 31)             # bottom-right corner
+add("PLANT_2", 8, 22)            # along top wall edge
+add("CACTUS", 26, 22)            # along top wall edge
+
+# -- Corner items --
 add("POT", 1, 32)
-add("BIN", 8, 32)
-add("PLANT", 25, 32)
-add("POT", 32, 32)
+add("BIN", 32, 32)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -240,17 +254,17 @@ layout = {
         "breakRoom": {
             "colMin": 1, "colMax": 32,
             "rowMin": 22, "rowMax": 32,
-            "description": "Break room — idle agents wander here"
+            "description": "Break room - idle agents wander here"
         },
         "mainOffice": {
-            "colMin": 1, "colMax": 13,
-            "rowMin": 1, "rowMax": 16,
-            "description": "Main office — core team desks"
+            "colMin": 1, "colMax": 14,
+            "rowMin": 1, "rowMax": 17,
+            "description": "Main office - core team desks"
         },
         "devRoom": {
-            "colMin": 20, "colMax": 32,
-            "rowMin": 1, "rowMax": 16,
-            "description": "Dev room — specialist desks"
+            "colMin": 19, "colMax": 32,
+            "rowMin": 1, "rowMax": 17,
+            "description": "Dev room - specialist desks"
         }
     }
 }
@@ -263,7 +277,14 @@ print(f"Generated layout: {W}x{H}, {len(furniture)} furniture items")
 print(f"Written to: {output_path}")
 
 chair_count = sum(1 for item in furniture if 'CHAIR' in item['type'])
-bench_count = sum(1 for item in furniture if 'BENCH' in item['type'])
-print(f"Work chairs: {chair_count} (seats for working agents)")
-print(f"Benches: {bench_count}")
-print(f"Zones: main office, dev room, break room — connected via central corridor + side passages")
+print(f"Work chairs: {chair_count} (seats for 14 agents)")
+print()
+print("Fixes applied:")
+print("  - Chairs use WOODEN_CHAIR_BACK (faces UP toward desk)")
+print("  - PCs at desk.row (on surface, not on wall)")
+print("  - All wall art on wall tiles (row 0 or row 21)")
+print("  - Plants ONLY at corners/edges, never mid-floor")
+print("  - No coffee mugs on floor (only on table surfaces)")
+print("  - Wide open passages (4 tiles wide) + 2 side passages")
+print("  - More bookshelves in both offices")
+print("  - Desks at row 3 (not row 2) to avoid wall overlap")

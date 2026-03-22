@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useChatStore, useWorkspaceStore } from '@renderer/store';
 import { ChatItem } from '@renderer/components/chat';
@@ -27,6 +27,7 @@ export default function ChatSidebar({
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const [conversationsLoaded, setConversationsLoaded] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const autoCreateInFlight = useRef(false);
 
   const isCollapsed = externalCollapsed ?? internalCollapsed;
   const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c));
@@ -44,8 +45,17 @@ export default function ChatSidebar({
 
   // Auto-create conversation when workspace is opened with no conversations
   useEffect(() => {
-    if (activeWorkspace && conversationsLoaded && conversations.length === 0 && !activeConversation) {
-      createConversation(activeWorkspace.id);
+    if (
+      activeWorkspace &&
+      conversationsLoaded &&
+      conversations.length === 0 &&
+      !activeConversation &&
+      !autoCreateInFlight.current
+    ) {
+      autoCreateInFlight.current = true;
+      createConversation(activeWorkspace.id).finally(() => {
+        autoCreateInFlight.current = false;
+      });
     }
   }, [activeWorkspace, conversationsLoaded, conversations.length, activeConversation, createConversation]);
 
