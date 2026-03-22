@@ -1,0 +1,27 @@
+import log from 'electron-log/main'
+
+// ── Configure log file behavior ──
+log.transports.file.maxSize = 5 * 1024 * 1024 // 5 MB per log file
+log.transports.file.format = '{y}-{m}-{d} {h}:{i}:{s}.{ms} [{level}] [{scope}] {text}'
+log.transports.console.format = '{h}:{i}:{s}.{ms} [{level}] [{scope}] {text}'
+
+// ── Catch unhandled errors at process level ──
+log.errorHandler.startCatching({
+  showDialog: false,
+  onError({ error }) {
+    log.error('Unhandled error:', error)
+    return null
+  }
+})
+
+// ── Create scoped loggers (replace LOG_PREFIX pattern) ──
+export const mainLogger = log.scope('Main')
+export const dbLogger = log.scope('DB')
+export const generalistLogger = log.scope('Generalist')
+export const orchestratorLogger = log.scope('Orchestrator')
+export const chatIpcLogger = log.scope('ChatIPC')
+export const agentIpcLogger = log.scope('AgentIPC')
+export const skillLogger = log.scope('Skill')
+export const deployLogger = log.scope('Deploy')
+
+export default log

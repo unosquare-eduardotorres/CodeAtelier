@@ -1,0 +1,22 @@
+/* Typography foundation for long-reading chat UI */
+body {
+  font-family:
+    'Inter Variable',
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    'Fira Sans',
+    'Droid Sans',
+    'Helvetica Neue',
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  letter-spacing: -0.006em;
+  font-feature-settings: 'cv01', 'cv02', 'cv03', 'cv04';
+  text-rendering: optimizeLegibility;
+}

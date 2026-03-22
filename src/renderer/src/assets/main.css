@@ -1,0 +1,51 @@
+@import 'tailwindcss';
+@import './base.css';
+
+@layer base {
+  body {
+    @apply bg-gray-900 text-gray-200 antialiased;
+  }
+
+  #root {
+    @apply h-screen w-screen overflow-hidden;
+  }
+
+  /* Improve prose readability for chat messages */
+  .prose {
+    --tw-prose-body: theme('colors.gray.300');
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .prose p {
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+  }
+
+  .prose pre {
+    font-size: 13px;
+  }
+
+  .prose code {
+    font-size: 13px;
+  }
+}
+
+/* Custom scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4b5563;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
+}

@@ -1,0 +1,137 @@
+import { useState, useEffect } from 'react';
+import { Brain, Pencil, Eye, CheckCircle, XCircle, Pause } from 'lucide-react';
+import type { AgentStatus } from '../../../../shared/types';
+import { AGENT_META } from '../../../../shared/constants';
+import { useSpecialistStore } from '@renderer/store';
+
+interface AgentStatusCardProps {
+  status: AgentStatus;
+}
+
+const STATUS_CONFIG: Record<
+  AgentStatus['status'],
+  { bg: string; text: string; dot: string; icon: React.ReactNode; label: string }
+> = {
+  idle: {
+    bg: 'bg-gray-700/50',
+    text: 'text-gray-400',
+    dot: 'bg-gray-500',
+    icon: <Pause size={12} />,
+    label: 'Idle'
+  },
+  thinking: {
+    bg: 'bg-yellow-500/10',
+    text: 'text-yellow-400',
+    dot: 'bg-yellow-400',
+    icon: <Brain size={12} />,
+    label: 'Thinking'
+  },
+  writing: {
+    bg: 'bg-blue-500/10',
+    text: 'text-blue-400',
+    dot: 'bg-blue-400',
+    icon: <Pencil size={12} />,
+    label: 'Writing'
+  },
+  reviewing: {
+    bg: 'bg-purple-500/10',
+    text: 'text-purple-400',
+    dot: 'bg-purple-400',
+    icon: <Eye size={12} />,
+    label: 'Reviewing'
+  },
+  completed: {
+    bg: 'bg-green-500/10',
+    text: 'text-green-400',
+    dot: 'bg-green-400',
+    icon: <CheckCircle size={12} />,
+    label: 'Completed'
+  },
+  failed: {
+    bg: 'bg-red-500/10',
+    text: 'text-red-400',
+    dot: 'bg-red-400',
+    icon: <XCircle size={12} />,
+    label: 'Failed'
+  }
+};
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function formatTokens(count: number): string {
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+  return count.toString();
+}
+
+export default function AgentStatusCard({ status }: AgentStatusCardProps): React.JSX.Element {
+  const [elapsed, setElapsed] = useState(status.elapsedMs);
+  const config = STATUS_CONFIG[status.status] || STATUS_CONFIG.idle;
+  const { specialists } = useSpecialistStore();
+
+  // Look up metadata from DB-backed specialists first, fall back to hardcoded AGENT_META
+  const dbSpecialist = specialists.find((s) => s.agentId === status.agentType);
+  const meta = dbSpecialist
+    ? { icon: dbSpecialist.icon, color: dbSpecialist.color, displayName: dbSpecialist.displayName }
+    : AGENT_META[status.agentType];
+
+  const isActive = status.status === 'thinking' || status.status === 'writing' || status.status === 'reviewing';
+
+  useEffect(() => {
+    // Sync elapsed with status when not active
+    if (!isActive) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setElapsed(status.elapsedMs);
+    }
+  }, [isActive, status.elapsedMs]);
+
+  useEffect(() => {
+    if (!isActive) return;
+
+    const startTime = Date.now() - status.elapsedMs;
+    const interval = setInterval(() => {
+      setElapsed(Date.now() - startTime);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isActive, status.elapsedMs]);
+
+  return (
+    <div
+      className="bg-gray-800 rounded-lg p-3 border border-gray-700/50 border-l-2"
+      style={{ borderLeftColor: meta?.color ?? '#6366F1' }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-base" role="img" aria-label={meta?.displayName ?? status.agentType}>
+            {meta?.icon ?? '🔧'}
+          </span>
+          <span className="text-sm font-medium text-gray-200">
+            {meta?.displayName ?? status.agentType.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+          </span>
+        </div>
+        <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${config.bg} ${config.text}`}>
+          {config.icon}
+          {config.label}
+        </span>
+      </div>
+
+      {status.currentTask && (
+        <p className="text-xs text-gray-400 mb-2 truncate" title={status.currentTask}>
+          {status.currentTask}
+        </p>
+      )}
+
+      <div className="flex items-center gap-3 text-[10px] text-gray-500">
+        <span>{formatElapsed(elapsed)}</span>
+        <span>·</span>
+        <span>{formatTokens(status.tokenUsage)} tokens</span>
+      </div>
+    </div>
+  );
+}
