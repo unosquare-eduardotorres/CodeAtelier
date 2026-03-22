@@ -127,6 +127,7 @@ AgentStudio/
 | `sqlite-patterns` | `.claude/skills/sqlite-patterns/SKILL.md` | db-architect |
 | `tailwind-ux` | `.claude/skills/tailwind-ux/SKILL.md` | ux-ui-specialist |
 | `git-workflow` | `.claude/skills/git-workflow/SKILL.md` | git-github-specialist |
+| `ipc-patterns` | `.claude/skills/ipc-patterns/SKILL.md` | react-architect, electron-architect, agentic-architect |
 
 ### Electron skill trigger
 
@@ -202,3 +203,28 @@ npm run format        # Run Prettier
 - **Database**: SQLite via `better-sqlite3`, schema in `src/main/db/schema.sql`, repositories in `src/main/db/repositories/`
 - **State**: Zustand stores in `src/renderer/src/store/` — one per domain (agent, chat, workspace)
 - **Git integration**: `simple-git` library for Git operations in the main process
+
+## Error handling patterns
+
+- **IPC handlers**: `validateSender(event)` first, then manual input validation with `throw new Error()`
+- **Streaming errors**: Send error chunk via `CHAT_MESSAGE_CHUNK`, then always send `CHAT_MESSAGE_COMPLETE`
+- **Service errors**: try-catch with `log.error()`, emit error events, update status to 'failed'
+- **Process errors**: Handle both 'error' and 'exit' events, flush NDJSON buffer on exit
+- **Graceful shutdown**: SIGTERM → 5s timeout → SIGKILL → clear process reference
+- **DB errors**: try-catch around operations, log.error and send error chunk to renderer
+- **Always send messageComplete**: Even on error — the UI needs it to exit loading state
+
+## Deprecation notes
+
+- `AGENT_IDS` in `src/shared/constants.ts` — `@deprecated`, use DB specialists instead
+- `AGENT_META` in `src/shared/constants.ts` — `@deprecated`, use DB specialists instead
+- Do not add new references to these deprecated constants
+
+## Electron documentation reference
+
+When debugging Electron-specific issues or implementing new features, consult the official docs:
+- **API reference**: https://www.electronjs.org/docs/latest/api/{module-name}
+- **Tutorials**: https://www.electronjs.org/docs/latest/tutorial/{topic}
+- **Breaking changes**: https://www.electronjs.org/docs/latest/breaking-changes
+- **Blog**: https://www.electronjs.org/blog
+- **GitHub issues**: https://github.com/electron/electron/issues

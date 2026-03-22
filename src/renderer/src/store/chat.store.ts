@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type {
+  CompleteResult,
   Conversation,
   ConversationMode,
   ExecutionStrategy,
@@ -61,22 +62,29 @@ interface ChatState {
   executePlan: (strategy: ExecutionStrategy) => Promise<void>
   clearTaskPlan: () => void
 
+  // /complete and /close actions
+  completeConversation: (commitMessage: string, description: string) => Promise<CompleteResult>
+  closeConversation: (id: string) => Promise<void>
+
   reset: () => void
 }
 
+// Preserve Zustand state across HMR (dev only)
+const previousChatState = import.meta.hot?.data?.chatStoreState as Partial<ChatState> | undefined
+
 export const useChatStore = create<ChatState>((set, get) => ({
-  conversations: [],
-  activeConversation: null,
-  messages: [],
-  streamingContent: '',
-  streamingRole: 'generalist' as const,
-  isStreaming: false,
-  activeHandoff: null,
-  toolActivities: [],
-  activeTaskPlan: null,
-  taskProgress: new Map(),
-  isExecutingPlan: false,
-  compactSuggestion: null,
+  conversations: previousChatState?.conversations ?? [],
+  activeConversation: previousChatState?.activeConversation ?? null,
+  messages: previousChatState?.messages ?? [],
+  streamingContent: previousChatState?.streamingContent ?? '',
+  streamingRole: previousChatState?.streamingRole ?? ('generalist' as const),
+  isStreaming: previousChatState?.isStreaming ?? false,
+  activeHandoff: previousChatState?.activeHandoff ?? null,
+  toolActivities: previousChatState?.toolActivities ?? [],
+  activeTaskPlan: previousChatState?.activeTaskPlan ?? null,
+  taskProgress: previousChatState?.taskProgress ?? new Map(),
+  isExecutingPlan: previousChatState?.isExecutingPlan ?? false,
+  compactSuggestion: previousChatState?.compactSuggestion ?? null,
 
   loadConversations: async (workspaceId: string) => {
     try {
@@ -99,15 +107,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   deleteConversation: async (id: string) => {
-    await window.api.deleteConversation({ conversationId: id })
-    const { activeConversation, conversations } = get()
-    const newConversations = conversations.filter((c) => c.id !== id)
-
-    set({
-      conversations: newConversations,
-      activeConversation: activeConversation?.id === id ? null : activeConversation,
-      messages: activeConversation?.id === id ? [] : get().messages
-    })
+    // Delete uses the same flow as /close
+    await get().closeConversation(id)
   },
 
   updateMode: async (mode: ConversationMode) => {
@@ -340,6 +341,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ activeTaskPlan: null, taskProgress: new Map(), isExecutingPlan: false })
   },
 
+  completeConversation: async (commitMessage: string, description: string) => {
+    const { activeConversation, conversations } = get()
+    if (!activeConversation) throw new Error('No active conversation')
+
+    const result = (await window.api.completeConversation({
+      conversationId: activeConversation.id,
+      commitMessage,
+      description
+    })) as CompleteResult
+
+    // Remove conversation from state (it's been deleted in DB)
+    const newConversations = conversations.filter((c) => c.id !== activeConversation.id)
+    set({
+      conversations: newConversations,
+      activeConversation: null,
+      messages: [],
+      streamingContent: '',
+      isStreaming: false,
+      toolActivities: [],
+      activeTaskPlan: null,
+      taskProgress: new Map(),
+      isExecutingPlan: false
+    })
+
+    return result
+  },
+
+  closeConversation: async (id: string) => {
+    try {
+      await window.api.closeConversation({ conversationId: id })
+    } catch (error) {
+      console.error('Failed to close conversation on backend:', error)
+      // Still remove from UI state even if backend cleanup fails
+    }
+    const { activeConversation, conversations } = get()
+    const newConversations = conversations.filter((c) => c.id !== id)
+    set({
+      conversations: newConversations,
+      activeConversation: activeConversation?.id === id ? null : activeConversation,
+      messages: activeConversation?.id === id ? [] : get().messages
+    })
+  },
+
   setCompactSuggestion: (data) => set({ compactSuggestion: data }),
 
   clearDisplay: () => {
@@ -381,3 +425,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   }
 }))
+
+// Preserve state on HMR dispose
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    import.meta.hot!.data.chatStoreState = useChatStore.getState()
+  })
+}

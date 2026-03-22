@@ -131,8 +131,16 @@ export interface PlacedFurniture {
   color?: FloorColor;
 }
 
+export interface OfficeZone {
+  colMin: number;
+  colMax: number;
+  rowMin: number;
+  rowMax: number;
+  description?: string;
+}
+
 export interface OfficeLayout {
-  version: 1;
+  version: number;
   cols: number;
   rows: number;
   tiles: TileType[];
@@ -141,6 +149,13 @@ export interface OfficeLayout {
   tileColors?: Array<FloorColor | null>;
   /** Bumped when the bundled default layout changes; forces a reset on existing installs */
   layoutRevision?: number;
+  /** Named zones for agent behavior routing (break room, offices, etc.) */
+  zones?: {
+    breakRoom?: OfficeZone;
+    mainOffice?: OfficeZone;
+    devRoom?: OfficeZone;
+    [key: string]: OfficeZone | undefined;
+  };
 }
 
 export interface Character {

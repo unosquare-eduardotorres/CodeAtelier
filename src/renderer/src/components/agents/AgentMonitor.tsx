@@ -1,35 +1,56 @@
-import { useEffect } from 'react';
-import { Monitor, ChevronLeft, ChevronRight, OctagonX } from 'lucide-react';
-import { useAgentStore, useSpecialistStore } from '@renderer/store';
-import { AgentStatusCard } from '@renderer/components/agents';
+import { useEffect, useCallback } from 'react'
+import { Monitor, ChevronLeft, ChevronRight, OctagonX } from 'lucide-react'
+import { useAgentStore, useSpecialistStore } from '@renderer/store'
+import { AgentStatusCard } from '@renderer/components/agents'
+
+function formatTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`
+  return count.toString()
+}
 
 interface AgentMonitorProps {
-  isCollapsed?: boolean;
-  onToggleCollapse?: () => void;
+  isCollapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
 export default function AgentMonitor({
   isCollapsed,
   onToggleCollapse
 }: AgentMonitorProps): React.JSX.Element {
-  const { statuses, stopAllAgents, isStopping } = useAgentStore();
-  const { specialists, loadSpecialists } = useSpecialistStore();
+  const { statuses, stopAllAgents, isStopping, sessionTokens, appendOutput } = useAgentStore()
+  const { specialists, loadSpecialists } = useSpecialistStore()
 
   // Load specialists on mount so AgentStatusCard can read metadata from DB
   useEffect(() => {
     if (specialists.length === 0) {
-      loadSpecialists();
+      loadSpecialists()
     }
-  }, [specialists.length, loadSpecialists]);
+  }, [specialists.length, loadSpecialists])
+
+  // Memoize handler to avoid re-registering listener
+  const handleTaskChunk = useCallback(
+    (data: { agentId: string; taskId: string; text: string }) => {
+      appendOutput(data.agentId, data.text)
+    },
+    [appendOutput]
+  )
+
+  // Listen for agent task chunks from main process
+  useEffect(() => {
+    const cleanup = window.api.onAgentTaskChunk(handleTaskChunk)
+    return cleanup
+  }, [handleTaskChunk])
 
   // Filter: only show agents that are active or have been used (have tokens)
-  const visibleStatuses = statuses.filter(
-    (s) => s.status !== 'idle' || s.tokenUsage > 0
-  );
+  const visibleStatuses = statuses.filter((s) => s.status !== 'idle' || s.tokenUsage > 0)
 
   const activeCount = statuses.filter(
     (s) => s.status === 'thinking' || s.status === 'writing' || s.status === 'reviewing'
-  ).length;
+  ).length
+
+  const completedCount = statuses.filter((s) => s.status === 'completed').length
+  const failedCount = statuses.filter((s) => s.status === 'failed').length
 
   // Collapsed state: slim bar
   if (isCollapsed) {
@@ -47,15 +68,15 @@ export default function AgentMonitor({
           </button>
         </div>
         <div className="flex flex-col items-center gap-2 py-3">
-        <Monitor size={16} className="text-indigo-400" />
-        {activeCount > 0 && (
-          <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-indigo-600 text-[10px] font-semibold text-white">
-            {activeCount}
-          </span>
-        )}
+          <Monitor size={16} className="text-indigo-400" />
+          {activeCount > 0 && (
+            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-indigo-600 text-[10px] font-semibold text-white">
+              {activeCount}
+            </span>
+          )}
         </div>
       </div>
-    );
+    )
   }
 
   return (
@@ -100,14 +121,26 @@ export default function AgentMonitor({
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <Monitor size={32} className="text-gray-700 mb-3" />
             <p className="text-sm text-gray-500 mb-1">No agents active</p>
-            <p className="text-xs text-gray-600">
-              Agents will appear here when processing tasks
-            </p>
+            <p className="text-xs text-gray-600">Agents will appear here when processing tasks</p>
           </div>
         ) : (
           visibleStatuses.map((status) => <AgentStatusCard key={status.agentId} status={status} />)
         )}
       </div>
+
+      {/* Summary footer */}
+      {visibleStatuses.length > 0 && (
+        <div className="px-4 py-2 border-t border-gray-700 text-xs text-gray-500">
+          <div className="flex justify-between">
+            <span>
+              {activeCount > 0 && `${activeCount} active · `}
+              {completedCount} done
+              {failedCount > 0 && ` · ${failedCount} failed`}
+            </span>
+            <span>{formatTokens(sessionTokens)} tokens this session</span>
+          </div>
+        </div>
+      )}
     </div>
-  );
+  )
 }

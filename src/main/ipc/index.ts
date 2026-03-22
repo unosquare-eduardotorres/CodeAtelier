@@ -7,6 +7,7 @@ import { registerSpecialistIpc } from './specialist.ipc'
 import { registerSkillIpc } from './skill.ipc'
 import { registerWorkspaceDeployIpc } from './workspace-deploy.ipc'
 import { registerSyncIpc } from './sync.ipc'
+import { registerWorktreeIpc } from './worktree.ipc'
 import { registerPixelOfficeHandlers } from './pixel-office.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
@@ -18,5 +19,6 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerSkillIpc()
   registerWorkspaceDeployIpc()
   registerSyncIpc()
+  registerWorktreeIpc()
   registerPixelOfficeHandlers()
 }

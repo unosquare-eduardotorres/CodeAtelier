@@ -25,6 +25,13 @@ When working on this project:
 - Schema is defined in src/main/db/schema.sql
 - Repository pattern is used in src/main/db/repositories/
 - Database initialization and seeding is in src/main/db/index.ts
+- Migrations are inline ALTER TABLE statements in src/main/db/index.ts — NOT a separate migration tool
+- New tables go in src/main/db/schema.sql (CREATE IF NOT EXISTS)
+- Schema changes use try/catch ALTER TABLE wrapping (column may already exist)
+- Repository singletons are exported from src/main/db/repositories/index.ts
+- All repositories take the db instance via constructor injection
+- better-sqlite3 is synchronous — no async/await needed for queries
+- Always enable WAL mode and foreign keys at connection time
 - All tables use TEXT PRIMARY KEY with hex(randomblob(16))
 - Timestamps use datetime('now') in ISO format
 - Skills and specialists tables are app-global (no workspace_id)

@@ -1,8 +1,9 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Send, Square, Minimize2, Trash2, HelpCircle } from 'lucide-react';
+import { Send, Square, Minimize2, Trash2, HelpCircle, GitPullRequestArrow, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useChatStore, useWorkspaceStore } from '@renderer/store';
 import { ConfirmDialog } from '@renderer/components/common';
+import CompleteDialog from './CompleteDialog';
 
 interface MessageInputProps {
   attachments: string[];
@@ -15,6 +16,8 @@ const SLASH_COMMANDS: Array<{
   icon: LucideIcon;
   iconColor: string;
 }> = [
+  { command: '/complete', description: 'Commit changes, push, and close conversation', icon: GitPullRequestArrow, iconColor: 'text-green-400' },
+  { command: '/close', description: 'Close and delete this conversation', icon: X, iconColor: 'text-orange-400' },
   { command: '/compact', description: 'Compress conversation context to save tokens', icon: Minimize2, iconColor: 'text-amber-400' },
   { command: '/clear', description: 'Clear chat display (keeps AI context)', icon: Trash2, iconColor: 'text-red-400' },
   { command: '/help', description: 'Show available commands', icon: HelpCircle, iconColor: 'text-blue-400' }
@@ -23,9 +26,11 @@ const SLASH_COMMANDS: Array<{
 export default function MessageInput({ attachments, onClearAttachments }: MessageInputProps): React.JSX.Element {
   const [text, setText] = useState('');
   const [showStopConfirm, setShowStopConfirm] = useState(false);
+  const [showCompleteDialog, setShowCompleteDialog] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { sendMessage, isStreaming, activeConversation, stopGeneration, clearDisplay, appendLocalMessage } = useChatStore();
+  const { sendMessage, isStreaming, activeConversation, stopGeneration, clearDisplay, appendLocalMessage, completeConversation, closeConversation } = useChatStore();
   const { orchestratorStatus } = useWorkspaceStore();
   const isInitializing = orchestratorStatus === 'starting';
 
@@ -64,6 +69,18 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
     if (trimmed.startsWith('/')) {
       const cmd = trimmed.split(' ')[0].toLowerCase();
 
+      if (cmd === '/complete') {
+        setText('');
+        setShowCompleteDialog(true);
+        return;
+      }
+
+      if (cmd === '/close') {
+        setText('');
+        setShowCloseConfirm(true);
+        return;
+      }
+
       if (cmd === '/compact') {
         setText('');
         // Send /compact through the normal message flow — the AI understands it
@@ -83,6 +100,8 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
       if (cmd === '/help') {
         setText('');
         const helpLines = [
+          '✅ **/complete** — Commit tracked changes, push, and close conversation',
+          '❌ **/close** — Close and permanently delete this conversation',
           '🗜️ **/compact** — Compress conversation context to save tokens',
           '🗑️ **/clear** — Clear chat display (keeps AI context)',
           '❓ **/help** — Show available commands'
@@ -223,6 +242,35 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
           setShowStopConfirm(false);
         }}
         onCancel={() => setShowStopConfirm(false)}
+      />
+
+      {/* /complete dialog */}
+      <CompleteDialog
+        isOpen={showCompleteDialog}
+        conversationTitle={activeConversation?.title ?? 'Untitled'}
+        conversationId={activeConversation?.id ?? ''}
+        onConfirm={async (commitMessage, description) => {
+          await completeConversation(commitMessage, description);
+          setShowCompleteDialog(false);
+        }}
+        onCancel={() => setShowCompleteDialog(false)}
+      />
+
+      {/* /close confirmation */}
+      <ConfirmDialog
+        isOpen={showCloseConfirm}
+        title="Close Conversation"
+        message="This will permanently delete this conversation, all messages, and tracked file changes. Uncommitted changes in your workspace will NOT be affected."
+        confirmLabel="Close"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={async () => {
+          if (activeConversation) {
+            await closeConversation(activeConversation.id);
+          }
+          setShowCloseConfirm(false);
+        }}
+        onCancel={() => setShowCloseConfirm(false)}
       />
     </>
   );

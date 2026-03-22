@@ -70,7 +70,8 @@ export class ConversationRepository {
 
   delete(id: string): void {
     const db = getDatabase()
-    // Delete messages first, then the conversation
+    // Delete file changes, messages, then the conversation
+    db.prepare('DELETE FROM conversation_file_changes WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
   }

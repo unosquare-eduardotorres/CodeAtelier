@@ -5,3 +5,7 @@ export { SpecialistRepository, specialistRepository } from './specialist.reposit
 export type { CreateSpecialistInput, UpdateSpecialistInput } from './specialist.repository';
 export { SkillRepository, skillRepository } from './skill.repository';
 export type { CreateSkillInput, UpdateSkillInput } from './skill.repository';
+export { FileChangeRepository, fileChangeRepository } from './file-change.repository';
+export type { FileChange } from './file-change.repository';
+export { WorktreeRepository, worktreeRepository } from './worktree.repository';
+export type { AgentWorktree, WorktreeStatus } from './worktree.repository';

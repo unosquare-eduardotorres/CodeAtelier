@@ -132,6 +132,48 @@ export function getDatabase(): Database.Database {
     // Column already exists — ignore
   }
 
+  // Migration: create conversation_file_changes table for per-session file tracking
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS conversation_file_changes (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        file_path TEXT NOT NULL,
+        change_type TEXT NOT NULL DEFAULT 'modified' CHECK (change_type IN ('created', 'modified', 'deleted')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(conversation_id, file_path)
+      );
+      CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
+    `)
+    dbLogger.info('Migration: conversation_file_changes table ready')
+  } catch {
+    // Table already exists — ignore
+  }
+
+  // Migration: create agent_worktrees table for worktree-based agent isolation
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_worktrees (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        worktree_path TEXT NOT NULL,
+        branch_name TEXT NOT NULL,
+        base_branch TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        merged_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
+    `)
+    dbLogger.info('Migration: agent_worktrees table ready')
+  } catch {
+    // Table already exists — ignore
+  }
+
   return db
 }
 
@@ -362,9 +404,35 @@ CREATE TABLE IF NOT EXISTS specialist_skills (
   PRIMARY KEY (specialist_id, skill_id)
 );
 
+CREATE TABLE IF NOT EXISTS conversation_file_changes (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL,
+  change_type TEXT NOT NULL DEFAULT 'modified' CHECK (change_type IN ('created', 'modified', 'deleted')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(conversation_id, file_path)
+);
+
+CREATE TABLE IF NOT EXISTS agent_worktrees (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  branch_name TEXT NOT NULL,
+  base_branch TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  merged_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
+CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
 `

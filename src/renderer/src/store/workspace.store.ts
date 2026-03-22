@@ -15,11 +15,16 @@ interface WorkspaceState {
   setOrchestratorReady: () => void
 }
 
+// Preserve Zustand state across HMR (dev only)
+const previousWorkspaceState = import.meta.hot?.data?.workspaceStoreState as
+  | Partial<WorkspaceState>
+  | undefined
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  workspaces: [],
-  activeWorkspace: null,
-  isLoading: false,
-  orchestratorStatus: 'stopped',
+  workspaces: previousWorkspaceState?.workspaces ?? [],
+  activeWorkspace: previousWorkspaceState?.activeWorkspace ?? null,
+  isLoading: previousWorkspaceState?.isLoading ?? false,
+  orchestratorStatus: previousWorkspaceState?.orchestratorStatus ?? 'stopped',
 
   loadWorkspaces: async () => {
     set({ isLoading: true })
@@ -76,3 +81,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setOrchestratorReady: () => set({ orchestratorStatus: 'running' })
 }))
+
+// Preserve state on HMR dispose
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    import.meta.hot!.data.workspaceStoreState = useWorkspaceStore.getState()
+  })
+}

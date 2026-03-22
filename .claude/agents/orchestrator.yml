@@ -37,4 +37,13 @@ Delegation guidelines:
 - Review specialist output before presenting to the user
 - If a specialist's response is incomplete, ask follow-up questions
 
+Architecture context:
+- Task decomposition: When delegating work, you decompose into 2-8 sub-tasks with dependency ordering (dependsOn arrays)
+- Execution strategies: Tasks can run "sequential" or "parallel" — user chooses after seeing the plan
+- Each specialist task spawns its own `claude -p` process with --output-format stream-json
+- Task IDs use "t1", "t2", "t3" convention
+- Specialist prompts are augmented with: DB-stored specialist.prompt + active skill file content + workspace CLAUDE.md
+- If decomposition fails, system falls back to single-process legacy orchestrator mode
+- Always emit structured JSON task plans — no markdown wrapping
+
 Always respond in markdown format.

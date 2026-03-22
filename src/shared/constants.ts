@@ -43,6 +43,9 @@ export const IPC_CHANNELS = {
   CHAT_TASK_PLAN: 'chat:taskPlan',
   CHAT_EXECUTE_PLAN: 'chat:executePlan',
   CHAT_TASK_PROGRESS: 'chat:taskProgress',
+  CHAT_COMPLETE: 'chat:complete',
+  CHAT_CLOSE: 'chat:close',
+  CHAT_GET_FILE_CHANGES: 'chat:getFileChanges',
 
   // Agents
   AGENT_GET_STATUSES: 'agent:getStatuses',
@@ -90,6 +93,16 @@ export const IPC_CHANNELS = {
 
   // Pixel Office
   PIXEL_OFFICE_POPOUT: 'pixelOffice:popout',
+
+  // Worktrees
+  WORKTREE_LIST: 'worktree:list',
+  WORKTREE_GET_DIFF: 'worktree:getDiff',
+  WORKTREE_MERGE: 'worktree:merge',
+  WORKTREE_MERGE_ALL: 'worktree:mergeAll',
+  WORKTREE_ABANDON: 'worktree:abandon',
+
+  // Agent Task Chunks (for Agent Monitor live output)
+  AGENT_TASK_CHUNK: 'agent:taskChunk',
 
   // Agent Sync
   SYNC_COMPUTE_DIFF: 'sync:computeDiff',

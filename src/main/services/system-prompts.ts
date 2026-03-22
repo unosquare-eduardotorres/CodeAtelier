@@ -39,6 +39,7 @@ Rules:
 4. Keep the number of tasks between 2 and 8 — decompose enough for parallelism but not so much that overhead dominates.
 5. Assign IDs as "t1", "t2", "t3", etc.
 6. If a task spans only one specialist, still decompose into logical steps if they can be parallelized.
+7. IMPORTANT: If two tasks are likely to modify the same files (e.g., shared types, config files, package.json, common utilities), set one to depend on the other using the dependsOn array. Only tasks that touch completely independent files should run in parallel. This prevents merge conflicts when agents work in isolated branches.
 
 Respond with ONLY valid JSON, no markdown, no explanation. Use this exact schema:
 {

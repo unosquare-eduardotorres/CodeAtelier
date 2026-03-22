@@ -95,6 +95,12 @@ app.whenReady().then(() => {
 
 **Preload scripts** — ESM preload scripts MUST use `.mjs` extension (`"type": "module"` in package.json is ignored for preloads). Sandboxed preloads CANNOT use ESM imports — use a bundler or stick to CommonJS with `require('electron')`.
 
+**ESM preload critical caveats:**
+- Sandboxed preloads CANNOT use ESM imports at all — must use CJS or a bundler
+- ESM preload scripts MUST have `.mjs` extension (package.json `"type": "module"` is ignored)
+- Dynamic `import()` in preload requires `contextIsolation: true`
+- ESM loads asynchronously — use `await` before `app.ready` to prevent race conditions
+
 **Migration gotcha**: if you're migrating from transpiled CJS (Babel/TypeScript converting `import` to `require`), be aware that native ESM loads asynchronously. Code that relied on synchronous `require()` timing may break. Always `await` dynamic imports before `app.ready`.
 
 ## Electron version strategy
@@ -108,6 +114,8 @@ Electron ships a new major version every 8 weeks, aligned with Chromium releases
 Key recent breaking changes to watch for:
 - **v40**: `clipboard` API deprecated in renderer — move to preload + contextBridge
 - **v41**: PDFs no longer create separate WebContents — use frame tree instead
+- **v39**: ASAR Integrity graduates to stable for runtime tamper detection
+- **v41**: ASAR Integrity digest for macOS, MSIX auto-updating, improved Wayland support
 - **v28**: sandbox enabled by default in renderers
 - **v12**: contextIsolation enabled by default
 - **v5**: nodeIntegration disabled by default
@@ -186,6 +194,36 @@ child.on('message', (result) => {
 ```
 
 This runs in a separate Node.js process with full Node.js API access but isolated from the main process. Preferred over `child_process.fork()` because it integrates with Electron's process lifecycle and crash reporting.
+
+### utilityProcess options
+```typescript
+const child = utilityProcess.fork(modulePath, args, {
+  serviceName: 'my-heavy-task',  // Shows in app.getAppMetrics()
+  stdio: 'pipe',                 // Enable stdout/stderr capture
+  env: { ...process.env },       // Custom environment
+  cwd: workspacePath,            // Working directory
+});
+```
+
+**Why utilityProcess over child_process.fork():**
+- Tracked by `app.getAppMetrics()` — visible in process monitoring
+- Integrates with Electron's crash reporting
+- Supports MessagePort for structured communication
+- Managed by Electron's process lifecycle
+
+**Communication pattern:**
+```typescript
+// Main process
+child.postMessage({ type: 'task', data: payload });
+child.on('message', (result) => { /* handle */ });
+
+// Utility process (in modulePath)
+process.parentPort.on('message', (e) => {
+  const { type, data } = e.data;
+  // ... process
+  process.parentPort.postMessage({ type: 'result', data: output });
+});
+```
 
 ## Quick reference — which API belongs where
 

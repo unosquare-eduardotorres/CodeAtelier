@@ -1,11 +1,20 @@
-import { useState, useEffect } from 'react';
-import { Brain, Pencil, Eye, CheckCircle, XCircle, Pause } from 'lucide-react';
-import type { AgentStatus } from '../../../../shared/types';
-import { AGENT_META } from '../../../../shared/constants';
-import { useSpecialistStore } from '@renderer/store';
+import { useState, useEffect, useRef } from 'react'
+import {
+  Brain,
+  Pencil,
+  Eye,
+  CheckCircle,
+  XCircle,
+  Pause,
+  ChevronDown,
+  ChevronUp
+} from 'lucide-react'
+import type { AgentStatus } from '../../../../shared/types'
+import { AGENT_META } from '../../../../shared/constants'
+import { useSpecialistStore, useAgentStore } from '@renderer/store'
 
 interface AgentStatusCardProps {
-  status: AgentStatus;
+  status: AgentStatus
 }
 
 const STATUS_CONFIG: Record<
@@ -54,71 +63,103 @@ const STATUS_CONFIG: Record<
     icon: <XCircle size={12} />,
     label: 'Failed'
   }
-};
+}
 
 function formatElapsed(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
+  const totalSeconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
 }
 
 function formatTokens(count: number): string {
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
-  return count.toString();
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`
+  return count.toString()
 }
 
 export default function AgentStatusCard({ status }: AgentStatusCardProps): React.JSX.Element {
-  const [elapsed, setElapsed] = useState(status.elapsedMs);
-  const config = STATUS_CONFIG[status.status] || STATUS_CONFIG.idle;
-  const { specialists } = useSpecialistStore();
+  const [elapsed, setElapsed] = useState(status.elapsedMs)
+  const [isExpanded, setIsExpanded] = useState(false)
+  const outputRef = useRef<HTMLDivElement>(null)
+  const config = STATUS_CONFIG[status.status] || STATUS_CONFIG.idle
+  const { specialists } = useSpecialistStore()
+  const agentOutput = useAgentStore((s) => s.agentOutputs[status.agentId] ?? '')
 
   // Look up metadata from DB-backed specialists first, fall back to hardcoded AGENT_META
-  const dbSpecialist = specialists.find((s) => s.agentId === status.agentType);
+  const dbSpecialist = specialists.find((s) => s.agentId === status.agentType)
   const meta = dbSpecialist
     ? { icon: dbSpecialist.icon, color: dbSpecialist.color, displayName: dbSpecialist.displayName }
-    : AGENT_META[status.agentType];
+    : AGENT_META[status.agentType]
 
-  const isActive = status.status === 'thinking' || status.status === 'writing' || status.status === 'reviewing';
+  const isActive =
+    status.status === 'thinking' || status.status === 'writing' || status.status === 'reviewing'
 
   useEffect(() => {
     // Sync elapsed with status when not active
     if (!isActive) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setElapsed(status.elapsedMs);
+      setElapsed(status.elapsedMs)
     }
-  }, [isActive, status.elapsedMs]);
+  }, [isActive, status.elapsedMs])
 
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive) return
 
-    const startTime = Date.now() - status.elapsedMs;
+    const startTime = Date.now() - status.elapsedMs
     const interval = setInterval(() => {
-      setElapsed(Date.now() - startTime);
-    }, 1000);
+      setElapsed(Date.now() - startTime)
+    }, 1000)
 
-    return () => clearInterval(interval);
-  }, [isActive, status.elapsedMs]);
+    return () => clearInterval(interval)
+  }, [isActive, status.elapsedMs])
+
+  // Auto-scroll output to bottom when new content arrives
+  useEffect(() => {
+    if (isExpanded && outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight
+    }
+  }, [isExpanded, agentOutput])
 
   return (
     <div
       className="bg-gray-800 rounded-lg p-3 border border-gray-700/50 border-l-2"
       style={{ borderLeftColor: meta?.color ?? '#6366F1' }}
     >
-      <div className="flex items-center justify-between mb-2">
+      <div
+        className="flex items-center justify-between mb-2 cursor-pointer"
+        onClick={() => setIsExpanded(!isExpanded)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') setIsExpanded(!isExpanded)
+        }}
+      >
         <div className="flex items-center gap-2">
           <span className="text-base" role="img" aria-label={meta?.displayName ?? status.agentType}>
             {meta?.icon ?? '🔧'}
           </span>
           <span className="text-sm font-medium text-gray-200">
-            {meta?.displayName ?? status.agentType.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+            {meta?.displayName ??
+              status.agentType
+                .split('-')
+                .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                .join(' ')}
           </span>
         </div>
-        <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${config.bg} ${config.text}`}>
-          {config.icon}
-          {config.label}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${config.bg} ${config.text}`}
+          >
+            {config.icon}
+            {config.label}
+          </span>
+          {isExpanded ? (
+            <ChevronUp size={14} className="text-gray-500" />
+          ) : (
+            <ChevronDown size={14} className="text-gray-500" />
+          )}
+        </div>
       </div>
 
       {status.currentTask && (
@@ -132,6 +173,17 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
         <span>·</span>
         <span>{formatTokens(status.tokenUsage)} tokens</span>
       </div>
+
+      {/* Expandable detail view */}
+      {isExpanded && (
+        <div className="mt-2 pt-2 border-t border-gray-700">
+          <div ref={outputRef} className="bg-gray-900 rounded p-2 max-h-48 overflow-y-auto">
+            <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono">
+              {agentOutput || 'Waiting for output...'}
+            </pre>
+          </div>
+        </div>
+      )}
     </div>
-  );
+  )
 }

@@ -12,5 +12,7 @@ export {
   SPECIALIST_TASK_SYSTEM_PROMPT
 } from './system-prompts'
 export { SpecialistPoolService, specialistPoolService } from './specialist-pool.service'
+export { GitWorktreeService, gitWorktreeService } from './git-worktree.service'
+export type { MergeResult, MergeAllResult } from './git-worktree.service'
 export { GENERALIST_SYSTEM_PROMPT } from './generalist-prompts'
 export { WorkspaceDeployService, workspaceDeployService } from './workspace-deploy.service'

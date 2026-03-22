@@ -173,6 +173,22 @@ export interface ActivationProgressEvent {
   timestamp: number
 }
 
+// ── File Change Tracking ──
+
+export interface FileChange {
+  id: string
+  conversationId: string
+  filePath: string
+  changeType: 'created' | 'modified' | 'deleted'
+  createdAt: string
+}
+
+export interface CompleteResult {
+  branch: string
+  commitHash: string
+  prUrl?: string
+}
+
 // ── Task Decomposition & Parallel Execution ──
 
 export type ExecutionStrategy = 'sequential' | 'parallel'
@@ -200,6 +216,38 @@ export interface TaskExecutionProgress {
   status: 'pending' | 'running' | 'completed' | 'failed'
   output?: string
   error?: string
+}
+
+// ── Git Worktree Models ──
+
+export type WorktreeStatus = 'active' | 'merging' | 'merged' | 'conflict' | 'abandoned' | 'pruned'
+
+export interface AgentWorktree {
+  id: string
+  conversationId: string
+  agentId: string
+  taskId: string
+  worktreePath: string
+  branchName: string
+  baseBranch: string
+  status: WorktreeStatus
+  createdAt: string
+  mergedAt: string | null
+}
+
+export interface MergeConflict {
+  agentId: string
+  taskId: string
+  conflictedFiles: string[]
+}
+
+export interface MergeAllResult {
+  merged: string[]
+  conflicted?: {
+    agentId: string
+    files: string[]
+  }
+  pending: string[]
 }
 
 // ── YAML ↔ DB Sync Models ──
@@ -298,6 +346,24 @@ export interface IpcChannels {
     return: void
   }
 
+  // Chat Commands
+  'chat:complete': {
+    args: { conversationId: string; commitMessage: string; description: string }
+    return: CompleteResult
+  }
+  'chat:close': { args: { conversationId: string }; return: void }
+  'chat:getFileChanges': { args: { conversationId: string }; return: FileChange[] }
+
+  // Worktrees
+  'worktree:list': { args: { conversationId: string }; return: AgentWorktree[] }
+  'worktree:getDiff': { args: { worktreeId: string }; return: string }
+  'worktree:merge': {
+    args: { worktreeId: string }
+    return: { success: boolean; conflictedFiles?: string[] }
+  }
+  'worktree:mergeAll': { args: { conversationId: string }; return: MergeAllResult }
+  'worktree:abandon': { args: { worktreeId: string }; return: void }
+
   // Agent Sync
   'sync:computeDiff': { args: { workspacePath: string }; return: SyncDiff }
   'sync:apply': { args: { workspacePath: string; skipRemoved?: boolean }; return: SyncResult }
@@ -316,5 +382,6 @@ export interface IpcEvents {
   'chat:taskPlan': TaskPlan
   'chat:taskProgress': TaskExecutionProgress
   'agent:statusUpdate': AgentStatus
+  'agent:taskChunk': { agentId: string; taskId: string; text: string }
   'workspace:activationProgress': ActivationProgressEvent
 }

@@ -5,8 +5,8 @@ description: Use this skill for ANY Electron desktop application work — creati
 
 # Electron Pro
 
-> **Skill version**: 2.0  
-> **Last updated**: 2026-03-21  
+> **Skill version**: 2.1
+> **Last updated**: 2026-03-22
 > **Electron version covered**: 28 — 41  
 > **Next review date**: 2026-06-21 (quarterly, or on Electron major release)
 
@@ -151,6 +151,45 @@ win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
   }
   return { action: 'deny' }; // never open new Electron windows from links
+});
+```
+
+### Sandboxed Preload API Availability
+
+When `sandbox: true` (default since Electron 20), preload scripts get a polyfilled subset:
+
+| Available Electron modules | Available Node.js built-ins | Available globals |
+|---|---|---|
+| `contextBridge` | `events` | `Buffer` |
+| `crashReporter` | `timers` | `process` (polyfilled) |
+| `ipcRenderer` | `url` | `clearImmediate` |
+| `nativeImage` | | `setImmediate` |
+| `webFrame` | | |
+| `webUtils` | | |
+
+**Cannot use in sandboxed preload:** `fs`, `path`, `child_process`, `crypto`, or any other Node.js module. These must go through IPC to the main process.
+
+**Cannot split preload into multiple files** with `require()` — use a bundler (electron-vite handles this automatically for Agent Studio).
+
+### Additional security hardening
+
+- **Do not enable `allowRunningInsecureContent`** — prevents HTTP resources on HTTPS pages (item #8)
+- **Do not enable `experimentalFeatures`** — untested Chromium features (item #9)
+- **Do not use `enableBlinkFeatures`** — if a feature isn't default, there's a reason (item #10)
+- **Disable `allowpopups` for WebViews** — prevents `window.open()` from webviews (item #11)
+- **Validate WebView options before creation** — use `will-attach-webview` event to sanitize WebView configs, delete untrusted preloads, enforce `nodeIntegration: false` (item #12)
+- **Consider custom protocols instead of file://** — `file://` has more privileges in Electron than in browsers; use `protocol.handle()` for better control (item #18)
+
+```typescript
+// Item #12: Validate webview creation
+app.on('web-contents-created', (event, contents) => {
+  contents.on('will-attach-webview', (event, webPreferences, params) => {
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    if (!params.src.startsWith('https://example.com/')) {
+      event.preventDefault();
+    }
+  });
 });
 ```
 
@@ -311,6 +350,140 @@ For complete code examples on these topics, see [references/packaging-and-native
 | Installer size | < 100MB | Check `dist/` output |
 
 **#1 performance rule**: defer heavy module imports. Use `await import('module')` instead of top-level imports for modules not needed at startup.
+
+## Child Process Management for CLI Integration
+
+### Spawning long-lived interactive processes
+
+Use `spawn()` with bidirectional stdio for interactive CLI sessions:
+
+```typescript
+import { spawn } from 'child_process';
+
+const proc = spawn('claude', [
+  '--output-format', 'stream-json',
+  '--input-format', 'stream-json',
+  '--verbose',
+  '--permission-mode', 'plan',
+], {
+  stdio: ['pipe', 'pipe', 'pipe'],
+  env: { ...process.env },
+});
+```
+
+**NDJSON parsing** — buffer stdout and split on newlines, handling partial lines:
+
+```typescript
+let buffer = '';
+proc.stdout.on('data', (chunk: Buffer) => {
+  buffer += chunk.toString();
+  const lines = buffer.split('\n');
+  buffer = lines.pop() ?? ''; // Keep incomplete last line in buffer
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line);
+      handleStreamEvent(event);
+    } catch { /* skip malformed lines */ }
+  }
+});
+
+// Flush buffer on exit
+proc.on('exit', () => {
+  if (buffer.trim()) {
+    try { handleStreamEvent(JSON.parse(buffer)); } catch {}
+  }
+});
+```
+
+### Spawning one-shot processes
+
+For non-interactive command execution:
+
+```typescript
+const proc = spawn('claude', ['-p', taskDescription, '--output-format', 'stream-json'], {
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+```
+
+### Graceful shutdown
+
+Always use a two-phase shutdown to avoid orphaned processes:
+
+```typescript
+async function stopProcess(proc: ChildProcess): Promise<void> {
+  return new Promise((resolve) => {
+    proc.on('exit', () => {
+      // Clear process reference and reset status
+      resolve();
+    });
+
+    proc.kill('SIGTERM'); // Ask nicely first
+
+    setTimeout(() => {
+      if (!proc.killed) {
+        proc.kill('SIGKILL'); // Force after timeout
+      }
+    }, 5000);
+  });
+}
+```
+
+### Environment hygiene
+
+```typescript
+const env = { ...process.env };
+delete env.CLAUDECODE; // Avoid nested session errors
+
+// Augment PATH for CLI binary discovery across platforms
+const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin', `${os.homedir()}/.local/bin`];
+env.PATH = [...extraPaths, env.PATH].join(path.delimiter);
+```
+
+## App Lifecycle Quick Reference
+
+### Essential methods
+| Method | Purpose |
+|--------|---------|
+| `app.whenReady()` | Returns Promise — preferred over `app.on('ready')` |
+| `app.quit()` | Graceful quit — fires before-quit, will-quit events |
+| `app.exit([code])` | Immediate exit — no events, no cleanup |
+| `app.requestSingleInstanceLock()` | Enforce single instance — returns false if another exists |
+| `app.getPath(name)` | Get special dirs: userData, appData, temp, logs, downloads |
+| `app.getAppMetrics()` | Memory/CPU stats for ALL processes — useful for monitoring |
+| `app.isPackaged` | Boolean — true in production, false in dev |
+
+### Key lifecycle events (in order)
+1. `will-finish-launching` — basic startup (register protocol handlers here)
+2. `ready` — Electron initialized, create windows
+3. `activate` (macOS) — dock click when no windows open
+4. `before-quit` — before windows close (preventDefault to cancel)
+5. `will-quit` — all windows closed, about to exit
+6. `quit` — final event, app is exiting
+
+### Second instance handling
+```typescript
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (event, argv, workingDir) => {
+    // Focus existing window, handle deep link from argv
+    if (mainWindow?.isMinimized()) mainWindow.restore();
+    mainWindow?.focus();
+  });
+}
+```
+
+### Performance optimization checklist
+
+1. **Module auditing**: Profile module load times with `node --cpu-prof --heap-prof -e "require('module')"`
+2. **Menu optimization**: Call `Menu.setApplicationMenu(null)` before `app.on('ready')` to skip default menu construction
+3. **Renderer idle work**: Use `requestIdleCallback()` for non-urgent background work
+4. **Web Workers**: Deploy for CPU-intensive renderer work (don't block the UI thread)
+5. **Remove polyfills**: Know your Chromium version — remove polyfills for natively supported features
+6. **Network**: Bundle static assets in the app — don't fetch fonts/images from CDNs at startup
 
 ## Common pitfalls — check for these
 

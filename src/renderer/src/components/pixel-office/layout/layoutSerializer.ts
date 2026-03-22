@@ -324,7 +324,7 @@ function migrateFurnitureTypes(furniture: PlacedFurniture[]): PlacedFurniture[] 
 export function deserializeLayout(json: string): OfficeLayout | null {
   try {
     const obj = JSON.parse(json);
-    if (obj && obj.version === 1 && Array.isArray(obj.tiles) && Array.isArray(obj.furniture)) {
+    if (obj && obj.version && Array.isArray(obj.tiles) && Array.isArray(obj.furniture)) {
       return migrateLayout(obj as OfficeLayout);
     }
   } catch {

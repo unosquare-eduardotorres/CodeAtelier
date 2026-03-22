@@ -247,6 +247,37 @@ function migrate(db: Database) {
 }
 ```
 
+## Inline Migration Pattern (Agent Studio approach)
+
+For smaller Electron apps, migrations can be inline in the database init function rather than using a schema_version table:
+
+```typescript
+// src/main/db/index.ts
+function runMigrations(db: Database) {
+  // Each migration wrapped in try/catch — column may already exist
+  try {
+    db.exec('ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT "plan"');
+  } catch { /* column exists */ }
+
+  try {
+    db.exec('ALTER TABLE conversations ADD COLUMN session_id TEXT');
+  } catch { /* column exists */ }
+
+  try {
+    db.exec('ALTER TABLE messages ADD COLUMN tool_activity TEXT');
+  } catch { /* column exists */ }
+}
+```
+
+**When to use**: < 20 tables, single developer, no rollback needs.
+**When to upgrade**: multi-dev team, production deployment, rollback needed → use the schema_version table pattern above.
+
+Key conventions:
+- New tables always go in `src/main/db/schema.sql` with `CREATE TABLE IF NOT EXISTS`
+- Column additions go in `runMigrations()` with try/catch wrapping
+- Always call `runMigrations(db)` after `db.exec(schema)` in initialization
+- Repository singletons are exported from `src/main/db/repositories/index.ts`
+
 ## Common pitfalls
 
 | Pitfall | Fix |

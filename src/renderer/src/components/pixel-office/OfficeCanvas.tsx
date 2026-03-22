@@ -120,18 +120,28 @@ export default function OfficeCanvas({ layout }: OfficeCanvasProps): React.JSX.E
     };
 
     const agentEntries = Object.entries(SPRITE_ASSIGNMENTS);
+    const idleZone = office.idleZoneTiles;
     agentEntries.forEach(([agentId, assignment], index) => {
       const numericId = index + 1;
-      office.addAgent(numericId, assignment.spriteIndex, assignment.hueShift);
+      office.addAgent(numericId, assignment.spriteIndex, assignment.hueShift, undefined, true);
       // Set display name
       const ch = office.characters.get(numericId);
-      if (ch) ch.displayName = AGENT_NAMES[agentId] || agentId;
-      // Assign to a seat so they know where to go when activated
+      if (ch) {
+        ch.displayName = AGENT_NAMES[agentId] || agentId;
+        // Spawn in break room (idle zone) instead of at desk
+        if (idleZone.length > 0) {
+          const spot = idleZone[Math.floor(Math.random() * idleZone.length)];
+          ch.x = spot.col * 16 + 8; // TILE_SIZE / 2
+          ch.y = spot.row * 16 + 8;
+          ch.tileCol = spot.col;
+          ch.tileRow = spot.row;
+        }
+      }
+      // Assign desk seat (they'll walk there when activated)
       if (index < seatEntries.length) {
         office.reassignSeat(numericId, seatEntries[index].uid);
-        office.sendToSeat(numericId);
       }
-      // Start idle — agents wander until the orchestrator activates them
+      // Start idle — agents wander in break room until orchestrator activates them
       office.setAgentActive(numericId, false);
     });
 

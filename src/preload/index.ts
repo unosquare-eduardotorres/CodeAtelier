@@ -58,6 +58,19 @@ const api = {
     tasks: Array<{ id: string; specialist: string; description: string; dependsOn: string[] }>
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_EXECUTE_PLAN, args),
 
+  // Chat commands
+  completeConversation: (args: {
+    conversationId: string
+    commitMessage: string
+    description: string
+  }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPLETE, args),
+
+  closeConversation: (args: { conversationId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_CLOSE, args),
+
+  getFileChanges: (args: { conversationId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_FILE_CHANGES, args),
+
   // ── Agents ──
   getAgentStatuses: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.AGENT_GET_STATUSES),
 
@@ -148,6 +161,22 @@ const api = {
 
   cleanActivation: (args: { workspacePath: string; removeClaudeMd?: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CLEAN_ACTIVATION, args),
+
+  // ── Worktrees ──
+  listWorktrees: (args: { conversationId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_LIST, args),
+
+  getWorktreeDiff: (args: { worktreeId: string }): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_GET_DIFF, args),
+
+  mergeWorktree: (args: { worktreeId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_MERGE, args),
+
+  mergeAllWorktrees: (args: { conversationId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_MERGE_ALL, args),
+
+  abandonWorktree: (args: { worktreeId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_ABANDON, args),
 
   // ── Pixel Office ──
   popoutPixelOffice: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PIXEL_OFFICE_POPOUT),
@@ -313,6 +342,19 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.ORCHESTRATOR_READY, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.ORCHESTRATOR_READY, handler)
+    }
+  },
+
+  onAgentTaskChunk: (
+    callback: (data: { agentId: string; taskId: string; text: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { agentId: string; taskId: string; text: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.AGENT_TASK_CHUNK, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TASK_CHUNK, handler)
     }
   },
 

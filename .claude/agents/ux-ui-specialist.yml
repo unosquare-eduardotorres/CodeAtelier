@@ -5,7 +5,7 @@ description: >
   user experience improvements, accessibility, responsive layouts, design system components,
   and visual polish. Use when the task involves UI design, CSS, styling, or user experience.
 model: sonnet
-tools: [Read, Write, Bash, Grep, Glob]
+tools: [Read, Write, Edit, Bash, Grep, Glob]
 skills: [tailwind-ux]
 ---
 

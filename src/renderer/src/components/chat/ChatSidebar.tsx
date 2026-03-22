@@ -20,7 +20,7 @@ export default function ChatSidebar({
     loadConversations,
     createConversation,
     selectConversation,
-    deleteConversation,
+    closeConversation,
     renameConversation
   } = useChatStore();
 
@@ -159,7 +159,15 @@ export default function ChatSidebar({
               conversation={conv}
               isActive={activeConversation?.id === conv.id}
               onSelect={selectConversation}
-              onDelete={(id) => setDeleteTarget(id)}
+              onDelete={(id) => {
+                // Skip confirmation for new/empty conversations (no interaction yet)
+                const target = conversations.find((c) => c.id === id);
+                if (target && target.title === 'New Conversation') {
+                  closeConversation(id);
+                } else {
+                  setDeleteTarget(id);
+                }
+              }}
               onRename={renameConversation}
             />
           ))
@@ -177,7 +185,7 @@ export default function ChatSidebar({
       variant="danger"
       onConfirm={async () => {
         if (deleteTarget) {
-          await deleteConversation(deleteTarget);
+          await closeConversation(deleteTarget);
           setDeleteTarget(null);
         }
       }}

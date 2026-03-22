@@ -44,6 +44,8 @@ export class OfficeState {
   blockedTiles: Set<string>;
   furniture: FurnitureInstance[];
   walkableTiles: Array<{ col: number; row: number }>;
+  /** Walkable tiles within the idle zone (break room) — idle agents wander here */
+  idleZoneTiles: Array<{ col: number; row: number }> = [];
   characters: Map<number, Character> = new Map();
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -64,6 +66,22 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.computeIdleZone();
+  }
+
+  /** Compute idle zone tiles from layout zones metadata */
+  private computeIdleZone(): void {
+    const zones = this.layout.zones;
+    if (zones?.breakRoom) {
+      const z = zones.breakRoom;
+      this.idleZoneTiles = this.walkableTiles.filter(
+        t => t.col >= z.colMin && t.col <= z.colMax && t.row >= z.rowMin && t.row <= z.rowMax
+      );
+    }
+    // If no break room zone defined, idle zone = all walkable tiles (original behavior)
+    if (this.idleZoneTiles.length === 0) {
+      this.idleZoneTiles = this.walkableTiles;
+    }
   }
 
   /** Rebuild all derived state from a new layout. Reassigns existing characters.
@@ -75,6 +93,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(layout.furniture);
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.computeIdleZone();
 
     // Shift character positions when grid expands left/up
     if (shift && (shift.col !== 0 || shift.row !== 0)) {
@@ -676,7 +695,7 @@ export class OfficeState {
 
       // Temporarily unblock own seat so character can pathfind to it
       this.withOwnSeatUnblocked(ch, () =>
-        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles),
+        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles, this.idleZoneTiles),
       );
 
       // Tick bubble timer for waiting bubbles

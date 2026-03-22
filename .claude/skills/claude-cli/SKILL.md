@@ -455,6 +455,72 @@ Claude Code configuration has seven layers (most specific wins):
 > /clear                       # Nuclear option — fresh start
 ```
 
+## Programmatic CLI Usage (from Electron)
+
+When using Claude CLI programmatically from an Electron main process (as Agent Studio does), follow these patterns:
+
+### Long-lived interactive session
+
+For agents that maintain ongoing conversation (e.g., generalist):
+
+```bash
+claude --output-format stream-json --input-format stream-json --verbose \
+  --permission-mode plan --allowedTools "WebSearch,WebFetch" \
+  --system-prompt "..."
+```
+
+- Write JSON prompts to stdin, read NDJSON responses from stdout
+- Use `--resume <session-id>` for conversation continuity across restarts
+- Process is kept alive for the lifetime of the conversation
+
+### One-shot execution
+
+For ephemeral tasks (e.g., orchestrator handoffs, specialist work):
+
+```bash
+claude -p "task description" --system-prompt "..." \
+  --output-format stream-json --verbose \
+  --dangerously-skip-permissions  # only in build/implementation mode
+```
+
+- Process exits after producing output
+- Parse NDJSON from stdout for streaming progress
+
+### Key stream-json event types
+
+| Event type | Purpose | Key fields |
+|------------|---------|------------|
+| `system` | Session initialization | Extract `session_id` for resumption |
+| `assistant` | Model response | `content` array with text/tool_use blocks |
+| `content_block_start` | Start of a content block | `content_block.type` (text, tool_use) |
+| `content_block_delta` | Streaming content | `delta.text` for text, `delta.partial_json` for tool input |
+| `content_block_stop` | End of a content block | Block index reference |
+| `message_start` | Message begins | `message.usage` for input token count |
+| `message_delta` | Message metadata update | `usage.output_tokens` for running count |
+| `message_stop` | Message complete | Final signal |
+| `result` | Final output | `usage` stats, `is_error` flag |
+| `error` | Error occurred | `error.message` |
+| `user` | Tool results | `content` array with `tool_result` blocks |
+
+### Environment requirements
+
+```typescript
+// Delete CLAUDECODE to avoid nested session errors
+delete process.env.CLAUDECODE;
+
+// Ensure claude binary is discoverable
+const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin', `${os.homedir()}/.local/bin`];
+process.env.PATH = [...extraPaths, process.env.PATH].join(':');
+```
+
+### Token tracking
+
+Track token usage from streaming events for compaction decisions:
+- `message_start` → `message.usage.input_tokens` (prompt tokens)
+- `message_delta` → `usage.output_tokens` (completion tokens, cumulative)
+- Suggest `/compact` at 80K total tokens
+- Auto-compact at 150K total tokens
+
 ## Troubleshooting
 
 | Problem | Solution |

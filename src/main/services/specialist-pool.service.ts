@@ -4,14 +4,17 @@ import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { ConversationMode, DecomposedTask, TaskExecutionProgress } from '../../shared/types'
 import { specialistPoolLogger } from '../logger'
-import { specialistRepository } from '../db/repositories'
+import { specialistRepository, worktreeRepository } from '../db/repositories'
 import { SPECIALIST_TASK_SYSTEM_PROMPT } from './system-prompts'
+import { gitWorktreeService } from './git-worktree.service'
+import type { MergeResult } from './git-worktree.service'
 
 interface SpecialistProcessInfo {
   task: DecomposedTask
   process: ChildProcess
   output: string
   status: TaskExecutionProgress['status']
+  worktreeId?: string
 }
 
 /**
@@ -25,6 +28,7 @@ interface SpecialistProcessInfo {
 export class SpecialistPoolService extends EventEmitter {
   private readonly log = specialistPoolLogger
   private workspacePath: string | null = null
+  private conversationId: string | null = null
   private activeProcesses: Map<string, SpecialistProcessInfo> = new Map()
   private completedTasks: Set<string> = new Set()
   private taskResults: Map<string, string> = new Map()
@@ -32,6 +36,10 @@ export class SpecialistPoolService extends EventEmitter {
 
   setWorkspacePath(path: string): void {
     this.workspacePath = path
+  }
+
+  setConversationId(id: string): void {
+    this.conversationId = id
   }
 
   /**
@@ -106,20 +114,56 @@ export class SpecialistPoolService extends EventEmitter {
 
   /**
    * Starts a single specialist task process and handles its lifecycle.
+   * Creates an isolated worktree for each specialist when in build mode.
    */
   private startTask(task: DecomposedTask, mode: ConversationMode, onDone: () => void): void {
     this.emitProgress(task, 'running')
 
-    const process = this.spawnSpecialist(task, mode)
+    // Create worktree for isolation, then spawn the specialist
+    this.createWorktreeAndSpawn(task, mode, onDone)
+  }
+
+  /**
+   * Creates a worktree (if in build mode) and spawns the specialist process.
+   */
+  private async createWorktreeAndSpawn(
+    task: DecomposedTask,
+    mode: ConversationMode,
+    onDone: () => void
+  ): Promise<void> {
+    let worktreeId: string | undefined
+
+    // Create isolated worktree for build mode
+    if (mode === 'build' && this.workspacePath && this.conversationId) {
+      try {
+        const worktreePath = await gitWorktreeService.create(
+          this.workspacePath,
+          task.specialist,
+          task.id,
+          this.conversationId
+        )
+        const worktreeRecord = worktreeRepository.findByTaskId(task.id)
+        worktreeId = worktreeRecord?.id
+        this.log.info(`Worktree created for ${task.specialist}/${task.id}: ${worktreePath}`)
+      } catch (error) {
+        this.log.warn(
+          `Failed to create worktree for ${task.specialist}/${task.id}, falling back to shared cwd:`,
+          error
+        )
+      }
+    }
+
+    const childProcess = this.spawnSpecialist(task, mode, worktreeId)
     const info: SpecialistProcessInfo = {
       task,
-      process,
+      process: childProcess,
       output: '',
-      status: 'running'
+      status: 'running',
+      worktreeId
     }
     this.activeProcesses.set(task.id, info)
 
-    process.stdout?.on('data', (data: Buffer) => {
+    childProcess.stdout?.on('data', (data: Buffer) => {
       const text = data.toString()
       info.output += text
 
@@ -181,11 +225,11 @@ export class SpecialistPoolService extends EventEmitter {
       }
     })
 
-    process.stderr?.on('data', (data: Buffer) => {
+    childProcess.stderr?.on('data', (data: Buffer) => {
       this.log.error(`[${task.specialist}/${task.id}] stderr:`, data.toString().trim())
     })
 
-    process.on('exit', (code) => {
+    childProcess.on('exit', (code) => {
       this.activeProcesses.delete(task.id)
       this.completedTasks.add(task.id)
       this.taskResults.set(task.id, info.output)
@@ -193,27 +237,75 @@ export class SpecialistPoolService extends EventEmitter {
       if (code === 0) {
         info.status = 'completed'
         this.emitProgress(task, 'completed', info.output)
+
+        // Attempt to merge worktree if one was created
+        if (info.worktreeId) {
+          gitWorktreeService
+            .merge(info.worktreeId)
+            .then((mergeResult: MergeResult) => {
+              if (!mergeResult.success) {
+                this.log.warn(
+                  `Merge conflict for ${task.specialist}/${task.id}:`,
+                  mergeResult.conflictedFiles
+                )
+                this.emit('mergeConflict', {
+                  agentId: task.specialist,
+                  taskId: task.id,
+                  conflictedFiles: mergeResult.conflictedFiles ?? []
+                })
+              } else {
+                // Clean up worktree after successful merge
+                gitWorktreeService.remove(info.worktreeId!, true).catch((err) => {
+                  this.log.warn(`Failed to remove worktree after merge: ${err}`)
+                })
+              }
+            })
+            .catch((err) => {
+              this.log.error(`Failed to merge worktree for ${task.specialist}/${task.id}:`, err)
+              this.emit('mergeConflict', {
+                agentId: task.specialist,
+                taskId: task.id,
+                conflictedFiles: []
+              })
+            })
+        }
       } else {
         info.status = 'failed'
         this.emitProgress(task, 'failed', undefined, `Process exited with code ${code}`)
+
+        // Abandon worktree on failure
+        if (info.worktreeId) {
+          worktreeRepository.updateStatus(info.worktreeId, 'abandoned')
+        }
       }
 
       onDone()
     })
 
-    process.on('error', (err) => {
+    childProcess.on('error', (err) => {
       this.activeProcesses.delete(task.id)
       this.completedTasks.add(task.id)
       info.status = 'failed'
       this.emitProgress(task, 'failed', undefined, err.message)
+
+      // Abandon worktree on error
+      if (info.worktreeId) {
+        worktreeRepository.updateStatus(info.worktreeId, 'abandoned')
+      }
+
       onDone()
     })
   }
 
   /**
    * Spawns a `claude -p` process for a single specialist task.
+   * If a worktreeId is provided, the process runs in the isolated worktree directory.
    */
-  private spawnSpecialist(task: DecomposedTask, mode: ConversationMode): ChildProcess {
+  private spawnSpecialist(
+    task: DecomposedTask,
+    mode: ConversationMode,
+    worktreeId?: string
+  ): ChildProcess {
     // Build specialist-specific system prompt
     let systemPrompt = SPECIALIST_TASK_SYSTEM_PROMPT
 
@@ -281,12 +373,21 @@ export class SpecialistPoolService extends EventEmitter {
 
     const env = this.buildEnvWithPath()
 
+    // Use worktree path if available, otherwise fall back to workspace path
+    let cwd = this.workspacePath!
+    if (worktreeId) {
+      const worktreeRecord = worktreeRepository.findById(worktreeId)
+      if (worktreeRecord) {
+        cwd = worktreeRecord.worktreePath
+      }
+    }
+
     this.log.info(
-      `Spawning specialist [${task.specialist}] for task ${task.id}: ${task.description.substring(0, 100)}`
+      `Spawning specialist [${task.specialist}] for task ${task.id} in ${cwd}: ${task.description.substring(0, 100)}`
     )
 
     return spawn('claude', args, {
-      cwd: this.workspacePath!,
+      cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       env
     })
@@ -421,6 +522,7 @@ export class SpecialistPoolService extends EventEmitter {
     this.taskResults.clear()
     this.activeProcesses.clear()
     this.aborted = false
+    // Note: workspacePath and conversationId are preserved across resets
   }
 }
 

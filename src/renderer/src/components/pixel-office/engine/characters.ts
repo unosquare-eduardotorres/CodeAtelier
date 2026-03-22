@@ -96,6 +96,7 @@ export function updateCharacter(
   seats: Map<string, Seat>,
   tileMap: TileTypeVal[][],
   blockedTiles: Set<string>,
+  idleZoneTiles?: Array<{ col: number; row: number }>,
 ): void {
   ch.frameTimer += dt;
 
@@ -164,30 +165,38 @@ export function updateCharacter(
       // Countdown wander timer
       ch.wanderTimer -= dt;
       if (ch.wanderTimer <= 0) {
-        // Check if we've wandered enough -- return to seat for a rest
-        if (ch.wanderCount >= ch.wanderLimit && ch.seatId) {
-          const seat = seats.get(ch.seatId);
-          if (seat) {
-            const path = findPath(
-              ch.tileCol,
-              ch.tileRow,
-              seat.seatCol,
-              seat.seatRow,
-              tileMap,
-              blockedTiles,
-            );
-            if (path.length > 0) {
-              ch.path = path;
-              ch.moveProgress = 0;
-              ch.state = CharacterState.WALK;
-              ch.frame = 0;
-              ch.frameTimer = 0;
-              break;
-            }
+        // Use idle zone tiles (break room) if available, otherwise all walkable tiles
+        const wanderArea = (idleZoneTiles && idleZoneTiles.length > 0) ? idleZoneTiles : walkableTiles;
+
+        // Check if character is NOT in the idle zone — if so, pathfind there first
+        const inIdleZone = !idleZoneTiles || idleZoneTiles.length === 0 ||
+          idleZoneTiles.some(t => t.col === ch.tileCol && t.row === ch.tileRow);
+
+        if (!inIdleZone && wanderArea.length > 0) {
+          // Walk to a random spot in the idle zone
+          const target = wanderArea[Math.floor(Math.random() * wanderArea.length)];
+          const path = findPath(ch.tileCol, ch.tileRow, target.col, target.row, tileMap, blockedTiles);
+          if (path.length > 0) {
+            ch.path = path;
+            ch.moveProgress = 0;
+            ch.state = CharacterState.WALK;
+            ch.frame = 0;
+            ch.frameTimer = 0;
+            break;
           }
         }
-        if (walkableTiles.length > 0) {
-          const target = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
+
+        // Already in idle zone — wander within it
+        if (ch.wanderCount >= ch.wanderLimit) {
+          // Rest in place for a while, then reset wander cycle
+          ch.wanderCount = 0;
+          ch.wanderLimit = randomInt(WANDER_MOVES_BEFORE_REST_MIN, WANDER_MOVES_BEFORE_REST_MAX);
+          ch.wanderTimer = randomRange(SEAT_REST_MIN_SEC, SEAT_REST_MAX_SEC);
+          break;
+        }
+
+        if (wanderArea.length > 0) {
+          const target = wanderArea[Math.floor(Math.random() * wanderArea.length)];
           const path = findPath(
             ch.tileCol,
             ch.tileRow,

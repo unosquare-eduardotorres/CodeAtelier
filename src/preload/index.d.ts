@@ -18,7 +18,11 @@ import type {
   DecomposedTask,
   TaskPlan,
   ExecutionStrategy,
-  TaskExecutionProgress
+  TaskExecutionProgress,
+  FileChange,
+  CompleteResult,
+  AgentWorktree,
+  MergeAllResult
 } from '../shared/types'
 
 interface Api {
@@ -57,6 +61,15 @@ interface Api {
     tasks: DecomposedTask[]
   }) => Promise<void>
 
+  // Chat commands
+  completeConversation: (args: {
+    conversationId: string
+    commitMessage: string
+    description: string
+  }) => Promise<CompleteResult>
+  closeConversation: (args: { conversationId: string }) => Promise<void>
+  getFileChanges: (args: { conversationId: string }) => Promise<FileChange[]>
+
   // Agents
   getAgentStatuses: () => Promise<AgentStatus[]>
   stopAllAgents: () => Promise<string[]>
@@ -93,7 +106,15 @@ interface Api {
   cancelActivation: () => Promise<void>
   cleanActivation: (args: { workspacePath: string; removeClaudeMd?: boolean }) => Promise<void>
 
-  // Agent Sync
+  // Worktrees
+  listWorktrees: (args: { conversationId: string }) => Promise<AgentWorktree[]>
+  getWorktreeDiff: (args: { worktreeId: string }) => Promise<string>
+  mergeWorktree: (args: {
+    worktreeId: string
+  }) => Promise<{ success: boolean; conflictedFiles?: string[] }>
+  mergeAllWorktrees: (args: { conversationId: string }) => Promise<MergeAllResult>
+  abandonWorktree: (args: { worktreeId: string }) => Promise<void>
+
   // Pixel Office
   popoutPixelOffice: () => Promise<void>
 
@@ -135,6 +156,9 @@ interface Api {
   onTaskPlan: (callback: (data: TaskPlan) => void) => () => void
   onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void
   onOrchestratorReady: (callback: () => void) => () => void
+  onAgentTaskChunk: (
+    callback: (data: { agentId: string; taskId: string; text: string }) => void
+  ) => () => void
   onAgentStatusUpdate: (
     callback: (data: {
       agentId: string
