@@ -6,6 +6,7 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import { workspaceRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 import { agentSyncService } from '../services/agent-sync.service'
+import { brainService } from '../services/brain.service'
 import { dbLogger } from '../logger'
 
 export function registerWorkspaceIpc(): void {
@@ -96,6 +97,14 @@ export function registerWorkspaceIpc(): void {
       }
     } catch (e) {
       dbLogger.warn('Auto-sync on workspace open failed:', e)
+    }
+
+    // Auto-initialize brain directory for this workspace
+    try {
+      brainService.initialize(workspace.repoPath)
+      dbLogger.info('Brain directory initialized for workspace:', workspace.repoPath)
+    } catch (e) {
+      dbLogger.warn('Brain initialization failed:', e)
     }
 
     return workspace
