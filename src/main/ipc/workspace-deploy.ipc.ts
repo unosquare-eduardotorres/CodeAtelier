@@ -29,6 +29,13 @@ export function registerWorkspaceDeployIpc(): void {
   })
 
   ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_CLEAN_ACTIVATION,
+    (_event, args: { workspacePath: string; removeClaudeMd?: boolean }) => {
+      workspaceDeployService.cleanActivation(args.workspacePath, args.removeClaudeMd)
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_READ_FILE,
     (_event, args: { filePath: string }) => {
       return workspaceDeployService.readWorkspaceFile(args.filePath)

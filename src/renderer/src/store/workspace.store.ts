@@ -69,7 +69,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   clearActiveWorkspace: () => {
-    set({ activeWorkspace: null, orchestratorStatus: 'stopped' })
+    // Only clear UI state — backend processes are still running, so preserve
+    // orchestratorStatus to avoid the "Initializing AI Agent..." overlay on re-open
+    set({ activeWorkspace: null })
   },
 
   setOrchestratorReady: () => set({ orchestratorStatus: 'running' })

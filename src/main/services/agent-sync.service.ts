@@ -136,8 +136,7 @@ export class AgentSyncService {
    * Apply the full sync: create/update/deactivate specialists + skills.
    * Called after user confirms the sync report.
    */
-  applySync(workspacePath: string, options?: { skipRemoved?: boolean }): SyncResult {
-    const diff = this.computeDiff(workspacePath)
+  applySync(workspacePath: string, _options?: { skipRemoved?: boolean }): SyncResult {
     const result: SyncResult = {
       imported: 0,
       updated: 0,
@@ -146,8 +145,23 @@ export class AgentSyncService {
       errors: []
     }
 
-    // Import new skills first (specialists may reference them)
-    for (const discoveredSkill of diff.newSkills) {
+    // ── Step 1: Wipe all YAML-sourced specialists ──
+    const dbSpecialists = specialistRepository.findAll()
+    for (const sp of dbSpecialists) {
+      if (sp.sourceYaml) {
+        try {
+          specialistRepository.delete(sp.id) // CASCADE removes specialist_skills
+          result.deactivated++
+        } catch (e) {
+          result.errors.push(`Failed to delete specialist "${sp.agentId}": ${(e as Error).message}`)
+        }
+      }
+    }
+
+    // ── Step 2: Import all skills from workspace ──
+    const yamlSkills = this.getDeployedWorkspaceSkills(workspacePath)
+    for (const discoveredSkill of yamlSkills) {
+      if (!discoveredSkill.hasSkillMd) continue
       try {
         this.importSkillFromDiscovered(discoveredSkill)
         result.skillsImported++
@@ -159,8 +173,9 @@ export class AgentSyncService {
       }
     }
 
-    // Create new specialists
-    for (const agent of diff.newSpecialists) {
+    // ── Step 3: Re-create all specialists from YAML ──
+    const yamlAgents = this.getDeployedWorkspaceAgents(workspacePath)
+    for (const agent of yamlAgents) {
       try {
         this.createSpecialistFromAgent(agent)
         result.imported++
@@ -172,36 +187,12 @@ export class AgentSyncService {
       }
     }
 
-    // Update changed specialists
-    for (const { agent, dbRecord } of diff.updatedSpecialists) {
-      try {
-        this.updateSpecialistFromAgent(agent, dbRecord)
-        result.updated++
-        dbLogger.info(`Sync: updated specialist "${agent.parsed.name}"`)
-      } catch (e) {
-        const msg = `Failed to update specialist "${agent.parsed.name}": ${(e as Error).message}`
-        result.errors.push(msg)
-        dbLogger.warn(`Sync: ${msg}`)
-      }
-    }
-
-    // Deactivate removed specialists (if not skipped)
-    if (!options?.skipRemoved) {
-      for (const specialist of diff.removedSpecialists) {
-        try {
-          specialistRepository.update(specialist.id, { isActive: false, sourceYaml: null })
-          result.deactivated++
-          dbLogger.info(`Sync: deactivated specialist "${specialist.agentId}" (YAML removed)`)
-        } catch (e) {
-          const msg = `Failed to deactivate specialist "${specialist.agentId}": ${(e as Error).message}`
-          result.errors.push(msg)
-          dbLogger.warn(`Sync: ${msg}`)
-        }
-      }
-    }
-
-    // Link specialists to skills
+    // ── Step 4: Link specialists to skills ──
     this.syncSkillAssignments(workspacePath)
+
+    dbLogger.info(
+      `Fresh sync complete: ${result.imported} imported, ${result.deactivated} wiped, ${result.skillsImported} skills`
+    )
 
     return result
   }
@@ -323,14 +314,6 @@ export class AgentSyncService {
     })
   }
 
-  /** Update an existing specialist from YAML changes */
-  private updateSpecialistFromAgent(agent: DiscoveredAgent, dbRecord: Specialist): Specialist {
-    return specialistRepository.update(dbRecord.id, {
-      prompt: agent.bodyContent || agent.parsed.description || dbRecord.prompt,
-      sourceYaml: agent.filename
-    })
-  }
-
   /** Import a discovered skill into the DB */
   private importSkillFromDiscovered(discovered: DiscoveredSkill): Skill {
     const filename = `${discovered.name}.md`
@@ -366,13 +349,33 @@ export class AgentSyncService {
       const currentSkills = specialistRepository.getSkills(specialist.id)
       const currentSkillIds = new Set(currentSkills.map((s) => s.id))
 
+      // Build the set of skill IDs that YAML expects
+      const expectedSkillIds = new Set<string>()
       for (const skillRef of agent.parsed.skills) {
         const skill = skillByName.get(skillRef)
-        if (skill && !currentSkillIds.has(skill.id)) {
+        if (skill) {
+          expectedSkillIds.add(skill.id)
+        }
+      }
+
+      // Add missing skill assignments
+      for (const skillId of expectedSkillIds) {
+        if (!currentSkillIds.has(skillId)) {
           try {
-            specialistRepository.assignSkill(specialist.id, skill.id)
+            specialistRepository.assignSkill(specialist.id, skillId)
           } catch {
             // Already assigned or constraint issue — ignore
+          }
+        }
+      }
+
+      // Remove stale skill assignments no longer in YAML
+      for (const existingSkill of currentSkills) {
+        if (!expectedSkillIds.has(existingSkill.id)) {
+          try {
+            specialistRepository.removeSkill(specialist.id, existingSkill.id)
+          } catch {
+            // Already removed or constraint issue — ignore
           }
         }
       }

@@ -1,11 +1,25 @@
 import { useEffect } from 'react'
 import { AppLayout } from '@renderer/components/layout'
+import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
 import { useWorkspaceStore, useChatStore, useAgentStore } from '@renderer/store'
-import type { ConversationMode } from '../../shared/types'
+import type { ConversationMode, TaskPlan } from '../../shared/types'
+
+// Check if this window was opened as a Pixel Office pop-out
+const isPixelOfficePopout =
+  new URLSearchParams(window.location.search).get('view') === 'pixel-office'
 
 function App(): React.JSX.Element {
   const { loadWorkspaces, setOrchestratorReady } = useWorkspaceStore()
-  const { appendStreamChunk, finalizeStream, setHandoff, addToolActivity, updateToolActivity } = useChatStore()
+  const {
+    appendStreamChunk,
+    finalizeStream,
+    setHandoff,
+    addToolActivity,
+    updateToolActivity,
+    setTaskPlan,
+    updateTaskProgress,
+    setCompactSuggestion
+  } = useChatStore()
   const { updateStatus } = useAgentStore()
 
   useEffect(() => {
@@ -23,15 +37,20 @@ function App(): React.JSX.Element {
             id: data.toolActivity.id,
             toolName: data.toolActivity.toolName,
             status: 'running',
+            input: data.toolActivity.input,
             startedAt: data.toolActivity.startedAt ?? Date.now()
           })
         } else {
           updateToolActivity({
             toolName: data.toolActivity.toolName,
             status: data.toolActivity.status,
+            input: data.toolActivity.input,
             completedAt: data.toolActivity.completedAt ?? Date.now()
           })
         }
+      }
+      if (data.compactNeeded) {
+        setCompactSuggestion(data.compactNeeded)
       }
     })
 
@@ -45,6 +64,14 @@ function App(): React.JSX.Element {
         specialists: data.specialists,
         mode: data.mode as ConversationMode
       })
+    })
+
+    const unsubTaskPlan = window.api.onTaskPlan((data) => {
+      setTaskPlan(data as TaskPlan)
+    })
+
+    const unsubTaskProgress = window.api.onTaskProgress((data) => {
+      updateTaskProgress(data)
     })
 
     const unsubReady = window.api.onOrchestratorReady(() => {
@@ -71,10 +98,29 @@ function App(): React.JSX.Element {
       unsubChunk()
       unsubComplete()
       unsubHandoff()
+      unsubTaskPlan()
+      unsubTaskProgress()
       unsubReady()
       unsubAgent()
     }
-  }, [loadWorkspaces, appendStreamChunk, finalizeStream, setHandoff, addToolActivity, updateToolActivity, updateStatus, setOrchestratorReady])
+  }, [
+    loadWorkspaces,
+    appendStreamChunk,
+    finalizeStream,
+    setHandoff,
+    setTaskPlan,
+    updateTaskProgress,
+    addToolActivity,
+    updateToolActivity,
+    updateStatus,
+    setOrchestratorReady,
+    setCompactSuggestion
+  ])
+
+  // Pop-out mode: render only the Pixel Office fullscreen
+  if (isPixelOfficePopout) {
+    return <PixelOfficeFullscreen />
+  }
 
   return <AppLayout />
 }

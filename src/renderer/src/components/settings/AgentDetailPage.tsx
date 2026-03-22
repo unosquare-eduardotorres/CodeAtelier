@@ -123,7 +123,7 @@ export default function AgentDetailPage({
                   {agent.parsed.tools.map((tool) => (
                     <span
                       key={tool}
-                      className="px-1.5 py-0.5 text-[10px] rounded bg-gray-800 text-gray-400"
+                      className="px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500/10 text-indigo-400 font-medium"
                     >
                       {tool}
                     </span>

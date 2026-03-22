@@ -450,6 +450,29 @@ export class WorkspaceDeployService {
     }
   }
 
+  /** Remove all deployed agents, skills, and optionally CLAUDE.md from the workspace */
+  cleanActivation(workspacePath: string, removeClaudeMd = false): void {
+    const agentsDir = join(workspacePath, '.claude', 'agents')
+    const skillsDir = join(workspacePath, '.claude', 'skills')
+
+    if (existsSync(agentsDir)) {
+      rmSync(agentsDir, { recursive: true, force: true })
+    }
+    if (existsSync(skillsDir)) {
+      rmSync(skillsDir, { recursive: true, force: true })
+    }
+    if (removeClaudeMd) {
+      const claudeMdPath = join(workspacePath, 'CLAUDE.md')
+      if (existsSync(claudeMdPath)) {
+        unlinkSync(claudeMdPath)
+      }
+    }
+
+    deployLogger.info(
+      `Cleaned activation for workspace: ${workspacePath} (removeClaudeMd: ${removeClaudeMd})`
+    )
+  }
+
   /** Recursive directory copy */
   private copyDirRecursive(src: string, dest: string): void {
     mkdirSync(dest, { recursive: true })
@@ -627,7 +650,7 @@ Return ONLY the complete CLAUDE.md content as plain text (no JSON wrapping, no c
     renameSync(tmpPath, claudeMdPath)
   }
 
-  /** Get a simple tree listing for the Opus prompt */
+  /** Get a simple tree listing for the activation prompt */
   private getTreeListing(dirPath: string, maxDepth: number, prefix = '', depth = 0): string {
     if (depth >= maxDepth) return ''
 
@@ -695,9 +718,9 @@ Return ONLY the complete CLAUDE.md content as plain text (no JSON wrapping, no c
 
       const child = spawn(
         'claude',
-        ['-p', prompt, '--model', ACTIVATION_MODEL_ID, '--output-format', 'text', '--permission-mode', 'plan', '--tools', ''],
+        ['-p', prompt, '--model', ACTIVATION_MODEL_ID, '--output-format', 'text', '--permission-mode', 'plan'],
         {
-          stdio: ['pipe', 'pipe', 'pipe'],
+          stdio: ['ignore', 'pipe', 'pipe'],
           env,
           signal
         }
@@ -744,7 +767,7 @@ Return ONLY the complete CLAUDE.md content as plain text (no JSON wrapping, no c
     })
   }
 
-  /** Shutdown — cancel any in-progress Opus call */
+  /** Shutdown — cancel any in-progress activation call */
   shutdown(): void {
     if (this.currentAbortController) {
       this.currentAbortController.abort()

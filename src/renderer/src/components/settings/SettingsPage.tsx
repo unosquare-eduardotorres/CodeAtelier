@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Settings, Bot, Sparkles, Loader2 } from 'lucide-react'
+import { ArrowLeft, Settings, Bot, Sparkles, Loader2, RotateCcw } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import ActivationBanner from './ActivationBanner'
@@ -35,8 +35,10 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
     selectSkill,
     confirmClaudeMd,
     dismissClaudeMdPreview,
+    isActivating,
     computeSyncDiff,
     applySync,
+    cleanAndReactivate,
     reset
   } = useSettingsStore()
 
@@ -156,6 +158,25 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
         <span className="text-xs text-gray-500">
           — {activeWorkspace.name}
         </span>
+        {!needsActivation && !isActivating && (
+          <div className="ml-auto">
+            <button
+              onClick={() => {
+                if (
+                  confirm(
+                    'This will remove all deployed agents and skills, then re-activate from scratch. Continue?'
+                  )
+                ) {
+                  cleanAndReactivate(workspacePath)
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-400 border border-amber-500/30 hover:bg-amber-500/10 transition-colors"
+            >
+              <RotateCcw size={12} />
+              Re-activate
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Loading state */}

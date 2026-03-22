@@ -1,15 +1,60 @@
-import { useChatStore } from '@renderer/store';
-import { useAutoScroll } from '@renderer/hooks';
-import { MessageBubble, HandoffIndicator } from '@renderer/components/chat';
-import FloatingRobots from './FloatingRobots';
+import { useChatStore } from '@renderer/store'
+import { useAutoScroll } from '@renderer/hooks'
+import { MessageBubble, HandoffIndicator, TaskPlanCard } from '@renderer/components/chat'
+import FloatingRobots from './FloatingRobots'
+
+function CompactSuggestionBanner({
+  inputTokens,
+  onCompact,
+  onDismiss
+}: {
+  inputTokens: number
+  onCompact: () => void
+  onDismiss: () => void
+}): React.JSX.Element {
+  return (
+    <div className="mx-4 mb-2 px-4 py-2.5 rounded-lg bg-amber-900/30 border border-amber-600/30 flex items-center gap-3">
+      <span className="text-amber-400 text-sm">⚠️</span>
+      <div className="flex-1">
+        <p className="text-sm text-amber-200">
+          Context is getting large ({Math.round(inputTokens / 1000)}K tokens). Consider compacting
+          to preserve performance.
+        </p>
+      </div>
+      <button
+        onClick={onCompact}
+        className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors"
+      >
+        /compact
+      </button>
+      <button onClick={onDismiss} className="text-gray-500 hover:text-gray-300 text-xs">
+        Dismiss
+      </button>
+    </div>
+  )
+}
 
 interface MessageListProps {
-  searchQuery?: string;
+  searchQuery?: string
 }
 
 export default function MessageList({ searchQuery }: MessageListProps): React.JSX.Element {
-  const { messages, streamingContent, streamingRole, isStreaming, activeHandoff, toolActivities } = useChatStore();
-  const scrollRef = useAutoScroll([messages.length, streamingContent]);
+  const {
+    messages,
+    streamingContent,
+    streamingRole,
+    isStreaming,
+    activeHandoff,
+    toolActivities,
+    activeTaskPlan,
+    taskProgress,
+    isExecutingPlan,
+    executePlan,
+    compactSuggestion,
+    setCompactSuggestion,
+    sendMessage
+  } = useChatStore()
+  const scrollRef = useAutoScroll([messages.length, streamingContent])
 
   if (messages.length === 0 && !isStreaming) {
     return (
@@ -20,85 +65,124 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           Start a conversation
         </h3>
         <p className="relative z-10 text-sm text-gray-600 max-w-md">
-          Chat with your AI development partner. Ask questions, brainstorm ideas, review code, or describe what you want built — the generalist will handle it or hand off to specialists.
+          Chat with your AI development partner. Ask questions, brainstorm ideas, review code, or
+          describe what you want built — the generalist will handle it or hand off to specialists.
         </p>
       </div>
-    );
+    )
   }
 
   return (
     <div className="relative flex-1 min-h-0">
-    <FloatingRobots />
-    <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto px-6 py-4 space-y-4 h-full">
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} searchHighlight={searchQuery} />
-      ))}
+      <FloatingRobots />
+      <div
+        ref={scrollRef}
+        className="relative z-10 flex-1 overflow-y-auto px-6 py-4 space-y-4 h-full"
+      >
+        {messages.map((msg) => (
+          <MessageBubble key={msg.id} message={msg} searchHighlight={searchQuery} />
+        ))}
 
-      {/* Handoff indicator — shown when generalist triggers a handoff */}
-      {activeHandoff && (
-        <HandoffIndicator
-          summary={activeHandoff.summary}
-          specialists={activeHandoff.specialists}
-          mode={activeHandoff.mode}
-        />
-      )}
+        {/* Handoff indicator — shown when generalist triggers a handoff */}
+        {activeHandoff && !activeTaskPlan && (
+          <HandoffIndicator
+            summary={activeHandoff.summary}
+            specialists={activeHandoff.specialists}
+            mode={activeHandoff.mode}
+          />
+        )}
 
-      {/* Thinking indicator: shows when streaming but no content yet */}
-      {isStreaming && !streamingContent && (
-        <div className="flex justify-start">
-          <div className="flex flex-col gap-2 px-4 py-3 rounded-xl bg-gray-800/50 border border-gray-700/50">
-            <div className="flex items-center gap-2">
-              <svg
-                className="animate-spin h-4 w-4 text-indigo-400"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              <span className="text-sm text-gray-400">
-                {activeHandoff ? 'Working on it...' : 'Thinking...'}
-              </span>
-            </div>
-            {toolActivities.length > 0 && (
-              <div className="space-y-1 border-l-2 border-gray-700 pl-3 ml-1">
-                {toolActivities.slice(-5).map((activity) => (
-                  <div key={activity.id} className="flex items-center gap-2 text-xs">
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        activity.status === 'running'
-                          ? 'bg-yellow-400 animate-pulse'
-                          : activity.status === 'completed'
-                            ? 'bg-green-400'
-                            : 'bg-red-400'
-                      }`}
-                    />
-                    <span className="font-mono text-gray-300">{activity.toolName}</span>
-                  </div>
-                ))}
+        {/* Task plan card — shown after orchestrator decomposes the handoff */}
+        {activeTaskPlan && (
+          <TaskPlanCard
+            summary={activeTaskPlan.summary}
+            tasks={activeTaskPlan.tasks}
+            mode={activeTaskPlan.mode}
+            taskProgress={taskProgress}
+            isExecuting={isExecutingPlan}
+            onExecute={executePlan}
+          />
+        )}
+
+        {/* Compact suggestion banner */}
+        {compactSuggestion && (
+          <CompactSuggestionBanner
+            inputTokens={compactSuggestion.inputTokens}
+            onCompact={() => {
+              setCompactSuggestion(null)
+              sendMessage('/compact')
+            }}
+            onDismiss={() => setCompactSuggestion(null)}
+          />
+        )}
+
+        {/* Thinking indicator: shows when streaming but no content yet */}
+        {isStreaming && !streamingContent && (
+          <div className="flex justify-start">
+            <div className="flex flex-col gap-2 px-4 py-3 rounded-xl bg-gray-800/50 border border-gray-700/50">
+              <div className="flex items-center gap-2">
+                <svg
+                  className="animate-spin h-4 w-4 text-indigo-400"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
+                <span className="text-sm text-gray-400">
+                  {activeHandoff ? 'Working on it...' : 'Thinking...'}
+                </span>
               </div>
-            )}
+              {toolActivities.length > 0 && (
+                <div className="space-y-1 border-l-2 border-gray-700 pl-3 ml-1">
+                  {toolActivities.slice(-5).map((activity) => (
+                    <div key={activity.id} className="flex items-center gap-2 text-xs">
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          activity.status === 'running'
+                            ? 'bg-yellow-400 animate-pulse'
+                            : activity.status === 'completed'
+                              ? 'bg-green-400'
+                              : 'bg-red-400'
+                        }`}
+                      />
+                      <span className="font-mono text-gray-300">{activity.toolName}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Streaming message bubble */}
-      {isStreaming && streamingContent && (
-        <MessageBubble
-          message={{
-            id: 'streaming',
-            conversationId: '',
-            role: streamingRole,
-            contentMd: streamingContent,
-            attachmentsJson: '[]',
-            createdAt: new Date().toISOString()
-          }}
-          isStreaming
-          toolActivities={toolActivities}
-        />
-      )}
+        {/* Streaming message bubble */}
+        {isStreaming && streamingContent && (
+          <MessageBubble
+            message={{
+              id: 'streaming',
+              conversationId: '',
+              role: streamingRole,
+              contentMd: streamingContent,
+              attachmentsJson: '[]',
+              createdAt: new Date().toISOString()
+            }}
+            isStreaming
+            toolActivities={toolActivities}
+          />
+        )}
+      </div>
     </div>
-    </div>
-  );
+  )
 }

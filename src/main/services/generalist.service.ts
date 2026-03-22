@@ -6,7 +6,8 @@ import { AGENT_IDS } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
-import { GENERALIST_SYSTEM_PROMPT } from './generalist-prompts'
+import { getGeneralistSystemPrompt } from './generalist-prompts'
+import { conversationRepository } from '../db/repositories'
 
 /** Regex to detect handoff blocks emitted by the generalist. */
 const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
@@ -23,7 +24,7 @@ export interface HandoffEvent {
  * Unlike the orchestrator (which spawns `claude -p` per message), the generalist
  * keeps a persistent stdin/stdout pipe open. Messages are sent by writing to stdin.
  *
- * Always runs with `--permission-mode plan` (read-only).
+ * Runs in plan mode (read-only) or build mode (can execute commands).
  */
 /** Timeout for receiving the first response chunk (in ms) */
 const RESPONSE_TIMEOUT_MS = 60_000 // 1 minute
@@ -35,16 +36,25 @@ export class GeneralistService extends AgentBaseService {
   private accumulatedText: string = ''
   private responseTimeoutTimer: ReturnType<typeof setTimeout> | null = null
   private processReady: boolean = false
+  private currentMode: ConversationMode = 'plan'
+  /** Maps conversationId → Claude CLI session_id for --resume support */
+  private sessionMap: Map<string, string> = new Map()
+
+  /** Token threshold to suggest compaction (80K tokens — Claude's context is ~200K) */
+  private static readonly COMPACT_SUGGEST_THRESHOLD = 80_000
+  private static readonly COMPACT_AUTO_THRESHOLD = 150_000
+  private compactSuggested: boolean = false
 
   /**
    * Spawns the long-lived interactive claude process for the given workspace.
    */
-  async start(workspacePath: string): Promise<void> {
+  async start(workspacePath: string, mode?: ConversationMode, resumeSessionId?: string): Promise<void> {
     if (this.process) {
       await this.stop()
     }
 
     this.workspacePath = workspacePath
+    this.currentMode = mode ?? 'plan'
     this.startedAt = Date.now()
     this.currentStatus = 'idle'
     this.buffer = ''
@@ -54,7 +64,7 @@ export class GeneralistService extends AgentBaseService {
     this.accumulatedText = ''
 
     // Build system prompt with workspace context
-    let fullSystemPrompt = GENERALIST_SYSTEM_PROMPT
+    let fullSystemPrompt = getGeneralistSystemPrompt(this.currentMode)
     try {
       const claudeMdPath = join(workspacePath, 'CLAUDE.md')
       const workspaceContext = readFileSync(claudeMdPath, 'utf-8')
@@ -63,19 +73,26 @@ export class GeneralistService extends AgentBaseService {
       // No CLAUDE.md — that's fine
     }
 
+    const isBuildMode = this.currentMode === 'build'
+
     const args = [
       '--output-format',
       'stream-json',
       '--input-format',
       'stream-json',
       '--verbose',
-      '--permission-mode',
-      'plan',
-      '--allowedTools',
-      'WebSearch,WebFetch',
+      ...(isBuildMode
+        ? ['--dangerously-skip-permissions']
+        : ['--permission-mode', 'plan', '--allowedTools', 'WebSearch,WebFetch']),
       '--system-prompt',
       fullSystemPrompt
     ]
+
+    // Resume existing session if available (preserves conversation context)
+    if (resumeSessionId) {
+      args.push('--resume', resumeSessionId)
+      this.log.info('Resuming session:', resumeSessionId)
+    }
 
     const env = this.buildEnvWithPath()
 
@@ -189,11 +206,24 @@ export class GeneralistService extends AgentBaseService {
    * Each message is a newline-terminated line written to the process stdin.
    */
   async send(message: string, conversationId: string): Promise<void> {
-    // If process is dead, attempt auto-restart
+    // If process is dead, attempt auto-restart with session resume
     if (!this.process || !this.process.stdin || this.process.killed) {
       if (this.workspacePath) {
         this.log.warn('Process not available, auto-restarting...')
-        await this.start(this.workspacePath)
+        // Try in-memory session first, then fall back to DB
+        let sessionId = this.sessionMap.get(conversationId)
+        if (!sessionId) {
+          try {
+            sessionId = conversationRepository.getSessionId(conversationId)
+            if (sessionId) {
+              this.sessionMap.set(conversationId, sessionId)
+              this.log.info('Session loaded from DB:', sessionId)
+            }
+          } catch (err) {
+            this.log.error('Failed to load session from DB:', err)
+          }
+        }
+        await this.start(this.workspacePath, this.currentMode, sessionId)
       }
       // Re-check after restart attempt
       if (!this.process || !this.process.stdin || this.process.killed) {
@@ -258,10 +288,20 @@ export class GeneralistService extends AgentBaseService {
   protected onResultEvent(event: Record<string, unknown>): void {
     this.clearResponseTimeout()
 
-    // Capture session info if present
+    // Capture session info and persist for --resume support
     const sessionId = event.session_id as string | undefined
     if (sessionId) {
       this.log.info('Session ID:', sessionId)
+      if (this.currentConversationId) {
+        this.sessionMap.set(this.currentConversationId, sessionId)
+        this.log.info('Session captured for conversation:', this.currentConversationId)
+        // Persist to database for cross-restart recovery
+        try {
+          conversationRepository.updateSessionId(this.currentConversationId, sessionId)
+        } catch (err) {
+          this.log.error('Failed to persist session ID to DB:', err)
+        }
+      }
     }
 
     // Emit result text if assistant events didn't already provide it
@@ -274,6 +314,20 @@ export class GeneralistService extends AgentBaseService {
     const usage = event.usage as Record<string, number> | undefined
     if (usage) {
       this.tokenUsage += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
+
+      // Emit context size warning when approaching limits
+      const inputTokens = usage.input_tokens ?? 0
+      if (inputTokens >= GeneralistService.COMPACT_AUTO_THRESHOLD) {
+        this.log.warn(`Context very large (${inputTokens} input tokens) — auto-compacting`)
+        this.emit('compactNeeded', { level: 'critical', inputTokens })
+      } else if (
+        inputTokens >= GeneralistService.COMPACT_SUGGEST_THRESHOLD &&
+        !this.compactSuggested
+      ) {
+        this.compactSuggested = true
+        this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
+        this.emit('compactNeeded', { level: 'suggest', inputTokens })
+      }
     }
 
     // Check for handoff in accumulated text
@@ -289,6 +343,9 @@ export class GeneralistService extends AgentBaseService {
     const sessionId = event.session_id as string | undefined
     if (sessionId) {
       this.log.info('System init, session:', sessionId)
+      if (this.currentConversationId) {
+        this.sessionMap.set(this.currentConversationId, sessionId)
+      }
     }
     this.emit('_processReady')
     this.emit('ready')
@@ -374,6 +431,8 @@ export class GeneralistService extends AgentBaseService {
     await super.stop()
     this.currentConversationId = null
     this.accumulatedText = ''
+    // NOTE: Do NOT clear sessionMap — sessions persist across process restarts
+    // so we can resume them with --resume
   }
 
   getStatus(): AgentStatus {
@@ -405,6 +464,69 @@ export class GeneralistService extends AgentBaseService {
 
   isReady(): boolean {
     return this.processReady && this.isRunning()
+  }
+
+  getMode(): ConversationMode {
+    return this.currentMode
+  }
+
+  /**
+   * Restart the generalist with a different permission mode.
+   * Stops the current session and spawns a new one.
+   */
+  /**
+   * Sends a compact command to the Claude CLI process, asking it to
+   * summarize and compress the conversation context to save tokens.
+   */
+  async compact(): Promise<void> {
+    if (!this.process || !this.process.stdin || this.process.killed) {
+      throw new Error('Generalist not running — nothing to compact')
+    }
+
+    this.log.info('Compacting conversation context...')
+    this.compactSuggested = false // Reset so we can re-suggest after compacting if needed
+    this.currentStatus = 'thinking'
+    this.emit('statusUpdate', this.getStatus())
+
+    const compactMessage = JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content:
+          '/compact — Summarize our entire conversation so far into a concise context summary. ' +
+          'Include: key decisions made, current task state, any pending items, and important code/file references. ' +
+          'Then continue using this summary as your working context.'
+      }
+    })
+    this.process.stdin.write(compactMessage + '\n')
+  }
+
+  /** Returns the session ID for a given conversation, if captured. */
+  getSessionId(conversationId: string): string | undefined {
+    return this.sessionMap.get(conversationId)
+  }
+
+  /** Stores a session ID for a conversation (e.g. loaded from DB). */
+  setSessionId(conversationId: string, sessionId: string): void {
+    this.sessionMap.set(conversationId, sessionId)
+  }
+
+  /** Removes session tracking for a conversation (e.g. on delete). */
+  clearSession(conversationId: string): void {
+    this.sessionMap.delete(conversationId)
+  }
+
+  async switchMode(mode: ConversationMode): Promise<void> {
+    if (mode === this.currentMode) return
+    if (!this.workspacePath) return
+
+    this.log.info(`Switching mode: ${this.currentMode} → ${mode}`)
+    const wp = this.workspacePath
+    const sessionId = this.currentConversationId
+      ? this.sessionMap.get(this.currentConversationId)
+      : undefined
+    await this.stop()
+    await this.start(wp, mode, sessionId)
   }
 }
 

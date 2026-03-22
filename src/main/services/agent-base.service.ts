@@ -7,7 +7,38 @@ export interface StreamChunk {
   type: 'text' | 'tool_use' | 'tool_result' | 'error' | 'status'
   content?: string
   toolName?: string
+  toolInput?: string
   error?: string
+}
+
+/**
+ * Extracts a human-readable summary from raw tool input for display in the UI.
+ */
+export function summarizeToolInput(toolName: string, input: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'Bash':
+      return (input.description as string) || (input.command as string) || ''
+    case 'Read':
+      return (input.file_path as string) || ''
+    case 'Write':
+    case 'Edit':
+      return (input.file_path as string) || ''
+    case 'Grep':
+      return `/${input.pattern as string}/` + (input.path ? ` in ${input.path}` : '')
+    case 'Glob':
+      return (input.pattern as string) || ''
+    case 'WebSearch':
+      return (input.query as string) || ''
+    case 'WebFetch':
+      return (input.url as string) || ''
+    case 'TodoRead':
+    case 'TodoWrite':
+      return 'Task management'
+    case 'TaskOutput':
+      return `Reading output of task ${(input.id as string)?.slice(0, 7) ?? ''}…`
+    default:
+      return ''
+  }
 }
 
 /**
@@ -113,6 +144,7 @@ export abstract class AgentBaseService extends EventEmitter {
               } else if (block.type === 'tool_use') {
                 const toolName = block.name as string
                 const toolId = block.id as string
+                const toolInput = block.input as Record<string, unknown> | undefined
                 if (toolId) {
                   this.toolIdToName.set(toolId, toolName)
                 }
@@ -120,7 +152,8 @@ export abstract class AgentBaseService extends EventEmitter {
                 this.emit('statusUpdate', this.getStatus())
                 this.emit('chunk', {
                   type: 'tool_use',
-                  toolName
+                  toolName,
+                  toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
                 } as StreamChunk)
               }
             }
@@ -181,10 +214,12 @@ export abstract class AgentBaseService extends EventEmitter {
           this.currentStatus = 'reviewing'
           this.currentToolName = contentBlock.name as string
           this.currentToolInput = ''
+          const toolInput = contentBlock.input as Record<string, unknown> | undefined
           this.emit('statusUpdate', this.getStatus())
           this.emit('chunk', {
             type: 'tool_use',
-            toolName: contentBlock.name as string
+            toolName: contentBlock.name as string,
+            toolInput: toolInput ? summarizeToolInput(this.currentToolName, toolInput) : undefined
           } as StreamChunk)
         } else if (contentBlock?.type === 'text' && contentBlock.text) {
           this.emit('chunk', {

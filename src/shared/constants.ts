@@ -37,7 +37,12 @@ export const IPC_CHANNELS = {
   CHAT_UPDATE_MODE: 'chat:updateMode',
   CHAT_RENAME: 'chat:renameConversation',
   CHAT_STOP: 'chat:stop',
+  CHAT_COMPACT: 'chat:compact',
+  CHAT_CLEAR: 'chat:clear',
   CHAT_HANDOFF: 'chat:handoff',
+  CHAT_TASK_PLAN: 'chat:taskPlan',
+  CHAT_EXECUTE_PLAN: 'chat:executePlan',
+  CHAT_TASK_PROGRESS: 'chat:taskProgress',
 
   // Agents
   AGENT_GET_STATUSES: 'agent:getStatuses',
@@ -81,6 +86,10 @@ export const IPC_CHANNELS = {
   WORKSPACE_CONFIRM_CLAUDE_MD: 'workspace:confirmClaudeMd',
   WORKSPACE_ACTIVATION_PROGRESS: 'workspace:activationProgress',
   WORKSPACE_CANCEL_ACTIVATION: 'workspace:cancelActivation',
+  WORKSPACE_CLEAN_ACTIVATION: 'workspace:cleanActivation',
+
+  // Pixel Office
+  PIXEL_OFFICE_POPOUT: 'pixelOffice:popout',
 
   // Agent Sync
   SYNC_COMPUTE_DIFF: 'sync:computeDiff',
@@ -113,12 +122,22 @@ export const AGENT_META: Record<string, { icon: string; color: string; displayNa
 }
 
 export const CONVERSATION_MODES = {
-  plan: { icon: '📋', label: 'Plan', color: '#8B5CF6', description: 'Analyze code, brainstorm ideas, create plans (read-only)' },
-  build: { icon: '🔨', label: 'Build', color: '#F59E0B', description: 'Make changes, write code, run commands (full access)' }
-} as const;
+  plan: {
+    icon: '📋',
+    label: 'Plan',
+    color: '#8B5CF6',
+    description: 'Analyze code, brainstorm ideas, create plans (read-only)'
+  },
+  build: {
+    icon: '🔨',
+    label: 'Build',
+    color: '#F59E0B',
+    description: 'Make changes, write code, run commands (full access)'
+  }
+} as const
 
 /** Model used for activation CLAUDE.md generation */
-export const ACTIVATION_MODEL_ID = 'claude-sonnet-4-20250514' as const;
+export const ACTIVATION_MODEL_ID = 'claude-sonnet-4-20250514' as const
 
 /** Maximum skill file size in bytes (500 KB) */
-export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const; // 500 * 1024
+export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const // 500 * 1024

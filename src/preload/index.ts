@@ -30,8 +30,11 @@ const api = {
   getConversations: (args: { workspaceId: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_CONVERSATIONS, args),
 
-  createConversation: (args: { workspaceId: string; title?: string; mode?: string }): Promise<unknown> =>
-    ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
+  createConversation: (args: {
+    workspaceId: string
+    title?: string
+    mode?: string
+  }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
   getMessages: (args: { conversationId: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES, args),
@@ -47,6 +50,14 @@ const api = {
 
   stopGeneration: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_STOP),
 
+  compactConversation: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT),
+
+  executePlan: (args: {
+    conversationId: string
+    strategy: 'sequential' | 'parallel'
+    tasks: Array<{ id: string; specialist: string; description: string; dependsOn: string[] }>
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_EXECUTE_PLAN, args),
+
   // ── Agents ──
   getAgentStatuses: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.AGENT_GET_STATUSES),
 
@@ -57,8 +68,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.ORCHESTRATOR_START, workspacePath),
 
   // ── Specialists ──
-  listSpecialists: (): Promise<unknown> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_LIST),
+  listSpecialists: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_LIST),
 
   getSpecialist: (args: { id: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_GET, args),
@@ -92,8 +102,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_REMOVE_SKILL, args),
 
   // ── Skills ──
-  listSkills: (): Promise<unknown> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SKILL_LIST),
+  listSkills: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SKILL_LIST),
 
   importSkill: (args: { filePath: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.SKILL_IMPORT, args),
@@ -110,8 +119,7 @@ const api = {
   deactivateSkill: (args: { id: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.SKILL_DEACTIVATE, args),
 
-  selectSkillFile: (): Promise<string | null> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SKILL_SELECT_FILE),
+  selectSkillFile: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.SKILL_SELECT_FILE),
 
   // ── Workspace Deploy ──
   scanWorkspaceClaude: (args: { workspacePath: string }): Promise<unknown> =>
@@ -137,6 +145,12 @@ const api = {
 
   cancelActivation: (): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CANCEL_ACTIVATION),
+
+  cleanActivation: (args: { workspacePath: string; removeClaudeMd?: boolean }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CLEAN_ACTIVATION, args),
+
+  // ── Pixel Office ──
+  popoutPixelOffice: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PIXEL_OFFICE_POPOUT),
 
   // ── Agent Sync ──
   computeSyncDiff: (args: { workspacePath: string }): Promise<unknown> =>
@@ -175,8 +189,13 @@ const api = {
         id: string
         toolName: string
         status: 'running' | 'completed' | 'error'
+        input?: string
         startedAt?: number
         completedAt?: number
+      }
+      compactNeeded?: {
+        level: string
+        inputTokens: number
       }
     }) => void
   ): (() => void) => {
@@ -192,6 +211,10 @@ const api = {
           status: 'running' | 'completed' | 'error'
           startedAt?: number
           completedAt?: number
+        }
+        compactNeeded?: {
+          level: string
+          inputTokens: number
         }
       }
     ): void => callback(data)
@@ -234,6 +257,54 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.CHAT_HANDOFF, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.CHAT_HANDOFF, handler)
+    }
+  },
+
+  onTaskPlan: (
+    callback: (data: {
+      conversationId: string
+      summary: string
+      mode: string
+      tasks: Array<{ id: string; specialist: string; description: string; dependsOn: string[] }>
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        conversationId: string
+        summary: string
+        mode: string
+        tasks: Array<{ id: string; specialist: string; description: string; dependsOn: string[] }>
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_TASK_PLAN, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_TASK_PLAN, handler)
+    }
+  },
+
+  onTaskProgress: (
+    callback: (data: {
+      taskId: string
+      specialist: string
+      status: 'pending' | 'running' | 'completed' | 'failed'
+      output?: string
+      error?: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        taskId: string
+        specialist: string
+        status: 'pending' | 'running' | 'completed' | 'failed'
+        output?: string
+        error?: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_TASK_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_TASK_PROGRESS, handler)
     }
   },
 

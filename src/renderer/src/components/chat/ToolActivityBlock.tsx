@@ -44,7 +44,7 @@ export default function ToolActivityBlock({ activities }: ToolActivityBlockProps
               />
               <span className="font-mono text-gray-300">{activity.toolName}</span>
               {activity.input && (
-                <span className="text-gray-500 truncate max-w-[200px]">{activity.input}</span>
+                <span className="text-gray-500 truncate max-w-[300px]">{activity.input}</span>
               )}
             </div>
           ))}

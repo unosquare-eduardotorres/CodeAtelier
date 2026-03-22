@@ -14,7 +14,11 @@ import type {
   DiscoveredSkill,
   DiscoveredAgent,
   SyncDiff,
-  SyncResult
+  SyncResult,
+  DecomposedTask,
+  TaskPlan,
+  ExecutionStrategy,
+  TaskExecutionProgress
 } from '../shared/types'
 
 interface Api {
@@ -33,12 +37,25 @@ interface Api {
     attachments?: string[]
   }) => Promise<void>
   getConversations: (args: { workspaceId: string }) => Promise<Conversation[]>
-  createConversation: (args: { workspaceId: string; title?: string; mode?: ConversationMode }) => Promise<Conversation>
+  createConversation: (args: {
+    workspaceId: string
+    title?: string
+    mode?: ConversationMode
+  }) => Promise<Conversation>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
   deleteConversation: (args: { conversationId: string }) => Promise<void>
-  updateConversationMode: (args: { conversationId: string; mode: ConversationMode }) => Promise<Conversation>
+  updateConversationMode: (args: {
+    conversationId: string
+    mode: ConversationMode
+  }) => Promise<Conversation>
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
   stopGeneration: () => Promise<void>
+  compactConversation: () => Promise<void>
+  executePlan: (args: {
+    conversationId: string
+    strategy: ExecutionStrategy
+    tasks: DecomposedTask[]
+  }) => Promise<void>
 
   // Agents
   getAgentStatuses: () => Promise<AgentStatus[]>
@@ -74,15 +91,17 @@ interface Api {
   scanWorkspaceAgents: (args: { workspacePath: string }) => Promise<DiscoveredAgent[]>
   confirmClaudeMd: (args: { workspacePath: string; content: string }) => Promise<void>
   cancelActivation: () => Promise<void>
+  cleanActivation: (args: { workspacePath: string; removeClaudeMd?: boolean }) => Promise<void>
 
   // Agent Sync
+  // Pixel Office
+  popoutPixelOffice: () => Promise<void>
+
   computeSyncDiff: (args: { workspacePath: string }) => Promise<SyncDiff>
   applySync: (args: { workspacePath: string; skipRemoved?: boolean }) => Promise<SyncResult>
 
   // Events (main → renderer) with cleanup
-  onActivationProgress: (
-    callback: (data: ActivationProgressEvent) => void
-  ) => () => void
+  onActivationProgress: (callback: (data: ActivationProgressEvent) => void) => () => void
   onMessageChunk: (
     callback: (data: {
       conversationId: string
@@ -92,8 +111,13 @@ interface Api {
         id: string
         toolName: string
         status: 'running' | 'completed' | 'error'
+        input?: string
         startedAt?: number
         completedAt?: number
+      }
+      compactNeeded?: {
+        level: string
+        inputTokens: number
       }
     }) => void
   ) => () => void
@@ -108,6 +132,8 @@ interface Api {
       mode: string
     }) => void
   ) => () => void
+  onTaskPlan: (callback: (data: TaskPlan) => void) => () => void
+  onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void
   onOrchestratorReady: (callback: () => void) => () => void
   onAgentStatusUpdate: (
     callback: (data: {

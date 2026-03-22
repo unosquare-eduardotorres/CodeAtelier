@@ -1,10 +1,16 @@
-export { AgentBaseService } from './agent-base.service'
+export { AgentBaseService, summarizeToolInput } from './agent-base.service'
 export type { StreamChunk } from './agent-base.service'
 export { GeneralistService, generalistService } from './generalist.service'
 export type { HandoffEvent } from './generalist.service'
 export { OrchestratorService, orchestratorService } from './orchestrator.service'
 export { FileService, fileService } from './file.service'
 export { SkillService, skillService } from './skill.service'
-export { PLAN_MODE_SYSTEM_PROMPT, BUILD_MODE_SYSTEM_PROMPT } from './system-prompts'
+export {
+  PLAN_MODE_SYSTEM_PROMPT,
+  BUILD_MODE_SYSTEM_PROMPT,
+  DECOMPOSITION_SYSTEM_PROMPT,
+  SPECIALIST_TASK_SYSTEM_PROMPT
+} from './system-prompts'
+export { SpecialistPoolService, specialistPoolService } from './specialist-pool.service'
 export { GENERALIST_SYSTEM_PROMPT } from './generalist-prompts'
 export { WorkspaceDeployService, workspaceDeployService } from './workspace-deploy.service'

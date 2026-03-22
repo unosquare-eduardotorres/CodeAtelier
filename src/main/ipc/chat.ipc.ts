@@ -1,10 +1,21 @@
 import { ipcMain, app, type BrowserWindow } from 'electron'
 import { conversationRepository, messageRepository } from '../db/repositories'
-import { generalistService, orchestratorService, fileService } from '../services'
+import {
+  generalistService,
+  orchestratorService,
+  specialistPoolService,
+  fileService
+} from '../services'
 import type { StreamChunk } from '../services'
+import { summarizeToolInput } from '../services'
 import type { HandoffEvent } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { ConversationMode } from '../../shared/types'
+import type {
+  ConversationMode,
+  DecomposedTask,
+  ExecutionStrategy,
+  TaskExecutionProgress
+} from '../../shared/types'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 
@@ -16,6 +27,16 @@ const MAX_MESSAGE_LENGTH = 1_000_000
 const MAX_ATTACHMENTS = 20
 
 export function registerChatIpc(mainWindow: BrowserWindow): void {
+  // Persistent listener: forward compact suggestions to the renderer
+  generalistService.on('compactNeeded', (data: { level: string; inputTokens: number }) => {
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId: generalistService.getCurrentConversationId() || '',
+      chunk: '',
+      role: 'generalist',
+      compactNeeded: data
+    })
+  })
+
   ipcMain.handle(
     IPC_CHANNELS.CHAT_SEND,
     async (event, args: { conversationId: string; text: string; attachments?: string[] }) => {
@@ -54,7 +75,11 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
         }
       }
 
-      log.info('SEND received:', { conversationId, textLen: text.length, attachments: attachments?.length ?? 0 })
+      log.info('SEND received:', {
+        conversationId,
+        textLen: text.length,
+        attachments: attachments?.length ?? 0
+      })
 
       // Build message content with attachments
       let fullContent = text
@@ -63,11 +88,22 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
         const attachmentContents: string[] = []
         for (const filePath of attachments) {
           try {
-            const content = fileService.readFileContent(filePath)
-            const tokens = fileService.estimateTokens(content)
-            attachmentContents.push(
-              `\n---\n**Attached file: ${filePath}** (${tokens} tokens)\n\`\`\`\n${content}\n\`\`\`\n`
-            )
+            if (fileService.isImageFile(filePath)) {
+              // Images: encode as base64 data URI for the AI
+              const { base64, mimeType } = fileService.readImageAsBase64(filePath)
+              const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'image'
+              attachmentContents.push(
+                `\n---\n**Attached image: ${fileName}** (${mimeType})\n` +
+                  `![${fileName}](data:${mimeType};base64,${base64})\n`
+              )
+            } else {
+              // Text files: read as utf-8
+              const content = fileService.readFileContent(filePath)
+              const tokens = fileService.estimateTokens(content)
+              attachmentContents.push(
+                `\n---\n**Attached file: ${filePath}** (${tokens} tokens)\n\`\`\`\n${content}\n\`\`\`\n`
+              )
+            }
           } catch (error) {
             attachmentContents.push(
               `\n---\n**Failed to read: ${filePath}**: ${(error as Error).message}\n`
@@ -105,10 +141,22 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
                 id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                 toolName: chunk.toolName ?? 'Unknown',
                 status: 'running',
+                input: chunk.toolInput,
                 startedAt: Date.now()
               }
             })
           } else if (chunk.type === 'tool_result') {
+            // Try to extract a summary from accumulated tool input JSON
+            let toolInputSummary: string | undefined
+            if (chunk.content) {
+              try {
+                const parsed = JSON.parse(chunk.content) as Record<string, unknown>
+                toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed)
+              } catch {
+                // Not valid JSON — use raw content truncated
+                toolInputSummary = chunk.content.slice(0, 120)
+              }
+            }
             // Forward tool activity completion to renderer
             mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
               conversationId,
@@ -118,6 +166,7 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
                 id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                 toolName: chunk.toolName ?? 'Unknown',
                 status: 'completed',
+                input: toolInputSummary,
                 completedAt: Date.now()
               }
             })
@@ -161,6 +210,7 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
           // Clean up listeners
           generalistService.removeListener('chunk', onChunk)
           generalistService.removeListener('complete', onComplete)
+          generalistService.removeListener('handoff', onHandoff)
         }
 
         // Handle handoff events — generalist detected implementation work
@@ -184,85 +234,25 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
             }
           }
 
-          // Forward the summarized task to the orchestrator
+          // Decompose the task into sub-tasks via orchestrator
           try {
-            let orchestratorContent = ''
+            log.info('Decomposing task for specialists:', handoff.specialists)
+            const taskPlan = await orchestratorService.decompose(
+              handoff.summary,
+              handoff.specialists,
+              conversationId,
+              handoff.mode
+            )
 
-            const onOrchestratorChunk = (chunk: StreamChunk): void => {
-              if (chunk.type === 'text' && chunk.content) {
-                orchestratorContent += chunk.content
-                mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-                  conversationId,
-                  chunk: chunk.content,
-                  role: 'coordinator'
-                })
-              } else if (chunk.type === 'tool_use') {
-                mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-                  conversationId,
-                  chunk: '',
-                  role: 'coordinator',
-                  toolActivity: {
-                    id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                    toolName: chunk.toolName ?? 'Unknown',
-                    status: 'running',
-                    startedAt: Date.now()
-                  }
-                })
-              } else if (chunk.type === 'tool_result') {
-                mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-                  conversationId,
-                  chunk: '',
-                  role: 'coordinator',
-                  toolActivity: {
-                    id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                    toolName: chunk.toolName ?? 'Unknown',
-                    status: 'completed',
-                    completedAt: Date.now()
-                  }
-                })
-              } else if (chunk.type === 'error') {
-                orchestratorContent += `\n\n**Error:** ${chunk.error}`
-                mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-                  conversationId,
-                  chunk: `\n\n**Error:** ${chunk.error}`,
-                  role: 'coordinator'
-                })
-              }
-            }
+            log.info(`Task decomposed into ${taskPlan.tasks.length} sub-tasks`)
 
-            const onOrchestratorComplete = (): void => {
-              const savedMsg = messageRepository.create(
-                conversationId,
-                'coordinator',
-                orchestratorContent || '_No response received from orchestrator._'
-              )
-
-              mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-                conversationId,
-                messageId: savedMsg.id
-              })
-
-              orchestratorService.removeListener('chunk', onOrchestratorChunk)
-              orchestratorService.removeListener('complete', onOrchestratorComplete)
-            }
-
-            orchestratorService.on('chunk', onOrchestratorChunk)
-            orchestratorService.on('complete', onOrchestratorComplete)
-            await orchestratorService.send(handoff.summary, conversationId, handoff.mode)
+            // Send the task plan to the renderer for user choice (sequential vs parallel)
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
           } catch (error) {
-            log.error('Failed to forward handoff to orchestrator:', error)
-            const errorMsg = `**Orchestrator Error:** ${(error as Error).message}`
-            const savedMsg = messageRepository.create(conversationId, 'coordinator', errorMsg)
+            log.error('Task decomposition failed, falling back to single orchestrator:', error)
 
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-              conversationId,
-              chunk: errorMsg,
-              role: 'coordinator'
-            })
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-              conversationId,
-              messageId: savedMsg.id
-            })
+            // Fallback: run orchestrator in legacy single-process mode
+            await runLegacyOrchestrator(mainWindow, conversationId, handoff)
           }
 
           // Clean up handoff listener (one-shot)
@@ -368,15 +358,129 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
     }
   )
 
+  // ── Compact conversation context ──
+  ipcMain.handle(IPC_CHANNELS.CHAT_COMPACT, async (event) => {
+    validateSender(event)
+    log.info('Compact requested')
+    await generalistService.compact()
+  })
+
   ipcMain.handle(IPC_CHANNELS.CHAT_STOP, async (event) => {
     validateSender(event)
     // Stop orchestrator if running (ephemeral per-handoff process)
     if (orchestratorService.isRunning()) {
       await orchestratorService.stop()
     }
+    // Stop any running specialist pool tasks
+    await specialistPoolService.stopAll()
     // Don't kill the generalist process — it persists across messages
     // Just signal that streaming should stop from the UI perspective
   })
+
+  // ── Execute task plan (user chose sequential or parallel) ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_EXECUTE_PLAN,
+    async (
+      event,
+      args: { conversationId: string; strategy: ExecutionStrategy; tasks: DecomposedTask[] }
+    ) => {
+      validateSender(event)
+
+      const { conversationId, strategy, tasks } = args
+      log.info(
+        `Executing plan: strategy=${strategy}, tasks=${tasks.length}, conversation=${conversationId}`
+      )
+
+      // Determine mode from conversation
+      const conversation = conversationRepository.findById(conversationId)
+      const mode: ConversationMode = (conversation?.mode as ConversationMode) ?? 'build'
+
+      // Set workspace path on the pool service
+      const workspacePath = generalistService.getWorkspacePath()
+      if (!workspacePath) {
+        throw new Error('No workspace path — generalist not started')
+      }
+      specialistPoolService.setWorkspacePath(workspacePath)
+
+      // Forward task progress events to the renderer
+      const onTaskProgress = (progress: TaskExecutionProgress): void => {
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PROGRESS, progress)
+
+        // Emit agent status updates so the AgentMonitor panel tracks each specialist
+        mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, {
+          agentId: `${progress.specialist}-${progress.taskId}`,
+          agentType: progress.specialist,
+          status:
+            progress.status === 'running'
+              ? 'writing'
+              : progress.status === 'completed'
+                ? 'completed'
+                : progress.status === 'failed'
+                  ? 'failed'
+                  : 'idle',
+          currentTask: tasks.find((t) => t.id === progress.taskId)?.description,
+          elapsedMs: 0,
+          tokenUsage: 0
+        })
+      }
+
+      // Forward streaming chunks from each specialist to the chat
+      const onTaskChunk = (data: { taskId: string; specialist: string; chunk: string }): void => {
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+          conversationId,
+          chunk: data.chunk,
+          role: 'coordinator'
+        })
+      }
+
+      const onAllComplete = (): void => {
+        log.info('All specialist tasks completed')
+
+        // Save a summary message
+        const summaryLines = tasks
+          .map((t) => `- **${t.specialist}** (${t.id}): ${t.description}`)
+          .join('\n')
+        const summaryContent = `## Task Execution Complete (${strategy})\n\n${summaryLines}`
+        const savedMsg = messageRepository.create(conversationId, 'coordinator', summaryContent)
+
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+          conversationId,
+          messageId: savedMsg.id
+        })
+
+        // Clean up
+        specialistPoolService.removeListener('taskProgress', onTaskProgress)
+        specialistPoolService.removeListener('taskChunk', onTaskChunk)
+        specialistPoolService.removeListener('allComplete', onAllComplete)
+      }
+
+      specialistPoolService.on('taskProgress', onTaskProgress)
+      specialistPoolService.on('taskChunk', onTaskChunk)
+      specialistPoolService.on('allComplete', onAllComplete)
+
+      try {
+        if (strategy === 'parallel') {
+          await specialistPoolService.executeParallel(tasks, mode)
+        } else {
+          await specialistPoolService.executeSequential(tasks, mode)
+        }
+      } catch (error) {
+        log.error('Plan execution failed:', error)
+        const errorMsg = `**Execution Error:** ${(error as Error).message}`
+        const savedMsg = messageRepository.create(conversationId, 'coordinator', errorMsg)
+
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+          conversationId,
+          chunk: errorMsg,
+          role: 'coordinator'
+        })
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+          conversationId,
+          messageId: savedMsg.id
+        })
+      }
+    }
+  )
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_UPDATE_MODE,
@@ -394,6 +498,13 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
 
       const updated = conversationRepository.updateMode(args.conversationId, args.mode)
       if (!updated) throw new Error('Conversation not found')
+
+      // Restart generalist CLI session with the new permission mode
+      if (generalistService.getMode() !== args.mode) {
+        log.info(`Mode changed to "${args.mode}" — restarting generalist session`)
+        await generalistService.switchMode(args.mode)
+      }
+
       return updated
     }
   )
@@ -403,7 +514,11 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
     async (event, args: { conversationId: string; title: string }) => {
       validateSender(event)
 
-      if (!args || typeof args.conversationId !== 'string' || args.conversationId.trim().length === 0) {
+      if (
+        !args ||
+        typeof args.conversationId !== 'string' ||
+        args.conversationId.trim().length === 0
+      ) {
         throw new Error('Invalid conversation ID')
       }
       if (typeof args.title !== 'string' || args.title.trim().length === 0) {
@@ -419,36 +534,118 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
     }
   )
 
-  ipcMain.handle(
-    IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE,
-    async (event, args: { dataUrl: string }) => {
-      validateSender(event)
+  ipcMain.handle(IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE, async (event, args: { dataUrl: string }) => {
+    validateSender(event)
 
-      if (!args?.dataUrl || typeof args.dataUrl !== 'string') {
-        throw new Error('Invalid image data')
-      }
-
-      // Extract base64 data from data URL
-      const matches = args.dataUrl.match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/)
-      if (!matches) {
-        throw new Error('Invalid image data URL format')
-      }
-
-      const ext = matches[1]
-      const base64Data = matches[2]
-      const buffer = Buffer.from(base64Data, 'base64')
-
-      // Save to temp directory
-      const { join } = await import('node:path')
-      const { writeFileSync, mkdirSync } = await import('node:fs')
-      const tempDir = join(app.getPath('userData'), 'clipboard-images')
-      mkdirSync(tempDir, { recursive: true })
-
-      const filename = `clipboard-${Date.now()}.${ext}`
-      const filePath = join(tempDir, filename)
-      writeFileSync(filePath, buffer)
-
-      return filePath
+    if (!args?.dataUrl || typeof args.dataUrl !== 'string') {
+      throw new Error('Invalid image data')
     }
-  )
+
+    // Extract base64 data from data URL
+    const matches = args.dataUrl.match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/)
+    if (!matches) {
+      throw new Error('Invalid image data URL format')
+    }
+
+    const ext = matches[1]
+    const base64Data = matches[2]
+    const buffer = Buffer.from(base64Data, 'base64')
+
+    // Save to temp directory
+    const { join } = await import('node:path')
+    const { writeFileSync, mkdirSync } = await import('node:fs')
+    const tempDir = join(app.getPath('userData'), 'clipboard-images')
+    mkdirSync(tempDir, { recursive: true })
+
+    const filename = `clipboard-${Date.now()}.${ext}`
+    const filePath = join(tempDir, filename)
+    writeFileSync(filePath, buffer)
+
+    return filePath
+  })
+}
+
+/**
+ * Fallback: runs the orchestrator in single-process mode (legacy behavior)
+ * when task decomposition fails.
+ */
+async function runLegacyOrchestrator(
+  mainWindow: BrowserWindow,
+  conversationId: string,
+  handoff: HandoffEvent
+): Promise<void> {
+  let orchestratorContent = ''
+
+  const onOrchestratorChunk = (chunk: StreamChunk): void => {
+    if (chunk.type === 'text' && chunk.content) {
+      orchestratorContent += chunk.content
+      mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+        conversationId,
+        chunk: chunk.content,
+        role: 'coordinator'
+      })
+    } else if (chunk.type === 'tool_use') {
+      mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+        conversationId,
+        chunk: '',
+        role: 'coordinator',
+        toolActivity: {
+          id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          toolName: chunk.toolName ?? 'Unknown',
+          status: 'running',
+          input: chunk.toolInput,
+          startedAt: Date.now()
+        }
+      })
+    } else if (chunk.type === 'tool_result') {
+      let toolInputSummary: string | undefined
+      if (chunk.content) {
+        try {
+          const parsed = JSON.parse(chunk.content) as Record<string, unknown>
+          toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed)
+        } catch {
+          toolInputSummary = chunk.content.slice(0, 120)
+        }
+      }
+      mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+        conversationId,
+        chunk: '',
+        role: 'coordinator',
+        toolActivity: {
+          id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          toolName: chunk.toolName ?? 'Unknown',
+          status: 'completed',
+          input: toolInputSummary,
+          completedAt: Date.now()
+        }
+      })
+    } else if (chunk.type === 'error') {
+      orchestratorContent += `\n\n**Error:** ${chunk.error}`
+      mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+        conversationId,
+        chunk: `\n\n**Error:** ${chunk.error}`,
+        role: 'coordinator'
+      })
+    }
+  }
+
+  const onOrchestratorComplete = (): void => {
+    const savedMsg = messageRepository.create(
+      conversationId,
+      'coordinator',
+      orchestratorContent || '_No response received from orchestrator._'
+    )
+
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+      conversationId,
+      messageId: savedMsg.id
+    })
+
+    orchestratorService.removeListener('chunk', onOrchestratorChunk)
+    orchestratorService.removeListener('complete', onOrchestratorComplete)
+  }
+
+  orchestratorService.on('chunk', onOrchestratorChunk)
+  orchestratorService.on('complete', onOrchestratorComplete)
+  await orchestratorService.send(handoff.summary, conversationId, handoff.mode)
 }

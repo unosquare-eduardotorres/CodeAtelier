@@ -58,6 +58,7 @@ interface SettingsState {
   saveFile: (filePath: string, content: string) => Promise<void>
   computeSyncDiff: (workspacePath: string) => Promise<void>
   applySync: (workspacePath: string, options?: { skipRemoved?: boolean }) => Promise<SyncResult | null>
+  cleanAndReactivate: (workspacePath: string) => Promise<void>
   dismissSync: () => void
   reset: () => void
 }
@@ -276,6 +277,29 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       set({ isSyncing: false, syncError: (error as Error).message })
       return null
     }
+  },
+
+  cleanAndReactivate: async (workspacePath: string) => {
+    // Step 1: Clean existing deployment
+    await window.api.cleanActivation({ workspacePath })
+
+    // Step 2: Refresh scan (will now show needsActivation = true)
+    const status = (await window.api.scanWorkspaceClaude({
+      workspacePath
+    })) as WorkspaceClaudeStatus
+    set({
+      claudeStatus: status,
+      agents: [],
+      skills: [],
+      activationResult: null,
+      activationError: null,
+      activationLog: [],
+      pendingClaudeMd: null
+    })
+
+    // Step 3: Immediately trigger re-activation
+    const { activateWorkspace } = useSettingsStore.getState()
+    await activateWorkspace(workspacePath)
   },
 
   dismissSync: () => {

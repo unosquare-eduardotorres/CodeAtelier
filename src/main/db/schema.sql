@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
-  summary TEXT
+  summary TEXT,
+  claude_session_id TEXT
 );
 
 -- Messages: individual chat messages

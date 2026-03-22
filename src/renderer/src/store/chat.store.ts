@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import type { Conversation, ConversationMode, Message, ToolActivity } from '../../../shared/types'
+import type {
+  Conversation,
+  ConversationMode,
+  ExecutionStrategy,
+  Message,
+  TaskExecutionProgress,
+  TaskPlan,
+  ToolActivity
+} from '../../../shared/types'
 
 interface HandoffState {
   summary: string
@@ -17,6 +25,14 @@ interface ChatState {
   activeHandoff: HandoffState | null
   toolActivities: ToolActivity[]
 
+  // Task plan state
+  activeTaskPlan: TaskPlan | null
+  taskProgress: Map<string, TaskExecutionProgress>
+  isExecutingPlan: boolean
+
+  // Compact suggestion state
+  compactSuggestion: { level: string; inputTokens: number } | null
+
   loadConversations: (workspaceId: string) => Promise<void>
   createConversation: (workspaceId: string, mode?: ConversationMode) => Promise<void>
   selectConversation: (id: string) => Promise<void>
@@ -31,6 +47,20 @@ interface ChatState {
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => void
   setHandoff: (handoff: HandoffState) => void
   clearHandoff: () => void
+
+  // Slash command actions
+  clearDisplay: () => void
+  appendLocalMessage: (content: string) => void
+
+  // Compact suggestion
+  setCompactSuggestion: (data: { level: string; inputTokens: number } | null) => void
+
+  // Task plan actions
+  setTaskPlan: (plan: TaskPlan) => void
+  updateTaskProgress: (progress: TaskExecutionProgress) => void
+  executePlan: (strategy: ExecutionStrategy) => Promise<void>
+  clearTaskPlan: () => void
+
   reset: () => void
 }
 
@@ -43,6 +73,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: false,
   activeHandoff: null,
   toolActivities: [],
+  activeTaskPlan: null,
+  taskProgress: new Map(),
+  isExecutingPlan: false,
+  compactSuggestion: null,
 
   loadConversations: async (workspaceId: string) => {
     try {
@@ -65,32 +99,55 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   deleteConversation: async (id: string) => {
-    await window.api.deleteConversation({ conversationId: id });
-    const { activeConversation, conversations } = get();
-    const newConversations = conversations.filter((c) => c.id !== id);
+    await window.api.deleteConversation({ conversationId: id })
+    const { activeConversation, conversations } = get()
+    const newConversations = conversations.filter((c) => c.id !== id)
 
     set({
       conversations: newConversations,
       activeConversation: activeConversation?.id === id ? null : activeConversation,
       messages: activeConversation?.id === id ? [] : get().messages
-    });
+    })
   },
 
   updateMode: async (mode: ConversationMode) => {
     const { activeConversation } = get()
     if (!activeConversation) return
 
-    const updated = await window.api.updateConversationMode({
-      conversationId: activeConversation.id,
-      mode
-    }) as Conversation
-
+    // Optimistic update — immediately reflect in UI
+    const optimistic = { ...activeConversation, mode }
     set((state) => ({
-      activeConversation: updated,
+      activeConversation: optimistic,
       conversations: state.conversations.map((c) =>
-        c.id === updated.id ? updated : c
+        c.id === activeConversation.id ? optimistic : c
       )
     }))
+
+    try {
+      const updated = (await window.api.updateConversationMode({
+        conversationId: activeConversation.id,
+        mode
+      })) as Conversation
+
+      // Reconcile with DB response
+      set((state) => ({
+        activeConversation:
+          state.activeConversation?.id === updated.id ? updated : state.activeConversation,
+        conversations: state.conversations.map((c) => (c.id === updated.id ? updated : c))
+      }))
+    } catch (error) {
+      console.error('Failed to update mode:', error)
+      // Rollback optimistic update
+      set((state) => ({
+        activeConversation:
+          state.activeConversation?.id === activeConversation.id
+            ? activeConversation
+            : state.activeConversation,
+        conversations: state.conversations.map((c) =>
+          c.id === activeConversation.id ? activeConversation : c
+        )
+      }))
+    }
   },
 
   selectConversation: async (id: string) => {
@@ -99,6 +156,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const messages = await window.api.getMessages({ conversationId: id })
     set({ activeConversation: conversation, messages, streamingContent: '', isStreaming: false })
+
+    // Sync generalist CLI mode with the conversation's persisted mode
+    try {
+      await window.api.updateConversationMode({
+        conversationId: conversation.id,
+        mode: conversation.mode
+      })
+    } catch (error) {
+      console.error('Failed to sync mode on conversation select:', error)
+    }
   },
 
   renameConversation: async (id: string, title: string) => {
@@ -203,11 +270,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } else if (activeConversation) {
       // No streaming content received — reload messages from DB
       // The backend saved a message (possibly an error or "No response received")
-      window.api.getMessages({ conversationId: activeConversation.id }).then((messages) => {
-        set({ messages: messages as Message[], streamingContent: '', isStreaming: false, toolActivities: [] })
-      }).catch(() => {
-        set({ streamingContent: '', isStreaming: false, toolActivities: [] })
-      })
+      window.api
+        .getMessages({ conversationId: activeConversation.id })
+        .then((messages) => {
+          set({
+            messages: messages as Message[],
+            streamingContent: '',
+            isStreaming: false,
+            toolActivities: []
+          })
+        })
+        .catch(() => {
+          set({ streamingContent: '', isStreaming: false, toolActivities: [] })
+        })
     } else {
       set({ streamingContent: '', isStreaming: false, toolActivities: [] })
     }
@@ -221,6 +296,74 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ activeHandoff: null })
   },
 
+  setTaskPlan: (plan: TaskPlan) => {
+    set({ activeTaskPlan: plan, taskProgress: new Map(), isExecutingPlan: false })
+  },
+
+  updateTaskProgress: (progress: TaskExecutionProgress) => {
+    set((state) => {
+      const updated = new Map(state.taskProgress)
+      updated.set(progress.taskId, progress)
+
+      // Check if all tasks are done
+      const allDone = state.activeTaskPlan?.tasks.every((t) => {
+        const p = updated.get(t.id)
+        return p?.status === 'completed' || p?.status === 'failed'
+      })
+
+      return {
+        taskProgress: updated,
+        isExecutingPlan: !allDone
+      }
+    })
+  },
+
+  executePlan: async (strategy: ExecutionStrategy) => {
+    const { activeTaskPlan } = get()
+    if (!activeTaskPlan) return
+
+    set({ isExecutingPlan: true, isStreaming: true, streamingContent: '' })
+
+    try {
+      await window.api.executePlan({
+        conversationId: activeTaskPlan.conversationId,
+        strategy,
+        tasks: activeTaskPlan.tasks
+      })
+    } catch (error) {
+      console.error('Failed to execute plan:', error)
+      set({ isExecutingPlan: false })
+    }
+  },
+
+  clearTaskPlan: () => {
+    set({ activeTaskPlan: null, taskProgress: new Map(), isExecutingPlan: false })
+  },
+
+  setCompactSuggestion: (data) => set({ compactSuggestion: data }),
+
+  clearDisplay: () => {
+    set({ messages: [], streamingContent: '', toolActivities: [] })
+  },
+
+  appendLocalMessage: (content: string) => {
+    const { activeConversation } = get()
+    if (!activeConversation) return
+
+    const localMessage: Message = {
+      id: `local-${Date.now()}`,
+      conversationId: activeConversation.id,
+      role: 'generalist',
+      contentMd: content,
+      attachmentsJson: '[]',
+      createdAt: new Date().toISOString()
+    }
+
+    set((state) => ({
+      messages: [...state.messages, localMessage]
+    }))
+  },
+
   reset: () => {
     set({
       conversations: [],
@@ -230,7 +373,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingRole: 'generalist' as const,
       isStreaming: false,
       activeHandoff: null,
-      toolActivities: []
+      toolActivities: [],
+      activeTaskPlan: null,
+      taskProgress: new Map(),
+      isExecutingPlan: false,
+      compactSuggestion: null
     })
   }
 }))

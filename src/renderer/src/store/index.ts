@@ -4,3 +4,4 @@ export { useWorkspaceStore } from './workspace.store';
 export { useSpecialistStore } from './specialist.store';
 export { useSkillStore } from './skill.store';
 export { useSettingsStore } from './settings.store';
+export { usePixelOfficeStore } from './pixelOffice.store';

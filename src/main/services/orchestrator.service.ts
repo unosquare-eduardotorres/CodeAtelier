@@ -1,11 +1,21 @@
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AgentStatus, ConversationMode, Skill } from '../../shared/types'
+import type {
+  AgentStatus,
+  ConversationMode,
+  DecomposedTask,
+  Skill,
+  TaskPlan
+} from '../../shared/types'
 import { AGENT_IDS } from '../../shared/constants'
 import { orchestratorLogger } from '../logger'
 import { skillRepository, specialistRepository } from '../db/repositories'
-import { PLAN_MODE_SYSTEM_PROMPT, BUILD_MODE_SYSTEM_PROMPT } from './system-prompts'
+import {
+  PLAN_MODE_SYSTEM_PROMPT,
+  BUILD_MODE_SYSTEM_PROMPT,
+  DECOMPOSITION_SYSTEM_PROMPT
+} from './system-prompts'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
 
@@ -90,7 +100,15 @@ export class OrchestratorService extends AgentBaseService {
 
     const augmentedMessage = skillContext ? `${message}${skillContext}` : message
 
-    const args = ['-p', augmentedMessage, '--output-format', 'stream-json', '--verbose', '--allowedTools', 'WebSearch,WebFetch']
+    const args = [
+      '-p',
+      augmentedMessage,
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--allowedTools',
+      'WebSearch,WebFetch'
+    ]
 
     if (mode === 'build') {
       args.push('--dangerously-skip-permissions')
@@ -167,6 +185,118 @@ export class OrchestratorService extends AgentBaseService {
   }
 
   /**
+   * Decomposes a handoff summary into structured sub-tasks via a short `claude -p` call.
+   * Returns a TaskPlan with decomposed tasks assigned to specialists.
+   */
+  async decompose(
+    summary: string,
+    specialists: string[],
+    conversationId: string,
+    mode: ConversationMode
+  ): Promise<TaskPlan> {
+    if (!this.workspacePath) {
+      throw new Error('Orchestrator not started — no workspace path set')
+    }
+
+    // Build specialist list for the prompt
+    const activeSpecialists = specialistRepository.findActive()
+    const relevantSpecialists =
+      specialists.length > 0
+        ? activeSpecialists.filter((s) => specialists.includes(s.agentId))
+        : activeSpecialists
+
+    const specialistList = relevantSpecialists
+      .map(
+        (s) =>
+          `- "${s.agentId}" — ${s.displayName}: ${s.prompt?.substring(0, 150) || 'General specialist'}`
+      )
+      .join('\n')
+
+    const prompt = `Task to decompose: "${summary}"
+
+Available specialists:
+${specialistList}
+
+Decompose this task into sub-tasks and respond with ONLY valid JSON.`
+
+    this.log.info('Decomposing task for specialists:', specialists.join(', '))
+
+    const env = this.buildEnvWithPath()
+
+    const result = await new Promise<string>((resolve, reject) => {
+      const child = spawn(
+        'claude',
+        ['-p', prompt, '--system-prompt', DECOMPOSITION_SYSTEM_PROMPT, '--output-format', 'text'],
+        {
+          cwd: this.workspacePath!,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env
+        }
+      )
+
+      let stdout = ''
+      let stderr = ''
+      child.stdout?.on('data', (data: Buffer) => {
+        stdout += data.toString()
+      })
+      child.stderr?.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+      child.on('exit', (code) => {
+        if (code === 0) resolve(stdout.trim())
+        else reject(new Error(`Decomposition failed (code ${code}): ${stderr.substring(0, 500)}`))
+      })
+      child.on('error', reject)
+
+      // 30s timeout for decomposition
+      setTimeout(() => {
+        try {
+          child.kill('SIGTERM')
+        } catch {
+          /* ignore */
+        }
+        reject(new Error('Task decomposition timed out'))
+      }, 30000)
+    })
+
+    // Parse the JSON response — strip markdown fences if present
+    let jsonStr = result
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (fenceMatch) {
+      jsonStr = fenceMatch[1].trim()
+    }
+
+    let parsed: { tasks: DecomposedTask[] }
+    try {
+      parsed = JSON.parse(jsonStr)
+    } catch {
+      this.log.error('Failed to parse decomposition JSON:', jsonStr.substring(0, 500))
+      throw new Error('Failed to parse task decomposition — LLM returned invalid JSON')
+    }
+
+    if (!parsed.tasks || !Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
+      throw new Error('Task decomposition returned no tasks')
+    }
+
+    // Validate and normalize tasks
+    const tasks: DecomposedTask[] = parsed.tasks.map((t, i) => ({
+      id: t.id || `t${i + 1}`,
+      specialist: t.specialist,
+      description: t.description,
+      dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn : []
+    }))
+
+    this.log.info(`Decomposed into ${tasks.length} tasks`)
+
+    return {
+      conversationId,
+      summary,
+      mode,
+      tasks
+    }
+  }
+
+  /**
    * Uses an LLM call to semantically match the user message against active skills.
    */
   private async matchSkill(message: string, skills: Skill[]): Promise<Skill | null> {
@@ -234,11 +364,7 @@ Respond with only a number (e.g., "1" or "0"):`
     const sessionId = event.session_id as string | undefined
     if (sessionId && this.currentConversationId) {
       this.sessionMap.set(this.currentConversationId, sessionId)
-      this.log.info(
-        'Session ID captured for conversation:',
-        this.currentConversationId,
-        sessionId
-      )
+      this.log.info('Session ID captured for conversation:', this.currentConversationId, sessionId)
     }
 
     // Call base implementation for text emission and status

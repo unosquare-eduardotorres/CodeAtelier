@@ -10,4 +10,5 @@ export { default as MessageList } from './MessageList';
 export { default as ModeToggle } from './ModeToggle';
 export { default as NewChatPopover } from './NewChatPopover';
 export { default as PlanCard } from './PlanCard';
+export { default as TaskPlanCard } from './TaskPlanCard';
 export { default as ToolActivityBlock } from './ToolActivityBlock';

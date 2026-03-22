@@ -9,7 +9,10 @@ interface ModeToggleProps {
 
 export default function ModeToggle({ mode, onChange, disabled }: ModeToggleProps): React.JSX.Element {
   return (
-    <div className="flex items-center bg-gray-800 rounded-lg p-0.5 border border-gray-700/50">
+    <div
+      className="flex items-center bg-gray-800 rounded-lg p-0.5 border border-gray-700/50"
+      title={`Toggle mode (${navigator.platform.toUpperCase().includes('MAC') ? '⌘' : 'Ctrl+'}⇧M)`}
+    >
       <button
         onClick={() => onChange('plan')}
         disabled={disabled}

@@ -1,167 +1,169 @@
 // ── Data Models ──
-export type ConversationMode = 'plan' | 'build';
+export type ConversationMode = 'plan' | 'build'
 
 export interface Workspace {
-  id: string;
-  name: string;
-  repoPath: string;
-  gitRemoteUrl?: string;
-  createdAt: string;
-  lastOpenedAt: string;
-  settingsJson: string;
+  id: string
+  name: string
+  repoPath: string
+  gitRemoteUrl?: string
+  createdAt: string
+  lastOpenedAt: string
+  settingsJson: string
 }
 
 export interface Conversation {
-  id: string;
-  workspaceId: string;
-  title: string;
-  mode: ConversationMode;
-  createdAt: string;
-  status: 'active' | 'archived';
-  summary?: string;
+  id: string
+  workspaceId: string
+  title: string
+  mode: ConversationMode
+  createdAt: string
+  status: 'active' | 'archived'
+  summary?: string
+  /** Claude CLI session ID for --resume support (context persistence) */
+  claudeSessionId?: string
 }
 
 export interface Message {
-  id: string;
-  conversationId: string;
-  role: 'user' | 'coordinator' | 'specialist' | 'generalist';
-  agentId?: string;
-  contentMd: string;
-  attachmentsJson: string;
-  createdAt: string;
+  id: string
+  conversationId: string
+  role: 'user' | 'coordinator' | 'specialist' | 'generalist'
+  agentId?: string
+  contentMd: string
+  attachmentsJson: string
+  createdAt: string
 }
 
 export interface Attachment {
-  id: string;
-  conversationId: string;
-  filename: string;
-  mimeType?: string;
-  filePath: string;
-  extractedText?: string;
-  tokenCount: number;
-  createdAt: string;
+  id: string
+  conversationId: string
+  filename: string
+  mimeType?: string
+  filePath: string
+  extractedText?: string
+  tokenCount: number
+  createdAt: string
 }
 
 export interface AgentStatus {
-  agentId: string;
-  agentType: string;
-  status: 'idle' | 'thinking' | 'writing' | 'reviewing' | 'completed' | 'failed';
-  currentTask?: string;
-  elapsedMs: number;
-  tokenUsage: number;
+  agentId: string
+  agentType: string
+  status: 'idle' | 'thinking' | 'writing' | 'reviewing' | 'completed' | 'failed'
+  currentTask?: string
+  elapsedMs: number
+  tokenUsage: number
 }
 
 // ── Tool Activity ──
 export interface ToolActivity {
-  id: string;
-  toolName: string;
-  status: 'running' | 'completed' | 'error';
-  input?: string;
-  startedAt: number;
-  completedAt?: number;
+  id: string
+  toolName: string
+  status: 'running' | 'completed' | 'error'
+  input?: string
+  startedAt: number
+  completedAt?: number
 }
 
 // ── Specialist & Skill Models ──
 export interface Specialist {
-  id: string;
-  agentId: string;
-  displayName: string;
-  icon: string;
-  color: string;
-  prompt: string;
-  priority: number;
-  isActive: boolean;
-  sourceYaml: string | null;
-  skills?: Skill[];
-  createdAt: string;
-  updatedAt: string;
+  id: string
+  agentId: string
+  displayName: string
+  icon: string
+  color: string
+  prompt: string
+  priority: number
+  isActive: boolean
+  sourceYaml: string | null
+  skills?: Skill[]
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Skill {
-  id: string;
-  name: string;
-  description: string;
-  filename: string;
-  filePath: string;
-  isActive: boolean;
-  lastUpdatedDate: string | null;
-  createdAt: string;
-  updatedAt: string;
+  id: string
+  name: string
+  description: string
+  filename: string
+  filePath: string
+  isActive: boolean
+  lastUpdatedDate: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface CreateSpecialistInput {
-  agentId: string;
-  displayName: string;
-  icon?: string;
-  color?: string;
-  prompt?: string;
-  priority?: number;
+  agentId: string
+  displayName: string
+  icon?: string
+  color?: string
+  prompt?: string
+  priority?: number
 }
 
 export interface UpdateSpecialistInput {
-  displayName?: string;
-  icon?: string;
-  color?: string;
-  prompt?: string;
-  priority?: number;
-  isActive?: boolean;
+  displayName?: string
+  icon?: string
+  color?: string
+  prompt?: string
+  priority?: number
+  isActive?: boolean
 }
 
 // ── Workspace Deploy Models ──
 
 /** Represents a skill directory discovered on the filesystem */
 export interface DiscoveredSkill {
-  name: string;
-  dirPath: string;
-  hasSkillMd: boolean;
-  referenceFiles: string[];
+  name: string
+  dirPath: string
+  hasSkillMd: boolean
+  referenceFiles: string[]
   frontmatter: {
-    name?: string;
-    description?: string;
-  } | null;
-  isActive: boolean;
-  lastUpdated: string | null;
-  source: 'master' | 'workspace';
+    name?: string
+    description?: string
+  } | null
+  isActive: boolean
+  lastUpdated: string | null
+  source: 'master' | 'workspace'
 }
 
 /** Represents an agent YAML discovered on the filesystem */
 export interface DiscoveredAgent {
-  filename: string;
-  filePath: string;
+  filename: string
+  filePath: string
   parsed: {
-    name: string;
-    description: string;
-    model: string;
-    tools: string[];
-    skills: string[];
-  };
-  bodyContent: string;
-  isActive: boolean;
-  isDeployed: boolean;
-  source: 'master' | 'workspace';
+    name: string
+    description: string
+    model: string
+    tools: string[]
+    skills: string[]
+  }
+  bodyContent: string
+  isActive: boolean
+  isDeployed: boolean
+  source: 'master' | 'workspace'
 }
 
 /** Result of scanning a workspace's .claude/ status */
 export interface WorkspaceClaudeStatus {
-  hasClaudeDir: boolean;
-  hasClaudeMd: boolean;
-  hasAgentsDir: boolean;
-  hasSkillsDir: boolean;
-  deployedAgents: string[];
-  deployedSkills: string[];
-  claudeMdPreview: string | null;
+  hasClaudeDir: boolean
+  hasClaudeMd: boolean
+  hasAgentsDir: boolean
+  hasSkillsDir: boolean
+  deployedAgents: string[]
+  deployedSkills: string[]
+  claudeMdPreview: string | null
 }
 
 /** Result of the Opus activation flow */
 export interface ActivationResult {
-  success: boolean;
-  selectedAgents: string[];
-  selectedSkills: string[];
-  error?: string;
+  success: boolean
+  selectedAgents: string[]
+  selectedSkills: string[]
+  error?: string
   // CLAUDE.md diff data for user review
-  existingClaudeMd: string | null;
-  proposedClaudeMd: string | null;
-  claudeMdWritten: boolean;
+  existingClaudeMd: string | null
+  proposedClaudeMd: string | null
+  claudeMdWritten: boolean
 }
 
 /** Progress event during Opus activation */
@@ -171,107 +173,148 @@ export interface ActivationProgressEvent {
   timestamp: number
 }
 
+// ── Task Decomposition & Parallel Execution ──
+
+export type ExecutionStrategy = 'sequential' | 'parallel'
+
+/** A single decomposed sub-task assigned to a specialist */
+export interface DecomposedTask {
+  id: string
+  specialist: string
+  description: string
+  dependsOn: string[]
+}
+
+/** The full task plan returned by the orchestrator's decomposition step */
+export interface TaskPlan {
+  conversationId: string
+  summary: string
+  mode: ConversationMode
+  tasks: DecomposedTask[]
+}
+
+/** Progress event for an individual specialist task */
+export interface TaskExecutionProgress {
+  taskId: string
+  specialist: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  output?: string
+  error?: string
+}
+
 // ── YAML ↔ DB Sync Models ──
 
 export interface SyncDiff {
   // Specialists
-  newSpecialists: DiscoveredAgent[];
+  newSpecialists: DiscoveredAgent[]
   updatedSpecialists: {
-    agent: DiscoveredAgent;
-    dbRecord: Specialist;
-    changes: string[];
-  }[];
-  removedSpecialists: Specialist[];
-  unchangedSpecialists: Specialist[];
+    agent: DiscoveredAgent
+    dbRecord: Specialist
+    changes: string[]
+  }[]
+  removedSpecialists: Specialist[]
+  unchangedSpecialists: Specialist[]
 
   // Skills
-  newSkills: DiscoveredSkill[];
-  removedSkills: Skill[];
-  unchangedSkills: Skill[];
+  newSkills: DiscoveredSkill[]
+  removedSkills: Skill[]
+  unchangedSkills: Skill[]
 
   // Summary
-  hasChanges: boolean;
+  hasChanges: boolean
 }
 
 export interface SyncResult {
-  imported: number;
-  updated: number;
-  deactivated: number;
-  skillsImported: number;
-  errors: string[];
+  imported: number
+  updated: number
+  deactivated: number
+  skillsImported: number
+  errors: string[]
 }
 
 // ── IPC Channel Map (type-safe) ──
 export interface IpcChannels {
-  'workspace:list': { args: void; return: Workspace[] };
-  'workspace:create': { args: { name: string; repoPath: string }; return: Workspace };
-  'workspace:open': { args: { id: string }; return: Workspace };
-  'workspace:delete': { args: { id: string }; return: void };
+  'workspace:list': { args: void; return: Workspace[] }
+  'workspace:create': { args: { name: string; repoPath: string }; return: Workspace }
+  'workspace:open': { args: { id: string }; return: Workspace }
+  'workspace:delete': { args: { id: string }; return: void }
   'chat:sendMessage': {
-    args: { conversationId: string; text: string; attachments?: string[] };
-    return: void;
-  };
-  'chat:getConversations': { args: { workspaceId: string }; return: Conversation[] };
+    args: { conversationId: string; text: string; attachments?: string[] }
+    return: void
+  }
+  'chat:getConversations': { args: { workspaceId: string }; return: Conversation[] }
   'chat:createConversation': {
-    args: { workspaceId: string; title?: string; mode?: ConversationMode };
-    return: Conversation;
-  };
-  'chat:getMessages': { args: { conversationId: string }; return: Message[] };
-  'chat:deleteConversation': { args: { conversationId: string }; return: void };
+    args: { workspaceId: string; title?: string; mode?: ConversationMode }
+    return: Conversation
+  }
+  'chat:getMessages': { args: { conversationId: string }; return: Message[] }
+  'chat:deleteConversation': { args: { conversationId: string }; return: void }
   'chat:renameConversation': {
-    args: { conversationId: string; title: string };
-    return: Conversation;
-  };
+    args: { conversationId: string; title: string }
+    return: Conversation
+  }
   'chat:updateMode': {
-    args: { conversationId: string; mode: ConversationMode };
-    return: Conversation;
-  };
-  'agent:getStatuses': { args: void; return: AgentStatus[] };
+    args: { conversationId: string; mode: ConversationMode }
+    return: Conversation
+  }
+  'agent:getStatuses': { args: void; return: AgentStatus[] }
 
   // Specialists
-  'specialist:list': { args: void; return: Specialist[] };
-  'specialist:get': { args: { id: string }; return: Specialist };
-  'specialist:create': { args: CreateSpecialistInput; return: Specialist };
-  'specialist:update': { args: { id: string } & UpdateSpecialistInput; return: Specialist };
-  'specialist:delete': { args: { id: string }; return: void };
-  'specialist:assignSkill': { args: { specialistId: string; skillId: string }; return: void };
-  'specialist:removeSkill': { args: { specialistId: string; skillId: string }; return: void };
+  'specialist:list': { args: void; return: Specialist[] }
+  'specialist:get': { args: { id: string }; return: Specialist }
+  'specialist:create': { args: CreateSpecialistInput; return: Specialist }
+  'specialist:update': { args: { id: string } & UpdateSpecialistInput; return: Specialist }
+  'specialist:delete': { args: { id: string }; return: void }
+  'specialist:assignSkill': { args: { specialistId: string; skillId: string }; return: void }
+  'specialist:removeSkill': { args: { specialistId: string; skillId: string }; return: void }
 
   // Skills
-  'skill:list': { args: void; return: Skill[] };
-  'skill:get': { args: { id: string }; return: Skill };
-  'skill:import': { args: { filePath: string }; return: Skill };
-  'skill:update': { args: { id: string; name?: string; description?: string }; return: Skill };
-  'skill:delete': { args: { id: string }; return: void };
-  'skill:activate': { args: { id: string }; return: Skill };
-  'skill:deactivate': { args: { id: string }; return: Skill };
-  'skill:selectFile': { args: void; return: string | null };
-  'dialog:saveClipboardImage': { args: { dataUrl: string }; return: string };
+  'skill:list': { args: void; return: Skill[] }
+  'skill:get': { args: { id: string }; return: Skill }
+  'skill:import': { args: { filePath: string }; return: Skill }
+  'skill:update': { args: { id: string; name?: string; description?: string }; return: Skill }
+  'skill:delete': { args: { id: string }; return: void }
+  'skill:activate': { args: { id: string }; return: Skill }
+  'skill:deactivate': { args: { id: string }; return: Skill }
+  'skill:selectFile': { args: void; return: string | null }
+  'dialog:saveClipboardImage': { args: { dataUrl: string }; return: string }
 
   // Workspace Deploy
-  'workspace:scanClaude': { args: { workspacePath: string }; return: WorkspaceClaudeStatus };
-  'workspace:activateAgents': { args: { workspacePath: string }; return: ActivationResult };
-  'workspace:readFile': { args: { filePath: string }; return: string };
-  'workspace:writeFile': { args: { filePath: string; content: string }; return: void };
-  'workspace:scanSkills': { args: { workspacePath: string }; return: DiscoveredSkill[] };
-  'workspace:scanAgents': { args: { workspacePath: string }; return: DiscoveredAgent[] };
-  'workspace:cancelActivation': { args: void; return: void };
+  'workspace:scanClaude': { args: { workspacePath: string }; return: WorkspaceClaudeStatus }
+  'workspace:activateAgents': { args: { workspacePath: string }; return: ActivationResult }
+  'workspace:readFile': { args: { filePath: string }; return: string }
+  'workspace:writeFile': { args: { filePath: string; content: string }; return: void }
+  'workspace:scanSkills': { args: { workspacePath: string }; return: DiscoveredSkill[] }
+  'workspace:scanAgents': { args: { workspacePath: string }; return: DiscoveredAgent[] }
+  'workspace:cancelActivation': { args: void; return: void }
+  'workspace:cleanActivation': {
+    args: { workspacePath: string; removeClaudeMd?: boolean }
+    return: void
+  }
+
+  // Task Execution
+  'chat:executePlan': {
+    args: { conversationId: string; strategy: ExecutionStrategy; tasks: DecomposedTask[] }
+    return: void
+  }
 
   // Agent Sync
-  'sync:computeDiff': { args: { workspacePath: string }; return: SyncDiff };
-  'sync:apply': { args: { workspacePath: string; skipRemoved?: boolean }; return: SyncResult };
+  'sync:computeDiff': { args: { workspacePath: string }; return: SyncDiff }
+  'sync:apply': { args: { workspacePath: string; skipRemoved?: boolean }; return: SyncResult }
 }
 
 // ── IPC Event Channels (main → renderer streaming) ──
 export interface IpcEvents {
-  'chat:messageChunk': { conversationId: string; chunk: string; role: 'coordinator' | 'generalist' };
-  'chat:messageComplete': { conversationId: string; messageId: string };
+  'chat:messageChunk': { conversationId: string; chunk: string; role: 'coordinator' | 'generalist' }
+  'chat:messageComplete': { conversationId: string; messageId: string }
   'chat:handoff': {
-    conversationId: string;
-    summary: string;
-    specialists: string[];
-    mode: ConversationMode;
-  };
-  'agent:statusUpdate': AgentStatus;
-  'workspace:activationProgress': ActivationProgressEvent;
+    conversationId: string
+    summary: string
+    specialists: string[]
+    mode: ConversationMode
+  }
+  'chat:taskPlan': TaskPlan
+  'chat:taskProgress': TaskExecutionProgress
+  'agent:statusUpdate': AgentStatus
+  'workspace:activationProgress': ActivationProgressEvent
 }

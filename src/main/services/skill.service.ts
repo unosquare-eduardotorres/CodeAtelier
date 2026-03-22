@@ -275,10 +275,9 @@ Instructions:
         '-p', prompt,
         '--model', ACTIVATION_MODEL_ID,
         '--output-format', 'text',
-        '--permission-mode', 'plan',
-        '--tools', ''
+        '--permission-mode', 'plan'
       ], {
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'],
         env,
         signal
       });

@@ -158,7 +158,7 @@ export default function SyncReviewModal({
                         {agent.parsed.skills.map((skill) => (
                           <span
                             key={skill}
-                            className="px-1.5 py-0.5 text-[10px] rounded bg-indigo-500/10 text-indigo-400"
+                            className="px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500/10 text-indigo-400 font-medium"
                           >
                             {skill}
                           </span>
@@ -222,7 +222,7 @@ export default function SyncReviewModal({
                       {changes.map((change) => (
                         <span
                           key={change}
-                          className="px-1.5 py-0.5 text-[10px] rounded bg-amber-500/10 text-amber-400"
+                          className="px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/10 text-amber-400 font-medium"
                         >
                           {change}
                         </span>

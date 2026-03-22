@@ -122,7 +122,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
                           {agent.parsed.skills.map((skill) => (
                             <span
                               key={skill}
-                              className="px-1.5 py-0.5 text-[10px] rounded bg-indigo-500/10 text-indigo-400"
+                              className="px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500/10 text-indigo-400 font-medium"
                             >
                               {skill}
                             </span>
@@ -167,7 +167,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
                     {/* Edit button */}
                     <button
                       onClick={() => selectAgent(agent)}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors opacity-0 group-hover:opacity-100"
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors"
                     >
                       Edit
                       <ChevronRight size={12} />

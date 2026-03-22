@@ -194,7 +194,7 @@ export default function ChatPanel(): React.JSX.Element {
       {/* Input - pinned to bottom */}
       <div className="flex-shrink-0 px-6 pb-4 pt-2">
         <AttachmentDropzone attachments={attachments} onAttachmentsChange={setAttachments}>
-          <MessageInput attachments={attachments} />
+          <MessageInput attachments={attachments} onClearAttachments={() => setAttachments([])} />
         </AttachmentDropzone>
       </div>
     </div>

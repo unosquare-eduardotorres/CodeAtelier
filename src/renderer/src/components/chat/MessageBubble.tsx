@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, User, Copy, Check, MessageCircle, Wrench } from 'lucide-react';
+import { Bot, User, Copy, Check, MessageCircle, Wrench, Paperclip } from 'lucide-react';
 import type { Message, ToolActivity } from '../../../../shared/types';
 import PlanCard from './PlanCard';
 import ToolActivityBlock from './ToolActivityBlock';
@@ -65,7 +65,7 @@ function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Eleme
           )}
         </button>
       </div>
-      <pre className="bg-gray-950 p-3 overflow-x-auto text-sm">{children}</pre>
+      <pre className="bg-gray-950 p-3 overflow-x-auto text-sm whitespace-pre-wrap break-words">{children}</pre>
     </div>
   );
 }
@@ -85,6 +85,19 @@ export default function MessageBubble({
   const isUser = message.role === 'user';
   const { updateMode, sendMessage } = useChatStore();
   const avatar = avatarConfig[message.role] ?? avatarConfig.coordinator;
+
+  // Parse attachments from JSON
+  const attachments: string[] = (() => {
+    try {
+      const parsed = JSON.parse(message.attachmentsJson || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const imageAttachments = attachments.filter((p) => /\.(png|jpg|jpeg|gif|webp)$/i.test(p));
+  const fileAttachments = attachments.filter((p) => !/\.(png|jpg|jpeg|gif|webp)$/i.test(p));
 
   // Detect plan blocks in coordinator/generalist messages
   const planRegex = /```plan\n([\s\S]*?)```/;
@@ -111,6 +124,27 @@ export default function MessageBubble({
       if (isBlock) {
         return <code className={`${className} text-sm`}>{children}</code>;
       }
+
+      // Check if the code content is a URL — render as clickable link
+      const text = String(children).trim();
+      const isUrl = /^https?:\/\/\S+$/.test(text);
+      if (isUrl) {
+        return (
+          <a
+            href={text}
+            className="bg-gray-700/50 px-1.5 py-0.5 rounded text-sm text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => {
+              e.preventDefault();
+              if (text) window.open(text, '_blank');
+            }}
+          >
+            {children}
+          </a>
+        );
+      }
+
       return (
         <code className="bg-gray-700/50 px-1.5 py-0.5 rounded text-sm text-indigo-300">
           {children}
@@ -118,7 +152,16 @@ export default function MessageBubble({
       );
     },
     a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-      <a href={href} className="text-indigo-400 hover:text-indigo-300 underline" target="_blank" rel="noreferrer">
+      <a
+        href={href}
+        className="text-indigo-400 hover:text-indigo-300 underline"
+        target="_blank"
+        rel="noreferrer"
+        onClick={(e) => {
+          e.preventDefault();
+          if (href) window.open(href, '_blank');
+        }}
+      >
         {children}
       </a>
     )
@@ -170,6 +213,36 @@ export default function MessageBubble({
               : 'bg-gray-800 text-gray-200 border border-gray-700/50'
           }`}
         >
+          {/* Image attachments */}
+          {imageAttachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {imageAttachments.map((path, idx) => (
+                <img
+                  key={idx}
+                  src={`file://${path}`}
+                  alt={path.split('/').pop() || 'attachment'}
+                  className="max-w-[240px] max-h-[180px] rounded-lg border border-gray-600/50 object-contain cursor-pointer hover:border-indigo-500/50 transition-colors"
+                  onClick={() => window.open(`file://${path}`, '_blank')}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* File attachments */}
+          {fileAttachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {fileAttachments.map((path, idx) => (
+                <span
+                  key={idx}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-700/50 text-xs text-gray-400"
+                >
+                  <Paperclip size={10} />
+                  {path.split('/').pop() || path}
+                </span>
+              ))}
+            </div>
+          )}
+
           {message.contentMd ? (
             <div className={`prose max-w-none ${isUser ? 'prose-invert' : 'prose-invert'}`}>
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>

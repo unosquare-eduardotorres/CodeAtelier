@@ -22,9 +22,14 @@ export function registerOrchestratorIpc(): void {
       return
     }
 
-    // Skip if already running for this workspace
+    // Already running for this workspace — re-send ready event so the renderer
+    // transitions out of 'starting' state (fixes Home → re-select same workspace)
     if (generalistService.isRunning() && generalistService.getWorkspacePath() === workspacePath) {
-      log.info('Generalist already running for:', workspacePath, '— skipping')
+      log.info('Generalist already running for:', workspacePath, '— re-sending ready')
+      const win = BrowserWindow.getAllWindows()[0]
+      if (win) {
+        win.webContents.send(IPC_CHANNELS.ORCHESTRATOR_READY)
+      }
       return
     }
 
