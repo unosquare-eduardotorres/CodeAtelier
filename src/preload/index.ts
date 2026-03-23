@@ -212,6 +212,21 @@ const api = {
   syncSkillToWorkspace: (args: { workspacePath: string; skillName: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.SKILL_SYNC_TO_WORKSPACE, args),
 
+  activateAgent: (args: { workspacePath: string; agentName: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AGENT_ACTIVATE, args),
+
+  deactivateAgent: (args: { workspacePath: string; agentName: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AGENT_DEACTIVATE, args),
+
+  deleteAllAgents: (args: { workspacePath: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DELETE_ALL_AGENTS, args),
+
+  deleteAllSkills: (args: { workspacePath: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DELETE_ALL_SKILLS, args),
+
+  deployAll: (args: { workspacePath: string }): Promise<{ agents: number; skills: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DEPLOY_ALL, args),
+
   // ── Worktrees ──
   listWorktrees: (args: { conversationId: string }): Promise<AgentWorktree[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_LIST, args),

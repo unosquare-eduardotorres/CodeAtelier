@@ -122,6 +122,17 @@ interface Api {
   deleteSkillFromWorkspace: (args: { workspacePath: string; skillName: string }) => Promise<void>
   syncSkillToWorkspace: (args: { workspacePath: string; skillName: string }) => Promise<void>
 
+  // Agent activate/deactivate
+  activateAgent: (args: { workspacePath: string; agentName: string }) => Promise<void>
+  deactivateAgent: (args: { workspacePath: string; agentName: string }) => Promise<void>
+
+  // Bulk delete all agents/skills
+  deleteAllAgents: (args: { workspacePath: string }) => Promise<void>
+  deleteAllSkills: (args: { workspacePath: string }) => Promise<void>
+
+  // Deploy all (inactive) to workspace
+  deployAll: (args: { workspacePath: string }) => Promise<{ agents: number; skills: number }>
+
   // Worktrees
   listWorktrees: (args: { conversationId: string }) => Promise<AgentWorktree[]>
   getWorktreeDiff: (args: { worktreeId: string }) => Promise<string>
