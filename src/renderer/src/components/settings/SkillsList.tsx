@@ -1,11 +1,5 @@
 import { useState } from 'react'
-import {
-  ChevronRight,
-  Loader2,
-  AlertTriangle,
-  FolderOpen,
-  Trash2
-} from 'lucide-react'
+import { ChevronRight, Loader2, AlertTriangle, FolderOpen, Trash2, RefreshCw } from 'lucide-react'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import { ConfirmDialog } from '@renderer/components/common'
 import SkillImportDropzone from './SkillImportDropzone'
@@ -38,26 +32,24 @@ interface SkillsListProps {
 
 export default function SkillsList({ workspacePath }: SkillsListProps): React.JSX.Element {
   const { skills, selectSkill, loadSkills } = useSettingsStore()
-  const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set())
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
+  const [deleteTarget, setDeleteTarget] = useState<DiscoveredSkill | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
-  const handleToggleDeploy = async (skill: DiscoveredSkill): Promise<void> => {
+  const handleSync = async (skill: DiscoveredSkill): Promise<void> => {
     const id = skill.name
-    setTogglingIds((prev) => new Set(prev).add(id))
+    setSyncingIds((prev) => new Set(prev).add(id))
 
     try {
-      if (skill.isActive && skill.source === 'workspace') {
-        // Undeploy: we'll use the write file endpoint conceptually
-        // In a real implementation this would call a dedicated undeploy IPC
-        // For now just refresh after the backend handles it
-        console.log('Undeploy skill:', skill.name)
-      }
-      // Refresh
+      await window.api.syncSkillToWorkspace({
+        workspacePath,
+        skillName: skill.name
+      })
       await loadSkills(workspacePath)
     } catch (error) {
-      console.error('Failed to toggle skill deployment:', error)
+      console.error('Failed to sync skill:', error)
     } finally {
-      setTogglingIds((prev) => {
+      setSyncingIds((prev) => {
         const next = new Set(prev)
         next.delete(id)
         return next
@@ -67,8 +59,20 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
 
   const handleDeleteConfirm = async (): Promise<void> => {
     if (!deleteTarget) return
-    // Skill deletion only removes DB record per spec
-    setDeleteTarget(null)
+    setDeletingId(deleteTarget.name)
+
+    try {
+      await window.api.deleteSkillFromWorkspace({
+        workspacePath,
+        skillName: deleteTarget.name
+      })
+      await loadSkills(workspacePath)
+    } catch (error) {
+      console.error('Failed to delete skill:', error)
+    } finally {
+      setDeleteTarget(null)
+      setDeletingId(null)
+    }
   }
 
   // Sort: active/workspace first, then by name
@@ -103,12 +107,13 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
           <div className="space-y-2">
             {sortedSkills.map((skill) => {
               const stale = isStale(skill.lastUpdated)
-              const isToggling = togglingIds.has(skill.name)
+              const isSyncing = syncingIds.has(skill.name)
+              const isDeleting = deletingId === skill.name
 
               return (
                 <div
                   key={skill.name}
-                  className="group bg-gray-800/50 border border-gray-700/50 rounded-xl p-4 hover:border-gray-600/50 transition-colors"
+                  className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4 hover:border-gray-600/50 transition-colors"
                 >
                   <div className="flex items-start gap-3">
                     {/* Icon */}
@@ -127,11 +132,8 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
                               : 'bg-gray-600/30 text-gray-500'
                           }`}
                         >
-                          {skill.isActive ? 'Active' : 'Inactive'}
+                          {skill.isActive ? 'Deployed' : 'Not deployed'}
                         </span>
-                        {skill.source === 'master' && !skill.isActive && (
-                          <span className="text-[10px] text-gray-600">(not deployed)</span>
-                        )}
                       </div>
 
                       {skill.frontmatter?.description && (
@@ -164,39 +166,27 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
                       )}
                     </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {/* Deploy toggle */}
+                    {/* Actions — always visible */}
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {/* Sync button */}
                       <button
-                        onClick={() => handleToggleDeploy(skill)}
-                        disabled={isToggling}
-                        className={`relative w-10 h-5 rounded-full transition-colors ${
-                          isToggling
-                            ? 'bg-gray-600 cursor-wait'
-                            : skill.isActive
-                              ? 'bg-indigo-600 hover:bg-indigo-500'
-                              : 'bg-gray-600 hover:bg-gray-500'
-                        }`}
-                        aria-label={skill.isActive ? 'Deactivate skill' : 'Activate skill'}
-                        title={skill.isActive ? 'Undeploy from workspace' : 'Deploy to workspace'}
+                        onClick={() => handleSync(skill)}
+                        disabled={isSyncing}
+                        className="p-1.5 rounded-md hover:bg-indigo-500/20 text-gray-400 hover:text-indigo-400 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                        aria-label={`Sync ${skill.name}`}
+                        title="Sync skill to workspace & CLAUDE.md"
                       >
-                        {isToggling ? (
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <Loader2 size={12} className="text-white animate-spin" />
-                          </div>
+                        {isSyncing ? (
+                          <Loader2 size={14} className="animate-spin" />
                         ) : (
-                          <span
-                            className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
-                              skill.isActive ? 'translate-x-5' : 'translate-x-0.5'
-                            }`}
-                          />
+                          <RefreshCw size={14} />
                         )}
                       </button>
 
                       {/* View button */}
                       <button
                         onClick={() => selectSkill(skill)}
-                        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors opacity-0 group-hover:opacity-100"
+                        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors"
                       >
                         View
                         <ChevronRight size={12} />
@@ -204,12 +194,17 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
 
                       {/* Delete button */}
                       <button
-                        onClick={() => setDeleteTarget(skill.name)}
-                        className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-all"
+                        onClick={() => setDeleteTarget(skill)}
+                        disabled={isDeleting}
+                        className="p-1.5 rounded-md hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors disabled:opacity-50"
                         aria-label={`Delete ${skill.name}`}
-                        title="Delete skill record"
+                        title="Delete skill from workspace & CLAUDE.md"
                       >
-                        <Trash2 size={14} />
+                        {isDeleting ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={14} />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -224,7 +219,7 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
       <ConfirmDialog
         isOpen={deleteTarget !== null}
         title="Delete Skill"
-        message="Remove this skill from the database? The files will remain in .claude/skills/ and CLAUDE.md will not be modified."
+        message={`Remove "${deleteTarget?.name ?? ''}" from this workspace? This will delete the skill directory from .claude/skills/ and remove references from CLAUDE.md.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="danger"

@@ -13,6 +13,8 @@ import {
 import { join } from 'node:path'
 import { ACTIVATION_MODEL_ID } from '../../shared/constants'
 import { deployLogger } from '../logger'
+import { specialistRepository } from '../db/repositories/specialist.repository'
+import { skillRepository } from '../db/repositories/skill.repository'
 import type {
   DiscoveredSkill,
   DiscoveredAgent,
@@ -80,9 +82,7 @@ function parseAgentYaml(content: string): {
 }
 
 /** Parse SKILL.md frontmatter for name/description */
-function parseSkillMdFrontmatter(
-  content: string
-): { name?: string; description?: string } | null {
+function parseSkillMdFrontmatter(content: string): { name?: string; description?: string } | null {
   const match = content.match(/^---\n([\s\S]*?)\n---/)
   if (!match) return null
 
@@ -306,6 +306,21 @@ export class WorkspaceDeployService {
       }
     }
 
+    // Enrich with DB specialist info (accurate isActive + specialistId)
+    try {
+      for (const agent of agents) {
+        const specialist = specialistRepository.findByAgentId(agent.parsed.name)
+        if (specialist) {
+          agent.specialistId = specialist.id
+          agent.isActive = specialist.isActive
+        } else {
+          agent.isActive = false
+        }
+      }
+    } catch {
+      // DB not ready — leave isActive as-is
+    }
+
     return agents
   }
 
@@ -450,6 +465,135 @@ export class WorkspaceDeployService {
     }
   }
 
+  // ── Individual Agent/Skill Delete & Sync ──
+
+  /** Delete a single agent from workspace: remove YAML, clean CLAUDE.md references, remove DB record */
+  deleteAgentFromWorkspace(workspacePath: string, filename: string): void {
+    // 1. Remove agent YAML from workspace
+    this.undeployAgent(workspacePath, filename)
+
+    // 2. Remove agent references from workspace CLAUDE.md
+    this.removeFromClaudeMd(workspacePath, filename.replace(/\.ya?ml$/, ''))
+
+    deployLogger.info(`Deleted agent from workspace: ${filename} in ${workspacePath}`)
+  }
+
+  /** Sync a single agent to workspace: copy YAML from master, update CLAUDE.md, upsert DB record */
+  syncAgentToWorkspace(workspacePath: string, filename: string): void {
+    // 1. Copy agent YAML from master to workspace
+    this.deployAgent(workspacePath, filename)
+
+    // 2. Add agent reference to workspace CLAUDE.md
+    const agentName = filename.replace(/\.ya?ml$/, '')
+    this.addToClaudeMd(workspacePath, 'agent', agentName)
+
+    deployLogger.info(`Synced agent to workspace: ${filename} in ${workspacePath}`)
+  }
+
+  /** Delete a single skill from workspace: remove skill dir, clean CLAUDE.md references, remove DB record */
+  deleteSkillFromWorkspace(workspacePath: string, skillName: string): void {
+    // 1. Remove skill directory from workspace
+    this.undeploySkill(workspacePath, skillName)
+
+    // 2. Remove skill references from workspace CLAUDE.md
+    this.removeFromClaudeMd(workspacePath, skillName)
+
+    deployLogger.info(`Deleted skill from workspace: ${skillName} in ${workspacePath}`)
+  }
+
+  /** Sync a single skill to workspace: copy skill dir from master, update CLAUDE.md, upsert DB record */
+  syncSkillToWorkspace(workspacePath: string, skillName: string): void {
+    // 1. Copy skill directory from master to workspace
+    this.deploySkill(workspacePath, skillName)
+
+    // 2. Add skill reference to workspace CLAUDE.md
+    this.addToClaudeMd(workspacePath, 'skill', skillName)
+
+    deployLogger.info(`Synced skill to workspace: ${skillName} in ${workspacePath}`)
+  }
+
+  /** Remove references to an agent or skill name from workspace CLAUDE.md */
+  private removeFromClaudeMd(workspacePath: string, name: string): void {
+    const claudeMdPath = join(workspacePath, 'CLAUDE.md')
+    if (!existsSync(claudeMdPath)) return
+
+    try {
+      let content = readFileSync(claudeMdPath, 'utf-8')
+      const original = content
+
+      // Remove lines containing the agent/skill name (common patterns in CLAUDE.md)
+      // e.g. references like "| `skill-name` | ..." or "- skill-name" or agent YAML references
+      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const patterns = [
+        // Table row: | `name` | ... |
+        new RegExp(`^\\|[^|]*\`${escapedName}\`[^|]*\\|.*$\\n?`, 'gm'),
+        // List item: - name or * name
+        new RegExp(`^\\s*[-*]\\s+\`?${escapedName}\`?\\s*.*$\\n?`, 'gm')
+      ]
+
+      for (const pattern of patterns) {
+        content = content.replace(pattern, '')
+      }
+
+      if (content !== original) {
+        // Clean up any double blank lines left behind
+        content = content.replace(/\n{3,}/g, '\n\n')
+        writeFileSync(claudeMdPath, content, 'utf-8')
+        deployLogger.info(`Removed references to "${name}" from CLAUDE.md`)
+      }
+    } catch (err) {
+      deployLogger.warn(`Failed to clean CLAUDE.md for "${name}": ${(err as Error).message}`)
+    }
+  }
+
+  /** Add a reference to an agent or skill in workspace CLAUDE.md */
+  private addToClaudeMd(workspacePath: string, type: 'agent' | 'skill', name: string): void {
+    const claudeMdPath = join(workspacePath, 'CLAUDE.md')
+    if (!existsSync(claudeMdPath)) return
+
+    try {
+      const content = readFileSync(claudeMdPath, 'utf-8')
+
+      // Check if already referenced
+      if (content.includes(name)) {
+        return // Already referenced
+      }
+
+      // Determine the section to append to
+      const sectionHeader = type === 'agent' ? '### Available agents' : '### Available skills'
+      const sectionIndex = content.indexOf(sectionHeader)
+
+      if (sectionIndex === -1) {
+        // No dedicated section found — append a note at the end
+        const reference =
+          type === 'agent'
+            ? `\n\n### Available agents\n\n| Agent | Path |\n|-------|------|\n| \`${name}\` | \`.claude/agents/${name}.yml\` |\n`
+            : `\n\n### Available skills\n\n| Skill | Path |\n|-------|------|\n| \`${name}\` | \`.claude/skills/${name}/SKILL.md\` |\n`
+        writeFileSync(claudeMdPath, content + reference, 'utf-8')
+      } else {
+        // Find the end of the table in that section and append a row
+        const afterSection = content.substring(sectionIndex)
+        // Find the last table row in the section (before the next heading or EOF)
+        const nextHeading = afterSection.search(/\n##[^#]/)
+        const sectionEnd = nextHeading === -1 ? content.length : sectionIndex + nextHeading
+
+        const newRow =
+          type === 'agent'
+            ? `| \`${name}\` | \`.claude/agents/${name}.yml\` | — |\n`
+            : `| \`${name}\` | \`.claude/skills/${name}/SKILL.md\` | — |\n`
+
+        const updated = content.substring(0, sectionEnd) + newRow + content.substring(sectionEnd)
+        writeFileSync(claudeMdPath, updated, 'utf-8')
+      }
+
+      deployLogger.info(`Added ${type} "${name}" reference to CLAUDE.md`)
+    } catch (err) {
+      deployLogger.warn(
+        `Failed to update CLAUDE.md for ${type} "${name}": ${(err as Error).message}`
+      )
+    }
+  }
+
   /** Remove all deployed agents, skills, and optionally CLAUDE.md from the workspace */
   cleanActivation(workspacePath: string, removeClaudeMd = false): void {
     const agentsDir = join(workspacePath, '.claude', 'agents')
@@ -548,7 +692,10 @@ export class WorkspaceDeployService {
       const { agentSyncService } = await import('./agent-sync.service')
       const syncResult = agentSyncService.autoSyncNewEntries(workspacePath)
       if (syncResult.imported > 0 || syncResult.skillsImported > 0) {
-        emit('status', `Synced ${syncResult.imported} specialists and ${syncResult.skillsImported} skills to database`)
+        emit(
+          'status',
+          `Synced ${syncResult.imported} specialists and ${syncResult.skillsImported} skills to database`
+        )
       }
     } catch (e) {
       deployLogger.warn('Auto-sync after activation failed:', e)
@@ -718,7 +865,16 @@ Return ONLY the complete CLAUDE.md content as plain text (no JSON wrapping, no c
 
       const child = spawn(
         'claude',
-        ['-p', prompt, '--model', ACTIVATION_MODEL_ID, '--output-format', 'text', '--permission-mode', 'plan'],
+        [
+          '-p',
+          prompt,
+          '--model',
+          ACTIVATION_MODEL_ID,
+          '--output-format',
+          'text',
+          '--permission-mode',
+          'plan'
+        ],
         {
           stdio: ['ignore', 'pipe', 'pipe'],
           env,
@@ -726,7 +882,9 @@ Return ONLY the complete CLAUDE.md content as plain text (no JSON wrapping, no c
         }
       )
 
-      deployLogger.info(`Sonnet activation spawned (no timeout, prompt length: ${prompt.length} chars)`)
+      deployLogger.info(
+        `Sonnet activation spawned (no timeout, prompt length: ${prompt.length} chars)`
+      )
       emit('status', `Sonnet process started (prompt: ${prompt.length} chars)`)
 
       let stdout = ''
@@ -747,7 +905,9 @@ Return ONLY the complete CLAUDE.md content as plain text (no JSON wrapping, no c
 
       child.on('exit', (code) => {
         this.currentAbortController = null
-        deployLogger.info(`Sonnet activation exited with code ${code} (stdout: ${stdout.length} chars, stderr: ${stderr.length} chars)`)
+        deployLogger.info(
+          `Sonnet activation exited with code ${code} (stdout: ${stdout.length} chars, stderr: ${stderr.length} chars)`
+        )
         emit('status', `Sonnet exited with code ${code}`)
 
         if (code === 0 && stdout.trim()) {
@@ -765,6 +925,94 @@ Return ONLY the complete CLAUDE.md content as plain text (no JSON wrapping, no c
         reject(new Error(`Failed to spawn activation call: ${err.message}`))
       })
     })
+  }
+
+  // ── Activate / Deactivate / Delete All / Deploy All ──
+
+  /** Activate agent: set DB is_active=true, add to CLAUDE.md */
+  activateAgent(workspacePath: string, agentName: string): void {
+    const specialist = specialistRepository.findByAgentId(agentName)
+    if (specialist) {
+      specialistRepository.update(specialist.id, { isActive: true })
+    }
+    this.addToClaudeMd(workspacePath, 'agent', agentName)
+    deployLogger.info(`Activated agent: ${agentName}`)
+  }
+
+  /** Deactivate agent: set DB is_active=false, remove from CLAUDE.md */
+  deactivateAgent(workspacePath: string, agentName: string): void {
+    const specialist = specialistRepository.findByAgentId(agentName)
+    if (specialist) {
+      specialistRepository.update(specialist.id, { isActive: false })
+    }
+    this.removeFromClaudeMd(workspacePath, agentName)
+    deployLogger.info(`Deactivated agent: ${agentName}`)
+  }
+
+  /** Delete all agents from workspace: rm .claude/agents/, delete all DB specialist records */
+  deleteAllAgents(workspacePath: string): void {
+    const agentsDir = join(workspacePath, '.claude', 'agents')
+    if (existsSync(agentsDir)) {
+      rmSync(agentsDir, { recursive: true, force: true })
+    }
+    specialistRepository.deleteAll()
+    deployLogger.info(`Deleted all agents from workspace: ${workspacePath}`)
+  }
+
+  /** Delete all skills from workspace: rm .claude/skills/, delete all DB skill records */
+  deleteAllSkills(workspacePath: string): void {
+    const skillsDir = join(workspacePath, '.claude', 'skills')
+    if (existsSync(skillsDir)) {
+      rmSync(skillsDir, { recursive: true, force: true })
+    }
+    skillRepository.deleteAll()
+    deployLogger.info(`Deleted all skills from workspace: ${workspacePath}`)
+  }
+
+  /** Deploy all master agents & skills to workspace with inactive DB records */
+  async deployAllInactive(workspacePath: string): Promise<{ agents: number; skills: number }> {
+    const masterAgents = this.scanMasterAgents()
+    const masterSkills = this.scanMasterSkills()
+
+    // Create directories
+    mkdirSync(join(workspacePath, '.claude', 'agents'), { recursive: true })
+    mkdirSync(join(workspacePath, '.claude', 'skills'), { recursive: true })
+
+    // Deploy all agent YAMLs
+    let agentCount = 0
+    for (const agent of masterAgents) {
+      try {
+        this.deployAgent(workspacePath, agent.filename)
+        agentCount++
+      } catch {
+        /* skip */
+      }
+    }
+
+    // Deploy all skills referenced by agents
+    let skillCount = 0
+    const referencedSkills = new Set<string>()
+    for (const agent of masterAgents) {
+      for (const ref of agent.parsed.skills) referencedSkills.add(ref)
+    }
+    // Also include any standalone master skills
+    for (const skill of masterSkills) {
+      referencedSkills.add(skill.name)
+    }
+    for (const skillName of referencedSkills) {
+      try {
+        this.deploySkill(workspacePath, skillName)
+        skillCount++
+      } catch {
+        /* skip */
+      }
+    }
+
+    // Auto-sync to DB (creates DB records, all inactive due to new default)
+    const { agentSyncService } = await import('./agent-sync.service')
+    agentSyncService.autoSyncNewEntries(workspacePath)
+
+    return { agents: agentCount, skills: skillCount }
   }
 
   /** Shutdown — cancel any in-progress activation call */

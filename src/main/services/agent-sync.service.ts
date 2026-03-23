@@ -310,7 +310,8 @@ export class AgentSyncService {
       color: meta?.color ?? '#6366F1',
       prompt: agent.bodyContent || agent.parsed.description || '',
       priority: meta?.priority ?? 100,
-      sourceYaml: agent.filename
+      sourceYaml: agent.filename,
+      isActive: false
     })
   }
 
@@ -327,7 +328,7 @@ export class AgentSyncService {
       description: discovered.frontmatter?.description ?? '',
       filename,
       filePath: join(discovered.dirPath, 'SKILL.md'),
-      isActive: true,
+      isActive: false,
       lastUpdatedDate: discovered.lastUpdated ?? undefined
     })
   }

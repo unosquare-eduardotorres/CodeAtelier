@@ -69,4 +69,75 @@ export function registerWorkspaceDeployIpc(): void {
       workspaceDeployService.confirmClaudeMd(args.workspacePath, args.content)
     }
   )
+
+  // ── Individual Agent/Skill Delete & Sync ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_DELETE_FROM_WORKSPACE,
+    (_event, args: { workspacePath: string; filename: string }) => {
+      workspaceDeployService.deleteAgentFromWorkspace(args.workspacePath, args.filename)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_SYNC_TO_WORKSPACE,
+    (_event, args: { workspacePath: string; filename: string }) => {
+      workspaceDeployService.syncAgentToWorkspace(args.workspacePath, args.filename)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SKILL_DELETE_FROM_WORKSPACE,
+    (_event, args: { workspacePath: string; skillName: string }) => {
+      workspaceDeployService.deleteSkillFromWorkspace(args.workspacePath, args.skillName)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SKILL_SYNC_TO_WORKSPACE,
+    (_event, args: { workspacePath: string; skillName: string }) => {
+      workspaceDeployService.syncSkillToWorkspace(args.workspacePath, args.skillName)
+    }
+  )
+
+  // ── Activate / Deactivate ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_ACTIVATE,
+    (_event, args: { workspacePath: string; agentName: string }) => {
+      workspaceDeployService.activateAgent(args.workspacePath, args.agentName)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_DEACTIVATE,
+    (_event, args: { workspacePath: string; agentName: string }) => {
+      workspaceDeployService.deactivateAgent(args.workspacePath, args.agentName)
+    }
+  )
+
+  // ── Bulk Delete All ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.DELETE_ALL_AGENTS,
+    (_event, args: { workspacePath: string }) => {
+      workspaceDeployService.deleteAllAgents(args.workspacePath)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.DELETE_ALL_SKILLS,
+    (_event, args: { workspacePath: string }) => {
+      workspaceDeployService.deleteAllSkills(args.workspacePath)
+    }
+  )
+
+  // ── Deploy All (inactive) ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_DEPLOY_ALL,
+    async (_event, args: { workspacePath: string }) => {
+      return workspaceDeployService.deployAllInactive(args.workspacePath)
+    }
+  )
 }

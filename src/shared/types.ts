@@ -98,6 +98,7 @@ export interface CreateSpecialistInput {
   color?: string
   prompt?: string
   priority?: number
+  isActive?: boolean
 }
 
 export interface UpdateSpecialistInput {
@@ -141,6 +142,7 @@ export interface DiscoveredAgent {
   isActive: boolean
   isDeployed: boolean
   source: 'master' | 'workspace'
+  specialistId?: string
 }
 
 /** Result of scanning a workspace's .claude/ status */
@@ -341,6 +343,21 @@ export interface BrainStatus {
   totalEstimatedTokens: number
 }
 
+// ── Brain Feed ──
+export interface BrainFeedProgress {
+  type: 'status' | 'error' | 'complete'
+  message: string
+  source: 'claude-md' | 'codebase' | 'document'
+  timestamp: number
+}
+
+export interface BrainFeedResult {
+  success: boolean
+  source: 'claude-md' | 'codebase' | 'document'
+  filesUpdated: string[]
+  error?: string
+}
+
 // ── Ideas ──
 export interface Idea {
   id: string
@@ -415,6 +432,38 @@ export interface IpcChannels {
     return: void
   }
 
+  // Agent/Skill individual delete & sync
+  'agent:deleteFromWorkspace': {
+    args: { workspacePath: string; filename: string }
+    return: void
+  }
+  'agent:syncToWorkspace': {
+    args: { workspacePath: string; filename: string }
+    return: void
+  }
+  'skill:deleteFromWorkspace': {
+    args: { workspacePath: string; skillName: string }
+    return: void
+  }
+  'skill:syncToWorkspace': {
+    args: { workspacePath: string; skillName: string }
+    return: void
+  }
+
+  // Agent activate/deactivate
+  'agent:activate': { args: { workspacePath: string; agentName: string }; return: void }
+  'agent:deactivate': { args: { workspacePath: string; agentName: string }; return: void }
+
+  // Bulk delete all agents/skills
+  'workspace:deleteAllAgents': { args: { workspacePath: string }; return: void }
+  'workspace:deleteAllSkills': { args: { workspacePath: string }; return: void }
+
+  // Deploy all (inactive) to workspace
+  'workspace:deployAll': {
+    args: { workspacePath: string }
+    return: { agents: number; skills: number }
+  }
+
   // Task Execution
   'chat:executePlan': {
     args: { conversationId: string; strategy: ExecutionStrategy; tasks: DecomposedTask[] }
@@ -451,6 +500,15 @@ export interface IpcChannels {
   'brain:compactFile': { args: { workspacePath: string; fileName: string }; return: BrainFileInfo }
   'brain:compactAll': { args: { workspacePath: string }; return: BrainStatus }
   'brain:updateSetting': { args: { workspaceId: string; brainEnabled: boolean }; return: void }
+
+  // Brain feed
+  'brain:feedClaudeMd': { args: { workspacePath: string }; return: BrainFeedResult }
+  'brain:feedCodebase': { args: { workspacePath: string }; return: BrainFeedResult }
+  'brain:feedDocument': {
+    args: { workspacePath: string; filePath: string }
+    return: BrainFeedResult
+  }
+  'brain:selectDocument': { args: void; return: string | null }
 
   // Tokens
   'token:getWorkspaceSummary': { args: { workspaceId: string }; return: TokenSummary }
@@ -511,4 +569,5 @@ export interface IpcEvents {
     maxRetries: number
   }
   'workspace:activationProgress': ActivationProgressEvent
+  'brain:feedProgress': BrainFeedProgress
 }

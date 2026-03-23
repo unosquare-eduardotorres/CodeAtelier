@@ -91,6 +91,23 @@ export const IPC_CHANNELS = {
   WORKSPACE_CANCEL_ACTIVATION: 'workspace:cancelActivation',
   WORKSPACE_CLEAN_ACTIVATION: 'workspace:cleanActivation',
 
+  // Agent/Skill individual delete & sync
+  AGENT_DELETE_FROM_WORKSPACE: 'agent:deleteFromWorkspace',
+  AGENT_SYNC_TO_WORKSPACE: 'agent:syncToWorkspace',
+  SKILL_DELETE_FROM_WORKSPACE: 'skill:deleteFromWorkspace',
+  SKILL_SYNC_TO_WORKSPACE: 'skill:syncToWorkspace',
+
+  // Agent activate/deactivate
+  AGENT_ACTIVATE: 'agent:activate',
+  AGENT_DEACTIVATE: 'agent:deactivate',
+
+  // Bulk delete all agents/skills
+  DELETE_ALL_AGENTS: 'workspace:deleteAllAgents',
+  DELETE_ALL_SKILLS: 'workspace:deleteAllSkills',
+
+  // Deploy all (inactive) to workspace
+  WORKSPACE_DEPLOY_ALL: 'workspace:deployAll',
+
   // Pixel Office
   PIXEL_OFFICE_POPOUT: 'pixelOffice:popout',
 
@@ -117,6 +134,13 @@ export const IPC_CHANNELS = {
   BRAIN_COMPACT_FILE: 'brain:compactFile',
   BRAIN_COMPACT_ALL: 'brain:compactAll',
   BRAIN_UPDATE_SETTING: 'brain:updateSetting',
+
+  // Brain feed (ingest sources into brain)
+  BRAIN_FEED_CLAUDE_MD: 'brain:feedClaudeMd',
+  BRAIN_FEED_CODEBASE: 'brain:feedCodebase',
+  BRAIN_FEED_DOCUMENT: 'brain:feedDocument',
+  BRAIN_FEED_PROGRESS: 'brain:feedProgress',
+  BRAIN_SELECT_DOCUMENT: 'brain:selectDocument',
 
   // Tokens
   TOKEN_GET_WORKSPACE_SUMMARY: 'token:getWorkspaceSummary',

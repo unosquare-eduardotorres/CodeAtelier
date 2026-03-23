@@ -25,5 +25,6 @@ export const skillLogger = log.scope('Skill')
 export const deployLogger = log.scope('Deploy')
 export const specialistPoolLogger = log.scope('SpecialistPool')
 export const gitWorktreeLogger = log.scope('GitWorktree')
+export const brainFeedLogger = log.scope('BrainFeed')
 
 export default log

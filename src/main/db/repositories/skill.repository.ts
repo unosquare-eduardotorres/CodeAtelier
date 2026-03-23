@@ -115,6 +115,12 @@ export class SkillRepository {
     db.prepare('DELETE FROM skills WHERE id = ?').run(id);
   }
 
+  deleteAll(): void {
+    const db = getDatabase();
+    db.prepare('DELETE FROM specialist_skills').run();
+    db.prepare('DELETE FROM skills').run();
+  }
+
   setActive(id: string, isActive: boolean): Skill {
     const db = getDatabase();
     const row = db.prepare(`

@@ -1,9 +1,11 @@
-import { ipcMain } from 'electron'
+import type { BrowserWindow } from 'electron'
+import { ipcMain, dialog } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { BrainEntry, BrainStatus } from '../../shared/types'
 import { brainService } from '../services/brain.service'
+import { brainFeedService } from '../services/brain-feed.service'
 import { workspaceRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 
@@ -15,7 +17,7 @@ const ALLOWED_BRAIN_FILES = [
   'errors-resolutions.md'
 ]
 
-export function registerBrainIpc(): void {
+export function registerBrainIpc(mainWindow: BrowserWindow): void {
   // Get full brain context for display or prompt injection
   ipcMain.handle(IPC_CHANNELS.BRAIN_GET_CONTEXT, async (event, args: { workspacePath: string }) => {
     validateSender(event)
@@ -127,6 +129,77 @@ export function registerBrainIpc(): void {
       const settings = JSON.parse(workspace.settingsJson || '{}')
       settings.brainEnabled = args.brainEnabled
       workspaceRepository.updateSettings(args.workspaceId, settings)
+    }
+  )
+
+  // ── Brain Feed handlers ──
+
+  // File picker for document ingestion
+  ipcMain.handle(IPC_CHANNELS.BRAIN_SELECT_DOCUMENT, async (event) => {
+    validateSender(event)
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      title: 'Select Document to Ingest',
+      filters: [
+        {
+          name: 'Supported Documents',
+          extensions: ['md', 'txt', 'docx', 'xlsx', 'pdf', 'pptx', 'odt', 'ods', 'rtf']
+        }
+      ]
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
+  // Feed from CLAUDE.md
+  ipcMain.handle(
+    IPC_CHANNELS.BRAIN_FEED_CLAUDE_MD,
+    async (event, args: { workspacePath: string }) => {
+      validateSender(event)
+      if (!args?.workspacePath || typeof args.workspacePath !== 'string') {
+        throw new Error('Invalid workspace path')
+      }
+
+      return brainFeedService.feedFromClaudeMd(args.workspacePath, (progress) => {
+        mainWindow.webContents.send(IPC_CHANNELS.BRAIN_FEED_PROGRESS, progress)
+      })
+    }
+  )
+
+  // Feed from codebase scan
+  ipcMain.handle(
+    IPC_CHANNELS.BRAIN_FEED_CODEBASE,
+    async (event, args: { workspacePath: string }) => {
+      validateSender(event)
+      if (!args?.workspacePath || typeof args.workspacePath !== 'string') {
+        throw new Error('Invalid workspace path')
+      }
+
+      return brainFeedService.feedFromCodebase(args.workspacePath, (progress) => {
+        mainWindow.webContents.send(IPC_CHANNELS.BRAIN_FEED_PROGRESS, progress)
+      })
+    }
+  )
+
+  // Feed from uploaded document
+  ipcMain.handle(
+    IPC_CHANNELS.BRAIN_FEED_DOCUMENT,
+    async (event, args: { workspacePath: string; filePath: string }) => {
+      validateSender(event)
+      if (!args?.workspacePath || typeof args.workspacePath !== 'string') {
+        throw new Error('Invalid workspace path')
+      }
+      if (!args?.filePath || typeof args.filePath !== 'string') {
+        throw new Error('Invalid file path')
+      }
+
+      return brainFeedService.feedFromDocument(
+        args.workspacePath,
+        args.filePath,
+        (progress) => {
+          mainWindow.webContents.send(IPC_CHANNELS.BRAIN_FEED_PROGRESS, progress)
+        }
+      )
     }
   )
 }

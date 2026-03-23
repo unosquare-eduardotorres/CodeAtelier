@@ -26,6 +26,8 @@ import type {
   BrainEntry,
   BrainFileInfo,
   BrainStatus,
+  BrainFeedProgress,
+  BrainFeedResult,
   TokenSummary,
   AgentSessionRecord,
   Idea
@@ -198,6 +200,18 @@ const api = {
   cleanActivation: (args: { workspacePath: string; removeClaudeMd?: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CLEAN_ACTIVATION, args),
 
+  deleteAgentFromWorkspace: (args: { workspacePath: string; filename: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AGENT_DELETE_FROM_WORKSPACE, args),
+
+  syncAgentToWorkspace: (args: { workspacePath: string; filename: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AGENT_SYNC_TO_WORKSPACE, args),
+
+  deleteSkillFromWorkspace: (args: { workspacePath: string; skillName: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SKILL_DELETE_FROM_WORKSPACE, args),
+
+  syncSkillToWorkspace: (args: { workspacePath: string; skillName: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SKILL_SYNC_TO_WORKSPACE, args),
+
   // ── Worktrees ──
   listWorktrees: (args: { conversationId: string }): Promise<AgentWorktree[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_LIST, args),
@@ -247,6 +261,31 @@ const api = {
 
   brainUpdateSetting: (args: { workspaceId: string; brainEnabled: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.BRAIN_UPDATE_SETTING, args),
+
+  // ── Brain Feed ──
+  brainSelectDocument: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_SELECT_DOCUMENT),
+
+  brainFeedClaudeMd: (args: { workspacePath: string }): Promise<BrainFeedResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_FEED_CLAUDE_MD, args),
+
+  brainFeedCodebase: (args: { workspacePath: string }): Promise<BrainFeedResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_FEED_CODEBASE, args),
+
+  brainFeedDocument: (args: {
+    workspacePath: string
+    filePath: string
+  }): Promise<BrainFeedResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_FEED_DOCUMENT, args),
+
+  onBrainFeedProgress: (callback: (data: BrainFeedProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: BrainFeedProgress): void =>
+      callback(data)
+    ipcRenderer.on(IPC_CHANNELS.BRAIN_FEED_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.BRAIN_FEED_PROGRESS, handler)
+    }
+  },
 
   // ── Tokens ──
   getWorkspaceTokenSummary: (args: { workspaceId: string }): Promise<TokenSummary> =>

@@ -54,15 +54,22 @@ AgentStudio/
 │   │   ├── code-planner.yml
 │   │   ├── execution-planner.yml
 │   │   ├── cicd-devops.yml
-│   │   └── cloud-infrastructure.yml
+│   │   ├── cloud-infrastructure.yml
+│   │   └── docs-diagrams-specialist.yml ← Documentation & Mermaid diagrams specialist
 │   └── skills/                   ← Claude Code native skill discovery
 │       ├── electron-pro/
 │       │   └── SKILL.md          ← Electron skill (846 lines + references)
 │       ├── dotnet-architect/
 │       │   ├── SKILL.md          ← .NET/C# architecture skill
 │       │   └── references/       ← EF Core, MSBuild, performance, testing
-│       └── claude-cli/
-│           └── SKILL.md          ← Claude Code CLI integration skill
+│       ├── claude-cli/
+│       │   └── SKILL.md          ← Claude Code CLI integration skill
+│       ├── mermaid-diagrams/
+│       │   ├── SKILL.md          ← Mermaid diagram generation (23 types + references)
+│       │   └── references/       ← Syntax docs per diagram type, theming, troubleshooting
+│       └── design-docs/
+│           ├── SKILL.md          ← Design document templates & code-to-diagram workflows
+│           └── references/       ← Templates (5) + guides (6)
 ├── Agent-Studio-Project-Plan.md  ← Full project plan and specs
 ├── electron-builder.yml          ← Packaging configuration
 ├── electron.vite.config.ts       ← Vite config for main/preload/renderer
@@ -128,6 +135,8 @@ AgentStudio/
 | `tailwind-ux` | `.claude/skills/tailwind-ux/SKILL.md` | ux-ui-specialist |
 | `git-workflow` | `.claude/skills/git-workflow/SKILL.md` | git-github-specialist |
 | `ipc-patterns` | `.claude/skills/ipc-patterns/SKILL.md` | react-architect, electron-architect, agentic-architect |
+| `mermaid-diagrams` | `.claude/skills/mermaid-diagrams/SKILL.md` | docs-diagrams-specialist |
+| `design-docs` | `.claude/skills/design-docs/SKILL.md` | docs-diagrams-specialist |
 
 ### Electron skill trigger
 
@@ -197,7 +206,7 @@ npm run format        # Run Prettier
 - **Generalist-first architecture**: User <-> Generalist (always) -> Orchestrator (on demand) -> Specialists
 - **Generalist**: Long-lived interactive Claude CLI session, always read-only (`--permission-mode plan`). Handles chat, brainstorming, code review. Detects inflection points and hands off to orchestrator via structured handoff blocks.
 - **Orchestrator**: Spawned on-demand when generalist detects implementation work. Uses `claude -p` per handoff with mode-appropriate permissions.
-- **15 agents** (1 generalist entry point + 1 orchestrator + 13 specialists) — agent YAMLs in `.claude/agents/`, specialist data in DB
+- **16 agents** (1 generalist entry point + 1 orchestrator + 14 specialists) — agent YAMLs in `.claude/agents/`, specialist data in DB
 - **IPC pattern**: Renderer calls `window.api.invoke(channel, ...args)` -> preload forwards via `ipcRenderer.invoke` -> main handles via `ipcMain.handle`
 - **Streaming**: Chat messages stream via `ipcRenderer.on` with cleanup functions returned by `window.api.on()`
 - **Database**: SQLite via `better-sqlite3`, schema in `src/main/db/schema.sql`, repositories in `src/main/db/repositories/`

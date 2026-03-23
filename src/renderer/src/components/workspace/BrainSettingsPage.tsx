@@ -1,5 +1,19 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Brain, BarChart3, FileText, Compass, Zap, RefreshCw, Eye, X, Shrink } from 'lucide-react'
+import {
+  Brain,
+  BarChart3,
+  FileText,
+  Compass,
+  Zap,
+  RefreshCw,
+  Eye,
+  X,
+  Shrink,
+  Upload,
+  FolderSearch,
+  Loader2
+} from 'lucide-react'
+import { useDropzone } from 'react-dropzone'
 import { useWorkspaceStore } from '@renderer/store'
 import type { BrainStatus, BrainFileInfo } from '../../../../shared/types'
 
@@ -66,6 +80,9 @@ export default function BrainSettingsPage(): React.JSX.Element {
   const [viewContent, setViewContent] = useState<string | null>(null)
   const [compacting, setCompacting] = useState<string | null>(null)
   const [toggling, setToggling] = useState(false)
+  const [feeding, setFeeding] = useState<'claude-md' | 'codebase' | 'document' | null>(null)
+  const [feedStatus, setFeedStatus] = useState<string | null>(null)
+  const [feedError, setFeedError] = useState<string | null>(null)
 
   const loadBrainInfo = useCallback(async () => {
     if (!activeWorkspace?.repoPath) return
@@ -154,6 +171,103 @@ export default function BrainSettingsPage(): React.JSX.Element {
     }
   }
 
+  // ── Feed Brain handlers ──
+
+  useEffect(() => {
+    const cleanup = window.api.onBrainFeedProgress((progress) => {
+      if (progress.type === 'error') {
+        setFeedError(progress.message)
+      } else if (progress.type === 'complete') {
+        setFeedStatus(progress.message)
+        setFeeding(null)
+        loadBrainInfo()
+      } else {
+        setFeedStatus(progress.message)
+      }
+    })
+    return cleanup
+  }, [loadBrainInfo])
+
+  const handleFeedClaudeMd = async (): Promise<void> => {
+    if (!activeWorkspace?.repoPath || feeding) return
+    setFeeding('claude-md')
+    setFeedError(null)
+    setFeedStatus('Starting...')
+    try {
+      const result = await window.api.brainFeedClaudeMd({
+        workspacePath: activeWorkspace.repoPath
+      })
+      if (!result.success) setFeedError(result.error ?? 'Failed')
+    } catch (err) {
+      setFeedError(String(err))
+    } finally {
+      setFeeding(null)
+    }
+  }
+
+  const handleFeedCodebase = async (): Promise<void> => {
+    if (!activeWorkspace?.repoPath || feeding) return
+    setFeeding('codebase')
+    setFeedError(null)
+    setFeedStatus('Starting...')
+    try {
+      const result = await window.api.brainFeedCodebase({
+        workspacePath: activeWorkspace.repoPath
+      })
+      if (!result.success) setFeedError(result.error ?? 'Failed')
+    } catch (err) {
+      setFeedError(String(err))
+    } finally {
+      setFeeding(null)
+    }
+  }
+
+  const handleFeedDocumentFromPath = async (filePath: string): Promise<void> => {
+    if (!activeWorkspace?.repoPath || feeding) return
+    setFeeding('document')
+    setFeedError(null)
+    setFeedStatus('Starting...')
+    try {
+      const result = await window.api.brainFeedDocument({
+        workspacePath: activeWorkspace.repoPath,
+        filePath
+      })
+      if (!result.success) setFeedError(result.error ?? 'Failed')
+    } catch (err) {
+      setFeedError(String(err))
+    } finally {
+      setFeeding(null)
+    }
+  }
+
+  const handleFeedDocument = async (): Promise<void> => {
+    if (!activeWorkspace?.repoPath || feeding) return
+    const filePath = await window.api.brainSelectDocument()
+    if (!filePath) return
+    await handleFeedDocumentFromPath(filePath)
+  }
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop: (files) => {
+      if (files.length > 0 && activeWorkspace?.repoPath && !feeding) {
+        const file = files[0] as File & { path: string }
+        if (file.path) {
+          handleFeedDocumentFromPath(file.path)
+        }
+      }
+    },
+    accept: {
+      'text/plain': ['.txt', '.md'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/pdf': ['.pdf'],
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+      'application/rtf': ['.rtf']
+    },
+    multiple: false,
+    disabled: feeding !== null
+  })
+
   if (isLoading) {
     return (
       <div className="p-6 flex items-center justify-center">
@@ -200,6 +314,97 @@ export default function BrainSettingsPage(): React.JSX.Element {
             }`}
           />
         </button>
+      </div>
+
+      {/* Feed Brain section */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Upload size={14} className="text-purple-400" />
+          <span className="text-xs font-semibold text-gray-200">Feed Brain</span>
+        </div>
+
+        <p className="text-[11px] text-gray-500">
+          AI analyzes your sources and writes structured summaries to the brain files.
+        </p>
+
+        {/* Action buttons row */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleFeedClaudeMd}
+            disabled={feeding !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors disabled:opacity-50"
+          >
+            {feeding === 'claude-md' ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <FileText size={12} />
+            )}
+            Ingest CLAUDE.md
+          </button>
+
+          <button
+            onClick={handleFeedCodebase}
+            disabled={feeding !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors disabled:opacity-50"
+          >
+            {feeding === 'codebase' ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <FolderSearch size={12} />
+            )}
+            Scan Codebase
+          </button>
+
+          <button
+            onClick={handleFeedDocument}
+            disabled={feeding !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors disabled:opacity-50"
+          >
+            {feeding === 'document' ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Upload size={12} />
+            )}
+            Browse File
+          </button>
+        </div>
+
+        {/* Document drop zone */}
+        <div
+          {...getRootProps()}
+          className={`border border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+            isDragActive
+              ? 'border-purple-400 bg-purple-400/5'
+              : feeding
+                ? 'border-gray-700 opacity-50 cursor-not-allowed'
+                : 'border-gray-600 hover:border-gray-500 hover:bg-gray-800/30'
+          }`}
+        >
+          <input {...getInputProps()} />
+          <Upload size={16} className="mx-auto mb-1.5 text-gray-500" />
+          <p className="text-[11px] text-gray-500">
+            Drop a document or <span className="text-purple-400">click to browse</span>
+          </p>
+          <p className="text-[10px] text-gray-600 mt-0.5">
+            .md .txt .docx .xlsx .pdf .pptx .rtf (max 2MB)
+          </p>
+        </div>
+
+        {/* Progress / status */}
+        {(feedStatus || feedError) && (
+          <div
+            className={`text-[11px] px-3 py-2 rounded-md ${
+              feedError
+                ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                : feeding
+                  ? 'bg-purple-500/10 text-purple-300 border border-purple-500/20'
+                  : 'bg-green-500/10 text-green-400 border border-green-500/20'
+            }`}
+          >
+            {feeding && <Loader2 size={11} className="inline animate-spin mr-1.5" />}
+            {feedError || feedStatus}
+          </div>
+        )}
       </div>
 
       {/* Summary card */}

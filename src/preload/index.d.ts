@@ -27,6 +27,8 @@ import type {
   BrainEntry,
   BrainFileInfo,
   BrainStatus,
+  BrainFeedProgress,
+  BrainFeedResult,
   TokenSummary,
   AgentSessionRecord,
   Idea
@@ -114,6 +116,12 @@ interface Api {
   cancelActivation: () => Promise<void>
   cleanActivation: (args: { workspacePath: string; removeClaudeMd?: boolean }) => Promise<void>
 
+  // Agent/Skill individual delete & sync
+  deleteAgentFromWorkspace: (args: { workspacePath: string; filename: string }) => Promise<void>
+  syncAgentToWorkspace: (args: { workspacePath: string; filename: string }) => Promise<void>
+  deleteSkillFromWorkspace: (args: { workspacePath: string; skillName: string }) => Promise<void>
+  syncSkillToWorkspace: (args: { workspacePath: string; skillName: string }) => Promise<void>
+
   // Worktrees
   listWorktrees: (args: { conversationId: string }) => Promise<AgentWorktree[]>
   getWorktreeDiff: (args: { worktreeId: string }) => Promise<string>
@@ -134,6 +142,13 @@ interface Api {
   brainCompactFile: (args: { workspacePath: string; fileName: string }) => Promise<BrainFileInfo>
   brainCompactAll: (args: { workspacePath: string }) => Promise<BrainStatus>
   brainUpdateSetting: (args: { workspaceId: string; brainEnabled: boolean }) => Promise<void>
+
+  // Brain Feed
+  brainSelectDocument: () => Promise<string | null>
+  brainFeedClaudeMd: (args: { workspacePath: string }) => Promise<BrainFeedResult>
+  brainFeedCodebase: (args: { workspacePath: string }) => Promise<BrainFeedResult>
+  brainFeedDocument: (args: { workspacePath: string; filePath: string }) => Promise<BrainFeedResult>
+  onBrainFeedProgress: (callback: (data: BrainFeedProgress) => void) => () => void
 
   computeSyncDiff: (args: { workspacePath: string }) => Promise<SyncDiff>
   applySync: (args: { workspacePath: string; skipRemoved?: boolean }) => Promise<SyncResult>

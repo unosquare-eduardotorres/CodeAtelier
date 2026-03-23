@@ -65,6 +65,7 @@ export interface CreateSpecialistInput {
   prompt?: string;
   priority?: number;
   sourceYaml?: string | null;
+  isActive?: boolean;
 }
 
 export interface UpdateSpecialistInput {
@@ -105,8 +106,8 @@ export class SpecialistRepository {
   create(data: CreateSpecialistInput): Specialist {
     const db = getDatabase();
     const row = db.prepare(`
-      INSERT INTO specialists (agent_id, display_name, icon, color, prompt, priority, source_yaml)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO specialists (agent_id, display_name, icon, color, prompt, priority, source_yaml, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING *
     `).get(
       data.agentId,
@@ -115,7 +116,8 @@ export class SpecialistRepository {
       data.color ?? '#6366F1',
       data.prompt ?? '',
       data.priority ?? 100,
-      data.sourceYaml ?? null
+      data.sourceYaml ?? null,
+      data.isActive !== undefined ? (data.isActive ? 1 : 0) : 0
     ) as SpecialistRow;
     return mapRow(row);
   }
@@ -155,6 +157,12 @@ export class SpecialistRepository {
   delete(id: string): void {
     const db = getDatabase();
     db.prepare('DELETE FROM specialists WHERE id = ?').run(id);
+  }
+
+  deleteAll(): void {
+    const db = getDatabase();
+    db.prepare('DELETE FROM specialist_skills').run();
+    db.prepare('DELETE FROM specialists').run();
   }
 
   assignSkill(specialistId: string, skillId: string): void {

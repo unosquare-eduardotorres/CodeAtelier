@@ -304,6 +304,11 @@ ${pendingList}
     this.contextCache.delete(workspacePath)
   }
 
+  /** Public cache invalidation for external writers (e.g., brain-feed) */
+  invalidateCachePublic(workspacePath: string): void {
+    this.invalidateCache(workspacePath)
+  }
+
   /** Format a BrainEntry into a markdown block */
   private formatEntry(entry: BrainEntry): string {
     const lines = [
