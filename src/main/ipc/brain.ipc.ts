@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { BrainEntry, BrainStatus } from '../../shared/types'
