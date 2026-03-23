@@ -1,8 +1,8 @@
 import { join } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync } from 'node:fs'
 import { dbLogger } from '../logger'
 import { messageRepository, conversationRepository } from '../db/repositories'
-import type { BrainEntry } from '../../shared/types'
+import type { BrainEntry, BrainFileInfo } from '../../shared/types'
 
 const log = dbLogger
 
@@ -47,7 +47,16 @@ const ERRORS_TEMPLATE = `# Errors & Resolutions
 ---
 `
 
+/** Known brain file names */
+const BRAIN_FILES = ['project-state.md', 'changelog.md', 'decisions-log.md', 'errors-resolutions.md']
+
 class BrainService {
+  /** ~4 chars per token rough estimate for markdown */
+  private static readonly CHARS_PER_TOKEN = 4
+  /** Cached brain context per workspace path — invalidated on write */
+  private contextCache: Map<string, { content: string; timestamp: number }> = new Map()
+  private static readonly CACHE_TTL_MS = 30_000 // 30 seconds
+
   private brainDir(workspacePath: string): string {
     return join(workspacePath, '.brain')
   }
@@ -81,6 +90,7 @@ class BrainService {
 
   /** Append a completed-work entry to changelog.md */
   logCompletion(workspacePath: string, entry: BrainEntry): void {
+    this.invalidateCache(workspacePath)
     const filePath = join(this.brainDir(workspacePath), 'changelog.md')
     if (!existsSync(filePath)) {
       this.initialize(workspacePath)
@@ -93,6 +103,7 @@ class BrainService {
 
   /** Append a decision entry to decisions-log.md */
   logDecision(workspacePath: string, entry: BrainEntry): void {
+    this.invalidateCache(workspacePath)
     const filePath = join(this.brainDir(workspacePath), 'decisions-log.md')
     if (!existsSync(filePath)) {
       this.initialize(workspacePath)
@@ -105,6 +116,7 @@ class BrainService {
 
   /** Append an error+resolution to errors-resolutions.md */
   logError(workspacePath: string, entry: BrainEntry): void {
+    this.invalidateCache(workspacePath)
     const filePath = join(this.brainDir(workspacePath), 'errors-resolutions.md')
     if (!existsSync(filePath)) {
       this.initialize(workspacePath)
@@ -120,6 +132,7 @@ class BrainService {
     workspacePath: string,
     state: { completed: string[]; pending: string[]; activePhase: string }
   ): void {
+    this.invalidateCache(workspacePath)
     const filePath = join(this.brainDir(workspacePath), 'project-state.md')
     if (!existsSync(filePath)) {
       this.initialize(workspacePath)
@@ -162,20 +175,20 @@ ${pendingList}
 
   /** Read all brain context as a single string (for injection into prompts) */
   getContext(workspacePath: string): string {
+    // Check cache first
+    const cached = this.contextCache.get(workspacePath)
+    if (cached && Date.now() - cached.timestamp < BrainService.CACHE_TTL_MS) {
+      return cached.content
+    }
+
     const dir = this.brainDir(workspacePath)
     if (!existsSync(dir)) {
       return ''
     }
 
     const sections: string[] = []
-    const files = [
-      'project-state.md',
-      'changelog.md',
-      'decisions-log.md',
-      'errors-resolutions.md'
-    ]
 
-    for (const fileName of files) {
+    for (const fileName of BRAIN_FILES) {
       const filePath = join(dir, fileName)
       if (existsSync(filePath)) {
         try {
@@ -190,7 +203,11 @@ ${pendingList}
       }
     }
 
-    return sections.length > 0 ? sections.join('\n\n---\n\n') : ''
+    const result = sections.length > 0 ? sections.join('\n\n---\n\n') : ''
+
+    // Cache result
+    this.contextCache.set(workspacePath, { content: result, timestamp: Date.now() })
+    return result
   }
 
   /** Build a conversation summary from messages in DB */
@@ -210,10 +227,10 @@ ${pendingList}
       // Extract key actions: user requests and assistant responses (first line only)
       const summaryLines: string[] = []
       for (const msg of recent) {
-        const firstLine = msg.content.split('\n')[0].substring(0, 200)
+        const firstLine = msg.contentMd.split('\n')[0].substring(0, 200)
         if (msg.role === 'user') {
           summaryLines.push(`  - User: ${firstLine}`)
-        } else if (msg.role === 'assistant' || msg.role === 'coordinator') {
+        } else if (msg.role === 'coordinator' || msg.role === 'generalist') {
           summaryLines.push(`  - Agent: ${firstLine}`)
         }
       }
@@ -225,6 +242,66 @@ ${pendingList}
       log.warn('Failed to summarize conversation:', error)
       return `Conversation ${conversationId} — summary unavailable`
     }
+  }
+
+  /** Get detailed info about all brain files */
+  getFilesInfo(workspacePath: string): BrainFileInfo[] {
+    const dir = this.brainDir(workspacePath)
+
+    return BRAIN_FILES.map((fileName) => {
+      const filePath = join(dir, fileName)
+      if (!existsSync(filePath)) {
+        return {
+          fileName,
+          filePath,
+          lineCount: 0,
+          sizeBytes: 0,
+          estimatedTokens: 0,
+          lastModified: '',
+          isOverThreshold: false
+        }
+      }
+      const stat = statSync(filePath)
+      const content = readFileSync(filePath, 'utf-8')
+      const lineCount = content.split('\n').length
+      const estimatedTokens = Math.ceil(content.length / BrainService.CHARS_PER_TOKEN)
+      return {
+        fileName,
+        filePath,
+        lineCount,
+        sizeBytes: stat.size,
+        estimatedTokens,
+        lastModified: stat.mtime.toISOString(),
+        isOverThreshold: lineCount > MAX_LINES
+      }
+    })
+  }
+
+  /** Force-compact a specific file regardless of line count */
+  forceCompact(workspacePath: string, fileName: string): BrainFileInfo {
+    this.invalidateCache(workspacePath)
+    const filePath = join(this.brainDir(workspacePath), fileName)
+    if (existsSync(filePath)) {
+      this.compactIfNeeded(filePath, 0) // threshold 0 = always compact
+    }
+    return this.getFilesInfo(workspacePath).find((f) => f.fileName === fileName)!
+  }
+
+  /** Force-compact all brain files */
+  forceCompactAll(workspacePath: string): BrainFileInfo[] {
+    this.invalidateCache(workspacePath)
+    for (const fn of BRAIN_FILES) {
+      const filePath = join(this.brainDir(workspacePath), fn)
+      if (existsSync(filePath)) {
+        this.compactIfNeeded(filePath, 0)
+      }
+    }
+    return this.getFilesInfo(workspacePath)
+  }
+
+  /** Invalidate cache on any write operation */
+  private invalidateCache(workspacePath: string): void {
+    this.contextCache.delete(workspacePath)
   }
 
   /** Format a BrainEntry into a markdown block */

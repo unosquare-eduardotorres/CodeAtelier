@@ -23,7 +23,13 @@ import type {
   CompleteResult,
   AgentWorktree,
   MergeAllResult,
-  GrillProposedTask
+  GrillProposedTask,
+  BrainEntry,
+  BrainFileInfo,
+  BrainStatus,
+  TokenSummary,
+  AgentSessionRecord,
+  Idea
 } from '../shared/types'
 
 interface Api {
@@ -120,8 +126,45 @@ interface Api {
   // Pixel Office
   popoutPixelOffice: () => Promise<void>
 
+  // Brain (project memory)
+  brainGetContext: (args: { workspacePath: string }) => Promise<string>
+  brainGetState: (args: { workspacePath: string }) => Promise<string>
+  brainLogDecision: (args: { workspacePath: string; entry: BrainEntry }) => Promise<void>
+  brainGetFilesInfo: (args: { workspacePath: string }) => Promise<BrainStatus>
+  brainCompactFile: (args: { workspacePath: string; fileName: string }) => Promise<BrainFileInfo>
+  brainCompactAll: (args: { workspacePath: string }) => Promise<BrainStatus>
+  brainUpdateSetting: (args: { workspaceId: string; brainEnabled: boolean }) => Promise<void>
+
   computeSyncDiff: (args: { workspacePath: string }) => Promise<SyncDiff>
   applySync: (args: { workspacePath: string; skipRemoved?: boolean }) => Promise<SyncResult>
+
+  // Tokens
+  getWorkspaceTokenSummary: (args: { workspaceId: string }) => Promise<TokenSummary>
+  getConversationTokenSummary: (args: { conversationId: string }) => Promise<TokenSummary>
+  getRecentSessions: (args: { workspaceId: string; limit?: number }) => Promise<AgentSessionRecord[]>
+
+  // Ideas
+  listIdeas: (args: { workspaceId: string }) => Promise<Idea[]>
+  createIdea: (args: { workspaceId: string; title: string; description: string }) => Promise<Idea>
+  updateIdea: (args: { id: string; title?: string; description?: string }) => Promise<Idea>
+  deleteIdea: (args: { id: string }) => Promise<void>
+  startIdeaGrill: (args: {
+    ideaId: string
+    workspaceId: string
+  }) => Promise<{ idea: Idea; conversation: Conversation }>
+  convertIdeaDirect: (args: {
+    ideaId: string
+    workspaceId: string
+  }) => Promise<{ idea: Idea; conversation: Conversation }>
+  completeIdeaFromGrill: (args: {
+    conversationId: string
+    summary?: string
+  }) => Promise<Idea | null>
+
+  // Auto-update
+  checkForUpdate: () => Promise<void>
+  downloadUpdate: () => Promise<void>
+  installUpdate: () => Promise<void>
 
   // Events (main → renderer) with cleanup
   onActivationProgress: (callback: (data: ActivationProgressEvent) => void) => () => void
@@ -177,6 +220,22 @@ interface Api {
       tokenUsage: number
     }) => void
   ) => () => void
+
+  // Auto-update events
+  onUpdateAvailable: (
+    callback: (info: { version: string; releaseDate?: string; releaseNotes?: string }) => void
+  ) => () => void
+  onUpdateNotAvailable: (callback: () => void) => () => void
+  onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void
+  onUpdateProgress: (
+    callback: (progress: {
+      percent: number
+      bytesPerSecond: number
+      transferred: number
+      total: number
+    }) => void
+  ) => () => void
+  onUpdateError: (callback: (message: string) => void) => () => void
 }
 
 declare global {

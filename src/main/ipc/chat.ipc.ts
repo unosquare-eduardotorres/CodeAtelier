@@ -25,6 +25,7 @@ import type {
   ExecutionStrategy,
   TaskExecutionProgress
 } from '../../shared/types'
+import { brainService } from '../services/brain.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 
@@ -107,6 +108,18 @@ function forwardChunkToRenderer(
       chunk: `\n\n**Error:** ${chunk.error}`,
       role
     })
+  }
+}
+
+/** Check if brain writes are enabled for the given workspace path */
+function isBrainEnabled(workspacePath: string): boolean {
+  const workspace = workspaceRepository.findAll().find((w) => w.repoPath === workspacePath)
+  if (!workspace) return true // default enabled
+  try {
+    const settings = JSON.parse(workspace.settingsJson || '{}')
+    return settings.brainEnabled !== false
+  } catch {
+    return true
   }
 }
 
@@ -513,14 +526,49 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
           messageId: savedMsg.id
         })
 
+        // Log task execution to brain
+        try {
+          const wpPath = generalistService.getWorkspacePath()
+          if (wpPath && isBrainEnabled(wpPath)) {
+            brainService.logCompletion(wpPath, {
+              timestamp: new Date().toISOString(),
+              conversationId,
+              conversationTitle: 'Task Execution',
+              type: 'completion',
+              summary: `Executed ${tasks.length} tasks (${strategy})`,
+              details: tasks.map((t) => `- ${t.specialist}: ${t.description}`).join('\n')
+            })
+          }
+        } catch (e) {
+          log.warn('Brain update on task complete failed:', e)
+        }
+
         // Clean up
         specialistPoolService.removeListener('taskProgress', onTaskProgress)
         specialistPoolService.removeListener('taskChunk', onTaskChunk)
+        specialistPoolService.removeListener('taskRetry', onTaskRetry)
         specialistPoolService.removeListener('allComplete', onAllComplete)
+      }
+
+      // Forward retry events to renderer
+      const onTaskRetry = (data: {
+        taskId: string
+        specialist: string
+        attempt: number
+        maxRetries: number
+      }): void => {
+        mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_RETRY, data)
+        // Also send as a chat chunk so the user sees the retry notification
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+          conversationId,
+          chunk: `\n> **${data.specialist}** failed — retrying (attempt ${data.attempt + 1}/${data.maxRetries + 1})...\n\n`,
+          role: 'coordinator'
+        })
       }
 
       specialistPoolService.on('taskProgress', onTaskProgress)
       specialistPoolService.on('taskChunk', onTaskChunk)
+      specialistPoolService.on('taskRetry', onTaskRetry)
       specialistPoolService.on('allComplete', onAllComplete)
 
       try {
@@ -633,6 +681,24 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
       }
     }
 
+    // Summarize and log to brain before deletion
+    try {
+      if (workspacePath && isBrainEnabled(workspacePath)) {
+        const conversation = conversationRepository.findById(conversationId)
+        if (conversation) {
+          brainService.logCompletion(workspacePath, {
+            timestamp: new Date().toISOString(),
+            conversationId,
+            conversationTitle: conversation.title,
+            type: 'context',
+            summary: brainService.summarizeConversation(conversationId)
+          })
+        }
+      }
+    } catch (e) {
+      log.warn('Brain update failed on /close:', e)
+    }
+
     // Delete conversation (cascades: file_changes, messages, attachments, agent_worktrees)
     conversationRepository.delete(conversationId)
   })
@@ -730,6 +796,22 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
         } catch (e) {
           log.warn('Push failed (no remote or auth issue):', e)
           // Local commit still succeeded — that's fine
+        }
+
+        // Update brain with completed work
+        try {
+          if (isBrainEnabled(workspace.repoPath)) {
+            brainService.logCompletion(workspace.repoPath, {
+              timestamp: new Date().toISOString(),
+              conversationId,
+              conversationTitle: conversation.title,
+              type: 'completion',
+              summary: commitMessage,
+              details: `Branch: ${branchName}\nCommit: ${commitHash}\nFiles: ${filesToStage.join(', ')}`
+            })
+          }
+        } catch (e) {
+          log.warn('Brain update failed on /complete:', e)
         }
 
         // 7. Cleanup: stop agents, clear DB data, delete conversation

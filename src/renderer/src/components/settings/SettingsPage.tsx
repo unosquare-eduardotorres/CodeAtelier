@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Settings, Bot, Sparkles, Loader2, RotateCcw } from 'lucide-react'
-import { useWorkspaceStore } from '@renderer/store'
+import { ArrowLeft, Settings, Bot, Sparkles, Loader2, RotateCcw, RefreshCw, Download, CheckCircle2 } from 'lucide-react'
+import { useWorkspaceStore, useUpdateStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import ActivationBanner from './ActivationBanner'
 import AgentsList from './AgentsList'
@@ -10,6 +10,45 @@ import SkillDetailPage from './SkillDetailPage'
 import ClaudeMdDiffModal from './ClaudeMdDiffModal'
 import SyncBanner from './SyncBanner'
 import SyncReviewModal from './SyncReviewModal'
+
+function UpdateButton(): React.JSX.Element {
+  const { status, availableVersion, checkForUpdates, installUpdate } = useUpdateStore()
+
+  if (status === 'ready') {
+    return (
+      <button
+        onClick={installUpdate}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/10 transition-colors"
+      >
+        <CheckCircle2 size={12} />
+        Install Update (v{availableVersion})
+      </button>
+    )
+  }
+
+  if (status === 'available') {
+    return (
+      <button
+        onClick={() => useUpdateStore.getState().downloadUpdate()}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/10 transition-colors"
+      >
+        <Download size={12} />
+        Download v{availableVersion}
+      </button>
+    )
+  }
+
+  return (
+    <button
+      onClick={checkForUpdates}
+      disabled={status === 'checking' || status === 'downloading'}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-400 border border-gray-600/30 hover:bg-gray-700/30 hover:text-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      <RefreshCw size={12} className={status === 'checking' ? 'animate-spin' : ''} />
+      {status === 'checking' ? 'Checking...' : status === 'downloading' ? 'Downloading...' : 'Check for Updates'}
+    </button>
+  )
+}
 
 interface SettingsPageProps {
   onBack: () => void
@@ -159,7 +198,8 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
           — {activeWorkspace.name}
         </span>
         {!needsActivation && !isActivating && (
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <UpdateButton />
             <button
               onClick={() => {
                 if (

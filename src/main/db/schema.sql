@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS attachments (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Agent sessions: basic tracking for Phase 1
+-- Agent sessions: tracking with workspace/conversation context
 CREATE TABLE IF NOT EXISTS agent_sessions (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   task_id TEXT,
@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   ended_at TEXT,
   token_usage INTEGER DEFAULT 0,
-  stdout_log_path TEXT
+  stdout_log_path TEXT,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE
 );
 
 -- Specialists: dynamic agent definitions (app-global)
@@ -126,3 +128,23 @@ CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversat
 CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id);
+
+-- Ideas: quick-capture work item drafts per workspace
+CREATE TABLE IF NOT EXISTS ideas (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'grilling', 'completed')),
+  grill_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  grill_summary TEXT,
+  converted_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ideas_workspace ON ideas(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status);

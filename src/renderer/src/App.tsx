@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { AppLayout } from '@renderer/components/layout'
 import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
-import { useWorkspaceStore, useChatStore, useAgentStore } from '@renderer/store'
+import { useWorkspaceStore, useChatStore, useAgentStore, useUpdateStore } from '@renderer/store'
 import type { ConversationMode, TaskPlan } from '../../shared/types'
 
 // Check if this window was opened as a Pixel Office pop-out
@@ -22,6 +22,7 @@ function App(): React.JSX.Element {
     endGrillSession
   } = useChatStore()
   const { updateStatus } = useAgentStore()
+  const { setAvailable, setNotAvailable, setDownloaded, setProgress, setError } = useUpdateStore()
 
   useEffect(() => {
     // Load workspaces on mount
@@ -99,6 +100,23 @@ function App(): React.JSX.Element {
       })
     })
 
+    // Auto-update event listeners
+    const unsubUpdateAvailable = window.api.onUpdateAvailable((info) => {
+      setAvailable(info.version, info.releaseNotes)
+    })
+    const unsubUpdateNotAvailable = window.api.onUpdateNotAvailable(() => {
+      setNotAvailable()
+    })
+    const unsubUpdateDownloaded = window.api.onUpdateDownloaded((info) => {
+      setDownloaded(info.version)
+    })
+    const unsubUpdateProgress = window.api.onUpdateProgress((progress) => {
+      setProgress(progress.percent)
+    })
+    const unsubUpdateError = window.api.onUpdateError((message) => {
+      setError(message)
+    })
+
     return () => {
       unsubChunk()
       unsubComplete()
@@ -108,6 +126,11 @@ function App(): React.JSX.Element {
       unsubTaskProgress()
       unsubReady()
       unsubAgent()
+      unsubUpdateAvailable()
+      unsubUpdateNotAvailable()
+      unsubUpdateDownloaded()
+      unsubUpdateProgress()
+      unsubUpdateError()
     }
   }, [
     loadWorkspaces,
@@ -121,7 +144,12 @@ function App(): React.JSX.Element {
     updateStatus,
     setOrchestratorReady,
     setCompactSuggestion,
-    endGrillSession
+    endGrillSession,
+    setAvailable,
+    setNotAvailable,
+    setDownloaded,
+    setProgress,
+    setError
   ])
 
   // Pop-out mode: render only the Pixel Office fullscreen

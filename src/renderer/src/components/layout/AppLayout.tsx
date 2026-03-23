@@ -6,6 +6,7 @@ import { AgentMonitor } from '@renderer/components/agents';
 import { PixelOfficePanel } from '@renderer/components/pixel-office';
 import { WorkspaceSettingsPage } from '@renderer/components/workspace';
 import { SettingsPage } from '@renderer/components/settings';
+import { UpdateBanner } from '@renderer/components/common';
 import { useWorkspaceStore, useAgentStore, useChatStore, usePixelOfficeStore } from '@renderer/store';
 
 const isMac = navigator.platform.toUpperCase().includes('MAC');
@@ -152,20 +153,25 @@ export default function AppLayout(): React.JSX.Element {
         </div>
       </div>
 
+      {/* Auto-update banner */}
+      <UpdateBanner />
+
       {/* Main content */}
       <div className="flex flex-1 min-h-0">
-        {/* Left sidebar */}
-        <Sidebar>
-          <ChatSidebar
-            isCollapsed={sidebarCollapsed}
-            onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
-          />
-        </Sidebar>
+        {/* Left sidebar — only show in chat view */}
+        {view === 'chat' && (
+          <Sidebar>
+            <ChatSidebar
+              isCollapsed={sidebarCollapsed}
+              onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+            />
+          </Sidebar>
+        )}
 
-        {/* Main content area */}
+        {/* Main content area — full width in settings views */}
         {renderMainContent()}
 
-        {/* Agent monitor panel */}
+        {/* Agent monitor panel — only in chat view */}
         {showAgentPanel && view === 'chat' && (
           <AgentMonitor
             isCollapsed={agentPanelCollapsed}
@@ -174,7 +180,7 @@ export default function AppLayout(): React.JSX.Element {
         )}
       </div>
 
-      {/* Pixel Office panel */}
+      {/* Pixel Office panel — only in chat view */}
       {showPixelOffice && view === 'chat' && <PixelOfficePanel />}
 
       {/* Status bar */}

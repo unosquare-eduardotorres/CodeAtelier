@@ -4,11 +4,21 @@ import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { ConversationMode, DecomposedTask, TaskExecutionProgress } from '../../shared/types'
 import { specialistPoolLogger } from '../logger'
-import { specialistRepository, worktreeRepository } from '../db/repositories'
+import { specialistRepository, worktreeRepository, agentSessionRepository } from '../db/repositories'
 import { SPECIALIST_TASK_SYSTEM_PROMPT } from './system-prompts'
 import { gitWorktreeService } from './git-worktree.service'
 import type { MergeResult } from './git-worktree.service'
 import { buildEnvWithPath } from './env-utils'
+
+/** Retry configuration for specialist tasks */
+const RETRY_CONFIG = {
+  maxRetries: 2, // Max 2 retries (3 total attempts)
+  baseDelayMs: 2000, // 2s initial delay
+  maxDelayMs: 30000, // 30s max delay
+  backoffMultiplier: 2, // Exponential backoff
+  retryableExitCodes: [1, 137, 143], // General error, SIGKILL, SIGTERM
+  rateLimitDelayMs: 10000 // Longer delay for rate-limited retries
+}
 
 interface SpecialistProcessInfo {
   task: DecomposedTask
@@ -16,6 +26,9 @@ interface SpecialistProcessInfo {
   output: string
   status: TaskExecutionProgress['status']
   worktreeId?: string
+  dbSessionId?: string
+  attempt: number
+  rateLimited?: boolean
 }
 
 /**
@@ -134,7 +147,8 @@ export class SpecialistPoolService extends EventEmitter {
   private async createWorktreeAndSpawn(
     task: DecomposedTask,
     mode: ConversationMode,
-    onDone: () => void
+    onDone: () => void,
+    attempt: number = 0
   ): Promise<void> {
     let worktreeId: string | undefined
 
@@ -159,12 +173,29 @@ export class SpecialistPoolService extends EventEmitter {
     }
 
     const childProcess = this.spawnSpecialist(task, mode, worktreeId)
+
+    // Create DB session for token tracking
+    let dbSessionId: string | undefined
+    try {
+      const session = agentSessionRepository.create(task.specialist, {
+        taskId: task.id,
+        pid: childProcess.pid,
+        conversationId: this.conversationId ?? undefined,
+        workspaceId: undefined // workspace DB ID not available here
+      })
+      dbSessionId = session.id
+    } catch (err) {
+      this.log.error('Failed to create DB session for specialist:', err)
+    }
+
     const info: SpecialistProcessInfo = {
       task,
       process: childProcess,
       output: '',
       status: 'running',
-      worktreeId
+      worktreeId,
+      dbSessionId,
+      attempt
     }
     this.activeProcesses.set(task.id, info)
 
@@ -239,7 +270,14 @@ export class SpecialistPoolService extends EventEmitter {
     })
 
     childProcess.stderr?.on('data', (data: Buffer) => {
-      this.log.error(`[${task.specialist}/${task.id}] stderr:`, data.toString().trim())
+      const text = data.toString().trim()
+      this.log.error(`[${task.specialist}/${task.id}] stderr:`, text)
+
+      // Detect rate limiting from Claude CLI
+      if (text.includes('rate limit') || text.includes('429') || text.includes('overloaded')) {
+        this.log.warn(`Rate limit detected for ${task.specialist}/${task.id}`)
+        info.rateLimited = true
+      }
     })
 
     childProcess.on('exit', (code) => {
@@ -268,6 +306,19 @@ export class SpecialistPoolService extends EventEmitter {
       this.activeProcesses.delete(task.id)
       this.completedTasks.add(task.id)
       this.taskResults.set(task.id, info.output)
+
+      // Complete DB session record
+      if (info.dbSessionId) {
+        try {
+          agentSessionRepository.complete(
+            info.dbSessionId,
+            code === 0 ? 'completed' : 'failed',
+            0 // Specialists don't track token usage from stream events yet
+          )
+        } catch (err) {
+          this.log.error('Failed to complete DB session:', err)
+        }
+      }
 
       if (code === 0) {
         info.status = 'completed'
@@ -306,6 +357,49 @@ export class SpecialistPoolService extends EventEmitter {
             })
         }
       } else {
+        // Check if we should retry
+        const exitCode = code ?? 0
+        const isRetryable =
+          info.attempt < RETRY_CONFIG.maxRetries &&
+          RETRY_CONFIG.retryableExitCodes.includes(exitCode)
+
+        if (isRetryable) {
+          const baseDelay = info.rateLimited
+            ? RETRY_CONFIG.rateLimitDelayMs
+            : RETRY_CONFIG.baseDelayMs
+          const delay = Math.min(
+            baseDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, info.attempt),
+            RETRY_CONFIG.maxDelayMs
+          )
+
+          this.log.warn(
+            `Task ${task.id} failed (attempt ${info.attempt + 1}), retrying in ${delay}ms...`
+          )
+          this.emit('taskRetry', {
+            taskId: task.id,
+            specialist: task.specialist,
+            attempt: info.attempt + 1,
+            maxRetries: RETRY_CONFIG.maxRetries
+          })
+
+          // Clean up failed worktree before retry
+          if (info.worktreeId) {
+            gitWorktreeService.remove(info.worktreeId, true).catch((err) => {
+              this.log.warn(`Failed to remove worktree before retry: ${err}`)
+            })
+          }
+
+          // Remove from completed (will re-add on retry completion)
+          this.completedTasks.delete(task.id)
+          this.taskResults.delete(task.id)
+
+          setTimeout(() => {
+            this.createWorktreeAndSpawn(task, mode, onDone, info.attempt + 1)
+          }, delay)
+          return // Don't call onDone yet — retry will handle it
+        }
+
+        // Retries exhausted or non-retryable — mark as failed
         info.status = 'failed'
         this.taskStatuses.set(task.id, 'failed')
         this.emitProgress(task, 'failed', undefined, `Process exited with code ${code}`)
@@ -326,6 +420,15 @@ export class SpecialistPoolService extends EventEmitter {
       info.status = 'failed'
       this.taskStatuses.set(task.id, 'failed')
       this.emitProgress(task, 'failed', undefined, err.message)
+
+      // Complete DB session on error
+      if (info.dbSessionId) {
+        try {
+          agentSessionRepository.complete(info.dbSessionId, 'failed', 0)
+        } catch (dbErr) {
+          this.log.error('Failed to complete DB session on error:', dbErr)
+        }
+      }
 
       // Abandon worktree on error
       if (info.worktreeId) {

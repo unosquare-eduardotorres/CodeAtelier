@@ -111,7 +111,39 @@ export const IPC_CHANNELS = {
   // Brain (project memory)
   BRAIN_GET_CONTEXT: 'brain:getContext',
   BRAIN_GET_STATE: 'brain:getState',
-  BRAIN_LOG_DECISION: 'brain:logDecision'
+  BRAIN_LOG_DECISION: 'brain:logDecision',
+  // Brain management
+  BRAIN_GET_FILES_INFO: 'brain:getFilesInfo',
+  BRAIN_COMPACT_FILE: 'brain:compactFile',
+  BRAIN_COMPACT_ALL: 'brain:compactAll',
+  BRAIN_UPDATE_SETTING: 'brain:updateSetting',
+
+  // Tokens
+  TOKEN_GET_WORKSPACE_SUMMARY: 'token:getWorkspaceSummary',
+  TOKEN_GET_CONVERSATION_SUMMARY: 'token:getConversationSummary',
+  TOKEN_GET_RECENT_SESSIONS: 'token:getRecentSessions',
+
+  // Agent retry events
+  AGENT_TASK_RETRY: 'agent:taskRetry',
+
+  // Ideas
+  IDEA_LIST: 'idea:list',
+  IDEA_CREATE: 'idea:create',
+  IDEA_UPDATE: 'idea:update',
+  IDEA_DELETE: 'idea:delete',
+  IDEA_START_GRILL: 'idea:startGrill',
+  IDEA_CONVERT_DIRECT: 'idea:convertDirect',
+  IDEA_COMPLETE_FROM_GRILL: 'idea:completeFromGrill',
+
+  // Auto-update
+  UPDATE_CHECK: 'update:check',
+  UPDATE_AVAILABLE: 'update:available',
+  UPDATE_NOT_AVAILABLE: 'update:notAvailable',
+  UPDATE_DOWNLOADED: 'update:downloaded',
+  UPDATE_ERROR: 'update:error',
+  UPDATE_PROGRESS: 'update:progress',
+  UPDATE_INSTALL: 'update:install',
+  UPDATE_DOWNLOAD: 'update:download'
 } as const
 
 /**

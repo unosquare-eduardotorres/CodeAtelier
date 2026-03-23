@@ -9,3 +9,6 @@ export { FileChangeRepository, fileChangeRepository } from './file-change.reposi
 export type { FileChange } from './file-change.repository';
 export { WorktreeRepository, worktreeRepository } from './worktree.repository';
 export type { AgentWorktree, WorktreeStatus } from './worktree.repository';
+export { AgentSessionRepository, agentSessionRepository } from './agent-session.repository';
+export type { AgentSession, TokenSummary } from './agent-session.repository';
+export { IdeaRepository, ideaRepository } from './idea.repository';

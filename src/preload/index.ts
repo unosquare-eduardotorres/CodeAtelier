@@ -22,7 +22,13 @@ import type {
   AgentWorktree,
   MergeAllResult,
   SyncDiff,
-  SyncResult
+  SyncResult,
+  BrainEntry,
+  BrainFileInfo,
+  BrainStatus,
+  TokenSummary,
+  AgentSessionRecord,
+  Idea
 } from '../shared/types'
 
 const api = {
@@ -220,6 +226,76 @@ const api = {
   applySync: (args: { workspacePath: string; skipRemoved?: boolean }): Promise<SyncResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SYNC_APPLY, args),
 
+  // ── Brain (project memory) ──
+  brainGetContext: (args: { workspacePath: string }): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_GET_CONTEXT, args),
+
+  brainGetState: (args: { workspacePath: string }): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_GET_STATE, args),
+
+  brainLogDecision: (args: { workspacePath: string; entry: BrainEntry }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_LOG_DECISION, args),
+
+  brainGetFilesInfo: (args: { workspacePath: string }): Promise<BrainStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_GET_FILES_INFO, args),
+
+  brainCompactFile: (args: { workspacePath: string; fileName: string }): Promise<BrainFileInfo> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_COMPACT_FILE, args),
+
+  brainCompactAll: (args: { workspacePath: string }): Promise<BrainStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_COMPACT_ALL, args),
+
+  brainUpdateSetting: (args: { workspaceId: string; brainEnabled: boolean }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_UPDATE_SETTING, args),
+
+  // ── Tokens ──
+  getWorkspaceTokenSummary: (args: { workspaceId: string }): Promise<TokenSummary> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TOKEN_GET_WORKSPACE_SUMMARY, args),
+
+  getConversationTokenSummary: (args: { conversationId: string }): Promise<TokenSummary> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TOKEN_GET_CONVERSATION_SUMMARY, args),
+
+  getRecentSessions: (args: { workspaceId: string; limit?: number }): Promise<AgentSessionRecord[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TOKEN_GET_RECENT_SESSIONS, args),
+
+  // ── Ideas ──
+  listIdeas: (args: { workspaceId: string }): Promise<Idea[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.IDEA_LIST, args),
+
+  createIdea: (args: { workspaceId: string; title: string; description: string }): Promise<Idea> =>
+    ipcRenderer.invoke(IPC_CHANNELS.IDEA_CREATE, args),
+
+  updateIdea: (args: { id: string; title?: string; description?: string }): Promise<Idea> =>
+    ipcRenderer.invoke(IPC_CHANNELS.IDEA_UPDATE, args),
+
+  deleteIdea: (args: { id: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.IDEA_DELETE, args),
+
+  startIdeaGrill: (args: {
+    ideaId: string
+    workspaceId: string
+  }): Promise<{ idea: Idea; conversation: Conversation }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.IDEA_START_GRILL, args),
+
+  convertIdeaDirect: (args: {
+    ideaId: string
+    workspaceId: string
+  }): Promise<{ idea: Idea; conversation: Conversation }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.IDEA_CONVERT_DIRECT, args),
+
+  completeIdeaFromGrill: (args: {
+    conversationId: string
+    summary?: string
+  }): Promise<Idea | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL, args),
+
+  // ── Auto-update ──
+  checkForUpdate: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
+
+  downloadUpdate: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_DOWNLOAD),
+
+  installUpdate: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_INSTALL),
+
   // ── Events (main → renderer) with cleanup ──
   onActivationProgress: (callback: (data: ActivationProgressEvent) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: ActivationProgressEvent): void =>
@@ -390,6 +466,64 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.AGENT_STATUS_UPDATE, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.AGENT_STATUS_UPDATE, handler)
+    }
+  },
+
+  // ── Auto-update events ──
+  onUpdateAvailable: (
+    callback: (info: { version: string; releaseDate?: string; releaseNotes?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      info: { version: string; releaseDate?: string; releaseNotes?: string }
+    ): void => callback(info)
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_AVAILABLE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_AVAILABLE, handler)
+    }
+  },
+
+  onUpdateNotAvailable: (callback: () => void): (() => void) => {
+    const handler = (): void => callback()
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_NOT_AVAILABLE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_NOT_AVAILABLE, handler)
+    }
+  },
+
+  onUpdateDownloaded: (callback: (info: { version: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { version: string }): void =>
+      callback(info)
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_DOWNLOADED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_DOWNLOADED, handler)
+    }
+  },
+
+  onUpdateProgress: (
+    callback: (progress: {
+      percent: number
+      bytesPerSecond: number
+      transferred: number
+      total: number
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }
+    ): void => callback(progress)
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_PROGRESS, handler)
+    }
+  },
+
+  onUpdateError: (callback: (message: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, message: string): void =>
+      callback(message)
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_ERROR, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_ERROR, handler)
     }
   }
 } as const

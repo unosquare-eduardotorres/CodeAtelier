@@ -65,6 +65,27 @@ export class WorkspaceRepository {
     const stmt = db.prepare('DELETE FROM workspaces WHERE id = ?');
     stmt.run(id);
   }
+
+  updateSettings(id: string, settings: Record<string, unknown>): Workspace | undefined {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      UPDATE workspaces SET settings_json = ?
+      WHERE id = ?
+      RETURNING *
+    `);
+    const row = stmt.get(JSON.stringify(settings), id) as WorkspaceRow | undefined;
+    return row ? mapRow(row) : undefined;
+  }
+
+  getSettings(id: string): Record<string, unknown> {
+    const workspace = this.findById(id);
+    if (!workspace) return {};
+    try {
+      return JSON.parse(workspace.settingsJson || '{}');
+    } catch {
+      return {};
+    }
+  }
 }
 
 export const workspaceRepository = new WorkspaceRepository();

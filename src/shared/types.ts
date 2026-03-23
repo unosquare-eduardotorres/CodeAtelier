@@ -291,6 +291,26 @@ export interface GrillSummary {
   proposedTasks: GrillProposedTask[]
 }
 
+// ── Agent Session & Token Tracking ──
+export interface AgentSessionRecord {
+  id: string
+  taskId: string | null
+  agentType: string
+  pid: number | null
+  status: 'running' | 'completed' | 'failed' | 'terminated'
+  startedAt: string
+  endedAt: string | null
+  tokenUsage: number
+  conversationId: string | null
+  workspaceId: string | null
+}
+
+export interface TokenSummary {
+  totalTokens: number
+  sessionCount: number
+  byAgent: { agentType: string; totalTokens: number; sessionCount: number }[]
+}
+
 // ── Brain (persistent project memory) ──
 export interface BrainEntry {
   timestamp: string
@@ -299,6 +319,40 @@ export interface BrainEntry {
   type: 'completion' | 'decision' | 'error' | 'milestone' | 'context'
   summary: string
   details?: string
+}
+
+// ── Brain Management ──
+export interface BrainFileInfo {
+  fileName: string
+  filePath: string
+  lineCount: number
+  sizeBytes: number
+  estimatedTokens: number
+  lastModified: string
+  isOverThreshold: boolean
+}
+
+export interface BrainStatus {
+  enabled: boolean
+  initialized: boolean
+  files: BrainFileInfo[]
+  totalLines: number
+  totalSizeBytes: number
+  totalEstimatedTokens: number
+}
+
+// ── Ideas ──
+export interface Idea {
+  id: string
+  workspaceId: string
+  title: string
+  description: string
+  status: 'draft' | 'grilling' | 'completed'
+  grillConversationId?: string
+  grillSummary?: string
+  convertedConversationId?: string
+  createdAt: string
+  updatedAt: string
 }
 
 // ── IPC Channel Map (type-safe) ──
@@ -393,6 +447,42 @@ export interface IpcChannels {
   'brain:getContext': { args: { workspacePath: string }; return: string }
   'brain:getState': { args: { workspacePath: string }; return: string }
   'brain:logDecision': { args: { workspacePath: string; entry: BrainEntry }; return: void }
+  'brain:getFilesInfo': { args: { workspacePath: string }; return: BrainStatus }
+  'brain:compactFile': { args: { workspacePath: string; fileName: string }; return: BrainFileInfo }
+  'brain:compactAll': { args: { workspacePath: string }; return: BrainStatus }
+  'brain:updateSetting': { args: { workspaceId: string; brainEnabled: boolean }; return: void }
+
+  // Tokens
+  'token:getWorkspaceSummary': { args: { workspaceId: string }; return: TokenSummary }
+  'token:getConversationSummary': { args: { conversationId: string }; return: TokenSummary }
+  'token:getRecentSessions': {
+    args: { workspaceId: string; limit?: number }
+    return: AgentSessionRecord[]
+  }
+
+  // Ideas
+  'idea:list': { args: { workspaceId: string }; return: Idea[] }
+  'idea:create': {
+    args: { workspaceId: string; title: string; description: string }
+    return: Idea
+  }
+  'idea:update': {
+    args: { id: string; title?: string; description?: string }
+    return: Idea
+  }
+  'idea:delete': { args: { id: string }; return: void }
+  'idea:startGrill': {
+    args: { ideaId: string; workspaceId: string }
+    return: { idea: Idea; conversation: Conversation }
+  }
+  'idea:convertDirect': {
+    args: { ideaId: string; workspaceId: string }
+    return: { idea: Idea; conversation: Conversation }
+  }
+  'idea:completeFromGrill': {
+    args: { conversationId: string; summary?: string }
+    return: Idea | null
+  }
 }
 
 // ── IPC Event Channels (main → renderer streaming) ──
@@ -414,5 +504,11 @@ export interface IpcEvents {
   'chat:taskProgress': TaskExecutionProgress
   'agent:statusUpdate': AgentStatus
   'agent:taskChunk': { agentId: string; taskId: string; text: string }
+  'agent:taskRetry': {
+    taskId: string
+    specialist: string
+    attempt: number
+    maxRetries: number
+  }
   'workspace:activationProgress': ActivationProgressEvent
 }

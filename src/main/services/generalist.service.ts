@@ -7,7 +7,8 @@ import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
 import { getGeneralistSystemPrompt } from './generalist-prompts'
-import { conversationRepository } from '../db/repositories'
+import { brainService } from './brain.service'
+import { conversationRepository, workspaceRepository } from '../db/repositories'
 
 /** Regex to detect handoff blocks emitted by the generalist. */
 const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
@@ -53,6 +54,11 @@ export class GeneralistService extends AgentBaseService {
   private static readonly COMPACT_AUTO_THRESHOLD = 150_000
   private compactSuggested: boolean = false
 
+  /** Tracks whether stop() was called intentionally (vs crash) */
+  private intentionallyStopped: boolean = false
+  /** Number of auto-restart attempts since last successful start */
+  private restartAttempts: number = 0
+
   /**
    * Spawns the long-lived interactive claude process for the given workspace.
    */
@@ -68,6 +74,8 @@ export class GeneralistService extends AgentBaseService {
     this.buffer = ''
     this.tokenUsage = 0
     this.processReady = false
+    this.intentionallyStopped = false
+    this.restartAttempts = 0
     this.currentConversationId = null
     this.accumulatedText = ''
 
@@ -79,6 +87,24 @@ export class GeneralistService extends AgentBaseService {
       fullSystemPrompt += `\n\n---\n\n## Workspace Project Context (from CLAUDE.md)\n\n${workspaceContext}`
     } catch {
       // No CLAUDE.md — that's fine
+    }
+
+    // Inject brain context (persistent project memory) into system prompt
+    try {
+      // Check if brain is enabled for this workspace
+      const allWorkspaces = workspaceRepository.findAll()
+      const workspace = allWorkspaces.find((w) => w.repoPath === workspacePath)
+      const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
+
+      if (settings.brainEnabled !== false) {
+        // default: enabled
+        const brainContext = brainService.getContext(workspacePath)
+        if (brainContext) {
+          fullSystemPrompt += `\n\n---\n\n## Project Brain (Persistent Memory)\n\n${brainContext}`
+        }
+      }
+    } catch {
+      // Brain context unavailable — not critical
     }
 
     const isBuildMode = this.currentMode === 'build'
@@ -121,6 +147,11 @@ export class GeneralistService extends AgentBaseService {
       env
     })
     this.process = currentProcess
+
+    // Create DB session for token tracking
+    this.createDbSession('generalist', {
+      pid: currentProcess.pid
+    })
 
     // Handle stdin errors (EPIPE when process dies unexpectedly)
     currentProcess.stdin?.on('error', (err: Error) => {
@@ -457,7 +488,47 @@ export class GeneralistService extends AgentBaseService {
     }
   }
 
+  /**
+   * Override to add auto-restart on unexpected crashes.
+   */
+  protected handleExit(code: number | null): void {
+    this.clearResponseTimeout()
+    super.handleExit(code)
+
+    // Auto-restart if crashed unexpectedly (not intentional stop)
+    if (code !== 0 && code !== null && this.workspacePath && !this.intentionallyStopped) {
+      this.restartAttempts++
+
+      if (this.restartAttempts <= 3) {
+        const delay = 3000 * this.restartAttempts
+        this.log.warn(
+          `Generalist crashed (code ${code}) — auto-restarting in ${delay}ms (attempt ${this.restartAttempts}/3)...`
+        )
+        const wp = this.workspacePath
+        const mode = this.currentMode
+        const sessionId = this.currentConversationId
+          ? this.sessionMap.get(this.currentConversationId)
+          : undefined
+
+        setTimeout(() => {
+          this.intentionallyStopped = false
+          this.start(wp, mode, sessionId).catch((err) => {
+            this.log.error('Auto-restart failed:', err)
+          })
+        }, delay)
+      } else {
+        this.log.error('Generalist restart attempts exhausted — giving up')
+        this.emit('chunk', {
+          type: 'error',
+          error:
+            'Claude CLI crashed repeatedly. Please restart the app or check your Claude CLI installation.'
+        } as StreamChunk)
+      }
+    }
+  }
+
   async stop(): Promise<void> {
+    this.intentionallyStopped = true
     this.clearResponseTimeout()
     await super.stop()
     this.currentConversationId = null

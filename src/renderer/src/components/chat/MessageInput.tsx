@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Send, Square, Minimize2, Trash2, HelpCircle, GitPullRequestArrow, X, Flame } from 'lucide-react';
+import { Send, Square, Minimize2, Trash2, HelpCircle, GitPullRequestArrow, X, Flame, Lightbulb } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useChatStore, useWorkspaceStore } from '@renderer/store';
 import { ConfirmDialog } from '@renderer/components/common';
 import CompleteDialog from './CompleteDialog';
+import IdeaPopover from './IdeaPopover';
 
 interface MessageInputProps {
   attachments: string[];
@@ -29,6 +30,7 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [showCompleteDialog, setShowCompleteDialog] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showIdeaPopover, setShowIdeaPopover] = useState(false);
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { sendMessage, isStreaming, activeConversation, stopGeneration, clearDisplay, appendLocalMessage, completeConversation, closeConversation, startGrillSession } = useChatStore();
@@ -197,6 +199,22 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
           </div>
         )}
 
+        {/* Idea capture button */}
+        <button
+          onClick={() => setShowIdeaPopover(!showIdeaPopover)}
+          disabled={!activeConversation}
+          className="flex-shrink-0 p-2 rounded-lg text-yellow-400 hover:bg-yellow-500/10 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+          aria-label="Capture an idea"
+          title="Capture an idea"
+        >
+          <Lightbulb size={18} />
+        </button>
+
+        {/* Idea popover */}
+        {showIdeaPopover && (
+          <IdeaPopover onClose={() => setShowIdeaPopover(false)} />
+        )}
+
         <textarea
           ref={textareaRef}
           value={text}
@@ -208,8 +226,8 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
               : !activeConversation
                 ? 'Select or create a conversation...'
                 : activeConversation.mode === 'plan'
-                  ? 'Ask anything — type / for commands...'
-                  : 'Describe what to build — type / for commands...'
+                  ? `Ask anything — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
+                  : `Describe what to build — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
           }
           disabled={isDisabled}
           rows={1}

@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import type { LogFunctions } from 'electron-log'
 import type { AgentStatus } from '../../shared/types'
 import { buildEnvWithPath } from './env-utils'
+import { agentSessionRepository } from '../db/repositories'
 
 export interface StreamChunk {
   type: 'text' | 'tool_use' | 'tool_result' | 'error' | 'status'
@@ -58,6 +59,9 @@ export abstract class AgentBaseService extends EventEmitter {
   protected currentToolInput: string = ''
   protected toolIdToName: Map<string, string> = new Map()
 
+  /** Database session ID for token tracking */
+  protected dbSessionId: string | null = null
+
   /** Scoped logger — each subclass provides its own scope */
   protected abstract readonly log: LogFunctions
 
@@ -69,6 +73,35 @@ export abstract class AgentBaseService extends EventEmitter {
    */
   protected buildEnvWithPath(): NodeJS.ProcessEnv {
     return buildEnvWithPath()
+  }
+
+  /**
+   * Creates a DB session record for token tracking.
+   * Call from subclass start() after spawning the process.
+   */
+  protected createDbSession(
+    agentType: string,
+    opts: { pid?: number; conversationId?: string; workspaceId?: string } = {}
+  ): void {
+    try {
+      const session = agentSessionRepository.create(agentType, opts)
+      this.dbSessionId = session.id
+    } catch (err) {
+      this.log.error('Failed to create DB session:', err)
+    }
+  }
+
+  /**
+   * Completes the DB session record with final status and token usage.
+   */
+  protected completeDbSession(status: 'completed' | 'failed' | 'terminated'): void {
+    if (!this.dbSessionId) return
+    try {
+      agentSessionRepository.complete(this.dbSessionId, status, this.tokenUsage)
+    } catch (err) {
+      this.log.error('Failed to complete DB session:', err)
+    }
+    this.dbSessionId = null
   }
 
   /**
@@ -346,6 +379,9 @@ export abstract class AgentBaseService extends EventEmitter {
       this.emit('statusUpdate', this.getStatus())
     }
 
+    // Complete the DB session record
+    this.completeDbSession(code === 0 ? 'completed' : 'failed')
+
     this.toolIdToName.clear()
     this.emit('complete')
     this.process = null
@@ -356,6 +392,9 @@ export abstract class AgentBaseService extends EventEmitter {
    */
   async stop(): Promise<void> {
     if (this.process) {
+      // Complete DB session before killing
+      this.completeDbSession('terminated')
+
       this.process.kill('SIGTERM')
 
       await new Promise<void>((resolve) => {

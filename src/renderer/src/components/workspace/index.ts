@@ -2,3 +2,7 @@ export { default as WorkspaceConfigModal } from './WorkspaceConfigModal';
 export { default as WorkspaceItem } from './WorkspaceItem';
 export { default as WorkspaceSidebar } from './WorkspaceSidebar';
 export { default as WorkspaceSettingsPage } from './WorkspaceSettingsPage';
+export { default as WorkspaceGeneralTab } from './WorkspaceGeneralTab';
+export { default as TokenUsagePage } from './TokenUsagePage';
+export { default as IdeasList } from './IdeasList';
+export { default as BrainSettingsPage } from './BrainSettingsPage';

@@ -6,6 +6,7 @@ import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
 import { registerAllIpcHandlers } from './ipc'
 import { generalistService, orchestratorService, skillService } from './services'
+import { autoUpdateService } from './services/auto-update.service'
 
 // Initialize electron-log for the main process
 // Must happen before app.whenReady() for early error capture
@@ -81,6 +82,13 @@ function createWindow(): void {
 
   // Register IPC handlers
   registerAllIpcHandlers(mainWindow)
+
+  // Initialize auto-updater (production only — dev uses electron-vite HMR)
+  if (!is.dev) {
+    autoUpdateService.init(mainWindow)
+    // Check for updates shortly after launch to avoid blocking startup
+    setTimeout(() => autoUpdateService.checkForUpdates(), 5000)
+  }
 
   // HMR for renderer based on electron-vite cli.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

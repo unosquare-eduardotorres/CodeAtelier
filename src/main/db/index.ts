@@ -174,6 +174,57 @@ export function getDatabase(): Database.Database {
     // Table already exists — ignore
   }
 
+  // Migration: add conversation_id and workspace_id columns to agent_sessions
+  try {
+    db.exec(
+      'ALTER TABLE agent_sessions ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL'
+    )
+    dbLogger.info('Migration: added conversation_id column to agent_sessions')
+  } catch {
+    // Column already exists — ignore
+  }
+  try {
+    db.exec(
+      'ALTER TABLE agent_sessions ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE'
+    )
+    dbLogger.info('Migration: added workspace_id column to agent_sessions')
+  } catch {
+    // Column already exists — ignore
+  }
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id)')
+    db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id)'
+    )
+    dbLogger.info('Migration: agent_sessions indexes ready')
+  } catch {
+    // Indexes already exist — ignore
+  }
+
+  // Migration: create ideas table for quick-capture work item drafts
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ideas (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'draft'
+          CHECK (status IN ('draft', 'grilling', 'completed')),
+        grill_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+        grill_summary TEXT,
+        converted_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_ideas_workspace ON ideas(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status);
+    `)
+    dbLogger.info('Migration: ideas table ready')
+  } catch {
+    // Table already exists — ignore
+  }
+
   return db
 }
 
@@ -369,7 +420,9 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   ended_at TEXT,
   token_usage INTEGER DEFAULT 0,
-  stdout_log_path TEXT
+  stdout_log_path TEXT,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS specialists (
@@ -435,4 +488,6 @@ CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
 CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id);
 `
