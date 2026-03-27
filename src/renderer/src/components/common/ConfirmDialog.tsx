@@ -85,7 +85,7 @@ export default function ConfirmDialog({
           <button
             ref={confirmRef}
             onClick={onConfirm}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 ${
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 press-scale ${
               variant === 'danger'
                 ? 'bg-red-600 hover:bg-red-500 text-white focus-visible:ring-red-500'
                 : 'bg-primary hover:bg-primary-hover text-white focus-visible:ring-primary'

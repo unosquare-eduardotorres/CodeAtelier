@@ -4,7 +4,15 @@
   "description": "Create src/main/ipc/cost.ipc.ts with handlers for COST_GET_CONVERSATION, COST_GET_WORKSPACE, COST_GET_SUMMARY. Register in ipc/index.ts. Add channels to constants.ts. Expose in preload.",
   "feature_ref": "F005",
   "task_type": "fullstack",
-  "complexity": { "score": 4, "factors": { "files_affected": 4, "estimated_lines": 80, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 4,
+    "factors": {
+      "files_affected": 4,
+      "estimated_lines": 80,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-009"],
   "acceptance_criteria": [
     "Three new IPC channels registered",

@@ -4,7 +4,15 @@
   "description": "Create CheckpointModal.tsx and checkpoint.store.ts. Modal shows title, summary, what/why/risk, changed files, test results. Approve (green) and Reject (red) buttons. Blocks further UI until resolved.",
   "feature_ref": "F006",
   "task_type": "frontend",
-  "complexity": { "score": 6, "factors": { "files_affected": 5, "estimated_lines": 200, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 6,
+    "factors": {
+      "files_affected": 5,
+      "estimated_lines": 200,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-026"],
   "acceptance_criteria": [
     "Modal displays all checkpoint details",

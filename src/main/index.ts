@@ -6,7 +6,7 @@ import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
 import { registerAllIpcHandlers } from './ipc'
 import { generalistService, orchestratorService, skillService } from './services'
-import { brainFeedService } from './services/brain-feed.service'
+import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
 
 // Initialize electron-log for the main process
@@ -244,9 +244,9 @@ app.on('before-quit', async (event) => {
     // Ignore errors during shutdown
   }
 
-  // Cleanup brain feed (cancel in-progress claude -p summarizer)
+  // Cleanup memory feed (cancel in-progress claude -p summarizer)
   try {
-    brainFeedService.shutdown()
+    memoryFeedService.shutdown()
   } catch {
     // Ignore errors during shutdown
   }

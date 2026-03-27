@@ -217,15 +217,15 @@ flowchart LR
 
 ## File Map
 
-| Layer | File | Role |
-|-------|------|------|
-| Shared | `src/shared/constants.ts` | 8 `UPDATE_*` IPC channel constants |
-| Main | `src/main/services/auto-update.service.ts` | Wraps `electron-updater`, forwards events to renderer |
-| Main | `src/main/ipc/update.ipc.ts` | IPC handlers: check, download, install |
-| Main | `src/main/index.ts` | Initializes service, triggers 5s startup check |
-| Preload | `src/preload/index.ts` | Exposes `checkForUpdate`, `downloadUpdate`, `installUpdate` + 5 event listeners |
-| Renderer | `src/renderer/src/store/update.store.ts` | Zustand store: status, version, progress, actions |
-| Renderer | `src/renderer/src/components/common/UpdateBanner.tsx` | Top-of-window banner (4 visual states) |
-| Renderer | `src/renderer/src/components/settings/SettingsPage.tsx` | "Check for Updates" / "Install Update" button |
-| Renderer | `src/renderer/src/App.tsx` | Wires IPC events to Zustand store |
-| Config | `electron-builder.yml` | GitHub publish provider config |
+| Layer    | File                                                    | Role                                                                            |
+| -------- | ------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Shared   | `src/shared/constants.ts`                               | 8 `UPDATE_*` IPC channel constants                                              |
+| Main     | `src/main/services/auto-update.service.ts`              | Wraps `electron-updater`, forwards events to renderer                           |
+| Main     | `src/main/ipc/update.ipc.ts`                            | IPC handlers: check, download, install                                          |
+| Main     | `src/main/index.ts`                                     | Initializes service, triggers 5s startup check                                  |
+| Preload  | `src/preload/index.ts`                                  | Exposes `checkForUpdate`, `downloadUpdate`, `installUpdate` + 5 event listeners |
+| Renderer | `src/renderer/src/store/update.store.ts`                | Zustand store: status, version, progress, actions                               |
+| Renderer | `src/renderer/src/components/common/UpdateBanner.tsx`   | Top-of-window banner (4 visual states)                                          |
+| Renderer | `src/renderer/src/components/settings/SettingsPage.tsx` | "Check for Updates" / "Install Update" button                                   |
+| Renderer | `src/renderer/src/App.tsx`                              | Wires IPC events to Zustand store                                               |
+| Config   | `electron-builder.yml`                                  | GitHub publish provider config                                                  |

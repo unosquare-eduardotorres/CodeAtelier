@@ -42,24 +42,24 @@ User Request
 
 Load the appropriate template based on user intent:
 
-| Template | Reference | Use When |
-|----------|-----------|----------|
+| Template            | Reference                                                                               | Use When                                                       |
+| ------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | Architecture Design | [architecture-design-template.md](references/templates/architecture-design-template.md) | System-wide architecture documentation, major design decisions |
-| API Design | [api-design-template.md](references/templates/api-design-template.md) | REST/GraphQL API specifications, endpoint documentation |
-| Feature Design | [feature-design-template.md](references/templates/feature-design-template.md) | Feature planning, user stories, implementation approach |
-| Database Design | [database-design-template.md](references/templates/database-design-template.md) | Schema design, ER diagrams, data model documentation |
-| System Design | [system-design-template.md](references/templates/system-design-template.md) | Complete system documentation, scalability, infrastructure |
+| API Design          | [api-design-template.md](references/templates/api-design-template.md)                   | REST/GraphQL API specifications, endpoint documentation        |
+| Feature Design      | [feature-design-template.md](references/templates/feature-design-template.md)           | Feature planning, user stories, implementation approach        |
+| Database Design     | [database-design-template.md](references/templates/database-design-template.md)         | Schema design, ER diagrams, data model documentation           |
+| System Design       | [system-design-template.md](references/templates/system-design-template.md)             | Complete system documentation, scalability, infrastructure     |
 
 ## Diagram Guides
 
 Specialized guides for diagram types commonly used in documentation:
 
-| Guide | Reference | Use When |
-|-------|-----------|----------|
+| Guide                 | Reference                                                              | Use When                                                  |
+| --------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------- |
 | Architecture Diagrams | [architecture-diagrams.md](references/guides/architecture-diagrams.md) | C4 model, component, layered, microservices, event-driven |
-| Deployment Diagrams | [deployment-diagrams.md](references/guides/deployment-diagrams.md) | Infrastructure, cloud architecture, K8s, serverless |
-| Sequence Diagrams | [sequence-diagrams.md](references/guides/sequence-diagrams.md) | API interactions, service communication, request/response |
-| Activity Diagrams | [activity-diagrams.md](references/guides/activity-diagrams.md) | Workflows, processes, business logic, decision trees |
+| Deployment Diagrams   | [deployment-diagrams.md](references/guides/deployment-diagrams.md)     | Infrastructure, cloud architecture, K8s, serverless       |
+| Sequence Diagrams     | [sequence-diagrams.md](references/guides/sequence-diagrams.md)         | API interactions, service communication, request/response |
+| Activity Diagrams     | [activity-diagrams.md](references/guides/activity-diagrams.md)         | Workflows, processes, business logic, decision trees      |
 
 ## Code-to-Diagram Workflow
 
@@ -69,32 +69,33 @@ Specialized guides for diagram types commonly used in documentation:
 
 Scan the codebase for telltale markers:
 
-| Framework | File Markers | Code Markers |
-|-----------|-------------|--------------|
-| Spring Boot | `pom.xml`, `build.gradle` | `@SpringBootApplication`, `@RestController`, `@Service` |
-| FastAPI | `requirements.txt`, `pyproject.toml` | `from fastapi import`, `@app.get`, `async def` |
-| React | `package.json`, `.tsx` files | `import React`, `useState`, `useEffect` |
-| Express | `package.json`, `app.js` | `express()`, `app.use`, `app.get` |
-| Electron | `package.json`, `electron-builder.yml` | `BrowserWindow`, `ipcMain`, `ipcRenderer` |
-| .NET | `*.csproj`, `*.sln` | `[ApiController]`, `DbContext`, `IServiceCollection` |
-| Django | `manage.py`, `settings.py` | `models.Model`, `views.py`, `urls.py` |
+| Framework   | File Markers                           | Code Markers                                            |
+| ----------- | -------------------------------------- | ------------------------------------------------------- |
+| Spring Boot | `pom.xml`, `build.gradle`              | `@SpringBootApplication`, `@RestController`, `@Service` |
+| FastAPI     | `requirements.txt`, `pyproject.toml`   | `from fastapi import`, `@app.get`, `async def`          |
+| React       | `package.json`, `.tsx` files           | `import React`, `useState`, `useEffect`                 |
+| Express     | `package.json`, `app.js`               | `express()`, `app.use`, `app.get`                       |
+| Electron    | `package.json`, `electron-builder.yml` | `BrowserWindow`, `ipcMain`, `ipcRenderer`               |
+| .NET        | `*.csproj`, `*.sln`                    | `[ApiController]`, `DbContext`, `IServiceCollection`    |
+| Django      | `manage.py`, `settings.py`             | `models.Model`, `views.py`, `urls.py`                   |
 
 ### Step 2: Map code to diagram types
 
-| Code Artifact | Diagram Type | What to Extract |
-|---------------|-------------|-----------------|
-| Directory structure | Architecture diagram | Package/module hierarchy |
-| Class hierarchy | Class diagram | Inheritance, composition, interfaces |
-| API endpoints | Sequence diagram | Request/response flows |
-| Business logic | Activity/Flowchart | Decision points, process steps |
-| Database models | ER diagram | Tables, relationships, cardinality |
-| Config files (Docker, K8s) | Deployment diagram | Infrastructure, services, networking |
-| State management | State diagram | State transitions, events |
-| Message queues/events | Sequence or Flowchart | Async communication patterns |
+| Code Artifact              | Diagram Type          | What to Extract                      |
+| -------------------------- | --------------------- | ------------------------------------ |
+| Directory structure        | Architecture diagram  | Package/module hierarchy             |
+| Class hierarchy            | Class diagram         | Inheritance, composition, interfaces |
+| API endpoints              | Sequence diagram      | Request/response flows               |
+| Business logic             | Activity/Flowchart    | Decision points, process steps       |
+| Database models            | ER diagram            | Tables, relationships, cardinality   |
+| Config files (Docker, K8s) | Deployment diagram    | Infrastructure, services, networking |
+| State management           | State diagram         | State transitions, events            |
+| Message queues/events      | Sequence or Flowchart | Async communication patterns         |
 
 ### Step 3: Generate diagrams
 
 For each identified artifact, generate the corresponding diagram using the `mermaid-diagrams` skill syntax. Always:
+
 - Use semantic node IDs derived from actual code names
 - Include Unicode symbols for clarity
 - Apply high-contrast styling
@@ -160,17 +161,17 @@ Every design document should start with:
 
 ## When to Use What
 
-| User Request | Action |
-|-------------|--------|
-| "Create architecture doc" | Load `architecture-design-template.md` + `architecture-diagrams.md` |
-| "API design document" | Load `api-design-template.md` + `sequence-diagrams.md` |
-| "Feature design for X" | Load `feature-design-template.md` + relevant diagram guides |
-| "Database design" | Load `database-design-template.md` + ER diagram reference |
-| "System design doc" | Load `system-design-template.md` + all diagram guides |
-| "Analyze this code" | Follow code-to-diagram workflow |
-| "Document the architecture" | Code-to-diagram + architecture template |
-| "Show the deployment" | Code-to-diagram + `deployment-diagrams.md` |
-| "Workflow diagram for X" | `activity-diagrams.md` + analyze code if provided |
+| User Request                | Action                                                              |
+| --------------------------- | ------------------------------------------------------------------- |
+| "Create architecture doc"   | Load `architecture-design-template.md` + `architecture-diagrams.md` |
+| "API design document"       | Load `api-design-template.md` + `sequence-diagrams.md`              |
+| "Feature design for X"      | Load `feature-design-template.md` + relevant diagram guides         |
+| "Database design"           | Load `database-design-template.md` + ER diagram reference           |
+| "System design doc"         | Load `system-design-template.md` + all diagram guides               |
+| "Analyze this code"         | Follow code-to-diagram workflow                                     |
+| "Document the architecture" | Code-to-diagram + architecture template                             |
+| "Show the deployment"       | Code-to-diagram + `deployment-diagrams.md`                          |
+| "Workflow diagram for X"    | `activity-diagrams.md` + analyze code if provided                   |
 
 ## Best Practices
 

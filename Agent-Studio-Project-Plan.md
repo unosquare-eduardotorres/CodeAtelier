@@ -66,53 +66,53 @@ Agent Studio follows a layered architecture with four principal tiers: the Elect
 
 ### 2.1 Architecture Overview
 
-| Layer | Technology | Responsibility |
-|-------|-----------|----------------|
-| Presentation | React 18 + TypeScript | All UI panels, state management, user interactions |
-| Desktop Shell | Electron 30+ | Window management, native menus, filesystem access, IPC bridge |
-| Backend Services | Node.js (Electron main process) | Agent lifecycle management, Git operations, file services, task tracking |
-| Agent Pool | Claude CLI (child processes) | 11 specialist agents + 1 orchestrator, each as isolated Claude Code sessions |
-| Persistence | SQLite + filesystem | Workspaces, tasks, chat history, execution plans, agent logs |
+| Layer            | Technology                      | Responsibility                                                               |
+| ---------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| Presentation     | React 18 + TypeScript           | All UI panels, state management, user interactions                           |
+| Desktop Shell    | Electron 30+                    | Window management, native menus, filesystem access, IPC bridge               |
+| Backend Services | Node.js (Electron main process) | Agent lifecycle management, Git operations, file services, task tracking     |
+| Agent Pool       | Claude CLI (child processes)    | 11 specialist agents + 1 orchestrator, each as isolated Claude Code sessions |
+| Persistence      | SQLite + filesystem             | Workspaces, tasks, chat history, execution plans, agent logs                 |
 
 ### 2.2 Technology Stack Detail
 
 #### 2.2.1 Frontend
 
-| Component | Choice | Rationale |
-|-----------|--------|-----------|
-| Framework | React 18 + TypeScript | Component model, ecosystem, type safety |
-| State Management | Zustand | Lightweight, no boilerplate, supports slices for complex state |
-| Diff Viewer | Monaco Editor (via @monaco-editor/react) | Same engine as VS Code; native diff view, syntax highlighting for 50+ languages |
-| Styling | Tailwind CSS | Utility-first, rapid prototyping, consistent design tokens |
-| Terminal Emulation | xterm.js | Display real-time agent CLI output streams |
-| Drag-and-Drop | react-dropzone | File attachments (docs, images, PDFs) |
-| Markdown Rendering | react-markdown + remark-gfm | Render agent responses with code blocks, tables, links |
-| Task Board | Custom + dnd-kit | Draggable task cards for execution plans |
-| Icons | Lucide React | Consistent, lightweight icon set |
-| Routing | React Router v6 | Workspace-level navigation |
+| Component          | Choice                                   | Rationale                                                                       |
+| ------------------ | ---------------------------------------- | ------------------------------------------------------------------------------- |
+| Framework          | React 18 + TypeScript                    | Component model, ecosystem, type safety                                         |
+| State Management   | Zustand                                  | Lightweight, no boilerplate, supports slices for complex state                  |
+| Diff Viewer        | Monaco Editor (via @monaco-editor/react) | Same engine as VS Code; native diff view, syntax highlighting for 50+ languages |
+| Styling            | Tailwind CSS                             | Utility-first, rapid prototyping, consistent design tokens                      |
+| Terminal Emulation | xterm.js                                 | Display real-time agent CLI output streams                                      |
+| Drag-and-Drop      | react-dropzone                           | File attachments (docs, images, PDFs)                                           |
+| Markdown Rendering | react-markdown + remark-gfm              | Render agent responses with code blocks, tables, links                          |
+| Task Board         | Custom + dnd-kit                         | Draggable task cards for execution plans                                        |
+| Icons              | Lucide React                             | Consistent, lightweight icon set                                                |
+| Routing            | React Router v6                          | Workspace-level navigation                                                      |
 
 #### 2.2.2 Backend (Electron Main Process)
 
-| Component | Choice | Rationale |
-|-----------|--------|-----------|
-| Runtime | Node.js 20+ (Electron bundled) | Native child_process for agent spawning |
-| Database | better-sqlite3 | Synchronous, fast, no server needed, great Electron support |
-| Git Operations | simple-git | Programmatic Git: clone, branch, commit, diff, worktree management |
-| GitHub Integration | octokit/rest | PR creation, repo management via GitHub API |
-| File Parsing | mammoth (docx), pdf-parse (PDF), xlsx (Excel), sharp (images) | Extract text from attached files for agent context injection |
-| Process Management | Custom AgentProcessManager | Spawn, monitor, communicate with, and terminate Claude CLI processes |
-| IPC Protocol | Electron ipcMain/ipcRenderer | Typed, bidirectional communication between UI and backend |
-| File Watcher | chokidar | Watch workspace files for changes, trigger re-analysis |
+| Component          | Choice                                                        | Rationale                                                            |
+| ------------------ | ------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Runtime            | Node.js 20+ (Electron bundled)                                | Native child_process for agent spawning                              |
+| Database           | better-sqlite3                                                | Synchronous, fast, no server needed, great Electron support          |
+| Git Operations     | simple-git                                                    | Programmatic Git: clone, branch, commit, diff, worktree management   |
+| GitHub Integration | octokit/rest                                                  | PR creation, repo management via GitHub API                          |
+| File Parsing       | mammoth (docx), pdf-parse (PDF), xlsx (Excel), sharp (images) | Extract text from attached files for agent context injection         |
+| Process Management | Custom AgentProcessManager                                    | Spawn, monitor, communicate with, and terminate Claude CLI processes |
+| IPC Protocol       | Electron ipcMain/ipcRenderer                                  | Typed, bidirectional communication between UI and backend            |
+| File Watcher       | chokidar                                                      | Watch workspace files for changes, trigger re-analysis               |
 
 #### 2.2.3 Agent Infrastructure
 
-| Component | Choice | Rationale |
-|-----------|--------|-----------|
-| Agent Runtime | Claude CLI (claude command) | Native Claude Code process, full tool access, authenticated via Max subscription |
-| Agent Definitions | .claude/agents/ YAML files | Declarative agent configuration with system prompts, tool permissions, and skills |
-| Isolation | Git worktrees | Each agent operates in its own worktree to prevent file conflicts |
-| Inter-Agent Comms | Filesystem-based message passing | Agents write to shared inbox directories; orchestrator reads and routes |
-| Auth | claude login (OAuth) | One-time login, session persists across all spawned agents |
+| Component         | Choice                           | Rationale                                                                         |
+| ----------------- | -------------------------------- | --------------------------------------------------------------------------------- |
+| Agent Runtime     | Claude CLI (claude command)      | Native Claude Code process, full tool access, authenticated via Max subscription  |
+| Agent Definitions | .claude/agents/ YAML files       | Declarative agent configuration with system prompts, tool permissions, and skills |
+| Isolation         | Git worktrees                    | Each agent operates in its own worktree to prevent file conflicts                 |
+| Inter-Agent Comms | Filesystem-based message passing | Agents write to shared inbox directories; orchestrator reads and routes           |
+| Auth              | claude login (OAuth)             | One-time login, session persists across all spawned agents                        |
 
 ### 2.3 Data Flow Architecture
 
@@ -155,124 +155,124 @@ Each specialist agent has a unique focus area, system prompt, and set of permitt
 
 #### 3.2.1 React Frontend Architect
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `react-architect` |
-| **Icon / Color** | ⚛️ Cyan (#61DAFB) |
-| **Domain** | Frontend architecture, React ecosystem, component design, state management |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent ID**            | `react-architect`                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Icon / Color**        | ⚛️ Cyan (#61DAFB)                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Domain**              | Frontend architecture, React ecosystem, component design, state management                                                                                                                                                                                                                                                                                                                                        |
 | **System Prompt Focus** | Component architecture patterns (atomic design, compound components), state management strategy (Zustand, Redux, React Query), routing patterns (Next.js App Router, React Router), performance optimization (code splitting, lazy loading, memoization, React Compiler), accessibility (WCAG 2.1 AA), design system integration, micro-frontend patterns, testing strategy (Vitest, Testing Library, Playwright) |
-| **Permitted Tools** | Read files, write files, execute bash (npm, build tools), search codebase |
-| **Skills** | frontend-conventions, react-patterns, accessibility-standards |
+| **Permitted Tools**     | Read files, write files, execute bash (npm, build tools), search codebase                                                                                                                                                                                                                                                                                                                                         |
+| **Skills**              | frontend-conventions, react-patterns, accessibility-standards                                                                                                                                                                                                                                                                                                                                                     |
 
 #### 3.2.2 .NET Backend Architect
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `dotnet-architect` |
-| **Icon / Color** | 🟣 Purple (#512BD4) |
-| **Domain** | .NET/C# backend, API design, middleware, microservices |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent ID**            | `dotnet-architect`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Icon / Color**        | 🟣 Purple (#512BD4)                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Domain**              | .NET/C# backend, API design, middleware, microservices                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **System Prompt Focus** | Clean Architecture / Vertical Slice patterns, ASP.NET Core middleware pipeline, Entity Framework Core (migrations, query optimization, change tracking), dependency injection patterns, authentication/authorization (IdentityServer, JWT, OAuth 2.0), microservices (MassTransit, gRPC, API gateways), CQRS + MediatR, background services (Hangfire, hosted services), health checks, rate limiting, caching (Redis, IMemoryCache), logging (Serilog), unit testing (xUnit, NSubstitute, Bogus) |
-| **Permitted Tools** | Read files, write files, execute bash (dotnet CLI), search codebase |
-| **Skills** | dotnet-conventions, api-design-patterns, ef-core-patterns |
+| **Permitted Tools**     | Read files, write files, execute bash (dotnet CLI), search codebase                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Skills**              | dotnet-conventions, api-design-patterns, ef-core-patterns                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 #### 3.2.3 Agentic Claude Architect
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `agentic-architect` |
-| **Icon / Color** | 🤖 Amber (#D97706) |
-| **Domain** | Claude-based agentic systems, multi-agent coordination, prompt engineering |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent ID**            | `agentic-architect`                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Icon / Color**        | 🤖 Amber (#D97706)                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Domain**              | Claude-based agentic systems, multi-agent coordination, prompt engineering                                                                                                                                                                                                                                                                                                                                                                           |
 | **System Prompt Focus** | Orchestrator/worker patterns, prompt engineering for agents (system prompts, tool definitions), tool use design and MCP server integration, context window management and token optimization, multi-agent coordination patterns (fan-out, pipeline, hierarchy), Claude Code subagents and agent teams, structured output parsing (JSON mode), error handling and retry strategies, agent observability and logging, safety guardrails and sandboxing |
-| **Permitted Tools** | Read files, write files, execute bash, search codebase |
-| **Skills** | agentic-patterns, prompt-engineering, mcp-integration |
+| **Permitted Tools**     | Read files, write files, execute bash, search codebase                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Skills**              | agentic-patterns, prompt-engineering, mcp-integration                                                                                                                                                                                                                                                                                                                                                                                                |
 
 #### 3.2.4 PostgreSQL Architect
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `postgres-architect` |
-| **Icon / Color** | 🐘 Blue (#336791) |
-| **Domain** | Database schema design, query optimization, PostgreSQL-specific features |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent ID**            | `postgres-architect`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Icon / Color**        | 🐘 Blue (#336791)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Domain**              | Database schema design, query optimization, PostgreSQL-specific features                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | **System Prompt Focus** | Schema design (normalization, denormalization trade-offs), indexing strategies (B-tree, GIN, GiST, BRIN, partial indexes, covering indexes), query optimization (EXPLAIN ANALYZE, CTEs, window functions, lateral joins), migration strategies (zero-downtime migrations, blue-green), partitioning (range, list, hash), replication (streaming, logical), connection pooling (PgBouncer, Supavisor), JSONB patterns, full-text search, row-level security, PostgreSQL extensions (pg_stat_statements, pg_trgm, PostGIS, pgvector), backup/recovery (pg_dump, WAL archiving, PITR) |
-| **Permitted Tools** | Read files, write files, execute bash (psql, migration tools), search codebase |
-| **Skills** | postgres-conventions, migration-patterns, query-optimization |
+| **Permitted Tools**     | Read files, write files, execute bash (psql, migration tools), search codebase                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Skills**              | postgres-conventions, migration-patterns, query-optimization                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 #### 3.2.5 UX/UI Specialist
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `ux-ui-specialist` |
-| **Icon / Color** | 🎨 Pink (#DB2777) |
-| **Domain** | User experience design, interface design, design systems, accessibility |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Agent ID**            | `ux-ui-specialist`                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Icon / Color**        | 🎨 Pink (#DB2777)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Domain**              | User experience design, interface design, design systems, accessibility                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **System Prompt Focus** | User journey mapping, wireframe specification (component hierarchy, layout grids), design system architecture (tokens, components, patterns), interaction design (micro-interactions, transitions, loading states, error states, empty states), responsive design patterns, accessibility (WCAG 2.1 AA, screen readers, keyboard navigation), information architecture, usability heuristics (Nielsen), dark mode considerations, design-to-code handoff specifications, component documentation |
-| **Permitted Tools** | Read files, write files, search codebase |
-| **Skills** | ux-patterns, design-system-architecture, accessibility-guidelines |
+| **Permitted Tools**     | Read files, write files, search codebase                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Skills**              | ux-patterns, design-system-architecture, accessibility-guidelines                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 #### 3.2.6 Git/GitHub Specialist
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `git-github-specialist` |
-| **Icon / Color** | 🔀 Gray (#64748B) |
-| **Domain** | Version control, branching strategies, PR workflows, repository management |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Agent ID**            | `git-github-specialist`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Icon / Color**        | 🔀 Gray (#64748B)                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Domain**              | Version control, branching strategies, PR workflows, repository management                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | **System Prompt Focus** | Branching strategies (Git Flow, GitHub Flow, trunk-based), commit message conventions (Conventional Commits), PR best practices (size, description, review checklist), merge strategies (merge, squash, rebase), conflict resolution workflows, Git worktree management for parallel agent work, branch protection rules, GitHub Actions integration, code review automation, monorepo strategies (Nx, Turborepo), Git hooks (husky, lint-staged), .gitignore patterns, repository hygiene |
-| **Permitted Tools** | Read files, execute bash (git, gh CLI), search codebase |
-| **Skills** | git-workflow-patterns, pr-conventions, branching-strategies |
+| **Permitted Tools**     | Read files, execute bash (git, gh CLI), search codebase                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Skills**              | git-workflow-patterns, pr-conventions, branching-strategies                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 #### 3.2.7 Requirements Specialist (PO/BA)
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `requirements-specialist` |
-| **Icon / Color** | 📋 Green (#059669) |
-| **Domain** | Business analysis, user stories, acceptance criteria, backlog management |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent ID**            | `requirements-specialist`                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **Icon / Color**        | 📋 Green (#059669)                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Domain**              | Business analysis, user stories, acceptance criteria, backlog management                                                                                                                                                                                                                                                                                                                                                                        |
 | **System Prompt Focus** | User story writing (INVEST criteria), acceptance criteria (Given-When-Then), requirements elicitation and refinement, domain modeling (event storming, domain-driven design ubiquitous language), stakeholder analysis, prioritization frameworks (MoSCoW, RICE, WSJF), backlog grooming, definition of ready/done, non-functional requirements specification, traceability matrices, impact analysis for change requests, BDD scenario writing |
-| **Permitted Tools** | Read files, write files, search codebase |
-| **Skills** | requirements-patterns, user-story-templates, ddd-patterns |
+| **Permitted Tools**     | Read files, write files, search codebase                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Skills**              | requirements-patterns, user-story-templates, ddd-patterns                                                                                                                                                                                                                                                                                                                                                                                       |
 
 #### 3.2.8 Code Planner Specialist
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `code-planner` |
-| **Icon / Color** | 📝 Gray (#475569) |
-| **Domain** | Code structure planning, module decomposition, dependency mapping, file organization |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent ID**            | `code-planner`                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Icon / Color**        | 📝 Gray (#475569)                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **Domain**              | Code structure planning, module decomposition, dependency mapping, file organization                                                                                                                                                                                                                                                                                                                                                                                                         |
 | **System Prompt Focus** | File and folder structure design, module decomposition (feature-based, layer-based, domain-based), dependency graphs and import maps, API contract definitions (OpenAPI specs), interface and type definitions before implementation, code generation templates, shared library identification, naming conventions, configuration management patterns, feature flag integration points, technical debt identification and refactoring plans, code change impact analysis across the codebase |
-| **Permitted Tools** | Read files, write files, execute bash (tree, find), search codebase |
-| **Skills** | code-organization, module-patterns, dependency-management |
+| **Permitted Tools**     | Read files, write files, execute bash (tree, find), search codebase                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Skills**              | code-organization, module-patterns, dependency-management                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 #### 3.2.9 Execution Planner Specialist
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `execution-planner` |
-| **Icon / Color** | 📅 Coral (#DC6843) |
-| **Domain** | Sprint planning, task sequencing, parallelization strategy, effort estimation |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent ID**            | `execution-planner`                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Icon / Color**        | 📅 Coral (#DC6843)                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Domain**              | Sprint planning, task sequencing, parallelization strategy, effort estimation                                                                                                                                                                                                                                                                                                                                                                                           |
 | **System Prompt Focus** | Task decomposition and sequencing with dependency graphs, parallel execution identification (which tasks can run concurrently), effort estimation (T-shirt sizing, story points), sprint capacity planning, critical path analysis, risk identification and mitigation planning, milestone definition, blocking dependency resolution, resource allocation across agents, progress tracking metrics, definition of done for each task, rollback plans for risky changes |
-| **Permitted Tools** | Read files, write files, search codebase |
-| **Skills** | execution-planning, task-decomposition, risk-assessment |
+| **Permitted Tools**     | Read files, write files, search codebase                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Skills**              | execution-planning, task-decomposition, risk-assessment                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 #### 3.2.10 CI/CD DevOps Specialist
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `cicd-devops` |
-| **Icon / Color** | 🚀 Red (#DC2626) |
-| **Domain** | CI/CD pipelines, Docker, testing automation, deployment strategies |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Agent ID**            | `cicd-devops`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Icon / Color**        | 🚀 Red (#DC2626)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Domain**              | CI/CD pipelines, Docker, testing automation, deployment strategies                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | **System Prompt Focus** | GitHub Actions workflow design (matrix builds, caching, artifacts), Docker/Dockerfile optimization (multi-stage, layer caching, security scanning), testing pipeline orchestration (unit, integration, e2e, visual regression), deployment strategies (blue-green, canary, rolling), infrastructure as code (Terraform, Pulumi), secrets management (GitHub Secrets, Vault), monitoring and alerting (health checks, SLIs/SLOs), database migration automation in CI, environment management (dev, staging, production), dependency scanning (Dependabot, Snyk), performance testing integration |
-| **Permitted Tools** | Read files, write files, execute bash (docker, gh, terraform), search codebase |
-| **Skills** | cicd-patterns, docker-best-practices, github-actions-patterns |
+| **Permitted Tools**     | Read files, write files, execute bash (docker, gh, terraform), search codebase                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Skills**              | cicd-patterns, docker-best-practices, github-actions-patterns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 #### 3.2.11 Cloud and Infrastructure Specialist
 
-| Attribute | Value |
-|-----------|-------|
-| **Agent ID** | `cloud-infrastructure` |
-| **Icon / Color** | ☁️ Teal (#0D9488) |
-| **Domain** | Cloud architecture, IaC, scaling, networking, security |
+| Attribute               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent ID**            | `cloud-infrastructure`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Icon / Color**        | ☁️ Teal (#0D9488)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **Domain**              | Cloud architecture, IaC, scaling, networking, security                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | **System Prompt Focus** | Cloud architecture patterns (AWS, Azure, GCP), infrastructure as code (Terraform modules, Pulumi stacks), networking (VPCs, subnets, load balancers, CDN, DNS), compute selection (containers vs serverless vs VMs), managed database services (RDS, Cloud SQL, Cosmos DB), message queues and event buses (SQS, EventBridge, Pub/Sub), storage (S3, Blob, object lifecycle policies), auto-scaling configurations, cost optimization strategies, security best practices (IAM, network policies, encryption at rest/transit), compliance frameworks, disaster recovery planning, multi-region architecture |
-| **Permitted Tools** | Read files, write files, execute bash (aws, az, gcloud, terraform), search codebase |
-| **Skills** | cloud-patterns, terraform-modules, security-best-practices |
+| **Permitted Tools**     | Read files, write files, execute bash (aws, az, gcloud, terraform), search codebase                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Skills**              | cloud-patterns, terraform-modules, security-best-practices                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### 3.3 Agent Interaction Patterns
 
@@ -298,15 +298,15 @@ The application uses a panel-based layout inspired by VS Code and modern IDE con
 
 ### 4.1 Main Layout
 
-| Panel | Position | Purpose | Key Features |
-|-------|----------|---------|--------------|
-| Workspace Sidebar | Left (collapsible) | Project navigation and management | Project list, file tree, recent workspaces, workspace settings |
-| Chat Panel | Center-left (primary) | Conversation with the Coordinator | Markdown rendering, code blocks, file attachment drop zone, message history search |
-| Agent Monitor | Center-right (toggle) | Real-time agent activity | Agent status cards, live stdout streaming via xterm.js, task queue, token usage |
-| Plan Viewer | Center-right (toggle) | Execution plan visualization | Task board with drag-and-drop, dependency graph, Gantt-style timeline, status filters |
-| Diff Viewer | Center-right (toggle) | Code change review | Monaco-based side-by-side diff, syntax highlighting, inline comments, approve/reject per file |
-| Git Panel | Bottom bar (expandable) | Version control operations | Branch selector, staged changes, commit message, push/PR button, merge conflict viewer |
-| Context Bar | Right sidebar (collapsible) | Attached files and agent context | Drag-drop file uploads, parsed preview, token count estimate, context management |
+| Panel             | Position                    | Purpose                           | Key Features                                                                                  |
+| ----------------- | --------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------- |
+| Workspace Sidebar | Left (collapsible)          | Project navigation and management | Project list, file tree, recent workspaces, workspace settings                                |
+| Chat Panel        | Center-left (primary)       | Conversation with the Coordinator | Markdown rendering, code blocks, file attachment drop zone, message history search            |
+| Agent Monitor     | Center-right (toggle)       | Real-time agent activity          | Agent status cards, live stdout streaming via xterm.js, task queue, token usage               |
+| Plan Viewer       | Center-right (toggle)       | Execution plan visualization      | Task board with drag-and-drop, dependency graph, Gantt-style timeline, status filters         |
+| Diff Viewer       | Center-right (toggle)       | Code change review                | Monaco-based side-by-side diff, syntax highlighting, inline comments, approve/reject per file |
+| Git Panel         | Bottom bar (expandable)     | Version control operations        | Branch selector, staged changes, commit message, push/PR button, merge conflict viewer        |
+| Context Bar       | Right sidebar (collapsible) | Attached files and agent context  | Drag-drop file uploads, parsed preview, token count estimate, context management              |
 
 ### 4.2 Key UI Workflows
 
@@ -359,17 +359,17 @@ All persistent data is stored in a local SQLite database. Each workspace has its
 
 ### 5.1 Core Tables
 
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| **workspaces** | Registered projects | id, name, repo_path, git_remote_url, created_at, last_opened_at, settings_json |
-| **conversations** | Chat sessions | id, workspace_id, title, created_at, status (active/archived), summary |
-| **messages** | Individual chat messages | id, conversation_id, role (user/coordinator/specialist), agent_id, content_md, attachments_json, created_at |
-| **execution_plans** | Task execution plans | id, conversation_id, title, status (draft/approved/in_progress/completed), plan_json, created_at |
-| **tasks** | Individual plan tasks | id, plan_id, agent_id, title, description, status, depends_on (task IDs), priority, effort_estimate, started_at, completed_at, output_summary |
-| **agent_sessions** | Spawned agent processes | id, task_id, agent_type, pid, status (running/completed/failed/terminated), started_at, ended_at, token_usage, stdout_log_path |
-| **file_changes** | Code modifications by agents | id, task_id, agent_id, file_path, change_type (create/modify/delete), diff_text, status (pending/approved/rejected), reviewed_at |
-| **attachments** | Context files | id, conversation_id, filename, mime_type, file_path, extracted_text, token_count, created_at |
-| **git_operations** | Git history tracking | id, workspace_id, operation (branch/commit/push/pr), ref_name, commit_hash, pr_url, created_at |
+| Table               | Purpose                      | Key Columns                                                                                                                                   |
+| ------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **workspaces**      | Registered projects          | id, name, repo_path, git_remote_url, created_at, last_opened_at, settings_json                                                                |
+| **conversations**   | Chat sessions                | id, workspace_id, title, created_at, status (active/archived), summary                                                                        |
+| **messages**        | Individual chat messages     | id, conversation_id, role (user/coordinator/specialist), agent_id, content_md, attachments_json, created_at                                   |
+| **execution_plans** | Task execution plans         | id, conversation_id, title, status (draft/approved/in_progress/completed), plan_json, created_at                                              |
+| **tasks**           | Individual plan tasks        | id, plan_id, agent_id, title, description, status, depends_on (task IDs), priority, effort_estimate, started_at, completed_at, output_summary |
+| **agent_sessions**  | Spawned agent processes      | id, task_id, agent_type, pid, status (running/completed/failed/terminated), started_at, ended_at, token_usage, stdout_log_path                |
+| **file_changes**    | Code modifications by agents | id, task_id, agent_id, file_path, change_type (create/modify/delete), diff_text, status (pending/approved/rejected), reviewed_at              |
+| **attachments**     | Context files                | id, conversation_id, filename, mime_type, file_path, extracted_text, token_count, created_at                                                  |
+| **git_operations**  | Git history tracking         | id, workspace_id, operation (branch/commit/push/pr), ref_name, commit_hash, pr_url, created_at                                                |
 
 ---
 
@@ -383,16 +383,16 @@ The project is divided into four phases, each delivering a usable increment. Eac
 
 #### 6.1.1 Deliverables
 
-| Task | Description | Effort |
-|------|-------------|--------|
-| Electron + React scaffold | Create Electron app with React + TypeScript + Tailwind. Vite for dev build. electron-builder for packaging. | 2–3 days |
-| SQLite integration | Set up better-sqlite3 in main process. Create schema for workspaces, conversations, and messages tables. | 1 day |
-| Workspace Manager | Left sidebar: add/remove workspaces by selecting local directories. Store in SQLite. Switch between workspaces. | 2 days |
-| IPC layer | Define typed IPC channels: chat:send, chat:receive, agent:status, workspace:open, etc. Bidirectional with event streaming. | 1–2 days |
-| Chat Panel | React component with message list (markdown rendering), input area, message history. Scrollable, auto-scroll on new messages. | 2–3 days |
-| Orchestrator integration | Spawn a persistent Claude CLI session as the coordinator. Route chat messages to it via stdin. Capture stdout responses. | 2–3 days |
-| Basic Agent Monitor | Simple status display showing which agents are currently active, their status, and elapsed time. | 1–2 days |
-| File attachment (basic) | Drag-and-drop zone in Chat Panel. Store files locally. Pass file content as context to the Orchestrator. | 1–2 days |
+| Task                      | Description                                                                                                                   | Effort   |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------- |
+| Electron + React scaffold | Create Electron app with React + TypeScript + Tailwind. Vite for dev build. electron-builder for packaging.                   | 2–3 days |
+| SQLite integration        | Set up better-sqlite3 in main process. Create schema for workspaces, conversations, and messages tables.                      | 1 day    |
+| Workspace Manager         | Left sidebar: add/remove workspaces by selecting local directories. Store in SQLite. Switch between workspaces.               | 2 days   |
+| IPC layer                 | Define typed IPC channels: chat:send, chat:receive, agent:status, workspace:open, etc. Bidirectional with event streaming.    | 1–2 days |
+| Chat Panel                | React component with message list (markdown rendering), input area, message history. Scrollable, auto-scroll on new messages. | 2–3 days |
+| Orchestrator integration  | Spawn a persistent Claude CLI session as the coordinator. Route chat messages to it via stdin. Capture stdout responses.      | 2–3 days |
+| Basic Agent Monitor       | Simple status display showing which agents are currently active, their status, and elapsed time.                              | 1–2 days |
+| File attachment (basic)   | Drag-and-drop zone in Chat Panel. Store files locally. Pass file content as context to the Orchestrator.                      | 1–2 days |
 
 #### 6.1.2 Technical Details
 
@@ -408,16 +408,16 @@ The project is divided into four phases, each delivering a usable increment. Eac
 
 #### 6.2.1 Deliverables
 
-| Task | Description | Effort |
-|------|-------------|--------|
-| Agent YAML definitions | Create all 11 `.claude/agents/` YAML files with system prompts, tool permissions, and skill references. | 2–3 days |
-| Agent Process Manager | Service that spawns Claude CLI sessions per specialist, manages lifecycle (start/stop/restart), captures stdout/stderr, handles crashes. | 3–4 days |
-| Parallel execution engine | Orchestrator emits delegation plan (JSON). Process Manager spawns specialists concurrently. Results collected via `Promise.allSettled` pattern. | 2–3 days |
-| Git worktree management | Automatically create and manage worktrees for each agent session. Merge changes back when tasks complete. | 2 days |
-| Enhanced Agent Monitor | Full agent dashboard: per-agent cards with live xterm.js terminal output, status indicators, token usage, elapsed time, expandable detail view. | 3–4 days |
-| Agent-to-agent messaging | Filesystem-based inbox system: agents write JSON messages to shared directories. Orchestrator routes between specialists. | 1–2 days |
-| Token usage tracking | Parse Claude CLI output for token counts. Store per-session in SQLite. Display in Agent Monitor and workspace dashboard. | 1 day |
-| Error handling and recovery | Graceful handling of agent crashes, timeouts, rate limits. Auto-retry with exponential backoff. User notification for persistent failures. | 2 days |
+| Task                        | Description                                                                                                                                     | Effort   |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| Agent YAML definitions      | Create all 11 `.claude/agents/` YAML files with system prompts, tool permissions, and skill references.                                         | 2–3 days |
+| Agent Process Manager       | Service that spawns Claude CLI sessions per specialist, manages lifecycle (start/stop/restart), captures stdout/stderr, handles crashes.        | 3–4 days |
+| Parallel execution engine   | Orchestrator emits delegation plan (JSON). Process Manager spawns specialists concurrently. Results collected via `Promise.allSettled` pattern. | 2–3 days |
+| Git worktree management     | Automatically create and manage worktrees for each agent session. Merge changes back when tasks complete.                                       | 2 days   |
+| Enhanced Agent Monitor      | Full agent dashboard: per-agent cards with live xterm.js terminal output, status indicators, token usage, elapsed time, expandable detail view. | 3–4 days |
+| Agent-to-agent messaging    | Filesystem-based inbox system: agents write JSON messages to shared directories. Orchestrator routes between specialists.                       | 1–2 days |
+| Token usage tracking        | Parse Claude CLI output for token counts. Store per-session in SQLite. Display in Agent Monitor and workspace dashboard.                        | 1 day    |
+| Error handling and recovery | Graceful handling of agent crashes, timeouts, rate limits. Auto-retry with exponential backoff. User notification for persistent failures.      | 2 days   |
 
 #### 6.2.2 Technical Details
 
@@ -433,16 +433,16 @@ The project is divided into four phases, each delivering a usable increment. Eac
 
 #### 6.3.1 Deliverables
 
-| Task | Description | Effort |
-|------|-------------|--------|
-| Plan Viewer (task board) | Interactive task board showing execution plan tasks as cards. Drag-and-drop reordering. Status columns: Pending, In Progress, Review, Done. | 3–4 days |
-| Dependency graph visualization | D3.js-based DAG showing task dependencies. Click nodes to view details. Visual indicators for blocked tasks. | 2–3 days |
-| Diff Viewer (Monaco) | Monaco Editor in diff mode showing side-by-side changes per file. Syntax highlighting. Inline approve/reject buttons per hunk. | 3–4 days |
-| File change aggregation | Collect all file modifications across agent worktrees. Present unified view grouped by file, with per-agent attribution. | 2 days |
-| Git Panel | Branch management: create, switch, delete. Staged changes viewer. Commit with auto-generated message. Push to remote. | 3–4 days |
-| PR creation flow | Git/GitHub Specialist drafts PR description. User reviews/edits. Create PR via gh CLI or Octokit. Show PR link and status. | 2–3 days |
-| Execution engine | Orchestrator executes approved plan tasks sequentially/in parallel based on dependency graph. Updates task statuses in real-time. | 3–4 days |
-| Context file parsing | Parse DOCX (mammoth), PDF (pdf-parse), XLSX (xlsx), CSV, images (sharp + OCR). Extract text, estimate tokens, inject into agent context. | 2–3 days |
+| Task                           | Description                                                                                                                                 | Effort   |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| Plan Viewer (task board)       | Interactive task board showing execution plan tasks as cards. Drag-and-drop reordering. Status columns: Pending, In Progress, Review, Done. | 3–4 days |
+| Dependency graph visualization | D3.js-based DAG showing task dependencies. Click nodes to view details. Visual indicators for blocked tasks.                                | 2–3 days |
+| Diff Viewer (Monaco)           | Monaco Editor in diff mode showing side-by-side changes per file. Syntax highlighting. Inline approve/reject buttons per hunk.              | 3–4 days |
+| File change aggregation        | Collect all file modifications across agent worktrees. Present unified view grouped by file, with per-agent attribution.                    | 2 days   |
+| Git Panel                      | Branch management: create, switch, delete. Staged changes viewer. Commit with auto-generated message. Push to remote.                       | 3–4 days |
+| PR creation flow               | Git/GitHub Specialist drafts PR description. User reviews/edits. Create PR via gh CLI or Octokit. Show PR link and status.                  | 2–3 days |
+| Execution engine               | Orchestrator executes approved plan tasks sequentially/in parallel based on dependency graph. Updates task statuses in real-time.           | 3–4 days |
+| Context file parsing           | Parse DOCX (mammoth), PDF (pdf-parse), XLSX (xlsx), CSV, images (sharp + OCR). Extract text, estimate tokens, inject into agent context.    | 2–3 days |
 
 #### 6.3.2 Technical Details
 
@@ -458,19 +458,19 @@ The project is divided into four phases, each delivering a usable increment. Eac
 
 #### 6.4.1 Deliverables
 
-| Task | Description | Effort |
-|------|-------------|--------|
-| Keyboard shortcuts | Comprehensive shortcut system: Cmd+K for command palette, Cmd+Enter to send, Cmd+Shift+D for diff, Cmd+B for sidebar toggle, etc. | 2 days |
-| Theme system | Light/dark theme toggle. CSS variables for all colors. Respect system preference. High-contrast accessibility mode. | 1–2 days |
-| Notification system | Toast notifications for: agent completion, errors, PR created, plan approved. Notification center for history. | 1–2 days |
-| Search across conversations | Full-text search across all chat history within a workspace. Filter by agent, date, topic. | 2 days |
-| Workspace settings | Per-workspace configuration: default branch, PR template, agent preferences, token budgets, Git remote settings. | 2 days |
-| Agent skill customization | UI for editing agent skills (`.claude/skills/` files). Add custom instructions per agent per workspace. | 2–3 days |
-| Export and reporting | Export conversation as Markdown/PDF. Export execution plan as document. Export audit report. | 2 days |
-| Performance optimization | Virtual scrolling for long conversations. Lazy loading for diff views. Debounced search. SQLite query optimization. | 2–3 days |
-| Onboarding and help | First-run wizard: connect Claude CLI, select first workspace, guided tour. In-app help tooltips. | 2 days |
-| Error boundary and recovery | React error boundaries. Automatic session recovery. Crash reporting. Safe mode for corrupted workspaces. | 2 days |
-| Cloud infrastructure panel | Optional: view cloud resources (AWS/Azure/GCP) related to the workspace. Trigger IaC plans from the app. | 3–4 days |
+| Task                        | Description                                                                                                                       | Effort   |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| Keyboard shortcuts          | Comprehensive shortcut system: Cmd+K for command palette, Cmd+Enter to send, Cmd+Shift+D for diff, Cmd+B for sidebar toggle, etc. | 2 days   |
+| Theme system                | Light/dark theme toggle. CSS variables for all colors. Respect system preference. High-contrast accessibility mode.               | 1–2 days |
+| Notification system         | Toast notifications for: agent completion, errors, PR created, plan approved. Notification center for history.                    | 1–2 days |
+| Search across conversations | Full-text search across all chat history within a workspace. Filter by agent, date, topic.                                        | 2 days   |
+| Workspace settings          | Per-workspace configuration: default branch, PR template, agent preferences, token budgets, Git remote settings.                  | 2 days   |
+| Agent skill customization   | UI for editing agent skills (`.claude/skills/` files). Add custom instructions per agent per workspace.                           | 2–3 days |
+| Export and reporting        | Export conversation as Markdown/PDF. Export execution plan as document. Export audit report.                                      | 2 days   |
+| Performance optimization    | Virtual scrolling for long conversations. Lazy loading for diff views. Debounced search. SQLite query optimization.               | 2–3 days |
+| Onboarding and help         | First-run wizard: connect Claude CLI, select first workspace, guided tour. In-app help tooltips.                                  | 2 days   |
+| Error boundary and recovery | React error boundaries. Automatic session recovery. Crash reporting. Safe mode for corrupted workspaces.                          | 2 days   |
+| Cloud infrastructure panel  | Optional: view cloud resources (AWS/Azure/GCP) related to the workspace. Trigger IaC plans from the app.                          | 3–4 days |
 
 ---
 
@@ -478,40 +478,40 @@ The project is divided into four phases, each delivering a usable increment. Eac
 
 The following is the recommended directory structure for the Agent Studio codebase:
 
-| Path | Purpose |
-|------|---------|
-| `agent-studio/` | Root monorepo |
-| `package.json` | Root package with Electron build scripts |
-| `electron.vite.config.ts` | Vite config for Electron (main + renderer) |
-| `src/main/` | Electron main process (Node.js) |
-| `src/main/index.ts` | App entry: window creation, IPC registration |
-| `src/main/ipc/` | IPC handler definitions (chat, agent, git, workspace channels) |
-| `src/main/services/orchestrator.ts` | OrchestratorService: manages persistent coordinator Claude CLI session |
-| `src/main/services/agent-process-manager.ts` | AgentProcessManager: spawn/monitor/terminate specialist agents |
-| `src/main/services/git.ts` | GitService: worktree, branch, commit, diff, PR operations |
-| `src/main/services/file.ts` | FileService: parse attachments (docx, pdf, xlsx, images) |
-| `src/main/services/task-tracker.ts` | TaskTracker: CRUD for execution plans and tasks in SQLite |
-| `src/main/services/context-store.ts` | ContextStore: manage attached files and token budgets |
-| `src/main/db/schema.sql` | SQLite schema definitions |
-| `src/main/db/index.ts` | Database initialization and migration runner |
-| `src/renderer/` | React frontend (renderer process) |
-| `src/renderer/App.tsx` | Root layout with panel management |
-| `src/renderer/store/` | Zustand stores (chatStore, agentStore, planStore, gitStore, workspaceStore) |
-| `src/renderer/components/chat/` | ChatPanel, MessageList, MessageInput, AttachmentDropzone |
-| `src/renderer/components/agents/` | AgentMonitor, AgentCard, AgentTerminal (xterm.js) |
-| `src/renderer/components/plan/` | PlanViewer, TaskBoard, TaskCard, DependencyGraph |
-| `src/renderer/components/diff/` | DiffViewer (Monaco), FileChangeList, HunkActions |
-| `src/renderer/components/git/` | GitPanel, BranchSelector, CommitDialog, PRCreator |
-| `src/renderer/components/workspace/` | WorkspaceSidebar, FileTree, WorkspaceSettings |
-| `src/renderer/components/context/` | ContextBar, FilePreview, TokenCounter |
-| `src/renderer/hooks/` | useIPC, useAgent, useGit, useWorkspace custom hooks |
-| `src/renderer/types/` | Shared TypeScript interfaces for all IPC payloads and data models |
-| `src/shared/` | Code shared between main and renderer |
-| `src/shared/types.ts` | IPC channel definitions, agent types, task types |
-| `src/shared/constants.ts` | Agent IDs, status enums, default configurations |
-| `.claude/agents/` | 11 specialist agent YAML definitions |
-| `.claude/skills/` | Custom skill files referenced by agents |
-| `resources/` | App icons, default templates, onboarding assets |
+| Path                                         | Purpose                                                                     |
+| -------------------------------------------- | --------------------------------------------------------------------------- |
+| `agent-studio/`                              | Root monorepo                                                               |
+| `package.json`                               | Root package with Electron build scripts                                    |
+| `electron.vite.config.ts`                    | Vite config for Electron (main + renderer)                                  |
+| `src/main/`                                  | Electron main process (Node.js)                                             |
+| `src/main/index.ts`                          | App entry: window creation, IPC registration                                |
+| `src/main/ipc/`                              | IPC handler definitions (chat, agent, git, workspace channels)              |
+| `src/main/services/orchestrator.ts`          | OrchestratorService: manages persistent coordinator Claude CLI session      |
+| `src/main/services/agent-process-manager.ts` | AgentProcessManager: spawn/monitor/terminate specialist agents              |
+| `src/main/services/git.ts`                   | GitService: worktree, branch, commit, diff, PR operations                   |
+| `src/main/services/file.ts`                  | FileService: parse attachments (docx, pdf, xlsx, images)                    |
+| `src/main/services/task-tracker.ts`          | TaskTracker: CRUD for execution plans and tasks in SQLite                   |
+| `src/main/services/context-store.ts`         | ContextStore: manage attached files and token budgets                       |
+| `src/main/db/schema.sql`                     | SQLite schema definitions                                                   |
+| `src/main/db/index.ts`                       | Database initialization and migration runner                                |
+| `src/renderer/`                              | React frontend (renderer process)                                           |
+| `src/renderer/App.tsx`                       | Root layout with panel management                                           |
+| `src/renderer/store/`                        | Zustand stores (chatStore, agentStore, planStore, gitStore, workspaceStore) |
+| `src/renderer/components/chat/`              | ChatPanel, MessageList, MessageInput, AttachmentDropzone                    |
+| `src/renderer/components/agents/`            | AgentMonitor, AgentCard, AgentTerminal (xterm.js)                           |
+| `src/renderer/components/plan/`              | PlanViewer, TaskBoard, TaskCard, DependencyGraph                            |
+| `src/renderer/components/diff/`              | DiffViewer (Monaco), FileChangeList, HunkActions                            |
+| `src/renderer/components/git/`               | GitPanel, BranchSelector, CommitDialog, PRCreator                           |
+| `src/renderer/components/workspace/`         | WorkspaceSidebar, FileTree, WorkspaceSettings                               |
+| `src/renderer/components/context/`           | ContextBar, FilePreview, TokenCounter                                       |
+| `src/renderer/hooks/`                        | useIPC, useAgent, useGit, useWorkspace custom hooks                         |
+| `src/renderer/types/`                        | Shared TypeScript interfaces for all IPC payloads and data models           |
+| `src/shared/`                                | Code shared between main and renderer                                       |
+| `src/shared/types.ts`                        | IPC channel definitions, agent types, task types                            |
+| `src/shared/constants.ts`                    | Agent IDs, status enums, default configurations                             |
+| `.claude/agents/`                            | 11 specialist agent YAML definitions                                        |
+| `.claude/skills/`                            | Custom skill files referenced by agents                                     |
+| `resources/`                                 | App icons, default templates, onboarding assets                             |
 
 ---
 
@@ -567,16 +567,16 @@ skills: [frontend-conventions, react-patterns]
 
 ## 9. Risk Assessment and Mitigations
 
-| Risk | Probability | Impact | Mitigation |
-|------|------------|--------|------------|
-| Claude CLI rate limits with parallel agents | High | High | Implement token budgets per agent. Queue agents when approaching limits. Use Sonnet for routine tasks, reserve Opus for complex analysis. Monitor with /cost command. |
-| Agent conflicts in shared codebase | Medium | High | Git worktree isolation ensures agents never touch the same files. Orchestrator manages dependency ordering. Merge conflicts detected and surfaced to user. |
-| Context window exhaustion in long sessions | High | Medium | Auto-compaction (/compact) triggered when context exceeds 70% capacity. Summarize completed tasks. Use subagents for contained subtasks (separate context). |
-| Electron app performance with many open panels | Medium | Medium | Virtual scrolling for long lists. Lazy-load Monaco editor. Debounce IPC events. Web Workers for heavy parsing. Profile with Chrome DevTools. |
-| Claude CLI version compatibility | Low | High | Pin minimum Claude CLI version in prerequisites. Check version on app startup. Graceful degradation for missing features. |
-| Large repository clone/analysis time | Medium | Low | Use shallow clones (--depth 1) for initial analysis. Incremental codebase scanning. .claudeignore to skip node_modules, build artifacts, etc. |
-| Data loss from app crash | Low | High | SQLite WAL mode for crash-safe writes. Auto-save conversation every 30 seconds. Git worktrees preserve agent work even if app crashes. Session recovery on restart. |
-| User confusion with many agents | Medium | Medium | Clear agent status UI. Collapsible agent cards. Focus mode showing only active agents. Onboarding tutorial explaining the agent team concept. |
+| Risk                                           | Probability | Impact | Mitigation                                                                                                                                                            |
+| ---------------------------------------------- | ----------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude CLI rate limits with parallel agents    | High        | High   | Implement token budgets per agent. Queue agents when approaching limits. Use Sonnet for routine tasks, reserve Opus for complex analysis. Monitor with /cost command. |
+| Agent conflicts in shared codebase             | Medium      | High   | Git worktree isolation ensures agents never touch the same files. Orchestrator manages dependency ordering. Merge conflicts detected and surfaced to user.            |
+| Context window exhaustion in long sessions     | High        | Medium | Auto-compaction (/compact) triggered when context exceeds 70% capacity. Summarize completed tasks. Use subagents for contained subtasks (separate context).           |
+| Electron app performance with many open panels | Medium      | Medium | Virtual scrolling for long lists. Lazy-load Monaco editor. Debounce IPC events. Web Workers for heavy parsing. Profile with Chrome DevTools.                          |
+| Claude CLI version compatibility               | Low         | High   | Pin minimum Claude CLI version in prerequisites. Check version on app startup. Graceful degradation for missing features.                                             |
+| Large repository clone/analysis time           | Medium      | Low    | Use shallow clones (--depth 1) for initial analysis. Incremental codebase scanning. .claudeignore to skip node_modules, build artifacts, etc.                         |
+| Data loss from app crash                       | Low         | High   | SQLite WAL mode for crash-safe writes. Auto-save conversation every 30 seconds. Git worktrees preserve agent work even if app crashes. Session recovery on restart.   |
+| User confusion with many agents                | Medium      | Medium | Clear agent status UI. Collapsible agent cards. Focus mode showing only active agents. Onboarding tutorial explaining the agent team concept.                         |
 
 ---
 
@@ -584,16 +584,16 @@ skills: [frontend-conventions, react-patterns]
 
 ### 10.1 System Requirements
 
-| Requirement | Minimum | Recommended |
-|-------------|---------|-------------|
-| Operating System | macOS 12+, Windows 10+, Ubuntu 22.04+ | macOS 14+ or latest Windows 11 |
-| Node.js | v20.0+ | v22 LTS |
-| Claude CLI | Latest version | Latest version (auto-update enabled) |
-| Claude Subscription | Max 5x ($100/mo) | Max 20x ($200/mo) for heavy parallel usage |
-| Git | 2.35+ | 2.44+ (worktree improvements) |
-| GitHub CLI (gh) | 2.40+ | Latest |
-| RAM | 8 GB | 16 GB+ (multiple agent processes) |
-| Disk | 2 GB free + repo size | SSD with 10 GB+ free |
+| Requirement         | Minimum                               | Recommended                                |
+| ------------------- | ------------------------------------- | ------------------------------------------ |
+| Operating System    | macOS 12+, Windows 10+, Ubuntu 22.04+ | macOS 14+ or latest Windows 11             |
+| Node.js             | v20.0+                                | v22 LTS                                    |
+| Claude CLI          | Latest version                        | Latest version (auto-update enabled)       |
+| Claude Subscription | Max 5x ($100/mo)                      | Max 20x ($200/mo) for heavy parallel usage |
+| Git                 | 2.35+                                 | 2.44+ (worktree improvements)              |
+| GitHub CLI (gh)     | 2.40+                                 | Latest                                     |
+| RAM                 | 8 GB                                  | 16 GB+ (multiple agent processes)          |
+| Disk                | 2 GB free + repo size                 | SSD with 10 GB+ free                       |
 
 ### 10.2 Initial Setup Steps
 
@@ -612,15 +612,15 @@ skills: [frontend-conventions, react-patterns]
 
 ## 11. Success Metrics
 
-| Metric | Target | How to Measure |
-|--------|--------|----------------|
-| Agent response time | < 30 seconds for simple delegation, < 2 min for full team | Timestamp logging in AgentProcessManager |
-| Parallel agent success rate | > 95% of delegations complete without error | Error counts in agent_sessions table |
-| Diff accuracy | > 90% of agent-generated diffs apply cleanly | Track merge conflict count vs. total changes |
-| PR quality | > 80% of auto-generated PRs pass CI on first push | GitHub API: check run status after PR creation |
-| Token efficiency | < 50K tokens per typical orchestration cycle | Token tracking in SQLite, compare across conversation types |
-| App startup time | < 3 seconds to interactive state | Performance profiling with Electron DevTools |
-| Crash rate | < 1 crash per 100 hours of usage | Error boundary reporting + process monitoring |
+| Metric                      | Target                                                    | How to Measure                                              |
+| --------------------------- | --------------------------------------------------------- | ----------------------------------------------------------- |
+| Agent response time         | < 30 seconds for simple delegation, < 2 min for full team | Timestamp logging in AgentProcessManager                    |
+| Parallel agent success rate | > 95% of delegations complete without error               | Error counts in agent_sessions table                        |
+| Diff accuracy               | > 90% of agent-generated diffs apply cleanly              | Track merge conflict count vs. total changes                |
+| PR quality                  | > 80% of auto-generated PRs pass CI on first push         | GitHub API: check run status after PR creation              |
+| Token efficiency            | < 50K tokens per typical orchestration cycle              | Token tracking in SQLite, compare across conversation types |
+| App startup time            | < 3 seconds to interactive state                          | Performance profiling with Electron DevTools                |
+| Crash rate                  | < 1 crash per 100 hours of usage                          | Error boundary reporting + process monitoring               |
 
 ---
 
@@ -640,4 +640,4 @@ To begin implementing Agent Studio, the recommended immediate actions are:
 
 ---
 
-*— End of Document —*
+_— End of Document —_

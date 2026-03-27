@@ -4,7 +4,15 @@
   "description": "Add CostPreference to workspace settings_json. Expose in Settings UI with economy/balanced/power radio buttons. Wire to orchestrator via IPC.",
   "feature_ref": "F001",
   "task_type": "fullstack",
-  "complexity": { "score": 4, "factors": { "files_affected": 4, "estimated_lines": 80, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 4,
+    "factors": {
+      "files_affected": 4,
+      "estimated_lines": 80,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-004"],
   "acceptance_criteria": [
     "Settings UI shows cost preference selector",

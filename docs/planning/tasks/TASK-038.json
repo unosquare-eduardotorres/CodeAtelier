@@ -4,7 +4,15 @@
   "description": "Enrich default specialist prompts in system-prompts.ts with deep persona structure: role, expertise, war stories, red flags, code patterns, philosophy, quality commitments. Reference multi-agent-squad patterns.",
   "feature_ref": "F010",
   "task_type": "backend",
-  "complexity": { "score": 5, "factors": { "files_affected": 2, "estimated_lines": 300, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 2,
+      "estimated_lines": 300,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-002"],
   "acceptance_criteria": [
     "DEEP_PERSONA_TEMPLATE with 7 sections",

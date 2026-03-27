@@ -4,7 +4,15 @@
   "description": "In task-loop.service.ts, activate bug council when opus fails 3x. Use synthesized solution as context for one final attempt. If that fails, surface to user.",
   "feature_ref": "F010",
   "task_type": "backend",
-  "complexity": { "score": 5, "factors": { "files_affected": 2, "estimated_lines": 60, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 2,
+      "estimated_lines": 60,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-039", "TASK-015"],
   "acceptance_criteria": [
     "Bug council activates after 3 opus failures",

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Lightbulb, Flame, Play, Trash2, CheckCircle, ExternalLink } from 'lucide-react'
 import { useIdeaStore, useChatStore, useWorkspaceStore } from '@renderer/store'
-import { ConfirmDialog } from '@renderer/components/common'
+import { ConfirmDialog, Skeleton } from '@renderer/components/common'
 import type { Idea } from '../../../../shared/types'
 
 interface IdeasListProps {
@@ -112,8 +112,20 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-8">
-        <div className="text-sm text-text-secondary">Loading ideas...</div>
+      <div className="space-y-3 py-4">
+        {[1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className="bg-surface-overlay border border-border-subtle rounded-xl p-4 flex items-start gap-3"
+          >
+            <Skeleton className="h-8 w-8 rounded-lg flex-shrink-0" />
+            <div className="flex-1">
+              <Skeleton className="h-4 w-40 mb-2" />
+              <Skeleton className="h-3 w-64 mb-1.5" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+          </div>
+        ))}
       </div>
     )
   }

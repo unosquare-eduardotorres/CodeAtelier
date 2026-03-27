@@ -37,6 +37,7 @@ claude
 ```
 
 For API key usage instead of subscription:
+
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 claude
@@ -110,41 +111,41 @@ Type `/` during a session to see all available commands. These are built-in and 
 
 ### Session management
 
-| Command | What it does |
-|---------|-------------|
-| `/clear` | Clear conversation history, start fresh context |
-| `/compact` | Summarize conversation to reduce token usage, preserve key decisions |
-| `/help` | Show all available commands |
-| `/quit` or `/exit` | End the session |
+| Command            | What it does                                                         |
+| ------------------ | -------------------------------------------------------------------- |
+| `/clear`           | Clear conversation history, start fresh context                      |
+| `/compact`         | Summarize conversation to reduce token usage, preserve key decisions |
+| `/help`            | Show all available commands                                          |
+| `/quit` or `/exit` | End the session                                                      |
 
 ### Context and model
 
-| Command | What it does |
-|---------|-------------|
-| `/context` | Show current context usage, skill budget, loaded files |
-| `/model` | Switch model mid-session (Opus for deep analysis, Sonnet for speed) |
-| `/effort` | Set model effort level (low/medium/high) |
-| `/fast` | Switch to Haiku for quick tasks |
+| Command    | What it does                                                        |
+| ---------- | ------------------------------------------------------------------- |
+| `/context` | Show current context usage, skill budget, loaded files              |
+| `/model`   | Switch model mid-session (Opus for deep analysis, Sonnet for speed) |
+| `/effort`  | Set model effort level (low/medium/high)                            |
+| `/fast`    | Switch to Haiku for quick tasks                                     |
 
 ### Project and navigation
 
-| Command | What it does |
-|---------|-------------|
-| `/init` | Generate a CLAUDE.md by analyzing your project structure |
-| `/add-dir <path>` | Add additional directory to context |
-| `/vim` | Toggle vim-style editing mode |
-| `/terminal-setup` | Configure Shift+Enter for multi-line input |
+| Command           | What it does                                             |
+| ----------------- | -------------------------------------------------------- |
+| `/init`           | Generate a CLAUDE.md by analyzing your project structure |
+| `/add-dir <path>` | Add additional directory to context                      |
+| `/vim`            | Toggle vim-style editing mode                            |
+| `/terminal-setup` | Configure Shift+Enter for multi-line input               |
 
 ### Code workflow
 
-| Command | What it does |
-|---------|-------------|
-| `/review` | Review code, diffs, or pull requests |
+| Command     | What it does                                                                        |
+| ----------- | ----------------------------------------------------------------------------------- |
+| `/review`   | Review code, diffs, or pull requests                                                |
 | `/simplify` | 3-agent quality review pipeline before PRs (architecture, duplication, performance) |
-| `/batch` | Run large-scale changes in parallel across worktrees, auto-creates PRs |
-| `/rewind` | Undo recent changes — choose conversation-only or code-only rollback |
-| `/debug` | Troubleshoot current session issues |
-| `/plan` | Create an implementation plan before coding |
+| `/batch`    | Run large-scale changes in parallel across worktrees, auto-creates PRs              |
+| `/rewind`   | Undo recent changes — choose conversation-only or code-only rollback                |
+| `/debug`    | Troubleshoot current session issues                                                 |
+| `/plan`     | Create an implementation plan before coding                                         |
 
 ### Shell commands
 
@@ -217,6 +218,7 @@ model: claude-opus-4-6
 ---
 
 Analyze the codebase for security vulnerabilities including:
+
 1. SQL injection risks
 2. XSS vulnerabilities
 3. Exposed credentials
@@ -227,16 +229,16 @@ Check OWASP Top 10 patterns. Reference `references/owasp-top10.md` for details.
 
 ### Frontmatter options
 
-| Field | Purpose |
-|-------|---------|
-| `name` | Becomes the /slash-command name |
-| `description` | Helps Claude decide when to auto-invoke + shown in /help |
-| `allowed-tools` | Restrict which tools the skill can use |
-| `model` | Override model when skill is invoked |
-| `effort` | Override effort level |
+| Field                            | Purpose                                                    |
+| -------------------------------- | ---------------------------------------------------------- |
+| `name`                           | Becomes the /slash-command name                            |
+| `description`                    | Helps Claude decide when to auto-invoke + shown in /help   |
+| `allowed-tools`                  | Restrict which tools the skill can use                     |
+| `model`                          | Override model when skill is invoked                       |
+| `effort`                         | Override effort level                                      |
 | `disable-model-invocation: true` | Only user can invoke (for side-effect skills like /deploy) |
-| `user-invocable: false` | Only Claude can invoke (background knowledge skills) |
-| `isolation: worktree` | Run in isolated git worktree |
+| `user-invocable: false`          | Only Claude can invoke (background knowledge skills)       |
+| `isolation: worktree`            | Run in isolated git worktree                               |
 
 ### Skill scopes
 
@@ -248,6 +250,7 @@ Check OWASP Top 10 patterns. Reference `references/owasp-top10.md` for details.
 ### Skill budget
 
 Skill descriptions consume context. Budget scales at 2% of context window (fallback: 16,000 chars). Run `/context` to check if skills are being excluded. Override with:
+
 ```bash
 export SLASH_COMMAND_TOOL_CHAR_BUDGET=32000
 ```
@@ -281,15 +284,15 @@ In `.claude/settings.json` or `~/.claude/settings.json`:
 
 ### Available hook points
 
-| Hook | When it fires |
-|------|--------------|
-| `PreFileEdit` | Before Claude edits a file |
-| `PostFileEdit` | After Claude edits a file |
-| `PreBash` | Before Claude runs a shell command |
-| `PostBash` | After Claude runs a shell command |
-| `PreCommit` | Before Claude creates a git commit |
-| `PostCommit` | After Claude creates a git commit |
-| `PostCompact` | After conversation compaction completes |
+| Hook           | When it fires                           |
+| -------------- | --------------------------------------- |
+| `PreFileEdit`  | Before Claude edits a file              |
+| `PostFileEdit` | After Claude edits a file               |
+| `PreBash`      | Before Claude runs a shell command      |
+| `PostBash`     | After Claude runs a shell command       |
+| `PreCommit`    | Before Claude creates a git commit      |
+| `PostCommit`   | After Claude creates a git commit       |
+| `PostCompact`  | After conversation compaction completes |
 
 ## MCP server configuration
 
@@ -332,11 +335,11 @@ description: Use for thorough code reviews
 model: sonnet
 color: orange
 ---
-
 You are an expert code reviewer. Focus on security, performance, and maintainability.
 ```
 
 Claude invokes subagents when tasks match their descriptions. Subagents run in parallel for tasks like:
+
 - Multi-file code review
 - Running tests across modules
 - Parallel refactoring
@@ -369,6 +372,7 @@ claude plugin remove formatter
 ```
 
 Plugin structure:
+
 ```
 my-plugin/
 ├── .claude-plugin/
@@ -423,6 +427,7 @@ Claude Code configuration has seven layers (most specific wins):
 ## Common patterns and recipes
 
 ### TDD workflow
+
 ```
 > "Write a failing test for the user registration endpoint"
 > !npm test                    # See it fail
@@ -431,17 +436,20 @@ Claude Code configuration has seven layers (most specific wins):
 ```
 
 ### Quick debugging
+
 ```
 > "Here's the error: [paste stack trace]. Find the cause and fix it"
 ```
 
 ### PR preparation
+
 ```
 > /simplify                    # 3-agent review pipeline
 > "Create a PR with a summary of all changes"
 ```
 
 ### Multi-repo work
+
 ```
 > /add-dir ~/projects/backend
 > /add-dir ~/projects/shared-types
@@ -449,6 +457,7 @@ Claude Code configuration has seven layers (most specific wins):
 ```
 
 ### Context management for long sessions
+
 ```
 > /compact                     # When context is getting large
 > /context                     # Check current usage
@@ -488,34 +497,35 @@ claude -p "task description" --system-prompt "..." \
 
 ### Key stream-json event types
 
-| Event type | Purpose | Key fields |
-|------------|---------|------------|
-| `system` | Session initialization | Extract `session_id` for resumption |
-| `assistant` | Model response | `content` array with text/tool_use blocks |
-| `content_block_start` | Start of a content block | `content_block.type` (text, tool_use) |
-| `content_block_delta` | Streaming content | `delta.text` for text, `delta.partial_json` for tool input |
-| `content_block_stop` | End of a content block | Block index reference |
-| `message_start` | Message begins | `message.usage` for input token count |
-| `message_delta` | Message metadata update | `usage.output_tokens` for running count |
-| `message_stop` | Message complete | Final signal |
-| `result` | Final output | `usage` stats, `is_error` flag |
-| `error` | Error occurred | `error.message` |
-| `user` | Tool results | `content` array with `tool_result` blocks |
+| Event type            | Purpose                  | Key fields                                                 |
+| --------------------- | ------------------------ | ---------------------------------------------------------- |
+| `system`              | Session initialization   | Extract `session_id` for resumption                        |
+| `assistant`           | Model response           | `content` array with text/tool_use blocks                  |
+| `content_block_start` | Start of a content block | `content_block.type` (text, tool_use)                      |
+| `content_block_delta` | Streaming content        | `delta.text` for text, `delta.partial_json` for tool input |
+| `content_block_stop`  | End of a content block   | Block index reference                                      |
+| `message_start`       | Message begins           | `message.usage` for input token count                      |
+| `message_delta`       | Message metadata update  | `usage.output_tokens` for running count                    |
+| `message_stop`        | Message complete         | Final signal                                               |
+| `result`              | Final output             | `usage` stats, `is_error` flag                             |
+| `error`               | Error occurred           | `error.message`                                            |
+| `user`                | Tool results             | `content` array with `tool_result` blocks                  |
 
 ### Environment requirements
 
 ```typescript
 // Delete CLAUDECODE to avoid nested session errors
-delete process.env.CLAUDECODE;
+delete process.env.CLAUDECODE
 
 // Ensure claude binary is discoverable
-const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin', `${os.homedir()}/.local/bin`];
-process.env.PATH = [...extraPaths, process.env.PATH].join(':');
+const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin', `${os.homedir()}/.local/bin`]
+process.env.PATH = [...extraPaths, process.env.PATH].join(':')
 ```
 
 ### Token tracking
 
 Track token usage from streaming events for compaction decisions:
+
 - `message_start` → `message.usage.input_tokens` (prompt tokens)
 - `message_delta` → `usage.output_tokens` (completion tokens, cumulative)
 - Suggest `/compact` at 80K total tokens
@@ -523,15 +533,15 @@ Track token usage from streaming events for compaction decisions:
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|---------|
-| "Context limit reached" | Run `/compact` to summarize and free space |
-| Skill not triggering | Run `/context` to check if skill is within budget. Check description matches the task |
-| Permission denied on file edit | Check `.claude/settings.json` for `allowedTools` restrictions |
-| MCP server not connecting | Run `claude mcp list` to verify config. Check server process is running |
-| Slow responses | Switch to Sonnet with `/model` or `/fast` for quick tasks |
-| Lost work after crash | Run `claude -c` to resume last session — auto-saved |
-| Claude using cat/sed instead of Read/Edit | Add to CLAUDE.md: "Use Read, Edit, Glob, Grep tools instead of bash equivalents" |
+| Problem                                   | Solution                                                                              |
+| ----------------------------------------- | ------------------------------------------------------------------------------------- |
+| "Context limit reached"                   | Run `/compact` to summarize and free space                                            |
+| Skill not triggering                      | Run `/context` to check if skill is within budget. Check description matches the task |
+| Permission denied on file edit            | Check `.claude/settings.json` for `allowedTools` restrictions                         |
+| MCP server not connecting                 | Run `claude mcp list` to verify config. Check server process is running               |
+| Slow responses                            | Switch to Sonnet with `/model` or `/fast` for quick tasks                             |
+| Lost work after crash                     | Run `claude -c` to resume last session — auto-saved                                   |
+| Claude using cat/sed instead of Read/Edit | Add to CLAUDE.md: "Use Read, Edit, Glob, Grep tools instead of bash equivalents"      |
 
 ---
 
@@ -539,20 +549,20 @@ Track token usage from streaming events for compaction decisions:
 
 ### Primary sources
 
-| Source | URL | What to extract |
-|--------|-----|-----------------|
-| Claude Code overview | https://docs.claude.com/en/docs/claude-code/overview | New features, surfaces, capabilities |
-| CLI reference | https://docs.claude.com/en/docs/claude-code/cli-reference | New flags, changed syntax |
-| Interactive mode | https://docs.claude.com/en/docs/claude-code/interactive-mode | New shortcuts, slash commands |
-| Slash commands / Skills | https://docs.claude.com/en/docs/claude-code/slash-commands | New commands, skill format changes |
-| Hooks reference | https://docs.claude.com/en/docs/claude-code/hooks | New hook points |
-| Plugins reference | https://docs.claude.com/en/docs/claude-code/plugins-reference | Plugin schema changes |
-| SDK slash commands | https://docs.claude.com/en/docs/claude-code/sdk/sdk-slash-commands | SDK integration updates |
-| Claude Code changelog | https://docs.claude.com/en/release-notes/claude-code | **Critical** — new features, breaking changes |
-| Claude Code GitHub repo | https://github.com/anthropics/claude-code | CHANGELOG.md, new releases |
+| Source                  | URL                                                                | What to extract                               |
+| ----------------------- | ------------------------------------------------------------------ | --------------------------------------------- |
+| Claude Code overview    | https://docs.claude.com/en/docs/claude-code/overview               | New features, surfaces, capabilities          |
+| CLI reference           | https://docs.claude.com/en/docs/claude-code/cli-reference          | New flags, changed syntax                     |
+| Interactive mode        | https://docs.claude.com/en/docs/claude-code/interactive-mode       | New shortcuts, slash commands                 |
+| Slash commands / Skills | https://docs.claude.com/en/docs/claude-code/slash-commands         | New commands, skill format changes            |
+| Hooks reference         | https://docs.claude.com/en/docs/claude-code/hooks                  | New hook points                               |
+| Plugins reference       | https://docs.claude.com/en/docs/claude-code/plugins-reference      | Plugin schema changes                         |
+| SDK slash commands      | https://docs.claude.com/en/docs/claude-code/sdk/sdk-slash-commands | SDK integration updates                       |
+| Claude Code changelog   | https://docs.claude.com/en/release-notes/claude-code               | **Critical** — new features, breaking changes |
+| Claude Code GitHub repo | https://github.com/anthropics/claude-code                          | CHANGELOG.md, new releases                    |
 
 ### Version history
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-03-21 | Initial creation from official docs, CLI reference, interactive mode, skills docs, hooks, MCP, plugins, changelog. Covers commands, flags, slash commands, CLAUDE.md hierarchy, custom skills with frontmatter, hooks lifecycle, MCP configuration, subagents, worktrees, plugins, session management, configuration layers, common patterns, and troubleshooting. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                            |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1.0     | 2026-03-21 | Initial creation from official docs, CLI reference, interactive mode, skills docs, hooks, MCP, plugins, changelog. Covers commands, flags, slash commands, CLAUDE.md hierarchy, custom skills with frontmatter, hooks lifecycle, MCP configuration, subagents, worktrees, plugins, session management, configuration layers, common patterns, and troubleshooting. |

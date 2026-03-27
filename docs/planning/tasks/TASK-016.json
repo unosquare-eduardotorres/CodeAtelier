@@ -4,7 +4,15 @@
   "description": "Replace direct specialist spawn in specialist-pool.service.ts with taskLoopService.executeWithLoop(). Preserve existing process-level retry for crashes. Task loop handles logical failures.",
   "feature_ref": "F002",
   "task_type": "backend",
-  "complexity": { "score": 6, "factors": { "files_affected": 1, "estimated_lines": 80, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 6,
+    "factors": {
+      "files_affected": 1,
+      "estimated_lines": 80,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-015"],
   "acceptance_criteria": [
     "All specialist tasks execute through task loop",

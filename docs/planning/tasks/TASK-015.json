@@ -4,7 +4,15 @@
   "description": "Create src/main/services/task-loop.service.ts. Wraps specialist execution in iterate-validate-escalate loop. Max 10 iterations. Model escalation: haiku->sonnet->opus after 2 consecutive failures. Stuck detection for same error 3x.",
   "feature_ref": "F002",
   "task_type": "backend",
-  "complexity": { "score": 9, "factors": { "files_affected": 3, "estimated_lines": 350, "new_dependencies": 0, "risk_flags": ["external_integration"] } },
+  "complexity": {
+    "score": 9,
+    "factors": {
+      "files_affected": 3,
+      "estimated_lines": 350,
+      "new_dependencies": 0,
+      "risk_flags": ["external_integration"]
+    }
+  },
   "dependencies": ["TASK-014", "TASK-005"],
   "acceptance_criteria": [
     "Execute->Validate->Escalate loop implemented",

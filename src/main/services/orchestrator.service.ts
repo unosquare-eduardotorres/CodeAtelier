@@ -1,23 +1,17 @@
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import type {
   AgentStatus,
   ConversationMode,
   CostPreference,
   DecomposedTask,
-  Skill,
+  HandoffBrief,
   TaskPlan
 } from '../../shared/types'
 import { AGENT_IDS, DEFAULT_COST_PREFERENCE } from '../../shared/constants'
 import { orchestratorLogger } from '../logger'
-import { skillRepository, specialistRepository, workspaceRepository } from '../db/repositories'
+import { specialistRepository, workspaceRepository } from '../db/repositories'
 import { enrichTasksWithComplexity } from './complexity-scorer.service'
-import {
-  PLAN_MODE_SYSTEM_PROMPT,
-  BUILD_MODE_SYSTEM_PROMPT,
-  DECOMPOSITION_SYSTEM_PROMPT
-} from './system-prompts'
+import { promptBuilder } from './prompt-builder'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
 
@@ -78,36 +72,12 @@ export class OrchestratorService extends AgentBaseService {
     this.currentConversationId = conversationId ?? null
     this.emit('statusUpdate', this.getStatus())
 
-    // ── Skill matching and routing ──
-    let skillContext = ''
-    try {
-      const activeSkills = skillRepository.findActive()
-      if (activeSkills.length > 0) {
-        const matchedSkill = await this.matchSkill(message, activeSkills)
-        if (matchedSkill) {
-          const specialists = specialistRepository.findSpecialistsForSkill(matchedSkill.id)
-          const targetSpecialist = specialists
-            .filter((s) => s.isActive)
-            .sort((a, b) => a.priority - b.priority)[0]
-
-          skillContext = `\n\n[Skill Match] The task best matches the "${matchedSkill.name}" skill (${matchedSkill.description}).`
-          if (targetSpecialist) {
-            skillContext += ` Route to specialist: ${targetSpecialist.displayName} (${targetSpecialist.agentId}, priority ${targetSpecialist.priority}).`
-            if (targetSpecialist.prompt) {
-              skillContext += `\nSpecialist instructions: ${targetSpecialist.prompt}`
-            }
-          }
-        }
-      }
-    } catch (error) {
-      this.log.error('Skill matching failed, proceeding without:', error)
-    }
-
-    const augmentedMessage = skillContext ? `${message}${skillContext}` : message
+    // No LLM skill matching — skills are resolved deterministically via AgentRegistry
+    // when the orchestrator decomposes tasks and assigns them to specialists.
 
     const args = [
       '-p',
-      augmentedMessage,
+      message,
       '--output-format',
       'stream-json',
       '--verbose',
@@ -126,20 +96,12 @@ export class OrchestratorService extends AgentBaseService {
       args.push('--resume', existingSession)
     }
 
-    const systemPromptValue = mode === 'plan' ? PLAN_MODE_SYSTEM_PROMPT : BUILD_MODE_SYSTEM_PROMPT
     if (!existingSession) {
-      let workspaceContext = ''
-      try {
-        const claudeMdPath = join(this.workspacePath!, 'CLAUDE.md')
-        workspaceContext = readFileSync(claudeMdPath, 'utf-8')
-      } catch {
-        // No CLAUDE.md in workspace — that's fine
-      }
-
-      const fullSystemPrompt = workspaceContext
-        ? `${systemPromptValue}\n\n---\n\n## Workspace Project Context (from CLAUDE.md)\n\n${workspaceContext}`
-        : systemPromptValue
-
+      const fullSystemPrompt = promptBuilder.build({
+        role: 'orchestrator',
+        mode,
+        workspacePath: this.workspacePath!
+      })
       args.push('--system-prompt', fullSystemPrompt)
     }
 
@@ -147,7 +109,7 @@ export class OrchestratorService extends AgentBaseService {
 
     this.log.info(
       'Spawning claude with args:',
-      args.filter((a) => a !== augmentedMessage && a !== systemPromptValue).join(' ')
+      args.filter((a) => a !== message && !a.includes('You are a')).join(' ')
     )
 
     const currentProcess = spawn('claude', args, {
@@ -190,12 +152,12 @@ export class OrchestratorService extends AgentBaseService {
   }
 
   /**
-   * Decomposes a handoff summary into structured sub-tasks via a short `claude -p` call.
+   * Decomposes a handoff brief into structured sub-tasks via a short `claude -p` call.
+   * Accepts a full HandoffBrief with decisions, constraints, files discussed, and recent messages.
    * Returns a TaskPlan with decomposed tasks assigned to specialists.
    */
   async decompose(
-    summary: string,
-    specialists: string[],
+    brief: HandoffBrief,
     conversationId: string,
     mode: ConversationMode
   ): Promise<TaskPlan> {
@@ -206,8 +168,8 @@ export class OrchestratorService extends AgentBaseService {
     // Build specialist list for the prompt
     const activeSpecialists = specialistRepository.findActive()
     const relevantSpecialists =
-      specialists.length > 0
-        ? activeSpecialists.filter((s) => specialists.includes(s.agentId))
+      brief.specialists.length > 0
+        ? activeSpecialists.filter((s) => brief.specialists.includes(s.agentId))
         : activeSpecialists
 
     const specialistList = relevantSpecialists
@@ -217,21 +179,46 @@ export class OrchestratorService extends AgentBaseService {
       )
       .join('\n')
 
-    const prompt = `Task to decompose: "${summary}"
+    // ── Build rich context for decomposition ──
+    const decisionsBlock =
+      brief.decisions.length > 0
+        ? `\nKey decisions already made:\n${brief.decisions.map((d) => `- ${d}`).join('\n')}`
+        : ''
+
+    const constraintsBlock =
+      brief.constraints.length > 0
+        ? `\nConstraints to respect:\n${brief.constraints.map((c) => `- ${c}`).join('\n')}`
+        : ''
+
+    const filesBlock =
+      brief.filesDiscussed.length > 0
+        ? `\nFiles discussed/planned:\n${brief.filesDiscussed.map((f) => `- ${f}`).join('\n')}`
+        : ''
+
+    const conversationBlock =
+      brief.recentMessages.length > 0
+        ? `\nRecent conversation context:\n${brief.recentMessages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n')}`
+        : ''
+
+    const prompt = `Task to decompose: "${brief.summary}"
+${decisionsBlock}
+${constraintsBlock}
+${filesBlock}
+${conversationBlock}
 
 Available specialists:
 ${specialistList}
 
 Decompose this task into sub-tasks and respond with ONLY valid JSON.`
 
-    this.log.info('Decomposing task for specialists:', specialists.join(', '))
+    this.log.info('Decomposing task for specialists:', brief.specialists.join(', '))
 
     const env = this.buildEnvWithPath()
 
     const result = await new Promise<string>((resolve, reject) => {
       const child = spawn(
         'claude',
-        ['-p', prompt, '--system-prompt', DECOMPOSITION_SYSTEM_PROMPT, '--output-format', 'text'],
+        ['-p', prompt, '--system-prompt', promptBuilder.getDecompositionPrompt(), '--output-format', 'text'],
         {
           cwd: this.workspacePath!,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -307,70 +294,10 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
 
     return {
       conversationId,
-      summary,
+      summary: brief.summary,
       mode,
-      tasks: enrichedTasks
-    }
-  }
-
-  /**
-   * Uses an LLM call to semantically match the user message against active skills.
-   */
-  private async matchSkill(message: string, skills: Skill[]): Promise<Skill | null> {
-    if (skills.length === 0) return null
-    if (skills.length === 1) return skills[0]
-
-    const skillList = skills
-      .map((s, i) => `${i + 1}. "${s.name}" - ${s.description || 'No description'}`)
-      .join('\n')
-
-    const prompt = `Given the following user message and available skills, respond with ONLY the number of the best-matching skill. If none match well, respond with "0".
-
-User message: "${message.substring(0, 500)}"
-
-Available skills:
-${skillList}
-
-Respond with only a number (e.g., "1" or "0"):`
-
-    try {
-      const env = this.buildEnvWithPath()
-
-      const result = await new Promise<string>((resolve, reject) => {
-        const child = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env
-        })
-
-        let stdout = ''
-        child.stdout?.on('data', (data: Buffer) => {
-          stdout += data.toString()
-        })
-        child.on('exit', (code) => {
-          if (code === 0) resolve(stdout.trim())
-          else reject(new Error(`Skill matching failed with code ${code}`))
-        })
-        child.on('error', reject)
-
-        setTimeout(() => {
-          try {
-            child.kill('SIGTERM')
-          } catch {
-            /* ignore */
-          }
-          reject(new Error('Skill matching timed out'))
-        }, 15000)
-      })
-
-      const index = parseInt(result, 10)
-      if (index > 0 && index <= skills.length) {
-        this.log.info(`Matched skill: ${skills[index - 1].name}`)
-        return skills[index - 1]
-      }
-      return null
-    } catch (error) {
-      this.log.error('Skill matching error:', error)
-      return null
+      tasks: enrichedTasks,
+      brief
     }
   }
 

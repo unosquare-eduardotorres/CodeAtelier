@@ -12,11 +12,13 @@
 [Brief overview of the system and key architectural decisions]
 
 **Business Context:**
+
 - Problem being solved
 - Target users
 - Key business requirements
 
 **Key Decisions:**
+
 - Major architectural choice 1
 - Major architectural choice 2
 - Major architectural choice 3
@@ -43,8 +45,8 @@ C4Context
 
 ### 2.2 Stakeholders
 
-| Stakeholder | Role | Interest |
-|-------------|------|----------|
+| Stakeholder  | Role   | Interest               |
+| ------------ | ------ | ---------------------- |
 | [Name/Group] | [Role] | [What they care about] |
 
 ---
@@ -53,18 +55,18 @@ C4Context
 
 ### 3.1 Functional Requirements
 
-| ID | Requirement | Priority |
-|----|-------------|----------|
+| ID   | Requirement               | Priority        |
+| ---- | ------------------------- | --------------- |
 | FR-1 | [Requirement description] | High/Medium/Low |
 
 ### 3.2 Non-Functional Requirements
 
-| Category | Requirement | Target |
-|----------|-------------|--------|
-| Performance | [Description] | [Metric] |
-| Scalability | [Description] | [Metric] |
-| Availability | [Description] | [Metric] |
-| Security | [Description] | [Standard] |
+| Category     | Requirement   | Target     |
+| ------------ | ------------- | ---------- |
+| Performance  | [Description] | [Metric]   |
+| Scalability  | [Description] | [Metric]   |
+| Availability | [Description] | [Metric]   |
+| Security     | [Description] | [Standard] |
 
 ---
 
@@ -75,6 +77,7 @@ C4Context
 [Description of the architectural pattern: microservices, layered, event-driven, etc.]
 
 **Why this style:**
+
 - Reason 1
 - Reason 2
 - Reason 3
@@ -140,6 +143,7 @@ graph LR
 ### 5.2 Component Descriptions
 
 #### Component A
+
 - **Purpose:** [What it does]
 - **Responsibilities:** [Key responsibilities]
 - **Technologies:** [Tech stack]
@@ -200,8 +204,8 @@ flowchart LR
 
 ### 7.1 External Dependencies
 
-| System | Purpose | Protocol | SLA |
-|--------|---------|----------|-----|
+| System   | Purpose   | Protocol        | SLA     |
+| -------- | --------- | --------------- | ------- |
 | [System] | [Purpose] | [REST/gRPC/etc] | [99.9%] |
 
 ### 7.2 API Design
@@ -304,15 +308,15 @@ graph TB
 
 ### 10.1 Scaling Strategy
 
-| Component | Strategy | Trigger | Max Scale |
-|-----------|----------|---------|-----------|
+| Component   | Strategy              | Trigger              | Max Scale     |
+| ----------- | --------------------- | -------------------- | ------------- |
 | [Component] | [Horizontal/Vertical] | [Metric > Threshold] | [N instances] |
 
 ### 10.2 Performance Targets
 
-| Operation | Target | Current | Strategy |
-|-----------|--------|---------|----------|
-| [Operation] | [< X ms] | [Y ms] | [Optimization approach] |
+| Operation   | Target   | Current | Strategy                |
+| ----------- | -------- | ------- | ----------------------- |
+| [Operation] | [< X ms] | [Y ms]  | [Optimization approach] |
 
 ---
 
@@ -346,9 +350,9 @@ graph LR
 
 ### 12.1 Backup Strategy
 
-| Data Type | Frequency | Retention | RTO | RPO |
-|-----------|-----------|-----------|-----|-----|
-| [Type] | [Frequency] | [Period] | [Time] | [Time] |
+| Data Type | Frequency   | Retention | RTO    | RPO    |
+| --------- | ----------- | --------- | ------ | ------ |
+| [Type]    | [Frequency] | [Period]  | [Time] | [Time] |
 
 ---
 
@@ -388,10 +392,12 @@ gantt
 [What was decided]
 
 **Consequences:**
+
 - Positive: [Benefits]
 - Negative: [Costs/Trade-offs]
 
 **Alternatives Considered:**
+
 1. [Alternative 1] - Rejected because [reason]
 2. [Alternative 2] - Rejected because [reason]
 
@@ -401,8 +407,8 @@ gantt
 
 ### Glossary
 
-| Term | Definition |
-|------|------------|
+| Term   | Definition   |
+| ------ | ------------ |
 | [Term] | [Definition] |
 
 ### References

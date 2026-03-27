@@ -59,8 +59,8 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
       <div className="p-4 space-y-3">
         <p className="text-xs text-gray-400 leading-relaxed">
           Save this idea for later. You can find it in{' '}
-          <span className="text-gray-300 font-medium">Workspace Settings → Ideas</span>, then
-          refine it with &quot;Grill Me&quot; or convert it directly into a work item.
+          <span className="text-gray-300 font-medium">Workspace Settings → Ideas</span>, then refine
+          it with &quot;Grill Me&quot; or convert it directly into a work item.
         </p>
         <input
           type="text"

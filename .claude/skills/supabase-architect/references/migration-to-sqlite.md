@@ -20,18 +20,18 @@ UUID primary keys            →    TEXT hex(randomblob(16))
 
 ## Type mapping: PostgreSQL → SQLite
 
-| PostgreSQL | SQLite | Notes |
-|-----------|--------|-------|
-| `UUID` | `TEXT` | Use `hex(randomblob(16))` for defaults |
-| `TEXT` | `TEXT` | Direct mapping |
-| `VARCHAR(n)` | `TEXT` | SQLite ignores length constraints |
-| `INTEGER` | `INTEGER` | Direct mapping |
-| `REAL` / `FLOAT` | `REAL` | Direct mapping |
-| `BOOLEAN` | `INTEGER` | 0/1 (SQLite has no native bool) |
-| `TIMESTAMPTZ` | `TEXT` | ISO 8601 strings: `datetime('now')` |
-| `JSONB` | `TEXT` | JSON stored as text, use `json()` for validation |
-| `vector(N)` | See vector section | sqlite-vec or application-level |
-| `SERIAL` | `INTEGER PRIMARY KEY` | Auto-increment |
+| PostgreSQL       | SQLite                | Notes                                            |
+| ---------------- | --------------------- | ------------------------------------------------ |
+| `UUID`           | `TEXT`                | Use `hex(randomblob(16))` for defaults           |
+| `TEXT`           | `TEXT`                | Direct mapping                                   |
+| `VARCHAR(n)`     | `TEXT`                | SQLite ignores length constraints                |
+| `INTEGER`        | `INTEGER`             | Direct mapping                                   |
+| `REAL` / `FLOAT` | `REAL`                | Direct mapping                                   |
+| `BOOLEAN`        | `INTEGER`             | 0/1 (SQLite has no native bool)                  |
+| `TIMESTAMPTZ`    | `TEXT`                | ISO 8601 strings: `datetime('now')`              |
+| `JSONB`          | `TEXT`                | JSON stored as text, use `json()` for validation |
+| `vector(N)`      | See vector section    | sqlite-vec or application-level                  |
+| `SERIAL`         | `INTEGER PRIMARY KEY` | Auto-increment                                   |
 
 ## Schema conversion examples
 
@@ -111,24 +111,28 @@ npm install sqlite-vec
 ```
 
 ```typescript
-import Database from 'better-sqlite3';
-import * as sqliteVec from 'sqlite-vec';
+import Database from 'better-sqlite3'
+import * as sqliteVec from 'sqlite-vec'
 
-const db = new Database('app.sqlite');
-sqliteVec.load(db);
+const db = new Database('app.sqlite')
+sqliteVec.load(db)
 
 db.exec(`
   CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(
     id TEXT PRIMARY KEY,
     embedding float[384]
   );
-`);
+`)
 
-const results = db.prepare(`
+const results = db
+  .prepare(
+    `
   SELECT id, distance FROM embeddings
   WHERE embedding MATCH ?
   ORDER BY distance LIMIT ?
-`).all(JSON.stringify(queryVector), 5);
+`
+  )
+  .all(JSON.stringify(queryVector), 5)
 ```
 
 ### Option B: Application-level cosine similarity
@@ -137,13 +141,15 @@ For small datasets (< 10K records):
 
 ```typescript
 function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0,
+    normA = 0,
+    normB = 0
   for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+    dot += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
   }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
 ```
 
@@ -183,12 +189,15 @@ CREATE TABLE IF NOT EXISTS local_config (
 ```typescript
 // Main process — emit after writes
 class MyRepository {
-  constructor(private db: Database, private win: BrowserWindow) {}
+  constructor(
+    private db: Database,
+    private win: BrowserWindow
+  ) {}
 
   create(data: NewRecord) {
-    const result = this.db.prepare('INSERT INTO my_table ...').run(data);
-    this.win.webContents.send('db:my_table:changed', { type: 'insert', data });
-    return result;
+    const result = this.db.prepare('INSERT INTO my_table ...').run(data)
+    this.win.webContents.send('db:my_table:changed', { type: 'insert', data })
+    return result
   }
 }
 
@@ -196,12 +205,12 @@ class MyRepository {
 contextBridge.exposeInMainWorld('api', {
   on: {
     myTableChanged: (cb: (data: any) => void) => {
-      const handler = (_: any, data: any) => cb(data);
-      ipcRenderer.on('db:my_table:changed', handler);
-      return () => ipcRenderer.removeListener('db:my_table:changed', handler);
-    },
-  },
-});
+      const handler = (_: any, data: any) => cb(data)
+      ipcRenderer.on('db:my_table:changed', handler)
+      return () => ipcRenderer.removeListener('db:my_table:changed', handler)
+    }
+  }
+})
 ```
 
 ## Credential storage in Electron
@@ -209,12 +218,12 @@ contextBridge.exposeInMainWorld('api', {
 Replace database-stored credentials with OS-level secure storage:
 
 ```typescript
-import { safeStorage } from 'electron';
+import { safeStorage } from 'electron'
 
-const encrypted = safeStorage.encryptString(apiKey);
+const encrypted = safeStorage.encryptString(apiKey)
 // Store as BLOB in SQLite or save to file
 
-const decrypted = safeStorage.decryptString(encrypted);
+const decrypted = safeStorage.decryptString(encrypted)
 ```
 
 Uses OS keychain (macOS Keychain, Windows Credential Locker, Linux libsecret).
@@ -222,47 +231,49 @@ Uses OS keychain (macOS Keychain, Windows Credential Locker, Linux libsecret).
 ## Data migration script template
 
 ```typescript
-import postgres from 'postgres';
-import Database from 'better-sqlite3';
+import postgres from 'postgres'
+import Database from 'better-sqlite3'
 
-const pg = postgres(process.env.DATABASE_URL!);
-const sqlite = new Database('app.sqlite');
+const pg = postgres(process.env.DATABASE_URL!)
+const sqlite = new Database('app.sqlite')
 
-sqlite.pragma('journal_mode = WAL');
-sqlite.pragma('foreign_keys = ON');
-sqlite.exec(readFileSync('schema.sql', 'utf8'));
+sqlite.pragma('journal_mode = WAL')
+sqlite.pragma('foreign_keys = ON')
+sqlite.exec(readFileSync('schema.sql', 'utf8'))
 
 async function migrateTable(tableName: string) {
-  const rows = await pg`SELECT * FROM ${pg(tableName)}`;
-  console.log(`Migrating ${tableName}: ${rows.length} rows`);
+  const rows = await pg`SELECT * FROM ${pg(tableName)}`
+  console.log(`Migrating ${tableName}: ${rows.length} rows`)
 
-  const columns = Object.keys(rows[0] || {});
-  const placeholders = columns.map(() => '?').join(', ');
+  const columns = Object.keys(rows[0] || {})
+  const placeholders = columns.map(() => '?').join(', ')
   const stmt = sqlite.prepare(
     `INSERT OR REPLACE INTO ${tableName} (${columns.join(', ')}) VALUES (${placeholders})`
-  );
+  )
 
   const insertAll = sqlite.transaction((data: any[]) => {
     for (const row of data) {
-      stmt.run(...columns.map(c => {
-        const val = row[c];
-        if (val !== null && typeof val === 'object') return JSON.stringify(val);
-        if (typeof val === 'boolean') return val ? 1 : 0;
-        return val;
-      }));
+      stmt.run(
+        ...columns.map((c) => {
+          const val = row[c]
+          if (val !== null && typeof val === 'object') return JSON.stringify(val)
+          if (typeof val === 'boolean') return val ? 1 : 0
+          return val
+        })
+      )
     }
-  });
+  })
 
-  insertAll(rows);
+  insertAll(rows)
 }
 
 // Migrate in FK-dependency order
-await migrateTable('users');
-await migrateTable('posts');
+await migrateTable('users')
+await migrateTable('posts')
 // ... etc
 
-await pg.end();
-sqlite.close();
+await pg.end()
+sqlite.close()
 ```
 
 ## Checklist

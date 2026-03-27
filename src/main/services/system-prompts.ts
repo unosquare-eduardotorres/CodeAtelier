@@ -70,6 +70,11 @@ Rules:
 5. Assign IDs as "t1", "t2", "t3", etc.
 6. If a task spans only one specialist, still decompose into logical steps if they can be parallelized.
 7. IMPORTANT: If two tasks are likely to modify the same files (e.g., shared types, config files, package.json, common utilities), set one to depend on the other using the dependsOn array. Only tasks that touch completely independent files should run in parallel. This prevents merge conflicts when agents work in isolated branches.
+8. USE the provided conversation context (decisions, constraints, files discussed, recent messages) to:
+   - Write more specific task descriptions that reference actual decisions and constraints
+   - Identify file conflicts more accurately (you know which files were discussed)
+   - Assign appropriate complexity scores based on the scope discussed
+   - Ensure no decided constraints are violated in the decomposition
 
 Complexity scoring — for EACH task, evaluate:
 - filesAffected (0-3): 1 file=0, 2-3=1, 4-6=2, 7+=3

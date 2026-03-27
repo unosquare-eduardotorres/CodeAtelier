@@ -4,7 +4,15 @@
   "description": "Wrap the current schema.sql content as migration 001_initial_schema.sql. Ensure existing databases are detected as already having migration 001 applied (by checking if tables exist).",
   "feature_ref": "F000",
   "task_type": "database",
-  "complexity": { "score": 3, "factors": { "files_affected": 2, "estimated_lines": 50, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 3,
+    "factors": {
+      "files_affected": 2,
+      "estimated_lines": 50,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-001"],
   "acceptance_criteria": [
     "001_initial_schema.sql contains current schema",

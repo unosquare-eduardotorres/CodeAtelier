@@ -4,7 +4,15 @@
   "description": "Add TASK_LOOP_* IPC channels. Forward loop events to renderer. Update TaskProgress component to show iteration count, model tier badge, gate results.",
   "feature_ref": "F002",
   "task_type": "fullstack",
-  "complexity": { "score": 5, "factors": { "files_affected": 5, "estimated_lines": 150, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 5,
+      "estimated_lines": 150,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-016"],
   "acceptance_criteria": [
     "IPC channels for iteration/gateResult/escalation/complete",

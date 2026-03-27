@@ -10,7 +10,7 @@ See `Agent-Studio-Project-Plan.md` for full project architecture, milestones, an
 
 ## Tech stack
 
-- **Runtime**: Electron 39 (Chromium + Node.js)
+- **Runtime**: Electron 40 (Chromium 144 + Node 24)
 - **Frontend**: React 19 + TypeScript 5.9
 - **Bundler**: electron-vite 5 (Vite 7 under the hood)
 - **Styling**: Tailwind CSS 4
@@ -126,21 +126,21 @@ AgentStudio/
 
 ### Available skills
 
-| Skill | Path | Used by agents |
-|-------|------|----------------|
-| `electron-pro` | `.claude/skills/electron-pro/SKILL.md` | react-architect, electron-architect, cicd-devops |
-| `dotnet-architect` | `.claude/skills/dotnet-architect/SKILL.md` | dotnet-architect |
-| `claude-code-cli` | `.claude/skills/claude-cli/SKILL.md` | electron-architect, agentic-architect |
-| `sqlite-patterns` | `.claude/skills/sqlite-patterns/SKILL.md` | db-architect |
-| `ui-ux-pro-max` | `.claude/skills/ui-ux-pro-max/SKILL.md` | ux-ui-specialist |
-| `ui-styling` | `.claude/skills/ui-styling/SKILL.md` | ux-ui-specialist |
-| `design-system` | `.claude/skills/design-system/SKILL.md` | ux-ui-specialist |
-| `brand` | `.claude/skills/brand/SKILL.md` | ux-ui-specialist |
-| `git-workflow` | `.claude/skills/git-workflow/SKILL.md` | git-github-specialist |
-| `ipc-patterns` | `.claude/skills/ipc-patterns/SKILL.md` | react-architect, electron-architect, agentic-architect |
-| `mermaid-diagrams` | `.claude/skills/mermaid-diagrams/SKILL.md` | docs-diagrams-specialist |
-| `design-docs` | `.claude/skills/design-docs/SKILL.md` | docs-diagrams-specialist |
-| `general-dev` | `.claude/skills/general-dev/SKILL.md` | generalist-developer |
+| Skill              | Path                                       | Used by agents                                         |
+| ------------------ | ------------------------------------------ | ------------------------------------------------------ |
+| `electron-pro`     | `.claude/skills/electron-pro/SKILL.md`     | react-architect, electron-architect, cicd-devops       |
+| `dotnet-architect` | `.claude/skills/dotnet-architect/SKILL.md` | dotnet-architect                                       |
+| `claude-code-cli`  | `.claude/skills/claude-cli/SKILL.md`       | electron-architect, agentic-architect                  |
+| `sqlite-patterns`  | `.claude/skills/sqlite-patterns/SKILL.md`  | db-architect                                           |
+| `ui-ux-pro-max`    | `.claude/skills/ui-ux-pro-max/SKILL.md`    | ux-ui-specialist                                       |
+| `ui-styling`       | `.claude/skills/ui-styling/SKILL.md`       | ux-ui-specialist                                       |
+| `design-system`    | `.claude/skills/design-system/SKILL.md`    | ux-ui-specialist                                       |
+| `brand`            | `.claude/skills/brand/SKILL.md`            | ux-ui-specialist                                       |
+| `git-workflow`     | `.claude/skills/git-workflow/SKILL.md`     | git-github-specialist                                  |
+| `ipc-patterns`     | `.claude/skills/ipc-patterns/SKILL.md`     | react-architect, electron-architect, agentic-architect |
+| `mermaid-diagrams` | `.claude/skills/mermaid-diagrams/SKILL.md` | docs-diagrams-specialist                               |
+| `design-docs`      | `.claude/skills/design-docs/SKILL.md`      | docs-diagrams-specialist                               |
+| `general-dev`      | `.claude/skills/general-dev/SKILL.md`      | generalist-developer                                   |
 
 ### Electron skill trigger
 
@@ -236,6 +236,7 @@ npm run format        # Run Prettier
 ## Electron documentation reference
 
 When debugging Electron-specific issues or implementing new features, consult the official docs:
+
 - **API reference**: https://www.electronjs.org/docs/latest/api/{module-name}
 - **Tutorials**: https://www.electronjs.org/docs/latest/tutorial/{topic}
 - **Breaking changes**: https://www.electronjs.org/docs/latest/breaking-changes

@@ -4,7 +4,15 @@
   "description": "Create migration 004 adding tier1_summary TEXT and tier2_instructions TEXT columns to skills table. Migrate existing skills to populate tiers.",
   "feature_ref": "F007",
   "task_type": "database",
-  "complexity": { "score": 3, "factors": { "files_affected": 3, "estimated_lines": 40, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 3,
+    "factors": {
+      "files_affected": 3,
+      "estimated_lines": 40,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-002"],
   "acceptance_criteria": [
     "Migration 004 adds two columns to skills table",

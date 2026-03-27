@@ -57,21 +57,21 @@ export default function GrillResultCard({
       <div className="flex items-center gap-2 px-4 py-3 border-t border-orange-500/20 bg-orange-900/10">
         <button
           onClick={onKeepIterating}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
         >
           <RefreshCw size={14} />
           Keep Iterating
         </button>
         <button
           onClick={onCreatePlan}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-medium transition-colors press-scale"
         >
           <ClipboardList size={14} />
           Create Plan
         </button>
         <button
           onClick={onCreateItems}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors press-scale"
         >
           <LayoutList size={14} />
           Create Items

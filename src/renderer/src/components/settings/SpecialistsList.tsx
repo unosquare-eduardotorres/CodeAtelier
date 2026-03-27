@@ -1,47 +1,47 @@
-import { useState } from 'react';
-import { Plus, Pencil, Trash2, FileText, PenLine } from 'lucide-react';
-import { useSpecialistStore, useSkillStore } from '@renderer/store';
-import { ConfirmDialog } from '@renderer/components/common';
-import SpecialistForm from './SpecialistForm';
-import type { Specialist } from '../../../../shared/types';
+import { useState } from 'react'
+import { Plus, Pencil, Trash2, FileText, PenLine } from 'lucide-react'
+import { useSpecialistStore, useSkillStore } from '@renderer/store'
+import { ConfirmDialog } from '@renderer/components/common'
+import SpecialistForm from './SpecialistForm'
+import type { Specialist } from '../../../../shared/types'
 
 export default function SpecialistsList(): React.JSX.Element {
-  const { specialists, isLoading, deleteSpecialist } = useSpecialistStore();
-  const { skills } = useSkillStore();
-  const [editingSpecialist, setEditingSpecialist] = useState<Specialist | null>(null);
-  const [showForm, setShowForm] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const { specialists, isLoading, deleteSpecialist } = useSpecialistStore()
+  const { skills } = useSkillStore()
+  const [editingSpecialist, setEditingSpecialist] = useState<Specialist | null>(null)
+  const [showForm, setShowForm] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  const sortedSpecialists = [...specialists].sort((a, b) => a.priority - b.priority);
+  const sortedSpecialists = [...specialists].sort((a, b) => a.priority - b.priority)
 
   const handleDelete = async (): Promise<void> => {
-    if (!deleteTarget) return;
-    const result = await deleteSpecialist(deleteTarget);
+    if (!deleteTarget) return
+    const result = await deleteSpecialist(deleteTarget)
     if (result.success) {
-      setDeleteTarget(null);
-      setDeleteError(null);
+      setDeleteTarget(null)
+      setDeleteError(null)
     } else {
-      setDeleteError(result.error ?? 'Failed to delete specialist');
+      setDeleteError(result.error ?? 'Failed to delete specialist')
     }
-  };
+  }
 
   const handleEdit = (specialist: Specialist): void => {
-    setEditingSpecialist(specialist);
-    setShowForm(true);
-  };
+    setEditingSpecialist(specialist)
+    setShowForm(true)
+  }
 
   const handleCloseForm = (): void => {
-    setShowForm(false);
-    setEditingSpecialist(null);
-  };
+    setShowForm(false)
+    setEditingSpecialist(null)
+  }
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-400" />
       </div>
-    );
+    )
   }
 
   return (
@@ -57,8 +57,8 @@ export default function SpecialistsList(): React.JSX.Element {
           </div>
           <button
             onClick={() => {
-              setEditingSpecialist(null);
-              setShowForm(true);
+              setEditingSpecialist(null)
+              setShowForm(true)
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
           >
@@ -126,9 +126,7 @@ export default function SpecialistsList(): React.JSX.Element {
                       <span className="text-[10px] text-gray-500">
                         Priority: {specialist.priority}
                       </span>
-                      <span className="text-[10px] text-gray-500">
-                        ID: {specialist.agentId}
-                      </span>
+                      <span className="text-[10px] text-gray-500">ID: {specialist.agentId}</span>
                       {specialist.skills && specialist.skills.length > 0 && (
                         <div className="flex items-center gap-1">
                           {specialist.skills.map((skill) => (
@@ -163,8 +161,8 @@ export default function SpecialistsList(): React.JSX.Element {
                     </button>
                     <button
                       onClick={() => {
-                        setDeleteError(null);
-                        setDeleteTarget(specialist.id);
+                        setDeleteError(null)
+                        setDeleteTarget(specialist.id)
                       }}
                       className="p-1.5 rounded-md hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors"
                       aria-label={`Delete ${specialist.displayName}`}
@@ -182,11 +180,7 @@ export default function SpecialistsList(): React.JSX.Element {
 
       {/* Specialist form modal */}
       {showForm && (
-        <SpecialistForm
-          specialist={editingSpecialist}
-          skills={skills}
-          onClose={handleCloseForm}
-        />
+        <SpecialistForm specialist={editingSpecialist} skills={skills} onClose={handleCloseForm} />
       )}
 
       {/* Delete confirmation */}
@@ -201,9 +195,19 @@ export default function SpecialistsList(): React.JSX.Element {
         confirmLabel={deleteError ? 'Close' : 'Delete'}
         cancelLabel="Cancel"
         variant="danger"
-        onConfirm={deleteError ? () => { setDeleteTarget(null); setDeleteError(null); } : handleDelete}
-        onCancel={() => { setDeleteTarget(null); setDeleteError(null); }}
+        onConfirm={
+          deleteError
+            ? () => {
+                setDeleteTarget(null)
+                setDeleteError(null)
+              }
+            : handleDelete
+        }
+        onCancel={() => {
+          setDeleteTarget(null)
+          setDeleteError(null)
+        }}
       />
     </>
-  );
+  )
 }

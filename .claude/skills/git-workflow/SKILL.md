@@ -64,30 +64,30 @@ Types:
 
 ### Types
 
-| Type | When |
-|------|------|
-| `feat` | New feature visible to users |
-| `fix` | Bug fix |
+| Type       | When                                                |
+| ---------- | --------------------------------------------------- |
+| `feat`     | New feature visible to users                        |
+| `fix`      | Bug fix                                             |
 | `refactor` | Code change that doesn't fix a bug or add a feature |
-| `chore` | Build, deps, config, tooling |
-| `docs` | Documentation only |
-| `style` | Formatting, whitespace (no code change) |
-| `test` | Adding or fixing tests |
-| `perf` | Performance improvement |
-| `ci` | CI/CD configuration |
+| `chore`    | Build, deps, config, tooling                        |
+| `docs`     | Documentation only                                  |
+| `style`    | Formatting, whitespace (no code change)             |
+| `test`     | Adding or fixing tests                              |
+| `perf`     | Performance improvement                             |
+| `ci`       | CI/CD configuration                                 |
 
 ### Scopes (project-specific)
 
-| Scope | Area |
-|-------|------|
-| `main` | Main process code |
-| `renderer` | React frontend |
-| `preload` | Preload bridge |
-| `ipc` | IPC handlers/channels |
-| `db` | Database schema/repositories |
-| `agents` | Agent system |
-| `orchestrator` | Orchestrator service |
-| `build` | Electron-builder, packaging |
+| Scope          | Area                         |
+| -------------- | ---------------------------- |
+| `main`         | Main process code            |
+| `renderer`     | React frontend               |
+| `preload`      | Preload bridge               |
+| `ipc`          | IPC handlers/channels        |
+| `db`           | Database schema/repositories |
+| `agents`       | Agent system                 |
+| `orchestrator` | Orchestrator service         |
+| `build`        | Electron-builder, packaging  |
 
 ### Examples
 
@@ -155,13 +155,13 @@ Before creating a PR:
 
 ### Common conflict patterns in Electron apps
 
-| File | Typical conflict | Resolution |
-|------|------------------|------------|
-| `constants.ts` | Two branches add new IPC channels | Keep both, maintain alphabetical order |
-| `schema.sql` | Two branches add tables | Keep both, check FK dependencies |
-| `package.json` | Different dependency versions | Take higher version, re-run `npm install` |
+| File                | Typical conflict                     | Resolution                                           |
+| ------------------- | ------------------------------------ | ---------------------------------------------------- |
+| `constants.ts`      | Two branches add new IPC channels    | Keep both, maintain alphabetical order               |
+| `schema.sql`        | Two branches add tables              | Keep both, check FK dependencies                     |
+| `package.json`      | Different dependency versions        | Take higher version, re-run `npm install`            |
 | `package-lock.json` | Always conflicts on parallel changes | Accept either side, then `npm install` to regenerate |
-| Component files | Structural changes | Manual merge, test thoroughly |
+| Component files     | Structural changes                   | Manual merge, test thoroughly                        |
 
 ### Resolution steps
 
@@ -262,23 +262,24 @@ jobs:
 export default {
   extends: ['@commitlint/config-conventional'],
   rules: {
-    'scope-enum': [2, 'always', [
-      'main', 'renderer', 'preload', 'ipc', 'db',
-      'agents', 'orchestrator', 'build', 'deps'
-    ]],
-  },
-};
+    'scope-enum': [
+      2,
+      'always',
+      ['main', 'renderer', 'preload', 'ipc', 'db', 'agents', 'orchestrator', 'build', 'deps']
+    ]
+  }
+}
 ```
 
 ## Common pitfalls
 
-| Pitfall | Fix |
-|---------|-----|
-| Force pushing to shared branches | Never `git push --force` on `main`; use `--force-with-lease` on feature branches |
-| Manually editing package-lock.json | Accept one side, run `npm install` to regenerate |
-| Large PRs (500+ lines) | Break into smaller, focused PRs |
-| Committing `.env` or secrets | Add to `.gitignore` before first commit; use `git-secrets` |
-| Amending published commits | Only amend local, unpushed commits |
-| Not rebasing before PR | Always `git rebase origin/main` before opening PR |
-| Committing `node_modules` | Ensure `node_modules/` is in `.gitignore` |
-| Forgetting to stage specific files | Use `git add <file>` not `git add -A` |
+| Pitfall                            | Fix                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| Force pushing to shared branches   | Never `git push --force` on `main`; use `--force-with-lease` on feature branches |
+| Manually editing package-lock.json | Accept one side, run `npm install` to regenerate                                 |
+| Large PRs (500+ lines)             | Break into smaller, focused PRs                                                  |
+| Committing `.env` or secrets       | Add to `.gitignore` before first commit; use `git-secrets`                       |
+| Amending published commits         | Only amend local, unpushed commits                                               |
+| Not rebasing before PR             | Always `git rebase origin/main` before opening PR                                |
+| Committing `node_modules`          | Ensure `node_modules/` is in `.gitignore`                                        |
+| Forgetting to stage specific files | Use `git add <file>` not `git add -A`                                            |

@@ -35,6 +35,7 @@ Use sequence diagrams to document:
 - **Complex Business Processes** - Break down multi-step workflows
 
 **When NOT to use sequence diagrams:**
+
 - System structure (use architecture diagrams)
 - Workflow logic (use activity diagrams)
 - Static relationships (use class/component diagrams)
@@ -64,17 +65,17 @@ sequenceDiagram
 
 **Participant Types with Unicode:**
 
-| Symbol | Type | Example |
-|--------|------|---------|
-| 👤 | Human User | Customer, Admin, Developer |
-| 🌐 | Web/Frontend | React App, Browser, Mobile App |
-| ⚙️ | Backend Service | API Server, Microservice |
-| 💾 | Database | PostgreSQL, MongoDB, Redis |
-| 📬 | Message Queue | RabbitMQ, Kafka, SQS |
-| 🔐 | Auth Service | OAuth Provider, Auth0, Keycloak |
-| 🚪 | Gateway | API Gateway, Load Balancer |
-| 📧 | Email Service | SendGrid, Mailgun |
-| 💳 | Payment Service | Stripe, PayPal |
+| Symbol | Type            | Example                         |
+| ------ | --------------- | ------------------------------- |
+| 👤     | Human User      | Customer, Admin, Developer      |
+| 🌐     | Web/Frontend    | React App, Browser, Mobile App  |
+| ⚙️     | Backend Service | API Server, Microservice        |
+| 💾     | Database        | PostgreSQL, MongoDB, Redis      |
+| 📬     | Message Queue   | RabbitMQ, Kafka, SQS            |
+| 🔐     | Auth Service    | OAuth Provider, Auth0, Keycloak |
+| 🚪     | Gateway         | API Gateway, Load Balancer      |
+| 📧     | Email Service   | SendGrid, Mailgun               |
+| 💳     | Payment Service | Stripe, PayPal                  |
 
 ### Message Types
 
@@ -826,37 +827,38 @@ sequenceDiagram
 
 Maintain consistent symbol usage across all diagrams:
 
-| Category | Symbols |
-|----------|---------|
-| Users | 👤 👥 👨‍💻 👩‍💼 |
-| Frontend | 🌐 📱 🖥️ ⚛️ |
-| Backend | ⚙️ 🔧 🚀 ⚡ |
-| Data | 💾 📊 🗄️ 📦 |
-| Security | 🔐 🔑 🛡️ 🚪 |
+| Category  | Symbols     |
+| --------- | ----------- |
+| Users     | 👤 👥 👨‍💻 👩‍💼 |
+| Frontend  | 🌐 📱 🖥️ ⚛️ |
+| Backend   | ⚙️ 🔧 🚀 ⚡ |
+| Data      | 💾 📊 🗄️ 📦 |
+| Security  | 🔐 🔑 🛡️ 🚪 |
 | Messaging | 📬 📨 📡 🐰 |
-| External | ☁️ 💳 📧 🔍 |
+| External  | ☁️ 💳 📧 🔍 |
 
 ---
 
 ## Summary
 
-| Pattern | When to Use | Key Elements |
-|---------|-------------|--------------|
-| **Simple CRUD** | Basic API operations | Client, API, Database, HTTP verbs |
-| **Pagination** | List endpoints with large datasets | Cache check, DB query with LIMIT/OFFSET, pagination metadata |
-| **OAuth Flow** | Third-party authentication | User, App, OAuth Provider, tokens |
-| **JWT Auth** | Token-based authentication | Login, token generation, refresh token flow |
-| **Service-to-Service** | Microservices communication | Multiple services, API Gateway, sync calls |
-| **Circuit Breaker** | Fault tolerance | Service, circuit breaker logic, failure thresholds |
-| **Event-Driven** | Async messaging | Producer, message queue, multiple consumers |
-| **Saga** | Distributed transactions | Multiple services, events, compensating transactions |
-| **Dead Letter Queue** | Error handling in queues | Main queue, DLQ, retry logic, monitoring |
-| **Parallel Requests** | Performance optimization | Multiple concurrent calls, aggregation |
-| **Webhook** | External callbacks | Provider, webhook endpoint, signature verification, queue |
+| Pattern                | When to Use                        | Key Elements                                                 |
+| ---------------------- | ---------------------------------- | ------------------------------------------------------------ |
+| **Simple CRUD**        | Basic API operations               | Client, API, Database, HTTP verbs                            |
+| **Pagination**         | List endpoints with large datasets | Cache check, DB query with LIMIT/OFFSET, pagination metadata |
+| **OAuth Flow**         | Third-party authentication         | User, App, OAuth Provider, tokens                            |
+| **JWT Auth**           | Token-based authentication         | Login, token generation, refresh token flow                  |
+| **Service-to-Service** | Microservices communication        | Multiple services, API Gateway, sync calls                   |
+| **Circuit Breaker**    | Fault tolerance                    | Service, circuit breaker logic, failure thresholds           |
+| **Event-Driven**       | Async messaging                    | Producer, message queue, multiple consumers                  |
+| **Saga**               | Distributed transactions           | Multiple services, events, compensating transactions         |
+| **Dead Letter Queue**  | Error handling in queues           | Main queue, DLQ, retry logic, monitoring                     |
+| **Parallel Requests**  | Performance optimization           | Multiple concurrent calls, aggregation                       |
+| **Webhook**            | External callbacks                 | Provider, webhook endpoint, signature verification, queue    |
 
 ---
 
 **Related Guides:**
+
 - [Activity Diagrams](./activity-diagrams.md) - Workflows and business logic
 - [Architecture Diagrams](./architecture-diagrams.md) - System structure
 - [Deployment Diagrams](./deployment-diagrams.md) - Infrastructure

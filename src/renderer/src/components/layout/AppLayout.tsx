@@ -16,7 +16,7 @@ import { AgentMonitor } from '@renderer/components/agents'
 import { PixelOfficePanel } from '@renderer/components/pixel-office'
 import { WorkspaceSettingsPage } from '@renderer/components/workspace'
 import { SettingsPage } from '@renderer/components/settings'
-import { UpdateBanner, BrainFeedBanner, ErrorBoundary } from '@renderer/components/common'
+import { UpdateBanner, MemoryFeedBanner, ErrorBoundary } from '@renderer/components/common'
 import {
   useWorkspaceStore,
   useAgentStore,
@@ -183,8 +183,8 @@ export default function AppLayout(): React.JSX.Element {
       {/* Auto-update banner */}
       <UpdateBanner />
 
-      {/* Brain feed progress banner */}
-      <BrainFeedBanner />
+      {/* Memory feed progress banner */}
+      <MemoryFeedBanner />
 
       {/* Main content */}
       <div className="flex flex-1 min-h-0">

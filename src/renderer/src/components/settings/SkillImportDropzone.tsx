@@ -1,57 +1,57 @@
-import { useState, useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
-import { Upload, FileText, RotateCcw, Loader2 } from 'lucide-react';
-import { useSkillStore } from '@renderer/store';
+import { useState, useCallback } from 'react'
+import { useDropzone } from 'react-dropzone'
+import { Upload, FileText, RotateCcw, Loader2 } from 'lucide-react'
+import { useSkillStore } from '@renderer/store'
 
 export default function SkillImportDropzone(): React.JSX.Element {
-  const { importSkill, importingSkill } = useSkillStore();
-  const [error, setError] = useState<string | null>(null);
-  const [lastFailedPath, setLastFailedPath] = useState<string | null>(null);
+  const { importSkill, importingSkill } = useSkillStore()
+  const [error, setError] = useState<string | null>(null)
+  const [lastFailedPath, setLastFailedPath] = useState<string | null>(null)
 
   const handleImport = useCallback(
     async (filePath: string): Promise<void> => {
-      setError(null);
-      setLastFailedPath(null);
+      setError(null)
+      setLastFailedPath(null)
 
-      const result = await importSkill(filePath);
+      const result = await importSkill(filePath)
       if (!result.success) {
-        setError(result.error ?? 'Import failed');
-        setLastFailedPath(filePath);
+        setError(result.error ?? 'Import failed')
+        setLastFailedPath(filePath)
       }
     },
     [importSkill]
-  );
+  )
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
-      if (acceptedFiles.length === 0) return;
-      const file = acceptedFiles[0] as File & { path: string };
+      if (acceptedFiles.length === 0) return
+      const file = acceptedFiles[0] as File & { path: string }
       if (file.path) {
-        handleImport(file.path);
+        handleImport(file.path)
       }
     },
     [handleImport]
-  );
+  )
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { 'text/markdown': ['.md'] },
     multiple: false,
     disabled: importingSkill
-  });
+  })
 
   const handleBrowse = async (): Promise<void> => {
-    const filePath = await window.api.selectSkillFile();
+    const filePath = await window.api.selectSkillFile()
     if (filePath) {
-      handleImport(filePath);
+      handleImport(filePath)
     }
-  };
+  }
 
   const handleRetry = (): void => {
     if (lastFailedPath) {
-      handleImport(lastFailedPath);
+      handleImport(lastFailedPath)
     }
-  };
+  }
 
   return (
     <div className="space-y-2">
@@ -88,8 +88,8 @@ export default function SkillImportDropzone(): React.JSX.Element {
               or{' '}
               <button
                 onClick={(e) => {
-                  e.stopPropagation();
-                  handleBrowse();
+                  e.stopPropagation()
+                  handleBrowse()
                 }}
                 className="text-indigo-400 hover:text-indigo-300 underline"
               >
@@ -116,5 +116,5 @@ export default function SkillImportDropzone(): React.JSX.Element {
         </div>
       )}
     </div>
-  );
+  )
 }

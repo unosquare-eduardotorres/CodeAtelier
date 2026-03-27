@@ -4,7 +4,15 @@
   "description": "Insert checkpoints at phase transitions in specialist pool (after all phase tasks complete) and before worktree merges. Show changed files and test results in checkpoint details.",
   "feature_ref": "F006",
   "task_type": "backend",
-  "complexity": { "score": 5, "factors": { "files_affected": 2, "estimated_lines": 80, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 2,
+      "estimated_lines": 80,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-026", "TASK-016"],
   "acceptance_criteria": [
     "Phase completion triggers checkpoint",

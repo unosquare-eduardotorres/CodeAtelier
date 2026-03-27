@@ -105,7 +105,7 @@ export default function ChatSidebar({
             <button
               key={conv.id}
               onClick={() => selectConversation(conv.id)}
-              className={`flex items-center justify-center w-8 h-8 rounded-lg text-xs font-semibold transition-colors ${
+              className={`flex items-center justify-center w-8 h-8 rounded-lg text-xs font-semibold transition-colors press-scale ${
                 activeConversation?.id === conv.id
                   ? 'bg-primary text-white'
                   : 'bg-surface-overlay text-text-secondary hover:bg-surface-float'

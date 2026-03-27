@@ -4,7 +4,15 @@
   "description": "In specialist-pool.service.ts, modify spawnSpecialist() to include --model flag based on task.model or fallback to complexity score. Add getModelForComplexity() private method.",
   "feature_ref": "F001",
   "task_type": "backend",
-  "complexity": { "score": 4, "factors": { "files_affected": 1, "estimated_lines": 40, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 4,
+    "factors": {
+      "files_affected": 1,
+      "estimated_lines": 40,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-004"],
   "acceptance_criteria": [
     "Specialist CLI args include --model flag",

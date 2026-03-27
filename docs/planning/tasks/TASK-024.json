@@ -4,7 +4,15 @@
   "description": "Before spawning each specialist, gather outputs from dependency tasks via taskArtifactService.readPriorOutputs(). Build enriched prompt with prior context. After completion, save output via writeTaskOutput().",
   "feature_ref": "F004",
   "task_type": "backend",
-  "complexity": { "score": 5, "factors": { "files_affected": 2, "estimated_lines": 80, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 2,
+      "estimated_lines": 80,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-023", "TASK-016"],
   "acceptance_criteria": [
     "Prior task outputs included in specialist prompt",

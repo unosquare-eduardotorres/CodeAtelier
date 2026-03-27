@@ -34,12 +34,12 @@ Use architecture diagrams when you need to:
 
 **Choose the Right Abstraction Level:**
 
-| Audience | Diagram Type | Focus |
-|----------|--------------|-------|
-| Executives, stakeholders | C4 Context | System in ecosystem, external dependencies |
-| Architects, technical leads | C4 Container, Component | Services, databases, communication patterns |
-| Developers | Component, Layered | Modules, interfaces, dependencies |
-| Operations | Deployment (see deployment guide) | Infrastructure, servers, networks |
+| Audience                    | Diagram Type                      | Focus                                       |
+| --------------------------- | --------------------------------- | ------------------------------------------- |
+| Executives, stakeholders    | C4 Context                        | System in ecosystem, external dependencies  |
+| Architects, technical leads | C4 Container, Component           | Services, databases, communication patterns |
+| Developers                  | Component, Layered                | Modules, interfaces, dependencies           |
+| Operations                  | Deployment (see deployment guide) | Infrastructure, servers, networks           |
 
 ---
 
@@ -52,6 +52,7 @@ The **C4 model** provides hierarchical views of system architecture at four leve
 **Purpose:** Show the system boundary and how it fits in its environment.
 
 **Include:**
+
 - Your system (single box)
 - Users/personas interacting with the system
 - External systems your system depends on
@@ -93,6 +94,7 @@ graph TB
 ```
 
 **Key Characteristics:**
+
 - Single box for your entire system
 - Clear system boundary
 - All external actors and systems shown
@@ -106,6 +108,7 @@ graph TB
 **Purpose:** Show the major runtime containers (applications, databases, services) that make up the system.
 
 **Include:**
+
 - Web applications, mobile apps, SPAs
 - Backend services (APIs, workers)
 - Databases (SQL, NoSQL, cache)
@@ -190,6 +193,7 @@ graph TB
 
 **Technology Stack Labels:**
 Always include:
+
 - Programming language/framework
 - Port numbers (if relevant)
 - Database technology
@@ -202,6 +206,7 @@ Always include:
 **Purpose:** Zoom into a single container to show its internal components and their relationships.
 
 **Include:**
+
 - Major modules/components within the container
 - Component responsibilities
 - Interfaces between components
@@ -283,6 +288,7 @@ graph TB
 ```
 
 **Component Naming Convention:**
+
 - Controllers: Handle HTTP requests/responses
 - Services: Business logic and orchestration
 - Repositories: Data access abstraction
@@ -355,11 +361,11 @@ graph TB
 ```typescript
 // IPlugin interface
 interface IPlugin {
-    name: string;
-    version: string;
-    init(config: PluginConfig): Promise<void>;
-    destroy(): Promise<void>;
-    onEvent(event: AppEvent): void;
+  name: string
+  version: string
+  init(config: PluginConfig): Promise<void>
+  destroy(): Promise<void>
+  onEvent(event: AppEvent): void
 }
 ```
 
@@ -442,6 +448,7 @@ graph TB
 ```
 
 **Dependency Rules:**
+
 - ✅ Presentation → Business Logic → Data Access
 - ❌ Data Access → Business Logic (violates layer independence)
 - ✅ Any layer → Cross-cutting concerns
@@ -516,6 +523,7 @@ graph TB
 ```
 
 **Key Insight:** Domain core depends only on port interfaces, never on concrete adapters. This enables:
+
 - Easy testing (swap with mocks)
 - Technology changes (swap adapters)
 - Multiple implementations (Postgres or MySQL)
@@ -597,6 +605,7 @@ graph TB
 ```
 
 **Key Design Principles:**
+
 - ✅ Each service owns its database (no shared databases)
 - ✅ Async communication via events when possible
 - ✅ Sync communication (REST/gRPC) only when needed
@@ -672,6 +681,7 @@ graph TB
 ```
 
 **Service Mesh Benefits:**
+
 - Zero-trust security (mTLS between all services)
 - Traffic management (retries, timeouts, circuit breaking)
 - Observability (metrics, traces, logs)
@@ -753,6 +763,7 @@ graph TB
 ```
 
 **CQRS Benefits:**
+
 - Separate optimization of read and write paths
 - Multiple read models tailored to different use cases
 - Event sourcing provides complete audit trail
@@ -802,11 +813,11 @@ sequenceDiagram
 
 **Saga Compensation Logic:**
 
-| Event | Compensating Action | Trigger |
-|-------|---------------------|---------|
-| PaymentFailed | Cancel order | OrderService |
-| InventoryReservationFailed | Refund payment | PaymentService |
-| ShipmentFailed | Release inventory | InventoryService |
+| Event                      | Compensating Action | Trigger          |
+| -------------------------- | ------------------- | ---------------- |
+| PaymentFailed              | Cancel order        | OrderService     |
+| InventoryReservationFailed | Refund payment      | PaymentService   |
+| ShipmentFailed             | Release inventory   | InventoryService |
 
 ---
 
@@ -814,9 +825,9 @@ sequenceDiagram
 
 ### 1. **Choose the Right Abstraction Level**
 
-| Too High Level | ❌ | Just Right | ✅ | Too Detailed | ❌ |
-|----------------|---|------------|---|--------------|---|
-| "The system" | | "API Gateway → Services → Databases" | | "UserController.getUser() → UserService.findById()" | |
+| Too High Level | ❌  | Just Right                           | ✅  | Too Detailed                                        | ❌  |
+| -------------- | --- | ------------------------------------ | --- | --------------------------------------------------- | --- |
+| "The system"   |     | "API Gateway → Services → Databases" |     | "UserController.getUser() → UserService.findById()" |     |
 
 ### 2. **Use Consistent Symbols**
 
@@ -838,6 +849,7 @@ graph LR
 ### 3. **Label Communication Protocols**
 
 Always specify:
+
 - Protocol: HTTPS, gRPC, AMQP
 - Port: :8080, :5432
 - Format: JSON, Protobuf, XML
@@ -846,6 +858,7 @@ Always specify:
 ### 4. **Show Boundaries Clearly**
 
 Use subgraphs to indicate:
+
 - System boundaries
 - Trust boundaries (DMZ, internal network)
 - Deployment boundaries (different servers/clusters)
@@ -971,23 +984,24 @@ graph TB
 
 ## Summary
 
-| Diagram Type | When to Use | Key Elements |
-|--------------|-------------|--------------|
-| **C4 Context** | System in ecosystem | System boundary, external actors, external systems |
-| **C4 Container** | Runtime structure | Web apps, APIs, databases, message queues, tech stack |
-| **C4 Component** | Internal module structure | Controllers, services, repositories, interfaces |
-| **Component** | Plugin/modular architecture | Plugin API, implementations, dependencies |
-| **Layered** | Strict layer separation | Presentation, business, data layers, dependency flow |
-| **Hexagonal** | Ports & Adapters pattern | Inbound/outbound ports, adapters, domain core |
-| **Microservices** | Distributed services | Service boundaries, ownership, communication patterns |
-| **Service Mesh** | Inter-service communication | Sidecars, control plane, mTLS, observability |
-| **Event-Driven** | Event flows | Events, producers, consumers, event store |
-| **CQRS** | Command-query separation | Command side, query side, projections |
-| **Saga** | Distributed transactions | Events, compensating actions, choreography |
+| Diagram Type      | When to Use                 | Key Elements                                          |
+| ----------------- | --------------------------- | ----------------------------------------------------- |
+| **C4 Context**    | System in ecosystem         | System boundary, external actors, external systems    |
+| **C4 Container**  | Runtime structure           | Web apps, APIs, databases, message queues, tech stack |
+| **C4 Component**  | Internal module structure   | Controllers, services, repositories, interfaces       |
+| **Component**     | Plugin/modular architecture | Plugin API, implementations, dependencies             |
+| **Layered**       | Strict layer separation     | Presentation, business, data layers, dependency flow  |
+| **Hexagonal**     | Ports & Adapters pattern    | Inbound/outbound ports, adapters, domain core         |
+| **Microservices** | Distributed services        | Service boundaries, ownership, communication patterns |
+| **Service Mesh**  | Inter-service communication | Sidecars, control plane, mTLS, observability          |
+| **Event-Driven**  | Event flows                 | Events, producers, consumers, event store             |
+| **CQRS**          | Command-query separation    | Command side, query side, projections                 |
+| **Saga**          | Distributed transactions    | Events, compensating actions, choreography            |
 
 ---
 
 **Related Guides:**
+
 - [Activity Diagrams](./activity-diagrams.md) - Workflows and processes
 - [Deployment Diagrams](./deployment-diagrams.md) - Infrastructure and hosting
 - [Unicode Symbols](../unicode-symbols/guide.md) - Complete symbol reference

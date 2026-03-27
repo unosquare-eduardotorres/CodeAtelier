@@ -46,6 +46,7 @@ my-app/
 ```
 
 Key rules:
+
 - Never put main process logic in the renderer folder or vice versa.
 - Every IPC channel name must be defined in `shared/ipc-channels.ts` — no magic strings.
 - The preload script is the ONLY place where Node/Electron APIs cross into the renderer.
@@ -59,13 +60,13 @@ Electron is NOT a web browser. Your code has full system access. Follow all 20 i
 // main/index.ts — BrowserWindow creation
 const win = new BrowserWindow({
   webPreferences: {
-    contextIsolation: true,      // NEVER set to false (default since Electron 12)
-    nodeIntegration: false,      // NEVER set to true (default since Electron 5)
-    sandbox: true,               // Enable renderer sandboxing (default since Electron 28)
+    contextIsolation: true, // NEVER set to false (default since Electron 12)
+    nodeIntegration: false, // NEVER set to true (default since Electron 5)
+    sandbox: true, // Enable renderer sandboxing (default since Electron 28)
     preload: path.join(__dirname, '../preload/index.js'),
-    webSecurity: true,           // NEVER disable — enforces same-origin policy
-  },
-});
+    webSecurity: true // NEVER disable — enforces same-origin policy
+  }
+})
 ```
 
 ### Content Security Policy
@@ -80,10 +81,10 @@ session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       ...details.responseHeaders,
       'Content-Security-Policy': [
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
-      ],
-    },
-  });
-});
+      ]
+    }
+  })
+})
 ```
 
 ### Validate IPC sender
@@ -94,12 +95,12 @@ Always verify that IPC messages come from expected sources — a compromised ren
 // main/ipc-handlers.ts — validate sender origin
 ipcMain.handle('sensitive-action', async (event) => {
   // Verify the sender is your app's window, not a rogue webview
-  const senderUrl = event.senderFrame.url;
+  const senderUrl = event.senderFrame.url
   if (!senderUrl.startsWith('file://') && !senderUrl.startsWith('https://yourdomain.com')) {
-    throw new Error('Unauthorized IPC sender');
+    throw new Error('Unauthorized IPC sender')
   }
   // ... proceed with action
-});
+})
 ```
 
 ### Permission request handling
@@ -109,9 +110,9 @@ Control what web permissions (camera, microphone, geolocation, notifications) yo
 ```typescript
 // main/index.ts — restrict permissions
 session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-  const allowedPermissions = ['notifications']; // only what your app needs
-  callback(allowedPermissions.includes(permission));
-});
+  const allowedPermissions = ['notifications'] // only what your app needs
+  callback(allowedPermissions.includes(permission))
+})
 ```
 
 ### shell.openExternal safety
@@ -120,13 +121,13 @@ Never pass untrusted URLs to `shell.openExternal` — it can execute arbitrary p
 
 ```typescript
 // ❌ DANGEROUS — user-supplied URL could be file://, smb://, or custom protocol
-shell.openExternal(userProvidedUrl);
+shell.openExternal(userProvidedUrl)
 
 // ✅ SAFE — validate protocol first
 function safeOpenExternal(url: string) {
-  const parsed = new URL(url);
+  const parsed = new URL(url)
   if (['https:', 'http:', 'mailto:'].includes(parsed.protocol)) {
-    shell.openExternal(url);
+    shell.openExternal(url)
   }
 }
 ```
@@ -138,34 +139,34 @@ Prevent your app from navigating to untrusted origins:
 ```typescript
 // main/index.ts — lock down navigation
 win.webContents.on('will-navigate', (event, url) => {
-  const parsed = new URL(url);
+  const parsed = new URL(url)
   if (parsed.origin !== 'file://') {
-    event.preventDefault(); // block navigation to external sites
+    event.preventDefault() // block navigation to external sites
   }
-});
+})
 
 // Prevent new windows from being opened
 win.webContents.setWindowOpenHandler(({ url }) => {
   // Open external links in the user's browser instead
   if (url.startsWith('https://')) {
-    shell.openExternal(url);
+    shell.openExternal(url)
   }
-  return { action: 'deny' }; // never open new Electron windows from links
-});
+  return { action: 'deny' } // never open new Electron windows from links
+})
 ```
 
 ### Sandboxed Preload API Availability
 
 When `sandbox: true` (default since Electron 20), preload scripts get a polyfilled subset:
 
-| Available Electron modules | Available Node.js built-ins | Available globals |
-|---|---|---|
-| `contextBridge` | `events` | `Buffer` |
-| `crashReporter` | `timers` | `process` (polyfilled) |
-| `ipcRenderer` | `url` | `clearImmediate` |
-| `nativeImage` | | `setImmediate` |
-| `webFrame` | | |
-| `webUtils` | | |
+| Available Electron modules | Available Node.js built-ins | Available globals      |
+| -------------------------- | --------------------------- | ---------------------- |
+| `contextBridge`            | `events`                    | `Buffer`               |
+| `crashReporter`            | `timers`                    | `process` (polyfilled) |
+| `ipcRenderer`              | `url`                       | `clearImmediate`       |
+| `nativeImage`              |                             | `setImmediate`         |
+| `webFrame`                 |                             |                        |
+| `webUtils`                 |                             |                        |
 
 **Cannot use in sandboxed preload:** `fs`, `path`, `child_process`, `crypto`, or any other Node.js module. These must go through IPC to the main process.
 
@@ -184,13 +185,13 @@ When `sandbox: true` (default since Electron 20), preload scripts get a polyfill
 // Item #12: Validate webview creation
 app.on('web-contents-created', (event, contents) => {
   contents.on('will-attach-webview', (event, webPreferences, params) => {
-    delete webPreferences.preload;
-    webPreferences.nodeIntegration = false;
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
     if (!params.src.startsWith('https://example.com/')) {
-      event.preventDefault();
+      event.preventDefault()
     }
-  });
-});
+  })
+})
 ```
 
 If the user asks you to disable contextIsolation or enable nodeIntegration, explain why this is dangerous and provide the secure alternative using preload + contextBridge instead.
@@ -210,14 +211,14 @@ export const IPC = {
   SAVE_FILE: 'file:save',
   OPEN_DIALOG: 'dialog:open',
   READ_SETTINGS: 'settings:read',
-  WRITE_SETTINGS: 'settings:write',
-} as const;
+  WRITE_SETTINGS: 'settings:write'
+} as const
 ```
 
 ```typescript
 // preload/index.ts — expose typed API to renderer
-import { contextBridge, ipcRenderer } from 'electron';
-import { IPC } from '../shared/ipc-channels';
+import { contextBridge, ipcRenderer } from 'electron'
+import { IPC } from '../shared/ipc-channels'
 
 const electronAPI = {
   getSystemInfo: () => ipcRenderer.invoke(IPC.GET_SYSTEM_INFO),
@@ -225,46 +226,46 @@ const electronAPI = {
   openDialog: () => ipcRenderer.invoke(IPC.OPEN_DIALOG),
   readSettings: () => ipcRenderer.invoke(IPC.READ_SETTINGS),
   writeSettings: (settings: Record<string, unknown>) =>
-    ipcRenderer.invoke(IPC.WRITE_SETTINGS, settings),
-} as const;
+    ipcRenderer.invoke(IPC.WRITE_SETTINGS, settings)
+} as const
 
-contextBridge.exposeInMainWorld('electronAPI', electronAPI);
+contextBridge.exposeInMainWorld('electronAPI', electronAPI)
 
 // Export type for renderer TypeScript usage
-export type ElectronAPI = typeof electronAPI;
+export type ElectronAPI = typeof electronAPI
 ```
 
 ```typescript
 // shared/types.ts — type the window global for renderer
-import type { ElectronAPI } from '../preload/index';
+import type { ElectronAPI } from '../preload/index'
 
 declare global {
   interface Window {
-    electronAPI: ElectronAPI;
+    electronAPI: ElectronAPI
   }
 }
 ```
 
 ```typescript
 // main/ipc-handlers.ts — register handlers with input validation
-import { ipcMain, dialog, BrowserWindow } from 'electron';
-import { IPC } from '../shared/ipc-channels';
+import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { IPC } from '../shared/ipc-channels'
 
 export function registerIpcHandlers() {
   ipcMain.handle(IPC.GET_SYSTEM_INFO, async () => {
-    return { platform: process.platform, arch: process.arch, version: process.versions.electron };
-  });
+    return { platform: process.platform, arch: process.arch, version: process.versions.electron }
+  })
 
   ipcMain.handle(IPC.SAVE_FILE, async (_event, data: string) => {
     if (typeof data !== 'string' || data.length > 10_000_000) {
-      throw new Error('Invalid data');
+      throw new Error('Invalid data')
     }
     // ... save logic
-  });
+  })
 
   ipcMain.handle(IPC.OPEN_DIALOG, async () => {
-    return dialog.showOpenDialog({ properties: ['openFile'] });
-  });
+    return dialog.showOpenDialog({ properties: ['openFile'] })
+  })
 }
 ```
 
@@ -275,14 +276,14 @@ Use `ipcRenderer.send` / `ipcMain.on` — for actions where you don't need a res
 ```typescript
 // preload — fire-and-forget
 contextBridge.exposeInMainWorld('electronAPI', {
-  setTitle: (title: string) => ipcRenderer.send('set-title', title),
-});
+  setTitle: (title: string) => ipcRenderer.send('set-title', title)
+})
 
 // main — handle without returning
 ipcMain.on('set-title', (event, title: string) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  win?.setTitle(title);
-});
+  const win = BrowserWindow.fromWebContents(event.sender)
+  win?.setTitle(title)
+})
 ```
 
 ### Pattern 3: Main → Renderer (push events)
@@ -293,19 +294,19 @@ Use `webContents.send` in main, listen via preload-exposed callback:
 // preload — expose event subscription with cleanup
 contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateAvailable: (callback: (info: any) => void) => {
-    const handler = (_event: any, info: any) => callback(info);
-    ipcRenderer.on('update-available', handler);
-    return () => ipcRenderer.removeListener('update-available', handler);
+    const handler = (_event: any, info: any) => callback(info)
+    ipcRenderer.on('update-available', handler)
+    return () => ipcRenderer.removeListener('update-available', handler)
   },
   onMenuAction: (callback: (action: string) => void) => {
-    const handler = (_event: any, action: string) => callback(action);
-    ipcRenderer.on('menu-action', handler);
-    return () => ipcRenderer.removeListener('menu-action', handler);
-  },
-});
+    const handler = (_event: any, action: string) => callback(action)
+    ipcRenderer.on('menu-action', handler)
+    return () => ipcRenderer.removeListener('menu-action', handler)
+  }
+})
 
 // main — push to renderer
-win.webContents.send('update-available', updateInfo);
+win.webContents.send('update-available', updateInfo)
 ```
 
 ### Pattern 4: Renderer ↔ Renderer (via main as broker)
@@ -314,22 +315,22 @@ Use MessagePorts for direct renderer-to-renderer communication when needed:
 
 ```typescript
 // main — create message channel between two windows
-const { port1, port2 } = new MessageChannelMain();
-win1.webContents.postMessage('port', null, [port1]);
-win2.webContents.postMessage('port', null, [port2]);
+const { port1, port2 } = new MessageChannelMain()
+win1.webContents.postMessage('port', null, [port1])
+win2.webContents.postMessage('port', null, [port2])
 ```
 
 ### IPC anti-patterns — never do these
 
 ```typescript
 // ❌ NEVER expose raw ipcRenderer — allows renderer to call ANY channel
-contextBridge.exposeInMainWorld('ipc', { send: ipcRenderer.send });
+contextBridge.exposeInMainWorld('ipc', { send: ipcRenderer.send })
 
 // ❌ NEVER use sendSync — blocks the renderer main thread
-const result = ipcRenderer.sendSync('get-data');
+const result = ipcRenderer.sendSync('get-data')
 
 // ❌ NEVER use ipcRenderer.send for request-response — no error propagation
-ipcRenderer.send('get-data'); // can't await this
+ipcRenderer.send('get-data') // can't await this
 ```
 
 ## Auto-updates, packaging, and native OS integration
@@ -342,12 +343,12 @@ For complete code examples on these topics, see [references/packaging-and-native
 
 ### Performance targets
 
-| Metric | Target | How to measure |
-|--------|--------|----------------|
-| Cold startup | < 3s | `process.hrtime()` from app ready to first paint |
-| Idle memory | < 200MB | Task Manager / Activity Monitor |
-| Animation | 60 FPS | DevTools Performance tab |
-| Installer size | < 100MB | Check `dist/` output |
+| Metric         | Target  | How to measure                                   |
+| -------------- | ------- | ------------------------------------------------ |
+| Cold startup   | < 3s    | `process.hrtime()` from app ready to first paint |
+| Idle memory    | < 200MB | Task Manager / Activity Monitor                  |
+| Animation      | 60 FPS  | DevTools Performance tab                         |
+| Installer size | < 100MB | Check `dist/` output                             |
 
 **#1 performance rule**: defer heavy module imports. Use `await import('module')` instead of top-level imports for modules not needed at startup.
 
@@ -358,43 +359,54 @@ For complete code examples on these topics, see [references/packaging-and-native
 Use `spawn()` with bidirectional stdio for interactive CLI sessions:
 
 ```typescript
-import { spawn } from 'child_process';
+import { spawn } from 'child_process'
 
-const proc = spawn('claude', [
-  '--output-format', 'stream-json',
-  '--input-format', 'stream-json',
-  '--verbose',
-  '--permission-mode', 'plan',
-], {
-  stdio: ['pipe', 'pipe', 'pipe'],
-  env: { ...process.env },
-});
+const proc = spawn(
+  'claude',
+  [
+    '--output-format',
+    'stream-json',
+    '--input-format',
+    'stream-json',
+    '--verbose',
+    '--permission-mode',
+    'plan'
+  ],
+  {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env }
+  }
+)
 ```
 
 **NDJSON parsing** — buffer stdout and split on newlines, handling partial lines:
 
 ```typescript
-let buffer = '';
+let buffer = ''
 proc.stdout.on('data', (chunk: Buffer) => {
-  buffer += chunk.toString();
-  const lines = buffer.split('\n');
-  buffer = lines.pop() ?? ''; // Keep incomplete last line in buffer
+  buffer += chunk.toString()
+  const lines = buffer.split('\n')
+  buffer = lines.pop() ?? '' // Keep incomplete last line in buffer
 
   for (const line of lines) {
-    if (!line.trim()) continue;
+    if (!line.trim()) continue
     try {
-      const event = JSON.parse(line);
-      handleStreamEvent(event);
-    } catch { /* skip malformed lines */ }
+      const event = JSON.parse(line)
+      handleStreamEvent(event)
+    } catch {
+      /* skip malformed lines */
+    }
   }
-});
+})
 
 // Flush buffer on exit
 proc.on('exit', () => {
   if (buffer.trim()) {
-    try { handleStreamEvent(JSON.parse(buffer)); } catch {}
+    try {
+      handleStreamEvent(JSON.parse(buffer))
+    } catch {}
   }
-});
+})
 ```
 
 ### Spawning one-shot processes
@@ -403,8 +415,8 @@ For non-interactive command execution:
 
 ```typescript
 const proc = spawn('claude', ['-p', taskDescription, '--output-format', 'stream-json'], {
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+  stdio: ['ignore', 'pipe', 'pipe']
+})
 ```
 
 ### Graceful shutdown
@@ -416,45 +428,47 @@ async function stopProcess(proc: ChildProcess): Promise<void> {
   return new Promise((resolve) => {
     proc.on('exit', () => {
       // Clear process reference and reset status
-      resolve();
-    });
+      resolve()
+    })
 
-    proc.kill('SIGTERM'); // Ask nicely first
+    proc.kill('SIGTERM') // Ask nicely first
 
     setTimeout(() => {
       if (!proc.killed) {
-        proc.kill('SIGKILL'); // Force after timeout
+        proc.kill('SIGKILL') // Force after timeout
       }
-    }, 5000);
-  });
+    }, 5000)
+  })
 }
 ```
 
 ### Environment hygiene
 
 ```typescript
-const env = { ...process.env };
-delete env.CLAUDECODE; // Avoid nested session errors
+const env = { ...process.env }
+delete env.CLAUDECODE // Avoid nested session errors
 
 // Augment PATH for CLI binary discovery across platforms
-const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin', `${os.homedir()}/.local/bin`];
-env.PATH = [...extraPaths, env.PATH].join(path.delimiter);
+const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin', `${os.homedir()}/.local/bin`]
+env.PATH = [...extraPaths, env.PATH].join(path.delimiter)
 ```
 
 ## App Lifecycle Quick Reference
 
 ### Essential methods
-| Method | Purpose |
-|--------|---------|
-| `app.whenReady()` | Returns Promise — preferred over `app.on('ready')` |
-| `app.quit()` | Graceful quit — fires before-quit, will-quit events |
-| `app.exit([code])` | Immediate exit — no events, no cleanup |
-| `app.requestSingleInstanceLock()` | Enforce single instance — returns false if another exists |
-| `app.getPath(name)` | Get special dirs: userData, appData, temp, logs, downloads |
-| `app.getAppMetrics()` | Memory/CPU stats for ALL processes — useful for monitoring |
-| `app.isPackaged` | Boolean — true in production, false in dev |
+
+| Method                            | Purpose                                                    |
+| --------------------------------- | ---------------------------------------------------------- |
+| `app.whenReady()`                 | Returns Promise — preferred over `app.on('ready')`         |
+| `app.quit()`                      | Graceful quit — fires before-quit, will-quit events        |
+| `app.exit([code])`                | Immediate exit — no events, no cleanup                     |
+| `app.requestSingleInstanceLock()` | Enforce single instance — returns false if another exists  |
+| `app.getPath(name)`               | Get special dirs: userData, appData, temp, logs, downloads |
+| `app.getAppMetrics()`             | Memory/CPU stats for ALL processes — useful for monitoring |
+| `app.isPackaged`                  | Boolean — true in production, false in dev                 |
 
 ### Key lifecycle events (in order)
+
 1. `will-finish-launching` — basic startup (register protocol handlers here)
 2. `ready` — Electron initialized, create windows
 3. `activate` (macOS) — dock click when no windows open
@@ -463,16 +477,17 @@ env.PATH = [...extraPaths, env.PATH].join(path.delimiter);
 6. `quit` — final event, app is exiting
 
 ### Second instance handling
+
 ```typescript
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
-  app.quit();
+  app.quit()
 } else {
   app.on('second-instance', (event, argv, workingDir) => {
     // Focus existing window, handle deep link from argv
-    if (mainWindow?.isMinimized()) mainWindow.restore();
-    mainWindow?.focus();
-  });
+    if (mainWindow?.isMinimized()) mainWindow.restore()
+    mainWindow?.focus()
+  })
 }
 ```
 
@@ -502,6 +517,7 @@ if (!gotLock) {
 For debugging, testing, ESM, fuses, ASAR integrity, clipboard handling, utility processes, version strategy, and the API location reference table, see [references/advanced-patterns.md](references/advanced-patterns.md).
 
 Key points:
+
 - **Debug**: `electron --inspect=9229 .` for main process, `ELECTRON_ENABLE_LOGGING=1` for verbose
 - **Test**: Playwright E2E recommended (`@playwright/test` with `_electron`)
 - **Fuses**: disable `RunAsNode` and `EnableNodeCliInspectArguments` in production

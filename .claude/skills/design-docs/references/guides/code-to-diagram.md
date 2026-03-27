@@ -34,14 +34,14 @@ This master guide explains how to analyze source code and configuration files to
 
 ### Supported Frameworks
 
-| Framework | Language | Architecture Style | Example Guide |
-|-----------|----------|-------------------|---------------|
-| **Spring Boot** | Java | Annotation-driven, layered | [Spring Boot Guide](../../examples/spring-boot/README.md) |
-| **FastAPI** | Python | Async, dependency injection | [FastAPI Guide](../../examples/fastapi/README.md) |
-| **React** | JavaScript/TypeScript | Component-based, state management | [React Guide](../../examples/react/README.md) |
-| **Express.js** | JavaScript/TypeScript | Middleware chain, routes | [Node.js Guide](../../examples/node-webapp/README.md) |
-| **Java Servlet** | Java | MVC Model 2, filters | [Java Servlet Guide](../../examples/java-webapp/README.md) |
-| **Python ETL** | Python | Data pipelines, transformations | [Python ETL Guide](../../examples/python-etl/README.md) |
+| Framework        | Language              | Architecture Style                | Example Guide                                              |
+| ---------------- | --------------------- | --------------------------------- | ---------------------------------------------------------- |
+| **Spring Boot**  | Java                  | Annotation-driven, layered        | [Spring Boot Guide](../../examples/spring-boot/README.md)  |
+| **FastAPI**      | Python                | Async, dependency injection       | [FastAPI Guide](../../examples/fastapi/README.md)          |
+| **React**        | JavaScript/TypeScript | Component-based, state management | [React Guide](../../examples/react/README.md)              |
+| **Express.js**   | JavaScript/TypeScript | Middleware chain, routes          | [Node.js Guide](../../examples/node-webapp/README.md)      |
+| **Java Servlet** | Java                  | MVC Model 2, filters              | [Java Servlet Guide](../../examples/java-webapp/README.md) |
+| **Python ETL**   | Python                | Data pipelines, transformations   | [Python ETL Guide](../../examples/python-etl/README.md)    |
 
 ---
 
@@ -65,42 +65,46 @@ grep -r "express()\|app.use" .
 
 **Common Framework Markers:**
 
-| Framework | File Markers | Code Markers |
-|-----------|--------------|--------------|
-| Spring Boot | `pom.xml`, `build.gradle` | `@SpringBootApplication`, `@RestController`, `@Service` |
-| FastAPI | `requirements.txt`, `pyproject.toml` | `from fastapi import`, `@app.get`, `async def` |
-| React | `package.json`, `.jsx/.tsx` files | `import React`, `useState`, `useEffect` |
-| Express | `package.json`, `app.js` | `const express = require`, `app.use`, `app.get` |
-| Django | `requirements.txt`, `settings.py` | `from django`, `models.Model`, `views.py` |
+| Framework   | File Markers                         | Code Markers                                            |
+| ----------- | ------------------------------------ | ------------------------------------------------------- |
+| Spring Boot | `pom.xml`, `build.gradle`            | `@SpringBootApplication`, `@RestController`, `@Service` |
+| FastAPI     | `requirements.txt`, `pyproject.toml` | `from fastapi import`, `@app.get`, `async def`          |
+| React       | `package.json`, `.jsx/.tsx` files    | `import React`, `useState`, `useEffect`                 |
+| Express     | `package.json`, `app.js`             | `const express = require`, `app.use`, `app.get`         |
+| Django      | `requirements.txt`, `settings.py`    | `from django`, `models.Model`, `views.py`               |
 
 ### Step 2: Map Code Structure to Diagram Types
 
-| Code Artifact | Extracts To | Diagram Type | Guide |
-|---------------|-------------|--------------|-------|
+| Code Artifact           | Extracts To              | Diagram Type | Guide                                                      |
+| ----------------------- | ------------------------ | ------------ | ---------------------------------------------------------- |
 | **Directory structure** | Package/module hierarchy | Architecture | [Architecture Guide](../diagrams/architecture-diagrams.md) |
-| **Configuration files** | Infrastructure layout | Deployment | [Deployment Guide](../diagrams/deployment-diagrams.md) |
-| **Method calls** | Request/response flow | Sequence | [Sequence Guide](../diagrams/sequence-diagrams.md) |
-| **Business logic** | Process flow | Activity | [Activity Guide](../diagrams/activity-diagrams.md) |
-| **Database entities** | Data relationships | ER Diagram | See examples |
+| **Configuration files** | Infrastructure layout    | Deployment   | [Deployment Guide](../diagrams/deployment-diagrams.md)     |
+| **Method calls**        | Request/response flow    | Sequence     | [Sequence Guide](../diagrams/sequence-diagrams.md)         |
+| **Business logic**      | Process flow             | Activity     | [Activity Guide](../diagrams/activity-diagrams.md)         |
+| **Database entities**   | Data relationships       | ER Diagram   | See examples                                               |
 
 ### Step 3: Extract Key Information
 
 **For Architecture Diagrams:**
+
 - Directory/package names → Components
 - Import/dependency statements → Relationships
 - Annotations/decorators → Component roles
 
 **For Deployment Diagrams:**
+
 - `application.yml`, `docker-compose.yml` → Services
 - Port configurations → Network connections
 - Environment variables → External dependencies
 
 **For Sequence Diagrams:**
+
 - Method signatures → Participants
 - Method calls → Messages
 - Return statements → Responses
 
 **For Activity Diagrams:**
+
 - Conditional statements (`if`, `switch`) → Decision nodes
 - Loops (`for`, `while`) → Loop nodes
 - Function calls → Activities
@@ -153,14 +157,14 @@ graph TB
 
 **Key Patterns to Recognize:**
 
-| Spring Pattern | Maps To | Diagram |
-|----------------|---------|---------|
-| `@RestController` + `@RequestMapping` | HTTP endpoints | Architecture, Sequence |
-| `@Service` | Business logic layer | Architecture |
-| `@Repository` | Data access layer | Architecture |
-| `@Configuration` + `@Bean` | Component wiring | Architecture |
-| `application.yml` datasource | Database connection | Deployment |
-| `@EnableScheduling` + `@Scheduled` | Background jobs | Activity |
+| Spring Pattern                        | Maps To              | Diagram                |
+| ------------------------------------- | -------------------- | ---------------------- |
+| `@RestController` + `@RequestMapping` | HTTP endpoints       | Architecture, Sequence |
+| `@Service`                            | Business logic layer | Architecture           |
+| `@Repository`                         | Data access layer    | Architecture           |
+| `@Configuration` + `@Bean`            | Component wiring     | Architecture           |
+| `application.yml` datasource          | Database connection  | Deployment             |
+| `@EnableScheduling` + `@Scheduled`    | Background jobs      | Activity               |
 
 **Example Mapping:**
 
@@ -225,13 +229,13 @@ sequenceDiagram
 
 **Key Patterns to Recognize:**
 
-| FastAPI Pattern | Maps To | Diagram |
-|-----------------|---------|---------|
-| `@app.get()`, `@app.post()` | HTTP endpoints | Architecture, Sequence |
-| `Depends(get_db)` | Dependency injection | Sequence |
-| `async def` | Async operations | Sequence |
-| `Celery.task` | Background jobs | Activity |
-| Pydantic `BaseSettings` | Configuration | Deployment |
+| FastAPI Pattern             | Maps To              | Diagram                |
+| --------------------------- | -------------------- | ---------------------- |
+| `@app.get()`, `@app.post()` | HTTP endpoints       | Architecture, Sequence |
+| `Depends(get_db)`           | Dependency injection | Sequence               |
+| `async def`                 | Async operations     | Sequence               |
+| `Celery.task`               | Background jobs      | Activity               |
+| Pydantic `BaseSettings`     | Configuration        | Deployment             |
 
 **Example Mapping:**
 
@@ -292,43 +296,39 @@ sequenceDiagram
 
 **Key Patterns to Recognize:**
 
-| React Pattern | Maps To | Diagram |
-|---------------|---------|---------|
-| Component hierarchy (imports) | Component tree | Architecture |
-| `useState`, `useReducer` | State management | Activity |
-| Redux `actions` → `reducers` → `store` | Data flow | Sequence |
-| `useEffect` with async calls | API interaction | Sequence |
-| Route configuration | Navigation flow | Architecture |
+| React Pattern                          | Maps To          | Diagram      |
+| -------------------------------------- | ---------------- | ------------ |
+| Component hierarchy (imports)          | Component tree   | Architecture |
+| `useState`, `useReducer`               | State management | Activity     |
+| Redux `actions` → `reducers` → `store` | Data flow        | Sequence     |
+| `useEffect` with async calls           | API interaction  | Sequence     |
+| Route configuration                    | Navigation flow  | Architecture |
 
 **Example Mapping:**
 
 ```javascript
 // Source code
 function ContactList() {
-  const [contacts, setContacts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [contacts, setContacts] = useState([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchContacts();
-  }, []);
+    fetchContacts()
+  }, [])
 
   const fetchContacts = async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const response = await api.get('/contacts');
-      setContacts(response.data);
+      const response = await api.get('/contacts')
+      setContacts(response.data)
     } catch (error) {
-      console.error('Failed to fetch contacts', error);
+      console.error('Failed to fetch contacts', error)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
-  return (
-    <div>
-      {loading ? <Spinner /> : <ContactTable contacts={contacts} />}
-    </div>
-  );
+  return <div>{loading ? <Spinner /> : <ContactTable contacts={contacts} />}</div>
 }
 ```
 
@@ -361,32 +361,32 @@ sequenceDiagram
 
 **Key Patterns to Recognize:**
 
-| Express Pattern | Maps To | Diagram |
-|-----------------|---------|---------|
-| `app.use()` middleware chain | Filter chain | Activity |
-| Route handlers (`app.get()`, `app.post()`) | Endpoints | Architecture |
-| Controller → Service → Repository | Layered architecture | Architecture |
-| `next(err)` error handling | Error flow | Sequence |
+| Express Pattern                            | Maps To              | Diagram      |
+| ------------------------------------------ | -------------------- | ------------ |
+| `app.use()` middleware chain               | Filter chain         | Activity     |
+| Route handlers (`app.get()`, `app.post()`) | Endpoints            | Architecture |
+| Controller → Service → Repository          | Layered architecture | Architecture |
+| `next(err)` error handling                 | Error flow           | Sequence     |
 
 **Example Mapping:**
 
 ```javascript
 // Middleware chain
-app.use(helmet());                    // Security headers
-app.use(cors());                      // CORS
-app.use(express.json());              // Body parsing
-app.use(rateLimiter);                 // Rate limiting
-app.use('/api', authMiddleware);      // Authentication
+app.use(helmet()) // Security headers
+app.use(cors()) // CORS
+app.use(express.json()) // Body parsing
+app.use(rateLimiter) // Rate limiting
+app.use('/api', authMiddleware) // Authentication
 
 // Route handler
 router.post('/contacts', async (req, res, next) => {
   try {
-    const contact = await contactService.create(req.body);
-    res.status(201).json(contact);
+    const contact = await contactService.create(req.body)
+    res.status(201).json(contact)
   } catch (error) {
-    next(error);
+    next(error)
   }
-});
+})
 ```
 
 **Generated Activity Diagram:**
@@ -420,11 +420,11 @@ flowchart TD
 
 **Key Patterns to Recognize:**
 
-| Servlet Pattern | Maps To | Diagram |
-|-----------------|---------|---------|
-| `web.xml` servlet mappings | Routing configuration | Deployment |
-| Filter chain execution order | Filter pipeline | Activity |
-| `doGet()`, `doPost()` method calls | Request handling | Sequence |
+| Servlet Pattern                         | Maps To                | Diagram      |
+| --------------------------------------- | ---------------------- | ------------ |
+| `web.xml` servlet mappings              | Routing configuration  | Deployment   |
+| Filter chain execution order            | Filter pipeline        | Activity     |
+| `doGet()`, `doPost()` method calls      | Request handling       | Sequence     |
 | `@WebServlet`, `@WebFilter` annotations | Component registration | Architecture |
 
 **Example Mapping:**
@@ -477,12 +477,12 @@ graph TB
 
 **Key Patterns to Recognize:**
 
-| ETL Pattern | Maps To | Diagram |
-|-------------|---------|---------|
-| Extract → Transform → Load classes | Data flow | Activity |
-| Airflow DAG definitions | Workflow orchestration | Activity |
-| Abstract base classes | Component hierarchy | Architecture |
-| Error handling & retries | Error flow | Activity |
+| ETL Pattern                        | Maps To                | Diagram      |
+| ---------------------------------- | ---------------------- | ------------ |
+| Extract → Transform → Load classes | Data flow              | Activity     |
+| Airflow DAG definitions            | Workflow orchestration | Activity     |
+| Abstract base classes              | Component hierarchy    | Architecture |
+| Error handling & retries           | Error flow             | Activity     |
 
 **Example Mapping:**
 
@@ -548,14 +548,14 @@ flowchart LR
 
 ### Quick Reference Table
 
-| If Code Contains... | Generate... | Use Guide... |
-|---------------------|-------------|--------------|
-| Package/directory structure | Architecture diagram | [Architecture](../diagrams/architecture-diagrams.md) |
-| Configuration files (YAML, XML, JSON) | Deployment diagram | [Deployment](../diagrams/deployment-diagrams.md) |
-| Method calls between classes | Sequence diagram | [Sequence](../diagrams/sequence-diagrams.md) |
-| Conditional logic, loops | Activity diagram | [Activity](../diagrams/activity-diagrams.md) |
-| Database entity annotations | ER diagram | See framework examples |
-| Message queue publishers/consumers | Event-driven architecture | [Architecture](../diagrams/architecture-diagrams.md) |
+| If Code Contains...                   | Generate...               | Use Guide...                                         |
+| ------------------------------------- | ------------------------- | ---------------------------------------------------- |
+| Package/directory structure           | Architecture diagram      | [Architecture](../diagrams/architecture-diagrams.md) |
+| Configuration files (YAML, XML, JSON) | Deployment diagram        | [Deployment](../diagrams/deployment-diagrams.md)     |
+| Method calls between classes          | Sequence diagram          | [Sequence](../diagrams/sequence-diagrams.md)         |
+| Conditional logic, loops              | Activity diagram          | [Activity](../diagrams/activity-diagrams.md)         |
+| Database entity annotations           | ER diagram                | See framework examples                               |
+| Message queue publishers/consumers    | Event-driven architecture | [Architecture](../diagrams/architecture-diagrams.md) |
 
 ### Decision Tree
 
@@ -593,6 +593,7 @@ graph TD
 #### 1. Layered Architecture (MVC)
 
 **Code Indicators:**
+
 - Directories: `controllers/`, `services/`, `repositories/` or `dao/`
 - Clear separation between presentation, business, and data layers
 
@@ -624,6 +625,7 @@ graph TB
 #### 2. Microservices
 
 **Code Indicators:**
+
 - Multiple independent `main()` or entry points
 - Service discovery configuration (Consul, Eureka)
 - Inter-service HTTP clients or message queue publishers/consumers
@@ -635,6 +637,7 @@ graph TB
 #### 3. Event-Driven
 
 **Code Indicators:**
+
 - Message queue consumers/producers (Kafka, RabbitMQ, SQS)
 - Event handler methods (`@EventListener`, `@Subscribe`)
 - Async message processing
@@ -646,6 +649,7 @@ graph TB
 #### 4. CQRS (Command Query Responsibility Segregation)
 
 **Code Indicators:**
+
 - Separate read and write models
 - Command handlers and query handlers
 - Event sourcing (event store)
@@ -670,6 +674,7 @@ Don't try to diagram everything at once:
 ### 2. **Use Framework Examples as Templates**
 
 Don't reinvent patterns. If you're analyzing a Spring Boot app:
+
 1. Load [Spring Boot Guide](../../examples/spring-boot/README.md)
 2. Find similar code patterns
 3. Adapt the Mermaid template to your specific code
@@ -677,6 +682,7 @@ Don't reinvent patterns. If you're analyzing a Spring Boot app:
 ### 3. **Include Technology Stack**
 
 Always label:
+
 - Programming language & version
 - Framework & version
 - Database technology
@@ -702,6 +708,7 @@ python scripts/mermaid_to_image.py diagram.mmd output.png
 ### 6. **Use Semantic Unicode Symbols**
 
 Refer to [Unicode Symbols Guide](../unicode-symbols/guide.md) for:
+
 - 👤 Users/actors
 - ⚙️ Services
 - 💾 Databases
@@ -726,19 +733,23 @@ graph TB
 ### ❌ Pitfall 1: Mixing Abstraction Levels
 
 **Bad:**
+
 ```mermaid
 graph TB
     UserService --> Database
     UserService --> UserRepository.findById
 ```
+
 ❌ Mixing component (UserService) with method call (findById)
 
 **Good:**
+
 ```mermaid
 graph TB
     UserService --> UserRepository
     UserRepository --> Database
 ```
+
 ✅ Consistent abstraction level (components)
 
 ### ❌ Pitfall 2: Overloading Diagrams
@@ -746,23 +757,28 @@ graph TB
 **Bad:** One diagram showing 20+ components
 
 **Good:** Multiple focused diagrams:
+
 - Architecture diagram (10-12 components)
 - Separate sequence diagram for each key flow
 
 ### ❌ Pitfall 3: Missing Communication Protocols
 
 **Bad:**
+
 ```mermaid
 graph TB
     ServiceA --> ServiceB
 ```
+
 ❌ How do they communicate?
 
 **Good:**
+
 ```mermaid
 graph TB
     ServiceA -->|REST API<br/>HTTPS<br/>JSON| ServiceB
 ```
+
 ✅ Protocol specified
 
 ### ❌ Pitfall 4: Ignoring Error Paths
@@ -770,6 +786,7 @@ graph TB
 **Bad:** Only showing happy path
 
 **Good:** Create separate diagrams for:
+
 - Main success flow
 - Validation errors
 - System errors
@@ -780,6 +797,7 @@ graph TB
 **Bad:** Diagram created once, never updated
 
 **Good:**
+
 - Store diagrams with code (e.g., `docs/diagrams/`)
 - Update during code reviews
 - Validate with team during architecture reviews
@@ -852,6 +870,7 @@ flowchart TD
 ---
 
 **Related Resources:**
+
 - [Activity Diagrams Guide](../diagrams/activity-diagrams.md)
 - [Architecture Diagrams Guide](../diagrams/architecture-diagrams.md)
 - [Deployment Diagrams Guide](../diagrams/deployment-diagrams.md)

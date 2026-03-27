@@ -55,7 +55,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const workspaces = await window.api.listWorkspaces()
       set({ workspaces })
-    } catch { /* silently ignore refresh failure */ }
+    } catch {
+      /* silently ignore refresh failure */
+    }
     // Fire-and-forget: start orchestrator (don't block on readiness)
     set({ orchestratorStatus: 'starting' })
     window.api.startOrchestrator(workspace.repoPath).catch((error) => {

@@ -141,7 +141,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
       style={{ borderLeftColor: meta?.color ?? '#6366F1' }}
     >
       <div
-        className="flex items-center justify-between mb-2 cursor-pointer"
+        className="flex items-center justify-between mb-2 cursor-pointer press-scale"
         onClick={() => setIsExpanded(!isExpanded)}
         role="button"
         tabIndex={0}

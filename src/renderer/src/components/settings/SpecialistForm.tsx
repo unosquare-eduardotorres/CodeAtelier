@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
-import { useSpecialistStore } from '@renderer/store';
-import type { Specialist, Skill } from '../../../../shared/types';
+import { useState, useEffect } from 'react'
+import { X } from 'lucide-react'
+import { useSpecialistStore } from '@renderer/store'
+import type { Specialist, Skill } from '../../../../shared/types'
 
 interface SpecialistFormProps {
-  specialist: Specialist | null;
-  skills: Skill[];
-  onClose: () => void;
+  specialist: Specialist | null
+  skills: Skill[]
+  onClose: () => void
 }
 
 export default function SpecialistForm({
@@ -14,21 +14,21 @@ export default function SpecialistForm({
   skills,
   onClose
 }: SpecialistFormProps): React.JSX.Element {
-  const { createSpecialist, updateSpecialist, assignSkill, removeSkill } = useSpecialistStore();
+  const { createSpecialist, updateSpecialist, assignSkill, removeSkill } = useSpecialistStore()
 
-  const [displayName, setDisplayName] = useState(specialist?.displayName ?? '');
-  const [agentId, setAgentId] = useState(specialist?.agentId ?? '');
-  const [icon, setIcon] = useState(specialist?.icon ?? '🔧');
-  const [color, setColor] = useState(specialist?.color ?? '#6366F1');
-  const [prompt, setPrompt] = useState(specialist?.prompt ?? '');
-  const [priority, setPriority] = useState(specialist?.priority ?? 100);
+  const [displayName, setDisplayName] = useState(specialist?.displayName ?? '')
+  const [agentId, setAgentId] = useState(specialist?.agentId ?? '')
+  const [icon, setIcon] = useState(specialist?.icon ?? '🔧')
+  const [color, setColor] = useState(specialist?.color ?? '#6366F1')
+  const [prompt, setPrompt] = useState(specialist?.prompt ?? '')
+  const [priority, setPriority] = useState(specialist?.priority ?? 100)
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
     new Set(specialist?.skills?.map((s) => s.id) ?? [])
-  );
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  )
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const isEditing = specialist !== null;
+  const isEditing = specialist !== null
 
   // Auto-generate agentId from displayName for new specialists
   useEffect(() => {
@@ -38,35 +38,35 @@ export default function SpecialistForm({
         .replace(/[^a-z0-9\s-]/g, '')
         .replace(/\s+/g, '-')
         .replace(/-+/g, '-')
-        .trim();
-      setAgentId(slug);
+        .trim()
+      setAgentId(slug)
     }
-  }, [displayName, isEditing]);
+  }, [displayName, isEditing])
 
   const handleSkillToggle = (skillId: string): void => {
     setSelectedSkillIds((prev) => {
-      const next = new Set(prev);
+      const next = new Set(prev)
       if (next.has(skillId)) {
-        next.delete(skillId);
+        next.delete(skillId)
       } else {
-        next.add(skillId);
+        next.add(skillId)
       }
-      return next;
-    });
-  };
+      return next
+    })
+  }
 
   const handleSave = async (): Promise<void> => {
     if (!displayName.trim()) {
-      setError('Display name is required');
-      return;
+      setError('Display name is required')
+      return
     }
     if (!agentId.trim()) {
-      setError('Agent ID is required');
-      return;
+      setError('Agent ID is required')
+      return
     }
 
-    setIsSaving(true);
-    setError(null);
+    setIsSaving(true)
+    setError(null)
 
     try {
       if (isEditing) {
@@ -76,18 +76,18 @@ export default function SpecialistForm({
           color,
           prompt,
           priority
-        });
+        })
 
         // Sync skills
-        const currentSkillIds = new Set(specialist.skills?.map((s) => s.id) ?? []);
+        const currentSkillIds = new Set(specialist.skills?.map((s) => s.id) ?? [])
         for (const skillId of selectedSkillIds) {
           if (!currentSkillIds.has(skillId)) {
-            await assignSkill(specialist.id, skillId);
+            await assignSkill(specialist.id, skillId)
           }
         }
         for (const skillId of currentSkillIds) {
           if (!selectedSkillIds.has(skillId)) {
-            await removeSkill(specialist.id, skillId);
+            await removeSkill(specialist.id, skillId)
           }
         }
       } else {
@@ -98,15 +98,15 @@ export default function SpecialistForm({
           color,
           prompt,
           priority
-        });
+        })
       }
-      onClose();
+      onClose()
     } catch (err) {
-      setError((err as Error).message);
+      setError((err as Error).message)
     } finally {
-      setIsSaving(false);
+      setIsSaving(false)
     }
-  };
+  }
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
@@ -266,5 +266,5 @@ export default function SpecialistForm({
         </div>
       </div>
     </div>
-  );
+  )
 }

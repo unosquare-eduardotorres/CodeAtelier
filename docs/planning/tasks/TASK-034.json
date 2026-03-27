@@ -4,7 +4,15 @@
   "description": "In task-loop.service.ts, run scope validation as an additional gate after quality gates. Scope violations = gate failure. Revert violating file changes via git checkout before retry.",
   "feature_ref": "F008",
   "task_type": "backend",
-  "complexity": { "score": 5, "factors": { "files_affected": 2, "estimated_lines": 60, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 2,
+      "estimated_lines": 60,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-032", "TASK-015"],
   "acceptance_criteria": [
     "Scope validation runs after quality gates",

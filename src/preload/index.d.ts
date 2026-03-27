@@ -24,11 +24,12 @@ import type {
   AgentWorktree,
   MergeAllResult,
   GrillProposedTask,
-  BrainEntry,
-  BrainFileInfo,
-  BrainStatus,
-  BrainFeedProgress,
-  BrainFeedResult,
+  Memory,
+  MemoryType,
+  MemoryFeedProgress,
+  MemoryFeedResult,
+  DreamRun,
+  DreamProgress,
   TokenSummary,
   AgentSessionRecord,
   Idea,
@@ -151,22 +152,44 @@ interface Api {
   // Pixel Office
   popoutPixelOffice: () => Promise<void>
 
-  // Brain (project memory)
-  brainGetContext: (args: { workspacePath: string }) => Promise<string>
-  brainGetState: (args: { workspacePath: string }) => Promise<string>
-  brainLogDecision: (args: { workspacePath: string; entry: BrainEntry }) => Promise<void>
-  brainGetFilesInfo: (args: { workspacePath: string }) => Promise<BrainStatus>
-  brainCompactFile: (args: { workspacePath: string; fileName: string }) => Promise<BrainFileInfo>
-  brainCompactAll: (args: { workspacePath: string }) => Promise<BrainStatus>
-  brainUpdateSetting: (args: { workspaceId: string; brainEnabled: boolean }) => Promise<void>
+  // Memory (auto memory system)
+  listMemories: (args: { workspaceId: string }) => Promise<Memory[]>
+  searchMemories: (args: { workspaceId: string; query: string }) => Promise<Memory[]>
+  createMemory: (args: {
+    workspaceId: string | null
+    type: MemoryType
+    title: string
+    content: string
+    tags?: string[]
+    importance?: number
+  }) => Promise<Memory>
+  updateMemory: (args: {
+    id: string
+    title?: string
+    content?: string
+    tags?: string[]
+    importance?: number
+  }) => Promise<Memory>
+  deleteMemory: (args: { id: string }) => Promise<void>
+  memoryUpdateSetting: (args: { workspaceId: string; memoryEnabled: boolean }) => Promise<void>
 
-  // Brain Feed
-  brainSelectDocument: () => Promise<string | null>
-  brainFeedCancel: () => Promise<void>
-  brainFeedClaudeMd: (args: { workspacePath: string }) => Promise<BrainFeedResult>
-  brainFeedCodebase: (args: { workspacePath: string }) => Promise<BrainFeedResult>
-  brainFeedDocument: (args: { workspacePath: string; filePath: string }) => Promise<BrainFeedResult>
-  onBrainFeedProgress: (callback: (data: BrainFeedProgress) => void) => () => void
+  // Memory Feed
+  memorySelectDocument: () => Promise<string | null>
+  memoryFeedCancel: () => Promise<void>
+  memoryFeedClaudeMd: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
+  memoryFeedCodebase: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
+  memoryFeedDocument: (args: {
+    workspacePath: string
+    filePath: string
+  }) => Promise<MemoryFeedResult>
+  onMemoryFeedProgress: (callback: (data: MemoryFeedProgress) => void) => () => void
+
+  // Dream (auto consolidation)
+  triggerDream: (args: { workspaceId: string }) => Promise<DreamRun>
+  cancelDream: (args: { workspaceId: string }) => Promise<void>
+  getDreamStatus: (args: { workspaceId: string }) => Promise<DreamRun | null>
+  getDreamHistory: (args: { workspaceId: string; limit?: number }) => Promise<DreamRun[]>
+  onDreamProgress: (callback: (data: DreamProgress) => void) => () => void
 
   computeSyncDiff: (args: { workspacePath: string }) => Promise<SyncDiff>
   applySync: (args: { workspacePath: string; skipRemoved?: boolean }) => Promise<SyncResult>
@@ -174,7 +197,10 @@ interface Api {
   // Tokens
   getWorkspaceTokenSummary: (args: { workspaceId: string }) => Promise<TokenSummary>
   getConversationTokenSummary: (args: { conversationId: string }) => Promise<TokenSummary>
-  getRecentSessions: (args: { workspaceId: string; limit?: number }) => Promise<AgentSessionRecord[]>
+  getRecentSessions: (args: {
+    workspaceId: string
+    limit?: number
+  }) => Promise<AgentSessionRecord[]>
 
   // Ideas
   listIdeas: (args: { workspaceId: string }) => Promise<Idea[]>

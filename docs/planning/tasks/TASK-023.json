@@ -4,7 +4,15 @@
   "description": "Create src/main/services/task-artifact.service.ts. Manages .agentstudio/{conversation-id}/ directories with state.json, tasks/{task-id}/input.md and output.md. Supports reading prior task outputs for context injection and session resumption.",
   "feature_ref": "F004",
   "task_type": "backend",
-  "complexity": { "score": 7, "factors": { "files_affected": 3, "estimated_lines": 250, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 7,
+    "factors": {
+      "files_affected": 3,
+      "estimated_lines": 250,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-002"],
   "acceptance_criteria": [
     "Artifact directory created per conversation",

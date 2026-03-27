@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Zap, Activity, Clock, Users } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
+import { Skeleton } from '@renderer/components/common'
 import type { TokenSummary, AgentSessionRecord } from '../../../../shared/types'
 
 function formatTokens(tokens: number): string {
@@ -78,9 +79,28 @@ export default function TokenUsagePage(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full text-text-secondary text-sm">
-        <Activity size={16} className="animate-spin mr-2" />
-        Loading token data...
+      <div className="p-6 space-y-4">
+        {/* Skeleton stat cards */}
+        <div className="grid grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="bg-surface-overlay border border-border-subtle rounded-xl p-4">
+              <Skeleton className="h-3 w-20 mb-3" />
+              <Skeleton className="h-6 w-24 mb-2" />
+              <Skeleton className="h-3 w-16" />
+            </div>
+          ))}
+        </div>
+        {/* Skeleton table rows */}
+        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 space-y-3">
+          <Skeleton className="h-4 w-32 mb-4" />
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="flex items-center gap-3">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-3 flex-1" />
+              <Skeleton className="h-3 w-16" />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }

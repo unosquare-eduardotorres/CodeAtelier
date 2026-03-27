@@ -205,24 +205,24 @@ flowchart TD
 
 ## Common Unicode Symbols for Activities
 
-| Symbol | Meaning | Use Case |
-|--------|---------|----------|
-| ⚡ | Start/Trigger | Process initiation |
-| ✓ / ✅ | Success | Successful completion |
-| ❌ / ✗ | Failure | Error states |
-| ⚙️ | Processing | Active computation |
-| 💾 | Storage | Database/file operations |
-| 📥 | Input | Receiving data |
-| 📤 | Output | Sending data |
-| 🌐 | Network | API calls, web requests |
-| 📧 | Email | Notification/messaging |
-| 🔄 | Retry | Retry logic |
-| ⏱️ | Wait | Delays, timeouts |
-| 🚨 | Alert | Critical notifications |
-| 📊 | Analysis | Data processing |
-| 🔐 | Security | Authentication/encryption |
-| 📝 | Logging | Write logs |
-| 🎯 | Target | Goal achievement |
+| Symbol | Meaning       | Use Case                  |
+| ------ | ------------- | ------------------------- |
+| ⚡     | Start/Trigger | Process initiation        |
+| ✓ / ✅ | Success       | Successful completion     |
+| ❌ / ✗ | Failure       | Error states              |
+| ⚙️     | Processing    | Active computation        |
+| 💾     | Storage       | Database/file operations  |
+| 📥     | Input         | Receiving data            |
+| 📤     | Output        | Sending data              |
+| 🌐     | Network       | API calls, web requests   |
+| 📧     | Email         | Notification/messaging    |
+| 🔄     | Retry         | Retry logic               |
+| ⏱️     | Wait          | Delays, timeouts          |
+| 🚨     | Alert         | Critical notifications    |
+| 📊     | Analysis      | Data processing           |
+| 🔐     | Security      | Authentication/encryption |
+| 📝     | Logging       | Write logs                |
+| 🎯     | Target        | Goal achievement          |
 
 ## Swimlane Activity Diagrams
 
@@ -473,6 +473,7 @@ Activity diagrams should reflect actual code workflows. See the `code-to-diagram
 ---
 
 **Next Steps:**
+
 - See `deployment-diagrams.md` for infrastructure flows
 - See `code-to-diagram/` for code-to-diagram examples
 - See `unicode-symbols/guide.md` for complete symbol reference

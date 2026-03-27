@@ -74,7 +74,7 @@ export default function ChatItem({
 
   return (
     <div
-      className={`group flex items-center gap-3 px-3 py-3 cursor-pointer rounded-lg transition-colors ${
+      className={`group flex items-center gap-3 px-3 py-3 cursor-pointer rounded-lg transition-colors press-scale ${
         isActive
           ? 'bg-primary-muted border-l-2 border-l-primary border border-primary/20'
           : 'hover:bg-surface-overlay border-l-2 border-l-transparent border border-transparent'

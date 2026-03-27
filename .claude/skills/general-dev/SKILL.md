@@ -25,6 +25,7 @@ user-invocable: false
 ## Node.js / TypeScript patterns
 
 ### Project structure (backend)
+
 ```
 src/
 ├── index.ts          # Entry point
@@ -38,6 +39,7 @@ src/
 ```
 
 ### Error handling
+
 ```typescript
 // Custom error classes for different domains
 class AppError extends Error {
@@ -65,6 +67,7 @@ try {
 ```
 
 ### Async patterns
+
 ```typescript
 // Prefer Promise.allSettled for parallel independent operations
 const results = await Promise.allSettled([
@@ -86,6 +89,7 @@ try {
 ## API design principles
 
 ### REST conventions
+
 - Use nouns for resources: `/users`, `/orders/{id}/items`
 - Use HTTP verbs correctly: GET (read), POST (create), PUT (replace), PATCH (update), DELETE
 - Return appropriate status codes: 200, 201, 204, 400, 401, 403, 404, 409, 422, 500
@@ -94,13 +98,15 @@ try {
 - Version APIs: `/api/v1/`
 
 ### Input validation
+
 ```typescript
 // Always validate at the boundary
 function validateCreateUser(input: unknown): CreateUserDto {
   if (!input || typeof input !== 'object') throw new AppError('Invalid input', 400)
   const { name, email } = input as Record<string, unknown>
   if (typeof name !== 'string' || name.length < 1) throw new AppError('Name required', 400)
-  if (typeof email !== 'string' || !email.includes('@')) throw new AppError('Valid email required', 400)
+  if (typeof email !== 'string' || !email.includes('@'))
+    throw new AppError('Valid email required', 400)
   return { name: name.trim(), email: email.toLowerCase().trim() }
 }
 ```
@@ -108,6 +114,7 @@ function validateCreateUser(input: unknown): CreateUserDto {
 ## Docker patterns
 
 ### Multi-stage build (Node.js)
+
 ```dockerfile
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -128,13 +135,14 @@ CMD ["node", "dist/index.js"]
 
 ## Testing strategy
 
-| Level | What | Tools | Coverage target |
-|-------|------|-------|-----------------|
-| Unit | Pure functions, utilities | Jest/Vitest, pytest, Go testing | 80%+ |
-| Integration | API endpoints, DB queries | Supertest, httptest | Key paths |
-| E2E | User workflows | Playwright, Cypress | Critical flows |
+| Level       | What                      | Tools                           | Coverage target |
+| ----------- | ------------------------- | ------------------------------- | --------------- |
+| Unit        | Pure functions, utilities | Jest/Vitest, pytest, Go testing | 80%+            |
+| Integration | API endpoints, DB queries | Supertest, httptest             | Key paths       |
+| E2E         | User workflows            | Playwright, Cypress             | Critical flows  |
 
 ### Test structure (Arrange-Act-Assert)
+
 ```typescript
 describe('UserService', () => {
   it('should create a user with valid input', async () => {

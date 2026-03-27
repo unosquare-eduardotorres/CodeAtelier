@@ -233,6 +233,8 @@ export interface TaskPlan {
   summary: string
   mode: ConversationMode
   tasks: DecomposedTask[]
+  /** Preserved enriched handoff context for specialist injection */
+  brief?: HandoffBrief
 }
 
 /** Progress event for an individual specialist task */
@@ -340,49 +342,80 @@ export interface TokenSummary {
   byAgent: { agentType: string; totalTokens: number; sessionCount: number }[]
 }
 
-// ── Brain (persistent project memory) ──
-export interface BrainEntry {
-  timestamp: string
-  conversationId: string
-  conversationTitle: string
-  type: 'completion' | 'decision' | 'error' | 'milestone' | 'context'
-  summary: string
-  details?: string
+// ── Auto Memory System ──
+
+export type MemoryType = 'user' | 'feedback' | 'project' | 'reference'
+
+export interface Memory {
+  id: string
+  workspaceId: string | null
+  type: MemoryType
+  title: string
+  content: string
+  tags: string[]
+  sourceConversationId: string | null
+  sourceAgentId: string | null
+  importance: number
+  lastAccessedAt: string | null
+  createdAt: string
+  updatedAt: string
 }
 
-// ── Brain Management ──
-export interface BrainFileInfo {
-  fileName: string
-  filePath: string
-  lineCount: number
-  sizeBytes: number
-  estimatedTokens: number
-  lastModified: string
-  isOverThreshold: boolean
+export type DreamStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+export type DreamTriggerType = 'startup' | 'idle' | 'manual'
+
+export interface DreamRun {
+  id: string
+  workspaceId: string
+  status: DreamStatus
+  triggerType: DreamTriggerType
+  memoriesCreated: number
+  memoriesMerged: number
+  memoriesPruned: number
+  tokenUsage: number
+  startedAt: string
+  endedAt: string | null
+  errorMessage: string | null
 }
 
-export interface BrainStatus {
-  enabled: boolean
-  initialized: boolean
-  files: BrainFileInfo[]
-  totalLines: number
-  totalSizeBytes: number
-  totalEstimatedTokens: number
+export interface DreamProgress {
+  phase: 'review' | 'consolidate' | 'prune' | 'complete'
+  message: string
+  memoriesCreated: number
+  memoriesMerged: number
+  memoriesPruned: number
 }
 
-// ── Brain Feed ──
-export interface BrainFeedProgress {
+export interface MemoryFeedProgress {
   type: 'status' | 'error' | 'complete'
   message: string
   source: 'claude-md' | 'codebase' | 'document'
   timestamp: number
 }
 
-export interface BrainFeedResult {
+export interface MemoryFeedResult {
   success: boolean
   source: 'claude-md' | 'codebase' | 'document'
-  filesUpdated: string[]
+  memoriesCreated: number
   error?: string
+}
+
+/** Structured handoff context built by generalist before delegation */
+export interface HandoffBrief {
+  /** LLM-generated summary of what needs to be done */
+  summary: string
+  /** Key decisions made during the conversation */
+  decisions: string[]
+  /** Constraints identified (tech constraints, time, compatibility, etc.) */
+  constraints: string[]
+  /** File paths discussed or referenced in conversation */
+  filesDiscussed: string[]
+  /** The last N user+assistant message pairs for full context */
+  recentMessages: Array<{ role: string; content: string }>
+  /** Specialist IDs suggested by generalist */
+  specialists: string[]
+  /** Conversation mode (plan or build) */
+  mode: ConversationMode
 }
 
 // ── Ideas ──
@@ -540,24 +573,42 @@ export interface IpcChannels {
   'sync:computeDiff': { args: { workspacePath: string }; return: SyncDiff }
   'sync:apply': { args: { workspacePath: string; skipRemoved?: boolean }; return: SyncResult }
 
-  // Brain (project memory)
-  'brain:getContext': { args: { workspacePath: string }; return: string }
-  'brain:getState': { args: { workspacePath: string }; return: string }
-  'brain:logDecision': { args: { workspacePath: string; entry: BrainEntry }; return: void }
-  'brain:getFilesInfo': { args: { workspacePath: string }; return: BrainStatus }
-  'brain:compactFile': { args: { workspacePath: string; fileName: string }; return: BrainFileInfo }
-  'brain:compactAll': { args: { workspacePath: string }; return: BrainStatus }
-  'brain:updateSetting': { args: { workspaceId: string; brainEnabled: boolean }; return: void }
-
-  // Brain feed
-  'brain:feedClaudeMd': { args: { workspacePath: string }; return: BrainFeedResult }
-  'brain:feedCodebase': { args: { workspacePath: string }; return: BrainFeedResult }
-  'brain:feedCancel': { args: void; return: void }
-  'brain:feedDocument': {
-    args: { workspacePath: string; filePath: string }
-    return: BrainFeedResult
+  // Memory (auto memory system)
+  'memory:list': { args: { workspaceId: string }; return: Memory[] }
+  'memory:search': { args: { workspaceId: string; query: string }; return: Memory[] }
+  'memory:create': {
+    args: {
+      workspaceId: string | null
+      type: MemoryType
+      title: string
+      content: string
+      tags?: string[]
+      importance?: number
+    }
+    return: Memory
   }
-  'brain:selectDocument': { args: void; return: string | null }
+  'memory:update': {
+    args: { id: string; title?: string; content?: string; tags?: string[]; importance?: number }
+    return: Memory
+  }
+  'memory:delete': { args: { id: string }; return: void }
+  'memory:updateSetting': { args: { workspaceId: string; memoryEnabled: boolean }; return: void }
+
+  // Memory feed (ingest sources into memories)
+  'memory:feedClaudeMd': { args: { workspacePath: string }; return: MemoryFeedResult }
+  'memory:feedCodebase': { args: { workspacePath: string }; return: MemoryFeedResult }
+  'memory:feedDocument': {
+    args: { workspacePath: string; filePath: string }
+    return: MemoryFeedResult
+  }
+  'memory:feedCancel': { args: void; return: void }
+  'memory:selectDocument': { args: void; return: string | null }
+
+  // Dream (auto consolidation)
+  'dream:trigger': { args: { workspaceId: string }; return: DreamRun }
+  'dream:cancel': { args: { workspaceId: string }; return: void }
+  'dream:getStatus': { args: { workspaceId: string }; return: DreamRun | null }
+  'dream:getHistory': { args: { workspaceId: string; limit?: number }; return: DreamRun[] }
 
   // Tokens
   'token:getWorkspaceSummary': { args: { workspaceId: string }; return: TokenSummary }
@@ -618,5 +669,6 @@ export interface IpcEvents {
     maxRetries: number
   }
   'workspace:activationProgress': ActivationProgressEvent
-  'brain:feedProgress': BrainFeedProgress
+  'memory:feedProgress': MemoryFeedProgress
+  'dream:progress': DreamProgress
 }

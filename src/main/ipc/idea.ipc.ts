@@ -1,33 +1,28 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { ideaRepository, conversationRepository, workspaceRepository } from '../db/repositories'
-import { brainService } from '../services/brain.service'
+import { ideaRepository, conversationRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 
-/** Sync ideas → project-state.md after any idea mutation */
-function syncBrain(workspaceId: string): void {
-  try {
-    const workspace = workspaceRepository.findById(workspaceId)
-    if (!workspace) return
-    // Check if brain is enabled
-    const settings = JSON.parse(workspace.settingsJson || '{}')
-    if (settings.brainEnabled === false) return
-    brainService.syncIdeasToProjectState(workspace.repoPath, workspaceId)
-  } catch {
-    // Non-critical — don't break the idea operation
-  }
+/**
+ * Sync ideas as project memories after any idea mutation.
+ * Replaces the old brain project-state.md sync.
+ * Note: This is a no-op for now — ideas are tracked in their own table
+ * and memories are created via conversation flow. The old syncBrain
+ * wrote ideas to a file; the new system stores them as memories on completion.
+ */
+function syncMemory(_workspaceId: string): void {
+  // Ideas are already persisted in the ideas table.
+  // Memory creation happens when ideas complete via conversation flow.
+  // This function is kept as a no-op hook for future use.
 }
 
 export function registerIdeaIpc(): void {
   // idea:list — returns all ideas for a workspace
-  ipcMain.handle(
-    IPC_CHANNELS.IDEA_LIST,
-    (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      if (!args?.workspaceId) throw new Error('workspaceId is required')
-      return ideaRepository.findByWorkspace(args.workspaceId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.IDEA_LIST, (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    if (!args?.workspaceId) throw new Error('workspaceId is required')
+    return ideaRepository.findByWorkspace(args.workspaceId)
+  })
 
   // idea:create — create a new idea
   ipcMain.handle(
@@ -38,8 +33,12 @@ export function registerIdeaIpc(): void {
       if (!args.title || typeof args.title !== 'string' || args.title.trim().length === 0) {
         throw new Error('title is required')
       }
-      const idea = ideaRepository.create(args.workspaceId, args.title.trim(), args.description?.trim() ?? '')
-      syncBrain(args.workspaceId)
+      const idea = ideaRepository.create(
+        args.workspaceId,
+        args.title.trim(),
+        args.description?.trim() ?? ''
+      )
+      syncMemory(args.workspaceId)
       return idea
     }
   )
@@ -55,7 +54,7 @@ export function registerIdeaIpc(): void {
         title: args.title,
         description: args.description
       })
-      if (existing) syncBrain(existing.workspaceId)
+      if (existing) syncMemory(existing.workspaceId)
       return updated
     }
   )
@@ -66,7 +65,7 @@ export function registerIdeaIpc(): void {
     if (!args?.id) throw new Error('id is required')
     const idea = ideaRepository.findById(args.id)
     ideaRepository.delete(args.id)
-    if (idea) syncBrain(idea.workspaceId)
+    if (idea) syncMemory(idea.workspaceId)
   })
 
   // idea:startGrill — create/resume a grill conversation for this idea
@@ -97,7 +96,7 @@ export function registerIdeaIpc(): void {
       ideaRepository.setGrillConversation(args.ideaId, conv.id)
       const updated = ideaRepository.updateStatus(args.ideaId, 'grilling')
 
-      syncBrain(args.workspaceId)
+      syncMemory(args.workspaceId)
       return { idea: updated, conversation: conv }
     }
   )
@@ -120,7 +119,7 @@ export function registerIdeaIpc(): void {
       ideaRepository.setConvertedConversation(args.ideaId, conv.id)
       const updated = ideaRepository.updateStatus(args.ideaId, 'completed')
 
-      syncBrain(args.workspaceId)
+      syncMemory(args.workspaceId)
       return { idea: updated, conversation: conv }
     }
   )
@@ -139,7 +138,7 @@ export function registerIdeaIpc(): void {
         ideaRepository.setGrillSummary(idea.id, args.summary)
       }
       const updated = ideaRepository.updateStatus(idea.id, 'completed')
-      syncBrain(idea.workspaceId)
+      syncMemory(idea.workspaceId)
       return updated
     }
   )

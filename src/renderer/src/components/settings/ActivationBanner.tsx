@@ -22,9 +22,7 @@ export default function ActivationBanner({
         </div>
 
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-gray-100">
-            Deploy Agents to Workspace
-          </h3>
+          <h3 className="text-sm font-semibold text-gray-100">Deploy Agents to Workspace</h3>
           <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
             No specialists are deployed to this workspace yet. Click below to copy the full preset
             of agents and skills. They will start inactive — activate each one individually.

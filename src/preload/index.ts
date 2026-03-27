@@ -23,11 +23,12 @@ import type {
   MergeAllResult,
   SyncDiff,
   SyncResult,
-  BrainEntry,
-  BrainFileInfo,
-  BrainStatus,
-  BrainFeedProgress,
-  BrainFeedResult,
+  Memory,
+  MemoryType,
+  MemoryFeedProgress,
+  MemoryFeedResult,
+  DreamRun,
+  DreamProgress,
   TokenSummary,
   AgentSessionRecord,
   Idea,
@@ -264,53 +265,80 @@ const api = {
   applySync: (args: { workspacePath: string; skipRemoved?: boolean }): Promise<SyncResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SYNC_APPLY, args),
 
-  // ── Brain (project memory) ──
-  brainGetContext: (args: { workspacePath: string }): Promise<string> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_GET_CONTEXT, args),
+  // ── Memory (auto memory system) ──
+  listMemories: (args: { workspaceId: string }): Promise<Memory[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_LIST, args),
 
-  brainGetState: (args: { workspacePath: string }): Promise<string> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_GET_STATE, args),
+  searchMemories: (args: { workspaceId: string; query: string }): Promise<Memory[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SEARCH, args),
 
-  brainLogDecision: (args: { workspacePath: string; entry: BrainEntry }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_LOG_DECISION, args),
+  createMemory: (args: {
+    workspaceId: string | null
+    type: MemoryType
+    title: string
+    content: string
+    tags?: string[]
+    importance?: number
+  }): Promise<Memory> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CREATE, args),
 
-  brainGetFilesInfo: (args: { workspacePath: string }): Promise<BrainStatus> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_GET_FILES_INFO, args),
+  updateMemory: (args: {
+    id: string
+    title?: string
+    content?: string
+    tags?: string[]
+    importance?: number
+  }): Promise<Memory> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_UPDATE, args),
 
-  brainCompactFile: (args: { workspacePath: string; fileName: string }): Promise<BrainFileInfo> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_COMPACT_FILE, args),
+  deleteMemory: (args: { id: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DELETE, args),
 
-  brainCompactAll: (args: { workspacePath: string }): Promise<BrainStatus> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_COMPACT_ALL, args),
+  memoryUpdateSetting: (args: { workspaceId: string; memoryEnabled: boolean }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_UPDATE_SETTING, args),
 
-  brainUpdateSetting: (args: { workspaceId: string; brainEnabled: boolean }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_UPDATE_SETTING, args),
+  // ── Memory Feed ──
+  memorySelectDocument: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SELECT_DOCUMENT),
 
-  // ── Brain Feed ──
-  brainSelectDocument: (): Promise<string | null> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_SELECT_DOCUMENT),
+  memoryFeedCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CANCEL),
 
-  brainFeedCancel: (): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_FEED_CANCEL),
+  memoryFeedClaudeMd: (args: { workspacePath: string }): Promise<MemoryFeedResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CLAUDE_MD, args),
 
-  brainFeedClaudeMd: (args: { workspacePath: string }): Promise<BrainFeedResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_FEED_CLAUDE_MD, args),
+  memoryFeedCodebase: (args: { workspacePath: string }): Promise<MemoryFeedResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CODEBASE, args),
 
-  brainFeedCodebase: (args: { workspacePath: string }): Promise<BrainFeedResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_FEED_CODEBASE, args),
-
-  brainFeedDocument: (args: {
+  memoryFeedDocument: (args: {
     workspacePath: string
     filePath: string
-  }): Promise<BrainFeedResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_FEED_DOCUMENT, args),
+  }): Promise<MemoryFeedResult> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_DOCUMENT, args),
 
-  onBrainFeedProgress: (callback: (data: BrainFeedProgress) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: BrainFeedProgress): void =>
+  onMemoryFeedProgress: (callback: (data: MemoryFeedProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: MemoryFeedProgress): void =>
       callback(data)
-    ipcRenderer.on(IPC_CHANNELS.BRAIN_FEED_PROGRESS, handler)
+    ipcRenderer.on(IPC_CHANNELS.MEMORY_FEED_PROGRESS, handler)
     return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.BRAIN_FEED_PROGRESS, handler)
+      ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_FEED_PROGRESS, handler)
+    }
+  },
+
+  // ── Dream (auto consolidation) ──
+  triggerDream: (args: { workspaceId: string }): Promise<DreamRun> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DREAM_TRIGGER, args),
+
+  cancelDream: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DREAM_CANCEL, args),
+
+  getDreamStatus: (args: { workspaceId: string }): Promise<DreamRun | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DREAM_GET_STATUS, args),
+
+  getDreamHistory: (args: { workspaceId: string; limit?: number }): Promise<DreamRun[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DREAM_GET_HISTORY, args),
+
+  onDreamProgress: (callback: (data: DreamProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: DreamProgress): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.DREAM_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.DREAM_PROGRESS, handler)
     }
   },
 
@@ -321,7 +349,10 @@ const api = {
   getConversationTokenSummary: (args: { conversationId: string }): Promise<TokenSummary> =>
     ipcRenderer.invoke(IPC_CHANNELS.TOKEN_GET_CONVERSATION_SUMMARY, args),
 
-  getRecentSessions: (args: { workspaceId: string; limit?: number }): Promise<AgentSessionRecord[]> =>
+  getRecentSessions: (args: {
+    workspaceId: string
+    limit?: number
+  }): Promise<AgentSessionRecord[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.TOKEN_GET_RECENT_SESSIONS, args),
 
   // ── Ideas ──
@@ -352,8 +383,7 @@ const api = {
   completeIdeaFromGrill: (args: {
     conversationId: string
     summary?: string
-  }): Promise<Idea | null> =>
-    ipcRenderer.invoke(IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL, args),
+  }): Promise<Idea | null> => ipcRenderer.invoke(IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL, args),
 
   // ── Auto-update ──
   checkForUpdate: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
@@ -585,8 +615,7 @@ const api = {
   },
 
   onUpdateError: (callback: (message: string) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, message: string): void =>
-      callback(message)
+    const handler = (_event: Electron.IpcRendererEvent, message: string): void => callback(message)
     ipcRenderer.on(IPC_CHANNELS.UPDATE_ERROR, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_ERROR, handler)

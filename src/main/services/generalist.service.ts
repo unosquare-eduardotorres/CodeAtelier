@@ -1,13 +1,13 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AgentStatus, ConversationMode } from '../../shared/types'
+import type { AgentStatus, ConversationMode, HandoffBrief } from '../../shared/types'
 import { AGENT_IDS } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
 import { getGeneralistSystemPrompt } from './generalist-prompts'
-import { brainService } from './brain.service'
+import { memoryService } from './memory.service'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 
 /** Regex to detect handoff blocks emitted by the generalist. */
@@ -16,6 +16,10 @@ const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
 /** Regex to detect grill-summary blocks emitted by the generalist. */
 const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
 
+/**
+ * @deprecated Use HandoffBrief from shared/types.ts instead.
+ * Kept for backward compatibility with legacy listeners.
+ */
 export interface HandoffEvent {
   summary: string
   specialists: string[]
@@ -62,7 +66,11 @@ export class GeneralistService extends AgentBaseService {
   /**
    * Spawns the long-lived interactive claude process for the given workspace.
    */
-  async start(workspacePath: string, mode?: ConversationMode, resumeSessionId?: string): Promise<void> {
+  async start(
+    workspacePath: string,
+    mode?: ConversationMode,
+    resumeSessionId?: string
+  ): Promise<void> {
     if (this.process) {
       await this.stop()
     }
@@ -89,22 +97,21 @@ export class GeneralistService extends AgentBaseService {
       // No CLAUDE.md — that's fine
     }
 
-    // Inject brain context (persistent project memory) into system prompt
+    // Inject auto memory context (persistent cross-session knowledge) into system prompt
     try {
-      // Check if brain is enabled for this workspace
       const allWorkspaces = workspaceRepository.findAll()
       const workspace = allWorkspaces.find((w) => w.repoPath === workspacePath)
       const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
 
-      if (settings.brainEnabled !== false) {
+      if (settings.memoryEnabled !== false && workspace) {
         // default: enabled
-        const brainContext = brainService.getContext(workspacePath)
-        if (brainContext) {
-          fullSystemPrompt += `\n\n---\n\n## Project Brain (Persistent Memory)\n\n${brainContext}`
+        const memoryContext = memoryService.getContextForPrompt(workspace.id, 10000)
+        if (memoryContext) {
+          fullSystemPrompt += `\n\n---\n\n## Auto Memory\n\n${memoryContext}`
         }
       }
     } catch {
-      // Brain context unavailable — not critical
+      // Memory context unavailable — not critical
     }
 
     const isBuildMode = this.currentMode === 'build'
@@ -235,7 +242,11 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
-    this.log.info('send() called', { conversationId, msgLen: message.length, processAlive: !!this.process && !this.process.killed })
+    this.log.info('send() called', {
+      conversationId,
+      msgLen: message.length,
+      processAlive: !!this.process && !this.process.killed
+    })
 
     this.currentStatus = 'thinking'
     this.hasEmittedContent = false
@@ -410,6 +421,8 @@ export class GeneralistService extends AgentBaseService {
 
   /**
    * Checks the accumulated response text for a handoff block and emits a `handoff` event if found.
+   * Parses the enriched HandoffBrief format with decisions, constraints, and files discussed.
+   * Falls back gracefully if only the legacy { summary, specialists, mode } fields are present.
    */
   private detectHandoff(): void {
     const match = this.accumulatedText.match(HANDOFF_REGEX)
@@ -418,13 +431,25 @@ export class GeneralistService extends AgentBaseService {
     try {
       const handoffData = JSON.parse(match[1].trim())
       if (handoffData.action === 'handoff' && handoffData.summary) {
-        const handoff: HandoffEvent = {
+        const brief: HandoffBrief = {
           summary: handoffData.summary,
+          decisions: Array.isArray(handoffData.decisions) ? handoffData.decisions : [],
+          constraints: Array.isArray(handoffData.constraints) ? handoffData.constraints : [],
+          filesDiscussed: Array.isArray(handoffData.filesDiscussed)
+            ? handoffData.filesDiscussed
+            : [],
+          recentMessages: [], // populated later in chat.ipc.ts from DB
           specialists: Array.isArray(handoffData.specialists) ? handoffData.specialists : [],
           mode: handoffData.mode === 'plan' ? 'plan' : 'build'
         }
-        this.log.info('Handoff detected:', handoff)
-        this.emit('handoff', handoff)
+        this.log.info('Handoff detected (enriched brief):', {
+          summary: brief.summary,
+          decisions: brief.decisions.length,
+          constraints: brief.constraints.length,
+          filesDiscussed: brief.filesDiscussed.length,
+          specialists: brief.specialists
+        })
+        this.emit('handoff', brief)
       }
     } catch (error) {
       this.log.error('Failed to parse handoff block:', error)

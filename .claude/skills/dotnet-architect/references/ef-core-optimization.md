@@ -17,11 +17,11 @@ Step-by-step workflow for detecting and fixing slow Entity Framework Core querie
 
 ## Inputs
 
-| Input | Required | Description |
-|-------|----------|-------------|
-| Project path | Yes | Path to solution or project with EF Core |
-| DbContext class | No | Specific context to analyze |
-| Slow endpoint/method | No | Known slow code path to start from |
+| Input                | Required | Description                              |
+| -------------------- | -------- | ---------------------------------------- |
+| Project path         | Yes      | Path to solution or project with EF Core |
+| DbContext class      | No       | Specific context to analyze              |
+| Slow endpoint/method | No       | Known slow code path to start from       |
 
 ## Workflow
 
@@ -94,13 +94,13 @@ Use `AsNoTrackingWithIdentityResolution()` when the query returns duplicate enti
 
 Check for these anti-patterns:
 
-| Trap | Problem | Fix |
-|------|---------|-----|
-| `ToList()` before `Where()` | Loads entire table into memory | Filter first: `.Where().ToList()` |
-| `Count()` to check existence | Scans all rows | Use `.Any()` instead |
-| `.Select()` after `.Include()` | Include is ignored with projection | Remove Include, use Select only |
-| `string.Contains()` in Where | May not translate, falls to client eval | Use `EF.Functions.Like()` |
-| `.ToList()` inside `Select()` | Causes nested queries | Use projection with Select all the way |
+| Trap                           | Problem                                 | Fix                                    |
+| ------------------------------ | --------------------------------------- | -------------------------------------- |
+| `ToList()` before `Where()`    | Loads entire table into memory          | Filter first: `.Where().ToList()`      |
+| `Count()` to check existence   | Scans all rows                          | Use `.Any()` instead                   |
+| `.Select()` after `.Include()` | Include is ignored with projection      | Remove Include, use Select only        |
+| `string.Contains()` in Where   | May not translate, falls to client eval | Use `EF.Functions.Like()`              |
+| `.ToList()` inside `Select()`  | Causes nested queries                   | Use projection with Select all the way |
 
 ### Step 5: Apply N+1 fixes
 
@@ -136,12 +136,12 @@ var orderSummaries = await db.Orders
 
 ### When to use Split vs Single query
 
-| Scenario | Use |
-|----------|-----|
-| 1 level of Include | Single query (default) |
-| Multiple Includes (cartesian risk) | `AsSplitQuery()` |
-| Include with large child collections | `AsSplitQuery()` |
-| Need transaction consistency | Single query |
+| Scenario                             | Use                    |
+| ------------------------------------ | ---------------------- |
+| 1 level of Include                   | Single query (default) |
+| Multiple Includes (cartesian risk)   | `AsSplitQuery()`       |
+| Include with large child collections | `AsSplitQuery()`       |
+| Need transaction consistency         | Single query           |
 
 ### Step 6: Check for bulk operation opportunities (EF Core 7+)
 
@@ -222,11 +222,11 @@ var results = await db.Orders
 
 ## Common pitfalls
 
-| Pitfall | Solution |
-|---------|----------|
-| Lazy loading silently creating N+1 | Remove `Microsoft.EntityFrameworkCore.Proxies` or disable lazy loading |
-| Global query filters forgotten | Check `HasQueryFilter` in model config; use `IgnoreQueryFilters()` if needed |
-| `DbContext` kept alive too long | DbContext should be scoped (per-request); don't cache it |
-| String interpolation in `FromSqlRaw` | SQL injection risk — use `FromSqlInterpolated` |
-| Missing indexes on frequently queried columns | Add `builder.HasIndex()` in entity configuration |
-| Not using `AsSplitQuery()` with multiple Includes | Cartesian explosion causes memory pressure |
+| Pitfall                                           | Solution                                                                     |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Lazy loading silently creating N+1                | Remove `Microsoft.EntityFrameworkCore.Proxies` or disable lazy loading       |
+| Global query filters forgotten                    | Check `HasQueryFilter` in model config; use `IgnoreQueryFilters()` if needed |
+| `DbContext` kept alive too long                   | DbContext should be scoped (per-request); don't cache it                     |
+| String interpolation in `FromSqlRaw`              | SQL injection risk — use `FromSqlInterpolated`                               |
+| Missing indexes on frequently queried columns     | Add `builder.HasIndex()` in entity configuration                             |
+| Not using `AsSplitQuery()` with multiple Includes | Cartesian explosion causes memory pressure                                   |

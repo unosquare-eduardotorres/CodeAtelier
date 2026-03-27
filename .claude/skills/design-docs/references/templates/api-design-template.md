@@ -13,11 +13,13 @@
 **Purpose:** [What this API does]
 
 **Target Audience:**
+
 - Internal services
 - External partners
 - Public developers
 
 **Key Features:**
+
 - Feature 1
 - Feature 2
 - Feature 3
@@ -92,6 +94,7 @@ graph LR
 Authenticate a user and receive access token.
 
 **Request:**
+
 ```json
 {
   "email": "user@example.com",
@@ -100,6 +103,7 @@ Authenticate a user and receive access token.
 ```
 
 **Response (200 OK):**
+
 ```json
 {
   "access_token": "eyJhbGc...",
@@ -110,6 +114,7 @@ Authenticate a user and receive access token.
 ```
 
 **Errors:**
+
 - `400 Bad Request` - Invalid credentials
 - `429 Too Many Requests` - Rate limit exceeded
 
@@ -120,9 +125,11 @@ Authenticate a user and receive access token.
 Retrieve user details by ID.
 
 **Parameters:**
+
 - `id` (path, required): User ID
 
 **Response (200 OK):**
+
 ```json
 {
   "id": "123",
@@ -134,6 +141,7 @@ Retrieve user details by ID.
 ```
 
 **Errors:**
+
 - `401 Unauthorized` - Missing or invalid token
 - `404 Not Found` - User not found
 
@@ -144,6 +152,7 @@ Retrieve user details by ID.
 Create a new resource.
 
 **Request:**
+
 ```json
 {
   "name": "Resource Name",
@@ -156,6 +165,7 @@ Create a new resource.
 ```
 
 **Response (201 Created):**
+
 ```json
 {
   "id": "res_123",
@@ -170,6 +180,7 @@ Create a new resource.
 ```
 
 **Errors:**
+
 - `400 Bad Request` - Validation errors
 - `401 Unauthorized` - Missing or invalid token
 - `422 Unprocessable Entity` - Invalid data
@@ -286,13 +297,14 @@ stateDiagram-v2
 
 ### 6.1 Rate Limit Policy
 
-| Tier | Requests/Minute | Requests/Hour | Burst |
-|------|-----------------|---------------|-------|
-| Free | 60 | 1000 | 10 |
-| Basic | 300 | 10000 | 50 |
-| Premium | 1000 | 100000 | 200 |
+| Tier    | Requests/Minute | Requests/Hour | Burst |
+| ------- | --------------- | ------------- | ----- |
+| Free    | 60              | 1000          | 10    |
+| Basic   | 300             | 10000         | 50    |
+| Premium | 1000            | 100000        | 200   |
 
 **Headers:**
+
 ```
 X-RateLimit-Limit: 60
 X-RateLimit-Remaining: 45
@@ -321,27 +333,29 @@ X-RateLimit-Reset: 1640995200
 
 ### 7.2 Error Codes
 
-| HTTP Status | Error Code | Description |
-|-------------|------------|-------------|
-| 400 | INVALID_REQUEST | Request validation failed |
-| 401 | UNAUTHORIZED | Missing or invalid authentication |
-| 403 | FORBIDDEN | Insufficient permissions |
-| 404 | NOT_FOUND | Resource not found |
-| 422 | VALIDATION_ERROR | Data validation failed |
-| 429 | RATE_LIMIT_EXCEEDED | Too many requests |
-| 500 | INTERNAL_ERROR | Server error |
-| 503 | SERVICE_UNAVAILABLE | Service temporarily unavailable |
+| HTTP Status | Error Code          | Description                       |
+| ----------- | ------------------- | --------------------------------- |
+| 400         | INVALID_REQUEST     | Request validation failed         |
+| 401         | UNAUTHORIZED        | Missing or invalid authentication |
+| 403         | FORBIDDEN           | Insufficient permissions          |
+| 404         | NOT_FOUND           | Resource not found                |
+| 422         | VALIDATION_ERROR    | Data validation failed            |
+| 429         | RATE_LIMIT_EXCEEDED | Too many requests                 |
+| 500         | INTERNAL_ERROR      | Server error                      |
+| 503         | SERVICE_UNAVAILABLE | Service temporarily unavailable   |
 
 ---
 
 ## 8. Pagination
 
 **Request:**
+
 ```
 GET /resources?page=2&per_page=20&sort=created_at&order=desc
 ```
 
 **Response:**
+
 ```json
 {
   "data": [...],
@@ -402,12 +416,14 @@ sequenceDiagram
 ```
 
 **Event Types:**
+
 - `resource.created`
 - `resource.updated`
 - `resource.deleted`
 - `user.created`
 
 **Webhook Payload:**
+
 ```json
 {
   "event": "resource.created",
@@ -426,11 +442,13 @@ sequenceDiagram
 **Strategy:** URL-based versioning
 
 **Deprecation Policy:**
+
 - New version announced 6 months in advance
 - Old version supported for 12 months after new version release
 - Sunset notices sent via email and API headers
 
 **Version Headers:**
+
 ```
 API-Version: 1.0
 API-Deprecated: false
@@ -458,12 +476,12 @@ API-Sunset-Date: null
 
 ## 13. Performance Targets
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| Response Time (p95) | < 200ms | 150ms |
-| Response Time (p99) | < 500ms | 350ms |
-| Throughput | > 1000 req/s | 1200 req/s |
-| Uptime | 99.9% | 99.95% |
+| Metric              | Target       | Current    |
+| ------------------- | ------------ | ---------- |
+| Response Time (p95) | < 200ms      | 150ms      |
+| Response Time (p99) | < 500ms      | 350ms      |
+| Throughput          | > 1000 req/s | 1200 req/s |
+| Uptime              | 99.9%        | 99.95%     |
 
 ---
 
@@ -534,6 +552,7 @@ print(response.json())
 ### v1.0.0 (2025-01-01)
 
 **Added:**
+
 - Initial API release
 - Authentication endpoints
 - User management endpoints
@@ -545,9 +564,9 @@ print(response.json())
 
 ### A. Glossary
 
-| Term | Definition |
-|------|------------|
-| JWT | JSON Web Token |
+| Term | Definition                   |
+| ---- | ---------------------------- |
+| JWT  | JSON Web Token               |
 | CRUD | Create, Read, Update, Delete |
 
 ### B. References

@@ -4,7 +4,15 @@
   "description": "Create src/main/services/scope-validator.service.ts. Validate changed files against TaskScope (allowedFiles, allowedPatterns, forbiddenDirectories, forbiddenFiles, maxFilesChanged). Get changed files via git diff.",
   "feature_ref": "F008",
   "task_type": "backend",
-  "complexity": { "score": 6, "factors": { "files_affected": 3, "estimated_lines": 180, "new_dependencies": 0, "risk_flags": ["security"] } },
+  "complexity": {
+    "score": 6,
+    "factors": {
+      "files_affected": 3,
+      "estimated_lines": 180,
+      "new_dependencies": 0,
+      "risk_flags": ["security"]
+    }
+  },
   "dependencies": ["TASK-002"],
   "acceptance_criteria": [
     "TaskScope interface with allowed/forbidden patterns",

@@ -9,7 +9,8 @@ import { registerWorkspaceDeployIpc } from './workspace-deploy.ipc'
 import { registerSyncIpc } from './sync.ipc'
 import { registerWorktreeIpc } from './worktree.ipc'
 import { registerPixelOfficeHandlers } from './pixel-office.ipc'
-import { registerBrainIpc } from './brain.ipc'
+import { registerMemoryIpc } from './memory.ipc'
+import { registerDreamIpc } from './dream.ipc'
 import { registerTokenIpc } from './token.ipc'
 import { registerIdeaIpc } from './idea.ipc'
 import { registerUpdateIpc } from './update.ipc'
@@ -26,7 +27,8 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerSyncIpc()
   registerWorktreeIpc()
   registerPixelOfficeHandlers()
-  registerBrainIpc(mainWindow)
+  registerMemoryIpc(mainWindow)
+  registerDreamIpc(mainWindow)
   registerTokenIpc()
   registerIdeaIpc()
   registerUpdateIpc()

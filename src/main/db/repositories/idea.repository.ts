@@ -43,9 +43,7 @@ export class IdeaRepository {
 
   findByWorkspace(workspaceId: string): Idea[] {
     const db = getDatabase()
-    const stmt = db.prepare(
-      'SELECT * FROM ideas WHERE workspace_id = ? ORDER BY created_at DESC'
-    )
+    const stmt = db.prepare('SELECT * FROM ideas WHERE workspace_id = ? ORDER BY created_at DESC')
     const rows = stmt.all(workspaceId) as IdeaRow[]
     return rows.map(mapRow)
   }

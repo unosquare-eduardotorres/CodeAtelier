@@ -4,7 +4,15 @@
   "description": "Create BugCouncilPanel.tsx. Show each analyst's perspective as collapsible cards, synthesized solution highlighted, recommended approach, and Approve & Retry / Escalate to Human buttons.",
   "feature_ref": "F010",
   "task_type": "frontend",
-  "complexity": { "score": 5, "factors": { "files_affected": 4, "estimated_lines": 180, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 4,
+      "estimated_lines": 180,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-039"],
   "acceptance_criteria": [
     "5 analyst perspective cards, each collapsible",

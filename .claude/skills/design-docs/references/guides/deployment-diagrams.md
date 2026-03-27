@@ -430,28 +430,28 @@ graph TB
 
 ## Unicode Symbols for Infrastructure
 
-| Symbol | Meaning | Use Case |
-|--------|---------|----------|
-| ☁️ | Cloud Service | Cloud resources, SaaS |
-| 🌐 | Load Balancer | LB, API Gateway |
-| ⚙️ | Application Server | Compute instances |
-| 💾 | Database | Persistent storage |
-| ⚡ | Cache | Redis, Memcached |
-| 📦 | Object Storage | S3, GCS, Blob Storage |
-| 🐰 | Message Queue | RabbitMQ, SQS |
-| 🔌 | Network Connector | VPN, VPC peering |
-| 🛡️ | Security | Firewall, WAF |
-| 🔐 | IAM/Auth | Identity, secrets |
-| 🔑 | Secrets | API keys, passwords |
-| 📊 | Monitoring | Metrics, dashboards |
-| 📝 | Logging | Log aggregation |
-| 🔄 | Replication | DB replication, sync |
-| 🌍 | Internet | Public access |
-| 👤 | User/Client | End users |
-| 🔧 | Management | Admin tools, bastion |
-| ⚛️ | Frontend | React, Vue, Angular |
-| 📨 | Event Bus | EventBridge, Pub/Sub |
-| 📬 | Queue | Job queues |
+| Symbol | Meaning            | Use Case              |
+| ------ | ------------------ | --------------------- |
+| ☁️     | Cloud Service      | Cloud resources, SaaS |
+| 🌐     | Load Balancer      | LB, API Gateway       |
+| ⚙️     | Application Server | Compute instances     |
+| 💾     | Database           | Persistent storage    |
+| ⚡     | Cache              | Redis, Memcached      |
+| 📦     | Object Storage     | S3, GCS, Blob Storage |
+| 🐰     | Message Queue      | RabbitMQ, SQS         |
+| 🔌     | Network Connector  | VPN, VPC peering      |
+| 🛡️     | Security           | Firewall, WAF         |
+| 🔐     | IAM/Auth           | Identity, secrets     |
+| 🔑     | Secrets            | API keys, passwords   |
+| 📊     | Monitoring         | Metrics, dashboards   |
+| 📝     | Logging            | Log aggregation       |
+| 🔄     | Replication        | DB replication, sync  |
+| 🌍     | Internet           | Public access         |
+| 👤     | User/Client        | End users             |
+| 🔧     | Management         | Admin tools, bastion  |
+| ⚛️     | Frontend           | React, Vue, Angular   |
+| 📨     | Event Bus          | EventBridge, Pub/Sub  |
+| 📬     | Queue              | Job queues            |
 
 ## Best Practices
 
@@ -467,6 +467,7 @@ graph TB
 ### 2. Indicate Network Boundaries
 
 Use subgraphs for:
+
 - VPCs / Virtual Networks
 - Subnets (public/private)
 - Security groups
@@ -616,6 +617,7 @@ Examples: `examples/spring-boot/`, `examples/fastapi/`, etc.
 ---
 
 **Next Steps:**
+
 - See `activity-diagrams.md` for workflow visualization
 - See `code-to-diagram/` for IaC-to-diagram examples
 - See language-specific examples for framework-specific patterns

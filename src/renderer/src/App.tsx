@@ -1,7 +1,14 @@
 import { useEffect } from 'react'
 import { AppLayout } from '@renderer/components/layout'
 import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
-import { useWorkspaceStore, useChatStore, useAgentStore, useUpdateStore, useBrainFeedStore } from '@renderer/store'
+import {
+  useWorkspaceStore,
+  useChatStore,
+  useAgentStore,
+  useUpdateStore,
+  useMemoryStore,
+  useDreamStore
+} from '@renderer/store'
 import type { ConversationMode, TaskPlan } from '../../shared/types'
 
 // Check if this window was opened as a Pixel Office pop-out
@@ -23,7 +30,8 @@ function App(): React.JSX.Element {
   } = useChatStore()
   const { updateStatus } = useAgentStore()
   const { setAvailable, setNotAvailable, setDownloaded, setProgress, setError } = useUpdateStore()
-  const { onProgress: onBrainFeedProgress } = useBrainFeedStore()
+  const { onFeedProgress: onMemoryFeedProgress } = useMemoryStore()
+  const { onProgress: onDreamProgress } = useDreamStore()
 
   useEffect(() => {
     // Load workspaces on mount
@@ -120,9 +128,14 @@ function App(): React.JSX.Element {
       setError(message)
     })
 
-    // Brain feed progress listener
-    const unsubBrainFeed = window.api.onBrainFeedProgress((progress) => {
-      onBrainFeedProgress(progress)
+    // Memory feed progress listener
+    const unsubMemoryFeed = window.api.onMemoryFeedProgress((progress) => {
+      onMemoryFeedProgress(progress)
+    })
+
+    // Dream progress listener
+    const unsubDreamProgress = window.api.onDreamProgress((progress) => {
+      onDreamProgress(progress)
     })
 
     return () => {
@@ -139,7 +152,8 @@ function App(): React.JSX.Element {
       unsubUpdateDownloaded()
       unsubUpdateProgress()
       unsubUpdateError()
-      unsubBrainFeed()
+      unsubMemoryFeed()
+      unsubDreamProgress()
     }
   }, [
     loadWorkspaces,
@@ -159,7 +173,8 @@ function App(): React.JSX.Element {
     setDownloaded,
     setProgress,
     setError,
-    onBrainFeedProgress
+    onMemoryFeedProgress,
+    onDreamProgress
   ])
 
   // Pop-out mode: render only the Pixel Office fullscreen

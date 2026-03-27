@@ -127,23 +127,28 @@ export const IPC_CHANNELS = {
   SYNC_COMPUTE_DIFF: 'sync:computeDiff',
   SYNC_APPLY: 'sync:apply',
 
-  // Brain (project memory)
-  BRAIN_GET_CONTEXT: 'brain:getContext',
-  BRAIN_GET_STATE: 'brain:getState',
-  BRAIN_LOG_DECISION: 'brain:logDecision',
-  // Brain management
-  BRAIN_GET_FILES_INFO: 'brain:getFilesInfo',
-  BRAIN_COMPACT_FILE: 'brain:compactFile',
-  BRAIN_COMPACT_ALL: 'brain:compactAll',
-  BRAIN_UPDATE_SETTING: 'brain:updateSetting',
+  // Memory (auto memory system)
+  MEMORY_LIST: 'memory:list',
+  MEMORY_SEARCH: 'memory:search',
+  MEMORY_CREATE: 'memory:create',
+  MEMORY_UPDATE: 'memory:update',
+  MEMORY_DELETE: 'memory:delete',
+  MEMORY_UPDATE_SETTING: 'memory:updateSetting',
 
-  // Brain feed (ingest sources into brain)
-  BRAIN_FEED_CLAUDE_MD: 'brain:feedClaudeMd',
-  BRAIN_FEED_CODEBASE: 'brain:feedCodebase',
-  BRAIN_FEED_DOCUMENT: 'brain:feedDocument',
-  BRAIN_FEED_PROGRESS: 'brain:feedProgress',
-  BRAIN_FEED_CANCEL: 'brain:feedCancel',
-  BRAIN_SELECT_DOCUMENT: 'brain:selectDocument',
+  // Memory feed (ingest sources into memories)
+  MEMORY_FEED_CLAUDE_MD: 'memory:feedClaudeMd',
+  MEMORY_FEED_CODEBASE: 'memory:feedCodebase',
+  MEMORY_FEED_DOCUMENT: 'memory:feedDocument',
+  MEMORY_FEED_PROGRESS: 'memory:feedProgress',
+  MEMORY_FEED_CANCEL: 'memory:feedCancel',
+  MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
+
+  // Dream (auto consolidation)
+  DREAM_TRIGGER: 'dream:trigger',
+  DREAM_CANCEL: 'dream:cancel',
+  DREAM_GET_STATUS: 'dream:getStatus',
+  DREAM_GET_HISTORY: 'dream:getHistory',
+  DREAM_PROGRESS: 'dream:progress',
 
   // Tokens
   TOKEN_GET_WORKSPACE_SUMMARY: 'token:getWorkspaceSummary',
@@ -221,8 +226,11 @@ export const CONVERSATION_MODES = {
 /** Model used for activation CLAUDE.md generation */
 export const ACTIVATION_MODEL_ID = 'claude-sonnet-4-20250514' as const
 
-/** Fast model used for brain feed summarization tasks (structured extraction) */
-export const BRAIN_FEED_MODEL_ID = 'claude-haiku-4-20250414' as const
+/** Fast model used for memory feed summarization tasks (structured extraction) */
+export const MEMORY_FEED_MODEL_ID = 'claude-haiku-4-20250414' as const
+
+/** Model used for dream consolidation cycles */
+export const DREAM_MODEL_ID = 'claude-haiku-4-20250414' as const
 
 /** Model IDs per complexity tier — used for specialist routing */
 export const MODEL_TIER_IDS = {

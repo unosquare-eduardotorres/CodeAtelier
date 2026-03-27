@@ -5,6 +5,7 @@
 > **How to use**: Feed each phase to Claude as a standalone task. Each phase is self-contained with exact file paths, code references, interfaces, and acceptance criteria.
 >
 > **Reference repos** (all cloned in `~/Downloads/external repos/`):
+>
 > - **DevTeam**: `~/Downloads/external repos/devteam/`
 > - **wshobson/agents**: `~/Downloads/external repos/agents/`
 > - **Multi-Agent Squad**: `~/Downloads/external repos/multi-agent-squad/`
@@ -29,14 +30,17 @@
 ## Phase 1: Complexity Scoring & Model Routing
 
 ### Goal
+
 Stop using a single model for all specialists. Score every task by complexity (0-14) and route to the cheapest capable model. This alone saves 40-60% on API costs.
 
 ### Reference Code
+
 - **DevTeam scoring algorithm**: `~/Downloads/external repos/devteam/agents/orchestration/task-loop.md` (lines describing complexity scoring)
 - **DevTeam model tiers**: `~/Downloads/external repos/devteam/.devteam/task-loop-config.yaml`
 - **wshobson tier assignments**: `~/Downloads/external repos/agents/docs/agents.md` (Opus/Sonnet/Haiku/Inherit mapping for 112 agents)
 
 ### Current State in AgentStudio
+
 - `src/shared/constants.ts` defines `ACTIVATION_MODEL_ID = 'claude-sonnet-4-20250514'` and `BRAIN_FEED_MODEL_ID = 'claude-haiku-4-20250414'` but these are only used for workspace activation and brain summarization.
 - `src/main/services/orchestrator.service.ts` spawns `claude -p` without any `--model` flag override per task.
 - `src/main/services/specialist-pool.service.ts` spawns specialists without model selection — all inherit the Claude CLI default.
@@ -64,12 +68,12 @@ Create a new service: `src/main/services/complexity-scorer.service.ts`
 //   9-14:  Complex  → opus
 
 export interface ComplexityScore {
-  filesAffected: number       // 0-3
-  estimatedLines: number      // 0-3
-  newDependencies: number     // 0-2
-  taskType: number            // 0-3
-  riskFlags: number           // 0-3
-  total: number               // 0-14
+  filesAffected: number // 0-3
+  estimatedLines: number // 0-3
+  newDependencies: number // 0-2
+  taskType: number // 0-3
+  riskFlags: number // 0-3
+  total: number // 0-14
   tier: 'simple' | 'moderate' | 'complex'
   model: 'haiku' | 'sonnet' | 'opus'
 }
@@ -78,6 +82,7 @@ export function scoreComplexity(task: DecomposedTask): ComplexityScore
 ```
 
 **Scoring implementation**: Use the orchestrator's existing `decompose()` method output. The `DecomposedTask` already has `title` and `description`. Parse these for:
+
 - File count estimation (look for file paths, "modify X files" language)
 - Task type keywords: "test" → 1pt, "implement"/"create" → 2pt, "architect"/"design"/"refactor" → 3pt, "document"/"update readme" → 0pt
 - Risk keywords: "auth"/"security"/"encryption" → +1pt, "API"/"webhook"/"external" → +1pt, "migration"/"breaking"/"schema change" → +1pt
@@ -163,6 +168,7 @@ ALTER TABLE agent_sessions ADD COLUMN model_tier TEXT; -- 'simple', 'moderate', 
 ```
 
 ### Acceptance Criteria
+
 - [ ] Every specialist task gets a complexity score before execution
 - [ ] Specialists spawn with the correct `--model` flag based on score
 - [ ] Users can set a workspace-level cost preference (economy/balanced/power)
@@ -171,24 +177,27 @@ ALTER TABLE agent_sessions ADD COLUMN model_tier TEXT; -- 'simple', 'moderate', 
 - [ ] Complex tasks (architecture, security) consistently route to opus
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
-| CREATE | `src/main/services/complexity-scorer.service.ts` |
+
+| Action | File                                                                                     |
+| ------ | ---------------------------------------------------------------------------------------- |
+| CREATE | `src/main/services/complexity-scorer.service.ts`                                         |
 | MODIFY | `src/shared/types.ts` — extend `DecomposedTask`, add `ComplexityScore`, `CostPreference` |
-| MODIFY | `src/shared/constants.ts` — add model ID constants per tier |
-| MODIFY | `src/main/services/orchestrator.service.ts` — wire scoring after decompose |
-| MODIFY | `src/main/services/specialist-pool.service.ts` — pass `--model` flag |
-| MODIFY | `src/main/db/schema.sql` — add columns to `agent_sessions` |
-| MODIFY | `src/main/db/repositories/agent-session.repository.ts` — persist new fields |
+| MODIFY | `src/shared/constants.ts` — add model ID constants per tier                              |
+| MODIFY | `src/main/services/orchestrator.service.ts` — wire scoring after decompose               |
+| MODIFY | `src/main/services/specialist-pool.service.ts` — pass `--model` flag                     |
+| MODIFY | `src/main/db/schema.sql` — add columns to `agent_sessions`                               |
+| MODIFY | `src/main/db/repositories/agent-session.repository.ts` — persist new fields              |
 
 ---
 
 ## Phase 2: Task Loop with Quality Gates
 
 ### Goal
+
 Wrap every specialist execution in an iterative loop: Execute → Validate → Pass? Done. Fail? Fix → Escalate model → Retry. No specialist completes until quality gates pass.
 
 ### Reference Code
+
 - **DevTeam Task Loop**: `~/Downloads/external repos/devteam/agents/orchestration/task-loop.md` — The full loop architecture with model escalation
 - **DevTeam Quality Gate Enforcer**: `~/Downloads/external repos/devteam/agents/orchestration/quality-gate-enforcer.md` — Gate definitions and commands per language
 - **DevTeam task-loop-config.yaml**: `~/Downloads/external repos/devteam/.devteam/task-loop-config.yaml` — Iteration limits, escalation thresholds
@@ -196,6 +205,7 @@ Wrap every specialist execution in an iterative loop: Execute → Validate → P
 - **wshobson/agents TDD workflow**: `~/Downloads/external repos/agents/plugins/conductor/commands/implement.md` — Red-green-refactor enforcement
 
 ### Current State in AgentStudio
+
 - `src/main/services/specialist-pool.service.ts` has retry logic (`RETRY_CONFIG`: maxRetries=2, exponential backoff) but retries use the **same model and same approach**. There's no quality validation — a specialist "succeeds" simply by exiting with code 0.
 - No post-execution test/lint/typecheck validation exists.
 - No model escalation on retry — same model every time.
@@ -279,11 +289,11 @@ Create: `src/main/services/task-loop.service.ts`
 //   Same error message 3x → ESCALATE immediately
 
 export interface TaskLoopConfig {
-  maxIterations: number           // default: 10
-  escalationThreshold: number     // consecutive failures before escalate (default: 2)
-  opusMaxFailures: number         // failures at opus before giving up (default: 3)
-  runQualityGates: boolean        // can disable for non-code tasks
-  gateTimeout: number             // ms, default: 120000 (2 min)
+  maxIterations: number // default: 10
+  escalationThreshold: number // consecutive failures before escalate (default: 2)
+  opusMaxFailures: number // failures at opus before giving up (default: 3)
+  runQualityGates: boolean // can disable for non-code tasks
+  gateTimeout: number // ms, default: 120000 (2 min)
 }
 
 export interface TaskLoopState {
@@ -347,6 +357,7 @@ In `src/main/services/specialist-pool.service.ts`, replace the direct specialist
 ```
 
 The specialist pool's existing retry logic (`RETRY_CONFIG`) handles process-level failures (crashes, timeouts). The task loop handles **logical failures** (tests not passing, lint errors). These are complementary:
+
 - Process crash → specialist-pool retries (same model, same prompt)
 - Quality gate failure → task-loop retries (upgraded model, fix context added)
 
@@ -366,6 +377,7 @@ Forward these from the main process to the renderer so the UI can show loop prog
 #### 2.5 — UI: Loop Progress Indicator
 
 In the specialist task progress UI, show:
+
 - Current iteration (e.g., "Iteration 2/10")
 - Current model tier (e.g., "sonnet" with color indicator)
 - Gate results (pass/fail badges for tests, lint, types)
@@ -391,6 +403,7 @@ CREATE TABLE task_loop_iterations (
 ```
 
 ### Acceptance Criteria
+
 - [ ] Every specialist task runs inside a task loop
 - [ ] Quality gates (test/lint/typecheck) run after each specialist completes
 - [ ] Failed gates trigger retry with fix context appended to prompt
@@ -401,29 +414,33 @@ CREATE TABLE task_loop_iterations (
 - [ ] All loop iterations are persisted in the database for analytics
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
-| CREATE | `src/main/services/quality-gate.service.ts` |
-| CREATE | `src/main/services/task-loop.service.ts` |
-| MODIFY | `src/main/services/specialist-pool.service.ts` — integrate task loop |
-| MODIFY | `src/shared/constants.ts` — add loop IPC channels |
+
+| Action | File                                                                     |
+| ------ | ------------------------------------------------------------------------ |
+| CREATE | `src/main/services/quality-gate.service.ts`                              |
+| CREATE | `src/main/services/task-loop.service.ts`                                 |
+| MODIFY | `src/main/services/specialist-pool.service.ts` — integrate task loop     |
+| MODIFY | `src/shared/constants.ts` — add loop IPC channels                        |
 | MODIFY | `src/shared/types.ts` — add TaskLoopState, GateResult, QualityGateReport |
-| MODIFY | `src/main/db/schema.sql` — add `task_loop_iterations` table |
-| CREATE | `src/main/db/repositories/task-loop.repository.ts` |
-| MODIFY | `src/renderer/src/components/agents/TaskProgress.tsx` — show loop state |
+| MODIFY | `src/main/db/schema.sql` — add `task_loop_iterations` table              |
+| CREATE | `src/main/db/repositories/task-loop.repository.ts`                       |
+| MODIFY | `src/renderer/src/components/agents/TaskProgress.tsx` — show loop state  |
 
 ---
 
 ## Phase 3: Anti-Abandonment Detection
 
 ### Goal
+
 Detect when a specialist is giving up ("I cannot", "this is beyond my capabilities", "you should manually") and inject a re-engagement prompt instead of accepting the failure.
 
 ### Reference Code
+
 - **DevTeam persistence hook**: `~/Downloads/external repos/devteam/hooks/persistence-hook.sh` — Complete regex patterns for abandonment detection with categorized patterns (direct abandonment, premature completion, deflection, permission seeking)
 - **DevTeam persistence config**: `~/Downloads/external repos/devteam/.devteam/persistence-config.yaml` — Re-engagement prompt templates
 
 ### Current State in AgentStudio
+
 - `src/main/services/agent-base.service.ts` processes NDJSON chunks and emits them. No content analysis.
 - `src/main/services/generalist.service.ts` already accumulates text for handoff detection (regex on `accumulatedText`). The same pattern can detect abandonment.
 - `src/main/services/specialist-pool.service.ts` treats any exit code 0 as success. An agent can say "I give up" and exit 0, and it's accepted.
@@ -477,7 +494,7 @@ export interface AbandonmentDetection {
   detected: boolean
   category: 'direct' | 'premature' | 'deflection' | 'permission' | null
   matchedPhrase: string | null
-  confidence: number  // 0-1
+  confidence: number // 0-1
 }
 
 export class AbandonmentDetector {
@@ -553,10 +570,12 @@ const abandonment = this.abandonmentDetector.detect(this.accumulatedText)
 if (abandonment.detected) {
   // For generalist: inject re-engagement via stdin
   const prompt = this.abandonmentDetector.getReEngagementPrompt(abandonment, currentTask)
-  this.currentProcess.stdin.write(JSON.stringify({
-    type: 'user',
-    content: prompt
-  }) + '\n')
+  this.currentProcess.stdin.write(
+    JSON.stringify({
+      type: 'user',
+      content: prompt
+    }) + '\n'
+  )
   this.emit('abandonmentDetected', abandonment)
 }
 ```
@@ -564,11 +583,13 @@ if (abandonment.detected) {
 #### 3.4 — UI Indicator
 
 Show a subtle indicator when abandonment is detected and re-engagement is triggered. Something like:
+
 ```
 ⚡ Agent attempted to give up — re-engaging with alternative approach
 ```
 
 ### Acceptance Criteria
+
 - [ ] Specialist output is analyzed for abandonment patterns before marking complete
 - [ ] Detected abandonment triggers re-engagement prompt (not task failure)
 - [ ] Re-engagement prompt varies by category (direct, premature, deflection)
@@ -578,13 +599,14 @@ Show a subtle indicator when abandonment is detected and re-engagement is trigge
 - [ ] Integrates with Task Loop (Phase 2) — abandonment counts toward escalation
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
-| CREATE | `src/main/services/abandonment-detector.service.ts` |
-| MODIFY | `src/main/services/specialist-pool.service.ts` — check before marking complete |
-| MODIFY | `src/main/services/generalist.service.ts` — detect in accumulated text |
-| MODIFY | `src/shared/constants.ts` — add `ABANDONMENT_DETECTED` IPC channel |
-| MODIFY | `src/shared/types.ts` — add `AbandonmentDetection` interface |
+
+| Action | File                                                                                |
+| ------ | ----------------------------------------------------------------------------------- |
+| CREATE | `src/main/services/abandonment-detector.service.ts`                                 |
+| MODIFY | `src/main/services/specialist-pool.service.ts` — check before marking complete      |
+| MODIFY | `src/main/services/generalist.service.ts` — detect in accumulated text              |
+| MODIFY | `src/shared/constants.ts` — add `ABANDONMENT_DETECTED` IPC channel                  |
+| MODIFY | `src/shared/types.ts` — add `AbandonmentDetection` interface                        |
 | MODIFY | `src/renderer/src/components/chat/MessageBubble.tsx` — show re-engagement indicator |
 
 ---
@@ -592,14 +614,17 @@ Show a subtle indicator when abandonment is detected and re-engagement is trigge
 ## Phase 4: File-Based Agent Communication Chain
 
 ### Goal
+
 Instead of passing all context through the LLM context window, have each specialist write structured output to a shared task directory. Subsequent specialists read prior outputs explicitly. This makes workflows auditable, resumable, and debuggable.
 
 ### Reference Code
+
 - **wshobson/agents file chain**: `~/Downloads/external repos/agents/plugins/full-stack-orchestration/commands/full-stack-feature.md` — Each step writes to `.full-stack-feature/01-requirements.md`, next step reads it
 - **wshobson/agents state file**: The `state.json` pattern with `current_step`, `completed_steps`, `files_created`
 - **Multi-Agent Squad status files**: `~/Downloads/external repos/multi-agent-squad/` — PROJECT_STATUS.md, `.feature-*` tracking files
 
 ### Current State in AgentStudio
+
 - `src/main/services/orchestrator.service.ts` passes task description directly to specialists via `claude -p` prompt. No file-based context passing.
 - `src/main/services/specialist-pool.service.ts` manages parallel/sequential execution but specialists don't share intermediate artifacts.
 - `src/main/db/schema.sql` has `conversation_file_changes` tracking created/modified/deleted files, but this is observational, not prescriptive.
@@ -640,7 +665,7 @@ export interface TaskArtifactState {
   currentTaskIndex: number
   completedTasks: string[]
   failedTasks: string[]
-  artifacts: Record<string, string>  // taskId → output file path
+  artifacts: Record<string, string> // taskId → output file path
   startedAt: string
   lastUpdated: string
 }
@@ -675,10 +700,7 @@ In `src/main/services/specialist-pool.service.ts`, before spawning each speciali
 
 ```typescript
 // 1. Gather outputs from dependency tasks
-const priorContext = await taskArtifactService.readPriorOutputs(
-  task.id,
-  task.dependencies
-)
+const priorContext = await taskArtifactService.readPriorOutputs(task.id, task.dependencies)
 
 // 2. Build enriched prompt with prior context
 const enrichedDescription = `
@@ -713,6 +735,7 @@ if (existingState && existingState.status === 'in_progress') {
 This is a major UX improvement — users can close the app and resume complex multi-task workflows.
 
 ### Acceptance Criteria
+
 - [ ] Each task plan creates a `.agentstudio/{conversation-id}/` directory
 - [ ] Each specialist's output is saved as a structured markdown file
 - [ ] Downstream specialists receive prior task outputs as context
@@ -722,26 +745,30 @@ This is a major UX improvement — users can close the app and resume complex mu
 - [ ] Artifacts are human-readable (markdown, not binary)
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
-| CREATE | `src/main/services/task-artifact.service.ts` |
-| MODIFY | `src/main/services/specialist-pool.service.ts` — read/write artifacts |
+
+| Action | File                                                                                |
+| ------ | ----------------------------------------------------------------------------------- |
+| CREATE | `src/main/services/task-artifact.service.ts`                                        |
+| MODIFY | `src/main/services/specialist-pool.service.ts` — read/write artifacts               |
 | MODIFY | `src/main/services/orchestrator.service.ts` — initialize artifacts on plan creation |
-| MODIFY | `src/shared/types.ts` — add `TaskArtifactState` |
-| MODIFY | `src/main/ipc/chat.ipc.ts` — expose resume capability |
+| MODIFY | `src/shared/types.ts` — add `TaskArtifactState`                                     |
+| MODIFY | `src/main/ipc/chat.ipc.ts` — expose resume capability                               |
 
 ---
 
 ## Phase 5: Cost Tracking Dashboard
 
 ### Goal
+
 Track token usage and estimated cost per model, per agent, per conversation. Show users how much they're spending and how much model routing (Phase 1) is saving them.
 
 ### Reference Code
+
 - **DevTeam cost tracking**: `~/Downloads/external repos/devteam/scripts/schema.sql` — `sessions` table with `total_tokens_input`, `total_tokens_output`, `total_cost_cents`; `events` table for per-agent tracking
 - **DevTeam cost tracking script**: `~/Downloads/external repos/devteam/scripts/cost-tracking.sh`
 
 ### Current State in AgentStudio
+
 - `src/main/services/agent-base.service.ts` already tracks token usage via `message_delta` and `message_stop` events. Accumulates `inputTokens` and `outputTokens`.
 - `src/main/db/schema.sql` has `agent_sessions` table with `token_usage TEXT` (JSON string with input/output counts).
 - `src/main/db/repositories/agent-session.repository.ts` persists sessions with token data.
@@ -756,21 +783,21 @@ Create: `src/main/services/cost-calculator.service.ts`
 ```typescript
 // Anthropic API pricing (as of 2025, update as needed):
 const MODEL_PRICING = {
-  'claude-opus-4-20250514':   { inputPer1M: 15.00, outputPer1M: 75.00 },
-  'claude-sonnet-4-20250514': { inputPer1M: 3.00,  outputPer1M: 15.00 },
-  'claude-haiku-4-20250414':  { inputPer1M: 0.80,  outputPer1M: 4.00 },
+  'claude-opus-4-20250514': { inputPer1M: 15.0, outputPer1M: 75.0 },
+  'claude-sonnet-4-20250514': { inputPer1M: 3.0, outputPer1M: 15.0 },
+  'claude-haiku-4-20250414': { inputPer1M: 0.8, outputPer1M: 4.0 }
 }
 
 export interface CostBreakdown {
   totalCostCents: number
-  byModel: Record<string, { inputTokens: number, outputTokens: number, costCents: number }>
-  byAgent: Record<string, { inputTokens: number, outputTokens: number, costCents: number }>
-  savingsVsAllOpus: number  // estimated savings from model routing
+  byModel: Record<string, { inputTokens: number; outputTokens: number; costCents: number }>
+  byAgent: Record<string, { inputTokens: number; outputTokens: number; costCents: number }>
+  savingsVsAllOpus: number // estimated savings from model routing
 }
 
 export class CostCalculator {
   // Calculate cost for a single session
-  calculateSessionCost(tokens: { input: number, output: number }, model: string): number
+  calculateSessionCost(tokens: { input: number; output: number }, model: string): number
 
   // Aggregate costs for a conversation
   getConversationCost(conversationId: string): Promise<CostBreakdown>
@@ -795,6 +822,7 @@ COST_GET_SUMMARY: 'cost:get:summary',
 #### 5.3 — UI: Cost Summary Component
 
 Create a cost summary component shown in:
+
 1. **Conversation header**: Small badge showing current conversation cost
 2. **Workspace settings**: Full cost dashboard with:
    - Total spend by model (pie chart or bar)
@@ -806,12 +834,14 @@ Create a cost summary component shown in:
 #### 5.4 — Budget Alerts
 
 Optional workspace setting: `maxBudgetCents`. When cost exceeds threshold:
+
 - 80% — yellow warning in UI
 - 100% — block new specialist executions, show alert
 
 Reference: DevTeam task-loop.md checks `if < 20% budget remaining, skip escalation`.
 
 ### Acceptance Criteria
+
 - [ ] Every agent session records model used and token counts
 - [ ] Cost is calculated using current Anthropic pricing per model
 - [ ] Conversation-level cost breakdown is available in the UI
@@ -820,30 +850,34 @@ Reference: DevTeam task-loop.md checks `if < 20% budget remaining, skip escalati
 - [ ] Optional budget alerts at 80% and 100% thresholds
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
-| CREATE | `src/main/services/cost-calculator.service.ts` |
-| CREATE | `src/main/ipc/cost.ipc.ts` |
-| CREATE | `src/renderer/src/components/settings/CostDashboard.tsx` |
-| CREATE | `src/renderer/src/store/cost.store.ts` |
-| MODIFY | `src/shared/constants.ts` — add cost IPC channels |
-| MODIFY | `src/shared/types.ts` — add CostBreakdown, budget types |
+
+| Action | File                                                                             |
+| ------ | -------------------------------------------------------------------------------- |
+| CREATE | `src/main/services/cost-calculator.service.ts`                                   |
+| CREATE | `src/main/ipc/cost.ipc.ts`                                                       |
+| CREATE | `src/renderer/src/components/settings/CostDashboard.tsx`                         |
+| CREATE | `src/renderer/src/store/cost.store.ts`                                           |
+| MODIFY | `src/shared/constants.ts` — add cost IPC channels                                |
+| MODIFY | `src/shared/types.ts` — add CostBreakdown, budget types                          |
 | MODIFY | `src/main/db/repositories/agent-session.repository.ts` — add aggregation queries |
-| MODIFY | `src/renderer/src/components/agents/TaskProgress.tsx` — show per-task cost |
+| MODIFY | `src/renderer/src/components/agents/TaskProgress.tsx` — show per-task cost       |
 
 ---
 
 ## Phase 6: Human Checkpoint UI
 
 ### Goal
+
 Add explicit approval gates in the UI before critical actions: merging worktrees, executing multi-task plans, deploying. The user sees a summary of what will happen and must approve.
 
 ### Reference Code
+
 - **wshobson/agents checkpoints**: `~/Downloads/external repos/agents/plugins/full-stack-orchestration/commands/full-stack-feature.md` — "PHASE CHECKPOINT 1 — User Approval Required. Do NOT proceed until user selects option 1."
 - **Multi-Agent Squad human gates**: `~/Downloads/external repos/multi-agent-squad/.claude/hooks/enterprise-workflow.toml` — `⚠️ CRITICAL DECISION:` pattern with What/Why/Risk
 - **wshobson/agents conductor**: `~/Downloads/external repos/agents/plugins/conductor/commands/implement.md` — Phase completion requires explicit user approval
 
 ### Current State in AgentStudio
+
 - `src/main/services/specialist-pool.service.ts` executes all tasks automatically once a plan is approved. No mid-execution checkpoints.
 - `src/main/services/generalist.service.ts` handles handoff detection and automatically routes to orchestrator. User approves the initial plan but has no control during execution.
 - Worktree merging in `specialist-pool.service.ts` happens automatically on completion.
@@ -860,11 +894,11 @@ export interface Checkpoint {
   title: string
   summary: string
   details: {
-    what: string          // What will happen
-    why: string           // Why this checkpoint exists
-    risk: string          // What could go wrong
-    changedFiles?: string[]  // Files that were modified
-    testResults?: string     // Summary of test results
+    what: string // What will happen
+    why: string // Why this checkpoint exists
+    risk: string // What could go wrong
+    changedFiles?: string[] // Files that were modified
+    testResults?: string // Summary of test results
   }
   status: 'pending' | 'approved' | 'rejected'
   createdAt: string
@@ -878,7 +912,9 @@ Create: `src/main/services/checkpoint.service.ts`
 ```typescript
 export class CheckpointService extends EventEmitter {
   // Create a checkpoint and pause execution
-  async requestApproval(checkpoint: Omit<Checkpoint, 'id' | 'status' | 'createdAt'>): Promise<boolean>
+  async requestApproval(
+    checkpoint: Omit<Checkpoint, 'id' | 'status' | 'createdAt'>
+  ): Promise<boolean>
 
   // Called from UI when user approves/rejects
   async resolve(checkpointId: string, approved: boolean): Promise<void>
@@ -886,6 +922,7 @@ export class CheckpointService extends EventEmitter {
 ```
 
 When `requestApproval` is called, it:
+
 1. Creates the checkpoint record
 2. Emits an IPC event to the renderer
 3. Returns a Promise that resolves when the user approves/rejects
@@ -894,9 +931,10 @@ When `requestApproval` is called, it:
 #### 6.3 — Integration Points
 
 **After all tasks in a phase complete** (specialist-pool.service.ts):
+
 ```typescript
 // Reference: wshobson full-stack-feature.md phase checkpoints
-if (currentPhase.tasks.every(t => t.status === 'complete')) {
+if (currentPhase.tasks.every((t) => t.status === 'complete')) {
   const approved = await checkpointService.requestApproval({
     type: 'phase_gate',
     title: `Phase ${currentPhase.index} Complete`,
@@ -905,7 +943,7 @@ if (currentPhase.tasks.every(t => t.status === 'complete')) {
       what: `Proceed to Phase ${currentPhase.index + 1}: ${nextPhase.name}`,
       why: 'Ensures work is reviewed before building on top of it',
       risk: 'Proceeding without review may compound errors across phases',
-      changedFiles: currentPhase.tasks.flatMap(t => t.modifiedFiles),
+      changedFiles: currentPhase.tasks.flatMap((t) => t.modifiedFiles),
       testResults: currentPhase.gateReport.summary
     }
   })
@@ -916,6 +954,7 @@ if (currentPhase.tasks.every(t => t.status === 'complete')) {
 ```
 
 **Before merging worktrees**:
+
 ```typescript
 const approved = await checkpointService.requestApproval({
   type: 'merge_approval',
@@ -933,6 +972,7 @@ const approved = await checkpointService.requestApproval({
 #### 6.4 — UI: Checkpoint Modal
 
 Create a modal component that:
+
 - Shows checkpoint title and summary
 - Displays changed files (collapsible list)
 - Shows test results if available
@@ -941,6 +981,7 @@ Create a modal component that:
 - Blocks further execution until resolved
 
 ### Acceptance Criteria
+
 - [ ] Phase transitions require user approval
 - [ ] Worktree merges require user approval
 - [ ] Checkpoint modal shows what/why/risk details
@@ -950,29 +991,33 @@ Create a modal component that:
 - [ ] Checkpoint history is persisted in the database
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
-| CREATE | `src/main/services/checkpoint.service.ts` |
-| CREATE | `src/renderer/src/components/chat/CheckpointModal.tsx` |
-| CREATE | `src/renderer/src/store/checkpoint.store.ts` |
-| MODIFY | `src/shared/constants.ts` — add checkpoint IPC channels |
-| MODIFY | `src/shared/types.ts` — add Checkpoint interface |
+
+| Action | File                                                                |
+| ------ | ------------------------------------------------------------------- |
+| CREATE | `src/main/services/checkpoint.service.ts`                           |
+| CREATE | `src/renderer/src/components/chat/CheckpointModal.tsx`              |
+| CREATE | `src/renderer/src/store/checkpoint.store.ts`                        |
+| MODIFY | `src/shared/constants.ts` — add checkpoint IPC channels             |
+| MODIFY | `src/shared/types.ts` — add Checkpoint interface                    |
 | MODIFY | `src/main/services/specialist-pool.service.ts` — insert checkpoints |
-| MODIFY | `src/main/ipc/chat.ipc.ts` — register checkpoint handlers |
+| MODIFY | `src/main/ipc/chat.ipc.ts` — register checkpoint handlers           |
 
 ---
 
 ## Phase 7: Progressive Skill Loading
 
 ### Goal
+
 Stop dumping all specialist knowledge into every prompt. Load skills in tiers: metadata always available, instructions on activation, code examples on demand. Reduces token usage and improves focus.
 
 ### Reference Code
+
 - **wshobson/agents skill architecture**: `~/Downloads/external repos/agents/docs/agent-skills.md` — 146 skills with progressive disclosure tiers
 - **wshobson/agents skill activation**: Skills activate via description matching, not explicit commands
 - **AgentStudio current skill system**: `~/Downloads/AgentStudio/src/main/services/skill.service.ts` — imports full .md files, activates via Opus call
 
 ### Current State in AgentStudio
+
 - `src/main/services/skill.service.ts` imports full markdown files (up to 500KB) and stores them in the `skills` table.
 - `src/main/services/orchestrator.service.ts` has `matchSkill()` which uses an LLM call to semantically match a task to a skill, then injects the **entire skill content** into the specialist's prompt.
 - Every matched skill = full content in context window, regardless of relevance level.
@@ -999,8 +1044,8 @@ export interface SkillTier {
     description: string
     keywords: string[]
   }
-  tier2: string | null     // First section of the skill (up to ## heading)
-  tier3: string            // Full content
+  tier2: string | null // First section of the skill (up to ## heading)
+  tier3: string // Full content
 }
 ```
 
@@ -1034,6 +1079,7 @@ ALTER TABLE skills ADD COLUMN tier2_instructions TEXT; -- First section of conte
 ```
 
 ### Acceptance Criteria
+
 - [ ] Skills are parsed into 3 tiers on import
 - [ ] Skill matching uses Tier 1 keywords first (no LLM call for obvious matches)
 - [ ] Specialist prompts receive Tier 2 by default, Tier 3 only when needed
@@ -1041,26 +1087,30 @@ ALTER TABLE skills ADD COLUMN tier2_instructions TEXT; -- First section of conte
 - [ ] Existing skills are migrated to tiered structure on upgrade
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
+
+| Action | File                                                                   |
+| ------ | ---------------------------------------------------------------------- |
 | MODIFY | `src/main/services/skill.service.ts` — add tier parsing, smart loading |
-| MODIFY | `src/main/services/orchestrator.service.ts` — tiered matching |
-| MODIFY | `src/main/db/schema.sql` — add tier columns |
-| MODIFY | `src/main/db/repositories/skill.repository.ts` — persist tiers |
-| MODIFY | `src/shared/types.ts` — add SkillTier interface |
+| MODIFY | `src/main/services/orchestrator.service.ts` — tiered matching          |
+| MODIFY | `src/main/db/schema.sql` — add tier columns                            |
+| MODIFY | `src/main/db/repositories/skill.repository.ts` — persist tiers         |
+| MODIFY | `src/shared/types.ts` — add SkillTier interface                        |
 
 ---
 
 ## Phase 8: Scope Enforcement Layer
 
 ### Goal
+
 Prevent specialists from modifying files outside their assigned task scope. Add file-pattern restrictions on top of the existing worktree isolation.
 
 ### Reference Code
+
 - **DevTeam scope validator**: `~/Downloads/external repos/devteam/agents/orchestration/scope-validator.md` — 6-layer enforcement with VETO power, forbidden files/directories, allowed patterns, max files changed
 - **DevTeam scope check hook**: `~/Downloads/external repos/devteam/hooks/scope-check.sh` — Pre-commit scope validation
 
 ### Current State in AgentStudio
+
 - `src/main/services/specialist-pool.service.ts` creates worktrees for isolation (good), but no file-pattern restrictions within the worktree.
 - `src/main/db/schema.sql` has `conversation_file_changes` table tracking what was modified, but only observationally (after the fact).
 
@@ -1073,11 +1123,11 @@ Extend `DecomposedTask` with scope constraints:
 ```typescript
 // Reference: DevTeam scope-validator.md
 export interface TaskScope {
-  allowedFiles?: string[]        // Exact paths: ["src/auth/login.ts"]
-  allowedPatterns?: string[]     // Globs: ["src/auth/**/*.ts", "tests/auth/**/*.ts"]
+  allowedFiles?: string[] // Exact paths: ["src/auth/login.ts"]
+  allowedPatterns?: string[] // Globs: ["src/auth/**/*.ts", "tests/auth/**/*.ts"]
   forbiddenDirectories?: string[] // ["src/billing/", "src/admin/"]
-  forbiddenFiles?: string[]      // ["src/config/secrets.ts"]
-  maxFilesChanged?: number       // e.g., 10
+  forbiddenFiles?: string[] // ["src/config/secrets.ts"]
+  maxFilesChanged?: number // e.g., 10
 }
 ```
 
@@ -1103,7 +1153,10 @@ export class ScopeValidator {
   async getChangedFiles(worktreePath: string): Promise<string[]>
 
   // Post-execution validation: check what the specialist actually modified
-  async validatePostExecution(worktreePath: string, scope: TaskScope): Promise<ScopeValidationResult>
+  async validatePostExecution(
+    worktreePath: string,
+    scope: TaskScope
+  ): Promise<ScopeValidationResult>
 }
 
 export interface ScopeValidationResult {
@@ -1137,6 +1190,7 @@ The orchestrator should auto-generate reasonable scope constraints during decomp
 ```
 
 ### Acceptance Criteria
+
 - [ ] Each decomposed task has a scope definition
 - [ ] Specialist prompts include scope instructions
 - [ ] Post-execution validation checks changed files against scope
@@ -1145,13 +1199,14 @@ The orchestrator should auto-generate reasonable scope constraints during decomp
 - [ ] Scope violations are logged for debugging
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
-| CREATE | `src/main/services/scope-validator.service.ts` |
-| MODIFY | `src/shared/types.ts` — add TaskScope, ScopeValidationResult |
-| MODIFY | `src/main/services/orchestrator.service.ts` — generate scopes in decompose |
-| MODIFY | `src/main/services/specialist-pool.service.ts` — validate post-execution |
-| MODIFY | `src/main/services/task-loop.service.ts` — scope violation = gate failure |
+
+| Action | File                                                                                |
+| ------ | ----------------------------------------------------------------------------------- |
+| CREATE | `src/main/services/scope-validator.service.ts`                                      |
+| MODIFY | `src/shared/types.ts` — add TaskScope, ScopeValidationResult                        |
+| MODIFY | `src/main/services/orchestrator.service.ts` — generate scopes in decompose          |
+| MODIFY | `src/main/services/specialist-pool.service.ts` — validate post-execution            |
+| MODIFY | `src/main/services/task-loop.service.ts` — scope violation = gate failure           |
 | MODIFY | `src/main/services/system-prompts.ts` — add scope instructions to specialist prompt |
 
 ---
@@ -1159,14 +1214,17 @@ The orchestrator should auto-generate reasonable scope constraints during decomp
 ## Phase 9: Declarative Hooks System
 
 ### Goal
+
 Let users define automation hooks in a config file (YAML/TOML) instead of hardcoding behavior. Hooks trigger on events like "specialist completed", "tests failed", "file written" and run shell commands or inject prompts.
 
 ### Reference Code
+
 - **Multi-Agent Squad TOML hooks**: `~/Downloads/external repos/multi-agent-squad/.claude/hooks/enterprise-workflow.toml` — Full declarative hook system with PreToolUse, PostToolUse, UserPromptSubmit events, blocking/non-blocking modes
 - **Multi-Agent Squad dynamic generation**: `~/Downloads/external repos/multi-agent-squad/scripts/generate-hooks.py` — Generate hooks based on project type
 - **DevTeam hooks.json**: `~/Downloads/external repos/devteam/hooks/hooks.json` — JSON-based hook configuration
 
 ### Current State in AgentStudio
+
 - No user-configurable hook system. All behavior is hardcoded in services.
 - The Electron lifecycle (app ready, before quit) handles app-level events.
 - No way for users to run custom commands on agent events.
@@ -1182,27 +1240,27 @@ Users create `.agentstudio/hooks.yaml` in their workspace:
 hooks:
   # Run after any specialist completes
   - event: specialist_complete
-    name: "Auto-format code"
-    command: "npx prettier --write ."
-    blocking: false           # Don't block execution
+    name: 'Auto-format code'
+    command: 'npx prettier --write .'
+    blocking: false # Don't block execution
     condition:
-      mode: build             # Only in build mode
+      mode: build # Only in build mode
 
   # Run after quality gates
   - event: gate_failed
-    name: "Notify on test failure"
+    name: 'Notify on test failure'
     command: "echo 'Tests failed' | notify-send"
     blocking: false
 
   # Run before worktree merge
   - event: pre_merge
-    name: "Final lint check"
-    command: "npm run lint"
-    blocking: true            # Block merge if lint fails
+    name: 'Final lint check'
+    command: 'npm run lint'
+    blocking: true # Block merge if lint fails
 
   # Run on task plan creation
   - event: plan_created
-    name: "Log plan to file"
+    name: 'Log plan to file'
     command: "echo '${PLAN_SUMMARY}' >> .agentstudio/plan-history.log"
     blocking: false
 ```
@@ -1230,14 +1288,14 @@ export type HookEvent =
 export interface HookDefinition {
   event: HookEvent
   name: string
-  command: string            // Shell command to run
-  blocking: boolean          // If true, block the event until command completes
+  command: string // Shell command to run
+  blocking: boolean // If true, block the event until command completes
   condition?: {
     mode?: 'plan' | 'build'
     model?: string
     agent?: string
   }
-  timeout?: number           // ms, default 30000
+  timeout?: number // ms, default 30000
 }
 
 export class HookEngine {
@@ -1272,11 +1330,13 @@ await hookEngine.executeHooks('checkpoint_approved', { checkpointId, type })
 #### 9.4 — UI: Hook Management
 
 In workspace settings, show:
+
 - Active hooks with their events and commands
 - Hook execution history (last run, status, output)
 - "Generate defaults" button that creates hooks based on detected project type
 
 ### Acceptance Criteria
+
 - [ ] Users can define hooks in `.agentstudio/hooks.yaml`
 - [ ] Hooks fire on the correct events
 - [ ] Blocking hooks pause execution until the command completes
@@ -1286,29 +1346,33 @@ In workspace settings, show:
 - [ ] Variables are interpolated into hook commands
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
-| CREATE | `src/main/services/hook-engine.service.ts` |
-| CREATE | `src/renderer/src/components/settings/HookManager.tsx` |
+
+| Action | File                                                                     |
+| ------ | ------------------------------------------------------------------------ |
+| CREATE | `src/main/services/hook-engine.service.ts`                               |
+| CREATE | `src/renderer/src/components/settings/HookManager.tsx`                   |
 | MODIFY | `src/main/services/specialist-pool.service.ts` — add hook trigger points |
-| MODIFY | `src/main/services/task-loop.service.ts` — add hook trigger points |
-| MODIFY | `src/main/services/checkpoint.service.ts` — add hook trigger points |
-| MODIFY | `src/shared/types.ts` — add HookDefinition, HookEvent, HookResult |
-| MODIFY | `src/shared/constants.ts` — add hook IPC channels |
+| MODIFY | `src/main/services/task-loop.service.ts` — add hook trigger points       |
+| MODIFY | `src/main/services/checkpoint.service.ts` — add hook trigger points      |
+| MODIFY | `src/shared/types.ts` — add HookDefinition, HookEvent, HookResult        |
+| MODIFY | `src/shared/constants.ts` — add hook IPC channels                        |
 
 ---
 
 ## Phase 10: Deep Agent Personas & Bug Council
 
 ### Goal
+
 Enrich specialist definitions with deep expertise (war stories, red flags, philosophy). Add a Bug Council pattern where 5 diagnostic agents collaborate when a specialist fails at the highest model tier.
 
 ### Reference Code
+
 - **Multi-Agent Squad personas**: `~/Downloads/external repos/multi-agent-squad/.claude/agents/` — 100+ line personas with war stories, lessons learned, red flags
 - **DevTeam Bug Council**: `~/Downloads/external repos/devteam/agents/diagnosis/` — 5 diagnostic agents (root-cause-analyst, code-archaeologist, pattern-matcher, systems-thinker, adversarial-tester)
 - **DevTeam Bug Council orchestrator**: `~/Downloads/external repos/devteam/agents/orchestration/bug-council-orchestrator.md`
 
 ### Current State in AgentStudio
+
 - `src/main/db/schema.sql` has `specialists` table with `prompt TEXT` field for agent definitions. These are typically short.
 - `src/main/services/system-prompts.ts` has `SPECIALIST_TASK_SYSTEM_PROMPT` which is generic (3 lines).
 - No diagnostic/council pattern exists.
@@ -1390,7 +1454,7 @@ export class BugCouncilService extends EventEmitter {
   // Activate Bug Council when specialist has failed at opus level
   async convene(params: {
     taskDescription: string
-    failureHistory: string[]      // All error outputs from previous attempts
+    failureHistory: string[] // All error outputs from previous attempts
     changedFiles: string[]
     workspacePath: string
   }): Promise<BugCouncilResult>
@@ -1410,7 +1474,7 @@ if (state.currentModel === 'opus' && state.consecutiveFailures >= config.opusMax
   this.emit('bugCouncilActivated', { taskId, failures: state.failureHistory })
   const councilResult = await bugCouncilService.convene({
     taskDescription: task.description,
-    failureHistory: state.failureHistory.map(f => f.errorSummary),
+    failureHistory: state.failureHistory.map((f) => f.errorSummary),
     changedFiles: getChangedFiles(worktreePath),
     workspacePath
   })
@@ -1423,12 +1487,14 @@ if (state.currentModel === 'opus' && state.consecutiveFailures >= config.opusMax
 #### 10.4 — UI: Bug Council Panel
 
 When Bug Council is active, show a panel with:
+
 - Each analyst's perspective (collapsible cards)
 - Synthesized solution (highlighted)
 - Recommended approach
 - "Approve & retry" / "Escalate to human" buttons
 
 ### Acceptance Criteria
+
 - [ ] Default specialists have enriched personas (war stories, red flags, philosophy)
 - [ ] Bug Council activates after 3 opus failures in the task loop
 - [ ] 5 diagnostic agents run in parallel with different perspectives
@@ -1438,15 +1504,16 @@ When Bug Council is active, show a panel with:
 - [ ] Bug Council activation is logged in the database
 
 ### Files to Create/Modify
-| Action | File |
-|--------|------|
-| CREATE | `src/main/services/bug-council.service.ts` |
-| CREATE | `src/renderer/src/components/agents/BugCouncilPanel.tsx` |
-| MODIFY | `src/main/services/task-loop.service.ts` — trigger Bug Council |
+
+| Action | File                                                                                  |
+| ------ | ------------------------------------------------------------------------------------- |
+| CREATE | `src/main/services/bug-council.service.ts`                                            |
+| CREATE | `src/renderer/src/components/agents/BugCouncilPanel.tsx`                              |
+| MODIFY | `src/main/services/task-loop.service.ts` — trigger Bug Council                        |
 | MODIFY | `src/main/services/system-prompts.ts` — add deep persona template + 5 council prompts |
-| MODIFY | `src/shared/types.ts` — add BugCouncilResult |
-| MODIFY | `src/shared/constants.ts` — add Bug Council IPC channels |
-| MODIFY | `src/main/db/schema.sql` — add `bug_council_sessions` table |
+| MODIFY | `src/shared/types.ts` — add BugCouncilResult                                          |
+| MODIFY | `src/shared/constants.ts` — add Bug Council IPC channels                              |
+| MODIFY | `src/main/db/schema.sql` — add `bug_council_sessions` table                           |
 
 ---
 
@@ -1472,38 +1539,38 @@ Phase 10: Bug Council ← depends on Phase 2 (activated by task loop)
 
 ### Suggested Sprint Plan
 
-| Sprint | Phases | Focus |
-|--------|--------|-------|
-| Sprint 1 | **Phase 1 + 5** | Model routing + cost visibility (quick wins, immediate savings) |
-| Sprint 2 | **Phase 2 + 3** | Task loop + anti-abandonment (reliability core) |
-| Sprint 3 | **Phase 4 + 6** | Artifacts + checkpoints (auditability + control) |
-| Sprint 4 | **Phase 7 + 8** | Skill optimization + scope enforcement (efficiency + safety) |
-| Sprint 5 | **Phase 9 + 10** | Hooks + Bug Council (extensibility + advanced diagnostics) |
+| Sprint   | Phases           | Focus                                                           |
+| -------- | ---------------- | --------------------------------------------------------------- |
+| Sprint 1 | **Phase 1 + 5**  | Model routing + cost visibility (quick wins, immediate savings) |
+| Sprint 2 | **Phase 2 + 3**  | Task loop + anti-abandonment (reliability core)                 |
+| Sprint 3 | **Phase 4 + 6**  | Artifacts + checkpoints (auditability + control)                |
+| Sprint 4 | **Phase 7 + 8**  | Skill optimization + scope enforcement (efficiency + safety)    |
+| Sprint 5 | **Phase 9 + 10** | Hooks + Bug Council (extensibility + advanced diagnostics)      |
 
 ---
 
 ## Quick Reference: Where to Find Patterns
 
-| Pattern | Project | File Path |
-|---------|---------|-----------|
-| Complexity scoring (0-14) | DevTeam | `agents/orchestration/task-loop.md` |
-| Task loop iterations | DevTeam | `agents/orchestration/task-loop.md` |
-| Quality gate commands per language | DevTeam | `agents/orchestration/quality-gate-enforcer.md` |
-| Model escalation config | DevTeam | `.devteam/task-loop-config.yaml` |
-| Scope validation with VETO | DevTeam | `agents/orchestration/scope-validator.md` |
-| Anti-abandonment regex patterns | DevTeam | `hooks/persistence-hook.sh` |
-| SQLite state schema | DevTeam | `scripts/schema.sql` |
-| Bug Council 5 analysts | DevTeam | `agents/diagnosis/*.md` |
-| Cost tracking tables | DevTeam | `scripts/schema.sql` (sessions table) |
-| File-based output chain | wshobson/agents | `plugins/full-stack-orchestration/commands/full-stack-feature.md` |
-| State.json resumption | wshobson/agents | Same file (state management section) |
-| Progressive skill tiers | wshobson/agents | `docs/agent-skills.md` |
-| Conductor TDD workflow | wshobson/agents | `plugins/conductor/commands/implement.md` |
-| Model tier assignments | wshobson/agents | `docs/agents.md` |
-| Phase checkpoints | wshobson/agents | `plugins/full-stack-orchestration/commands/full-stack-feature.md` |
-| TOML declarative hooks | Multi-Agent Squad | `.claude/hooks/enterprise-workflow.toml` |
-| Dynamic hook generation | Multi-Agent Squad | `scripts/generate-hooks.py` |
-| Deep agent personas | Multi-Agent Squad | `.claude/agents/*/*.md` |
-| Git worktree orchestration | Multi-Agent Squad | `scripts/worktree-manager.sh` |
-| Human checkpoint pattern | Multi-Agent Squad | `.claude/hooks/enterprise-workflow.toml` |
-| Enterprise Agile workflow | Multi-Agent Squad | `docs/AGILE_WORKFLOW.md` |
+| Pattern                            | Project           | File Path                                                         |
+| ---------------------------------- | ----------------- | ----------------------------------------------------------------- |
+| Complexity scoring (0-14)          | DevTeam           | `agents/orchestration/task-loop.md`                               |
+| Task loop iterations               | DevTeam           | `agents/orchestration/task-loop.md`                               |
+| Quality gate commands per language | DevTeam           | `agents/orchestration/quality-gate-enforcer.md`                   |
+| Model escalation config            | DevTeam           | `.devteam/task-loop-config.yaml`                                  |
+| Scope validation with VETO         | DevTeam           | `agents/orchestration/scope-validator.md`                         |
+| Anti-abandonment regex patterns    | DevTeam           | `hooks/persistence-hook.sh`                                       |
+| SQLite state schema                | DevTeam           | `scripts/schema.sql`                                              |
+| Bug Council 5 analysts             | DevTeam           | `agents/diagnosis/*.md`                                           |
+| Cost tracking tables               | DevTeam           | `scripts/schema.sql` (sessions table)                             |
+| File-based output chain            | wshobson/agents   | `plugins/full-stack-orchestration/commands/full-stack-feature.md` |
+| State.json resumption              | wshobson/agents   | Same file (state management section)                              |
+| Progressive skill tiers            | wshobson/agents   | `docs/agent-skills.md`                                            |
+| Conductor TDD workflow             | wshobson/agents   | `plugins/conductor/commands/implement.md`                         |
+| Model tier assignments             | wshobson/agents   | `docs/agents.md`                                                  |
+| Phase checkpoints                  | wshobson/agents   | `plugins/full-stack-orchestration/commands/full-stack-feature.md` |
+| TOML declarative hooks             | Multi-Agent Squad | `.claude/hooks/enterprise-workflow.toml`                          |
+| Dynamic hook generation            | Multi-Agent Squad | `scripts/generate-hooks.py`                                       |
+| Deep agent personas                | Multi-Agent Squad | `.claude/agents/*/*.md`                                           |
+| Git worktree orchestration         | Multi-Agent Squad | `scripts/worktree-manager.sh`                                     |
+| Human checkpoint pattern           | Multi-Agent Squad | `.claude/hooks/enterprise-workflow.toml`                          |
+| Enterprise Agile workflow          | Multi-Agent Squad | `docs/AGILE_WORKFLOW.md`                                          |

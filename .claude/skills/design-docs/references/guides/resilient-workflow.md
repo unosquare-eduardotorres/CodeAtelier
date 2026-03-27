@@ -82,16 +82,16 @@ Analyze the Mermaid code to determine the diagram type and load appropriate refe
 
 **Detection Patterns:**
 
-| First Line Pattern | Type | Reference Guide |
-|-------------------|------|-----------------|
-| `flowchart TD/LR/...` or `graph TB/...` | Flowchart | `references/guides/diagrams/activity-diagrams.md` |
-| `sequenceDiagram` | Sequence | `references/guides/diagrams/sequence-diagrams.md` |
-| `classDiagram` | Class | (use general mermaid-diagram-guide.md) |
-| `stateDiagram-v2` | State | (use general mermaid-diagram-guide.md) |
-| `erDiagram` | ER | (use general mermaid-diagram-guide.md) |
-| `gantt` | Gantt | (use general mermaid-diagram-guide.md) |
-| `pie` | Pie | (use general mermaid-diagram-guide.md) |
-| `C4Context/Container/...` | C4 | `references/guides/diagrams/architecture-diagrams.md` |
+| First Line Pattern                      | Type      | Reference Guide                                       |
+| --------------------------------------- | --------- | ----------------------------------------------------- |
+| `flowchart TD/LR/...` or `graph TB/...` | Flowchart | `references/guides/diagrams/activity-diagrams.md`     |
+| `sequenceDiagram`                       | Sequence  | `references/guides/diagrams/sequence-diagrams.md`     |
+| `classDiagram`                          | Class     | (use general mermaid-diagram-guide.md)                |
+| `stateDiagram-v2`                       | State     | (use general mermaid-diagram-guide.md)                |
+| `erDiagram`                             | ER        | (use general mermaid-diagram-guide.md)                |
+| `gantt`                                 | Gantt     | (use general mermaid-diagram-guide.md)                |
+| `pie`                                   | Pie       | (use general mermaid-diagram-guide.md)                |
+| `C4Context/Container/...`               | C4        | `references/guides/diagrams/architecture-diagrams.md` |
 
 **Action:** Load the appropriate reference guide to ensure correct syntax and patterns are used.
 
@@ -100,6 +100,7 @@ Analyze the Mermaid code to determine the diagram type and load appropriate refe
 Write the Mermaid diagram code following the patterns in the loaded reference guide.
 
 **Best Practices:**
+
 - Use high-contrast styling with `classDef` and `color:` property
 - Use Unicode symbols for semantic meaning
 - Follow the patterns and templates from the reference guides
@@ -112,6 +113,7 @@ Write the Mermaid diagram code following the patterns in the loaded reference gu
 **Output Directory:** `./diagrams/` (relative to markdown file location)
 
 **Generated Files:**
+
 ```
 ./diagrams/<base_filename>.mmd    # Mermaid source code
 ./diagrams/<base_filename>.png    # Rendered image (or .svg)
@@ -126,6 +128,7 @@ mmdc -i diagram.mmd -o diagram.png -b transparent
 ```
 
 **Success Criteria:**
+
 - Exit code is 0
 - Output file exists
 - Output file size > 0 bytes
@@ -145,6 +148,7 @@ When validation fails:
 4. **Retry validation**
 
 If troubleshooting guide doesn't have a match:
+
 1. Use **search tools** (see [Search Tool Priority](#search-tool-priority))
 2. Apply the found solution
 3. Retry validation
@@ -158,6 +162,7 @@ If troubleshooting guide doesn't have a match:
 ```
 
 Optionally include a link to the source:
+
 ```markdown
 ![Diagram Description](./diagrams/filename.png)
 
@@ -176,13 +181,13 @@ Optionally include a link to the source:
 
 ### Components
 
-| Component | Description | Example |
-|-----------|-------------|---------|
-| `markdown_file` | Source file name (no extension, sanitized) | `api_design` |
-| `num` | Zero-padded diagram number (01-99) | `01`, `02`, `03` |
-| `type` | Diagram type (lowercase) | `flowchart`, `sequence`, `class` |
-| `title` | Sanitized title (max 20 chars) | `auth_flow`, `user_reg` |
-| `ext` | File extension | `.mmd`, `.png`, `.svg` |
+| Component       | Description                                | Example                          |
+| --------------- | ------------------------------------------ | -------------------------------- |
+| `markdown_file` | Source file name (no extension, sanitized) | `api_design`                     |
+| `num`           | Zero-padded diagram number (01-99)         | `01`, `02`, `03`                 |
+| `type`          | Diagram type (lowercase)                   | `flowchart`, `sequence`, `class` |
+| `title`         | Sanitized title (max 20 chars)             | `auth_flow`, `user_reg`          |
+| `ext`           | File extension                             | `.mmd`, `.png`, `.svg`           |
 
 ### Sanitization Rules
 
@@ -195,12 +200,14 @@ Optionally include a link to the source:
 ### Examples
 
 **Input:**
+
 - Markdown file: `API Design Doc.md`
 - Diagram number: 1
 - Type: sequence
 - Title: "User Authentication Flow"
 
 **Output files:**
+
 ```
 ./diagrams/api_design_doc_01_sequence_user_authenticatio.mmd
 ./diagrams/api_design_doc_01_sequence_user_authenticatio.png
@@ -234,17 +241,17 @@ python scripts/resilient_diagram.py \
 
 ### CLI Options
 
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--code` | `-c` | Mermaid code string | - |
-| `--mmd-file` | `-i` | Path to .mmd file | - |
-| `--stdin` | - | Read from stdin | - |
-| `--output-dir` | `-o` | Output directory | `./diagrams` |
-| `--markdown-file` | `-m` | Source markdown name | `diagram` |
-| `--diagram-num` | `-n` | Diagram number | `1` |
-| `--title` | `-t` | Diagram title | `diagram` |
-| `--format` | `-f` | Image format (png/svg/pdf) | `png` |
-| `--json` | `-j` | Output as JSON | `false` |
+| Option            | Short | Description                | Default      |
+| ----------------- | ----- | -------------------------- | ------------ |
+| `--code`          | `-c`  | Mermaid code string        | -            |
+| `--mmd-file`      | `-i`  | Path to .mmd file          | -            |
+| `--stdin`         | -     | Read from stdin            | -            |
+| `--output-dir`    | `-o`  | Output directory           | `./diagrams` |
+| `--markdown-file` | `-m`  | Source markdown name       | `diagram`    |
+| `--diagram-num`   | `-n`  | Diagram number             | `1`          |
+| `--title`         | `-t`  | Diagram title              | `diagram`    |
+| `--format`        | `-f`  | Image format (png/svg/pdf) | `png`        |
+| `--json`          | `-j`  | Output as JSON             | `false`      |
 
 ### JSON Output Format
 
@@ -417,12 +424,14 @@ WebSearch: "mermaid diagram syntax error [specific error text]"
 ### Search Query Format
 
 Construct search queries with:
+
 1. Tool/technology: "mermaid"
 2. Diagram type: "flowchart", "sequence", etc.
 3. Error context: "syntax error", "parse error"
 4. Key error text: first 100 characters of error message
 
 **Example:**
+
 ```
 mermaid flowchart syntax error: Parse error on line 2 reserved word end
 ```
@@ -437,16 +446,16 @@ If the `resilient_diagram.py` script is unavailable or fails, follow these manua
 
 Look at the first non-comment line of Mermaid code:
 
-| First Line | Type |
-|------------|------|
+| First Line            | Type               |
+| --------------------- | ------------------ |
 | `flowchart` / `graph` | Flowchart/Activity |
-| `sequenceDiagram` | Sequence |
-| `classDiagram` | Class |
-| `stateDiagram-v2` | State |
-| `erDiagram` | ER |
-| `gantt` | Gantt |
-| `pie` | Pie |
-| `C4Context` | C4/Architecture |
+| `sequenceDiagram`     | Sequence           |
+| `classDiagram`        | Class              |
+| `stateDiagram-v2`     | State              |
+| `erDiagram`           | ER                 |
+| `gantt`               | Gantt              |
+| `pie`                 | Pie                |
+| `C4Context`           | C4/Architecture    |
 
 ### Step 2: Load Reference Guide
 
@@ -468,6 +477,7 @@ mkdir -p ./diagrams/
 ### Step 4: Save .mmd File
 
 Create the file with naming convention:
+
 ```bash
 # Generate filename
 FILENAME="<markdown>_<num>_<type>_<title>.mmd"
@@ -487,6 +497,7 @@ mmdc -i "./diagrams/${FILENAME}" -o "./diagrams/${FILENAME%.mmd}.png" -b transpa
 ```
 
 Check exit code:
+
 - `0` = Success, proceed to Step 7
 - Non-zero = Error, proceed to Step 6
 
@@ -502,6 +513,7 @@ Check exit code:
 5. **Retry Step 5**
 
 If no match found:
+
 1. Use search tools in priority order
 2. Apply found solution
 3. Retry Step 5
@@ -527,6 +539,7 @@ Only after validation succeeds:
 1. **Identify type:** Sequence diagram
 2. **Load guide:** `references/guides/diagrams/sequence-diagrams.md`
 3. **Generate code:**
+
    ```mermaid
    sequenceDiagram
        participant U as User
@@ -538,11 +551,13 @@ Only after validation succeeds:
        D-->>A: User data
        A-->>U: JWT token
    ```
+
 4. **Save files:**
    - `./diagrams/auth_doc_01_sequence_user_login.mmd`
    - `./diagrams/auth_doc_01_sequence_user_login.png`
 5. **Validate:** `mmdc -i ... -o ...` → Success
 6. **Add to markdown:**
+
    ```markdown
    ## Login Flow
 
@@ -552,6 +567,7 @@ Only after validation succeeds:
 ### Example 2: Handling Validation Error
 
 **Diagram Code:**
+
 ```mermaid
 flowchart TD
     start --> end
@@ -627,6 +643,7 @@ mmdc -i input.mmd -o output.png -b transparent
 
 **Version:** 1.0
 **Related Guides:**
+
 - [Troubleshooting Guide](troubleshooting.md)
 - [Activity Diagrams](diagrams/activity-diagrams.md)
 - [Sequence Diagrams](diagrams/sequence-diagrams.md)

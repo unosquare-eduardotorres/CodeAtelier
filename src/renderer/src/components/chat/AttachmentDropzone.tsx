@@ -1,19 +1,36 @@
-import { useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
-import { Paperclip, X } from 'lucide-react';
-import type React from 'react';
+import { useCallback } from 'react'
+import { useDropzone } from 'react-dropzone'
+import { Paperclip, X } from 'lucide-react'
+import type React from 'react'
 
 interface AttachmentDropzoneProps {
-  attachments: string[];
-  onAttachmentsChange: (attachments: string[]) => void;
-  children: React.ReactNode;
+  attachments: string[]
+  onAttachmentsChange: (attachments: string[]) => void
+  children: React.ReactNode
 }
 
 const ACCEPTED_EXTENSIONS = [
-  '.txt', '.md', '.json', '.ts', '.tsx', '.js', '.jsx',
-  '.py', '.sql', '.yml', '.yaml', '.csv',
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.doc', '.docx'
-];
+  '.txt',
+  '.md',
+  '.json',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.py',
+  '.sql',
+  '.yml',
+  '.yaml',
+  '.csv',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.pdf',
+  '.doc',
+  '.docx'
+]
 
 export default function AttachmentDropzone({
   attachments,
@@ -22,41 +39,41 @@ export default function AttachmentDropzone({
 }: AttachmentDropzoneProps): React.JSX.Element {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
-      const newPaths = acceptedFiles.map((f) => (f as File & { path: string }).path).filter(Boolean);
-      onAttachmentsChange([...attachments, ...newPaths]);
+      const newPaths = acceptedFiles.map((f) => (f as File & { path: string }).path).filter(Boolean)
+      onAttachmentsChange([...attachments, ...newPaths])
     },
     [attachments, onAttachmentsChange]
-  );
+  )
 
   const handlePaste = useCallback(
     async (e: React.ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
+      const items = e.clipboardData?.items
+      if (!items) return
 
       for (const item of Array.from(items)) {
         if (item.type.startsWith('image/')) {
-          e.preventDefault();
-          const blob = item.getAsFile();
-          if (!blob) continue;
+          e.preventDefault()
+          const blob = item.getAsFile()
+          if (!blob) continue
 
           // Convert to data URL and save via IPC
-          const reader = new FileReader();
+          const reader = new FileReader()
           reader.onload = async (): Promise<void> => {
             try {
-              const dataUrl = reader.result as string;
-              const filePath = await window.api.saveClipboardImage({ dataUrl });
-              onAttachmentsChange([...attachments, filePath]);
+              const dataUrl = reader.result as string
+              const filePath = await window.api.saveClipboardImage({ dataUrl })
+              onAttachmentsChange([...attachments, filePath])
             } catch (error) {
-              console.error('Failed to save clipboard image:', error);
+              console.error('Failed to save clipboard image:', error)
             }
-          };
-          reader.readAsDataURL(blob);
-          return; // Only handle first image
+          }
+          reader.readAsDataURL(blob)
+          return // Only handle first image
         }
       }
     },
     [attachments, onAttachmentsChange]
-  );
+  )
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
@@ -64,20 +81,20 @@ export default function AttachmentDropzone({
     noKeyboard: true,
     accept: ACCEPTED_EXTENSIONS.reduce(
       (acc, ext) => {
-        acc[`text/${ext.slice(1)}`] = [ext];
-        return acc;
+        acc[`text/${ext.slice(1)}`] = [ext]
+        return acc
       },
       {} as Record<string, string[]>
     )
-  });
+  })
 
   const removeAttachment = (index: number): void => {
-    onAttachmentsChange(attachments.filter((_, i) => i !== index));
-  };
+    onAttachmentsChange(attachments.filter((_, i) => i !== index))
+  }
 
   const getFileName = (path: string): string => {
-    return path.split('/').pop() || path.split('\\').pop() || path;
-  };
+    return path.split('/').pop() || path.split('\\').pop() || path
+  }
 
   return (
     <div
@@ -101,7 +118,7 @@ export default function AttachmentDropzone({
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-3 pt-3">
           {attachments.map((path, idx) => {
-            const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(path);
+            const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(path)
             return (
               <span
                 key={idx}
@@ -119,8 +136,8 @@ export default function AttachmentDropzone({
                 <span className="max-w-[120px] truncate">{getFileName(path)}</span>
                 <button
                   onClick={(e) => {
-                    e.stopPropagation();
-                    removeAttachment(idx);
+                    e.stopPropagation()
+                    removeAttachment(idx)
                   }}
                   className="ml-0.5 hover:text-red-400 transition-colors"
                   aria-label={`Remove ${getFileName(path)}`}
@@ -128,7 +145,7 @@ export default function AttachmentDropzone({
                   <X size={12} />
                 </button>
               </span>
-            );
+            )
           })}
         </div>
       )}
@@ -137,8 +154,8 @@ export default function AttachmentDropzone({
       <div className="flex items-end px-3 pb-3 pt-2">
         <button
           onClick={(e) => {
-            e.stopPropagation();
-            open();
+            e.stopPropagation()
+            open()
           }}
           className="flex-shrink-0 p-2 rounded-lg hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors mr-1"
           aria-label="Attach files"
@@ -149,5 +166,5 @@ export default function AttachmentDropzone({
         {children}
       </div>
     </div>
-  );
+  )
 }

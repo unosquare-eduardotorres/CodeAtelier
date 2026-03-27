@@ -198,7 +198,7 @@ export default function WorkspaceGeneralTab(): React.JSX.Element {
         <button
           onClick={handleAddWorkspace}
           disabled={isAdding}
-          className="flex items-center gap-2 px-4 py-2.5 w-full justify-center rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          className="flex items-center gap-2 px-4 py-2.5 w-full justify-center rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary press-scale"
         >
           <Plus size={16} />
           <span>Add Workspace</span>

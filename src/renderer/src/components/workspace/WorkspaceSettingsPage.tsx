@@ -5,7 +5,7 @@ import {
   Settings,
   Zap,
   Lightbulb,
-  Brain,
+  Database,
   Bot,
   Sparkles,
   Loader2,
@@ -18,7 +18,7 @@ import { useSettingsStore } from '@renderer/store/settings.store'
 import WorkspaceGeneralTab from './WorkspaceGeneralTab'
 import TokenUsagePage from './TokenUsagePage'
 import IdeasList from './IdeasList'
-import BrainSettingsPage from './BrainSettingsPage'
+import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import {
   AgentsList,
@@ -30,14 +30,14 @@ import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import SyncBanner from '@renderer/components/settings/SyncBanner'
 import SyncReviewModal from '@renderer/components/settings/SyncReviewModal'
 
-type SettingsTab = 'workspace' | 'agents' | 'skills' | 'ideas' | 'brain' | 'documents' | 'tokens'
+type SettingsTab = 'workspace' | 'agents' | 'skills' | 'ideas' | 'memory' | 'documents' | 'tokens'
 
 const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
   { id: 'workspace', label: 'Workspace', icon: FolderOpen },
   { id: 'agents', label: 'Agents', icon: Bot, iconColor: 'text-blue-400' },
   { id: 'skills', label: 'Skills', icon: Sparkles, iconColor: 'text-amber-400' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
-  { id: 'brain', label: 'Brain', icon: Brain, iconColor: 'text-purple-400' },
+  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
   { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-cyan-400' },
   { id: 'tokens', label: 'Tokens', icon: Zap }
 ]
@@ -292,7 +292,7 @@ export default function WorkspaceSettingsPage({
               <IdeasList onNavigateToChat={onBack} />
             </div>
           )}
-          {activeTab === 'brain' && <BrainSettingsPage />}
+          {activeTab === 'memory' && <MemorySettingsPage />}
           {activeTab === 'documents' && <DocumentsPage />}
           {activeTab === 'tokens' && <TokenUsagePage />}
         </div>

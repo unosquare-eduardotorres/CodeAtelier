@@ -102,15 +102,17 @@ RESET ROLE;
 ### Frontend usage
 
 ```typescript
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+)
 
 // Auth state
-const { data: { session } } = await supabase.auth.getSession();
+const {
+  data: { session }
+} = await supabase.auth.getSession()
 ```
 
 ### For Electron migration
@@ -124,18 +126,22 @@ The `users` table becomes a simple config store for local user preferences.
 // Listen for changes on a table
 const channel = supabase
   .channel('my-changes')
-  .on('postgres_changes', {
-    event: 'INSERT',
-    schema: 'public',
-    table: 'my_table',
-    filter: 'status=eq.pending'
-  }, (payload) => {
-    handleNewRecord(payload.new);
-  })
-  .subscribe();
+  .on(
+    'postgres_changes',
+    {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'my_table',
+      filter: 'status=eq.pending'
+    },
+    (payload) => {
+      handleNewRecord(payload.new)
+    }
+  )
+  .subscribe()
 
 // Cleanup
-channel.unsubscribe();
+channel.unsubscribe()
 ```
 
 ### For Electron migration
@@ -144,12 +150,12 @@ Replace with IPC events from main process:
 
 ```typescript
 // Main process — after a write
-win.webContents.send('db:my_table:changed', { type: 'insert', data: newRecord });
+win.webContents.send('db:my_table:changed', { type: 'insert', data: newRecord })
 
 // Renderer — via preload
 window.api.on.myTableChanged((payload) => {
-  handleNewRecord(payload.data);
-});
+  handleNewRecord(payload.data)
+})
 ```
 
 ## Database functions

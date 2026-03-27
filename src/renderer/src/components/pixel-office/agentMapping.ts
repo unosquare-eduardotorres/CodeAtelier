@@ -7,7 +7,7 @@
 
 // ── Status → Animation mapping ──
 
-export type PixelAnimationState = 'IDLE' | 'WALK' | 'TYPE' | 'READING';
+export type PixelAnimationState = 'IDLE' | 'WALK' | 'TYPE' | 'READING'
 
 /**
  * Maps AgentStatus.status to pixel character animation states.
@@ -19,7 +19,7 @@ export const STATUS_TO_ANIMATION: Record<string, PixelAnimationState> = {
   reviewing: 'READING',
   completed: 'IDLE',
   failed: 'IDLE'
-};
+}
 
 /**
  * Statuses that should show a brief speech bubble on transition.
@@ -27,15 +27,15 @@ export const STATUS_TO_ANIMATION: Record<string, PixelAnimationState> = {
 export const STATUS_BUBBLES: Record<string, { text: string; durationMs: number } | undefined> = {
   completed: { text: '✓ Done', durationMs: 3000 },
   failed: { text: '✗ Error', durationMs: 5000 }
-};
+}
 
 // ── Agent → Sprite mapping ──
 
 export interface SpriteAssignment {
   /** Index of the base character sprite (0-5) */
-  spriteIndex: number;
+  spriteIndex: number
   /** Hue shift in degrees (-180 to 180) for visual differentiation */
-  hueShift: number;
+  hueShift: number
 }
 
 /**
@@ -57,7 +57,7 @@ export const SPRITE_ASSIGNMENTS: Record<string, SpriteAssignment> = {
   'execution-planner': { spriteIndex: 5, hueShift: 120 },
   'cicd-devops': { spriteIndex: 0, hueShift: 330 },
   'cloud-infrastructure': { spriteIndex: 1, hueShift: 200 }
-};
+}
 
 /**
  * Default seat assignments — maps agent IDs to desk/seat indices in the default layout.
@@ -78,7 +78,7 @@ export const DEFAULT_SEAT_ASSIGNMENTS: Record<string, number> = {
   'execution-planner': 11,
   'cicd-devops': 12,
   'cloud-infrastructure': 13
-};
+}
 
 // ── Dynamic assignment for unknown agents ──
 
@@ -86,39 +86,39 @@ export const DEFAULT_SEAT_ASSIGNMENTS: Record<string, number> = {
  * Simple string hash for consistent sprite assignment of dynamic agents.
  */
 function hashString(str: string): number {
-  let hash = 0;
+  let hash = 0
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash |= 0; // Convert to 32bit integer
+    const char = str.charCodeAt(i)
+    hash = (hash << 5) - hash + char
+    hash |= 0 // Convert to 32bit integer
   }
-  return Math.abs(hash);
+  return Math.abs(hash)
 }
 
 /**
  * Convert a hex color string to a hue value (0-360).
  */
 function hexToHue(hex: string): number {
-  const clean = hex.replace('#', '');
-  const r = parseInt(clean.substring(0, 2), 16) / 255;
-  const g = parseInt(clean.substring(2, 4), 16) / 255;
-  const b = parseInt(clean.substring(4, 6), 16) / 255;
+  const clean = hex.replace('#', '')
+  const r = parseInt(clean.substring(0, 2), 16) / 255
+  const g = parseInt(clean.substring(2, 4), 16) / 255
+  const b = parseInt(clean.substring(4, 6), 16) / 255
 
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const delta = max - min;
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const delta = max - min
 
-  if (delta === 0) return 0;
+  if (delta === 0) return 0
 
-  let hue: number;
-  if (max === r) hue = ((g - b) / delta) % 6;
-  else if (max === g) hue = (b - r) / delta + 2;
-  else hue = (r - g) / delta + 4;
+  let hue: number
+  if (max === r) hue = ((g - b) / delta) % 6
+  else if (max === g) hue = (b - r) / delta + 2
+  else hue = (r - g) / delta + 4
 
-  hue = Math.round(hue * 60);
-  if (hue < 0) hue += 360;
+  hue = Math.round(hue * 60)
+  if (hue < 0) hue += 360
 
-  return hue;
+  return hue
 }
 
 /**
@@ -127,30 +127,30 @@ function hexToHue(hex: string): number {
  */
 export function getSpriteAssignment(agentId: string, color?: string): SpriteAssignment {
   // Check static assignments first
-  const staticAssignment = SPRITE_ASSIGNMENTS[agentId];
-  if (staticAssignment) return staticAssignment;
+  const staticAssignment = SPRITE_ASSIGNMENTS[agentId]
+  if (staticAssignment) return staticAssignment
 
   // Dynamic fallback: hash-based sprite index + color-derived hue
-  const spriteIndex = hashString(agentId) % 6;
-  const hueShift = color ? hexToHue(color) : (hashString(agentId + '_hue') % 360) - 180;
+  const spriteIndex = hashString(agentId) % 6
+  const hueShift = color ? hexToHue(color) : (hashString(agentId + '_hue') % 360) - 180
 
-  return { spriteIndex, hueShift };
+  return { spriteIndex, hueShift }
 }
 
 /**
  * Get animation state for an agent status.
  */
 export function getAnimationState(status: string): PixelAnimationState {
-  return STATUS_TO_ANIMATION[status] ?? 'IDLE';
+  return STATUS_TO_ANIMATION[status] ?? 'IDLE'
 }
 
 /**
  * Get the default seat index for an agent, or assign one dynamically.
  */
 export function getDefaultSeatIndex(agentId: string, totalSeats: number): number {
-  const staticSeat = DEFAULT_SEAT_ASSIGNMENTS[agentId];
-  if (staticSeat !== undefined && staticSeat < totalSeats) return staticSeat;
+  const staticSeat = DEFAULT_SEAT_ASSIGNMENTS[agentId]
+  if (staticSeat !== undefined && staticSeat < totalSeats) return staticSeat
 
   // Dynamic: hash to available seat
-  return hashString(agentId) % totalSeats;
+  return hashString(agentId) % totalSeats
 }

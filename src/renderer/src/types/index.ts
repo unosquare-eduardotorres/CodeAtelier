@@ -6,4 +6,4 @@ export type {
   AgentStatus,
   IpcChannels,
   IpcEvents
-} from '../../../shared/types';
+} from '../../../shared/types'

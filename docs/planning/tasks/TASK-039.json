@@ -4,7 +4,15 @@
   "description": "Create src/main/services/bug-council.service.ts. 5 parallel diagnostic agents: root-cause-analyst, code-archaeologist, pattern-matcher, systems-thinker, adversarial-tester. Spawn via claude -p with haiku. Synthesize with sonnet.",
   "feature_ref": "F010",
   "task_type": "backend",
-  "complexity": { "score": 8, "factors": { "files_affected": 4, "estimated_lines": 300, "new_dependencies": 0, "risk_flags": ["external_integration"] } },
+  "complexity": {
+    "score": 8,
+    "factors": {
+      "files_affected": 4,
+      "estimated_lines": 300,
+      "new_dependencies": 0,
+      "risk_flags": ["external_integration"]
+    }
+  },
   "dependencies": ["TASK-038"],
   "acceptance_criteria": [
     "5 diagnostic agent personas defined",

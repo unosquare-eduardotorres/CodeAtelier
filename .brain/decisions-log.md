@@ -1,9 +1,11 @@
 # Decisions Log
+
 > Auto-maintained by Agent Studio. Key decisions and rationale.
 
 ---
 
 ### [DECISION] Generalist-First Architecture
+
 > 2026-03-21
 
 User always talks to the Generalist agent (long-lived Claude CLI session). The Generalist detects inflection points and hands off to the Orchestrator, which spawns specialists. This avoids multi-agent confusion and keeps a single conversational thread.
@@ -13,6 +15,7 @@ User always talks to the Generalist agent (long-lived Claude CLI session). The G
 ---
 
 ### [DECISION] Claude CLI via spawn (not API)
+
 > 2026-03-21
 
 Use Claude CLI (`claude`) via `child_process.spawn` with `--input-format stream-json` and `--output-format stream-json` for NDJSON streaming. No API keys needed — leverages Claude Max subscription.
@@ -22,6 +25,7 @@ Use Claude CLI (`claude`) via `child_process.spawn` with `--input-format stream-
 ---
 
 ### [DECISION] SQLite via better-sqlite3 (no ORM)
+
 > 2026-03-21
 
 Raw SQL with repository pattern instead of an ORM like Prisma or TypeORM. Each domain entity gets its own repository class with a singleton export.
@@ -31,6 +35,7 @@ Raw SQL with repository pattern instead of an ORM like Prisma or TypeORM. Each d
 ---
 
 ### [DECISION] Git Worktree Isolation for Parallel Agents
+
 > 2026-03-22
 
 Each specialist agent works in its own git worktree branch during parallel execution. Worktrees are merged back to the main branch after completion.
@@ -40,6 +45,7 @@ Each specialist agent works in its own git worktree branch during parallel execu
 ---
 
 ### [DECISION] Plan/Build Mode with CLI Session Resume
+
 > 2026-03-22
 
 Plan mode uses `--permission-mode plan` (read-only). Build mode uses `--dangerously-skip-permissions` (full access). Mode switch kills and re-spawns the CLI process with `--resume sessionId` to preserve conversation history.
@@ -49,6 +55,7 @@ Plan mode uses `--permission-mode plan` (read-only). Build mode uses `--dangerou
 ---
 
 ### [DECISION] Brain as Flat Markdown Files (not DB)
+
 > 2026-03-22
 
 Project brain stored as `.brain/*.md` files in the workspace repo, not in SQLite. Files are append-friendly markdown with periodic compaction.
@@ -58,9 +65,11 @@ Project brain stored as `.brain/*.md` files in the workspace repo, not in SQLite
 ---
 
 ### [DECISION] Hybrid Brain: Flat Files + Local Vector Search (Future)
+
 > 2026-03-23
 
 Evaluated three tiers of knowledge persistence:
+
 - **Tier 1 (.brain/ markdown):** Compact curated working memory — always injected into system prompt. Already implemented.
 - **Tier 2 (local vectors):** Long-term searchable memory using local embedding model (all-MiniLM-L6-v2 via ONNX) + local file-based vector DB (vectra). Selective retrieval — only top-K relevant chunks per query. **Chosen for next phase.**
 - **Tier 3 (cloud vectors — Pinecone/Weaviate):** Rejected for now — requires API keys and network, contradicts Agent Studio's local-first, no-API-key philosophy.
@@ -74,9 +83,11 @@ Evaluated three tiers of knowledge persistence:
 ---
 
 ### [DECISION] Code Audit — Security & Performance Fixes Applied
+
 > 2026-03-23
 
 Applied comprehensive 3-specialist code audit (Electron, React, Agentic):
+
 - **Security (Critical):** Added `validateSender()` to 37 unprotected IPC handlers across 4 modules. Added path validation for `WORKSPACE_READ_FILE`/`WORKSPACE_WRITE_FILE` (allowlist: `.claude/`, `skills/`, `CLAUDE.md`).
 - **Reliability:** Fixed async `before-quit` handler (Electron doesn't await async — now uses `event.preventDefault()` + guard). Added 10-min timeout to specialist processes (SIGTERM → SIGKILL escalation).
 - **Performance:** Zustand individual selectors in MessageList, React.memo on MessageBubble, extracted OrchestratorDot component.

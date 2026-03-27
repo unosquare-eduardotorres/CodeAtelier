@@ -54,9 +54,9 @@ updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 Always enable foreign keys at connection time and define ON DELETE behavior:
 
 ```typescript
-const db = new Database(dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const db = new Database(dbPath)
+db.pragma('journal_mode = WAL')
+db.pragma('foreign_keys = ON')
 ```
 
 ```sql
@@ -70,6 +70,7 @@ CREATE TABLE messages (
 ### Indexes
 
 Create indexes for:
+
 - Foreign key columns (SQLite does NOT auto-index these)
 - Columns used in WHERE clauses
 - Columns used in ORDER BY
@@ -88,15 +89,15 @@ CREATE INDEX idx_messages_conv_created ON messages(conversation_id, created_at);
 
 ```typescript
 // ✅ Prepared statement — safe from SQL injection, cached by SQLite
-const stmt = db.prepare('SELECT * FROM workspaces WHERE id = ?');
-const workspace = stmt.get(id);
+const stmt = db.prepare('SELECT * FROM workspaces WHERE id = ?')
+const workspace = stmt.get(id)
 
 // ✅ Named parameters for clarity
-const stmt = db.prepare('INSERT INTO workspaces (name, path) VALUES (@name, @path)');
-stmt.run({ name: 'My Project', path: '/Users/dev/project' });
+const stmt = db.prepare('INSERT INTO workspaces (name, path) VALUES (@name, @path)')
+stmt.run({ name: 'My Project', path: '/Users/dev/project' })
 
 // ❌ NEVER interpolate user input
-const bad = db.prepare(`SELECT * FROM workspaces WHERE name = '${name}'`);
+const bad = db.prepare(`SELECT * FROM workspaces WHERE name = '${name}'`)
 ```
 
 ### Transaction wrapper
@@ -105,14 +106,14 @@ Use transactions for multi-statement operations — better-sqlite3 transactions 
 
 ```typescript
 const insertMany = db.transaction((items: Item[]) => {
-  const stmt = db.prepare('INSERT INTO items (name, value) VALUES (@name, @value)');
+  const stmt = db.prepare('INSERT INTO items (name, value) VALUES (@name, @value)')
   for (const item of items) {
-    stmt.run(item);
+    stmt.run(item)
   }
-});
+})
 
 // Usage — all-or-nothing
-insertMany(items);
+insertMany(items)
 ```
 
 ### Repository pattern
@@ -121,29 +122,27 @@ Each domain entity gets its own repository class:
 
 ```typescript
 export class WorkspaceRepository {
-  private db: Database;
+  private db: Database
 
   constructor(db: Database) {
-    this.db = db;
+    this.db = db
   }
 
   findAll(): Workspace[] {
-    return this.db.prepare('SELECT * FROM workspaces ORDER BY updated_at DESC').all() as Workspace[];
+    return this.db.prepare('SELECT * FROM workspaces ORDER BY updated_at DESC').all() as Workspace[]
   }
 
   findById(id: string): Workspace | undefined {
-    return this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as Workspace | undefined;
+    return this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as Workspace | undefined
   }
 
   create(name: string, path: string): Workspace {
-    const stmt = this.db.prepare(
-      'INSERT INTO workspaces (name, path) VALUES (?, ?) RETURNING *'
-    );
-    return stmt.get(name, path) as Workspace;
+    const stmt = this.db.prepare('INSERT INTO workspaces (name, path) VALUES (?, ?) RETURNING *')
+    return stmt.get(name, path) as Workspace
   }
 
   delete(id: string): void {
-    this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id);
+    this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id)
   }
 }
 ```
@@ -153,7 +152,7 @@ export class WorkspaceRepository {
 Always enable WAL (Write-Ahead Logging) for concurrent read/write:
 
 ```typescript
-db.pragma('journal_mode = WAL');
+db.pragma('journal_mode = WAL')
 ```
 
 **Why**: WAL allows readers to not block writers. Essential for Electron apps where the main process writes while the renderer queries.
@@ -163,21 +162,23 @@ db.pragma('journal_mode = WAL');
 ### Use EXPLAIN QUERY PLAN
 
 ```typescript
-const plan = db.prepare('EXPLAIN QUERY PLAN SELECT * FROM messages WHERE conversation_id = ?').all('test-id');
-console.log(plan);
+const plan = db
+  .prepare('EXPLAIN QUERY PLAN SELECT * FROM messages WHERE conversation_id = ?')
+  .all('test-id')
+console.log(plan)
 // Look for: SEARCH using index (good) vs SCAN (bad)
 ```
 
-### Avoid SELECT *
+### Avoid SELECT \*
 
 Only select the columns you need:
 
 ```typescript
 // ❌ Fetches all columns including large content blobs
-db.prepare('SELECT * FROM messages WHERE conversation_id = ?');
+db.prepare('SELECT * FROM messages WHERE conversation_id = ?')
 
 // ✅ Only what the UI needs
-db.prepare('SELECT id, role, created_at FROM messages WHERE conversation_id = ?');
+db.prepare('SELECT id, role, created_at FROM messages WHERE conversation_id = ?')
 ```
 
 ### Pagination
@@ -186,10 +187,10 @@ Use keyset pagination (not OFFSET) for large result sets:
 
 ```typescript
 // ❌ OFFSET skips rows — O(n) for deep pages
-db.prepare('SELECT * FROM messages ORDER BY created_at LIMIT 50 OFFSET 500');
+db.prepare('SELECT * FROM messages ORDER BY created_at LIMIT 50 OFFSET 500')
 
 // ✅ Keyset — O(1) seek using index
-db.prepare('SELECT * FROM messages WHERE created_at < ? ORDER BY created_at DESC LIMIT 50');
+db.prepare('SELECT * FROM messages WHERE created_at < ? ORDER BY created_at DESC LIMIT 50')
 ```
 
 ### Bulk inserts
@@ -199,16 +200,16 @@ Always wrap bulk inserts in a transaction — without a transaction, each INSERT
 ```typescript
 // ❌ 1000 individual commits
 for (const msg of messages) {
-  insertStmt.run(msg);
+  insertStmt.run(msg)
 }
 
 // ✅ Single transaction, single commit
 const bulkInsert = db.transaction((msgs: Message[]) => {
   for (const msg of msgs) {
-    insertStmt.run(msg);
+    insertStmt.run(msg)
   }
-});
-bulkInsert(messages);
+})
+bulkInsert(messages)
 ```
 
 ## Migration strategy
@@ -226,24 +227,26 @@ CREATE TABLE IF NOT EXISTS schema_version (
 const migrations = [
   { version: 1, sql: 'CREATE TABLE workspaces (...)' },
   { version: 2, sql: 'ALTER TABLE workspaces ADD COLUMN description TEXT' },
-  { version: 3, sql: 'CREATE INDEX idx_workspaces_path ON workspaces(path)' },
-];
+  { version: 3, sql: 'CREATE INDEX idx_workspaces_path ON workspaces(path)' }
+]
 
 function migrate(db: Database) {
-  const current = db.prepare('SELECT MAX(version) as v FROM schema_version').get() as { v: number } | undefined;
-  const currentVersion = current?.v ?? 0;
+  const current = db.prepare('SELECT MAX(version) as v FROM schema_version').get() as
+    | { v: number }
+    | undefined
+  const currentVersion = current?.v ?? 0
 
-  const pending = migrations.filter(m => m.version > currentVersion);
-  if (pending.length === 0) return;
+  const pending = migrations.filter((m) => m.version > currentVersion)
+  if (pending.length === 0) return
 
   const applyMigration = db.transaction(() => {
     for (const m of pending) {
-      db.exec(m.sql);
-      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(m.version);
+      db.exec(m.sql)
+      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(m.version)
     }
-  });
+  })
 
-  applyMigration();
+  applyMigration()
 }
 ```
 
@@ -256,16 +259,22 @@ For smaller Electron apps, migrations can be inline in the database init functio
 function runMigrations(db: Database) {
   // Each migration wrapped in try/catch — column may already exist
   try {
-    db.exec('ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT "plan"');
-  } catch { /* column exists */ }
+    db.exec('ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT "plan"')
+  } catch {
+    /* column exists */
+  }
 
   try {
-    db.exec('ALTER TABLE conversations ADD COLUMN session_id TEXT');
-  } catch { /* column exists */ }
+    db.exec('ALTER TABLE conversations ADD COLUMN session_id TEXT')
+  } catch {
+    /* column exists */
+  }
 
   try {
-    db.exec('ALTER TABLE messages ADD COLUMN tool_activity TEXT');
-  } catch { /* column exists */ }
+    db.exec('ALTER TABLE messages ADD COLUMN tool_activity TEXT')
+  } catch {
+    /* column exists */
+  }
 }
 ```
 
@@ -273,6 +282,7 @@ function runMigrations(db: Database) {
 **When to upgrade**: multi-dev team, production deployment, rollback needed → use the schema_version table pattern above.
 
 Key conventions:
+
 - New tables always go in `src/main/db/schema.sql` with `CREATE TABLE IF NOT EXISTS`
 - Column additions go in `runMigrations()` with try/catch wrapping
 - Always call `runMigrations(db)` after `db.exec(schema)` in initialization
@@ -280,13 +290,13 @@ Key conventions:
 
 ## Common pitfalls
 
-| Pitfall | Fix |
-|---------|-----|
-| Foreign keys not enforced | `PRAGMA foreign_keys = ON` at every connection |
-| Slow bulk inserts | Wrap in `db.transaction()` |
-| OFFSET pagination on large tables | Use keyset pagination |
-| Missing indexes on FK columns | Always create indexes for foreign keys |
-| Using INTEGER autoincrement PKs | Use `hex(randomblob(16))` TEXT PKs |
-| Not using WAL mode | `PRAGMA journal_mode = WAL` at startup |
-| String interpolation in queries | Always use prepared statements with `?` or `@param` |
-| Forgetting RETURNING clause | Use `RETURNING *` for INSERT/UPDATE to get the created/updated row |
+| Pitfall                           | Fix                                                                |
+| --------------------------------- | ------------------------------------------------------------------ |
+| Foreign keys not enforced         | `PRAGMA foreign_keys = ON` at every connection                     |
+| Slow bulk inserts                 | Wrap in `db.transaction()`                                         |
+| OFFSET pagination on large tables | Use keyset pagination                                              |
+| Missing indexes on FK columns     | Always create indexes for foreign keys                             |
+| Using INTEGER autoincrement PKs   | Use `hex(randomblob(16))` TEXT PKs                                 |
+| Not using WAL mode                | `PRAGMA journal_mode = WAL` at startup                             |
+| String interpolation in queries   | Always use prepared statements with `?` or `@param`                |
+| Forgetting RETURNING clause       | Use `RETURNING *` for INSERT/UPDATE to get the created/updated row |

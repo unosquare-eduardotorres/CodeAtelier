@@ -151,3 +151,40 @@ CREATE TABLE IF NOT EXISTS ideas (
 
 CREATE INDEX IF NOT EXISTS idx_ideas_workspace ON ideas(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status);
+
+-- Memories: auto memory system (persistent cross-session knowledge)
+CREATE TABLE IF NOT EXISTS memories (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  tags TEXT DEFAULT '[]' CHECK (json_valid(tags)),
+  source_conversation_id TEXT,
+  source_agent_id TEXT,
+  importance INTEGER NOT NULL DEFAULT 5,
+  last_accessed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
+CREATE INDEX IF NOT EXISTS idx_memories_context ON memories(workspace_id, type, importance DESC);
+
+-- Dream runs: consolidation cycles that process and refine memories
+CREATE TABLE IF NOT EXISTS dream_runs (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('startup', 'idle', 'manual')),
+  memories_created INTEGER DEFAULT 0,
+  memories_merged INTEGER DEFAULT 0,
+  memories_pruned INTEGER DEFAULT 0,
+  token_usage INTEGER DEFAULT 0,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ended_at TEXT,
+  error_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dream_runs_workspace ON dream_runs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_dream_runs_status ON dream_runs(status);

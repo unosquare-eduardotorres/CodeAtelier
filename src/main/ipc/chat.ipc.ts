@@ -17,15 +17,15 @@ import {
 } from '../services'
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
-import type { HandoffEvent } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
   DecomposedTask,
   ExecutionStrategy,
+  HandoffBrief,
   TaskExecutionProgress
 } from '../../shared/types'
-import { brainService } from '../services/brain.service'
+import { memoryService } from '../services/memory.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 
@@ -111,13 +111,13 @@ function forwardChunkToRenderer(
   }
 }
 
-/** Check if brain writes are enabled for the given workspace path */
-function isBrainEnabled(workspacePath: string): boolean {
+/** Check if memory writes are enabled for the given workspace path */
+function isMemoryEnabled(workspacePath: string): boolean {
   const workspace = workspaceRepository.findAll().find((w) => w.repoPath === workspacePath)
   if (!workspace) return true // default enabled
   try {
     const settings = JSON.parse(workspace.settingsJson || '{}')
-    return settings.brainEnabled !== false
+    return settings.memoryEnabled !== false
   } catch {
     return true
   }
@@ -248,6 +248,26 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
           )
           log.info('Generalist message saved, id:', savedMessage.id)
 
+          // Process memory blocks from accumulated text
+          try {
+            const wpPath = generalistService.getWorkspacePath()
+            const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
+            const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
+            if (workspace) {
+              const memoriesCreated = memoryService.processMemoryBlocks(
+                streamedContent.value,
+                conversationId,
+                'generalist',
+                workspace.id
+              )
+              if (memoriesCreated > 0) {
+                log.info(`Created ${memoriesCreated} memories from generalist response`)
+              }
+            }
+          } catch (memErr) {
+            log.warn('Memory block processing failed:', memErr)
+          }
+
           mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
             conversationId,
             messageId: savedMessage.id
@@ -269,35 +289,41 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
       }
 
       // Handle handoff events — generalist detected implementation work
-      const onHandoff = async (handoff: HandoffEvent): Promise<void> => {
-        log.info('Handoff received from generalist:', handoff)
+      const onHandoff = async (brief: HandoffBrief): Promise<void> => {
+        log.info('Handoff received from generalist:', brief.summary)
+
+        // ── Enrich with recent conversation messages ──
+        try {
+          const allMessages = messageRepository.findByConversation(conversationId)
+          brief.recentMessages = allMessages
+            .slice(-10) // Last 10 messages (5 user + 5 assistant turns)
+            .map((m) => ({ role: m.role, content: m.contentMd.substring(0, 2000) }))
+          log.info(`Enriched handoff with ${brief.recentMessages.length} recent messages`)
+        } catch (error) {
+          log.warn('Failed to enrich handoff with recent messages:', error)
+        }
 
         // Send visual handoff indicator to the renderer
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
           conversationId,
-          summary: handoff.summary,
-          specialists: handoff.specialists,
-          mode: handoff.mode
+          summary: brief.summary,
+          specialists: brief.specialists,
+          mode: brief.mode
         })
 
         // Update conversation mode if needed
-        if (handoff.mode) {
+        if (brief.mode) {
           try {
-            conversationRepository.updateMode(conversationId, handoff.mode)
+            conversationRepository.updateMode(conversationId, brief.mode)
           } catch (error) {
             log.error('Failed to update conversation mode:', error)
           }
         }
 
-        // Decompose the task into sub-tasks via orchestrator
+        // Decompose the task into sub-tasks via orchestrator with full brief
         try {
-          log.info('Decomposing task for specialists:', handoff.specialists)
-          const taskPlan = await orchestratorService.decompose(
-            handoff.summary,
-            handoff.specialists,
-            conversationId,
-            handoff.mode
-          )
+          log.info('Decomposing task for specialists:', brief.specialists)
+          const taskPlan = await orchestratorService.decompose(brief, conversationId, brief.mode)
 
           log.info(`Task decomposed into ${taskPlan.tasks.length} sub-tasks`)
 
@@ -307,7 +333,7 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
           log.error('Task decomposition failed, falling back to single orchestrator:', error)
 
           // Fallback: run orchestrator in legacy single-process mode
-          await runLegacyOrchestrator(mainWindow, conversationId, handoff)
+          await runLegacyOrchestrator(mainWindow, conversationId, brief)
         }
 
         // Clean up handoff listener (one-shot)
@@ -473,6 +499,12 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
       specialistPoolService.setWorkspacePath(workspacePath)
       specialistPoolService.setConversationId(conversationId)
 
+      // Pass the enriched handoff brief to the specialist pool for context injection
+      // The brief is attached to the task plan (if available from decomposition)
+      // We look for it in the args or fall back to null
+      const taskPlanBrief = (args as { brief?: HandoffBrief }).brief ?? null
+      specialistPoolService.setConversationBrief(taskPlanBrief)
+
       // Forward task progress events to the renderer
       const onTaskProgress = (progress: TaskExecutionProgress): void => {
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PROGRESS, progress)
@@ -528,21 +560,25 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
           messageId: savedMsg.id
         })
 
-        // Log task execution to brain
+        // Log task execution as a project memory
         try {
           const wpPath = generalistService.getWorkspacePath()
-          if (wpPath && isBrainEnabled(wpPath)) {
-            brainService.logCompletion(wpPath, {
-              timestamp: new Date().toISOString(),
-              conversationId,
-              conversationTitle: 'Task Execution',
-              type: 'completion',
-              summary: `Executed ${tasks.length} tasks (${strategy})`,
-              details: tasks.map((t) => `- ${t.specialist}: ${t.description}`).join('\n')
-            })
+          if (wpPath && isMemoryEnabled(wpPath)) {
+            const allWs = workspaceRepository.findAll()
+            const ws = allWs.find((w) => w.repoPath === wpPath)
+            if (ws) {
+              memoryService.create({
+                workspaceId: ws.id,
+                type: 'project',
+                title: `Task execution: ${tasks.length} tasks (${strategy})`,
+                content: tasks.map((t) => `- ${t.specialist}: ${t.description}`).join('\n'),
+                tags: ['task-execution'],
+                importance: 4
+              })
+            }
           }
         } catch (e) {
-          log.warn('Brain update on task complete failed:', e)
+          log.warn('Memory update on task complete failed:', e)
         }
 
         // Clean up
@@ -683,22 +719,31 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
       }
     }
 
-    // Summarize and log to brain before deletion
+    // Log conversation context as a project memory before close
     try {
-      if (workspacePath && isBrainEnabled(workspacePath)) {
+      if (workspacePath && isMemoryEnabled(workspacePath)) {
         const conversation = conversationRepository.findById(conversationId)
-        if (conversation) {
-          brainService.logCompletion(workspacePath, {
-            timestamp: new Date().toISOString(),
-            conversationId,
-            conversationTitle: conversation.title,
-            type: 'context',
-            summary: brainService.summarizeConversation(conversationId)
+        const allWs = workspaceRepository.findAll()
+        const ws = allWs.find((w) => w.repoPath === workspacePath)
+        if (conversation && ws) {
+          // Get last few messages for a summary
+          const messages = messageRepository.findByConversation(conversationId)
+          const lastMsgs = messages
+            .slice(-5)
+            .map((m) => m.contentMd.substring(0, 200))
+            .join(' | ')
+          memoryService.create({
+            workspaceId: ws.id,
+            type: 'project',
+            title: `Conversation: ${conversation.title}`,
+            content: lastMsgs || 'No messages',
+            tags: ['conversation-close'],
+            importance: 3
           })
         }
       }
     } catch (e) {
-      log.warn('Brain update failed on /close:', e)
+      log.warn('Memory update failed on /close:', e)
     }
 
     // Delete conversation (cascades: file_changes, messages, attachments, agent_worktrees)
@@ -800,20 +845,20 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
           // Local commit still succeeded — that's fine
         }
 
-        // Update brain with completed work
+        // Log completion as a project memory
         try {
-          if (isBrainEnabled(workspace.repoPath)) {
-            brainService.logCompletion(workspace.repoPath, {
-              timestamp: new Date().toISOString(),
-              conversationId,
-              conversationTitle: conversation.title,
-              type: 'completion',
-              summary: commitMessage,
-              details: `Branch: ${branchName}\nCommit: ${commitHash}\nFiles: ${filesToStage.join(', ')}`
+          if (isMemoryEnabled(workspace.repoPath)) {
+            memoryService.create({
+              workspaceId: workspace.id,
+              type: 'project',
+              title: `Completed: ${commitMessage.substring(0, 80)}`,
+              content: `Branch: ${branchName}\nCommit: ${commitHash}\nFiles: ${filesToStage.join(', ')}`,
+              tags: ['completion', 'git-commit'],
+              importance: 6
             })
           }
         } catch (e) {
-          log.warn('Brain update failed on /complete:', e)
+          log.warn('Memory update failed on /complete:', e)
         }
 
         // 7. Cleanup: stop agents, clear DB data, delete conversation
@@ -875,7 +920,7 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
 async function runLegacyOrchestrator(
   mainWindow: BrowserWindow,
   conversationId: string,
-  handoff: HandoffEvent
+  handoff: HandoffBrief
 ): Promise<void> {
   const orchestratorContent = { value: '' }
 

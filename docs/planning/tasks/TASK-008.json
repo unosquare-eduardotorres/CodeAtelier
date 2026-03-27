@@ -4,7 +4,15 @@
   "description": "Create migration 002 that adds complexity_score INTEGER, model_used TEXT, and model_tier TEXT columns to the agent_sessions table.",
   "feature_ref": "F001",
   "task_type": "database",
-  "complexity": { "score": 2, "factors": { "files_affected": 2, "estimated_lines": 20, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 2,
+    "factors": {
+      "files_affected": 2,
+      "estimated_lines": 20,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-002"],
   "acceptance_criteria": [
     "Migration 002 adds three columns to agent_sessions",

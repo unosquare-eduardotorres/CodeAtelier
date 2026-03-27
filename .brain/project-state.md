@@ -1,10 +1,13 @@
 # Project State
+
 > Auto-maintained by Agent Studio. Last updated: 2026-03-22T19:00:00.000Z
 
 ## Current Phase
+
 Core Application — Feature Complete (MVP+)
 
 ## Completed Items
+
 - Initial Electron + React + TypeScript scaffold (electron-vite, Tailwind CSS 4)
 - SQLite database with better-sqlite3 (8 tables: workspaces, conversations, messages, specialists, skills, specialist_skills, conversation_file_changes, agent_worktrees, agent_sessions, ideas)
 - 14 agent YAML definitions in .claude/agents/ (generalist + orchestrator + 12 specialists)
@@ -31,6 +34,7 @@ Core Application — Feature Complete (MVP+)
 - Brain Settings page: management UI for .brain/ files with file cards, progress bars, compact, toggle
 
 ## Pending Items
+
 - Jest test setup and initial test coverage
 - CI/CD pipeline configuration
 - Auto-update (electron-updater) integration

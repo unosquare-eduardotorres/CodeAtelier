@@ -36,6 +36,7 @@ python scripts/mermaid_to_image.py diagram.mmd output.png
 ```
 
 **Common Quick Fixes:**
+
 - ✅ Wrap reserved words in double quotes
 - ✅ Check for missing closing `end` keywords in blocks
 - ✅ Ensure colons exist before message text in sequence diagrams
@@ -53,11 +54,13 @@ python scripts/mermaid_to_image.py diagram.mmd output.png
 **Problem:** Using reserved keywords without quotes breaks the parser.
 
 **Reserved Words Include:**
+
 - `default`, `style`, `class`, `end`, `subgraph`, `click`
 - `interpolate`, `classDef`, `linkStyle`, `call`, `graph`
 - `_self`, `_blank`, `_parent`, `_top`
 
 **Incorrect:**
+
 ```mermaid
 flowchart TD
     start --> end
@@ -65,6 +68,7 @@ flowchart TD
 ```
 
 **Correct:**
+
 ```mermaid
 flowchart TD
     start --> "end"
@@ -72,6 +76,7 @@ flowchart TD
 ```
 
 **Error Message:**
+
 - `Parse error on line X: ... got 'DEFAULT'`
 - `Syntax error in text`
 
@@ -86,6 +91,7 @@ flowchart TD
 **Problem:** Special characters in labels must be escaped or wrapped in quotes.
 
 **Special Characters:**
+
 - Double quotes: `"`
 - Parentheses: `(` `)`
 - Brackets: `[` `]` `{` `}`
@@ -94,6 +100,7 @@ flowchart TD
 - Hash: `#`, Percent: `%`, At: `@`
 
 **Incorrect:**
+
 ```mermaid
 flowchart TD
     A[Say "hello"]
@@ -102,6 +109,7 @@ flowchart TD
 ```
 
 **Correct:**
+
 ```mermaid
 flowchart TD
     A["Say #34;hello#34;"]
@@ -110,6 +118,7 @@ flowchart TD
 ```
 
 **Alternative:**
+
 ```mermaid
 flowchart TD
     A["Say &quot;hello&quot;"]
@@ -130,6 +139,7 @@ flowchart TD
 **Problem:** Using curly braces or semicolons in classDef declarations.
 
 **Incorrect:**
+
 ```mermaid
 flowchart TD
     classDef myClass {
@@ -139,18 +149,21 @@ flowchart TD
 ```
 
 **Also Incorrect:**
+
 ```mermaid
 stateDiagram-v2
     classDef badEvent fill:#f00;color:white
 ```
 
 **Correct:**
+
 ```mermaid
 flowchart TD
     classDef myClass fill:#ff0000,stroke:#333,color:#fff
 ```
 
 **Explanation:**
+
 - No curly braces allowed
 - Use comma or space to separate properties
 - No semicolons (only CSS-like property:value pairs)
@@ -166,6 +179,7 @@ flowchart TD
 **Problem:** Comment marker `%%` without any following text.
 
 **Incorrect:**
+
 ```mermaid
 gantt
     %%
@@ -174,6 +188,7 @@ gantt
 ```
 
 **Correct:**
+
 ```mermaid
 gantt
     %% This is a comment
@@ -194,12 +209,14 @@ gantt
 **Problem:** The word "end" is reserved and breaks flowcharts.
 
 **Incorrect:**
+
 ```mermaid
 flowchart TD
     start --> end
 ```
 
 **Correct Solutions:**
+
 ```mermaid
 flowchart TD
     start --> End
@@ -220,6 +237,7 @@ flowchart TD
 **Problem:** Starting a node ID with `o` or `x` conflicts with edge markers.
 
 **Incorrect:**
+
 ```mermaid
 flowchart LR
     dev---ops
@@ -227,6 +245,7 @@ flowchart LR
 ```
 
 **Correct:**
+
 ```mermaid
 flowchart LR
     dev--- ops
@@ -246,6 +265,7 @@ flowchart LR
 **Problem:** Missing dashes or using wrong arrow syntax.
 
 **Incorrect:**
+
 ```mermaid
 flowchart TD
     A - B
@@ -257,6 +277,7 @@ flowchart TD
 ```
 
 **Correct:**
+
 ```mermaid
 flowchart TD
     A --> B
@@ -268,6 +289,7 @@ flowchart TD
 ```
 
 **Valid Arrow Types:**
+
 - `-->` Standard arrow
 - `-.->` Dotted arrow
 - `==>` Thick arrow
@@ -283,18 +305,21 @@ flowchart TD
 **Problem:** Missing or mismatched brackets around node labels.
 
 **Incorrect:**
+
 ```mermaid
 flowchart TD
     A[Start --> B[Process]]
 ```
 
 **Correct:**
+
 ```mermaid
 flowchart TD
     A[Start] --> B[Process]
 ```
 
 **Node Shape Reference:**
+
 - `[]` Rectangle
 - `()` Rounded
 - `[[]]` Subroutine
@@ -313,11 +338,13 @@ flowchart TD
 **Problem:** Diagram type and direction must be on a separate line.
 
 **Incorrect:**
+
 ```mermaid
 flowchart TD A --> B
 ```
 
 **Correct:**
+
 ```mermaid
 flowchart TD
     A --> B
@@ -332,6 +359,7 @@ flowchart TD
 **Problem:** Linking to both a parent subgraph and a nested subgraph within it.
 
 **Incorrect:**
+
 ```mermaid
 flowchart TD
     sender1 --> system
@@ -345,6 +373,7 @@ flowchart TD
 ```
 
 **Correct:**
+
 ```mermaid
 flowchart TD
     sender1 --> service1
@@ -370,12 +399,14 @@ flowchart TD
 **Problem:** Colon is required to separate arrow from message.
 
 **Incorrect:**
+
 ```mermaid
 sequenceDiagram
     Alice->>Bob Message
 ```
 
 **Correct:**
+
 ```mermaid
 sequenceDiagram
     Alice->>Bob: Message
@@ -390,12 +421,14 @@ sequenceDiagram
 **Problem:** No space between "participant" keyword and participant name.
 
 **Incorrect:**
+
 ```mermaid
 sequenceDiagram
     participantAlice
 ```
 
 **Correct:**
+
 ```mermaid
 sequenceDiagram
     participant Alice
@@ -410,6 +443,7 @@ sequenceDiagram
 **Problem:** Forgetting to close blocks with "end" keyword.
 
 **Incorrect:**
+
 ```mermaid
 sequenceDiagram
     Alice->>Bob: Request
@@ -420,6 +454,7 @@ sequenceDiagram
 ```
 
 **Correct:**
+
 ```mermaid
 sequenceDiagram
     Alice->>Bob: Request
@@ -441,6 +476,7 @@ sequenceDiagram
 **Problem:** Placing activate/deactivate in wrong positions.
 
 **Incorrect:**
+
 ```mermaid
 sequenceDiagram
     Alice->>Bob: Request
@@ -449,6 +485,7 @@ sequenceDiagram
 ```
 
 **Correct:**
+
 ```mermaid
 sequenceDiagram
     Alice->>Bob: Request
@@ -458,6 +495,7 @@ sequenceDiagram
 ```
 
 **Alternative (shorthand):**
+
 ```mermaid
 sequenceDiagram
     Alice->>+Bob: Request
@@ -473,6 +511,7 @@ sequenceDiagram
 **Problem:** Names starting with 'x' are confused with `-x` deactivation shorthand.
 
 **Incorrect:**
+
 ```mermaid
 sequenceDiagram
     xAlice->>+John: Hello
@@ -480,6 +519,7 @@ sequenceDiagram
 ```
 
 **Correct:**
+
 ```mermaid
 sequenceDiagram
     Alice->>+John: Hello
@@ -500,12 +540,14 @@ sequenceDiagram
 **Problem:** Cardinality values must be in quotes.
 
 **Incorrect:**
+
 ```mermaid
 classDiagram
     Customer 1 --> * Order
 ```
 
 **Correct:**
+
 ```mermaid
 classDiagram
     Customer "1" --> "*" Order
@@ -520,6 +562,7 @@ classDiagram
 **Problem:** Methods require parentheses even with no parameters.
 
 **Incorrect:**
+
 ```mermaid
 classDiagram
     class Animal {
@@ -529,6 +572,7 @@ classDiagram
 ```
 
 **Correct:**
+
 ```mermaid
 classDiagram
     class Animal {
@@ -543,9 +587,10 @@ classDiagram
 
 **Severity:** 🟡 Medium
 
-**Problem:** Static ($) and abstract (*) must come AFTER the signature.
+**Problem:** Static ($) and abstract (\*) must come AFTER the signature.
 
 **Incorrect:**
+
 ```mermaid
 classDiagram
     class MyClass {
@@ -555,6 +600,7 @@ classDiagram
 ```
 
 **Correct:**
+
 ```mermaid
 classDiagram
     class MyClass {
@@ -574,6 +620,7 @@ classDiagram
 **Problem:** State names starting with 'x' are confused with arrow modifiers.
 
 **Incorrect:**
+
 ```mermaid
 stateDiagram-v2
     Still --> xAlice
@@ -581,6 +628,7 @@ stateDiagram-v2
 ```
 
 **Correct:**
+
 ```mermaid
 stateDiagram-v2
     Still --> Alice
@@ -596,12 +644,14 @@ stateDiagram-v2
 **Problem:** Using colon instead of "as" keyword with state descriptions.
 
 **Incorrect:**
+
 ```mermaid
 stateDiagram-v2
     state "This is a description": s2
 ```
 
 **Correct:**
+
 ```mermaid
 stateDiagram-v2
     state "This is a description" as s2
@@ -616,6 +666,7 @@ stateDiagram-v2
 **Problem:** Classes cannot be applied to `[*]` (start/end states).
 
 **Incorrect:**
+
 ```mermaid
 stateDiagram-v2
     classDef myClass fill:#f00
@@ -623,6 +674,7 @@ stateDiagram-v2
 ```
 
 **Correct:**
+
 ```mermaid
 stateDiagram-v2
     classDef myClass fill:#f00
@@ -641,6 +693,7 @@ stateDiagram-v2
 **Problem:** Attribute type must come BEFORE the name.
 
 **Incorrect:**
+
 ```mermaid
 erDiagram
     Order {
@@ -650,6 +703,7 @@ erDiagram
 ```
 
 **Correct:**
+
 ```mermaid
 erDiagram
     Order {
@@ -669,18 +723,21 @@ erDiagram
 **Problem:** Using incomplete relationship notation.
 
 **Incorrect:**
+
 ```mermaid
 erDiagram
     Order |-- Customer
 ```
 
 **Correct:**
+
 ```mermaid
 erDiagram
     Order }|..|{ Customer
 ```
 
 **Relationship Notation:**
+
 - First marker: `}|` (many), `||` (one), `o|` (zero or one)
 - Relationship line: `--` (identifying), `..` (non-identifying)
 - Second marker: `|{` (many), `||` (one), `|o` (zero or one)
@@ -696,6 +753,7 @@ erDiagram
 **Problem:** Words like "gantt", "section", "dateFormat" cause errors.
 
 **Incorrect:**
+
 ```mermaid
 gantt
     dateFormat YYYY-MM-DD
@@ -705,6 +763,7 @@ gantt
 ```
 
 **Correct:**
+
 ```mermaid
 gantt
     dateFormat YYYY-MM-DD
@@ -714,6 +773,7 @@ gantt
 ```
 
 **Reserved Gantt Keywords:**
+
 - `gantt`, `section`, `dateFormat`, `click`, `title`
 - `axisFormat`, `excludes`, `includes`, `todayMarker`, `topAxis`
 
@@ -726,6 +786,7 @@ gantt
 **Problem:** Missing comma between task ID and date.
 
 **Incorrect:**
+
 ```mermaid
 gantt
     dateFormat YYYY-MM-DD
@@ -733,6 +794,7 @@ gantt
 ```
 
 **Correct:**
+
 ```mermaid
 gantt
     dateFormat YYYY-MM-DD
@@ -750,6 +812,7 @@ gantt
 **Problem:** Hash, semicolon, or colon cause truncation or errors.
 
 **Incorrect:**
+
 ```mermaid
 gantt
     section Tasks
@@ -759,6 +822,7 @@ gantt
 ```
 
 **Correct:**
+
 ```mermaid
 gantt
     section Tasks
@@ -768,6 +832,7 @@ gantt
 ```
 
 **Characters to Avoid in Gantt:**
+
 - `#` causes truncation
 - `;` causes syntax errors
 - `:` at beginning/end causes errors
@@ -781,6 +846,7 @@ gantt
 **Problem:** Missing or incorrect "after" keyword for dependencies.
 
 **Incorrect:**
+
 ```mermaid
 gantt
     dateFormat YYYY-MM-DD
@@ -789,6 +855,7 @@ gantt
 ```
 
 **Correct:**
+
 ```mermaid
 gantt
     dateFormat YYYY-MM-DD
@@ -807,6 +874,7 @@ gantt
 **Problem:** Negative numbers or non-numeric values.
 
 **Incorrect:**
+
 ```mermaid
 pie
     title Key elements
@@ -816,6 +884,7 @@ pie
 ```
 
 **Correct:**
+
 ```mermaid
 pie
     title Key elements
@@ -847,6 +916,7 @@ pie
 ### Validation Tools
 
 **Command Line:**
+
 ```bash
 # Install mermaid-cli
 npm install -g @mermaid-js/mermaid-cli
@@ -856,6 +926,7 @@ mmdc -i input.mmd -o output.png
 ```
 
 **Python Scripts (This Skill):**
+
 ```bash
 # Validate diagrams in markdown
 python scripts/extract_mermaid.py file.md --validate

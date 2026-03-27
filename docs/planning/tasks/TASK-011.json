@@ -4,7 +4,15 @@
   "description": "Create CostDashboard.tsx in settings components and cost.store.ts. Show total spend by model, cost per conversation table, savings from model routing, and token usage summary.",
   "feature_ref": "F005",
   "task_type": "frontend",
-  "complexity": { "score": 6, "factors": { "files_affected": 4, "estimated_lines": 250, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 6,
+    "factors": {
+      "files_affected": 4,
+      "estimated_lines": 250,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-010"],
   "acceptance_criteria": [
     "Cost dashboard accessible from workspace settings",

@@ -12,11 +12,13 @@
 **System Purpose:** [One sentence describing what the system does]
 
 **Scale:**
+
 - Users: [Number of users]
 - Requests/Day: [Volume]
 - Data Volume: [Size]
 
 **Key Challenges:**
+
 1. [Challenge 1]
 2. [Challenge 2]
 3. [Challenge 3]
@@ -33,13 +35,13 @@
 
 ### 2.2 Non-Functional Requirements
 
-| Category | Requirement | Target | Priority |
-|----------|-------------|--------|----------|
-| Availability | Uptime | 99.99% | Critical |
-| Performance | Response time | < 100ms | High |
-| Scalability | Concurrent users | 100k | High |
-| Consistency | Data consistency | Eventual | Medium |
-| Security | Data encryption | At rest & transit | Critical |
+| Category     | Requirement      | Target            | Priority |
+| ------------ | ---------------- | ----------------- | -------- |
+| Availability | Uptime           | 99.99%            | Critical |
+| Performance  | Response time    | < 100ms           | High     |
+| Scalability  | Concurrent users | 100k              | High     |
+| Consistency  | Data consistency | Eventual          | Medium   |
+| Security     | Data encryption  | At rest & transit | Critical |
 
 ---
 
@@ -329,6 +331,7 @@ graph TB
 **Sharding Key:** `user_id`
 
 **Rationale:**
+
 - Even distribution of data
 - Enables user-centric queries
 - Allows independent scaling
@@ -360,12 +363,12 @@ sequenceDiagram
 
 ### 8.2 Key Endpoints
 
-| Endpoint | Method | Purpose | Rate Limit |
-|----------|--------|---------|------------|
-| `/api/v1/users` | GET | List users | 100/min |
-| `/api/v1/users/:id` | GET | Get user | 300/min |
-| `/api/v1/orders` | POST | Create order | 30/min |
-| `/api/v1/orders/:id` | GET | Get order | 300/min |
+| Endpoint             | Method | Purpose      | Rate Limit |
+| -------------------- | ------ | ------------ | ---------- |
+| `/api/v1/users`      | GET    | List users   | 100/min    |
+| `/api/v1/users/:id`  | GET    | Get user     | 300/min    |
+| `/api/v1/orders`     | POST   | Create order | 30/min     |
+| `/api/v1/orders/:id` | GET    | Get order    | 300/min    |
 
 ---
 
@@ -448,12 +451,12 @@ graph TB
 
 **Strategy:** Write-through with TTL
 
-| Data Type | TTL | Invalidation Trigger |
-|-----------|-----|---------------------|
-| User Profile | 1 hour | On user update |
-| Product Catalog | 15 minutes | On product change |
-| Order Status | 5 minutes | On order update |
-| Static Assets | 30 days | On deployment |
+| Data Type       | TTL        | Invalidation Trigger |
+| --------------- | ---------- | -------------------- |
+| User Profile    | 1 hour     | On user update       |
+| Product Catalog | 15 minutes | On product change    |
+| Order Status    | 5 minutes  | On order update      |
+| Static Assets   | 30 days    | On deployment        |
 
 ---
 
@@ -589,14 +592,14 @@ graph TB
 
 ### 13.2 Key Metrics
 
-| Metric | Type | Threshold | Alert Level |
-|--------|------|-----------|-------------|
-| Request Rate | Gauge | - | Info |
-| Error Rate | Gauge | > 1% | Warning |
-| Response Time (p99) | Histogram | > 500ms | Warning |
-| CPU Usage | Gauge | > 80% | Critical |
-| Memory Usage | Gauge | > 85% | Warning |
-| Database Connections | Gauge | > 80% pool | Warning |
+| Metric               | Type      | Threshold  | Alert Level |
+| -------------------- | --------- | ---------- | ----------- |
+| Request Rate         | Gauge     | -          | Info        |
+| Error Rate           | Gauge     | > 1%       | Warning     |
+| Response Time (p99)  | Histogram | > 500ms    | Warning     |
+| CPU Usage            | Gauge     | > 80%      | Critical    |
+| Memory Usage         | Gauge     | > 85%      | Warning     |
+| Database Connections | Gauge     | > 80% pool | Warning     |
 
 ---
 
@@ -618,12 +621,12 @@ graph TB
 
 ### 14.2 Recovery Procedures
 
-| Scenario | RTO | RPO | Procedure |
-|----------|-----|-----|-----------|
-| Service Outage | 5 minutes | 0 | Auto-failover to healthy instances |
-| Database Failure | 1 hour | 15 minutes | Promote read replica |
-| Region Failure | 4 hours | 1 hour | Failover to DR region |
-| Data Corruption | 24 hours | 24 hours | Restore from backup |
+| Scenario         | RTO       | RPO        | Procedure                          |
+| ---------------- | --------- | ---------- | ---------------------------------- |
+| Service Outage   | 5 minutes | 0          | Auto-failover to healthy instances |
+| Database Failure | 1 hour    | 15 minutes | Promote read replica               |
+| Region Failure   | 4 hours   | 1 hour     | Failover to DR region              |
+| Data Corruption  | 24 hours  | 24 hours   | Restore from backup                |
 
 ---
 
@@ -672,12 +675,12 @@ graph TB
 
 ### 16.1 Cost Breakdown
 
-| Component | Monthly Cost | Optimization Opportunity |
-|-----------|-------------|-------------------------|
-| Compute | $10,000 | Reserved instances, spot instances |
-| Database | $5,000 | Right-sizing, read replicas |
-| Data Transfer | $2,000 | CDN, compression |
-| Storage | $1,000 | Lifecycle policies, compression |
+| Component     | Monthly Cost | Optimization Opportunity           |
+| ------------- | ------------ | ---------------------------------- |
+| Compute       | $10,000      | Reserved instances, spot instances |
+| Database      | $5,000       | Right-sizing, read replicas        |
+| Data Transfer | $2,000       | CDN, compression                   |
+| Storage       | $1,000       | Lifecycle policies, compression    |
 
 ---
 
@@ -686,12 +689,14 @@ graph TB
 ### 17.1 Key Decisions
 
 **Decision 1: Eventual Consistency vs Strong Consistency**
+
 - **Chosen:** Eventual consistency
 - **Rationale:** Better availability and performance
 - **Trade-off:** Temporary inconsistency acceptable for this use case
 - **Alternative:** Strong consistency - rejected due to performance impact
 
 **Decision 2: Monolith vs Microservices**
+
 - **Chosen:** Microservices
 - **Rationale:** Independent scaling, fault isolation
 - **Trade-off:** Increased operational complexity
@@ -724,11 +729,11 @@ gantt
 
 ### A. Glossary
 
-| Term | Definition |
-|------|------------|
-| CDN | Content Delivery Network |
-| WAF | Web Application Firewall |
-| TTL | Time To Live |
+| Term | Definition               |
+| ---- | ------------------------ |
+| CDN  | Content Delivery Network |
+| WAF  | Web Application Firewall |
+| TTL  | Time To Live             |
 
 ### B. References
 

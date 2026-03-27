@@ -17,11 +17,11 @@ Step-by-step workflow for running tests, writing tests, and applying modern test
 
 ## Inputs
 
-| Input | Required | Description |
-|-------|----------|-------------|
-| Solution/project path | Yes | Where to run/write tests |
-| Filter expression | No | Class/method name filter |
-| Test framework | No | Auto-detected if not specified |
+| Input                 | Required | Description                    |
+| --------------------- | -------- | ------------------------------ |
+| Solution/project path | Yes      | Where to run/write tests       |
+| Filter expression     | No       | Class/method name filter       |
+| Test framework        | No       | Auto-detected if not specified |
 
 ## Workflow
 
@@ -366,15 +366,15 @@ public sealed class OrdersApiTests(WebApplicationFactory<Program> factory)
 
 ## Anti-patterns to avoid
 
-| Anti-pattern | Solution |
-|-------------|----------|
-| `Assert.AreEqual(actual, expected)` — swapped args | Always: `Assert.AreEqual(expected, actual)` |
-| `[ExpectedException]` in MSTest | Use `Assert.ThrowsExactly<T>` |
-| `items.Single()` — unclear failure message | Use `Assert.Single(items)` (xUnit) or `Assert.ContainsSingle(items)` (MSTest) |
-| Hard cast `(MyType)result` | Use `Assert.IsType<MyType>(result)` |
-| Testing implementation details (private methods) | Test through public API surface |
-| Shared mutable state between tests | Each test creates its own instances |
-| `Thread.Sleep` in tests | Use `Task.Delay` with `CancellationToken` or mock time |
-| No `CancellationToken` in async tests | Use `TestContext.CancellationToken` (MSTest) or `CancellationTokenSource` |
-| Non-sealed test classes | Seal by default for performance |
-| Excessive mocking (mocking everything) | Only mock external dependencies, not the SUT |
+| Anti-pattern                                       | Solution                                                                      |
+| -------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `Assert.AreEqual(actual, expected)` — swapped args | Always: `Assert.AreEqual(expected, actual)`                                   |
+| `[ExpectedException]` in MSTest                    | Use `Assert.ThrowsExactly<T>`                                                 |
+| `items.Single()` — unclear failure message         | Use `Assert.Single(items)` (xUnit) or `Assert.ContainsSingle(items)` (MSTest) |
+| Hard cast `(MyType)result`                         | Use `Assert.IsType<MyType>(result)`                                           |
+| Testing implementation details (private methods)   | Test through public API surface                                               |
+| Shared mutable state between tests                 | Each test creates its own instances                                           |
+| `Thread.Sleep` in tests                            | Use `Task.Delay` with `CancellationToken` or mock time                        |
+| No `CancellationToken` in async tests              | Use `TestContext.CancellationToken` (MSTest) or `CancellationTokenSource`     |
+| Non-sealed test classes                            | Seal by default for performance                                               |
+| Excessive mocking (mocking everything)             | Only mock external dependencies, not the SUT                                  |

@@ -2,15 +2,22 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
-import type { ConversationMode, DecomposedTask, TaskExecutionProgress } from '../../shared/types'
+import type {
+  ConversationMode,
+  DecomposedTask,
+  HandoffBrief,
+  TaskExecutionProgress
+} from '../../shared/types'
 import { MODEL_TIER_IDS } from '../../shared/constants'
 import { specialistPoolLogger } from '../logger'
 import {
   specialistRepository,
   worktreeRepository,
-  agentSessionRepository
+  agentSessionRepository,
+  workspaceRepository
 } from '../db/repositories'
 import { SPECIALIST_TASK_SYSTEM_PROMPT } from './system-prompts'
+import { memoryService } from './memory.service'
 import { getModelId } from './complexity-scorer.service'
 import { gitWorktreeService } from './git-worktree.service'
 import type { MergeResult } from './git-worktree.service'
@@ -63,9 +70,15 @@ export class SpecialistPoolService extends EventEmitter {
   /** Track final status per task for runSpecialistTask result checking */
   private taskStatuses: Map<string, TaskExecutionProgress['status']> = new Map()
   private aborted: boolean = false
+  /** Enriched handoff context from the generalist, injected into specialist prompts */
+  private conversationBrief: HandoffBrief | null = null
 
   setWorkspacePath(path: string): void {
     this.workspacePath = path
+  }
+
+  setConversationBrief(brief: HandoffBrief | null): void {
+    this.conversationBrief = brief
   }
 
   setConversationId(id: string): void {
@@ -534,6 +547,41 @@ export class SpecialistPoolService extends EventEmitter {
       // No CLAUDE.md — fine
     }
 
+    // Inject enriched conversation context from handoff brief
+    if (this.conversationBrief) {
+      let briefContext = `\n\n## Conversation Context\n\nSummary: ${this.conversationBrief.summary}`
+      if (this.conversationBrief.decisions.length > 0) {
+        briefContext += `\n\nDecisions made:\n${this.conversationBrief.decisions.map((d) => `- ${d}`).join('\n')}`
+      }
+      if (this.conversationBrief.constraints.length > 0) {
+        briefContext += `\n\nConstraints:\n${this.conversationBrief.constraints.map((c) => `- ${c}`).join('\n')}`
+      }
+      if (this.conversationBrief.filesDiscussed.length > 0) {
+        briefContext += `\n\nFiles discussed:\n${this.conversationBrief.filesDiscussed.map((f) => `- ${f}`).join('\n')}`
+      }
+      systemPrompt += briefContext
+    }
+
+    // Inject filtered feedback memories for this specialist
+    try {
+      if (this.workspacePath) {
+        const allWs = workspaceRepository.findAll()
+        const ws = allWs.find((w) => w.repoPath === this.workspacePath)
+        if (ws) {
+          const feedbackContext = memoryService.getFeedbackForSpecialist(
+            ws.id,
+            task.specialist,
+            2000
+          )
+          if (feedbackContext) {
+            systemPrompt += `\n\n${feedbackContext}`
+          }
+        }
+      }
+    } catch {
+      // Feedback memories unavailable — not critical
+    }
+
     // Build context from completed dependency outputs
     let dependencyContext = ''
     for (const depId of task.dependsOn) {
@@ -709,6 +757,7 @@ export class SpecialistPoolService extends EventEmitter {
     this.taskStatuses.clear()
     this.activeProcesses.clear()
     this.aborted = false
+    this.conversationBrief = null
     // Note: workspacePath and conversationId are preserved across resets
   }
 }

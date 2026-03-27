@@ -1,1 +1,1 @@
-export { useAutoScroll } from './useAutoScroll';
+export { useAutoScroll } from './useAutoScroll'

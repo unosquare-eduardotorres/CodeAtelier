@@ -4,7 +4,15 @@
   "description": "In generalist.service.ts, add abandonment detection to accumulated text analysis (alongside handoff detection). On detection, inject re-engagement prompt via stdin.",
   "feature_ref": "F003",
   "task_type": "backend",
-  "complexity": { "score": 4, "factors": { "files_affected": 1, "estimated_lines": 40, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 4,
+    "factors": {
+      "files_affected": 1,
+      "estimated_lines": 40,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-019"],
   "acceptance_criteria": [
     "Generalist accumulated text checked for abandonment",

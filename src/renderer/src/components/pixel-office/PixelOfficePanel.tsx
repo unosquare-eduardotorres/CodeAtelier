@@ -1,50 +1,50 @@
-import { useCallback, useRef, useEffect } from 'react';
-import { Minus, Maximize2, ExternalLink } from 'lucide-react';
-import { usePixelOfficeStore } from '@renderer/store/pixelOffice.store';
-import OfficeCanvas from './OfficeCanvas';
+import { useCallback, useRef, useEffect } from 'react'
+import { Minus, Maximize2, ExternalLink } from 'lucide-react'
+import { usePixelOfficeStore } from '@renderer/store/pixelOffice.store'
+import OfficeCanvas from './OfficeCanvas'
 
 export default function PixelOfficePanel(): React.JSX.Element {
-  const { panelHeight, setPanelHeight, hidePanel } = usePixelOfficeStore();
-  const panelRef = useRef<HTMLDivElement>(null);
-  const isDragging = useRef(false);
-  const startY = useRef(0);
-  const startHeight = useRef(0);
+  const { panelHeight, setPanelHeight, hidePanel } = usePixelOfficeStore()
+  const panelRef = useRef<HTMLDivElement>(null)
+  const isDragging = useRef(false)
+  const startY = useRef(0)
+  const startHeight = useRef(0)
 
   // ── Resize handle drag ──
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      e.preventDefault();
-      isDragging.current = true;
-      startY.current = e.clientY;
-      startHeight.current = panelHeight;
-      document.body.style.cursor = 'row-resize';
-      document.body.style.userSelect = 'none';
+      e.preventDefault()
+      isDragging.current = true
+      startY.current = e.clientY
+      startHeight.current = panelHeight
+      document.body.style.cursor = 'row-resize'
+      document.body.style.userSelect = 'none'
     },
     [panelHeight]
-  );
+  )
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent): void => {
-      if (!isDragging.current) return;
+      if (!isDragging.current) return
       // Dragging up increases height (startY > clientY means moving up)
-      const delta = startY.current - e.clientY;
-      setPanelHeight(startHeight.current + delta);
-    };
+      const delta = startY.current - e.clientY
+      setPanelHeight(startHeight.current + delta)
+    }
 
     const handleMouseUp = (): void => {
-      if (!isDragging.current) return;
-      isDragging.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
+      if (!isDragging.current) return
+      isDragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [setPanelHeight]);
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [setPanelHeight])
 
   return (
     <div
@@ -67,7 +67,7 @@ export default function PixelOfficePanel(): React.JSX.Element {
         <div className="flex items-center gap-1">
           <button
             onClick={async () => {
-              await window.api.popoutPixelOffice();
+              await window.api.popoutPixelOffice()
               // Don't hide the panel — keep it visible so the user
               // can see the office in both places, or let them close
               // the panel manually with the minimize button
@@ -102,5 +102,5 @@ export default function PixelOfficePanel(): React.JSX.Element {
         <OfficeCanvas />
       </div>
     </div>
-  );
+  )
 }

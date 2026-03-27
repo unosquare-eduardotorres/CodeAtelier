@@ -34,7 +34,7 @@ export default function PlanCard({
       <div className="flex items-center gap-2 px-4 py-3 border-t border-purple-500/20 bg-purple-900/10">
         <button
           onClick={onBuild}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/50 press-scale"
         >
           <Hammer size={14} />
           Build This

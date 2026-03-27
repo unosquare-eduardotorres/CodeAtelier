@@ -14,6 +14,7 @@
 **Purpose:** [What this database stores and why]
 
 **Scale:**
+
 - Expected records: [Number]
 - Expected growth: [Rate]
 - Expected queries/sec: [Number]
@@ -24,18 +25,18 @@
 
 ### 2.1 Functional Requirements
 
-| Requirement | Description | Priority |
-|-------------|-------------|----------|
-| FR-1 | [Requirement] | High/Medium/Low |
+| Requirement | Description   | Priority        |
+| ----------- | ------------- | --------------- |
+| FR-1        | [Requirement] | High/Medium/Low |
 
 ### 2.2 Non-Functional Requirements
 
-| Category | Requirement | Target |
-|----------|-------------|--------|
-| Performance | Query response time | < 100ms |
-| Availability | Uptime | 99.9% |
-| Scalability | Max records | 10M |
-| Backup | Recovery time | < 1 hour |
+| Category     | Requirement         | Target   |
+| ------------ | ------------------- | -------- |
+| Performance  | Query response time | < 100ms  |
+| Availability | Uptime              | 99.9%    |
+| Scalability  | Max records         | 10M      |
+| Backup       | Recovery time       | < 1 hour |
 
 ---
 
@@ -158,12 +159,12 @@ erDiagram
 
 ### 3.2 Cardinality Explanation
 
-| Relationship | Cardinality | Explanation |
-|--------------|-------------|-------------|
-| USER - ORDER | 1:N | One user can place many orders |
-| ORDER - ORDER_ITEM | 1:N | One order contains many items |
-| PRODUCT - ORDER_ITEM | 1:N | One product can be in many order items |
-| ORDER - PAYMENT | 1:1 | One order has one payment |
+| Relationship         | Cardinality | Explanation                            |
+| -------------------- | ----------- | -------------------------------------- |
+| USER - ORDER         | 1:N         | One user can place many orders         |
+| ORDER - ORDER_ITEM   | 1:N         | One order contains many items          |
+| PRODUCT - ORDER_ITEM | 1:N         | One product can be in many order items |
+| ORDER - PAYMENT      | 1:1         | One order has one payment              |
 
 ---
 
@@ -194,15 +195,16 @@ CREATE INDEX idx_users_is_active ON users(is_active) WHERE is_active = true;
 
 **Column Details:**
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| id | UUID | PK | Unique identifier |
-| email | VARCHAR(255) | UNIQUE, NOT NULL | User email |
-| password_hash | VARCHAR(255) | NOT NULL | Bcrypt password hash |
-| role | VARCHAR(50) | CHECK, DEFAULT 'user' | User role |
-| is_active | BOOLEAN | DEFAULT true | Soft delete flag |
+| Column        | Type         | Constraints           | Description          |
+| ------------- | ------------ | --------------------- | -------------------- |
+| id            | UUID         | PK                    | Unique identifier    |
+| email         | VARCHAR(255) | UNIQUE, NOT NULL      | User email           |
+| password_hash | VARCHAR(255) | NOT NULL              | Bcrypt password hash |
+| role          | VARCHAR(50)  | CHECK, DEFAULT 'user' | User role            |
+| is_active     | BOOLEAN      | DEFAULT true          | Soft delete flag     |
 
 **Indexes:**
+
 - Primary key on `id` (B-tree)
 - Unique index on `email` (B-tree)
 - Index on `created_at` for sorting (B-tree)
@@ -255,11 +257,11 @@ ALTER TABLE products ADD CONSTRAINT check_price_non_negative
 
 ### 5.2 Foreign Key Constraints
 
-| Table | Foreign Key | References | On Delete | On Update |
-|-------|-------------|------------|-----------|-----------|
-| orders | user_id | users(id) | RESTRICT | CASCADE |
-| order_items | order_id | orders(id) | CASCADE | CASCADE |
-| order_items | product_id | products(id) | RESTRICT | CASCADE |
+| Table       | Foreign Key | References   | On Delete | On Update |
+| ----------- | ----------- | ------------ | --------- | --------- |
+| orders      | user_id     | users(id)    | RESTRICT  | CASCADE   |
+| order_items | order_id    | orders(id)   | CASCADE   | CASCADE   |
+| order_items | product_id  | products(id) | RESTRICT  | CASCADE   |
 
 ---
 
@@ -294,12 +296,12 @@ graph TB
 
 ### 6.2 Critical Indexes
 
-| Table | Index | Type | Purpose | Estimated Size |
-|-------|-------|------|---------|----------------|
-| users | idx_users_email | B-tree | Login queries | 10MB |
-| orders | idx_orders_user_id | B-tree | User order history | 50MB |
-| orders | idx_orders_status | Partial | Active orders only | 20MB |
-| products | idx_products_sku | Unique B-tree | Product lookup | 5MB |
+| Table    | Index              | Type          | Purpose            | Estimated Size |
+| -------- | ------------------ | ------------- | ------------------ | -------------- |
+| users    | idx_users_email    | B-tree        | Login queries      | 10MB           |
+| orders   | idx_orders_user_id | B-tree        | User order history | 50MB           |
+| orders   | idx_orders_status  | Partial       | Active orders only | 20MB           |
+| products | idx_products_sku   | Unique B-tree | Product lookup     | 5MB            |
 
 ---
 
@@ -308,14 +310,17 @@ graph TB
 ### 7.1 Query Patterns
 
 **Pattern 1: User Login**
+
 ```sql
 SELECT id, email, password_hash, role
 FROM users
 WHERE email = ? AND is_active = true;
 ```
+
 **Indexes Used:** `idx_users_email`
 
 **Pattern 2: Order History**
+
 ```sql
 SELECT o.*, oi.*, p.*
 FROM orders o
@@ -325,6 +330,7 @@ WHERE o.user_id = ?
 ORDER BY o.order_date DESC
 LIMIT 20;
 ```
+
 **Indexes Used:** `idx_orders_user_id`, `idx_orders_order_date`
 
 ### 7.2 Query Flow
@@ -374,6 +380,7 @@ CREATE TABLE orders_2024_q2 PARTITION OF orders
 ```
 
 **Benefits:**
+
 - Faster queries on recent orders
 - Easier archival of old data
 - Improved maintenance (VACUUM, ANALYZE)
@@ -387,16 +394,17 @@ CREATE TABLE orders_2024_q2 PARTITION OF orders
 **Level:** Third Normal Form (3NF)
 
 **Why:**
+
 - Eliminates data redundancy
 - Maintains data integrity
 - Allows efficient updates
 
 ### 9.2 Denormalization Decisions
 
-| Table | Denormalized Field | Reason | Trade-off |
-|-------|-------------------|--------|-----------|
-| order_items | unit_price | Historical price at time of order | Duplicates product price |
-| orders | total_amount | Avoid recalculating sum | Must update on item changes |
+| Table       | Denormalized Field | Reason                            | Trade-off                   |
+| ----------- | ------------------ | --------------------------------- | --------------------------- |
+| order_items | unit_price         | Historical price at time of order | Duplicates product price    |
+| orders      | total_amount       | Avoid recalculating sum           | Must update on item changes |
 
 ---
 
@@ -435,11 +443,11 @@ ALTER TABLE users ALTER COLUMN phone SET NOT NULL;
 
 ### 11.1 Backup Strategy
 
-| Backup Type | Frequency | Retention | RTO | RPO |
-|-------------|-----------|-----------|-----|-----|
-| Full Backup | Daily | 30 days | 4 hours | 24 hours |
-| Incremental | Hourly | 7 days | 1 hour | 1 hour |
-| Transaction Logs | Continuous | 7 days | 15 minutes | 5 minutes |
+| Backup Type      | Frequency  | Retention | RTO        | RPO       |
+| ---------------- | ---------- | --------- | ---------- | --------- |
+| Full Backup      | Daily      | 30 days   | 4 hours    | 24 hours  |
+| Incremental      | Hourly     | 7 days    | 1 hour     | 1 hour    |
+| Transaction Logs | Continuous | 7 days    | 15 minutes | 5 minutes |
 
 ### 11.2 Recovery Flow
 
@@ -467,6 +475,7 @@ flowchart TD
 ### 12.1 Query Optimization
 
 **Slow Query Example:**
+
 ```sql
 -- SLOW: Full table scan
 SELECT * FROM orders WHERE EXTRACT(YEAR FROM order_date) = 2024;
@@ -513,11 +522,11 @@ CREATE ROLE admin WITH SUPERUSER;
 
 ### 13.2 Data Encryption
 
-| Data Type | Encryption | Key Management |
-|-----------|------------|----------------|
-| Passwords | Bcrypt hash | N/A |
-| Payment Data | AES-256 | AWS KMS |
-| PII | Column-level encryption | HashiCorp Vault |
+| Data Type    | Encryption              | Key Management  |
+| ------------ | ----------------------- | --------------- |
+| Passwords    | Bcrypt hash             | N/A             |
+| Payment Data | AES-256                 | AWS KMS         |
+| PII          | Column-level encryption | HashiCorp Vault |
 
 ---
 
@@ -542,12 +551,12 @@ graph LR
 
 ### 14.2 Maintenance Tasks
 
-| Task | Frequency | Purpose |
-|------|-----------|---------|
-| VACUUM | Weekly | Reclaim space, update statistics |
-| ANALYZE | Daily | Update query planner statistics |
-| REINDEX | Monthly | Rebuild fragmented indexes |
-| Backup Verification | Weekly | Ensure backups are valid |
+| Task                | Frequency | Purpose                          |
+| ------------------- | --------- | -------------------------------- |
+| VACUUM              | Weekly    | Reclaim space, update statistics |
+| ANALYZE             | Daily     | Update query planner statistics  |
+| REINDEX             | Monthly   | Rebuild fragmented indexes       |
+| Backup Verification | Weekly    | Ensure backups are valid         |
 
 ---
 
@@ -594,14 +603,15 @@ graph TB
 
 ### A. Data Dictionary
 
-| Table | Column | Type | Description |
-|-------|--------|------|-------------|
-| users | id | UUID | Unique identifier |
-| users | email | VARCHAR(255) | User email address |
+| Table | Column | Type         | Description        |
+| ----- | ------ | ------------ | ------------------ |
+| users | id     | UUID         | Unique identifier  |
+| users | email  | VARCHAR(255) | User email address |
 
 ### B. Reserved Keywords
 
 Avoid using these as column names:
+
 - `user`, `order`, `select`, `from`, `where`, etc.
 
 ### C. References

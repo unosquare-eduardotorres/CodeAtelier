@@ -211,18 +211,18 @@ LIMIT 5;
 
 ## Comparison: Agent Studio (SQLite) vs Supabase projects
 
-| Aspect | Agent Studio | Supabase project |
-|--------|-------------|-----------------|
-| Database | SQLite (better-sqlite3) | PostgreSQL 15 |
-| Primary keys | `TEXT hex(randomblob(16))` | `UUID gen_random_uuid()` |
-| Timestamps | `TEXT datetime('now')` | `TIMESTAMPTZ NOW()` |
-| JSON | TEXT (json_extract) | JSONB (native operators) |
-| Auth | None (local desktop app) | Supabase Auth + RLS |
-| Queries | Synchronous prepared stmts | Async Drizzle/Supabase client |
-| Migrations | Inline try/catch ALTER | SQL files via CLI or Drizzle Kit |
-| Vector search | sqlite-vec or app-level | pgvector extension |
-| Connection | Local file | Session/transaction pooler |
-| Skill to use | `sqlite-patterns` | `supabase-architect` (this skill) |
+| Aspect        | Agent Studio               | Supabase project                  |
+| ------------- | -------------------------- | --------------------------------- |
+| Database      | SQLite (better-sqlite3)    | PostgreSQL 15                     |
+| Primary keys  | `TEXT hex(randomblob(16))` | `UUID gen_random_uuid()`          |
+| Timestamps    | `TEXT datetime('now')`     | `TIMESTAMPTZ NOW()`               |
+| JSON          | TEXT (json_extract)        | JSONB (native operators)          |
+| Auth          | None (local desktop app)   | Supabase Auth + RLS               |
+| Queries       | Synchronous prepared stmts | Async Drizzle/Supabase client     |
+| Migrations    | Inline try/catch ALTER     | SQL files via CLI or Drizzle Kit  |
+| Vector search | sqlite-vec or app-level    | pgvector extension                |
+| Connection    | Local file                 | Session/transaction pooler        |
+| Skill to use  | `sqlite-patterns`          | `supabase-architect` (this skill) |
 
 ## Reference files
 

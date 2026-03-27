@@ -4,7 +4,15 @@
   "description": "Create src/main/services/cost-calculator.service.ts with Anthropic model pricing, session cost calculation, conversation/workspace aggregation, and savings-vs-all-opus calculation.",
   "feature_ref": "F005",
   "task_type": "backend",
-  "complexity": { "score": 5, "factors": { "files_affected": 3, "estimated_lines": 150, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 3,
+      "estimated_lines": 150,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-008"],
   "acceptance_criteria": [
     "Model pricing table for haiku/sonnet/opus",

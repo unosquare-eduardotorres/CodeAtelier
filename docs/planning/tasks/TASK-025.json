@@ -4,7 +4,15 @@
   "description": "On conversation reopen, check for existing artifact state. If in_progress, offer to resume from last completed task. Skip completed tasks and continue from currentTaskIndex.",
   "feature_ref": "F004",
   "task_type": "fullstack",
-  "complexity": { "score": 5, "factors": { "files_affected": 4, "estimated_lines": 100, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 4,
+      "estimated_lines": 100,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-024"],
   "acceptance_criteria": [
     "Existing artifact state detected on conversation open",

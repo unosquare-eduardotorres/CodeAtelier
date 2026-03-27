@@ -4,7 +4,15 @@
   "description": "In specialist-pool.service.ts, accumulate specialist stdout text. Before marking task complete, check for abandonment. On detection, mark iteration as abandoned and integrate with task loop for re-engagement.",
   "feature_ref": "F003",
   "task_type": "backend",
-  "complexity": { "score": 5, "factors": { "files_affected": 1, "estimated_lines": 60, "new_dependencies": 0, "risk_flags": [] } },
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 1,
+      "estimated_lines": 60,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
   "dependencies": ["TASK-019", "TASK-016"],
   "acceptance_criteria": [
     "Specialist output text accumulated during execution",
