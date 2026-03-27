@@ -1,8 +1,14 @@
 import { useState, useEffect } from 'react'
-import { FolderOpen, Plus, Trash2, Check } from 'lucide-react'
+import { FolderOpen, Plus, Trash2, Check, Coins, Scale, Rocket } from 'lucide-react'
 import type { CostPreference } from '../../../../shared/types'
 import { useWorkspaceStore } from '@renderer/store'
 import { ConfirmDialog } from '@renderer/components/common'
+
+const COST_PREF_ICON: Record<CostPreference, React.ReactNode> = {
+  economy: <Coins size={16} />,
+  balanced: <Scale size={16} />,
+  power: <Rocket size={16} />
+}
 
 export default function WorkspaceGeneralTab(): React.JSX.Element {
   const { workspaces, activeWorkspace, openWorkspace, createWorkspace, deleteWorkspace } =
@@ -13,7 +19,7 @@ export default function WorkspaceGeneralTab(): React.JSX.Element {
 
   useEffect(() => {
     if (activeWorkspace) {
-      window.api.getWorkspaceSettings(activeWorkspace.id).then((settings) => {
+      window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id }).then((settings) => {
         setCostPreference((settings.costPreference as CostPreference) || 'balanced')
       })
     }
@@ -22,10 +28,10 @@ export default function WorkspaceGeneralTab(): React.JSX.Element {
   const handleCostPreferenceChange = async (pref: CostPreference): Promise<void> => {
     setCostPreference(pref)
     if (activeWorkspace) {
-      const settings = await window.api.getWorkspaceSettings(activeWorkspace.id)
-      await window.api.updateWorkspaceSettings(activeWorkspace.id, {
-        ...settings,
-        costPreference: pref
+      const settings = await window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id })
+      await window.api.updateWorkspaceSettings({
+        workspaceId: activeWorkspace.id,
+        settings: { ...settings, costPreference: pref }
       })
     }
   }
@@ -112,13 +118,7 @@ export default function WorkspaceGeneralTab(): React.JSX.Element {
                         : 'border-border-subtle hover:bg-surface-overlay text-text-secondary'
                     }`}
                   >
-                    <span className="text-base">
-                      {pref === 'economy'
-                        ? '\uD83D\uDCB0'
-                        : pref === 'balanced'
-                          ? '\u2696\uFE0F'
-                          : '\uD83D\uDE80'}
-                    </span>
+                    <span className="text-base">{COST_PREF_ICON[pref]}</span>
                     <span className="capitalize">{pref}</span>
                     <span className="text-[10px] text-text-muted">
                       {pref === 'economy'

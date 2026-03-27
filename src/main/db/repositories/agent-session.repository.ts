@@ -14,7 +14,7 @@ interface AgentSessionRow {
   workspace_id: string | null
   complexity_score: number | null
   model_used: string | null
-  model_tier: string | null
+  complexity_tier: string | null
 }
 
 export interface AgentSession {
@@ -30,7 +30,7 @@ export interface AgentSession {
   workspaceId: string | null
   complexityScore: number | null
   modelUsed: string | null
-  modelTier: string | null
+  complexityTier: string | null
 }
 
 export interface TokenSummary {
@@ -53,7 +53,7 @@ function toModel(row: AgentSessionRow): AgentSession {
     workspaceId: row.workspace_id,
     complexityScore: row.complexity_score,
     modelUsed: row.model_used,
-    modelTier: row.model_tier
+    complexityTier: row.complexity_tier
   }
 }
 
@@ -68,13 +68,13 @@ export class AgentSessionRepository {
       workspaceId?: string
       complexityScore?: number
       modelUsed?: string
-      modelTier?: string
+      complexityTier?: string
     } = {}
   ): AgentSession {
     const db = getDatabase()
     const row = db
       .prepare(
-        `INSERT INTO agent_sessions (agent_type, task_id, pid, conversation_id, workspace_id, complexity_score, model_used, model_tier)
+        `INSERT INTO agent_sessions (agent_type, task_id, pid, conversation_id, workspace_id, complexity_score, model_used, complexity_tier)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
@@ -86,7 +86,7 @@ export class AgentSessionRepository {
         opts.workspaceId ?? null,
         opts.complexityScore ?? null,
         opts.modelUsed ?? null,
-        opts.modelTier ?? null
+        opts.complexityTier ?? null
       ) as AgentSessionRow
     return toModel(row)
   }

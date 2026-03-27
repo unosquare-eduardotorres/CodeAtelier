@@ -2,6 +2,9 @@ import React, { useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
+import type { Plugin } from 'unified'
+import type { Root, Text, PhrasingContent } from 'mdast'
+import { visit } from 'unist-util-visit'
 import { Bot, User, Copy, Check, MessageCircle, Wrench, Paperclip } from 'lucide-react'
 import type { Message, ToolActivity, GrillProposedTask } from '../../../../shared/types'
 import PlanCard from './PlanCard'
@@ -9,6 +12,54 @@ import GrillResultCard from './GrillResultCard'
 import ToolActivityBlock from './ToolActivityBlock'
 import { useChatStore } from '@renderer/store'
 import { MermaidDiagram } from '@renderer/components/common'
+
+/**
+ * Remark plugin: wraps emoji characters inside headings with a styled <span class="emoji">
+ * so CSS can normalize their size and alignment.
+ */
+const remarkEmojiSpan: Plugin<[], Root> = () => {
+  // Matches common emoji: symbols, dingbats, emoticons, flags, skin-tone modifiers, ZWJ sequences
+  const emojiRegex =
+    /(\p{Emoji_Presentation}|\p{Extended_Pictographic})(\u200D(\p{Emoji_Presentation}|\p{Extended_Pictographic}))*/gu
+
+  return (tree) => {
+    visit(tree, 'heading', (node) => {
+      const newChildren: PhrasingContent[] = []
+      for (const child of node.children) {
+        if (child.type !== 'text') {
+          newChildren.push(child)
+          continue
+        }
+        const text = (child as Text).value
+        let lastIndex = 0
+        let match: RegExpExecArray | null
+
+        emojiRegex.lastIndex = 0
+        while ((match = emojiRegex.exec(text)) !== null) {
+          // Text before the emoji
+          if (match.index > lastIndex) {
+            newChildren.push({ type: 'text', value: text.slice(lastIndex, match.index) })
+          }
+          // Wrap emoji in an html node that renders as <span class="emoji">
+          newChildren.push({
+            type: 'html',
+            value: `<span class="emoji">${match[0]}</span>`
+          })
+          lastIndex = match.index + match[0].length
+        }
+        // Remainder after last emoji
+        if (lastIndex < text.length) {
+          newChildren.push({ type: 'text', value: text.slice(lastIndex) })
+        }
+        // If no emoji was found, keep original
+        if (lastIndex === 0) {
+          newChildren.push(child)
+        }
+      }
+      node.children = newChildren
+    })
+  }
+}
 
 interface MessageBubbleProps {
   message: Message
@@ -231,7 +282,7 @@ function MessageBubbleInner({
       )
     },
     table: ({ children }: { children?: React.ReactNode }) => (
-      <div className="overflow-x-auto rounded-lg border border-border-subtle my-3">
+      <div className="overflow-x-auto rounded-lg border border-border-default my-3 shadow-sm">
         <table className="min-w-full">{children}</table>
       </div>
     ),
@@ -277,7 +328,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks]}
+                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
                   >
                     {beforeGrill}
@@ -296,7 +347,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks]}
+                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
                   >
                     {afterGrill}
@@ -312,7 +363,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks]}
+                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
                   >
                     {beforePlan}
@@ -325,7 +376,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks]}
+                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
                   >
                     {afterPlan}
@@ -373,7 +424,7 @@ function MessageBubbleInner({
             {message.contentMd ? (
               <div className={`prose max-w-none ${isUser ? 'prose-invert' : 'prose-invert'}`}>
                 <ReactMarkdown
-                  remarkPlugins={[remarkGfm, remarkBreaks]}
+                  remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                   components={markdownComponents}
                 >
                   {message.contentMd}

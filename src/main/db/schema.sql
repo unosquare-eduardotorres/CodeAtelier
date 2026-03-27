@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
   complexity_score INTEGER,
   model_used TEXT,
-  model_tier TEXT
+  complexity_tier TEXT
 );
 
 -- Specialists: dynamic agent definitions (app-global)

@@ -421,8 +421,11 @@ export interface IpcChannels {
   'workspace:create': { args: { name: string; repoPath: string }; return: Workspace }
   'workspace:open': { args: { id: string }; return: Workspace }
   'workspace:delete': { args: { id: string }; return: void }
-  'workspace:get-settings': { args: string; return: Record<string, unknown> }
-  'workspace:update-settings': { args: [string, Record<string, unknown>]; return: void }
+  'workspace:get-settings': { args: { workspaceId: string }; return: Record<string, unknown> }
+  'workspace:update-settings': {
+    args: { workspaceId: string; settings: Record<string, unknown> }
+    return: void
+  }
   'chat:sendMessage': {
     args: { conversationId: string; text: string; attachments?: string[] }
     return: void

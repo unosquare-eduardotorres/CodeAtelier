@@ -197,7 +197,7 @@ export class SpecialistPoolService extends EventEmitter {
         workspaceId: undefined, // workspace DB ID not available here
         complexityScore: task.complexity?.total,
         modelUsed: sessionModelId,
-        modelTier: task.complexity?.tier
+        complexityTier: task.complexity?.tier
       })
       dbSessionId = session.id
     } catch (err) {

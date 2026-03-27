@@ -205,7 +205,7 @@ export function getDatabase(): Database.Database {
   try {
     db.exec('ALTER TABLE agent_sessions ADD COLUMN complexity_score INTEGER')
     db.exec('ALTER TABLE agent_sessions ADD COLUMN model_used TEXT')
-    db.exec('ALTER TABLE agent_sessions ADD COLUMN model_tier TEXT')
+    db.exec('ALTER TABLE agent_sessions ADD COLUMN complexity_tier TEXT')
     dbLogger.info('Migration: added complexity scoring columns to agent_sessions')
   } catch {
     // Columns already exist — fine

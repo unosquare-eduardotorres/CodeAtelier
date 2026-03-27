@@ -85,7 +85,7 @@ export default function ChatPanel(): React.JSX.Element {
 
         <button
           onClick={handleAddWorkspace}
-          className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg font-medium text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
+          className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg font-medium text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base press-scale"
         >
           <FolderOpen size={16} />
           Add Workspace
@@ -107,7 +107,7 @@ export default function ChatPanel(): React.JSX.Element {
         </p>
         <button
           onClick={() => createConversation(activeWorkspace.id, 'plan')}
-          className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
+          className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 press-scale"
         >
           <MessageSquarePlus size={16} />
           Start a conversation

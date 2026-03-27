@@ -285,7 +285,7 @@ export default function MessageInput({
         {isStreaming && (
           <button
             onClick={() => setShowStopConfirm(true)}
-            className="flex-shrink-0 p-2 rounded-lg bg-red-600 text-white hover:bg-red-500 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base"
+            className="flex-shrink-0 p-2 rounded-lg bg-red-600 text-white hover:bg-red-500 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
             aria-label="Stop generation"
             title="Stop generation"
           >
