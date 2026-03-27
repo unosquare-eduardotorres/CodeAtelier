@@ -1,3 +1,9 @@
+/**
+ * @deprecated Import from './prompt-builder' instead.
+ * These constants are maintained here only for backward compatibility.
+ * The canonical copies now live in prompt-builder.ts.
+ */
+
 export const PLAN_MODE_SYSTEM_PROMPT = `You are a senior software architect in Plan mode. Your role is to:
 - Analyze codebases, discuss architecture, brainstorm solutions
 - Read and search files to understand the codebase

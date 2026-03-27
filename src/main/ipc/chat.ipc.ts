@@ -753,10 +753,18 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
     conversationRepository.delete(conversationId)
   })
 
-  // ── /complete: commit changes, push, and clean up ──
+  // ── /complete: commit changes, push, create PR, and clean up ──
   ipcMain.handle(
     IPC_CHANNELS.CHAT_COMPLETE,
-    async (event, args: { conversationId: string; commitMessage: string; description: string }) => {
+    async (
+      event,
+      args: {
+        conversationId: string
+        branchName: string
+        commitMessage: string
+        description: string
+      }
+    ) => {
       validateSender(event)
 
       const { conversationId, commitMessage, description } = args
@@ -794,14 +802,17 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
 
       // 2. Get tracked file changes for this conversation
       const fileChanges = fileChangeRepository.findByConversation(conversationId)
-      if (fileChanges.length === 0) throw new Error('No file changes tracked for this conversation')
+      if (fileChanges.length === 0)
+        throw new Error('No file changes tracked for this conversation')
 
-      // 3. Create feature branch from current HEAD
-      const branchName = `chat/${conversation.title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, 50)}-${conversationId.slice(0, 8)}`
+      // 3. Create feature branch — use user-provided name or auto-generate
+      const branchName =
+        args.branchName ||
+        `chat/${conversation.title
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '')
+          .slice(0, 50)}-${conversationId.slice(0, 8)}`
 
       const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD'])
       await git.checkoutLocalBranch(branchName)
@@ -848,6 +859,29 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
           // Local commit still succeeded — that's fine
         }
 
+        // 7. Auto-create PR if GitHub is configured
+        if (githubService.isConfigured(workspace.id)) {
+          try {
+            const prResult = await githubService.createPullRequest({
+              workspaceId: workspace.id,
+              repoPath: workspace.repoPath,
+              head: branchName,
+              base: currentBranch,
+              title: commitMessage,
+              body: description
+            })
+            prUrl = prResult.prUrl
+            conversationRepository.updatePrInfo(
+              conversationId,
+              prResult.prUrl,
+              prResult.prNumber,
+              branchName
+            )
+          } catch (e) {
+            log.warn('GitHub PR creation failed (push succeeded):', e)
+          }
+        }
+
         // Log completion as a project memory
         try {
           if (isMemoryEnabled(workspace.repoPath)) {
@@ -855,7 +889,7 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
               workspaceId: workspace.id,
               type: 'project',
               title: `Completed: ${commitMessage.substring(0, 80)}`,
-              content: `Branch: ${branchName}\nCommit: ${commitHash}\nFiles: ${filesToStage.join(', ')}`,
+              content: `Branch: ${branchName}\nCommit: ${commitHash}\nFiles: ${filesToStage.join(', ')}${prUrl ? `\nPR: ${prUrl}` : ''}`,
               tags: ['completion', 'git-commit'],
               importance: 6
             })
@@ -864,7 +898,7 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
           log.warn('Memory update failed on /complete:', e)
         }
 
-        // 7. Cleanup: stop agents, clear DB data, delete conversation
+        // 8. Cleanup: stop agents, clear DB data, delete conversation
         if (orchestratorService.isRunning()) {
           await orchestratorService.stop()
         }
