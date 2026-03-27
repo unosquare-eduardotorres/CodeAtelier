@@ -56,7 +56,10 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   token_usage INTEGER DEFAULT 0,
   stdout_log_path TEXT,
   conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  complexity_score INTEGER,
+  model_used TEXT,
+  model_tier TEXT
 );
 
 -- Specialists: dynamic agent definitions (app-global)

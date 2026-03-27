@@ -31,7 +31,8 @@ import type {
   BrainFeedResult,
   TokenSummary,
   AgentSessionRecord,
-  Idea
+  Idea,
+  DocFile
 } from '../shared/types'
 
 interface Api {
@@ -41,6 +42,11 @@ interface Api {
   openWorkspace: (args: { id: string }) => Promise<Workspace>
   deleteWorkspace: (args: { id: string }) => Promise<void>
   selectDirectory: () => Promise<string | null>
+  getWorkspaceSettings: (args: { workspaceId: string }) => Promise<Record<string, unknown>>
+  updateWorkspaceSettings: (args: {
+    workspaceId: string
+    settings: Record<string, unknown>
+  }) => Promise<void>
   saveClipboardImage: (args: { dataUrl: string }) => Promise<string>
 
   // Chat
@@ -156,6 +162,7 @@ interface Api {
 
   // Brain Feed
   brainSelectDocument: () => Promise<string | null>
+  brainFeedCancel: () => Promise<void>
   brainFeedClaudeMd: (args: { workspacePath: string }) => Promise<BrainFeedResult>
   brainFeedCodebase: (args: { workspacePath: string }) => Promise<BrainFeedResult>
   brainFeedDocument: (args: { workspacePath: string; filePath: string }) => Promise<BrainFeedResult>
@@ -244,6 +251,8 @@ interface Api {
       status: string
       elapsedMs: number
       tokenUsage: number
+      model?: 'haiku' | 'sonnet' | 'opus'
+      complexityTier?: 'simple' | 'moderate' | 'complex'
     }) => void
   ) => () => void
 
@@ -262,6 +271,11 @@ interface Api {
     }) => void
   ) => () => void
   onUpdateError: (callback: (message: string) => void) => () => void
+
+  // Documents
+  listDocs: (args: { workspacePath: string }) => Promise<DocFile[]>
+  readDocFile: (args: { filePath: string }) => Promise<string>
+  renderMermaid: (args: { definition: string; id?: string }) => Promise<{ svg: string }>
 }
 
 declare global {

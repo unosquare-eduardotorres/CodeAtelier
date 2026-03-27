@@ -1,7 +1,22 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { ideaRepository, conversationRepository } from '../db/repositories'
+import { ideaRepository, conversationRepository, workspaceRepository } from '../db/repositories'
+import { brainService } from '../services/brain.service'
 import { validateSender } from './validate-sender'
+
+/** Sync ideas → project-state.md after any idea mutation */
+function syncBrain(workspaceId: string): void {
+  try {
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace) return
+    // Check if brain is enabled
+    const settings = JSON.parse(workspace.settingsJson || '{}')
+    if (settings.brainEnabled === false) return
+    brainService.syncIdeasToProjectState(workspace.repoPath, workspaceId)
+  } catch {
+    // Non-critical — don't break the idea operation
+  }
+}
 
 export function registerIdeaIpc(): void {
   // idea:list — returns all ideas for a workspace
@@ -23,7 +38,9 @@ export function registerIdeaIpc(): void {
       if (!args.title || typeof args.title !== 'string' || args.title.trim().length === 0) {
         throw new Error('title is required')
       }
-      return ideaRepository.create(args.workspaceId, args.title.trim(), args.description?.trim() ?? '')
+      const idea = ideaRepository.create(args.workspaceId, args.title.trim(), args.description?.trim() ?? '')
+      syncBrain(args.workspaceId)
+      return idea
     }
   )
 
@@ -33,10 +50,13 @@ export function registerIdeaIpc(): void {
     (event, args: { id: string; title?: string; description?: string }) => {
       validateSender(event)
       if (!args?.id) throw new Error('id is required')
-      return ideaRepository.update(args.id, {
+      const existing = ideaRepository.findById(args.id)
+      const updated = ideaRepository.update(args.id, {
         title: args.title,
         description: args.description
       })
+      if (existing) syncBrain(existing.workspaceId)
+      return updated
     }
   )
 
@@ -44,7 +64,9 @@ export function registerIdeaIpc(): void {
   ipcMain.handle(IPC_CHANNELS.IDEA_DELETE, (event, args: { id: string }) => {
     validateSender(event)
     if (!args?.id) throw new Error('id is required')
+    const idea = ideaRepository.findById(args.id)
     ideaRepository.delete(args.id)
+    if (idea) syncBrain(idea.workspaceId)
   })
 
   // idea:startGrill — create/resume a grill conversation for this idea
@@ -75,6 +97,7 @@ export function registerIdeaIpc(): void {
       ideaRepository.setGrillConversation(args.ideaId, conv.id)
       const updated = ideaRepository.updateStatus(args.ideaId, 'grilling')
 
+      syncBrain(args.workspaceId)
       return { idea: updated, conversation: conv }
     }
   )
@@ -97,6 +120,7 @@ export function registerIdeaIpc(): void {
       ideaRepository.setConvertedConversation(args.ideaId, conv.id)
       const updated = ideaRepository.updateStatus(args.ideaId, 'completed')
 
+      syncBrain(args.workspaceId)
       return { idea: updated, conversation: conv }
     }
   )
@@ -115,6 +139,7 @@ export function registerIdeaIpc(): void {
         ideaRepository.setGrillSummary(idea.id, args.summary)
       }
       const updated = ideaRepository.updateStatus(idea.id, 'completed')
+      syncBrain(idea.workspaceId)
       return updated
     }
   )

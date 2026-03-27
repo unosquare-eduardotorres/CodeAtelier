@@ -3,6 +3,19 @@
 
 ---
 
+### [COMPLETION] Comprehensive Code Audit — Security, Performance & Reliability
+> 2026-03-23
+
+Applied 14 fixes from 3-specialist audit (Electron, React, Agentic).
+
+**Details:**
+- 🔴 Critical: validateSender() added to 37 IPC handlers (workspace-deploy, sync, token, update). Path validation on WORKSPACE_READ_FILE/WORKSPACE_WRITE_FILE.
+- 🟡 Medium: Fixed async before-quit, specialist 10min timeout, generalist restart UI notification, Zustand selectors, React.memo on MessageBubble, minimal production menu.
+- 🟢 Minor: OrchestratorDot extraction, skill truncation logging, dead code removal, ErrorBoundary per panel, orchestrator session map LRU, cross-platform path fix.
+- Files modified: 10 files across main process, renderer, and services.
+
+---
+
 ### [COMPLETION] Initial commit
 > 2026-03-21T20:35:23-06:00
 

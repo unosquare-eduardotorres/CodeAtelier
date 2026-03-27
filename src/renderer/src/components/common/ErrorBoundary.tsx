@@ -30,10 +30,10 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="flex items-center justify-center h-full p-8 text-center">
             <div>
               <h2 className="text-lg font-semibold text-red-400 mb-2">Something went wrong</h2>
-              <p className="text-gray-400 text-sm mb-4">{this.state.error?.message}</p>
+              <p className="text-text-secondary text-sm mb-4">{this.state.error?.message}</p>
               <button
                 onClick={() => this.setState({ hasError: false, error: null })}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 text-sm"
+                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover text-sm transition-colors"
               >
                 Try Again
               </button>

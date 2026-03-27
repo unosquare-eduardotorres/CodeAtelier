@@ -491,7 +491,9 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
                   : 'idle',
           currentTask: tasks.find((t) => t.id === progress.taskId)?.description,
           elapsedMs: 0,
-          tokenUsage: 0
+          tokenUsage: 0,
+          model: progress.model,
+          complexityTier: progress.complexityTier
         })
       }
 

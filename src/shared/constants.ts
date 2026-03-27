@@ -25,6 +25,8 @@ export const IPC_CHANNELS = {
   WORKSPACE_CREATE: 'workspace:create',
   WORKSPACE_OPEN: 'workspace:open',
   WORKSPACE_DELETE: 'workspace:delete',
+  WORKSPACE_GET_SETTINGS: 'workspace:get-settings',
+  WORKSPACE_UPDATE_SETTINGS: 'workspace:update-settings',
 
   // Chat
   CHAT_SEND: 'chat:sendMessage',
@@ -140,6 +142,7 @@ export const IPC_CHANNELS = {
   BRAIN_FEED_CODEBASE: 'brain:feedCodebase',
   BRAIN_FEED_DOCUMENT: 'brain:feedDocument',
   BRAIN_FEED_PROGRESS: 'brain:feedProgress',
+  BRAIN_FEED_CANCEL: 'brain:feedCancel',
   BRAIN_SELECT_DOCUMENT: 'brain:selectDocument',
 
   // Tokens
@@ -158,6 +161,11 @@ export const IPC_CHANNELS = {
   IDEA_START_GRILL: 'idea:startGrill',
   IDEA_CONVERT_DIRECT: 'idea:convertDirect',
   IDEA_COMPLETE_FROM_GRILL: 'idea:completeFromGrill',
+
+  // Documents
+  DOCS_LIST: 'docs:list',
+  DOCS_READ_FILE: 'docs:readFile',
+  DOCS_RENDER_MERMAID: 'docs:renderMermaid',
 
   // Auto-update
   UPDATE_CHECK: 'update:check',
@@ -212,6 +220,26 @@ export const CONVERSATION_MODES = {
 
 /** Model used for activation CLAUDE.md generation */
 export const ACTIVATION_MODEL_ID = 'claude-sonnet-4-20250514' as const
+
+/** Fast model used for brain feed summarization tasks (structured extraction) */
+export const BRAIN_FEED_MODEL_ID = 'claude-haiku-4-20250414' as const
+
+/** Model IDs per complexity tier — used for specialist routing */
+export const MODEL_TIER_IDS = {
+  haiku: 'claude-haiku-4-20250414',
+  sonnet: 'claude-sonnet-4-20250514',
+  opus: 'claude-opus-4-20250514'
+} as const
+
+/** Complexity score thresholds for tier assignment */
+export const COMPLEXITY_THRESHOLDS = {
+  simple: { min: 0, max: 4 },
+  moderate: { min: 5, max: 8 },
+  complex: { min: 9, max: 14 }
+} as const
+
+/** Default cost preference for new workspaces */
+export const DEFAULT_COST_PREFERENCE = 'balanced' as const
 
 /** Maximum skill file size in bytes (500 KB) */
 export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const // 500 * 1024

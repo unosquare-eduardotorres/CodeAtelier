@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process'
-import { join, extname } from 'node:path'
+import { join, extname, basename } from 'node:path'
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs'
 import { parseOffice } from 'officeparser'
 import { brainService } from './brain.service'
-import { ACTIVATION_MODEL_ID } from '../../shared/constants'
+import { BRAIN_FEED_MODEL_ID } from '../../shared/constants'
 import { brainFeedLogger } from '../logger'
 import type { BrainFeedProgress, BrainFeedResult } from '../../shared/types'
 
@@ -12,7 +12,7 @@ const log = brainFeedLogger
 /** Max file size for document ingestion (2MB) */
 const MAX_DOCUMENT_SIZE = 2 * 1024 * 1024
 /** Max chars to send to the summarizer prompt (to avoid exceeding context) */
-const MAX_PROMPT_CHARS = 100_000
+const MAX_PROMPT_CHARS = 50_000
 /** Supported document extensions */
 const SUPPORTED_EXTENSIONS = new Set([
   '.md',
@@ -37,6 +37,7 @@ type ProgressCallback = (event: BrainFeedProgress) => void
 
 class BrainFeedService {
   private currentAbortController: AbortController | null = null
+  private isBusy = false
 
   /** Ensure the .brain directory exists */
   private ensureBrainDir(workspacePath: string): string {
@@ -54,12 +55,23 @@ class BrainFeedService {
     workspacePath: string,
     onProgress?: ProgressCallback
   ): Promise<BrainFeedResult> {
+    if (this.isBusy) {
+      return {
+        success: false,
+        source: 'claude-md',
+        filesUpdated: [],
+        error: 'Another feed is in progress'
+      }
+    }
+    this.isBusy = true
+
     const emit = (type: BrainFeedProgress['type'], message: string): void => {
       onProgress?.({ type, message, source: 'claude-md', timestamp: Date.now() })
     }
 
     const claudeMdPath = join(workspacePath, 'CLAUDE.md')
     if (!existsSync(claudeMdPath)) {
+      this.isBusy = false
       emit('error', 'No CLAUDE.md found in workspace')
       return { success: false, source: 'claude-md', filesUpdated: [], error: 'No CLAUDE.md found' }
     }
@@ -152,6 +164,8 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
       log.error('feedFromClaudeMd failed:', msg)
       emit('error', `AI summarization failed: ${msg}`)
       return { success: false, source: 'claude-md', filesUpdated: [], error: msg }
+    } finally {
+      this.isBusy = false
     }
   }
 
@@ -162,6 +176,16 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
     workspacePath: string,
     onProgress?: ProgressCallback
   ): Promise<BrainFeedResult> {
+    if (this.isBusy) {
+      return {
+        success: false,
+        source: 'codebase',
+        filesUpdated: [],
+        error: 'Another feed is in progress'
+      }
+    }
+    this.isBusy = true
+
     const emit = (type: BrainFeedProgress['type'], message: string): void => {
       onProgress?.({ type, message, source: 'codebase', timestamp: Date.now() })
     }
@@ -180,10 +204,10 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
 Project path: ${workspacePath}
 
 File tree (depth 3):
-${treeListing.substring(0, 30_000)}
+${treeListing.substring(0, 15_000)}
 
 Key files content:
-${keyFiles.substring(0, MAX_PROMPT_CHARS - 30_000)}
+${keyFiles.substring(0, MAX_PROMPT_CHARS - 15_000)}
 
 Generate TWO markdown sections separated by "===SECTION_BREAK===":
 
@@ -253,6 +277,8 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
       log.error('feedFromCodebase failed:', msg)
       emit('error', `AI summarization failed: ${msg}`)
       return { success: false, source: 'codebase', filesUpdated: [], error: msg }
+    } finally {
+      this.isBusy = false
     }
   }
 
@@ -264,6 +290,16 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
     filePath: string,
     onProgress?: ProgressCallback
   ): Promise<BrainFeedResult> {
+    if (this.isBusy) {
+      return {
+        success: false,
+        source: 'document',
+        filesUpdated: [],
+        error: 'Another feed is in progress'
+      }
+    }
+    this.isBusy = true
+
     const emit = (type: BrainFeedProgress['type'], message: string): void => {
       onProgress?.({ type, message, source: 'document', timestamp: Date.now() })
     }
@@ -271,6 +307,7 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
     // Validate extension
     const ext = extname(filePath).toLowerCase()
     if (!SUPPORTED_EXTENSIONS.has(ext)) {
+      this.isBusy = false
       emit('error', `Unsupported file type: ${ext}`)
       return {
         success: false,
@@ -285,6 +322,7 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
     try {
       stat = statSync(filePath)
     } catch {
+      this.isBusy = false
       emit('error', 'File not found or inaccessible')
       return {
         success: false,
@@ -295,10 +333,8 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
     }
 
     if (stat.size > MAX_DOCUMENT_SIZE) {
-      emit(
-        'error',
-        `File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB, max 2MB)`
-      )
+      this.isBusy = false
+      emit('error', `File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB, max 2MB)`)
       return { success: false, source: 'document', filesUpdated: [], error: 'File too large' }
     }
 
@@ -310,15 +346,19 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
         text = readFileSync(filePath, 'utf-8')
       } else {
         // Use officeparser for docx, xlsx, pdf, pptx, odt, ods, rtf
-        text = await parseOffice(filePath) as string
+        // officeparser v6 returns an OfficeParserAST object — call .toText()
+        const ast = await parseOffice(filePath)
+        text = ast.toText()
       }
     } catch (error) {
+      this.isBusy = false
       const msg = `Text extraction failed: ${(error as Error).message}`
       emit('error', msg)
       return { success: false, source: 'document', filesUpdated: [], error: msg }
     }
 
     if (!text?.trim()) {
+      this.isBusy = false
       emit('error', 'No text content extracted from document')
       return {
         success: false,
@@ -328,7 +368,7 @@ Return ONLY the two sections as plain text. No code fences, no JSON wrapping.`
       }
     }
 
-    const fileName = filePath.split('/').pop() || 'document'
+    const fileName = basename(filePath)
     const today = new Date().toISOString().split('T')[0]
 
     const prompt = `You are processing a document to add its content to a project's persistent brain memory.
@@ -373,6 +413,8 @@ Only include files that have relevant content. Use appropriate markdown formatti
       log.error('feedFromDocument failed:', msg)
       emit('error', `AI summarization failed: ${msg}`)
       return { success: false, source: 'document', filesUpdated: [], error: msg }
+    } finally {
+      this.isBusy = false
     }
   }
 
@@ -436,9 +478,7 @@ Only include files that have relevant content. Use appropriate markdown formatti
     const claudeMd = join(workspacePath, 'CLAUDE.md')
     if (existsSync(claudeMd)) {
       try {
-        sections.push(
-          `### CLAUDE.md\n${readFileSync(claudeMd, 'utf-8').substring(0, 10_000)}`
-        )
+        sections.push(`### CLAUDE.md\n${readFileSync(claudeMd, 'utf-8').substring(0, 10_000)}`)
       } catch {
         /* skip */
       }
@@ -448,12 +488,7 @@ Only include files that have relevant content. Use appropriate markdown formatti
   }
 
   /** Tree listing (reused from workspace-deploy pattern) */
-  private getTreeListing(
-    dirPath: string,
-    maxDepth: number,
-    prefix = '',
-    depth = 0
-  ): string {
+  private getTreeListing(dirPath: string, maxDepth: number, prefix = '', depth = 0): string {
     if (depth >= maxDepth) return ''
 
     let result = ''
@@ -494,10 +529,17 @@ Only include files that have relevant content. Use appropriate markdown formatti
   }
 
   /** Spawn claude -p for summarization (same pattern as workspace-deploy) */
-  private spawnSummarizer(prompt: string): Promise<string> {
+  private spawnSummarizer(prompt: string, model?: string): Promise<string> {
     return new Promise((resolve, reject) => {
       this.currentAbortController = new AbortController()
       const { signal } = this.currentAbortController
+
+      // 5-minute timeout to prevent permanent hangs
+      const TIMEOUT_MS = 5 * 60 * 1000
+      const timer = setTimeout(() => {
+        log.warn('Brain feed summarizer timed out after 5 minutes')
+        this.currentAbortController?.abort()
+      }, TIMEOUT_MS)
 
       const env = { ...process.env }
       delete env.CLAUDECODE
@@ -515,7 +557,7 @@ Only include files that have relevant content. Use appropriate markdown formatti
           '-p',
           prompt,
           '--model',
-          ACTIVATION_MODEL_ID,
+          model ?? BRAIN_FEED_MODEL_ID,
           '--output-format',
           'text',
           '--permission-mode',
@@ -544,6 +586,7 @@ Only include files that have relevant content. Use appropriate markdown formatti
       })
 
       child.on('exit', (code) => {
+        clearTimeout(timer)
         this.currentAbortController = null
         log.info(
           `Summarizer exited with code ${code} (stdout: ${stdout.length} chars, stderr: ${stderr.length} chars)`
@@ -561,6 +604,7 @@ Only include files that have relevant content. Use appropriate markdown formatti
       })
 
       child.on('error', (err) => {
+        clearTimeout(timer)
         this.currentAbortController = null
         reject(new Error(`Failed to spawn summarizer: ${err.message}`))
       })
@@ -573,6 +617,7 @@ Only include files that have relevant content. Use appropriate markdown formatti
       this.currentAbortController.abort()
       this.currentAbortController = null
     }
+    this.isBusy = false
   }
 }
 

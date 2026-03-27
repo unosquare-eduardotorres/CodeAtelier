@@ -45,37 +45,33 @@ export default function SkillDetailPage({
   const isWorkspaceSkill = skill.source === 'workspace'
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
+    <div className="flex-1 flex flex-col bg-surface-raised min-w-0">
       {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-700 bg-gray-900">
+      <div className="flex items-center gap-3 px-6 py-3 border-b border-border-subtle bg-surface-raised">
         <button
           onClick={onBack}
-          className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+          className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
           aria-label="Back to Skills"
         >
           <ArrowLeft size={16} />
         </button>
-        <span className="text-sm font-semibold text-gray-200">{skill.name}</span>
+        <span className="text-sm font-semibold text-text-primary">{skill.name}</span>
         <span
-          className={`px-1.5 py-0.5 text-[10px] rounded-full font-medium ${
-            skill.isActive
-              ? 'bg-green-500/10 text-green-400'
-              : 'bg-gray-600/30 text-gray-500'
+          className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${
+            skill.isActive ? 'bg-green-500/10 text-green-400' : 'bg-surface-overlay text-text-muted'
           }`}
         >
           {skill.isActive ? 'Active' : 'Inactive'}
         </span>
         {skill.lastUpdated && (
-          <span className="text-[10px] text-gray-500">
-            Last updated: {skill.lastUpdated}
-          </span>
+          <span className="text-xs text-text-muted">Last updated: {skill.lastUpdated}</span>
         )}
       </div>
 
       {/* Content: two columns */}
       <div className="flex-1 flex min-h-0">
         {/* Left sidebar: File tree + Used by */}
-        <div className="w-56 flex-shrink-0 border-r border-gray-800 overflow-y-auto p-4">
+        <div className="w-56 flex-shrink-0 border-r border-border-subtle overflow-y-auto p-4">
           <SkillFileTree
             skill={skill}
             selectedFile={selectedFile}
@@ -84,13 +80,13 @@ export default function SkillDetailPage({
 
           {/* Used by agents */}
           {usedByAgents.length > 0 && (
-            <div className="mt-6 pt-4 border-t border-gray-800">
-              <h4 className="text-xs font-medium text-gray-400 mb-2">Used by</h4>
+            <div className="mt-6 pt-4 border-t border-border-subtle">
+              <h4 className="text-xs font-medium text-text-secondary mb-2">Used by</h4>
               <div className="space-y-1">
                 {usedByAgents.map((agent) => (
                   <div
                     key={agent.filename}
-                    className="text-xs text-gray-400 px-2 py-1 rounded-md bg-gray-800/50"
+                    className="text-xs text-text-secondary px-2 py-1 rounded-md bg-surface-overlay"
                   >
                     {agent.parsed.name}
                   </div>
@@ -101,14 +97,14 @@ export default function SkillDetailPage({
 
           {/* Skill metadata */}
           {skill.frontmatter && (
-            <div className="mt-6 pt-4 border-t border-gray-800">
-              <h4 className="text-xs font-medium text-gray-400 mb-2">Info</h4>
+            <div className="mt-6 pt-4 border-t border-border-subtle">
+              <h4 className="text-xs font-medium text-text-secondary mb-2">Info</h4>
               {skill.frontmatter.description && (
-                <p className="text-[11px] text-gray-500 leading-relaxed">
+                <p className="text-xs text-text-muted leading-relaxed">
                   {skill.frontmatter.description}
                 </p>
               )}
-              <div className="mt-2 text-[10px] text-gray-600">
+              <div className="mt-2 text-xs text-text-muted">
                 <div>Files: SKILL.md + {skill.referenceFiles.length} references</div>
                 <div>Source: {skill.source}</div>
               </div>
@@ -120,11 +116,11 @@ export default function SkillDetailPage({
         <div className="flex-1 overflow-y-auto p-4">
           {!selectedFile ? (
             <div className="flex items-center justify-center py-12">
-              <p className="text-sm text-gray-500">Select a file to view</p>
+              <p className="text-sm text-text-secondary">Select a file to view</p>
             </div>
           ) : isFileLoading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 size={18} className="animate-spin text-gray-500" />
+              <Loader2 size={18} className="animate-spin text-text-muted" />
             </div>
           ) : activeFileContent !== null && activeFilePath === selectedFile ? (
             <MarkdownViewer
@@ -135,7 +131,7 @@ export default function SkillDetailPage({
             />
           ) : (
             <div className="flex items-center justify-center py-12">
-              <p className="text-sm text-gray-500">Could not load file</p>
+              <p className="text-sm text-text-secondary">Could not load file</p>
             </div>
           )}
         </div>

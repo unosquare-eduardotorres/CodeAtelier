@@ -1,0 +1,16 @@
+{
+  "id": "TASK-033",
+  "title": "Add scope auto-generation to orchestrator",
+  "description": "In orchestrator decompose, generate scope constraints for each task based on agent type and task description. Backend tasks -> src/api/**, frontend -> src/components/**, etc.",
+  "feature_ref": "F008",
+  "task_type": "backend",
+  "complexity": { "score": 4, "factors": { "files_affected": 2, "estimated_lines": 60, "new_dependencies": 0, "risk_flags": [] } },
+  "dependencies": ["TASK-032"],
+  "acceptance_criteria": [
+    "Decomposition prompt includes scope generation instructions",
+    "Each task has scope.allowedPatterns based on domain",
+    "Scope included in specialist prompt as instructions",
+    "Reasonable defaults for unknown task types"
+  ],
+  "suggested_agent": "backend:api-developer-typescript"
+}

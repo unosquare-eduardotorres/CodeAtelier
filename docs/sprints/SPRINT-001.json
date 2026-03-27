@@ -1,0 +1,17 @@
+{
+  "id": "SPRINT-001",
+  "name": "Model Routing & Cost Visibility",
+  "goal": "Score task complexity, route to optimal model tier, and provide cost tracking dashboard with budget alerts",
+  "phases": ["Phase 1: Complexity Scoring & Model Routing", "Phase 5: Cost Tracking Dashboard"],
+  "tasks": ["TASK-003", "TASK-004", "TASK-005", "TASK-006", "TASK-007", "TASK-008", "TASK-009", "TASK-010", "TASK-011", "TASK-012", "TASK-013"],
+  "estimated_complexity": 44,
+  "dependencies": { "sprints": ["SPRINT-000"] },
+  "quality_gates": [
+    "All specialist tasks get complexity scores",
+    "Model routing verified with --model flag",
+    "Cost dashboard displays accurate spend data",
+    "Budget alerts fire at 80% and 100%",
+    "TypeScript compiles with no errors",
+    "ESLint passes"
+  ]
+}

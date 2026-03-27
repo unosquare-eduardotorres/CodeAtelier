@@ -55,12 +55,12 @@ export default function AgentMonitor({
   // Collapsed state: slim bar
   if (isCollapsed) {
     return (
-      <div className="flex flex-col items-center w-12 bg-gray-900 border-l border-gray-700 flex-shrink-0">
+      <div className="flex flex-col items-center w-12 bg-surface-raised border-l border-border-subtle flex-shrink-0">
         {/* Header area — matches sidebar header height for continuous border line */}
-        <div className="flex items-center justify-center w-full py-3 border-b border-gray-700">
+        <div className="flex items-center justify-center w-full py-3 border-b border-border-subtle">
           <button
             onClick={onToggleCollapse}
-            className="p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+            className="p-2 rounded-lg hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
             aria-label="Expand agent panel"
             title="Expand agent panel"
           >
@@ -68,9 +68,9 @@ export default function AgentMonitor({
           </button>
         </div>
         <div className="flex flex-col items-center gap-2 py-3">
-          <Monitor size={16} className="text-indigo-400" />
+          <Monitor size={16} className="text-primary-text" />
           {activeCount > 0 && (
-            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-indigo-600 text-[10px] font-semibold text-white">
+            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-white">
               {activeCount}
             </span>
           )}
@@ -80,16 +80,16 @@ export default function AgentMonitor({
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 border-l border-gray-700 w-[350px] flex-shrink-0">
+    <div className="flex flex-col h-full bg-surface-raised border-l border-border-subtle w-[350px] flex-shrink-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
         <div className="flex items-center gap-2">
-          <Monitor size={16} className="text-indigo-400" />
-          <span className="text-sm font-semibold text-gray-200">Agent Monitor</span>
+          <Monitor size={16} className="text-primary-text" />
+          <span className="text-sm font-semibold text-text-primary">Agent Monitor</span>
         </div>
         <div className="flex items-center gap-2">
           {activeCount > 0 && (
-            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-indigo-600 text-[10px] font-semibold text-white">
+            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-white">
               {activeCount}
             </span>
           )}
@@ -97,7 +97,7 @@ export default function AgentMonitor({
             <button
               onClick={stopAllAgents}
               disabled={isStopping}
-              className="p-1.5 rounded-md hover:bg-red-900/40 text-gray-400 hover:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-1.5 rounded-md hover:bg-danger-muted text-text-secondary hover:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="Stop all agents"
               title="Stop all agents"
             >
@@ -106,7 +106,7 @@ export default function AgentMonitor({
           )}
           <button
             onClick={onToggleCollapse}
-            className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+            className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
             aria-label="Collapse agent panel"
             title="Collapse agent panel"
           >
@@ -119,9 +119,9 @@ export default function AgentMonitor({
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {visibleStatuses.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <Monitor size={32} className="text-gray-700 mb-3" />
-            <p className="text-sm text-gray-500 mb-1">No agents active</p>
-            <p className="text-xs text-gray-600">Agents will appear here when processing tasks</p>
+            <Monitor size={32} className="text-border-default mb-3" />
+            <p className="text-sm text-text-secondary mb-1">No agents active</p>
+            <p className="text-xs text-text-muted">Agents will appear here when processing tasks</p>
           </div>
         ) : (
           visibleStatuses.map((status) => <AgentStatusCard key={status.agentId} status={status} />)
@@ -130,7 +130,7 @@ export default function AgentMonitor({
 
       {/* Summary footer */}
       {visibleStatuses.length > 0 && (
-        <div className="px-4 py-2 border-t border-gray-700 text-xs text-gray-500">
+        <div className="px-4 py-2.5 border-t border-border-subtle text-xs text-text-secondary">
           <div className="flex justify-between">
             <span>
               {activeCount > 0 && `${activeCount} active · `}

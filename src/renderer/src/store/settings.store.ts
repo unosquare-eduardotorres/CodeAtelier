@@ -62,6 +62,9 @@ interface SettingsState {
     options?: { skipRemoved?: boolean }
   ) => Promise<SyncResult | null>
   cleanAndReactivate: (workspacePath: string) => Promise<void>
+  deployAll: (workspacePath: string) => Promise<{ agents: number; skills: number } | null>
+  deleteAllAgents: (workspacePath: string) => Promise<void>
+  deleteAllSkills: (workspacePath: string) => Promise<void>
   dismissSync: () => void
   reset: () => void
 }
@@ -303,6 +306,49 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     // Step 3: Immediately trigger re-activation
     const { activateWorkspace } = useSettingsStore.getState()
     await activateWorkspace(workspacePath)
+  },
+
+  deployAll: async (workspacePath: string) => {
+    set({ isActivating: true, activationError: null })
+    try {
+      const result = await window.api.deployAll({ workspacePath })
+
+      // Refresh scan and lists after deploy
+      const status = await window.api.scanWorkspaceClaude({ workspacePath })
+      const agents = await window.api.scanWorkspaceAgents({ workspacePath })
+      const skills = await window.api.scanWorkspaceSkills({ workspacePath })
+
+      set({ claudeStatus: status, agents, skills, isActivating: false })
+      return result
+    } catch (error) {
+      const message = (error as Error).message
+      set({ isActivating: false, activationError: message })
+      return null
+    }
+  },
+
+  deleteAllAgents: async (workspacePath: string) => {
+    try {
+      await window.api.deleteAllAgents({ workspacePath })
+      // Refresh
+      const status = await window.api.scanWorkspaceClaude({ workspacePath })
+      const agents = await window.api.scanWorkspaceAgents({ workspacePath })
+      set({ claudeStatus: status, agents })
+    } catch (error) {
+      console.error('Failed to delete all agents:', error)
+    }
+  },
+
+  deleteAllSkills: async (workspacePath: string) => {
+    try {
+      await window.api.deleteAllSkills({ workspacePath })
+      // Refresh
+      const status = await window.api.scanWorkspaceClaude({ workspacePath })
+      const skills = await window.api.scanWorkspaceSkills({ workspacePath })
+      set({ claudeStatus: status, skills })
+    } catch (error) {
+      console.error('Failed to delete all skills:', error)
+    }
   },
 
   dismissSync: () => {

@@ -6,7 +6,9 @@ interface ToolActivityBlockProps {
   activities: ToolActivity[]
 }
 
-export default function ToolActivityBlock({ activities }: ToolActivityBlockProps): React.JSX.Element | null {
+export default function ToolActivityBlock({
+  activities
+}: ToolActivityBlockProps): React.JSX.Element | null {
   const [isExpanded, setIsExpanded] = useState(false)
 
   if (activities.length === 0) return null
@@ -18,7 +20,7 @@ export default function ToolActivityBlock({ activities }: ToolActivityBlockProps
     <div className="my-2">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-300 transition-colors"
+        className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
       >
         <Wrench size={12} />
         <span>
@@ -30,7 +32,7 @@ export default function ToolActivityBlock({ activities }: ToolActivityBlockProps
       </button>
 
       {isExpanded && (
-        <div className="mt-1.5 ml-4 space-y-1 border-l-2 border-gray-700 pl-3">
+        <div className="mt-1.5 ml-4 space-y-1 border-l-2 border-border-subtle pl-3">
           {activities.map((activity) => (
             <div key={activity.id} className="flex items-center gap-2 text-xs">
               <span
@@ -42,9 +44,9 @@ export default function ToolActivityBlock({ activities }: ToolActivityBlockProps
                       : 'bg-red-400'
                 }`}
               />
-              <span className="font-mono text-gray-300">{activity.toolName}</span>
+              <span className="font-mono text-text-body">{activity.toolName}</span>
               {activity.input && (
-                <span className="text-gray-500 truncate max-w-[300px]">{activity.input}</span>
+                <span className="text-text-muted truncate max-w-[300px]">{activity.input}</span>
               )}
             </div>
           ))}

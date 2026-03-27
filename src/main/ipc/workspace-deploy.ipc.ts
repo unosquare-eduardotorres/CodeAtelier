@@ -1,12 +1,38 @@
+import path from 'node:path'
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { ActivationProgressEvent } from '../../shared/types'
 import { workspaceDeployService } from '../services/workspace-deploy.service'
+import { validateSender } from './validate-sender'
+
+/** Allowed file patterns for workspace read/write — relative to workspace root */
+const ALLOWED_FILE_PATTERNS = ['.claude/', 'CLAUDE.md', 'skills/']
+
+/**
+ * Validates that a file path is within the workspace boundary and matches
+ * allowed patterns. Prevents arbitrary file read/write via IPC.
+ */
+function validateWorkspaceFilePath(filePath: string): void {
+  const resolved = path.resolve(filePath)
+
+  // The file must be within a directory that contains one of the allowed patterns
+  const hasAllowedPattern = ALLOWED_FILE_PATTERNS.some((pattern) => {
+    const sep = path.sep
+    return resolved.includes(`${sep}${pattern.replace(/\//g, sep)}`)
+  })
+
+  if (!hasAllowedPattern) {
+    throw new Error(
+      `Access denied: file path must be within allowed workspace directories (.claude/, skills/, or CLAUDE.md). Got: ${filePath}`
+    )
+  }
+}
 
 export function registerWorkspaceDeployIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_SCAN_CLAUDE,
-    (_event, args: { workspacePath: string }) => {
+    (event, args: { workspacePath: string }) => {
+      validateSender(event)
       return workspaceDeployService.scanWorkspaceClaude(args.workspacePath)
     }
   )
@@ -14,6 +40,7 @@ export function registerWorkspaceDeployIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_ACTIVATE_AGENTS,
     async (event, args: { workspacePath: string }) => {
+      validateSender(event)
       const win = BrowserWindow.fromWebContents(event.sender)
 
       const onProgress = (progressEvent: ActivationProgressEvent): void => {
@@ -24,48 +51,57 @@ export function registerWorkspaceDeployIpc(): void {
     }
   )
 
-  ipcMain.handle(IPC_CHANNELS.WORKSPACE_CANCEL_ACTIVATION, () => {
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_CANCEL_ACTIVATION, (event) => {
+    validateSender(event)
     workspaceDeployService.shutdown()
   })
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_CLEAN_ACTIVATION,
-    (_event, args: { workspacePath: string; removeClaudeMd?: boolean }) => {
+    (event, args: { workspacePath: string; removeClaudeMd?: boolean }) => {
+      validateSender(event)
       workspaceDeployService.cleanActivation(args.workspacePath, args.removeClaudeMd)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_READ_FILE,
-    (_event, args: { filePath: string }) => {
+    (event, args: { filePath: string }) => {
+      validateSender(event)
+      validateWorkspaceFilePath(args.filePath)
       return workspaceDeployService.readWorkspaceFile(args.filePath)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_WRITE_FILE,
-    (_event, args: { filePath: string; content: string }) => {
+    (event, args: { filePath: string; content: string }) => {
+      validateSender(event)
+      validateWorkspaceFilePath(args.filePath)
       workspaceDeployService.writeWorkspaceFile(args.filePath, args.content)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_SCAN_SKILLS,
-    (_event, args: { workspacePath: string }) => {
+    (event, args: { workspacePath: string }) => {
+      validateSender(event)
       return workspaceDeployService.scanWorkspaceSkills(args.workspacePath)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_SCAN_AGENTS,
-    (_event, args: { workspacePath: string }) => {
+    (event, args: { workspacePath: string }) => {
+      validateSender(event)
       return workspaceDeployService.scanWorkspaceAgents(args.workspacePath)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_CONFIRM_CLAUDE_MD,
-    (_event, args: { workspacePath: string; content: string }) => {
+    (event, args: { workspacePath: string; content: string }) => {
+      validateSender(event)
       workspaceDeployService.confirmClaudeMd(args.workspacePath, args.content)
     }
   )
@@ -74,28 +110,32 @@ export function registerWorkspaceDeployIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.AGENT_DELETE_FROM_WORKSPACE,
-    (_event, args: { workspacePath: string; filename: string }) => {
+    (event, args: { workspacePath: string; filename: string }) => {
+      validateSender(event)
       workspaceDeployService.deleteAgentFromWorkspace(args.workspacePath, args.filename)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.AGENT_SYNC_TO_WORKSPACE,
-    (_event, args: { workspacePath: string; filename: string }) => {
+    (event, args: { workspacePath: string; filename: string }) => {
+      validateSender(event)
       workspaceDeployService.syncAgentToWorkspace(args.workspacePath, args.filename)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.SKILL_DELETE_FROM_WORKSPACE,
-    (_event, args: { workspacePath: string; skillName: string }) => {
+    (event, args: { workspacePath: string; skillName: string }) => {
+      validateSender(event)
       workspaceDeployService.deleteSkillFromWorkspace(args.workspacePath, args.skillName)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.SKILL_SYNC_TO_WORKSPACE,
-    (_event, args: { workspacePath: string; skillName: string }) => {
+    (event, args: { workspacePath: string; skillName: string }) => {
+      validateSender(event)
       workspaceDeployService.syncSkillToWorkspace(args.workspacePath, args.skillName)
     }
   )
@@ -104,14 +144,16 @@ export function registerWorkspaceDeployIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.AGENT_ACTIVATE,
-    (_event, args: { workspacePath: string; agentName: string }) => {
+    (event, args: { workspacePath: string; agentName: string }) => {
+      validateSender(event)
       workspaceDeployService.activateAgent(args.workspacePath, args.agentName)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.AGENT_DEACTIVATE,
-    (_event, args: { workspacePath: string; agentName: string }) => {
+    (event, args: { workspacePath: string; agentName: string }) => {
+      validateSender(event)
       workspaceDeployService.deactivateAgent(args.workspacePath, args.agentName)
     }
   )
@@ -120,14 +162,16 @@ export function registerWorkspaceDeployIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.DELETE_ALL_AGENTS,
-    (_event, args: { workspacePath: string }) => {
+    (event, args: { workspacePath: string }) => {
+      validateSender(event)
       workspaceDeployService.deleteAllAgents(args.workspacePath)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.DELETE_ALL_SKILLS,
-    (_event, args: { workspacePath: string }) => {
+    (event, args: { workspacePath: string }) => {
+      validateSender(event)
       workspaceDeployService.deleteAllSkills(args.workspacePath)
     }
   )
@@ -136,7 +180,8 @@ export function registerWorkspaceDeployIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_DEPLOY_ALL,
-    async (_event, args: { workspacePath: string }) => {
+    async (event, args: { workspacePath: string }) => {
+      validateSender(event)
       return workspaceDeployService.deployAllInactive(args.workspacePath)
     }
   )

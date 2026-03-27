@@ -70,7 +70,7 @@ export default function TokenUsagePage(): React.JSX.Element {
 
   if (!activeWorkspace) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+      <div className="flex items-center justify-center h-full text-text-secondary text-sm">
         Select a workspace to view token usage
       </div>
     )
@@ -78,7 +78,7 @@ export default function TokenUsagePage(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+      <div className="flex items-center justify-center h-full text-text-secondary text-sm">
         <Activity size={16} className="animate-spin mr-2" />
         Loading token data...
       </div>
@@ -88,50 +88,62 @@ export default function TokenUsagePage(): React.JSX.Element {
   const maxAgentTokens = summary?.byAgent[0]?.totalTokens ?? 1
   const mostActiveAgent = summary?.byAgent[0]?.agentType ?? 'N/A'
 
+  // Color palette for per-agent bars
+  const barColors = [
+    'bg-primary',
+    'bg-emerald-500',
+    'bg-amber-500',
+    'bg-purple-500',
+    'bg-cyan-500',
+    'bg-rose-500',
+    'bg-blue-500',
+    'bg-orange-500'
+  ]
+
   return (
     <div className="max-w-4xl mx-auto px-6 py-8">
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-          <div className="flex items-center gap-2 text-gray-500 text-xs uppercase tracking-wider mb-2">
+        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Zap size={12} />
             Total Tokens
           </div>
-          <div className="text-2xl font-bold text-gray-100">
+          <div className="text-2xl font-bold text-text-primary">
             {formatTokens(summary?.totalTokens ?? 0)}
           </div>
-          <div className="text-xs text-gray-500 mt-1">All-time for this workspace</div>
+          <div className="text-xs text-text-secondary mt-1">All-time for this workspace</div>
         </div>
 
-        <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-          <div className="flex items-center gap-2 text-gray-500 text-xs uppercase tracking-wider mb-2">
+        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Activity size={12} />
             Sessions
           </div>
-          <div className="text-2xl font-bold text-gray-100">{summary?.sessionCount ?? 0}</div>
-          <div className="text-xs text-gray-500 mt-1">Agent sessions recorded</div>
+          <div className="text-2xl font-bold text-text-primary">{summary?.sessionCount ?? 0}</div>
+          <div className="text-xs text-text-secondary mt-1">Agent sessions recorded</div>
         </div>
 
-        <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-          <div className="flex items-center gap-2 text-gray-500 text-xs uppercase tracking-wider mb-2">
+        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Users size={12} />
             Most Active
           </div>
-          <div className="text-2xl font-bold text-gray-100 truncate">{mostActiveAgent}</div>
-          <div className="text-xs text-gray-500 mt-1">Highest token consumption</div>
+          <div className="text-2xl font-bold text-text-primary truncate">{mostActiveAgent}</div>
+          <div className="text-xs text-text-secondary mt-1">Highest token consumption</div>
         </div>
       </div>
 
       {/* Per-Agent Breakdown */}
       {summary && summary.byAgent.length > 0 && (
         <div className="mb-8">
-          <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-3 font-medium">
+          <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-3 font-medium">
             Per-Agent Breakdown
           </h3>
-          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl overflow-hidden">
+          <div className="bg-surface-overlay border border-border-subtle rounded-xl overflow-hidden shadow-sm">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-700/50 text-xs text-gray-500 uppercase tracking-wider">
+                <tr className="border-b border-border-subtle text-xs text-text-secondary uppercase tracking-wider">
                   <th className="text-left px-4 py-2.5 font-medium">Agent</th>
                   <th className="text-right px-4 py-2.5 font-medium">Tokens</th>
                   <th className="text-right px-4 py-2.5 font-medium">Sessions</th>
@@ -140,34 +152,39 @@ export default function TokenUsagePage(): React.JSX.Element {
                 </tr>
               </thead>
               <tbody>
-                {summary.byAgent.map((agent) => {
+                {summary.byAgent.map((agent, idx) => {
                   const avg =
                     agent.sessionCount > 0 ? Math.round(agent.totalTokens / agent.sessionCount) : 0
                   const pct = maxAgentTokens > 0 ? (agent.totalTokens / maxAgentTokens) * 100 : 0
+                  const barColor = barColors[idx % barColors.length]
 
                   return (
                     <tr
                       key={agent.agentType}
-                      className="border-b border-gray-700/30 last:border-b-0 hover:bg-gray-800/30"
+                      className="border-b border-border-subtle/50 last:border-b-0 hover:bg-surface-overlay/50"
                     >
                       <td className="px-4 py-2.5">
-                        <span className="text-sm font-medium text-gray-200">{agent.agentType}</span>
+                        <span className="text-sm font-medium text-text-primary">
+                          {agent.agentType}
+                        </span>
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <span className="text-sm text-gray-300 font-mono">
+                        <span className="text-sm text-text-body font-mono">
                           {formatTokens(agent.totalTokens)}
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <span className="text-sm text-gray-400">{agent.sessionCount}</span>
+                        <span className="text-sm text-text-secondary">{agent.sessionCount}</span>
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <span className="text-sm text-gray-400 font-mono">{formatTokens(avg)}</span>
+                        <span className="text-sm text-text-secondary font-mono">
+                          {formatTokens(avg)}
+                        </span>
                       </td>
                       <td className="px-4 py-2.5">
-                        <div className="w-full bg-gray-700/30 rounded-full h-2">
+                        <div className="w-full bg-surface-base rounded-full h-3">
                           <div
-                            className="bg-indigo-500 h-2 rounded-full transition-all"
+                            className={`${barColor} h-3 rounded-full transition-all`}
                             style={{ width: `${Math.max(pct, 2)}%` }}
                           />
                         </div>
@@ -183,22 +200,22 @@ export default function TokenUsagePage(): React.JSX.Element {
 
       {/* Recent Sessions */}
       <div>
-        <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-3 font-medium">
+        <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-3 font-medium">
           Recent Sessions
         </h3>
         {sessions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center bg-gray-800/30 rounded-xl border border-gray-700/30">
-            <Clock size={24} className="text-gray-700 mb-2" />
-            <p className="text-sm text-gray-500">No sessions recorded yet</p>
-            <p className="text-xs text-gray-600 mt-1">
+          <div className="flex flex-col items-center justify-center py-12 text-center bg-surface-overlay/30 rounded-xl border border-border-subtle">
+            <Clock size={24} className="text-border-default mb-2" />
+            <p className="text-sm text-text-secondary">No sessions recorded yet</p>
+            <p className="text-xs text-text-muted mt-1">
               Token usage will appear here after agent sessions complete
             </p>
           </div>
         ) : (
-          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl overflow-hidden">
+          <div className="bg-surface-overlay border border-border-subtle rounded-xl overflow-hidden shadow-sm">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-700/50 text-xs text-gray-500 uppercase tracking-wider">
+                <tr className="border-b border-border-subtle text-xs text-text-secondary uppercase tracking-wider">
                   <th className="text-left px-4 py-2.5 font-medium">Agent</th>
                   <th className="text-left px-4 py-2.5 font-medium">Status</th>
                   <th className="text-right px-4 py-2.5 font-medium">Tokens</th>
@@ -212,10 +229,10 @@ export default function TokenUsagePage(): React.JSX.Element {
                   return (
                     <tr
                       key={session.id}
-                      className="border-b border-gray-700/30 last:border-b-0 hover:bg-gray-800/30"
+                      className="border-b border-border-subtle/50 last:border-b-0 hover:bg-surface-overlay/50"
                     >
                       <td className="px-4 py-2.5">
-                        <span className="text-sm font-medium text-gray-200">
+                        <span className="text-sm font-medium text-text-primary">
                           {session.agentType}
                         </span>
                       </td>
@@ -227,17 +244,17 @@ export default function TokenUsagePage(): React.JSX.Element {
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <span className="text-sm text-gray-300 font-mono">
+                        <span className="text-sm text-text-body font-mono">
                           {formatTokens(session.tokenUsage)}
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <span className="text-sm text-gray-400">
+                        <span className="text-sm text-text-secondary">
                           {formatDuration(session.startedAt, session.endedAt)}
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <span className="text-sm text-gray-500">
+                        <span className="text-sm text-text-muted">
                           {formatDate(session.startedAt)}
                         </span>
                       </td>

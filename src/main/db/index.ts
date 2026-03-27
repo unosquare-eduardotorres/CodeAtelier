@@ -201,6 +201,16 @@ export function getDatabase(): Database.Database {
     // Indexes already exist — ignore
   }
 
+  // Migration: Add complexity scoring columns to agent_sessions
+  try {
+    db.exec('ALTER TABLE agent_sessions ADD COLUMN complexity_score INTEGER')
+    db.exec('ALTER TABLE agent_sessions ADD COLUMN model_used TEXT')
+    db.exec('ALTER TABLE agent_sessions ADD COLUMN model_tier TEXT')
+    dbLogger.info('Migration: added complexity scoring columns to agent_sessions')
+  } catch {
+    // Columns already exist — fine
+  }
+
   // Migration: create ideas table for quick-capture work item drafts
   try {
     db.exec(`

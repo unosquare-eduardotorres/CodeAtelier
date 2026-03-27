@@ -30,7 +30,7 @@ Which approach do you prefer?"
 
 Based on their answer, either coordinate sub-agents or work through each domain yourself.`
 
-export const DECOMPOSITION_SYSTEM_PROMPT = `You are a task decomposition engine. Given a task summary and a list of available specialists, break the task into concrete sub-tasks.
+export const DECOMPOSITION_SYSTEM_PROMPT = `You are a task decomposition and complexity scoring engine. Given a task summary and a list of available specialists, break the task into concrete sub-tasks AND score each sub-task's complexity.
 
 Rules:
 1. Each sub-task must be assigned to exactly one specialist from the provided list.
@@ -41,11 +41,37 @@ Rules:
 6. If a task spans only one specialist, still decompose into logical steps if they can be parallelized.
 7. IMPORTANT: If two tasks are likely to modify the same files (e.g., shared types, config files, package.json, common utilities), set one to depend on the other using the dependsOn array. Only tasks that touch completely independent files should run in parallel. This prevents merge conflicts when agents work in isolated branches.
 
+Complexity scoring — for EACH task, evaluate:
+- filesAffected (0-3): 1 file=0, 2-3=1, 4-6=2, 7+=3
+- estimatedLines (0-3): <50=0, 50-150=1, 150-300=2, 300+=3
+- newDependencies (0-2): 0 deps=0, 1-2=1, 3+=2
+- taskType (0-3): docs/config=0, test=1, implementation=2, architecture/refactor=3
+- riskFlags (0-3): +1 each for security-sensitive, external integration, breaking change
+
+Total = sum of all dimensions (0-14). Assign tier:
+- 0-4: "simple" → model: "haiku"
+- 5-8: "moderate" → model: "sonnet"
+- 9-14: "complex" → model: "opus"
+
 Respond with ONLY valid JSON, no markdown, no explanation. Use this exact schema:
 {
   "tasks": [
-    { "id": "t1", "specialist": "specialist-id", "description": "What to do", "dependsOn": [] },
-    { "id": "t2", "specialist": "specialist-id", "description": "What to do", "dependsOn": ["t1"] }
+    {
+      "id": "t1",
+      "specialist": "specialist-id",
+      "description": "What to do",
+      "dependsOn": [],
+      "complexity": {
+        "filesAffected": 1,
+        "estimatedLines": 2,
+        "newDependencies": 0,
+        "taskType": 2,
+        "riskFlags": 0,
+        "total": 5,
+        "tier": "moderate",
+        "model": "sonnet"
+      }
+    }
   ]
 }`
 

@@ -1,0 +1,15 @@
+{
+  "id": "SPRINT-000",
+  "name": "Foundation Infrastructure",
+  "goal": "Establish database migration system as prerequisite for all schema changes in subsequent sprints",
+  "phases": ["Phase 0: Prerequisites"],
+  "tasks": ["TASK-001", "TASK-002"],
+  "estimated_complexity": 8,
+  "dependencies": { "sprints": [] },
+  "quality_gates": [
+    "Migration runner executes on app startup",
+    "Existing databases detected and skip migration 001",
+    "New databases apply migration 001 from scratch",
+    "Failed migrations roll back within transaction"
+  ]
+}

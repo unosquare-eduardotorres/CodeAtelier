@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { AppLayout } from '@renderer/components/layout'
 import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
-import { useWorkspaceStore, useChatStore, useAgentStore, useUpdateStore } from '@renderer/store'
+import { useWorkspaceStore, useChatStore, useAgentStore, useUpdateStore, useBrainFeedStore } from '@renderer/store'
 import type { ConversationMode, TaskPlan } from '../../shared/types'
 
 // Check if this window was opened as a Pixel Office pop-out
@@ -23,6 +23,7 @@ function App(): React.JSX.Element {
   } = useChatStore()
   const { updateStatus } = useAgentStore()
   const { setAvailable, setNotAvailable, setDownloaded, setProgress, setError } = useUpdateStore()
+  const { onProgress: onBrainFeedProgress } = useBrainFeedStore()
 
   useEffect(() => {
     // Load workspaces on mount
@@ -96,7 +97,9 @@ function App(): React.JSX.Element {
           | 'completed'
           | 'failed',
         elapsedMs: data.elapsedMs,
-        tokenUsage: data.tokenUsage
+        tokenUsage: data.tokenUsage,
+        model: data.model,
+        complexityTier: data.complexityTier
       })
     })
 
@@ -117,6 +120,11 @@ function App(): React.JSX.Element {
       setError(message)
     })
 
+    // Brain feed progress listener
+    const unsubBrainFeed = window.api.onBrainFeedProgress((progress) => {
+      onBrainFeedProgress(progress)
+    })
+
     return () => {
       unsubChunk()
       unsubComplete()
@@ -131,6 +139,7 @@ function App(): React.JSX.Element {
       unsubUpdateDownloaded()
       unsubUpdateProgress()
       unsubUpdateError()
+      unsubBrainFeed()
     }
   }, [
     loadWorkspaces,
@@ -149,7 +158,8 @@ function App(): React.JSX.Element {
     setNotAvailable,
     setDownloaded,
     setProgress,
-    setError
+    setError,
+    onBrainFeedProgress
   ])
 
   // Pop-out mode: render only the Pixel Office fullscreen

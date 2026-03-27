@@ -3,9 +3,15 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { ConversationMode, DecomposedTask, TaskExecutionProgress } from '../../shared/types'
+import { MODEL_TIER_IDS } from '../../shared/constants'
 import { specialistPoolLogger } from '../logger'
-import { specialistRepository, worktreeRepository, agentSessionRepository } from '../db/repositories'
+import {
+  specialistRepository,
+  worktreeRepository,
+  agentSessionRepository
+} from '../db/repositories'
 import { SPECIALIST_TASK_SYSTEM_PROMPT } from './system-prompts'
+import { getModelId } from './complexity-scorer.service'
 import { gitWorktreeService } from './git-worktree.service'
 import type { MergeResult } from './git-worktree.service'
 import { buildEnvWithPath } from './env-utils'
@@ -20,6 +26,11 @@ const RETRY_CONFIG = {
   rateLimitDelayMs: 10000 // Longer delay for rate-limited retries
 }
 
+/** Maximum time (ms) a specialist process can run before being killed — 10 minutes */
+const SPECIALIST_TIMEOUT_MS = 10 * 60 * 1000
+/** Grace period (ms) between SIGTERM and SIGKILL escalation */
+const SIGKILL_GRACE_MS = 5000
+
 interface SpecialistProcessInfo {
   task: DecomposedTask
   process: ChildProcess
@@ -29,6 +40,7 @@ interface SpecialistProcessInfo {
   dbSessionId?: string
   attempt: number
   rateLimited?: boolean
+  timeoutTimer?: ReturnType<typeof setTimeout>
 }
 
 /**
@@ -177,11 +189,15 @@ export class SpecialistPoolService extends EventEmitter {
     // Create DB session for token tracking
     let dbSessionId: string | undefined
     try {
+      const sessionModelId = task.model ? getModelId(task.model) : MODEL_TIER_IDS.sonnet
       const session = agentSessionRepository.create(task.specialist, {
         taskId: task.id,
         pid: childProcess.pid,
         conversationId: this.conversationId ?? undefined,
-        workspaceId: undefined // workspace DB ID not available here
+        workspaceId: undefined, // workspace DB ID not available here
+        complexityScore: task.complexity?.total,
+        modelUsed: sessionModelId,
+        modelTier: task.complexity?.tier
       })
       dbSessionId = session.id
     } catch (err) {
@@ -198,6 +214,31 @@ export class SpecialistPoolService extends EventEmitter {
       attempt
     }
     this.activeProcesses.set(task.id, info)
+
+    // Set a timeout to kill stuck specialist processes (SIGTERM → SIGKILL escalation)
+    info.timeoutTimer = setTimeout(() => {
+      if (childProcess.exitCode === null && !childProcess.killed) {
+        this.log.warn(
+          `Specialist [${task.specialist}] task ${task.id} timed out after ${SPECIALIST_TIMEOUT_MS / 1000}s — sending SIGTERM`
+        )
+        this.emit('taskChunk', {
+          taskId: task.id,
+          specialist: task.specialist,
+          chunk: `\n\n⚠️ Task timed out after ${SPECIALIST_TIMEOUT_MS / 60000} minutes. Terminating…`
+        })
+        childProcess.kill('SIGTERM')
+
+        // Escalate to SIGKILL if SIGTERM doesn't work
+        setTimeout(() => {
+          if (childProcess.exitCode === null && !childProcess.killed) {
+            this.log.warn(
+              `Specialist [${task.specialist}] task ${task.id} did not exit after SIGTERM — sending SIGKILL`
+            )
+            childProcess.kill('SIGKILL')
+          }
+        }, SIGKILL_GRACE_MS)
+      }
+    }, SPECIALIST_TIMEOUT_MS)
 
     // Initialize NDJSON buffer for this task
     this.taskBuffers.set(task.id, '')
@@ -281,6 +322,9 @@ export class SpecialistPoolService extends EventEmitter {
     })
 
     childProcess.on('exit', (code) => {
+      // Clear the timeout timer — process exited normally
+      if (info.timeoutTimer) clearTimeout(info.timeoutTimer)
+
       // Flush any remaining NDJSON buffer content
       const remainingBuffer = this.taskBuffers.get(task.id)?.trim()
       if (remainingBuffer) {
@@ -414,6 +458,7 @@ export class SpecialistPoolService extends EventEmitter {
     })
 
     childProcess.on('error', (err) => {
+      if (info.timeoutTimer) clearTimeout(info.timeoutTimer)
       this.taskBuffers.delete(task.id)
       this.activeProcesses.delete(task.id)
       this.completedTasks.add(task.id)
@@ -465,6 +510,11 @@ export class SpecialistPoolService extends EventEmitter {
         for (const skill of activeSkills) {
           try {
             const content = readFileSync(skill.filePath, 'utf-8')
+            if (content.length > 5000) {
+              this.log.warn(
+                `Skill "${skill.name}" truncated from ${content.length} to 5000 chars for specialist ${task.specialist}`
+              )
+            }
             systemPrompt += `\n\n## Skill: ${skill.name}\n${content.substring(0, 5000)}`
           } catch {
             this.log.warn(`Could not read skill file: ${skill.filePath}`)
@@ -497,11 +547,14 @@ export class SpecialistPoolService extends EventEmitter {
       ? `${task.description}${dependencyContext}`
       : task.description
 
+    const modelId = task.model ? getModelId(task.model) : MODEL_TIER_IDS.sonnet
     const args = [
       '-p',
       fullPrompt,
       '--system-prompt',
       systemPrompt,
+      '--model',
+      modelId,
       '--output-format',
       'stream-json',
       '--verbose'
@@ -525,7 +578,7 @@ export class SpecialistPoolService extends EventEmitter {
     }
 
     this.log.info(
-      `Spawning specialist [${task.specialist}] for task ${task.id} in ${cwd}: ${task.description.substring(0, 100)}`
+      `Spawning specialist [${task.specialist}] model=${task.model ?? 'sonnet'} complexity=${task.complexity?.total ?? '?'} for task ${task.id} in ${cwd}: ${task.description.substring(0, 100)}`
     )
 
     return spawn('claude', args, {
@@ -599,6 +652,7 @@ export class SpecialistPoolService extends EventEmitter {
 
     for (const [id, info] of this.activeProcesses) {
       this.log.info(`Stopping specialist process: ${id}`)
+      if (info.timeoutTimer) clearTimeout(info.timeoutTimer)
 
       exitPromises.push(
         new Promise<void>((resolve) => {
@@ -641,7 +695,9 @@ export class SpecialistPoolService extends EventEmitter {
       specialist: task.specialist,
       status,
       output,
-      error
+      error,
+      model: task.model,
+      complexityTier: task.complexity?.tier
     }
     this.emit('taskProgress', progress)
   }

@@ -113,7 +113,7 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
-        <div className="text-sm text-gray-500">Loading ideas...</div>
+        <div className="text-sm text-text-secondary">Loading ideas...</div>
       </div>
     )
   }
@@ -122,8 +122,8 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
     return (
       <div className="flex flex-col items-center justify-center py-8 text-center">
         <Lightbulb size={32} className="text-yellow-400/30 mb-3" />
-        <p className="text-sm text-gray-500 mb-1">No ideas yet</p>
-        <p className="text-xs text-gray-600">
+        <p className="text-sm text-text-secondary mb-1">No ideas yet</p>
+        <p className="text-xs text-text-muted">
           Use the <Lightbulb size={10} className="inline text-yellow-400" /> button in the chat
           input to capture ideas.
         </p>
@@ -137,7 +137,7 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
         {ideas.map((idea) => (
           <div
             key={idea.id}
-            className="bg-gray-800/60 border border-gray-700/50 rounded-lg p-3 hover:border-gray-600/50 transition-colors"
+            className="bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm"
           >
             {/* Title row */}
             <div className="flex items-start justify-between gap-3 mb-1">
@@ -149,14 +149,14 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
                 ) : (
                   <Lightbulb size={14} className="text-yellow-400 flex-shrink-0" />
                 )}
-                <span className="text-sm font-medium text-gray-200 truncate">{idea.title}</span>
+                <span className="text-sm font-medium text-text-primary truncate">{idea.title}</span>
               </div>
               <StatusBadge status={idea.status} />
             </div>
 
             {/* Description */}
             {idea.description && (
-              <p className="text-xs text-gray-400 mb-3 ml-[22px] line-clamp-2">
+              <p className="text-xs text-text-secondary mb-3 ml-[22px] line-clamp-2">
                 {idea.description}
               </p>
             )}
@@ -174,7 +174,7 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
                   </button>
                   <button
                     onClick={() => handleConvertDirect(idea)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 rounded-lg hover:bg-indigo-500/20 transition-colors"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
                   >
                     <Play size={12} />
                     Convert Directly
@@ -185,7 +185,9 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
               {idea.status === 'grilling' && (
                 <>
                   <button
-                    onClick={() => idea.grillConversationId && handleContinueGrill(idea.grillConversationId)}
+                    onClick={() =>
+                      idea.grillConversationId && handleContinueGrill(idea.grillConversationId)
+                    }
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-orange-300 bg-orange-500/10 border border-orange-500/20 rounded-lg hover:bg-orange-500/20 transition-colors"
                   >
                     <Flame size={12} />
@@ -193,7 +195,7 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
                   </button>
                   <button
                     disabled
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-500 bg-gray-700/30 border border-gray-700/50 rounded-lg cursor-not-allowed opacity-50"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-text-muted bg-surface-overlay border border-border-subtle rounded-lg cursor-not-allowed opacity-50"
                     title="Complete the Grill Me session first"
                   >
                     <Play size={12} />
@@ -212,20 +214,22 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
                 </button>
               )}
 
-              {idea.status === 'completed' && idea.grillConversationId && !idea.convertedConversationId && (
-                <button
-                  onClick={() => handleGoToConversation(idea.grillConversationId!)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-green-300 bg-green-500/10 border border-green-500/20 rounded-lg hover:bg-green-500/20 transition-colors"
-                >
-                  <ExternalLink size={12} />
-                  Go to Grill Conversation
-                </button>
-              )}
+              {idea.status === 'completed' &&
+                idea.grillConversationId &&
+                !idea.convertedConversationId && (
+                  <button
+                    onClick={() => handleGoToConversation(idea.grillConversationId!)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-green-300 bg-green-500/10 border border-green-500/20 rounded-lg hover:bg-green-500/20 transition-colors"
+                  >
+                    <ExternalLink size={12} />
+                    Go to Grill Conversation
+                  </button>
+                )}
 
               {/* Delete button — always available */}
               <button
                 onClick={() => setDeleteTarget(idea.id)}
-                className="inline-flex items-center p-1 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors ml-auto"
+                className="inline-flex items-center p-1 text-text-muted hover:text-red-400 hover:bg-danger-muted rounded-md transition-colors ml-auto"
                 aria-label="Delete idea"
                 title="Delete idea"
               >
@@ -235,9 +239,11 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
 
             {/* Grill summary */}
             {idea.grillSummary && idea.status === 'completed' && (
-              <div className="mt-2 ml-[22px] p-2 bg-gray-900/40 rounded-md border border-gray-700/30">
-                <span className="text-xs text-gray-500 font-medium">Grill Summary:</span>
-                <p className="text-xs text-gray-400 mt-0.5 line-clamp-3">{idea.grillSummary}</p>
+              <div className="mt-2 ml-[22px] p-2 bg-surface-base rounded-md border border-border-subtle">
+                <span className="text-xs text-text-muted font-medium">Grill Summary:</span>
+                <p className="text-xs text-text-secondary mt-0.5 line-clamp-3">
+                  {idea.grillSummary}
+                </p>
               </div>
             )}
           </div>

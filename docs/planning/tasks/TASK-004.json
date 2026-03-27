@@ -1,0 +1,16 @@
+{
+  "id": "TASK-004",
+  "title": "Extend DecomposedTask with complexity and model fields",
+  "description": "In src/shared/types.ts, add optional complexity?: ComplexityScore, model?: string, and maxRetries?: number fields to the DecomposedTask interface. Add CostPreference type ('economy' | 'balanced' | 'power'). Add model ID constants to shared/constants.ts.",
+  "feature_ref": "F001",
+  "task_type": "fullstack",
+  "complexity": { "score": 2, "factors": { "files_affected": 2, "estimated_lines": 30, "new_dependencies": 0, "risk_flags": [] } },
+  "dependencies": ["TASK-003"],
+  "acceptance_criteria": [
+    "DecomposedTask has complexity, model, maxRetries fields",
+    "CostPreference type exported",
+    "MODEL_IDS constant with haiku, sonnet, opus model strings",
+    "No breaking changes to existing DecomposedTask usage"
+  ],
+  "suggested_agent": "backend:api-developer-typescript"
+}

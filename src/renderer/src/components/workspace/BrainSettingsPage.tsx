@@ -14,7 +14,7 @@ import {
   Loader2
 } from 'lucide-react'
 import { useDropzone } from 'react-dropzone'
-import { useWorkspaceStore } from '@renderer/store'
+import { useWorkspaceStore, useBrainFeedStore } from '@renderer/store'
 import type { BrainStatus, BrainFileInfo } from '../../../../shared/types'
 
 /** Max lines threshold for progress bar display */
@@ -59,13 +59,13 @@ function LineProgressBar({ current, max }: { current: number; max: number }): Re
 
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+      <div className="flex-1 h-2 bg-surface-base rounded-full overflow-hidden">
         <div
           className={`h-full ${color} rounded-full transition-all`}
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="text-[10px] text-gray-500 whitespace-nowrap">
+      <span className="text-xs text-text-muted whitespace-nowrap">
         {current}/{max} ({Math.round(pct)}%)
       </span>
     </div>
@@ -80,9 +80,14 @@ export default function BrainSettingsPage(): React.JSX.Element {
   const [viewContent, setViewContent] = useState<string | null>(null)
   const [compacting, setCompacting] = useState<string | null>(null)
   const [toggling, setToggling] = useState(false)
-  const [feeding, setFeeding] = useState<'claude-md' | 'codebase' | 'document' | null>(null)
-  const [feedStatus, setFeedStatus] = useState<string | null>(null)
-  const [feedError, setFeedError] = useState<string | null>(null)
+  const {
+    status: brainFeedStatus,
+    source: feedSource,
+    startFeed,
+    error: feedError,
+    message: feedMessage
+  } = useBrainFeedStore()
+  const feeding = brainFeedStatus === 'running' ? feedSource : null
 
   const loadBrainInfo = useCallback(async () => {
     if (!activeWorkspace?.repoPath) return
@@ -173,84 +178,63 @@ export default function BrainSettingsPage(): React.JSX.Element {
 
   // ── Feed Brain handlers ──
 
+  // Reload brain info when feed completes
   useEffect(() => {
-    const cleanup = window.api.onBrainFeedProgress((progress) => {
-      if (progress.type === 'error') {
-        setFeedError(progress.message)
-      } else if (progress.type === 'complete') {
-        setFeedStatus(progress.message)
-        setFeeding(null)
-        loadBrainInfo()
-      } else {
-        setFeedStatus(progress.message)
-      }
-    })
-    return cleanup
-  }, [loadBrainInfo])
-
-  const handleFeedClaudeMd = async (): Promise<void> => {
-    if (!activeWorkspace?.repoPath || feeding) return
-    setFeeding('claude-md')
-    setFeedError(null)
-    setFeedStatus('Starting...')
-    try {
-      const result = await window.api.brainFeedClaudeMd({
-        workspacePath: activeWorkspace.repoPath
-      })
-      if (!result.success) setFeedError(result.error ?? 'Failed')
-    } catch (err) {
-      setFeedError(String(err))
-    } finally {
-      setFeeding(null)
+    if (brainFeedStatus === 'completed') {
+      loadBrainInfo()
     }
+  }, [brainFeedStatus, loadBrainInfo])
+
+  const handleFeedClaudeMd = (): void => {
+    if (!activeWorkspace?.repoPath || brainFeedStatus === 'running') return
+    startFeed('claude-md')
+    window.api
+      .brainFeedClaudeMd({ workspacePath: activeWorkspace.repoPath })
+      .then((result) => {
+        if (!result.success && result.error) {
+          console.error('Feed failed:', result.error)
+        }
+      })
+      .catch((err) => console.error('Feed IPC error:', err))
   }
 
-  const handleFeedCodebase = async (): Promise<void> => {
-    if (!activeWorkspace?.repoPath || feeding) return
-    setFeeding('codebase')
-    setFeedError(null)
-    setFeedStatus('Starting...')
-    try {
-      const result = await window.api.brainFeedCodebase({
-        workspacePath: activeWorkspace.repoPath
+  const handleFeedCodebase = (): void => {
+    if (!activeWorkspace?.repoPath || brainFeedStatus === 'running') return
+    startFeed('codebase')
+    window.api
+      .brainFeedCodebase({ workspacePath: activeWorkspace.repoPath })
+      .then((result) => {
+        if (!result.success && result.error) {
+          console.error('Feed failed:', result.error)
+        }
       })
-      if (!result.success) setFeedError(result.error ?? 'Failed')
-    } catch (err) {
-      setFeedError(String(err))
-    } finally {
-      setFeeding(null)
-    }
+      .catch((err) => console.error('Feed IPC error:', err))
   }
 
-  const handleFeedDocumentFromPath = async (filePath: string): Promise<void> => {
-    if (!activeWorkspace?.repoPath || feeding) return
-    setFeeding('document')
-    setFeedError(null)
-    setFeedStatus('Starting...')
-    try {
-      const result = await window.api.brainFeedDocument({
-        workspacePath: activeWorkspace.repoPath,
-        filePath
+  const handleFeedDocumentFromPath = (filePath: string): void => {
+    if (!activeWorkspace?.repoPath || brainFeedStatus === 'running') return
+    startFeed('document')
+    window.api
+      .brainFeedDocument({ workspacePath: activeWorkspace.repoPath, filePath })
+      .then((result) => {
+        if (!result.success && result.error) {
+          console.error('Feed failed:', result.error)
+        }
       })
-      if (!result.success) setFeedError(result.error ?? 'Failed')
-    } catch (err) {
-      setFeedError(String(err))
-    } finally {
-      setFeeding(null)
-    }
+      .catch((err) => console.error('Feed IPC error:', err))
   }
 
   const handleFeedDocument = async (): Promise<void> => {
-    if (!activeWorkspace?.repoPath || feeding) return
+    if (!activeWorkspace?.repoPath || brainFeedStatus === 'running') return
     const filePath = await window.api.brainSelectDocument()
     if (!filePath) return
-    await handleFeedDocumentFromPath(filePath)
+    handleFeedDocumentFromPath(filePath)
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: (files) => {
       if (files.length > 0 && activeWorkspace?.repoPath && !feeding) {
-        const file = files[0] as File & { path: string }
+        const file = files[0] as unknown as File & { path: string }
         if (file.path) {
           handleFeedDocumentFromPath(file.path)
         }
@@ -271,8 +255,8 @@ export default function BrainSettingsPage(): React.JSX.Element {
   if (isLoading) {
     return (
       <div className="p-6 flex items-center justify-center">
-        <RefreshCw size={16} className="animate-spin text-gray-500" />
-        <span className="ml-2 text-sm text-gray-500">Loading brain info...</span>
+        <RefreshCw size={16} className="animate-spin text-text-muted" />
+        <span className="ml-2 text-sm text-text-secondary">Loading brain info...</span>
       </div>
     )
   }
@@ -280,7 +264,7 @@ export default function BrainSettingsPage(): React.JSX.Element {
   if (!brainStatus) {
     return (
       <div className="p-6">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-text-secondary">
           Brain not initialized. Open a workspace to initialize the project brain.
         </p>
       </div>
@@ -294,8 +278,8 @@ export default function BrainSettingsPage(): React.JSX.Element {
         <div className="flex items-center gap-2.5">
           <Brain size={18} className="text-purple-400" />
           <div>
-            <h3 className="text-sm font-semibold text-gray-200">Project Brain</h3>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <h3 className="text-sm font-semibold text-text-primary">Project Brain</h3>
+            <p className="text-xs text-text-secondary mt-0.5">
               Persistent memory injected into new conversations
             </p>
           </div>
@@ -317,13 +301,13 @@ export default function BrainSettingsPage(): React.JSX.Element {
       </div>
 
       {/* Feed Brain section */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 space-y-3">
+      <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 space-y-3 shadow-sm">
         <div className="flex items-center gap-2">
           <Upload size={14} className="text-purple-400" />
-          <span className="text-xs font-semibold text-gray-200">Feed Brain</span>
+          <span className="text-xs font-semibold text-text-primary">Feed Brain</span>
         </div>
 
-        <p className="text-[11px] text-gray-500">
+        <p className="text-xs text-text-secondary">
           AI analyzes your sources and writes structured summaries to the brain files.
         </p>
 
@@ -332,7 +316,7 @@ export default function BrainSettingsPage(): React.JSX.Element {
           <button
             onClick={handleFeedClaudeMd}
             disabled={feeding !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-surface-float hover:bg-border-subtle text-text-body rounded-md transition-colors disabled:opacity-50"
           >
             {feeding === 'claude-md' ? (
               <Loader2 size={12} className="animate-spin" />
@@ -345,7 +329,7 @@ export default function BrainSettingsPage(): React.JSX.Element {
           <button
             onClick={handleFeedCodebase}
             disabled={feeding !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-surface-float hover:bg-border-subtle text-text-body rounded-md transition-colors disabled:opacity-50"
           >
             {feeding === 'codebase' ? (
               <Loader2 size={12} className="animate-spin" />
@@ -358,7 +342,7 @@ export default function BrainSettingsPage(): React.JSX.Element {
           <button
             onClick={handleFeedDocument}
             disabled={feeding !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-surface-float hover:bg-border-subtle text-text-body rounded-md transition-colors disabled:opacity-50"
           >
             {feeding === 'document' ? (
               <Loader2 size={12} className="animate-spin" />
@@ -376,24 +360,24 @@ export default function BrainSettingsPage(): React.JSX.Element {
             isDragActive
               ? 'border-purple-400 bg-purple-400/5'
               : feeding
-                ? 'border-gray-700 opacity-50 cursor-not-allowed'
-                : 'border-gray-600 hover:border-gray-500 hover:bg-gray-800/30'
+                ? 'border-border-subtle opacity-50 cursor-not-allowed'
+                : 'border-border-default hover:border-text-muted hover:bg-surface-overlay/30'
           }`}
         >
           <input {...getInputProps()} />
-          <Upload size={16} className="mx-auto mb-1.5 text-gray-500" />
-          <p className="text-[11px] text-gray-500">
+          <Upload size={16} className="mx-auto mb-1.5 text-text-muted" />
+          <p className="text-xs text-text-secondary">
             Drop a document or <span className="text-purple-400">click to browse</span>
           </p>
-          <p className="text-[10px] text-gray-600 mt-0.5">
+          <p className="text-xs text-text-muted mt-0.5">
             .md .txt .docx .xlsx .pdf .pptx .rtf (max 2MB)
           </p>
         </div>
 
         {/* Progress / status */}
-        {(feedStatus || feedError) && (
+        {(feedMessage || feedError) && brainFeedStatus !== 'idle' && (
           <div
-            className={`text-[11px] px-3 py-2 rounded-md ${
+            className={`text-xs px-3 py-2 rounded-md ${
               feedError
                 ? 'bg-red-500/10 text-red-400 border border-red-500/20'
                 : feeding
@@ -402,17 +386,19 @@ export default function BrainSettingsPage(): React.JSX.Element {
             }`}
           >
             {feeding && <Loader2 size={11} className="inline animate-spin mr-1.5" />}
-            {feedError || feedStatus}
+            {feedError || feedMessage}
           </div>
         )}
       </div>
 
       {/* Summary card */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 space-y-2">
+      <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 space-y-2 shadow-sm">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4 text-xs text-gray-400">
+          <div className="flex items-center gap-4 text-xs text-text-secondary">
             <span>
-              <strong className="text-gray-200">{brainStatus.totalLines.toLocaleString()}</strong>{' '}
+              <strong className="text-text-primary">
+                {brainStatus.totalLines.toLocaleString()}
+              </strong>{' '}
               lines
             </span>
             <span>{formatBytes(brainStatus.totalSizeBytes)}</span>
@@ -420,10 +406,10 @@ export default function BrainSettingsPage(): React.JSX.Element {
           </div>
           <div className="flex items-center gap-2">
             <span
-              className={`inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+              className={`inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded-full ${
                 brainStatus.enabled
                   ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                  : 'bg-gray-600/20 text-gray-500 border border-gray-600/30'
+                  : 'bg-surface-float text-text-muted border border-border-subtle'
               }`}
             >
               <span
@@ -437,7 +423,7 @@ export default function BrainSettingsPage(): React.JSX.Element {
           <button
             onClick={handleCompactAll}
             disabled={compacting !== null}
-            className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors disabled:opacity-50"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-surface-float hover:bg-border-subtle text-text-body rounded-md transition-colors disabled:opacity-50"
           >
             {compacting === 'all' ? (
               <RefreshCw size={11} className="animate-spin" />
@@ -449,7 +435,7 @@ export default function BrainSettingsPage(): React.JSX.Element {
           <button
             onClick={loadBrainInfo}
             disabled={isLoading}
-            className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors disabled:opacity-50"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-surface-float hover:bg-border-subtle text-text-body rounded-md transition-colors disabled:opacity-50"
           >
             <RefreshCw size={11} />
             Refresh
@@ -462,7 +448,7 @@ export default function BrainSettingsPage(): React.JSX.Element {
         {brainStatus.files.map((file) => {
           const iconConfig = FILE_ICONS[file.fileName] ?? {
             icon: FileText,
-            color: 'text-gray-400'
+            color: 'text-text-secondary'
           }
           const Icon = iconConfig.icon
           return (
@@ -483,20 +469,20 @@ export default function BrainSettingsPage(): React.JSX.Element {
       {/* View modal */}
       {viewingFile && viewContent !== null && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-8">
-          <div className="bg-gray-800 rounded-xl border border-gray-700 w-full max-w-3xl max-h-[80vh] flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-              <span className="text-sm font-semibold text-gray-200">{viewingFile}</span>
+          <div className="bg-surface-float rounded-xl border border-border-default w-full max-w-3xl max-h-[80vh] flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
+              <span className="text-sm font-semibold text-text-primary">{viewingFile}</span>
               <button
                 onClick={() => {
                   setViewingFile(null)
                   setViewContent(null)
                 }}
-                className="p-1 rounded-md hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+                className="p-1 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
               >
                 <X size={14} />
               </button>
             </div>
-            <pre className="flex-1 overflow-auto p-4 text-xs text-gray-300 font-mono whitespace-pre-wrap">
+            <pre className="flex-1 overflow-auto p-4 text-xs text-text-body font-mono whitespace-pre-wrap">
               {viewContent}
             </pre>
           </div>
@@ -527,22 +513,22 @@ function BrainFileCard({
   const isEmpty = file.lineCount === 0
 
   return (
-    <div className="bg-gray-800/30 border border-gray-700/60 rounded-lg p-3.5 space-y-2.5">
+    <div className="bg-surface-overlay/50 border border-border-subtle rounded-lg p-4 space-y-2.5 shadow-sm">
       {/* File header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Icon size={14} className={iconColor} />
-          <span className="text-xs font-semibold text-gray-200">{file.fileName}</span>
+          <span className="text-xs font-semibold text-text-primary">{file.fileName}</span>
         </div>
         {file.isOverThreshold && (
-          <span className="text-[10px] font-medium text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded-full border border-amber-400/20">
+          <span className="text-xs font-medium text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded-full border border-amber-400/20">
             Over threshold
           </span>
         )}
       </div>
 
       {/* Stats */}
-      <div className="flex items-center gap-3 text-[11px] text-gray-500">
+      <div className="flex items-center gap-3 text-xs text-text-muted">
         <span>{file.lineCount} lines</span>
         <span>{formatBytes(file.sizeBytes)}</span>
         <span>~{formatTokens(file.estimatedTokens)} tokens</span>
@@ -557,7 +543,7 @@ function BrainFileCard({
         <button
           onClick={onView}
           disabled={isEmpty}
-          className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-gray-700/50 hover:bg-gray-600/50 text-gray-400 hover:text-gray-200 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          className="flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-surface-float hover:bg-border-subtle text-text-secondary hover:text-text-primary rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         >
           <Eye size={10} />
           View
@@ -565,13 +551,9 @@ function BrainFileCard({
         <button
           onClick={onCompact}
           disabled={disabled || isEmpty}
-          className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-gray-700/50 hover:bg-gray-600/50 text-gray-400 hover:text-gray-200 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          className="flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-surface-float hover:bg-border-subtle text-text-secondary hover:text-text-primary rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          {compacting ? (
-            <RefreshCw size={10} className="animate-spin" />
-          ) : (
-            <Shrink size={10} />
-          )}
+          {compacting ? <RefreshCw size={10} className="animate-spin" /> : <Shrink size={10} />}
           Compact
         </button>
       </div>

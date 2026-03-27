@@ -1,0 +1,17 @@
+{
+  "id": "TASK-027",
+  "title": "Add checkpoint integration points",
+  "description": "Insert checkpoints at phase transitions in specialist pool (after all phase tasks complete) and before worktree merges. Show changed files and test results in checkpoint details.",
+  "feature_ref": "F006",
+  "task_type": "backend",
+  "complexity": { "score": 5, "factors": { "files_affected": 2, "estimated_lines": 80, "new_dependencies": 0, "risk_flags": [] } },
+  "dependencies": ["TASK-026", "TASK-016"],
+  "acceptance_criteria": [
+    "Phase completion triggers checkpoint",
+    "Worktree merge triggers checkpoint",
+    "Changed files listed in checkpoint details",
+    "Test results included when available",
+    "Rejected checkpoints pause execution for user feedback"
+  ],
+  "suggested_agent": "backend:api-developer-typescript"
+}

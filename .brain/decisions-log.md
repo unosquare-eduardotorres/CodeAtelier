@@ -56,3 +56,33 @@ Project brain stored as `.brain/*.md` files in the workspace repo, not in SQLite
 **Rationale:** 1) Git-trackable — team members benefit from shared context. 2) Human-readable — developers can read/edit brain files directly. 3) Simple — no schema migrations needed. 4) Portable — brain travels with the repo.
 
 ---
+
+### [DECISION] Hybrid Brain: Flat Files + Local Vector Search (Future)
+> 2026-03-23
+
+Evaluated three tiers of knowledge persistence:
+- **Tier 1 (.brain/ markdown):** Compact curated working memory — always injected into system prompt. Already implemented.
+- **Tier 2 (local vectors):** Long-term searchable memory using local embedding model (all-MiniLM-L6-v2 via ONNX) + local file-based vector DB (vectra). Selective retrieval — only top-K relevant chunks per query. **Chosen for next phase.**
+- **Tier 3 (cloud vectors — Pinecone/Weaviate):** Rejected for now — requires API keys and network, contradicts Agent Studio's local-first, no-API-key philosophy.
+
+**Key insight:** `.brain/` = "what matters now" (working memory). Vectors = "what did we decide 3 weeks ago about X" (long-term memory). They complement each other.
+
+**Cost analysis:** Local embedding ~5ms/query, vector search ~2ms/query. Zero API cost. ~90MB model bundled with app. No network calls.
+
+**Rationale:** Keeps Agent Studio fully offline and API-key-free while enabling semantic search across all past conversations, decisions, and code architecture. Toggle in settings allows users to opt in/out per workspace.
+
+---
+
+### [DECISION] Code Audit — Security & Performance Fixes Applied
+> 2026-03-23
+
+Applied comprehensive 3-specialist code audit (Electron, React, Agentic):
+- **Security (Critical):** Added `validateSender()` to 37 unprotected IPC handlers across 4 modules. Added path validation for `WORKSPACE_READ_FILE`/`WORKSPACE_WRITE_FILE` (allowlist: `.claude/`, `skills/`, `CLAUDE.md`).
+- **Reliability:** Fixed async `before-quit` handler (Electron doesn't await async — now uses `event.preventDefault()` + guard). Added 10-min timeout to specialist processes (SIGTERM → SIGKILL escalation).
+- **Performance:** Zustand individual selectors in MessageList, React.memo on MessageBubble, extracted OrchestratorDot component.
+- **Observability:** Generalist restart now notifies UI, skill truncation logged, orchestrator session map bounded (100 max with LRU eviction).
+- **Cleanup:** Removed dead `waitForReady()`, added ErrorBoundary per feature panel, minimal production menu (preserves Cmd+C/V/X/Z).
+
+**Rationale:** Security hardening was critical — `workspace-deploy.ipc.ts` had 18 handlers with zero sender validation, including arbitrary file read/write. React perf fixes reduce unnecessary re-renders during streaming.
+
+---

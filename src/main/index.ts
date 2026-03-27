@@ -6,6 +6,7 @@ import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
 import { registerAllIpcHandlers } from './ipc'
 import { generalistService, orchestratorService, skillService } from './services'
+import { brainFeedService } from './services/brain-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
 
 // Initialize electron-log for the main process
@@ -98,9 +99,58 @@ function createWindow(): void {
   }
 }
 
-// ── Security: Set application menu before ready to skip default menu construction ──
+// ── Security: Minimal production menu — preserves standard keyboard shortcuts ──
 if (!is.dev) {
-  Menu.setApplicationMenu(null)
+  const isMac = process.platform === 'darwin'
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              { role: 'quit' as const }
+            ]
+          }
+        ]
+      : []),
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    ...(isMac
+      ? [
+          {
+            label: 'Window',
+            submenu: [{ role: 'minimize' as const }, { role: 'zoom' as const }]
+          }
+        ]
+      : [])
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 // ── Security: Validate webview creation — deny all webviews ──
@@ -167,7 +217,12 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', async () => {
+let isQuitting = false
+app.on('before-quit', async (event) => {
+  if (isQuitting) return
+  event.preventDefault()
+  isQuitting = true
+
   // Cleanup skill service (cancel in-progress Opus calls, discard queue)
   try {
     await skillService.shutdown()
@@ -189,5 +244,13 @@ app.on('before-quit', async () => {
     // Ignore errors during shutdown
   }
 
+  // Cleanup brain feed (cancel in-progress claude -p summarizer)
+  try {
+    brainFeedService.shutdown()
+  } catch {
+    // Ignore errors during shutdown
+  }
+
   closeDatabase()
+  app.quit()
 })

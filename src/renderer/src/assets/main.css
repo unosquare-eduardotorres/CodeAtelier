@@ -1,9 +1,53 @@
 @import 'tailwindcss';
+@plugin "@tailwindcss/typography";
 @import './base.css';
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Design Token System — Semantic Colors for Agent Studio
+   4-layer surface system + semantic text/border/accent colors
+   ═══════════════════════════════════════════════════════════════════════════ */
+@theme {
+  /* ── Surface layers (dark → light) ── */
+  --color-surface-base: oklch(0.145 0.01 260); /* Deepest: app shell, titlebar, status bar */
+  --color-surface-raised: oklch(0.175 0.012 260); /* Sidebars, panels */
+  --color-surface-overlay: oklch(0.21 0.014 260); /* Cards, chat bubbles, dropdowns */
+  --color-surface-float: oklch(0.25 0.015 260); /* Modals, popovers, tooltips */
+
+  /* ── Border layers ── */
+  --color-border-subtle: oklch(0.28 0.01 260); /* Between same-level surfaces */
+  --color-border-default: oklch(0.33 0.012 260); /* Between different-level surfaces */
+  --color-border-strong: oklch(0.4 0.014 260); /* Emphasis borders */
+
+  /* ── Text hierarchy ── */
+  --color-text-primary: oklch(0.92 0.01 260); /* Headings, important text */
+  --color-text-body: oklch(0.82 0.01 260); /* Body text, chat messages */
+  --color-text-secondary: oklch(0.65 0.01 260); /* Labels, secondary info */
+  --color-text-muted: oklch(0.5 0.01 260); /* Timestamps, meta — MINIMUM for dark bg */
+
+  /* ── Primary accent (Indigo) ── */
+  --color-primary: oklch(0.585 0.233 277);
+  --color-primary-hover: oklch(0.63 0.24 277);
+  --color-primary-muted: oklch(0.585 0.233 277 / 0.15);
+  --color-primary-text: oklch(0.72 0.18 277);
+
+  /* ── Accent (Cyan/Teal — active indicators, links) ── */
+  --color-accent: oklch(0.72 0.15 200);
+  --color-accent-muted: oklch(0.72 0.15 200 / 0.15);
+
+  /* ── Semantic status ── */
+  --color-success: oklch(0.65 0.2 155);
+  --color-success-muted: oklch(0.65 0.2 155 / 0.15);
+  --color-warning: oklch(0.75 0.18 85);
+  --color-warning-muted: oklch(0.75 0.18 85 / 0.15);
+  --color-danger: oklch(0.6 0.22 25);
+  --color-danger-muted: oklch(0.6 0.22 25 / 0.15);
+  --color-info: oklch(0.65 0.18 250);
+  --color-info-muted: oklch(0.65 0.18 250 / 0.15);
+}
 
 @layer base {
   body {
-    @apply bg-gray-900 text-gray-200 antialiased;
+    @apply bg-surface-base text-text-body antialiased;
   }
 
   #root {
@@ -12,9 +56,9 @@
 
   /* Improve prose readability for chat messages */
   .prose {
-    --tw-prose-body: theme('colors.gray.300');
-    font-size: 14px;
-    line-height: 1.55;
+    --tw-prose-body: var(--color-text-body);
+    font-size: 15px;
+    line-height: 1.6;
   }
 
   .prose p {
@@ -29,6 +73,48 @@
   .prose code {
     font-size: 13px;
   }
+
+  /* Table styling for chat messages */
+  .prose table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+    margin-top: 0.75em;
+    margin-bottom: 0.75em;
+  }
+
+  .prose thead {
+    border-bottom: 2px solid var(--color-border-default);
+  }
+
+  .prose th {
+    padding: 0.5em 0.75em;
+    text-align: left;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .prose td {
+    padding: 0.4em 0.75em;
+    border-bottom: 1px solid var(--color-border-subtle);
+    color: var(--color-text-body);
+  }
+
+  .prose tbody tr:hover {
+    background: var(--color-surface-overlay);
+  }
+
+  /* Horizontal rule styling */
+  .prose hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--color-border-default), transparent);
+    margin-top: 1.25em;
+    margin-bottom: 1.25em;
+  }
 }
 
 /* Custom scrollbar styling for dark theme */
@@ -42,10 +128,10 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4b5563;
+  background: var(--color-border-default);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #6b7280;
+  background: var(--color-border-strong);
 }

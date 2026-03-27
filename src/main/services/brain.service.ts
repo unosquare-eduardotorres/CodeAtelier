@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync } from 'node:fs'
 import { dbLogger } from '../logger'
 import { messageRepository, conversationRepository } from '../db/repositories'
-import type { BrainEntry, BrainFileInfo } from '../../shared/types'
+import type { BrainEntry, BrainFileInfo, Idea } from '../../shared/types'
 
 const log = dbLogger
 
@@ -162,6 +162,70 @@ ${pendingList}
 `
 
     writeFileSync(filePath, content, 'utf-8')
+  }
+
+  /** Sync ideas from DB into project-state.md Pending/Completed sections */
+  syncIdeasToProjectState(workspacePath: string, workspaceId: string): void {
+    this.invalidateCache(workspacePath)
+    const filePath = join(this.brainDir(workspacePath), 'project-state.md')
+    if (!existsSync(filePath)) {
+      this.initialize(workspacePath)
+    }
+
+    // Dynamic require to avoid circular dependency
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { ideaRepository } = require('../db/repositories')
+    const ideas: Idea[] = ideaRepository.findByWorkspace(workspaceId)
+
+    // Categorize
+    const pending = ideas.filter((i) => i.status === 'draft' || i.status === 'grilling')
+    const completed = ideas.filter((i) => i.status === 'completed')
+
+    const pendingList =
+      pending.length > 0
+        ? pending
+            .map((i) => {
+              const grillNote = i.status === 'grilling' ? ' _(refining)_' : ''
+              return `- ${i.title}${grillNote}${i.description ? `: ${i.description.substring(0, 100)}` : ''}`
+            })
+            .join('\n')
+        : '_None yet_'
+
+    const completedList =
+      completed.length > 0
+        ? completed
+            .map((i) => {
+              const summary = i.grillSummary ? `: ${i.grillSummary.substring(0, 100)}` : ''
+              return `- ${i.title}${summary}`
+            })
+            .join('\n')
+        : '_None yet_'
+
+    // Read existing content and replace only the Pending/Completed sections
+    let fileContent = readFileSync(filePath, 'utf-8')
+
+    // Replace ## Pending Items section
+    fileContent = this.replaceSection(fileContent, 'Pending Items', pendingList)
+    // Replace ## Completed Items section
+    fileContent = this.replaceSection(fileContent, 'Completed Items', completedList)
+
+    // Update timestamp
+    const timestamp = new Date().toISOString()
+    fileContent = fileContent.replace(/Last updated: .+/, `Last updated: ${timestamp}`)
+
+    writeFileSync(filePath, fileContent, 'utf-8')
+  }
+
+  /** Replace content of a ## Section while preserving everything else */
+  private replaceSection(content: string, sectionName: string, newBody: string): string {
+    const sectionRegex = new RegExp(`(## ${sectionName}\\n)([\\s\\S]*?)(?=\\n## |$)`, 'm')
+
+    if (sectionRegex.test(content)) {
+      return content.replace(sectionRegex, `$1${newBody}\n\n`)
+    }
+
+    // Section doesn't exist yet — append it
+    return content + `\n## ${sectionName}\n${newBody}\n\n`
   }
 
   /** Read project-state.md content */

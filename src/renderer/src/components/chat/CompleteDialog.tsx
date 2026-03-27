@@ -89,7 +89,7 @@ export default function CompleteDialog({
       case 'deleted':
         return 'text-red-400'
       default:
-        return 'text-gray-400'
+        return 'text-text-secondary'
     }
   }
 
@@ -103,15 +103,15 @@ export default function CompleteDialog({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
 
       {/* Dialog */}
-      <div className="relative bg-gray-800 border border-gray-700 rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4 animate-in fade-in zoom-in-95">
+      <div className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4 animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="flex items-center gap-3 mb-5">
-          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center">
+          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-success-muted flex items-center justify-center">
             <GitBranch size={20} className="text-green-400" />
           </div>
           <div>
-            <h3 className="text-base font-semibold text-gray-100">Complete Conversation</h3>
-            <p className="text-xs text-gray-400">
+            <h3 className="text-base font-semibold text-text-primary">Complete Conversation</h3>
+            <p className="text-xs text-text-secondary">
               Create a branch, commit changes, and push to remote
             </p>
           </div>
@@ -121,7 +121,7 @@ export default function CompleteDialog({
         <div className="mb-4">
           <label
             htmlFor="commit-message"
-            className="block text-sm font-medium text-gray-300 mb-1.5"
+            className="block text-sm font-medium text-text-body mb-1.5"
           >
             Commit message
           </label>
@@ -132,7 +132,7 @@ export default function CompleteDialog({
             value={commitMessage}
             onChange={(e) => setCommitMessage(e.target.value)}
             disabled={isSubmitting}
-            className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-gray-200 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-50"
+            className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
             placeholder="feat: describe your changes..."
           />
         </div>
@@ -141,7 +141,7 @@ export default function CompleteDialog({
         <div className="mb-4">
           <label
             htmlFor="commit-description"
-            className="block text-sm font-medium text-gray-300 mb-1.5"
+            className="block text-sm font-medium text-text-body mb-1.5"
           >
             Description
           </label>
@@ -151,7 +151,7 @@ export default function CompleteDialog({
             onChange={(e) => setDescription(e.target.value)}
             disabled={isSubmitting}
             rows={4}
-            className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-gray-200 text-sm placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-50"
+            className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm placeholder-text-muted resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
             placeholder="Detailed description of changes..."
           />
         </div>
@@ -159,17 +159,17 @@ export default function CompleteDialog({
         {/* File changes list */}
         {fileChanges.length > 0 && (
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+            <label className="block text-sm font-medium text-text-body mb-1.5">
               <FileText size={14} className="inline mr-1" />
               Tracked files ({fileChanges.length})
             </label>
-            <div className="max-h-32 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-2 space-y-1">
+            <div className="max-h-32 overflow-y-auto bg-surface-base border border-border-subtle rounded-lg p-2 space-y-1">
               {fileChanges.map((fc, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs font-mono">
                   <span className={`${changeTypeColor(fc.changeType)} flex-shrink-0 w-16`}>
                     {fc.changeType}
                   </span>
-                  <span className="text-gray-400 truncate">{fc.filePath}</span>
+                  <span className="text-text-secondary truncate">{fc.filePath}</span>
                 </div>
               ))}
             </div>
@@ -177,7 +177,7 @@ export default function CompleteDialog({
         )}
 
         {fileChanges.length === 0 && (
-          <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+          <div className="mb-4 p-3 bg-warning-muted border border-amber-500/20 rounded-lg">
             <div className="flex items-center gap-2 text-amber-400 text-sm">
               <AlertTriangle size={14} />
               <span>No file changes tracked for this conversation yet.</span>
@@ -187,7 +187,7 @@ export default function CompleteDialog({
 
         {/* Error display */}
         {error && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+          <div className="mb-4 p-3 bg-danger-muted border border-red-500/20 rounded-lg">
             <div className="flex items-start gap-2 text-red-400 text-sm">
               <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
               <span>{error}</span>
@@ -200,7 +200,7 @@ export default function CompleteDialog({
           <button
             onClick={onCancel}
             disabled={isSubmitting}
-            className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-gray-100 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-500 disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-text-body hover:text-text-primary bg-surface-overlay hover:bg-surface-raised rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-border-default disabled:opacity-50"
           >
             Cancel
           </button>

@@ -1,0 +1,17 @@
+{
+  "id": "TASK-026",
+  "title": "Create checkpoint service",
+  "description": "Create src/main/services/checkpoint.service.ts. Supports checkpoint types: phase_gate, merge_approval, deployment, destructive_action. requestApproval() pauses execution and returns Promise resolved by UI.",
+  "feature_ref": "F006",
+  "task_type": "backend",
+  "complexity": { "score": 6, "factors": { "files_affected": 3, "estimated_lines": 150, "new_dependencies": 0, "risk_flags": [] } },
+  "dependencies": ["TASK-002"],
+  "acceptance_criteria": [
+    "Checkpoint interface with what/why/risk details",
+    "requestApproval returns Promise that blocks execution",
+    "resolve(id, approved) unblocks the Promise",
+    "Checkpoint history persisted in database",
+    "Events emitted for UI modal"
+  ],
+  "suggested_agent": "backend:api-developer-typescript"
+}

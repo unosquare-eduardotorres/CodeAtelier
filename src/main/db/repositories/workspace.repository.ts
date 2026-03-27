@@ -86,6 +86,18 @@ export class WorkspaceRepository {
       return {};
     }
   }
+
+  /** Get settings for a workspace by its repo path (used when only path is available) */
+  getSettingsByPath(repoPath: string): Record<string, unknown> {
+    const db = getDatabase();
+    const row = db.prepare('SELECT * FROM workspaces WHERE repo_path = ?').get(repoPath) as WorkspaceRow | undefined;
+    if (!row) return {};
+    try {
+      return JSON.parse(row.settings_json || '{}');
+    } catch {
+      return {};
+    }
+  }
 }
 
 export const workspaceRepository = new WorkspaceRepository();

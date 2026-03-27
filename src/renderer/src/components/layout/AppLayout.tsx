@@ -1,132 +1,159 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Monitor, Bot, Zap, Home, Settings, Sliders, Building2 } from 'lucide-react';
-import { Sidebar } from '@renderer/components/layout';
-import { ChatSidebar, ChatPanel } from '@renderer/components/chat';
-import { AgentMonitor } from '@renderer/components/agents';
-import { PixelOfficePanel } from '@renderer/components/pixel-office';
-import { WorkspaceSettingsPage } from '@renderer/components/workspace';
-import { SettingsPage } from '@renderer/components/settings';
-import { UpdateBanner } from '@renderer/components/common';
-import { useWorkspaceStore, useAgentStore, useChatStore, usePixelOfficeStore } from '@renderer/store';
+import { useState, useEffect, useRef, useCallback } from 'react'
+import {
+  Monitor,
+  Bot,
+  Zap,
+  Home,
+  Settings,
+  Sliders,
+  Building2,
+  ClipboardList,
+  Hammer
+} from 'lucide-react'
+import { Sidebar } from '@renderer/components/layout'
+import { ChatSidebar, ChatPanel } from '@renderer/components/chat'
+import { AgentMonitor } from '@renderer/components/agents'
+import { PixelOfficePanel } from '@renderer/components/pixel-office'
+import { WorkspaceSettingsPage } from '@renderer/components/workspace'
+import { SettingsPage } from '@renderer/components/settings'
+import { UpdateBanner, BrainFeedBanner, ErrorBoundary } from '@renderer/components/common'
+import {
+  useWorkspaceStore,
+  useAgentStore,
+  useChatStore,
+  usePixelOfficeStore
+} from '@renderer/store'
 
-const isMac = navigator.platform.toUpperCase().includes('MAC');
+const isMac = navigator.platform.toUpperCase().includes('MAC')
+
+/** Extracted orchestrator status dot — avoids recreating on every AppLayout render */
+function OrchestratorDot({ status }: { status: string }): React.JSX.Element {
+  const dotBase = 'w-2 h-2 rounded-full inline-block'
+  switch (status) {
+    case 'running':
+      return <span className={`${dotBase} bg-green-400`} title="Orchestrator running" />
+    case 'starting':
+      return (
+        <span className={`${dotBase} bg-yellow-400 animate-pulse`} title="Orchestrator starting" />
+      )
+    case 'error':
+      return <span className={`${dotBase} bg-red-400`} title="Orchestrator error" />
+    default:
+      return <span className={`${dotBase} bg-gray-500`} title="Orchestrator stopped" />
+  }
+}
 
 export default function AppLayout(): React.JSX.Element {
-  const [showAgentPanel, setShowAgentPanel] = useState(false);
-  const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(true);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [view, setView] = useState<'chat' | 'settings' | 'app-settings'>('chat');
-  const { activeWorkspace, orchestratorStatus, clearActiveWorkspace } = useWorkspaceStore();
-  const { statuses, sessionTokens } = useAgentStore();
-  const { activeConversation, createConversation, updateMode, isStreaming } = useChatStore();
-  const { isVisible: showPixelOffice, togglePanel: togglePixelOffice } = usePixelOfficeStore();
+  const [showAgentPanel, setShowAgentPanel] = useState(false)
+  const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(true)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [view, setView] = useState<'chat' | 'settings' | 'app-settings'>('chat')
+  const { activeWorkspace, orchestratorStatus, clearActiveWorkspace } = useWorkspaceStore()
+  const { statuses, sessionTokens } = useAgentStore()
+  const { activeConversation, createConversation, updateMode, isStreaming } = useChatStore()
+  const { isVisible: showPixelOffice, togglePanel: togglePixelOffice } = usePixelOfficeStore()
 
   const activeAgentCount = statuses.filter(
     (s) => s.status === 'thinking' || s.status === 'writing' || s.status === 'reviewing'
-  ).length;
+  ).length
 
   // #7 - Auto-open agent panel when agents activate
-  const prevAgentCount = useRef(0);
+  const prevAgentCount = useRef(0)
   useEffect(() => {
-    const wasZero = prevAgentCount.current === 0;
-    prevAgentCount.current = activeAgentCount;
+    const wasZero = prevAgentCount.current === 0
+    prevAgentCount.current = activeAgentCount
 
     if (wasZero && activeAgentCount > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setShowAgentPanel(true);
+      setShowAgentPanel(true)
     }
-  }, [activeAgentCount]);
+  }, [activeAgentCount])
 
   // #18 - Keyboard shortcuts
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      const isMeta = e.metaKey || e.ctrlKey;
+      const isMeta = e.metaKey || e.ctrlKey
 
       if (isMeta && e.key === 'j') {
-        e.preventDefault();
-        setShowAgentPanel((prev) => !prev);
+        e.preventDefault()
+        setShowAgentPanel((prev) => !prev)
       }
 
       if (isMeta && e.key === 'b') {
-        e.preventDefault();
-        setSidebarCollapsed((prev) => !prev);
+        e.preventDefault()
+        setSidebarCollapsed((prev) => !prev)
       }
 
       if (isMeta && e.key === 'n') {
-        e.preventDefault();
+        e.preventDefault()
         if (activeWorkspace) {
-          createConversation(activeWorkspace.id);
+          createConversation(activeWorkspace.id)
         }
       }
 
       if (isMeta && e.key === '.') {
-        e.preventDefault();
+        e.preventDefault()
         if (activeConversation && !isStreaming) {
-          updateMode(activeConversation.mode === 'plan' ? 'build' : 'plan');
+          updateMode(activeConversation.mode === 'plan' ? 'build' : 'plan')
         }
       }
 
       if (isMeta && e.shiftKey && e.key === 'o') {
-        e.preventDefault();
-        togglePixelOffice();
+        e.preventDefault()
+        togglePixelOffice()
       }
     },
-    [activeWorkspace, createConversation, togglePixelOffice, activeConversation, updateMode, isStreaming]
-  );
+    [
+      activeWorkspace,
+      createConversation,
+      togglePixelOffice,
+      activeConversation,
+      updateMode,
+      isStreaming
+    ]
+  )
 
   useEffect(() => {
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [handleKeyDown])
 
   const handleGoHome = (): void => {
-    clearActiveWorkspace();
-    setView('chat');
-  };
-
-  // Orchestrator status indicator
-  const orchestratorDot = (): React.JSX.Element => {
-    const dotBase = 'w-2 h-2 rounded-full inline-block';
-    switch (orchestratorStatus) {
-      case 'running':
-        return <span className={`${dotBase} bg-green-400`} title="Orchestrator running" />;
-      case 'starting':
-        return <span className={`${dotBase} bg-yellow-400 animate-pulse`} title="Orchestrator starting" />;
-      case 'error':
-        return <span className={`${dotBase} bg-red-400`} title="Orchestrator error" />;
-      default:
-        return <span className={`${dotBase} bg-gray-500`} title="Orchestrator stopped" />;
-    }
-  };
+    clearActiveWorkspace()
+    setView('chat')
+  }
 
   const renderMainContent = (): React.JSX.Element => {
     switch (view) {
       case 'settings':
-        return <WorkspaceSettingsPage onBack={() => setView('chat')} />;
+        return <WorkspaceSettingsPage onBack={() => setView('chat')} />
       case 'app-settings':
-        return <SettingsPage onBack={() => setView('chat')} />;
+        return <SettingsPage onBack={() => setView('chat')} />
       default:
-        return <ChatPanel />;
+        return <ChatPanel />
     }
-  };
+  }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-900">
+    <div className="flex flex-col h-screen bg-surface-base">
       {/* Drag region for frameless window */}
       <div
-        className={`h-10 flex-shrink-0 bg-gray-900 border-b border-gray-700 flex items-center pr-4 relative ${isMac ? 'pl-[80px]' : 'pl-20'}`}
+        className={`h-10 flex-shrink-0 bg-surface-base border-b border-border-subtle flex items-center pr-4 relative ${isMac ? 'pl-[80px]' : 'pl-20'}`}
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
         {/* Centered title */}
-        <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-gray-400 pointer-events-none">
+        <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-text-secondary pointer-events-none">
           Agent Studio
         </span>
 
         {/* Right-aligned buttons */}
-        <div className="flex items-center gap-1.5 ml-auto relative z-10" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div
+          className="flex items-center gap-1.5 ml-auto relative z-10"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
           <button
             onClick={handleGoHome}
-            className="p-1.5 rounded-md hover:bg-gray-800 text-gray-500 hover:text-gray-300 transition-colors"
+            className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
             title="Home"
             aria-label="Home"
           >
@@ -135,7 +162,7 @@ export default function AppLayout(): React.JSX.Element {
           {activeWorkspace && (
             <button
               onClick={() => setView(view === 'settings' ? 'chat' : 'settings')}
-              className={`p-1.5 rounded-md transition-colors ${view === 'settings' ? 'text-indigo-400 bg-gray-800' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
+              className={`p-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
               title="Workspace Settings"
               aria-label="Workspace Settings"
             >
@@ -144,7 +171,7 @@ export default function AppLayout(): React.JSX.Element {
           )}
           <button
             onClick={() => setView(view === 'app-settings' ? 'chat' : 'app-settings')}
-            className={`p-1.5 rounded-md transition-colors ${view === 'app-settings' ? 'text-indigo-400 bg-gray-800' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
+            className={`p-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'app-settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title="Settings"
             aria-label="Settings"
           >
@@ -155,6 +182,9 @@ export default function AppLayout(): React.JSX.Element {
 
       {/* Auto-update banner */}
       <UpdateBanner />
+
+      {/* Brain feed progress banner */}
+      <BrainFeedBanner />
 
       {/* Main content */}
       <div className="flex flex-1 min-h-0">
@@ -169,43 +199,68 @@ export default function AppLayout(): React.JSX.Element {
         )}
 
         {/* Main content area — full width in settings views */}
-        {renderMainContent()}
+        <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
 
         {/* Agent monitor panel — only in chat view */}
         {showAgentPanel && view === 'chat' && (
-          <AgentMonitor
-            isCollapsed={agentPanelCollapsed}
-            onToggleCollapse={() => setAgentPanelCollapsed((prev) => !prev)}
-          />
+          <ErrorBoundary
+            fallback={
+              <div className="w-64 flex items-center justify-center p-4 text-sm text-red-400 bg-surface-raised border-l border-border-subtle">
+                Agent panel error — click to retry
+              </div>
+            }
+          >
+            <AgentMonitor
+              isCollapsed={agentPanelCollapsed}
+              onToggleCollapse={() => setAgentPanelCollapsed((prev) => !prev)}
+            />
+          </ErrorBoundary>
         )}
       </div>
 
       {/* Pixel Office panel — only in chat view */}
-      {showPixelOffice && view === 'chat' && <PixelOfficePanel />}
+      {showPixelOffice && view === 'chat' && (
+        <ErrorBoundary
+          fallback={
+            <div className="p-4 text-sm text-red-400 bg-surface-raised border-t border-border-subtle">
+              Pixel Office error — click to retry
+            </div>
+          }
+        >
+          <PixelOfficePanel />
+        </ErrorBoundary>
+      )}
 
       {/* Status bar */}
-      <div className="flex items-center justify-between px-4 py-1.5 bg-gray-900 border-t border-gray-700 text-[11px]">
+      <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-xs">
         <div className="flex items-center gap-4">
           {activeWorkspace ? (
-            <span className="flex items-center gap-1.5 text-gray-400">
-              {orchestratorDot()}
-              <Bot size={12} className="text-indigo-400" />
+            <span className="flex items-center gap-1.5 text-text-secondary">
+              <OrchestratorDot status={orchestratorStatus} />
+              <Bot size={12} className="text-primary-text" />
               {activeWorkspace.name}
             </span>
           ) : (
-            <span className="text-gray-600">No workspace selected</span>
+            <span className="text-text-muted">No workspace selected</span>
           )}
 
           {activeConversation && (
             <>
-              <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                activeConversation.mode === 'plan'
-                  ? 'bg-purple-600/20 text-purple-400'
-                  : 'bg-amber-600/20 text-amber-400'
-              }`}>
-                {activeConversation.mode === 'plan' ? '📋 Plan' : '🔨 Build'}
+              <span
+                className={`text-xs px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
+                  activeConversation.mode === 'plan'
+                    ? 'bg-purple-600/20 text-purple-400'
+                    : 'bg-amber-600/20 text-amber-400'
+                }`}
+              >
+                {activeConversation.mode === 'plan' ? (
+                  <ClipboardList size={10} />
+                ) : (
+                  <Hammer size={10} />
+                )}
+                {activeConversation.mode === 'plan' ? 'Plan' : 'Build'}
               </span>
-              <span className="text-gray-500 truncate max-w-[200px]">
+              <span className="text-text-muted truncate max-w-[200px]">
                 {activeConversation.title}
               </span>
             </>
@@ -213,17 +268,17 @@ export default function AppLayout(): React.JSX.Element {
         </div>
 
         <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1.5 text-gray-500">
-            <Zap size={10} />
+          <span className="flex items-center gap-1.5 text-text-muted">
+            <Zap size={11} />
             {sessionTokens > 0 ? `${(sessionTokens / 1000).toFixed(1)}k tokens` : '0 tokens'}
           </span>
 
           <button
             onClick={togglePixelOffice}
-            className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors ${
+            className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
               showPixelOffice
-                ? 'text-indigo-400 bg-indigo-500/10'
-                : 'text-gray-500 hover:text-gray-300'
+                ? 'text-primary-text bg-primary-muted'
+                : 'text-text-muted hover:text-text-secondary'
             }`}
             aria-label={showPixelOffice ? 'Hide pixel office' : 'Show pixel office'}
             aria-pressed={showPixelOffice}
@@ -235,10 +290,10 @@ export default function AppLayout(): React.JSX.Element {
 
           <button
             onClick={() => setShowAgentPanel(!showAgentPanel)}
-            className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors ${
+            className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
               showAgentPanel
-                ? 'text-indigo-400 bg-indigo-500/10'
-                : 'text-gray-500 hover:text-gray-300'
+                ? 'text-primary-text bg-primary-muted'
+                : 'text-text-muted hover:text-text-secondary'
             }`}
             aria-label={showAgentPanel ? 'Hide agent panel' : 'Show agent panel'}
             aria-pressed={showAgentPanel}
@@ -249,7 +304,6 @@ export default function AppLayout(): React.JSX.Element {
           </button>
         </div>
       </div>
-
     </div>
-  );
+  )
 }

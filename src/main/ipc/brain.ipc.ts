@@ -1,7 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import { ipcMain, dialog } from 'electron'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve, isAbsolute } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { BrainEntry, BrainStatus } from '../../shared/types'
 import { brainService } from '../services/brain.service'
@@ -91,28 +91,25 @@ export function registerBrainIpc(mainWindow: BrowserWindow): void {
   )
 
   // Force-compact all brain files
-  ipcMain.handle(
-    IPC_CHANNELS.BRAIN_COMPACT_ALL,
-    async (event, args: { workspacePath: string }) => {
-      validateSender(event)
-      if (!args?.workspacePath || typeof args.workspacePath !== 'string') {
-        throw new Error('Invalid workspace path')
-      }
-
-      const files = brainService.forceCompactAll(args.workspacePath)
-      const workspace = workspaceRepository.findAll().find((w) => w.repoPath === args.workspacePath)
-      const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
-
-      return {
-        enabled: settings.brainEnabled !== false,
-        initialized: existsSync(join(args.workspacePath, '.brain')),
-        files,
-        totalLines: files.reduce((s, f) => s + f.lineCount, 0),
-        totalSizeBytes: files.reduce((s, f) => s + f.sizeBytes, 0),
-        totalEstimatedTokens: files.reduce((s, f) => s + f.estimatedTokens, 0)
-      } satisfies BrainStatus
+  ipcMain.handle(IPC_CHANNELS.BRAIN_COMPACT_ALL, async (event, args: { workspacePath: string }) => {
+    validateSender(event)
+    if (!args?.workspacePath || typeof args.workspacePath !== 'string') {
+      throw new Error('Invalid workspace path')
     }
-  )
+
+    const files = brainService.forceCompactAll(args.workspacePath)
+    const workspace = workspaceRepository.findAll().find((w) => w.repoPath === args.workspacePath)
+    const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
+
+    return {
+      enabled: settings.brainEnabled !== false,
+      initialized: existsSync(join(args.workspacePath, '.brain')),
+      files,
+      totalLines: files.reduce((s, f) => s + f.lineCount, 0),
+      totalSizeBytes: files.reduce((s, f) => s + f.sizeBytes, 0),
+      totalEstimatedTokens: files.reduce((s, f) => s + f.estimatedTokens, 0)
+    } satisfies BrainStatus
+  })
 
   // Update brain enabled/disabled setting for a workspace
   ipcMain.handle(
@@ -131,6 +128,12 @@ export function registerBrainIpc(mainWindow: BrowserWindow): void {
       workspaceRepository.updateSettings(args.workspaceId, settings)
     }
   )
+
+  // Cancel in-progress brain feed
+  ipcMain.handle(IPC_CHANNELS.BRAIN_FEED_CANCEL, (event) => {
+    validateSender(event)
+    brainFeedService.shutdown()
+  })
 
   // ── Brain Feed handlers ──
 
@@ -193,13 +196,15 @@ export function registerBrainIpc(mainWindow: BrowserWindow): void {
         throw new Error('Invalid file path')
       }
 
-      return brainFeedService.feedFromDocument(
-        args.workspacePath,
-        args.filePath,
-        (progress) => {
-          mainWindow.webContents.send(IPC_CHANNELS.BRAIN_FEED_PROGRESS, progress)
-        }
-      )
+      // Validate file path — must be absolute and not contain traversal
+      const resolvedPath = resolve(args.filePath)
+      if (!isAbsolute(args.filePath) || resolvedPath !== resolve(args.filePath)) {
+        throw new Error('Invalid file path')
+      }
+
+      return brainFeedService.feedFromDocument(args.workspacePath, args.filePath, (progress) => {
+        mainWindow.webContents.send(IPC_CHANNELS.BRAIN_FEED_PROGRESS, progress)
+      })
     }
   )
 }

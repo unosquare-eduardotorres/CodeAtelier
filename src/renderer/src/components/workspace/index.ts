@@ -6,3 +6,4 @@ export { default as WorkspaceGeneralTab } from './WorkspaceGeneralTab';
 export { default as TokenUsagePage } from './TokenUsagePage';
 export { default as IdeasList } from './IdeasList';
 export { default as BrainSettingsPage } from './BrainSettingsPage';
+export { default as DocumentsPage } from './DocumentsPage';

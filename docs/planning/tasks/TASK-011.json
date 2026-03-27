@@ -1,0 +1,17 @@
+{
+  "id": "TASK-011",
+  "title": "Create cost dashboard UI",
+  "description": "Create CostDashboard.tsx in settings components and cost.store.ts. Show total spend by model, cost per conversation table, savings from model routing, and token usage summary.",
+  "feature_ref": "F005",
+  "task_type": "frontend",
+  "complexity": { "score": 6, "factors": { "files_affected": 4, "estimated_lines": 250, "new_dependencies": 0, "risk_flags": [] } },
+  "dependencies": ["TASK-010"],
+  "acceptance_criteria": [
+    "Cost dashboard accessible from workspace settings",
+    "Shows spend breakdown by model (visual bars)",
+    "Shows cost per conversation (table)",
+    "Shows savings vs all-opus metric",
+    "Zustand store manages cost state"
+  ],
+  "suggested_agent": "frontend:developer"
+}

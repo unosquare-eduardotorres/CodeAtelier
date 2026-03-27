@@ -1,0 +1,16 @@
+{
+  "id": "TASK-006",
+  "title": "Wire complexity scoring into orchestrator decompose",
+  "description": "In orchestrator.service.ts, after decompose() returns tasks, score each one with scoreComplexity() and set task.model. Respect workspace CostPreference setting.",
+  "feature_ref": "F001",
+  "task_type": "backend",
+  "complexity": { "score": 4, "factors": { "files_affected": 2, "estimated_lines": 40, "new_dependencies": 0, "risk_flags": [] } },
+  "dependencies": ["TASK-003", "TASK-005"],
+  "acceptance_criteria": [
+    "All decomposed tasks have complexity scores before execution",
+    "CostPreference from workspace settings is respected",
+    "Economy mode biases toward haiku, power toward opus",
+    "Scoring happens between decompose and specialist dispatch"
+  ],
+  "suggested_agent": "backend:api-developer-typescript"
+}

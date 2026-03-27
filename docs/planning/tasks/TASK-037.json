@@ -1,0 +1,16 @@
+{
+  "id": "TASK-037",
+  "title": "Create hook management UI",
+  "description": "Create HookManager.tsx in settings. Show active hooks, event types, execution history. Add Generate Defaults button that creates hooks based on project type.",
+  "feature_ref": "F009",
+  "task_type": "frontend",
+  "complexity": { "score": 5, "factors": { "files_affected": 3, "estimated_lines": 150, "new_dependencies": 0, "risk_flags": [] } },
+  "dependencies": ["TASK-035"],
+  "acceptance_criteria": [
+    "Hook list shows event, name, command, blocking status",
+    "Execution history shows last run, status, output",
+    "Generate Defaults creates hooks for detected project type",
+    "Accessible from workspace settings"
+  ],
+  "suggested_agent": "frontend:developer"
+}

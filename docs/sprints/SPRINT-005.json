@@ -1,0 +1,18 @@
+{
+  "id": "SPRINT-005",
+  "name": "Extensibility & Advanced Diagnostics",
+  "goal": "Add declarative hooks system for user automation and deep agent personas with bug council for persistent failure diagnosis",
+  "phases": ["Phase 9: Declarative Hooks System", "Phase 10: Deep Agent Personas & Bug Council"],
+  "tasks": ["TASK-035", "TASK-036", "TASK-037", "TASK-038", "TASK-039", "TASK-040", "TASK-041", "TASK-042"],
+  "estimated_complexity": 43,
+  "dependencies": { "sprints": ["SPRINT-002", "SPRINT-003"] },
+  "quality_gates": [
+    "Hooks fire on correct events",
+    "Blocking hooks pause execution",
+    "Default hooks generated per project type",
+    "Deep personas have 7 sections each",
+    "Bug council activates after 3 opus failures",
+    "5 diagnostic agents produce synthesized solution",
+    "Council results shown in UI"
+  ]
+}

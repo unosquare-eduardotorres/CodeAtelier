@@ -30,7 +30,8 @@ import type {
   BrainFeedResult,
   TokenSummary,
   AgentSessionRecord,
-  Idea
+  Idea,
+  DocFile
 } from '../shared/types'
 
 const api = {
@@ -48,6 +49,14 @@ const api = {
 
   selectDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_DIRECTORY),
+
+  getWorkspaceSettings: (args: { workspaceId: string }): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_GET_SETTINGS, args),
+
+  updateWorkspaceSettings: (args: {
+    workspaceId: string
+    settings: Record<string, unknown>
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS, args),
 
   saveClipboardImage: (args: { dataUrl: string }): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE, args),
@@ -280,6 +289,9 @@ const api = {
   // ── Brain Feed ──
   brainSelectDocument: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.BRAIN_SELECT_DOCUMENT),
+
+  brainFeedCancel: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BRAIN_FEED_CANCEL),
 
   brainFeedClaudeMd: (args: { workspacePath: string }): Promise<BrainFeedResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.BRAIN_FEED_CLAUDE_MD, args),
@@ -579,7 +591,17 @@ const api = {
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_ERROR, handler)
     }
-  }
+  },
+
+  // ── Documents ──
+  listDocs: (args: { workspacePath: string }): Promise<DocFile[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DOCS_LIST, args),
+
+  readDocFile: (args: { filePath: string }): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DOCS_READ_FILE, args),
+
+  renderMermaid: (args: { definition: string; id?: string }): Promise<{ svg: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DOCS_RENDER_MERMAID, args)
 } as const
 
 if (process.contextIsolated) {

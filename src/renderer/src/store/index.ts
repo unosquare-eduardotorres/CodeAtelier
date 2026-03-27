@@ -7,3 +7,5 @@ export { useSettingsStore } from './settings.store';
 export { usePixelOfficeStore } from './pixelOffice.store';
 export { useIdeaStore } from './idea.store';
 export { useUpdateStore } from './update.store';
+export { useBrainFeedStore } from './brain-feed.store';
+export { useDocsStore } from './docs.store';

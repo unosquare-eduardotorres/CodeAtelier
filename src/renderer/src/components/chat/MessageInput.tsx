@@ -1,200 +1,248 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Send, Square, Minimize2, Trash2, HelpCircle, GitPullRequestArrow, X, Flame, Lightbulb } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import { useChatStore, useWorkspaceStore } from '@renderer/store';
-import { ConfirmDialog } from '@renderer/components/common';
-import CompleteDialog from './CompleteDialog';
-import IdeaPopover from './IdeaPopover';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import {
+  Send,
+  Square,
+  Minimize2,
+  Trash2,
+  HelpCircle,
+  GitPullRequestArrow,
+  X,
+  Flame,
+  Lightbulb
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { useChatStore, useWorkspaceStore } from '@renderer/store'
+import { ConfirmDialog } from '@renderer/components/common'
+import CompleteDialog from './CompleteDialog'
+import IdeaPopover from './IdeaPopover'
 
 interface MessageInputProps {
-  attachments: string[];
-  onClearAttachments: () => void;
+  attachments: string[]
+  onClearAttachments: () => void
 }
 
 const SLASH_COMMANDS: Array<{
-  command: string;
-  description: string;
-  icon: LucideIcon;
-  iconColor: string;
+  command: string
+  description: string
+  icon: LucideIcon
+  iconColor: string
 }> = [
-  { command: '/complete', description: 'Commit changes, push, and close conversation', icon: GitPullRequestArrow, iconColor: 'text-green-400' },
-  { command: '/close', description: 'Close and delete this conversation', icon: X, iconColor: 'text-orange-400' },
-  { command: '/compact', description: 'Compress conversation context to save tokens', icon: Minimize2, iconColor: 'text-amber-400' },
-  { command: '/clear', description: 'Clear chat display (keeps AI context)', icon: Trash2, iconColor: 'text-red-400' },
-  { command: '/grillme', description: 'Deep-dive interview to clarify your plan', icon: Flame, iconColor: 'text-orange-500' },
-  { command: '/help', description: 'Show available commands', icon: HelpCircle, iconColor: 'text-blue-400' }
-];
+  {
+    command: '/complete',
+    description: 'Commit changes, push, and close conversation',
+    icon: GitPullRequestArrow,
+    iconColor: 'text-green-400'
+  },
+  {
+    command: '/close',
+    description: 'Close and delete this conversation',
+    icon: X,
+    iconColor: 'text-orange-400'
+  },
+  {
+    command: '/compact',
+    description: 'Compress conversation context to save tokens',
+    icon: Minimize2,
+    iconColor: 'text-amber-400'
+  },
+  {
+    command: '/clear',
+    description: 'Clear chat display (keeps AI context)',
+    icon: Trash2,
+    iconColor: 'text-red-400'
+  },
+  {
+    command: '/grillme',
+    description: 'Deep-dive interview to clarify your plan',
+    icon: Flame,
+    iconColor: 'text-orange-500'
+  },
+  {
+    command: '/help',
+    description: 'Show available commands',
+    icon: HelpCircle,
+    iconColor: 'text-blue-400'
+  }
+]
 
-export default function MessageInput({ attachments, onClearAttachments }: MessageInputProps): React.JSX.Element {
-  const [text, setText] = useState('');
-  const [showStopConfirm, setShowStopConfirm] = useState(false);
-  const [showCompleteDialog, setShowCompleteDialog] = useState(false);
-  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
-  const [showIdeaPopover, setShowIdeaPopover] = useState(false);
-  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { sendMessage, isStreaming, activeConversation, stopGeneration, clearDisplay, appendLocalMessage, completeConversation, closeConversation, startGrillSession } = useChatStore();
-  const { orchestratorStatus } = useWorkspaceStore();
-  const isInitializing = orchestratorStatus === 'starting';
+export default function MessageInput({
+  attachments,
+  onClearAttachments
+}: MessageInputProps): React.JSX.Element {
+  const [text, setText] = useState('')
+  const [showStopConfirm, setShowStopConfirm] = useState(false)
+  const [showCompleteDialog, setShowCompleteDialog] = useState(false)
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
+  const [showIdeaPopover, setShowIdeaPopover] = useState(false)
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const {
+    sendMessage,
+    isStreaming,
+    activeConversation,
+    stopGeneration,
+    clearDisplay,
+    appendLocalMessage,
+    completeConversation,
+    closeConversation,
+    startGrillSession
+  } = useChatStore()
+  const { orchestratorStatus } = useWorkspaceStore()
+  const isInitializing = orchestratorStatus === 'starting'
 
   const adjustHeight = useCallback(() => {
-    const textarea = textareaRef.current;
+    const textarea = textareaRef.current
     if (textarea) {
-      textarea.style.height = 'auto';
-      const maxHeight = 6 * 24; // ~6 lines
-      textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+      textarea.style.height = 'auto'
+      const maxHeight = 6 * 24 // ~6 lines
+      textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
     }
-  }, []);
+  }, [])
 
   useEffect(() => {
-    adjustHeight();
-  }, [text, adjustHeight]);
+    adjustHeight()
+  }, [text, adjustHeight])
 
   // Slash command filtering
   const filteredCommands = useMemo(() => {
-    if (!text.startsWith('/')) return [];
-    const typed = text.split(' ')[0].toLowerCase();
-    return SLASH_COMMANDS.filter((c) => c.command.startsWith(typed));
-  }, [text]);
+    if (!text.startsWith('/')) return []
+    const typed = text.split(' ')[0].toLowerCase()
+    return SLASH_COMMANDS.filter((c) => c.command.startsWith(typed))
+  }, [text])
 
-  const showCommands = text.startsWith('/') && filteredCommands.length > 0;
+  const showCommands = text.startsWith('/') && filteredCommands.length > 0
 
   // Reset selected index when filtered commands change
   useEffect(() => {
-    setSelectedCommandIndex(0);
-  }, [filteredCommands.length]);
+    setSelectedCommandIndex(0)
+  }, [filteredCommands.length])
 
   const handleSend = async (): Promise<void> => {
-    const trimmed = text.trim();
-    if (!trimmed || isStreaming || !activeConversation) return;
+    const trimmed = text.trim()
+    if (!trimmed || isStreaming || !activeConversation) return
 
     // Handle slash commands
     if (trimmed.startsWith('/')) {
-      const cmd = trimmed.split(' ')[0].toLowerCase();
+      const cmd = trimmed.split(' ')[0].toLowerCase()
 
       if (cmd === '/complete') {
-        setText('');
-        setShowCompleteDialog(true);
-        return;
+        setText('')
+        setShowCompleteDialog(true)
+        return
       }
 
       if (cmd === '/close') {
-        setText('');
-        setShowCloseConfirm(true);
-        return;
+        setText('')
+        setShowCloseConfirm(true)
+        return
       }
 
       if (cmd === '/compact') {
-        setText('');
-        // Send /compact through the normal message flow — the AI understands it
-        // and the IPC handler will also trigger the compact() method
-        await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined);
-        onClearAttachments();
-        return;
+        setText('')
+        await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined)
+        onClearAttachments()
+        return
       }
 
       if (cmd === '/clear') {
-        setText('');
-        // Clear messages display but keep the AI process running with context
-        clearDisplay();
-        return;
+        setText('')
+        clearDisplay()
+        return
       }
 
       if (cmd === '/grillme') {
-        setText('');
-        startGrillSession();
-        const grillPrompt = `[GRILL MODE ACTIVATED]\n\nInterview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. If a question can be answered by exploring the codebase, explore the codebase instead.\n\nReview the conversation above and start grilling me about the items, pending decisions, and unclear requirements.`;
-        await sendMessage(grillPrompt, attachments.length > 0 ? attachments : undefined);
-        onClearAttachments();
-        return;
+        setText('')
+        startGrillSession()
+        const grillPrompt = `[GRILL MODE ACTIVATED]\n\nInterview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. If a question can be answered by exploring the codebase, explore the codebase instead.\n\nReview the conversation above and start grilling me about the items, pending decisions, and unclear requirements.`
+        await sendMessage(grillPrompt, attachments.length > 0 ? attachments : undefined)
+        onClearAttachments()
+        return
       }
 
       if (cmd === '/help') {
-        setText('');
+        setText('')
         const helpLines = [
-          '✅ **/complete** — Commit tracked changes, push, and close conversation',
-          '❌ **/close** — Close and permanently delete this conversation',
-          '🗜️ **/compact** — Compress conversation context to save tokens',
-          '🗑️ **/clear** — Clear chat display (keeps AI context)',
-          '🔥 **/grillme** — Deep-dive interview to clarify your plan',
-          '❓ **/help** — Show available commands'
-        ];
-        appendLocalMessage(`### Available Commands\n\n${helpLines.join('\n')}`);
-        return;
+          '**`/complete`** — Commit tracked changes, push, and close conversation',
+          '**`/close`** — Close and permanently delete this conversation',
+          '**`/compact`** — Compress conversation context to save tokens',
+          '**`/clear`** — Clear chat display (keeps AI context)',
+          '**`/grillme`** — Deep-dive interview to clarify your plan',
+          '**`/help`** — Show available commands'
+        ]
+        appendLocalMessage(`### Available Commands\n\n${helpLines.join('\n')}`)
+        return
       }
     }
 
-    setText('');
-    await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined);
-    onClearAttachments();
-  };
+    setText('')
+    await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined)
+    onClearAttachments()
+  }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     // Handle command autocomplete navigation
     if (showCommands) {
       if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setSelectedCommandIndex((prev) =>
-          prev > 0 ? prev - 1 : filteredCommands.length - 1
-        );
-        return;
+        e.preventDefault()
+        setSelectedCommandIndex((prev) => (prev > 0 ? prev - 1 : filteredCommands.length - 1))
+        return
       }
       if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setSelectedCommandIndex((prev) =>
-          prev < filteredCommands.length - 1 ? prev + 1 : 0
-        );
-        return;
+        e.preventDefault()
+        setSelectedCommandIndex((prev) => (prev < filteredCommands.length - 1 ? prev + 1 : 0))
+        return
       }
       if (e.key === 'Tab') {
-        e.preventDefault();
-        const selected = filteredCommands[selectedCommandIndex];
+        e.preventDefault()
+        const selected = filteredCommands[selectedCommandIndex]
         if (selected) {
-          setText(selected.command);
+          setText(selected.command)
         }
-        return;
+        return
       }
       if (e.key === 'Escape') {
-        e.preventDefault();
-        setText('');
-        return;
+        e.preventDefault()
+        setText('')
+        return
       }
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+      e.preventDefault()
+      handleSend()
     }
-  };
+  }
 
-  const isDisabled = isStreaming || !activeConversation || isInitializing;
+  const isDisabled = isStreaming || !activeConversation || isInitializing
 
   return (
     <>
       <div className="relative flex-1 min-w-0 flex items-end gap-2">
         {/* Slash command autocomplete dropdown */}
         {showCommands && (
-          <div className="absolute bottom-full mb-1 left-0 bg-gray-800 rounded-lg border border-gray-700 py-1.5 w-96 shadow-xl z-50">
+          <div className="absolute bottom-full mb-1 left-0 bg-surface-float rounded-lg border border-border-default py-1.5 w-96 shadow-xl z-50">
             {filteredCommands.map((cmd, index) => {
-              const Icon = cmd.icon;
+              const Icon = cmd.icon
               return (
                 <button
                   key={cmd.command}
                   onClick={() => {
-                    setText(cmd.command);
-                    textareaRef.current?.focus();
+                    setText(cmd.command)
+                    textareaRef.current?.focus()
                   }}
                   className={`w-full text-left px-4 py-2.5 text-base transition-colors flex items-center gap-3 ${
                     index === selectedCommandIndex
-                      ? 'bg-gray-700 text-white'
-                      : 'hover:bg-gray-700/50 text-gray-300'
+                      ? 'bg-surface-overlay text-text-primary'
+                      : 'hover:bg-surface-overlay/50 text-text-body'
                   }`}
                 >
                   <Icon size={18} className={cmd.iconColor} />
-                  <span className="text-indigo-400 font-mono text-sm font-medium">{cmd.command}</span>
-                  <span className="text-gray-400 ml-auto text-sm">{cmd.description}</span>
+                  <span className="text-primary-text font-mono text-sm font-medium">
+                    {cmd.command}
+                  </span>
+                  <span className="text-text-secondary ml-auto text-sm">{cmd.description}</span>
                 </button>
-              );
+              )
             })}
           </div>
         )}
@@ -211,9 +259,7 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
         </button>
 
         {/* Idea popover */}
-        {showIdeaPopover && (
-          <IdeaPopover onClose={() => setShowIdeaPopover(false)} />
-        )}
+        {showIdeaPopover && <IdeaPopover onClose={() => setShowIdeaPopover(false)} />}
 
         <textarea
           ref={textareaRef}
@@ -231,7 +277,7 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
           }
           disabled={isDisabled}
           rows={1}
-          className="flex-1 bg-transparent text-gray-200 placeholder-gray-500 resize-none outline-none text-sm leading-relaxed py-2 disabled:opacity-50"
+          className="flex-1 bg-transparent text-text-body placeholder-text-muted resize-none outline-none text-sm leading-relaxed py-2 disabled:opacity-50"
           aria-label="Message input"
         />
 
@@ -239,7 +285,7 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
         {isStreaming && (
           <button
             onClick={() => setShowStopConfirm(true)}
-            className="flex-shrink-0 p-2 rounded-lg bg-red-600 text-white hover:bg-red-500 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-1 focus-visible:ring-offset-gray-900"
+            className="flex-shrink-0 p-2 rounded-lg bg-red-600 text-white hover:bg-red-500 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base"
             aria-label="Stop generation"
             title="Stop generation"
           >
@@ -251,7 +297,7 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
         <button
           onClick={handleSend}
           disabled={isDisabled || !text.trim()}
-          className="flex-shrink-0 p-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 focus-visible:ring-offset-gray-900"
+          className="flex-shrink-0 p-2 rounded-lg bg-primary text-white hover:bg-primary-hover disabled:opacity-30 disabled:hover:bg-primary transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base"
           aria-label="Send message (Enter)"
           title="Send message (Enter)"
         >
@@ -267,8 +313,8 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
         cancelLabel="Continue"
         variant="danger"
         onConfirm={async () => {
-          await stopGeneration();
-          setShowStopConfirm(false);
+          await stopGeneration()
+          setShowStopConfirm(false)
         }}
         onCancel={() => setShowStopConfirm(false)}
       />
@@ -279,8 +325,8 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
         conversationTitle={activeConversation?.title ?? 'Untitled'}
         conversationId={activeConversation?.id ?? ''}
         onConfirm={async (commitMessage, description) => {
-          await completeConversation(commitMessage, description);
-          setShowCompleteDialog(false);
+          await completeConversation(commitMessage, description)
+          setShowCompleteDialog(false)
         }}
         onCancel={() => setShowCompleteDialog(false)}
       />
@@ -295,12 +341,12 @@ export default function MessageInput({ attachments, onClearAttachments }: Messag
         variant="danger"
         onConfirm={async () => {
           if (activeConversation) {
-            await closeConversation(activeConversation.id);
+            await closeConversation(activeConversation.id)
           }
-          setShowCloseConfirm(false);
+          setShowCloseConfirm(false)
         }}
         onCancel={() => setShowCloseConfirm(false)}
       />
     </>
-  );
+  )
 }

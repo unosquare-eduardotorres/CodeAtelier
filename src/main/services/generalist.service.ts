@@ -206,41 +206,6 @@ export class GeneralistService extends AgentBaseService {
   }
 
   /**
-   * Waits for the Claude CLI process to finish initializing (system init event).
-   * Resolves immediately if already ready. Times out after 120 seconds.
-   * Retained for external use via isReady() — no longer called from send()
-   * since --input-format stream-json initializes on first stdin message.
-   */
-  // @ts-ignore TS6133 — retained for potential external use; no longer called from send()
-  private waitForReady(): Promise<void> {
-    if (this.processReady) return Promise.resolve()
-
-    return new Promise<void>((resolve, reject) => {
-      const readyTimeout = setTimeout(() => {
-        this.removeListener('_processReady', onReady)
-        reject(new Error('Claude CLI failed to initialize within 120 seconds'))
-      }, 120_000)
-
-      const onReady = (): void => {
-        clearTimeout(readyTimeout)
-        resolve()
-      }
-      this.once('_processReady', onReady)
-
-      // Also reject if process exits before ready
-      if (this.process) {
-        this.process.once('exit', () => {
-          clearTimeout(readyTimeout)
-          this.removeListener('_processReady', onReady)
-          if (!this.processReady) {
-            reject(new Error('Claude CLI process exited before initialization'))
-          }
-        })
-      }
-    })
-  }
-
-  /**
    * Sends a message to the long-lived process by writing to stdin.
    * Each message is a newline-terminated line written to the process stdin.
    */
@@ -504,6 +469,13 @@ export class GeneralistService extends AgentBaseService {
         this.log.warn(
           `Generalist crashed (code ${code}) — auto-restarting in ${delay}ms (attempt ${this.restartAttempts}/3)...`
         )
+
+        // Notify the UI about the reconnection attempt
+        this.emit('chunk', {
+          type: 'status',
+          content: `Reconnecting to Claude CLI (attempt ${this.restartAttempts}/3)…`
+        } as StreamChunk)
+
         const wp = this.workspacePath
         const mode = this.currentMode
         const sessionId = this.currentConversationId
@@ -514,6 +486,10 @@ export class GeneralistService extends AgentBaseService {
           this.intentionallyStopped = false
           this.start(wp, mode, sessionId).catch((err) => {
             this.log.error('Auto-restart failed:', err)
+            this.emit('chunk', {
+              type: 'error',
+              error: `Auto-restart failed: ${err instanceof Error ? err.message : String(err)}`
+            } as StreamChunk)
           })
         }, delay)
       } else {

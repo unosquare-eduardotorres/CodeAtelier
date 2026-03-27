@@ -120,6 +120,28 @@ export function registerWorkspaceIpc(): void {
     workspaceRepository.delete(args.id)
   })
 
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_GET_SETTINGS, async (event, workspaceId: string) => {
+    validateSender(event)
+    if (!workspaceId || typeof workspaceId !== 'string') {
+      throw new Error('Invalid workspace ID')
+    }
+    return workspaceRepository.getSettings(workspaceId)
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS,
+    async (event, workspaceId: string, settings: Record<string, unknown>) => {
+      validateSender(event)
+      if (!workspaceId || typeof workspaceId !== 'string') {
+        throw new Error('Invalid workspace ID')
+      }
+      if (!settings || typeof settings !== 'object') {
+        throw new Error('Invalid settings object')
+      }
+      return workspaceRepository.updateSettings(workspaceId, settings)
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_DIRECTORY, async (event) => {
     validateSender(event)
 

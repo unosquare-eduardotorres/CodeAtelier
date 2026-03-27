@@ -35,3 +35,13 @@ Core Application — Feature Complete (MVP+)
 - CI/CD pipeline configuration
 - Auto-update (electron-updater) integration
 - Code signing and notarization for macOS distribution
+- **Long-term memory via local vector search (Tier 2 brain enhancement)**
+  - Local embedding model (all-MiniLM-L6-v2 via ONNX Runtime, ~90MB, CPU-only)
+  - Local file-based vector DB (vectra by Microsoft — TypeScript, no server)
+  - Store: chunked conversation history, architecture decisions, error resolutions, code references
+  - Query: embed user message locally (~5ms) → search top-5 relevant chunks → inject into prompt
+  - Settings toggle: enable/disable semantic search per workspace
+  - Auto-index on /complete, /close, brain feed ingest
+  - Storage: `.brain/vectors/` directory (git-ignorable)
+  - Zero API keys, fully offline — aligns with Agent Studio philosophy
+- Comprehensive code audit fixes (E3/E4 CSP improvements, R4/R5/R6 component decomposition, A5 build-mode permission scoping, A6 handoff regex robustness)

@@ -18,3 +18,10 @@ export { GENERALIST_SYSTEM_PROMPT } from './generalist-prompts'
 export { WorkspaceDeployService, workspaceDeployService } from './workspace-deploy.service'
 export { brainService } from './brain.service'
 export { brainFeedService } from './brain-feed.service'
+export {
+  validateComplexityScore,
+  getTierFromScore,
+  resolveModel,
+  getModelId,
+  enrichTasksWithComplexity
+} from './complexity-scorer.service'

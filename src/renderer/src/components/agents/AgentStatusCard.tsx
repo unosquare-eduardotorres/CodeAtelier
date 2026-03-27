@@ -9,9 +9,23 @@ import {
   ChevronDown,
   ChevronUp
 } from 'lucide-react'
-import type { AgentStatus } from '../../../../shared/types'
+import type { AgentStatus, ModelTier, ComplexityTier } from '../../../../shared/types'
 import { AGENT_META } from '../../../../shared/constants'
 import { useSpecialistStore, useAgentStore } from '@renderer/store'
+
+// Model tier badge config
+const MODEL_BADGE: Record<ModelTier, { label: string; bg: string; text: string }> = {
+  haiku: { label: 'H', bg: 'bg-emerald-500/15', text: 'text-emerald-400' },
+  sonnet: { label: 'S', bg: 'bg-blue-500/15', text: 'text-blue-400' },
+  opus: { label: 'O', bg: 'bg-purple-500/15', text: 'text-purple-400' }
+}
+
+// Complexity tier dot colors
+const TIER_DOT: Record<ComplexityTier, string> = {
+  simple: 'bg-emerald-400',
+  moderate: 'bg-yellow-400',
+  complex: 'bg-red-400'
+}
 
 interface AgentStatusCardProps {
   status: AgentStatus
@@ -22,8 +36,8 @@ const STATUS_CONFIG: Record<
   { bg: string; text: string; dot: string; icon: React.ReactNode; label: string }
 > = {
   idle: {
-    bg: 'bg-gray-700/50',
-    text: 'text-gray-400',
+    bg: 'bg-surface-overlay',
+    text: 'text-text-secondary',
     dot: 'bg-gray-500',
     icon: <Pause size={12} />,
     label: 'Idle'
@@ -123,7 +137,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
 
   return (
     <div
-      className="bg-gray-800 rounded-lg p-3 border border-gray-700/50 border-l-2"
+      className="bg-surface-overlay rounded-lg p-4 border border-border-subtle border-l-2 shadow-sm hover:border-border-default transition-colors"
       style={{ borderLeftColor: meta?.color ?? '#6366F1' }}
     >
       <div
@@ -139,7 +153,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
           <span className="text-base" role="img" aria-label={meta?.displayName ?? status.agentType}>
             {meta?.icon ?? '🔧'}
           </span>
-          <span className="text-sm font-medium text-gray-200">
+          <span className="text-sm font-medium text-text-primary">
             {meta?.displayName ??
               status.agentType
                 .split('-')
@@ -154,21 +168,39 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
             {config.icon}
             {config.label}
           </span>
+          {/* Model + complexity indicators */}
+          {status.model && MODEL_BADGE[status.model] && (
+            <span
+              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${MODEL_BADGE[status.model].bg} ${MODEL_BADGE[status.model].text}`}
+              title={`Model: ${status.model} | Complexity: ${status.complexityTier ?? 'unknown'}`}
+              aria-label={`Model: ${status.model}`}
+            >
+              {MODEL_BADGE[status.model].label}
+            </span>
+          )}
+          {status.complexityTier && TIER_DOT[status.complexityTier] && (
+            <span
+              className={`w-2 h-2 rounded-full ${TIER_DOT[status.complexityTier]}`}
+              title={`Complexity: ${status.complexityTier}`}
+              role="img"
+              aria-label={`Complexity: ${status.complexityTier}`}
+            />
+          )}
           {isExpanded ? (
-            <ChevronUp size={14} className="text-gray-500" />
+            <ChevronUp size={14} className="text-text-muted" />
           ) : (
-            <ChevronDown size={14} className="text-gray-500" />
+            <ChevronDown size={14} className="text-text-muted" />
           )}
         </div>
       </div>
 
       {status.currentTask && (
-        <p className="text-xs text-gray-400 mb-2 truncate" title={status.currentTask}>
+        <p className="text-xs text-text-secondary mb-2 truncate" title={status.currentTask}>
           {status.currentTask}
         </p>
       )}
 
-      <div className="flex items-center gap-3 text-[10px] text-gray-500">
+      <div className="flex items-center gap-3 text-xs text-text-muted">
         <span>{formatElapsed(elapsed)}</span>
         <span>·</span>
         <span>{formatTokens(status.tokenUsage)} tokens</span>
@@ -176,9 +208,9 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
 
       {/* Expandable detail view */}
       {isExpanded && (
-        <div className="mt-2 pt-2 border-t border-gray-700">
-          <div ref={outputRef} className="bg-gray-900 rounded p-2 max-h-48 overflow-y-auto">
-            <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono">
+        <div className="mt-3 pt-3 border-t border-border-subtle">
+          <div ref={outputRef} className="bg-surface-base rounded p-2 max-h-48 overflow-y-auto">
+            <pre className="text-xs text-text-body whitespace-pre-wrap font-mono">
               {agentOutput || 'Waiting for output...'}
             </pre>
           </div>

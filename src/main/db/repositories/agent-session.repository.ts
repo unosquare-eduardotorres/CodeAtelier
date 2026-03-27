@@ -12,6 +12,9 @@ interface AgentSessionRow {
   stdout_log_path: string | null
   conversation_id: string | null
   workspace_id: string | null
+  complexity_score: number | null
+  model_used: string | null
+  model_tier: string | null
 }
 
 export interface AgentSession {
@@ -25,6 +28,9 @@ export interface AgentSession {
   tokenUsage: number
   conversationId: string | null
   workspaceId: string | null
+  complexityScore: number | null
+  modelUsed: string | null
+  modelTier: string | null
 }
 
 export interface TokenSummary {
@@ -44,7 +50,10 @@ function toModel(row: AgentSessionRow): AgentSession {
     endedAt: row.ended_at,
     tokenUsage: row.token_usage,
     conversationId: row.conversation_id,
-    workspaceId: row.workspace_id
+    workspaceId: row.workspace_id,
+    complexityScore: row.complexity_score,
+    modelUsed: row.model_used,
+    modelTier: row.model_tier
   }
 }
 
@@ -57,13 +66,16 @@ export class AgentSessionRepository {
       pid?: number
       conversationId?: string
       workspaceId?: string
+      complexityScore?: number
+      modelUsed?: string
+      modelTier?: string
     } = {}
   ): AgentSession {
     const db = getDatabase()
     const row = db
       .prepare(
-        `INSERT INTO agent_sessions (agent_type, task_id, pid, conversation_id, workspace_id)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO agent_sessions (agent_type, task_id, pid, conversation_id, workspace_id, complexity_score, model_used, model_tier)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
       .get(
@@ -71,7 +83,10 @@ export class AgentSessionRepository {
         opts.taskId ?? null,
         opts.pid ?? null,
         opts.conversationId ?? null,
-        opts.workspaceId ?? null
+        opts.workspaceId ?? null,
+        opts.complexityScore ?? null,
+        opts.modelUsed ?? null,
+        opts.modelTier ?? null
       ) as AgentSessionRow
     return toModel(row)
   }

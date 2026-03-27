@@ -4,13 +4,15 @@ import { join } from 'node:path'
 import type {
   AgentStatus,
   ConversationMode,
+  CostPreference,
   DecomposedTask,
   Skill,
   TaskPlan
 } from '../../shared/types'
-import { AGENT_IDS } from '../../shared/constants'
+import { AGENT_IDS, DEFAULT_COST_PREFERENCE } from '../../shared/constants'
 import { orchestratorLogger } from '../logger'
-import { skillRepository, specialistRepository } from '../db/repositories'
+import { skillRepository, specialistRepository, workspaceRepository } from '../db/repositories'
+import { enrichTasksWithComplexity } from './complexity-scorer.service'
 import {
   PLAN_MODE_SYSTEM_PROMPT,
   BUILD_MODE_SYSTEM_PROMPT,
@@ -18,6 +20,9 @@ import {
 } from './system-prompts'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
+
+/** Maximum number of session entries before evicting oldest */
+const MAX_SESSION_MAP_SIZE = 100
 
 export class OrchestratorService extends AgentBaseService {
   protected readonly log = orchestratorLogger
@@ -278,21 +283,33 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
       throw new Error('Task decomposition returned no tasks')
     }
 
-    // Validate and normalize tasks
+    // Validate and normalize tasks — including raw complexity from LLM
     const tasks: DecomposedTask[] = parsed.tasks.map((t, i) => ({
       id: t.id || `t${i + 1}`,
       specialist: t.specialist,
       description: t.description,
-      dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn : []
+      dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn : [],
+      complexity: t.complexity // raw from LLM — will be validated next
     }))
 
-    this.log.info(`Decomposed into ${tasks.length} tasks`)
+    // Read workspace cost preference and enrich tasks with validated complexity scores
+    const settings = this.workspacePath
+      ? workspaceRepository.getSettingsByPath(this.workspacePath)
+      : {}
+    const costPreference = (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
+
+    const enrichedTasks = enrichTasksWithComplexity(tasks, costPreference)
+
+    this.log.info(`Decomposed into ${enrichedTasks.length} tasks (cost: ${costPreference})`)
+    for (const t of enrichedTasks) {
+      this.log.info(`  ${t.id}: ${t.complexity?.tier}/${t.model} (score: ${t.complexity?.total})`)
+    }
 
     return {
       conversationId,
       summary,
       mode,
-      tasks
+      tasks: enrichedTasks
     }
   }
 
@@ -364,6 +381,7 @@ Respond with only a number (e.g., "1" or "0"):`
     const sessionId = event.session_id as string | undefined
     if (sessionId && this.currentConversationId) {
       this.sessionMap.set(this.currentConversationId, sessionId)
+      this.evictOldSessions()
       this.log.info('Session ID captured for conversation:', this.currentConversationId, sessionId)
     }
 
@@ -375,6 +393,7 @@ Respond with only a number (e.g., "1" or "0"):`
     const sessionId = event.session_id as string | undefined
     if (sessionId && this.currentConversationId) {
       this.sessionMap.set(this.currentConversationId, sessionId)
+      this.evictOldSessions()
       this.log.info(
         'System init, session:',
         sessionId,
@@ -392,6 +411,24 @@ Respond with only a number (e.g., "1" or "0"):`
 
   clearSession(conversationId: string): void {
     this.sessionMap.delete(conversationId)
+  }
+
+  /**
+   * Evicts the oldest session entries when the map exceeds MAX_SESSION_MAP_SIZE.
+   * Map iteration order is insertion order, so first entries are oldest.
+   */
+  private evictOldSessions(): void {
+    if (this.sessionMap.size <= MAX_SESSION_MAP_SIZE) return
+    const excess = this.sessionMap.size - MAX_SESSION_MAP_SIZE
+    let removed = 0
+    for (const key of this.sessionMap.keys()) {
+      if (removed >= excess) break
+      this.sessionMap.delete(key)
+      removed++
+    }
+    this.log.info(
+      `Evicted ${removed} old orchestrator sessions (map size: ${this.sessionMap.size})`
+    )
   }
 
   getStatus(): AgentStatus {

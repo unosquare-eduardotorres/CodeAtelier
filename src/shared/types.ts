@@ -51,6 +51,9 @@ export interface AgentStatus {
   currentTask?: string
   elapsedMs: number
   tokenUsage: number
+  // Complexity scoring — populated when running as a specialist
+  model?: ModelTier
+  complexityTier?: ComplexityTier
 }
 
 // ── Tool Activity ──
@@ -195,12 +198,33 @@ export interface CompleteResult {
 
 export type ExecutionStrategy = 'sequential' | 'parallel'
 
+// ── Complexity Scoring ──
+
+export interface ComplexityScore {
+  filesAffected: number // 0-3
+  estimatedLines: number // 0-3
+  newDependencies: number // 0-2
+  taskType: number // 0-3
+  riskFlags: number // 0-3
+  total: number // 0-14
+  tier: 'simple' | 'moderate' | 'complex'
+  model: 'haiku' | 'sonnet' | 'opus'
+}
+
+export type CostPreference = 'economy' | 'balanced' | 'power'
+
+export type ComplexityTier = ComplexityScore['tier']
+export type ModelTier = ComplexityScore['model']
+
 /** A single decomposed sub-task assigned to a specialist */
 export interface DecomposedTask {
   id: string
   specialist: string
   description: string
   dependsOn: string[]
+  // Populated by combined decompose+score call
+  complexity?: ComplexityScore
+  model?: ModelTier
 }
 
 /** The full task plan returned by the orchestrator's decomposition step */
@@ -218,6 +242,9 @@ export interface TaskExecutionProgress {
   status: 'pending' | 'running' | 'completed' | 'failed'
   output?: string
   error?: string
+  // Complexity scoring
+  model?: ModelTier
+  complexityTier?: ComplexityTier
 }
 
 // ── Git Worktree Models ──
@@ -372,12 +399,30 @@ export interface Idea {
   updatedAt: string
 }
 
+/** A document file discovered in the workspace /docs folder */
+export interface DocFile {
+  /** File name (e.g. "auto-update-flow.md") */
+  name: string
+  /** Absolute file path */
+  path: string
+  /** File extension without dot (e.g. "md", "docx", "pdf") */
+  extension: string
+  /** Whether the format is renderable (only .md for now) */
+  supported: boolean
+  /** File size in bytes */
+  sizeBytes: number
+  /** Last modified timestamp (epoch ms) */
+  modifiedAt: number
+}
+
 // ── IPC Channel Map (type-safe) ──
 export interface IpcChannels {
   'workspace:list': { args: void; return: Workspace[] }
   'workspace:create': { args: { name: string; repoPath: string }; return: Workspace }
   'workspace:open': { args: { id: string }; return: Workspace }
   'workspace:delete': { args: { id: string }; return: void }
+  'workspace:get-settings': { args: string; return: Record<string, unknown> }
+  'workspace:update-settings': { args: [string, Record<string, unknown>]; return: void }
   'chat:sendMessage': {
     args: { conversationId: string; text: string; attachments?: string[] }
     return: void
@@ -504,6 +549,7 @@ export interface IpcChannels {
   // Brain feed
   'brain:feedClaudeMd': { args: { workspacePath: string }; return: BrainFeedResult }
   'brain:feedCodebase': { args: { workspacePath: string }; return: BrainFeedResult }
+  'brain:feedCancel': { args: void; return: void }
   'brain:feedDocument': {
     args: { workspacePath: string; filePath: string }
     return: BrainFeedResult
