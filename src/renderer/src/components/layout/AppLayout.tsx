@@ -8,7 +8,10 @@ import {
   Sliders,
   Building2,
   ClipboardList,
-  Hammer
+  Hammer,
+  ZoomIn,
+  ZoomOut,
+  CircleHelp
 } from 'lucide-react'
 import { Sidebar } from '@renderer/components/layout'
 import { ChatSidebar, ChatPanel } from '@renderer/components/chat'
@@ -17,6 +20,7 @@ import { PixelOfficePanel } from '@renderer/components/pixel-office'
 import { WorkspaceSettingsPanel, WorkspaceSettingsContent } from '@renderer/components/workspace'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import { SettingsPage } from '@renderer/components/settings'
+import { HelpView } from '@renderer/components/help'
 import { WelcomeScreen } from '@renderer/components/welcome'
 import { UpdateBanner, MemoryFeedBanner, ErrorBoundary } from '@renderer/components/common'
 import { NewConversationModal } from '@renderer/components/chat'
@@ -24,7 +28,8 @@ import {
   useWorkspaceStore,
   useAgentStore,
   useChatStore,
-  usePixelOfficeStore
+  usePixelOfficeStore,
+  useIdeaStore
 } from '@renderer/store'
 import type { ConversationMode } from '../../../../shared/types'
 
@@ -51,9 +56,9 @@ export default function AppLayout(): React.JSX.Element {
   const [showAgentPanel, setShowAgentPanel] = useState(false)
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [view, setView] = useState<'chat' | 'app-settings'>('chat')
+  const [view, setView] = useState<'chat' | 'app-settings' | 'help'>('chat')
   const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false)
-  const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('workspace')
+  const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('models')
   const [wsSettingsPanelCollapsed, setWsSettingsPanelCollapsed] = useState(false)
   const { activeWorkspace, orchestratorStatus, clearActiveWorkspace } = useWorkspaceStore()
   const { statuses, sessionTokens } = useAgentStore()
@@ -61,6 +66,25 @@ export default function AppLayout(): React.JSX.Element {
     useChatStore()
   const [showNewChatModal, setShowNewChatModal] = useState(false)
   const { isVisible: showPixelOffice, togglePanel: togglePixelOffice } = usePixelOfficeStore()
+  const { createIdea } = useIdeaStore()
+  const [zoomFactor, setZoomFactor] = useState(1.0)
+
+  // Load initial zoom and subscribe to changes
+  useEffect(() => {
+    window.api.zoomGet().then(setZoomFactor).catch(console.error)
+    const unsub = window.api.onZoomChanged((factor) => setZoomFactor(factor))
+    return unsub
+  }, [])
+
+  const handleZoomIn = useCallback(() => {
+    window.api.zoomIn()
+  }, [])
+  const handleZoomOut = useCallback(() => {
+    window.api.zoomOut()
+  }, [])
+  const handleZoomReset = useCallback(() => {
+    window.api.zoomReset()
+  }, [])
 
   const activeAgentCount = statuses.filter(
     (s) => s.status === 'thinking' || s.status === 'writing' || s.status === 'reviewing'
@@ -85,6 +109,10 @@ export default function AppLayout(): React.JSX.Element {
     // 2. If workspace settings panel is open → close it (show chat sidebar)
     // 3. Otherwise → no-op (already at default chat view)
 
+    if (view === 'help') {
+      setView('chat')
+      return
+    }
     if (view === 'app-settings') {
       setView('chat')
       return
@@ -135,9 +163,28 @@ export default function AppLayout(): React.JSX.Element {
         }
       }
 
+      if (isMeta && e.key === '/') {
+        e.preventDefault()
+        setView((prev) => (prev === 'help' ? 'chat' : 'help'))
+      }
+
       if (isMeta && e.shiftKey && e.key === 'o') {
         e.preventDefault()
         togglePixelOffice()
+      }
+
+      // Zoom shortcuts — ⌘+/⌘= to zoom in, ⌘- to zoom out, ⌘0 to reset
+      if (isMeta && (e.key === '=' || e.key === '+')) {
+        e.preventDefault()
+        window.api.zoomIn()
+      }
+      if (isMeta && e.key === '-') {
+        e.preventDefault()
+        window.api.zoomOut()
+      }
+      if (isMeta && e.key === '0') {
+        e.preventDefault()
+        window.api.zoomReset()
       }
     },
     [activeWorkspace, togglePixelOffice, activeConversation, updateMode, isStreaming, navigateBack]
@@ -163,6 +210,20 @@ export default function AppLayout(): React.JSX.Element {
     setShowWorkspaceSettings(false)
   }
 
+  const handleOpenIdeas = (): void => {
+    setWorkspaceSettingsTab('ideas')
+    setShowWorkspaceSettings(true)
+  }
+
+  const handleCreateIdea = async (data: {
+    title: string
+    description?: string
+  }): Promise<void> => {
+    if (!activeWorkspace) return
+    await createIdea(activeWorkspace.id, data.title, data.description ?? '')
+    handleOpenIdeas()
+  }
+
   const handleCreateChat = async (data: {
     title: string
     description?: string
@@ -185,6 +246,10 @@ export default function AppLayout(): React.JSX.Element {
   }
 
   const renderMainContent = (): React.JSX.Element => {
+    if (view === 'help') {
+      return <HelpView onBack={() => setView('chat')} />
+    }
+
     if (view === 'app-settings') {
       return <SettingsPage onBack={() => setView('chat')} />
     }
@@ -205,7 +270,7 @@ export default function AppLayout(): React.JSX.Element {
     }
 
     // Default: chat
-    return <ChatPanel />
+    return <ChatPanel onCreateIdea={handleCreateIdea} />
   }
 
   // Determine if sidebar should show (chat view or workspace settings view)
@@ -228,6 +293,14 @@ export default function AppLayout(): React.JSX.Element {
           className="flex items-center gap-1.5 ml-auto relative z-10"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
+          <button
+            onClick={() => setView(view === 'help' ? 'chat' : 'help')}
+            className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'help' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
+            title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
+            aria-label="Help"
+          >
+            <CircleHelp size={16} />
+          </button>
           <button
             onClick={handleGoHome}
             className="p-2.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
@@ -280,6 +353,7 @@ export default function AppLayout(): React.JSX.Element {
               <ChatSidebar
                 isCollapsed={sidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+                onCreateIdea={handleCreateIdea}
               />
             )}
           </Sidebar>
@@ -360,6 +434,33 @@ export default function AppLayout(): React.JSX.Element {
             {sessionTokens > 0 ? `${(sessionTokens / 1000).toFixed(1)}k tokens` : '0 tokens'}
           </span>
 
+          {/* Zoom controls */}
+          <div className="flex items-center gap-0.5 border-l border-border-subtle pl-3 ml-1">
+            <button
+              onClick={handleZoomOut}
+              className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-secondary transition-colors"
+              aria-label="Zoom out"
+              title={`Zoom Out (${isMac ? '⌘' : 'Ctrl+'}−)`}
+            >
+              <ZoomOut size={12} />
+            </button>
+            <button
+              onClick={handleZoomReset}
+              className="px-1 py-0.5 rounded hover:bg-surface-overlay text-text-muted hover:text-text-secondary transition-colors min-w-[36px] text-center"
+              title={`Reset Zoom (${isMac ? '⌘' : 'Ctrl+'}0)`}
+            >
+              <span className="text-[11px] font-mono">{Math.round(zoomFactor * 100)}%</span>
+            </button>
+            <button
+              onClick={handleZoomIn}
+              className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-secondary transition-colors"
+              aria-label="Zoom in"
+              title={`Zoom In (${isMac ? '⌘' : 'Ctrl+'}+)`}
+            >
+              <ZoomIn size={12} />
+            </button>
+          </div>
+
           <button
             onClick={togglePixelOffice}
             className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
@@ -397,6 +498,7 @@ export default function AppLayout(): React.JSX.Element {
         isOpen={showNewChatModal}
         onClose={() => setShowNewChatModal(false)}
         onSubmit={handleCreateChat}
+        onCreateIdea={handleCreateIdea}
       />
     </div>
   )

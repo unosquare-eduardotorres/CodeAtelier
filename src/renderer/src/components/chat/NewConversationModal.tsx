@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { ClipboardList, Hammer, GitBranch, X, Paperclip } from 'lucide-react'
+import { ClipboardList, Hammer, GitBranch, Lightbulb, X } from 'lucide-react'
 import type { ConversationMode } from '../../../../shared/types'
 import { AttachmentDropzone } from '@renderer/components/chat'
 
@@ -13,6 +13,7 @@ interface NewConversationModalProps {
     attachments?: string[]
     useIsolatedBranch?: boolean
   }) => void
+  onCreateIdea?: (data: { title: string; description?: string }) => void
 }
 
 const TITLE_MAX = 500
@@ -21,7 +22,8 @@ const DESCRIPTION_MAX = 15_000
 export default function NewConversationModal({
   isOpen,
   onClose,
-  onSubmit
+  onSubmit,
+  onCreateIdea
 }: NewConversationModalProps): React.JSX.Element | null {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -79,6 +81,17 @@ export default function NewConversationModal({
     })
   }, [title, description, mode, attachments, useIsolatedBranch, onSubmit])
 
+  const handleCreateIdea = useCallback((): void => {
+    const trimmedTitle = title.trim()
+    if (!trimmedTitle || !onCreateIdea) return
+
+    onCreateIdea({
+      title: trimmedTitle,
+      description: description.trim() || undefined
+    })
+    onClose()
+  }, [title, description, onCreateIdea, onClose])
+
   // Submit on Cmd/Ctrl+Enter
   useEffect(() => {
     if (!isOpen) return
@@ -117,7 +130,7 @@ export default function NewConversationModal({
           </h2>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
+            className="p-2.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
             aria-label="Close"
           >
             <X size={18} />
@@ -125,7 +138,7 @@ export default function NewConversationModal({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 text-left">
           {/* Title */}
           <div>
             <label
@@ -158,27 +171,27 @@ export default function NewConversationModal({
             <div className="flex items-center gap-2 bg-surface-overlay rounded-lg p-1 border border-border-subtle w-fit">
               <button
                 onClick={() => setMode('plan')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-purple-500/50 ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                   mode === 'plan'
-                    ? 'bg-purple-600/30 text-purple-300 border border-purple-500/30'
+                    ? 'bg-mode-plan-muted text-mode-plan-text border border-mode-plan-border'
                     : 'text-text-secondary hover:text-text-primary'
                 }`}
               >
-                <ClipboardList size={14} />
-                📋 Plan
+                <ClipboardList size={16} />
+                Plan
               </button>
               <button
                 onClick={() => {
                   setMode('build')
                 }}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/50 ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                   mode === 'build'
-                    ? 'bg-amber-600/30 text-amber-300 border border-amber-500/30'
+                    ? 'bg-mode-build-muted text-mode-build-text border border-mode-build-border'
                     : 'text-text-secondary hover:text-text-primary'
                 }`}
               >
-                <Hammer size={14} />
-                🔨 Build
+                <Hammer size={16} />
+                Build
               </button>
             </div>
             <p className="text-xs text-text-muted mt-1.5">
@@ -219,10 +232,9 @@ export default function NewConversationModal({
               Attachments <span className="text-text-muted font-normal">(optional)</span>
             </label>
             <AttachmentDropzone attachments={attachments} onAttachmentsChange={setAttachments}>
-              <div className="flex items-center gap-2 text-sm text-text-muted py-1">
-                <Paperclip size={14} />
-                <span>Drop files here or click the clip icon to attach</span>
-              </div>
+              <span className="text-sm text-text-muted">
+                Drop files here or click the clip icon to attach
+              </span>
             </AttachmentDropzone>
           </div>
 
@@ -254,7 +266,7 @@ export default function NewConversationModal({
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-border-subtle">
           <span className="text-xs text-text-muted">
-            {navigator.platform.toUpperCase().includes('MAC') ? '⌘' : 'Ctrl+'}↵ to create
+            {/mac/i.test(navigator.userAgent) ? '⌘' : 'Ctrl+'}↵ to create
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -263,6 +275,20 @@ export default function NewConversationModal({
             >
               Cancel
             </button>
+            {onCreateIdea && (
+              <button
+                onClick={handleCreateIdea}
+                disabled={!isValid}
+                className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 press-scale ${
+                  isValid
+                    ? 'bg-warning-muted hover:bg-warning/25 text-warning border border-warning/30'
+                    : 'bg-warning/5 text-warning/30 border border-warning/10 cursor-not-allowed'
+                }`}
+              >
+                <Lightbulb size={14} />
+                Create Idea
+              </button>
+            )}
             <button
               onClick={handleSubmit}
               disabled={!isValid}

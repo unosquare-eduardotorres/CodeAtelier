@@ -42,7 +42,7 @@ function StatusBadge({ status }: { status: Idea['status'] }): React.JSX.Element 
 export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.JSX.Element {
   const { ideas, loadIdeas, deleteIdea, startGrill, convertDirect, isLoading } = useIdeaStore()
   const { activeWorkspace } = useWorkspaceStore()
-  const { selectConversation, sendMessage } = useChatStore()
+  const { selectConversation, sendMessage, loadConversations } = useChatStore()
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   useEffect(() => {
@@ -55,6 +55,8 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
     if (!activeWorkspace) return
     try {
       const { idea: updatedIdea, conversation } = await convertDirect(idea.id, activeWorkspace.id)
+      // Refresh conversations so the newly-created conversation is in the chat store
+      await loadConversations(activeWorkspace.id)
       await selectConversation(conversation.id)
       const initialMessage = `## Idea: ${updatedIdea.title}\n\n${updatedIdea.description || 'No description provided.'}\n\nPlease help me work on this idea.`
       await sendMessage(initialMessage)
@@ -68,6 +70,8 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
     if (!activeWorkspace) return
     try {
       const { idea: updatedIdea, conversation } = await startGrill(idea.id, activeWorkspace.id)
+      // Refresh conversations so the newly-created grill conversation is in the chat store
+      await loadConversations(activeWorkspace.id)
       await selectConversation(conversation.id)
 
       // Only auto-send the grill prompt if this is a new grill session
@@ -82,7 +86,9 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
   }
 
   const handleContinueGrill = async (grillConversationId: string): Promise<void> => {
+    if (!activeWorkspace) return
     try {
+      await loadConversations(activeWorkspace.id)
       await selectConversation(grillConversationId)
       onNavigateToChat()
     } catch (error) {
@@ -91,7 +97,9 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
   }
 
   const handleGoToConversation = async (conversationId: string): Promise<void> => {
+    if (!activeWorkspace) return
     try {
+      await loadConversations(activeWorkspace.id)
       await selectConversation(conversationId)
       onNavigateToChat()
     } catch (error) {

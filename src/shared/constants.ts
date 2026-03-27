@@ -50,6 +50,12 @@ export const IPC_CHANNELS = {
   SPECIALIST_ASSIGN_SKILL: 'specialist:assignSkill',
   SPECIALIST_REMOVE_SKILL: 'specialist:removeSkill',
 
+  // Specialist Marketplace
+  SPECIALIST_DEPLOY: 'specialist:deploy',
+  SPECIALIST_UNDEPLOY: 'specialist:undeploy',
+  SPECIALIST_UPDATE_CONFIG: 'specialist:updateConfig',
+  SPECIALIST_GET_MARKETPLACE: 'specialist:getMarketplace',
+
   // Skills
   SKILL_LIST: 'skill:list',
   SKILL_GET: 'skill:get',
@@ -185,7 +191,15 @@ export const IPC_CHANNELS = {
   CORE_AGENT_UPSERT: 'coreAgent:upsert',
 
   // Renderer logging bridge
-  LOG_FROM_RENDERER: 'log:fromRenderer'
+  LOG_FROM_RENDERER: 'log:fromRenderer',
+
+  // Zoom
+  ZOOM_IN: 'zoom:in',
+  ZOOM_OUT: 'zoom:out',
+  ZOOM_RESET: 'zoom:reset',
+  ZOOM_SET: 'zoom:set',
+  ZOOM_GET: 'zoom:get',
+  ZOOM_CHANGED: 'zoom:changed'
 } as const
 
 export const CONVERSATION_MODES = {

@@ -130,7 +130,11 @@ export function registerWorkspaceIpc(): void {
       if (!args.settings || typeof args.settings !== 'object' || Array.isArray(args.settings)) {
         throw new Error('Invalid settings object')
       }
-      return workspaceRepository.updateSettings(args.workspaceId, args.settings)
+      // Merge with existing settings to avoid overwriting fields set by other services
+      // (e.g., githubTokenEncrypted set by github.service)
+      const existing = workspaceRepository.getSettings(args.workspaceId)
+      const merged = { ...existing, ...args.settings }
+      return workspaceRepository.updateSettings(args.workspaceId, merged)
     }
   )
 

@@ -249,11 +249,9 @@ export default function WorkspaceSettingsPage({
                       />
                     </div>
                   )}
-                  {!needsActivation && (
-                    <div className="flex-1 min-h-0">
-                      <TeamPage workspacePath={workspacePath} />
-                    </div>
-                  )}
+                  <div className="flex-1 min-h-0">
+                    <TeamPage workspacePath={workspacePath} />
+                  </div>
                 </>
               )}
             </div>

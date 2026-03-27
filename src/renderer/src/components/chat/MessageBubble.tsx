@@ -446,7 +446,7 @@ function MessageBubbleInner({
         ) : (
           <div
             className={`rounded-2xl shadow-sm ${
-              isUser ? 'px-5 py-4 bg-primary/90 text-white' : aiBubbleClass
+              isUser ? 'px-5 py-4 bg-[oklch(0.24_0.04_277)] text-text-body border-l-2 border-primary' : aiBubbleClass
             }`}
           >
             {/* Image attachments */}

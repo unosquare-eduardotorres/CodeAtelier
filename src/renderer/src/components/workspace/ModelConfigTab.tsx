@@ -144,8 +144,8 @@ export default function ModelConfigTab(): React.JSX.Element {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-8">
-      {/* Header */}
+    <div className="max-w-6xl mx-auto px-6 py-8">
+      {/* Header — full width */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-base font-semibold text-text-primary">Model Configuration</h2>
@@ -168,124 +168,132 @@ export default function ModelConfigTab(): React.JSX.Element {
         </button>
       </div>
 
-      {/* Fast Mode toggle */}
-      <div className="mb-8">
-        <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
-          Speed
-        </h3>
-        <SettingsCard>
-          <div className="flex items-center justify-between">
-            <div className="flex-1 mr-4">
-              <div className="flex items-center gap-2">
-                <Zap size={14} className={fastMode ? 'text-amber-400' : 'text-text-muted'} />
-                <h4 className="text-sm font-medium text-text-primary">Fast Mode</h4>
-                {fastMode && (
-                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 font-medium">
-                    ON
-                  </span>
-                )}
+      {/* 2-column grid on wide screens, single column on narrow */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-8 gap-y-6">
+        {/* Left column: Speed + Cost Preference + Info */}
+        <div className="space-y-8">
+          {/* Fast Mode toggle */}
+          <div>
+            <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
+              Speed
+            </h3>
+            <SettingsCard>
+              <div className="flex items-center justify-between">
+                <div className="flex-1 mr-4">
+                  <div className="flex items-center gap-2">
+                    <Zap size={14} className={fastMode ? 'text-amber-400' : 'text-text-muted'} />
+                    <h4 className="text-sm font-medium text-text-primary">Fast Mode</h4>
+                    {fastMode && (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 font-medium">
+                        ON
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-text-secondary mt-1">
+                    {fastMode
+                      ? 'Responses ~2.5\u00d7 faster, billed as extra usage. Only affects the generalist chat \u2014 specialist agents run independently.'
+                      : 'Uses included Claude Max usage at standard speed. Enable for faster responses (billed separately).'}
+                  </p>
+                </div>
+                <button
+                  onClick={handleFastModeToggle}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                    fastMode ? 'bg-amber-500' : 'bg-border-default'
+                  }`}
+                  role="switch"
+                  aria-checked={fastMode}
+                  aria-label="Toggle fast mode"
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      fastMode ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
               </div>
-              <p className="text-xs text-text-secondary mt-1">
-                {fastMode
-                  ? 'Responses ~2.5\u00d7 faster, billed as extra usage. Only affects the generalist chat \u2014 specialist agents run independently.'
-                  : 'Uses included Claude Max usage at standard speed. Enable for faster responses (billed separately).'}
+            </SettingsCard>
+          </div>
+
+          {/* Cost Preference */}
+          <div>
+            <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
+              Cost Preference
+            </h3>
+            <SettingsCard>
+              <div className="mb-3">
+                <h4 className="text-sm font-medium text-text-primary">Default Routing</h4>
+                <p className="text-xs text-text-secondary mt-0.5">
+                  Controls which AI model is used for specialist tasks based on task complexity.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(['economy', 'balanced', 'power'] as const).map((pref) => (
+                  <button
+                    key={pref}
+                    onClick={() => handleCostPreferenceChange(pref)}
+                    className={`flex flex-col items-center gap-1.5 px-3 py-3 rounded-lg border text-xs font-medium transition-colors ${
+                      costPreference === pref
+                        ? 'border-primary bg-primary-muted text-primary-text'
+                        : 'border-border-subtle hover:bg-surface-overlay text-text-secondary'
+                    }`}
+                  >
+                    <span className="text-base">{COST_PREF_ICON[pref]}</span>
+                    <span className="capitalize">{pref}</span>
+                    <span className="text-xs text-text-muted">
+                      {pref === 'economy'
+                        ? 'Always Haiku'
+                        : pref === 'balanced'
+                          ? 'Auto-route'
+                          : 'Always Opus'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </SettingsCard>
+          </div>
+
+          {/* Info box */}
+          <SettingsCard>
+            <div className="flex items-start gap-2.5">
+              <Info size={14} className="text-text-muted flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-text-secondary leading-relaxed">
+                Per-action overrides take highest priority. The{' '}
+                <span className="text-text-primary font-medium">Cost Preference</span> above applies
+                only to specialist tasks when no per-action override is set.
               </p>
             </div>
-            <button
-              onClick={handleFastModeToggle}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-                fastMode ? 'bg-amber-500' : 'bg-border-default'
-              }`}
-              role="switch"
-              aria-checked={fastMode}
-              aria-label="Toggle fast mode"
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  fastMode ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
-            </button>
-          </div>
-        </SettingsCard>
-      </div>
-
-      {/* Cost Preference */}
-      <div className="mb-8">
-        <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
-          Cost Preference
-        </h3>
-        <SettingsCard>
-          <div className="mb-3">
-            <h4 className="text-sm font-medium text-text-primary">Default Routing</h4>
-            <p className="text-xs text-text-secondary mt-0.5">
-              Controls which AI model is used for specialist tasks based on task complexity.
-            </p>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {(['economy', 'balanced', 'power'] as const).map((pref) => (
-              <button
-                key={pref}
-                onClick={() => handleCostPreferenceChange(pref)}
-                className={`flex flex-col items-center gap-1.5 px-3 py-3 rounded-lg border text-xs font-medium transition-colors ${
-                  costPreference === pref
-                    ? 'border-primary bg-primary-muted text-primary-text'
-                    : 'border-border-subtle hover:bg-surface-overlay text-text-secondary'
-                }`}
-              >
-                <span className="text-base">{COST_PREF_ICON[pref]}</span>
-                <span className="capitalize">{pref}</span>
-                <span className="text-xs text-text-muted">
-                  {pref === 'economy'
-                    ? 'Always Haiku'
-                    : pref === 'balanced'
-                      ? 'Auto-route'
-                      : 'Always Opus'}
-                </span>
-              </button>
-            ))}
-          </div>
-        </SettingsCard>
-      </div>
-
-      {/* Sections */}
-      {SECTIONS.map((section) => (
-        <div key={section.key} className="mb-8">
-          <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-1.5 font-medium">
-            {section.label}
-          </h3>
-          <p className="text-xs text-text-secondary mb-3">{section.description}</p>
-          <div className="space-y-3">
-            {section.actions.map((action) => {
-              const meta = MODEL_ACTIONS_META[action]
-              return (
-                <ModelSelector
-                  key={action}
-                  action={action}
-                  label={meta.label}
-                  description={meta.description}
-                  icon={meta.icon}
-                  selectedModel={getSelectedModel(action)}
-                  onChange={handleChange}
-                  onReset={handleReset}
-                />
-              )
-            })}
-          </div>
+          </SettingsCard>
         </div>
-      ))}
 
-      {/* Info box */}
-      <SettingsCard>
-        <div className="flex items-start gap-2.5">
-          <Info size={14} className="text-text-muted flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-text-secondary leading-relaxed">
-            Per-action overrides take highest priority. The{' '}
-            <span className="text-text-primary font-medium">Cost Preference</span> above applies
-            only to specialist tasks when no per-action override is set.
-          </p>
+        {/* Right column: Agent Models + Specialist Routing + Background Tasks */}
+        <div className="space-y-8">
+          {SECTIONS.map((section) => (
+            <div key={section.key}>
+              <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-1.5 font-medium">
+                {section.label}
+              </h3>
+              <p className="text-xs text-text-secondary mb-3">{section.description}</p>
+              <div className="space-y-3">
+                {section.actions.map((action) => {
+                  const meta = MODEL_ACTIONS_META[action]
+                  return (
+                    <ModelSelector
+                      key={action}
+                      action={action}
+                      label={meta.label}
+                      description={meta.description}
+                      icon={meta.icon}
+                      selectedModel={getSelectedModel(action)}
+                      onChange={handleChange}
+                      onReset={handleReset}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
-      </SettingsCard>
+      </div>
     </div>
   )
 }

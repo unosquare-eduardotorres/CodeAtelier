@@ -22,7 +22,7 @@
   --color-text-primary: oklch(0.92 0.01 260); /* Headings, important text */
   --color-text-body: oklch(0.82 0.01 260); /* Body text, chat messages */
   --color-text-secondary: oklch(0.65 0.01 260); /* Labels, secondary info */
-  --color-text-muted: oklch(0.56 0.01 260); /* Timestamps, meta — meets 4.5:1 on surface-base */
+  --color-text-muted: oklch(0.60 0.01 260); /* Timestamps, meta — safer 5.2:1 contrast margin on surface-base */
 
   /* ── Primary accent (Indigo) ── */
   --color-primary: oklch(0.585 0.233 277);
@@ -43,6 +43,17 @@
   --color-danger-muted: oklch(0.6 0.22 25 / 0.15);
   --color-info: oklch(0.65 0.18 250);
   --color-info-muted: oklch(0.65 0.18 250 / 0.15);
+
+  /* ── Mode tokens (Plan / Build) ── */
+  --color-mode-plan: oklch(0.55 0.2 295);
+  --color-mode-plan-muted: oklch(0.55 0.2 295 / 0.3);
+  --color-mode-plan-text: oklch(0.78 0.14 295);
+  --color-mode-plan-border: oklch(0.55 0.2 295 / 0.3);
+
+  --color-mode-build: oklch(0.65 0.18 85);
+  --color-mode-build-muted: oklch(0.65 0.18 85 / 0.3);
+  --color-mode-build-text: oklch(0.82 0.13 85);
+  --color-mode-build-border: oklch(0.65 0.18 85 / 0.3);
 
   /* ── Component tokens (3rd layer) ── */
   --color-button-primary-bg: var(--color-primary);
@@ -146,7 +157,7 @@
     --tw-prose-code: var(--color-primary-text);
     --tw-prose-bullets: var(--color-text-secondary);
     --tw-prose-counters: var(--color-text-secondary);
-    font-size: 15px;
+    font-size: 16px;
     line-height: 1.6;
     max-width: 72ch; /* 60-75ch for optimal readability */
   }
@@ -167,19 +178,19 @@
   }
 
   .prose h1 {
-    font-size: 1.35em;
+    font-size: 1.5em; /* 24px — clear 4px step from h2 */
     margin-top: 1.2em;
     margin-bottom: 0.6em;
   }
 
   .prose h2 {
-    font-size: 1.15em;
+    font-size: 1.25em; /* 20px — clear 2px step from h3 */
     margin-top: 1.1em;
     margin-bottom: 0.5em;
   }
 
   .prose h3 {
-    font-size: 1.05em;
+    font-size: 1.125em; /* 18px — clear 2px step from body */
     margin-top: 0.9em;
     margin-bottom: 0.4em;
   }
@@ -219,13 +230,13 @@
     border: 1px solid var(--color-border-subtle);
   }
 
-  /* Code blocks */
+  /* Code blocks — 14px for extended code reading comfort */
   .prose pre {
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .prose code {
-    font-size: 13px;
+    font-size: 14px;
   }
 
   /* ── Tables — the big fix ── */
@@ -233,7 +244,7 @@
     border-collapse: separate;
     border-spacing: 0;
     width: 100%;
-    font-size: 13px;
+    font-size: 14px;
     margin-top: 0.75em;
     margin-bottom: 0.75em;
     border: 1px solid var(--color-border-default);
@@ -254,7 +265,7 @@
     text-align: left;
     font-weight: 600;
     color: var(--color-text-primary);
-    font-size: 11px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     border-bottom: 2px solid var(--color-border-default);

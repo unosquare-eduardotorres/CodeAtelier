@@ -11,7 +11,11 @@ import {
 } from '@renderer/components/chat'
 import type { ConversationMode } from '../../../../shared/types'
 
-export default function ChatPanel(): React.JSX.Element {
+interface ChatPanelProps {
+  onCreateIdea?: (data: { title: string; description?: string }) => void
+}
+
+export default function ChatPanel({ onCreateIdea }: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, orchestratorStatus } = useWorkspaceStore()
   const { activeConversation, messages, createConversation, updateMode, isStreaming, sendMessage } =
     useChatStore()
@@ -71,6 +75,7 @@ export default function ChatPanel(): React.JSX.Element {
           isOpen={showNewChatModal}
           onClose={() => setShowNewChatModal(false)}
           onSubmit={handleCreateChat}
+          onCreateIdea={onCreateIdea}
         />
       </div>
     )

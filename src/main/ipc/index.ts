@@ -20,6 +20,8 @@ import { registerRepoIpc } from './repo.ipc'
 import { registerUserProfileIpc } from './user-profile.ipc'
 import { registerCoreAgentAliasIpc } from './core-agent-alias.ipc'
 import { registerLogIpc } from './log.ipc'
+import { registerZoomIpc } from './zoom.ipc'
+import { registerSpecialistDeployIpc } from './specialist-deploy.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -43,4 +45,6 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerUserProfileIpc()
   registerCoreAgentAliasIpc()
   registerLogIpc()
+  registerZoomIpc(mainWindow)
+  registerSpecialistDeployIpc()
 }

@@ -13,11 +13,13 @@ import type { ConversationMode } from '../../../../shared/types'
 interface ChatSidebarProps {
   isCollapsed?: boolean
   onToggleCollapse?: () => void
+  onCreateIdea?: (data: { title: string; description?: string }) => void
 }
 
 export default function ChatSidebar({
   isCollapsed: externalCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  onCreateIdea
 }: ChatSidebarProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const {
@@ -42,6 +44,7 @@ export default function ChatSidebar({
   const [completeFromUnsaved, setCompleteFromUnsaved] = useState<string | null>(null)
   const [showNewChatModal, setShowNewChatModal] = useState(false)
   const autoCreateInFlight = useRef(false)
+  const initialAutoCreateDone = useRef(false)
 
   const isCollapsed = externalCollapsed ?? internalCollapsed
   const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c))
@@ -49,6 +52,8 @@ export default function ChatSidebar({
   // Load conversations when workspace changes
   useEffect(() => {
     if (activeWorkspace) {
+      // Reset auto-create guard when switching workspaces
+      initialAutoCreateDone.current = false
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setConversationsLoaded(false)
       loadConversations(activeWorkspace.id).then(() => {
@@ -57,19 +62,26 @@ export default function ChatSidebar({
     }
   }, [activeWorkspace, loadConversations])
 
-  // Auto-create conversation when workspace is opened with no conversations
+  // Auto-create conversation only on initial workspace load when there are no conversations.
+  // Does NOT re-trigger after the user deletes the last conversation.
   useEffect(() => {
     if (
       activeWorkspace &&
       conversationsLoaded &&
       conversations.length === 0 &&
       !activeConversation &&
-      !autoCreateInFlight.current
+      !autoCreateInFlight.current &&
+      !initialAutoCreateDone.current
     ) {
+      initialAutoCreateDone.current = true
       autoCreateInFlight.current = true
       createConversation(activeWorkspace.id).finally(() => {
         autoCreateInFlight.current = false
       })
+    }
+    // Mark initial check as done once conversations are loaded (even if list is non-empty)
+    if (conversationsLoaded && !initialAutoCreateDone.current) {
+      initialAutoCreateDone.current = true
     }
   }, [
     activeWorkspace,
@@ -132,7 +144,6 @@ export default function ChatSidebar({
           >
             <Plus size={14} />
           </button>
-
           {/* Conversation initials */}
           {sortedConversations.slice(0, 8).map((conv) => (
             <button
@@ -301,6 +312,7 @@ export default function ChatSidebar({
         isOpen={showNewChatModal}
         onClose={() => setShowNewChatModal(false)}
         onSubmit={handleCreateChat}
+        onCreateIdea={onCreateIdea}
       />
     </>
   )

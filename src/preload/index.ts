@@ -35,7 +35,8 @@ import type {
   DocFile,
   RepoInfo,
   UserProfile,
-  CoreAgentAlias
+  CoreAgentAlias,
+  MarketplaceSpecialist
 } from '../shared/types'
 
 const api = {
@@ -167,6 +168,26 @@ const api = {
 
   removeSkillFromSpecialist: (args: { specialistId: string; skillId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_REMOVE_SKILL, args),
+
+  // ── Specialist Marketplace ──
+  deploySpecialist: (args: { workspacePath: string; specialistId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_DEPLOY, args),
+
+  undeploySpecialist: (args: { workspacePath: string; specialistId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_UNDEPLOY, args),
+
+  updateSpecialistConfig: (args: {
+    id: string
+    displayName?: string
+    icon?: string
+    color?: string
+    alias?: string | null
+    avatarUrl?: string | null
+    priority?: number
+  }): Promise<Specialist> => ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_UPDATE_CONFIG, args),
+
+  getMarketplace: (args: { workspacePath: string }): Promise<MarketplaceSpecialist[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_GET_MARKETPLACE, args),
 
   // ── Skills ──
   listSkills: (): Promise<Skill[]> => ipcRenderer.invoke(IPC_CHANNELS.SKILL_LIST),
@@ -699,6 +720,20 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.LOG_FROM_RENDERER, args).catch(() => {
       // Fallback silently — IPC may not be ready during early startup
     })
+  },
+
+  // ── Zoom ──
+  zoomIn: (): Promise<number> => ipcRenderer.invoke(IPC_CHANNELS.ZOOM_IN),
+  zoomOut: (): Promise<number> => ipcRenderer.invoke(IPC_CHANNELS.ZOOM_OUT),
+  zoomReset: (): Promise<number> => ipcRenderer.invoke(IPC_CHANNELS.ZOOM_RESET),
+  zoomSet: (factor: number): Promise<number> => ipcRenderer.invoke(IPC_CHANNELS.ZOOM_SET, factor),
+  zoomGet: (): Promise<number> => ipcRenderer.invoke(IPC_CHANNELS.ZOOM_GET),
+  onZoomChanged: (callback: (factor: number) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, factor: number): void => callback(factor)
+    ipcRenderer.on(IPC_CHANNELS.ZOOM_CHANGED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.ZOOM_CHANGED, handler)
+    }
   }
 } as const
 

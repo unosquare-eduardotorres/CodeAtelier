@@ -36,7 +36,8 @@ import type {
   DocFile,
   RepoInfo,
   UserProfile,
-  CoreAgentAlias
+  CoreAgentAlias,
+  MarketplaceSpecialist
 } from '../shared/types'
 
 interface Api {
@@ -106,6 +107,20 @@ interface Api {
   deleteSpecialist: (args: { id: string }) => Promise<void>
   assignSkillToSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
   removeSkillFromSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
+
+  // Specialist Marketplace
+  deploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
+  undeploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
+  updateSpecialistConfig: (args: {
+    id: string
+    displayName?: string
+    icon?: string
+    color?: string
+    alias?: string | null
+    avatarUrl?: string | null
+    priority?: number
+  }) => Promise<Specialist>
+  getMarketplace: (args: { workspacePath: string }) => Promise<MarketplaceSpecialist[]>
 
   // Skills
   listSkills: () => Promise<Skill[]>
@@ -344,6 +359,14 @@ interface Api {
     message: string
     data?: unknown[]
   }) => void
+
+  // Zoom
+  zoomIn: () => Promise<number>
+  zoomOut: () => Promise<number>
+  zoomReset: () => Promise<number>
+  zoomSet: (factor: number) => Promise<number>
+  zoomGet: () => Promise<number>
+  onZoomChanged: (callback: (factor: number) => void) => () => void
 }
 
 declare global {

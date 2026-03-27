@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { Bot, FolderOpen, Plus, Mic, Keyboard, Flame, ChevronRight } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
+import FloatingIconField from './FloatingIconField'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 const metaKey = isMac ? '⌘' : 'Ctrl+'
@@ -39,8 +40,12 @@ export default function WelcomeScreen(): React.JSX.Element {
   }, [createWorkspace])
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-b from-surface-base via-surface-overlay/20 to-surface-base overflow-y-auto">
-      <div className="w-full max-w-2xl px-8 py-12">
+    <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-b from-surface-base via-surface-overlay/20 to-surface-base overflow-y-auto relative">
+      {/* Animated background: floating dev icons + mini avatars */}
+      <FloatingIconField />
+
+      {/* All content stays above floating icons */}
+      <div className="w-full max-w-2xl px-8 py-12 relative z-10">
         {/* Hero: Logo + Tagline */}
         <div className="flex items-center gap-3 mb-10 justify-center">
           <div className="w-14 h-14 rounded-2xl bg-primary-muted border border-primary/30 flex items-center justify-center">

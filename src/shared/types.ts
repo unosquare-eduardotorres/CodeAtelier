@@ -139,6 +139,25 @@ export interface UpdateSpecialistInput {
   avatarUrl?: string | null
 }
 
+// ── Marketplace Models ──
+
+export interface MarketplaceSpecialist {
+  id: string
+  agentId: string
+  displayName: string
+  description: string
+  icon: string
+  color: string
+  model: string
+  tools: string[]
+  skills: Skill[]
+  isActive: boolean
+  isDeployed: boolean
+  alias: string | null
+  avatarUrl: string | null
+  priority: number
+}
+
 // ── Workspace Deploy Models ──
 
 /** Represents a skill directory discovered on the filesystem */
@@ -542,6 +561,32 @@ export interface IpcChannels {
   'specialist:delete': { args: { id: string }; return: void }
   'specialist:assignSkill': { args: { specialistId: string; skillId: string }; return: void }
   'specialist:removeSkill': { args: { specialistId: string; skillId: string }; return: void }
+
+  // Specialist Marketplace
+  'specialist:deploy': {
+    args: { workspacePath: string; specialistId: string }
+    return: void
+  }
+  'specialist:undeploy': {
+    args: { workspacePath: string; specialistId: string }
+    return: void
+  }
+  'specialist:updateConfig': {
+    args: {
+      id: string
+      displayName?: string
+      icon?: string
+      color?: string
+      alias?: string | null
+      avatarUrl?: string | null
+      priority?: number
+    }
+    return: Specialist
+  }
+  'specialist:getMarketplace': {
+    args: { workspacePath: string }
+    return: MarketplaceSpecialist[]
+  }
 
   // Skills
   'skill:list': { args: void; return: Skill[] }
