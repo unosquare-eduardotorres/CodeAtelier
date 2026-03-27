@@ -81,7 +81,11 @@ interface ChatState {
   ) => Promise<void>
 
   // /complete and /close actions
-  completeConversation: (commitMessage: string, description: string) => Promise<CompleteResult>
+  completeConversation: (
+    branchName: string,
+    commitMessage: string,
+    description: string
+  ) => Promise<CompleteResult>
   closeConversation: (id: string) => Promise<void>
 
   reset: () => void
@@ -361,12 +365,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ activeTaskPlan: null, taskProgress: new Map(), isExecutingPlan: false })
   },
 
-  completeConversation: async (commitMessage: string, description: string) => {
+  completeConversation: async (branchName: string, commitMessage: string, description: string) => {
     const { activeConversation, conversations } = get()
     if (!activeConversation) throw new Error('No active conversation')
 
     const result = await window.api.completeConversation({
       conversationId: activeConversation.id,
+      branchName,
       commitMessage,
       description
     })

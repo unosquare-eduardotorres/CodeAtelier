@@ -10,7 +10,8 @@ import {
   Sparkles,
   Loader2,
   Trash2,
-  FileText
+  FileText,
+  GitBranch
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
@@ -20,6 +21,7 @@ import TokenUsagePage from './TokenUsagePage'
 import IdeasList from './IdeasList'
 import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
+import RepositorySettingsTab from './RepositorySettingsTab'
 import {
   AgentsList,
   SkillsList,
@@ -30,10 +32,19 @@ import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import SyncBanner from '@renderer/components/settings/SyncBanner'
 import SyncReviewModal from '@renderer/components/settings/SyncReviewModal'
 
-type SettingsTab = 'workspace' | 'agents' | 'skills' | 'ideas' | 'memory' | 'documents' | 'tokens'
+type SettingsTab =
+  | 'workspace'
+  | 'repository'
+  | 'agents'
+  | 'skills'
+  | 'ideas'
+  | 'memory'
+  | 'documents'
+  | 'tokens'
 
 const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
   { id: 'workspace', label: 'Workspace', icon: FolderOpen },
+  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
   { id: 'agents', label: 'Agents', icon: Bot, iconColor: 'text-blue-400' },
   { id: 'skills', label: 'Skills', icon: Sparkles, iconColor: 'text-amber-400' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
@@ -214,6 +225,7 @@ export default function WorkspaceSettingsPage({
           )}
 
           {activeTab === 'workspace' && <WorkspaceGeneralTab />}
+          {activeTab === 'repository' && <RepositorySettingsTab />}
 
           {activeTab === 'agents' && workspacePath && (
             <div className="flex-1 flex flex-col min-h-0">

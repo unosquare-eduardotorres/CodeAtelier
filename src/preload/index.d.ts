@@ -33,7 +33,8 @@ import type {
   TokenSummary,
   AgentSessionRecord,
   Idea,
-  DocFile
+  DocFile,
+  RepoInfo
 } from '../shared/types'
 
 interface Api {
@@ -80,11 +81,13 @@ interface Api {
   // Chat commands
   completeConversation: (args: {
     conversationId: string
+    branchName: string
     commitMessage: string
     description: string
   }) => Promise<CompleteResult>
   closeConversation: (args: { conversationId: string }) => Promise<void>
   getFileChanges: (args: { conversationId: string }) => Promise<FileChange[]>
+  generatePrDescription: (args: { conversationId: string }) => Promise<{ description: string }>
 
   // Agents
   getAgentStatuses: () => Promise<AgentStatus[]>
@@ -302,6 +305,24 @@ interface Api {
   listDocs: (args: { workspacePath: string }) => Promise<DocFile[]>
   readDocFile: (args: { filePath: string }) => Promise<string>
   renderMermaid: (args: { definition: string; id?: string }) => Promise<{ svg: string }>
+
+  // GitHub
+  saveGitHubToken: (args: { workspaceId: string; token: string }) => Promise<{ login: string }>
+  validateGitHubToken: (args: {
+    token: string
+  }) => Promise<{ valid: boolean; login: string; scopes: string[] }>
+  getGitHubStatus: (args: {
+    workspaceId: string
+  }) => Promise<{ configured: boolean; login?: string }>
+  removeGitHubToken: (args: { workspaceId: string }) => Promise<void>
+
+  // Repository
+  initRepo: (args: { workspaceId: string }) => Promise<void>
+  setRepoRemote: (args: { workspaceId: string; remoteUrl: string }) => Promise<void>
+  getRepoInfo: (args: { workspaceId: string }) => Promise<RepoInfo>
+  hasUnsavedChanges: (args: {
+    conversationId: string
+  }) => Promise<{ hasChanges: boolean; fileCount: number; files: string[] }>
 }
 
 declare global {

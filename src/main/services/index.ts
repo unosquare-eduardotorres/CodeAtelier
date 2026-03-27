@@ -41,3 +41,5 @@ export {
   getModelId,
   enrichTasksWithComplexity
 } from './complexity-scorer.service'
+export { GitHubService, githubService } from './github.service'
+export { RepoService, repoService } from './repo.service'

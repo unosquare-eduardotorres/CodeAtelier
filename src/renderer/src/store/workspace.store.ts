@@ -1,11 +1,13 @@
 import { create } from 'zustand'
-import type { Workspace } from '../../../shared/types'
+import type { Workspace, RepoInfo } from '../../../shared/types'
 
 interface WorkspaceState {
   workspaces: Workspace[]
   activeWorkspace: Workspace | null
   isLoading: boolean
   orchestratorStatus: 'stopped' | 'starting' | 'running' | 'error'
+  repoInfo: RepoInfo | null
+  githubStatus: { configured: boolean; login?: string } | null
 
   loadWorkspaces: () => Promise<void>
   createWorkspace: (name: string, repoPath: string) => Promise<void>
@@ -13,6 +15,8 @@ interface WorkspaceState {
   deleteWorkspace: (id: string) => Promise<void>
   clearActiveWorkspace: () => void
   setOrchestratorReady: () => void
+  loadRepoInfo: (workspaceId: string) => Promise<void>
+  loadGitHubStatus: (workspaceId: string) => Promise<void>
 }
 
 // Preserve Zustand state across HMR (dev only)
@@ -25,6 +29,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeWorkspace: previousWorkspaceState?.activeWorkspace ?? null,
   isLoading: previousWorkspaceState?.isLoading ?? false,
   orchestratorStatus: previousWorkspaceState?.orchestratorStatus ?? 'stopped',
+  repoInfo: previousWorkspaceState?.repoInfo ?? null,
+  githubStatus: previousWorkspaceState?.githubStatus ?? null,
 
   loadWorkspaces: async () => {
     set({ isLoading: true })
@@ -64,6 +70,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       console.error('Failed to start orchestrator:', error)
       set({ orchestratorStatus: 'error' })
     })
+    // Load repo info + GitHub status in parallel (fire-and-forget)
+    get().loadRepoInfo(id)
+    get().loadGitHubStatus(id)
   },
 
   deleteWorkspace: async (id: string) => {
@@ -78,10 +87,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   clearActiveWorkspace: () => {
     // Only clear UI state — backend processes are still running, so preserve
     // orchestratorStatus to avoid the "Initializing AI Agent..." overlay on re-open
-    set({ activeWorkspace: null })
+    set({ activeWorkspace: null, repoInfo: null, githubStatus: null })
   },
 
-  setOrchestratorReady: () => set({ orchestratorStatus: 'running' })
+  setOrchestratorReady: () => set({ orchestratorStatus: 'running' }),
+
+  loadRepoInfo: async (workspaceId: string) => {
+    try {
+      const repoInfo = await window.api.getRepoInfo({ workspaceId })
+      set({ repoInfo })
+    } catch {
+      set({ repoInfo: null })
+    }
+  },
+
+  loadGitHubStatus: async (workspaceId: string) => {
+    try {
+      const githubStatus = await window.api.getGitHubStatus({ workspaceId })
+      set({ githubStatus })
+    } catch {
+      set({ githubStatus: null })
+    }
+  }
 }))
 
 // Preserve state on HMR dispose

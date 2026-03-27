@@ -10,9 +10,7 @@ export class GitHubService {
   /**
    * Validate a GitHub PAT: check it works and has the `repo` scope.
    */
-  async validateToken(
-    token: string
-  ): Promise<{ valid: boolean; login: string; scopes: string[] }> {
+  async validateToken(token: string): Promise<{ valid: boolean; login: string; scopes: string[] }> {
     try {
       const octokit = new Octokit({ auth: token })
       const response = await octokit.rest.users.getAuthenticated()
@@ -125,11 +123,7 @@ export class GitHubService {
   /**
    * Delete a remote branch on GitHub.
    */
-  async deleteRemoteBranch(
-    workspaceId: string,
-    repoPath: string,
-    branch: string
-  ): Promise<void> {
+  async deleteRemoteBranch(workspaceId: string, repoPath: string, branch: string): Promise<void> {
     const octokit = this.getOctokit(workspaceId)
     const { owner, repo } = await this.parseRemoteUrl(repoPath)
 

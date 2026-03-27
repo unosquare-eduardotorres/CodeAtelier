@@ -15,6 +15,8 @@ import { registerTokenIpc } from './token.ipc'
 import { registerIdeaIpc } from './idea.ipc'
 import { registerUpdateIpc } from './update.ipc'
 import { registerDocsIpc } from './docs.ipc'
+import { registerGithubIpc } from './github.ipc'
+import { registerRepoIpc } from './repo.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -33,4 +35,6 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerIdeaIpc()
   registerUpdateIpc()
   registerDocsIpc()
+  registerGithubIpc()
+  registerRepoIpc()
 }

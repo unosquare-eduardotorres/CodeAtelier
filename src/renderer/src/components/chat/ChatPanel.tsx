@@ -5,7 +5,8 @@ import {
   MessageList,
   MessageInput,
   AttachmentDropzone,
-  ModeToggle
+  ModeToggle,
+  RepoWarningBanner
 } from '@renderer/components/chat'
 
 export default function ChatPanel(): React.JSX.Element {
@@ -176,6 +177,9 @@ export default function ChatPanel(): React.JSX.Element {
           </button>
         </div>
       )}
+
+      {/* Repo/GitHub warning banner */}
+      <RepoWarningBanner />
 
       {/* Messages or initialization overlay */}
       {orchestratorStatus === 'starting' ? (

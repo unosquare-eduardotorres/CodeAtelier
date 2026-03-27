@@ -722,6 +722,41 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
       }
     }
 
+    // Clean up branches (local + remote if PR was merged)
+    try {
+      const conv = conversationRepository.findById(conversationId)
+      if (conv?.branchName && workspacePath) {
+        const git = simpleGit(workspacePath)
+        const allWs = workspaceRepository.findAll()
+        const ws = allWs.find((w) => w.repoPath === workspacePath)
+
+        // Delete remote branch if PR was merged/closed
+        if (conv.prNumber && ws && githubService.isConfigured(ws.id)) {
+          try {
+            const status = await githubService.getPullRequestStatus(
+              ws.id,
+              workspacePath,
+              conv.prNumber
+            )
+            if (status === 'merged' || status === 'closed') {
+              await githubService.deleteRemoteBranch(ws.id, workspacePath, conv.branchName)
+            }
+          } catch (e) {
+            log.warn('Remote branch cleanup failed:', e)
+          }
+        }
+
+        // Always clean up local branch
+        try {
+          await git.deleteLocalBranch(conv.branchName, true)
+        } catch {
+          /* branch may already be deleted */
+        }
+      }
+    } catch (e) {
+      log.warn('Branch cleanup failed:', e)
+    }
+
     // Log conversation context as a project memory before close
     try {
       if (workspacePath && isMemoryEnabled(workspacePath)) {
@@ -802,8 +837,7 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
 
       // 2. Get tracked file changes for this conversation
       const fileChanges = fileChangeRepository.findByConversation(conversationId)
-      if (fileChanges.length === 0)
-        throw new Error('No file changes tracked for this conversation')
+      if (fileChanges.length === 0) throw new Error('No file changes tracked for this conversation')
 
       // 3. Create feature branch — use user-provided name or auto-generate
       const branchName =

@@ -6,22 +6,19 @@ import { validateSender } from './validate-sender'
 
 export function registerRepoIpc(): void {
   // Initialize a git repo at the workspace path
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_INIT,
-    async (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      if (!args?.workspaceId) throw new Error('Missing workspaceId')
+  ipcMain.handle(IPC_CHANNELS.REPO_INIT, async (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    if (!args?.workspaceId) throw new Error('Missing workspaceId')
 
-      const workspace = workspaceRepository.findById(args.workspaceId)
-      if (!workspace) throw new Error('Workspace not found')
+    const workspace = workspaceRepository.findById(args.workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
 
-      await repoService.initRepo(workspace.repoPath)
+    await repoService.initRepo(workspace.repoPath)
 
-      // Update workspace record
-      const settings = workspaceRepository.getSettings(args.workspaceId)
-      workspaceRepository.updateSettings(args.workspaceId, { ...settings })
-    }
-  )
+    // Update workspace record
+    const settings = workspaceRepository.getSettings(args.workspaceId)
+    workspaceRepository.updateSettings(args.workspaceId, { ...settings })
+  })
 
   // Set or update the origin remote URL
   ipcMain.handle(
@@ -40,18 +37,15 @@ export function registerRepoIpc(): void {
   )
 
   // Get repo info (isRepo, hasRemote, remoteUrl, currentBranch)
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_GET_INFO,
-    async (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      if (!args?.workspaceId) throw new Error('Missing workspaceId')
+  ipcMain.handle(IPC_CHANNELS.REPO_GET_INFO, async (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    if (!args?.workspaceId) throw new Error('Missing workspaceId')
 
-      const workspace = workspaceRepository.findById(args.workspaceId)
-      if (!workspace) throw new Error('Workspace not found')
+    const workspace = workspaceRepository.findById(args.workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
 
-      return repoService.getRepoInfo(workspace.repoPath)
-    }
-  )
+    return repoService.getRepoInfo(workspace.repoPath)
+  })
 
   // Check if a conversation has unsaved changes
   ipcMain.handle(

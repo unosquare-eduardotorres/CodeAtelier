@@ -17,38 +17,29 @@ export function registerGithubIpc(): void {
   )
 
   // Validate token without storing
-  ipcMain.handle(
-    IPC_CHANNELS.GITHUB_VALIDATE_TOKEN,
-    async (event, args: { token: string }) => {
-      validateSender(event)
-      if (!args?.token) {
-        throw new Error('Missing token')
-      }
-      return githubService.validateToken(args.token)
+  ipcMain.handle(IPC_CHANNELS.GITHUB_VALIDATE_TOKEN, async (event, args: { token: string }) => {
+    validateSender(event)
+    if (!args?.token) {
+      throw new Error('Missing token')
     }
-  )
+    return githubService.validateToken(args.token)
+  })
 
   // Get GitHub connection status for a workspace
-  ipcMain.handle(
-    IPC_CHANNELS.GITHUB_GET_STATUS,
-    async (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      if (!args?.workspaceId) {
-        throw new Error('Missing workspaceId')
-      }
-      return githubService.getStatus(args.workspaceId)
+  ipcMain.handle(IPC_CHANNELS.GITHUB_GET_STATUS, async (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    if (!args?.workspaceId) {
+      throw new Error('Missing workspaceId')
     }
-  )
+    return githubService.getStatus(args.workspaceId)
+  })
 
   // Remove GitHub token from a workspace
-  ipcMain.handle(
-    IPC_CHANNELS.GITHUB_REMOVE_TOKEN,
-    async (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      if (!args?.workspaceId) {
-        throw new Error('Missing workspaceId')
-      }
-      githubService.removeToken(args.workspaceId)
+  ipcMain.handle(IPC_CHANNELS.GITHUB_REMOVE_TOKEN, async (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    if (!args?.workspaceId) {
+      throw new Error('Missing workspaceId')
     }
-  )
+    githubService.removeToken(args.workspaceId)
+  })
 }

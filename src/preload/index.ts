@@ -32,7 +32,8 @@ import type {
   TokenSummary,
   AgentSessionRecord,
   Idea,
-  DocFile
+  DocFile,
+  RepoInfo
 } from '../shared/types'
 
 const api = {
@@ -105,6 +106,7 @@ const api = {
   // Chat commands
   completeConversation: (args: {
     conversationId: string
+    branchName: string
     commitMessage: string
     description: string
   }): Promise<CompleteResult> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPLETE, args),
@@ -114,6 +116,9 @@ const api = {
 
   getFileChanges: (args: { conversationId: string }): Promise<FileChange[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_FILE_CHANGES, args),
+
+  generatePrDescription: (args: { conversationId: string }): Promise<{ description: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION, args),
 
   // ── Agents ──
   getAgentStatuses: (): Promise<AgentStatus[]> =>
@@ -630,7 +635,39 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.DOCS_READ_FILE, args),
 
   renderMermaid: (args: { definition: string; id?: string }): Promise<{ svg: string }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DOCS_RENDER_MERMAID, args)
+    ipcRenderer.invoke(IPC_CHANNELS.DOCS_RENDER_MERMAID, args),
+
+  // ── GitHub ──
+  saveGitHubToken: (args: { workspaceId: string; token: string }): Promise<{ login: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_SAVE_TOKEN, args),
+
+  validateGitHubToken: (args: {
+    token: string
+  }): Promise<{ valid: boolean; login: string; scopes: string[] }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_VALIDATE_TOKEN, args),
+
+  getGitHubStatus: (args: {
+    workspaceId: string
+  }): Promise<{ configured: boolean; login?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_GET_STATUS, args),
+
+  removeGitHubToken: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_REMOVE_TOKEN, args),
+
+  // ── Repository ──
+  initRepo: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_INIT, args),
+
+  setRepoRemote: (args: { workspaceId: string; remoteUrl: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_SET_REMOTE, args),
+
+  getRepoInfo: (args: { workspaceId: string }): Promise<RepoInfo> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_INFO, args),
+
+  hasUnsavedChanges: (args: {
+    conversationId: string
+  }): Promise<{ hasChanges: boolean; fileCount: number; files: string[] }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_HAS_UNSAVED_CHANGES, args)
 } as const
 
 if (process.contextIsolated) {

@@ -324,8 +324,8 @@ export default function MessageInput({
         isOpen={showCompleteDialog}
         conversationTitle={activeConversation?.title ?? 'Untitled'}
         conversationId={activeConversation?.id ?? ''}
-        onConfirm={async (commitMessage, description) => {
-          await completeConversation(commitMessage, description)
+        onConfirm={async (branchName, commitMessage, description) => {
+          await completeConversation(branchName, commitMessage, description)
           setShowCompleteDialog(false)
         }}
         onCancel={() => setShowCompleteDialog(false)}
