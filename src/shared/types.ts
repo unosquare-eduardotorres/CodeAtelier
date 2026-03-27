@@ -9,6 +9,7 @@ export interface Workspace {
   createdAt: string
   lastOpenedAt: string
   settingsJson: string
+  isGitRepo: boolean
 }
 
 export interface Conversation {
@@ -21,6 +22,12 @@ export interface Conversation {
   summary?: string
   /** Claude CLI session ID for --resume support (context persistence) */
   claudeSessionId?: string
+  /** PR number created during /complete */
+  prNumber?: number
+  /** PR URL created during /complete */
+  prUrl?: string
+  /** Git branch name created during /complete */
+  branchName?: string
 }
 
 export interface Message {
@@ -448,6 +455,13 @@ export interface DocFile {
   modifiedAt: number
 }
 
+export interface RepoInfo {
+  isRepo: boolean
+  hasRemote: boolean
+  remoteUrl?: string
+  currentBranch: string
+}
+
 // ── IPC Channel Map (type-safe) ──
 export interface IpcChannels {
   'workspace:list': { args: void; return: Workspace[] }
@@ -553,11 +567,36 @@ export interface IpcChannels {
 
   // Chat Commands
   'chat:complete': {
-    args: { conversationId: string; commitMessage: string; description: string }
+    args: { conversationId: string; branchName: string; commitMessage: string; description: string }
     return: CompleteResult
   }
   'chat:close': { args: { conversationId: string }; return: void }
   'chat:getFileChanges': { args: { conversationId: string }; return: FileChange[] }
+  'chat:generatePrDescription': {
+    args: { conversationId: string }
+    return: { description: string }
+  }
+
+  // GitHub Integration
+  'github:saveToken': { args: { workspaceId: string; token: string }; return: { login: string } }
+  'github:validateToken': {
+    args: { token: string }
+    return: { valid: boolean; login: string; scopes: string[] }
+  }
+  'github:getStatus': {
+    args: { workspaceId: string }
+    return: { configured: boolean; login?: string }
+  }
+  'github:removeToken': { args: { workspaceId: string }; return: void }
+
+  // Repository Management
+  'repo:init': { args: { workspaceId: string }; return: void }
+  'repo:setRemote': { args: { workspaceId: string; remoteUrl: string }; return: void }
+  'repo:getInfo': { args: { workspaceId: string }; return: RepoInfo }
+  'repo:hasUnsavedChanges': {
+    args: { conversationId: string }
+    return: { hasChanges: boolean; fileCount: number; files: string[] }
+  }
 
   // Worktrees
   'worktree:list': { args: { conversationId: string }; return: AgentWorktree[] }

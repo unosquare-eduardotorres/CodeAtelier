@@ -9,6 +9,7 @@ interface WorkspaceRow {
   created_at: string
   last_opened_at: string
   settings_json: string
+  is_git_repo: number | null
 }
 
 function mapRow(row: WorkspaceRow): Workspace {
@@ -19,19 +20,20 @@ function mapRow(row: WorkspaceRow): Workspace {
     gitRemoteUrl: row.git_remote_url ?? undefined,
     createdAt: row.created_at,
     lastOpenedAt: row.last_opened_at,
-    settingsJson: row.settings_json
+    settingsJson: row.settings_json,
+    isGitRepo: row.is_git_repo !== 0
   }
 }
 
 export class WorkspaceRepository {
-  create(name: string, repoPath: string, gitRemoteUrl?: string): Workspace {
+  create(name: string, repoPath: string, gitRemoteUrl?: string, isGitRepo = true): Workspace {
     const db = getDatabase()
     const stmt = db.prepare(`
-      INSERT INTO workspaces (name, repo_path, git_remote_url)
-      VALUES (?, ?, ?)
+      INSERT INTO workspaces (name, repo_path, git_remote_url, is_git_repo)
+      VALUES (?, ?, ?, ?)
       RETURNING *
     `)
-    const row = stmt.get(name, repoPath, gitRemoteUrl ?? null) as WorkspaceRow
+    const row = stmt.get(name, repoPath, gitRemoteUrl ?? null, isGitRepo ? 1 : 0) as WorkspaceRow
     return mapRow(row)
   }
 

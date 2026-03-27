@@ -247,20 +247,6 @@ export default function MessageInput({
           </div>
         )}
 
-        {/* Idea capture button */}
-        <button
-          onClick={() => setShowIdeaPopover(!showIdeaPopover)}
-          disabled={!activeConversation}
-          className="flex-shrink-0 p-2 rounded-lg text-yellow-400 hover:bg-yellow-500/10 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-          aria-label="Capture an idea"
-          title="Capture an idea"
-        >
-          <Lightbulb size={18} />
-        </button>
-
-        {/* Idea popover */}
-        {showIdeaPopover && <IdeaPopover onClose={() => setShowIdeaPopover(false)} />}
-
         <textarea
           ref={textareaRef}
           value={text}
@@ -292,6 +278,20 @@ export default function MessageInput({
             <Square size={18} />
           </button>
         )}
+
+        {/* Idea capture button */}
+        <button
+          onClick={() => setShowIdeaPopover(!showIdeaPopover)}
+          disabled={!activeConversation}
+          className="flex-shrink-0 p-2 rounded-lg text-yellow-400 hover:bg-yellow-500/10 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+          aria-label="Capture an idea"
+          title="Capture an idea"
+        >
+          <Lightbulb size={18} />
+        </button>
+
+        {/* Idea popover */}
+        {showIdeaPopover && <IdeaPopover onClose={() => setShowIdeaPopover(false)} />}
 
         {/* Send button */}
         <button

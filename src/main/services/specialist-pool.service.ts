@@ -1,6 +1,4 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type {
   ConversationMode,
@@ -16,7 +14,8 @@ import {
   agentSessionRepository,
   workspaceRepository
 } from '../db/repositories'
-import { SPECIALIST_TASK_SYSTEM_PROMPT } from './system-prompts'
+import { promptBuilder } from './prompt-builder'
+import { agentRegistry } from './agent-registry'
 import { memoryService } from './memory.service'
 import { getModelId } from './complexity-scorer.service'
 import { gitWorktreeService } from './git-worktree.service'
@@ -506,81 +505,38 @@ export class SpecialistPoolService extends EventEmitter {
     mode: ConversationMode,
     worktreeId?: string
   ): ChildProcess {
-    // Build specialist-specific system prompt
-    let systemPrompt = SPECIALIST_TASK_SYSTEM_PROMPT
-
-    // Augment with specialist prompt from DB
+    // Resolve specialist prompt from DB
     const specialist = specialistRepository.findByAgentId(task.specialist)
-    if (specialist?.prompt) {
-      systemPrompt += `\n\n## Specialist Role\n${specialist.prompt}`
-    }
 
-    // Augment with skill content if specialist has skills
-    if (specialist) {
-      try {
-        const skills = specialistRepository.getSkills(specialist.id)
-        const activeSkills = skills.filter((s) => s.isActive)
-        for (const skill of activeSkills) {
-          try {
-            const content = readFileSync(skill.filePath, 'utf-8')
-            if (content.length > 5000) {
-              this.log.warn(
-                `Skill "${skill.name}" truncated from ${content.length} to 5000 chars for specialist ${task.specialist}`
-              )
-            }
-            systemPrompt += `\n\n## Skill: ${skill.name}\n${content.substring(0, 5000)}`
-          } catch {
-            this.log.warn(`Could not read skill file: ${skill.filePath}`)
-          }
-        }
-      } catch {
-        // No skills — fine
-      }
-    }
+    // Resolve skills deterministically via AgentRegistry (no LLM matching)
+    const assignedSkills = agentRegistry.getSkillsForAgent(task.specialist)
 
-    // Add workspace CLAUDE.md context
-    try {
-      const claudeMdPath = join(this.workspacePath!, 'CLAUDE.md')
-      const workspaceContext = readFileSync(claudeMdPath, 'utf-8')
-      systemPrompt += `\n\n---\n\n## Workspace Context (from CLAUDE.md)\n\n${workspaceContext}`
-    } catch {
-      // No CLAUDE.md — fine
-    }
-
-    // Inject enriched conversation context from handoff brief
-    if (this.conversationBrief) {
-      let briefContext = `\n\n## Conversation Context\n\nSummary: ${this.conversationBrief.summary}`
-      if (this.conversationBrief.decisions.length > 0) {
-        briefContext += `\n\nDecisions made:\n${this.conversationBrief.decisions.map((d) => `- ${d}`).join('\n')}`
-      }
-      if (this.conversationBrief.constraints.length > 0) {
-        briefContext += `\n\nConstraints:\n${this.conversationBrief.constraints.map((c) => `- ${c}`).join('\n')}`
-      }
-      if (this.conversationBrief.filesDiscussed.length > 0) {
-        briefContext += `\n\nFiles discussed:\n${this.conversationBrief.filesDiscussed.map((f) => `- ${f}`).join('\n')}`
-      }
-      systemPrompt += briefContext
-    }
-
-    // Inject filtered feedback memories for this specialist
+    // Resolve feedback memories
+    let feedbackContext: string | undefined
     try {
       if (this.workspacePath) {
         const allWs = workspaceRepository.findAll()
         const ws = allWs.find((w) => w.repoPath === this.workspacePath)
         if (ws) {
-          const feedbackContext = memoryService.getFeedbackForSpecialist(
-            ws.id,
-            task.specialist,
-            2000
-          )
-          if (feedbackContext) {
-            systemPrompt += `\n\n${feedbackContext}`
-          }
+          const ctx = memoryService.getFeedbackForSpecialist(ws.id, task.specialist, 2000)
+          if (ctx) feedbackContext = ctx
         }
       }
     } catch {
       // Feedback memories unavailable — not critical
     }
+
+    // Build system prompt via centralized PromptBuilder
+    const systemPrompt = promptBuilder.build({
+      role: 'specialist',
+      mode,
+      specialistId: task.specialist,
+      specialistPrompt: specialist?.prompt || undefined,
+      assignedSkills,
+      workspacePath: this.workspacePath!,
+      brief: this.conversationBrief || undefined,
+      feedbackContext
+    })
 
     // Build context from completed dependency outputs
     let dependencyContext = ''

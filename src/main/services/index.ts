@@ -5,16 +5,30 @@ export type { GrillCompleteEvent } from './generalist.service'
 export { OrchestratorService, orchestratorService } from './orchestrator.service'
 export { FileService, fileService } from './file.service'
 export { SkillService, skillService } from './skill.service'
+
+// Prompt assembly — centralized in PromptBuilder
+export { PromptBuilder, promptBuilder } from './prompt-builder'
+export type { PromptBuildOptions, PromptRole } from './prompt-builder'
+
+// Backward-compatible re-exports of prompt constants (from prompt-builder)
 export {
   PLAN_MODE_SYSTEM_PROMPT,
   BUILD_MODE_SYSTEM_PROMPT,
   DECOMPOSITION_SYSTEM_PROMPT,
   SPECIALIST_TASK_SYSTEM_PROMPT
-} from './system-prompts'
+} from './prompt-builder'
+
+// Agent registry — YAML single source of truth
+export { AgentRegistry, agentRegistry } from './agent-registry'
+export type { AgentDefinition } from './agent-registry'
+
 export { SpecialistPoolService, specialistPoolService } from './specialist-pool.service'
 export { GitWorktreeService, gitWorktreeService } from './git-worktree.service'
 export type { MergeResult, MergeAllResult } from './git-worktree.service'
+
+/** @deprecated Use promptBuilder.build({ role: 'generalist', mode }) instead */
 export { GENERALIST_SYSTEM_PROMPT } from './generalist-prompts'
+
 export { WorkspaceDeployService, workspaceDeployService } from './workspace-deploy.service'
 export { memoryService } from './memory.service'
 export { memoryFeedService } from './memory-feed.service'

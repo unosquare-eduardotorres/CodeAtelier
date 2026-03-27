@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync, watchFile, unwatchFile } from 'node:fs'
 import { join } from 'node:path'
-import type { DiscoveredAgent, Skill } from '../../shared/types'
+import type { Skill } from '../../shared/types'
 import { agentRegistryLogger } from '../logger'
 import { specialistRepository, skillRepository } from '../db/repositories'
 

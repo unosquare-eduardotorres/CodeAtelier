@@ -153,22 +153,22 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                   {activeHandoff ? 'Working on it...' : 'Thinking...'}
                 </span>
               </div>
-              {toolActivities.length > 0 && (
+              {toolActivities.some((a) => a.status === 'running') && (
                 <div className="space-y-1 border-l-2 border-border-subtle pl-3 ml-1">
-                  {toolActivities.slice(-5).map((activity) => (
-                    <div key={activity.id} className="flex items-center gap-2 text-xs">
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          activity.status === 'running'
-                            ? 'bg-yellow-400 animate-pulse'
-                            : activity.status === 'completed'
-                              ? 'bg-green-400'
-                              : 'bg-red-400'
-                        }`}
-                      />
-                      <span className="font-mono text-text-body">{activity.toolName}</span>
-                    </div>
-                  ))}
+                  {toolActivities
+                    .filter((a) => a.status === 'running')
+                    .slice(-5)
+                    .map((activity) => (
+                      <div key={activity.id} className="flex items-center gap-2 text-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
+                        <span className="font-mono text-text-body">{activity.toolName}</span>
+                        {activity.input && (
+                          <span className="text-text-muted truncate max-w-[300px]">
+                            {activity.input}
+                          </span>
+                        )}
+                      </div>
+                    ))}
                 </div>
               )}
             </div>

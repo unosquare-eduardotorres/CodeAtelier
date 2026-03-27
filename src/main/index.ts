@@ -6,6 +6,7 @@ import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
 import { registerAllIpcHandlers } from './ipc'
 import { generalistService, orchestratorService, skillService } from './services'
+import { agentRegistry } from './services/agent-registry'
 import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
 
@@ -79,6 +80,14 @@ function createWindow(): void {
       'Database Error',
       `Agent Studio failed to initialize its database. The application may not work correctly.\n\n${(error as Error).message}`
     )
+  }
+
+  // Initialize agent registry from YAML files (single source of truth)
+  try {
+    agentRegistry.loadFromDisk()
+    agentRegistry.startWatching()
+  } catch (error) {
+    dbLogger.warn('Failed to initialize agent registry:', error)
   }
 
   // Register IPC handlers
@@ -250,6 +259,9 @@ app.on('before-quit', async (event) => {
   } catch {
     // Ignore errors during shutdown
   }
+
+  // Stop watching agent YAML files
+  agentRegistry.stopWatching()
 
   closeDatabase()
   app.quit()

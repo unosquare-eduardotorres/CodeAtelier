@@ -180,7 +180,22 @@ export const IPC_CHANNELS = {
   UPDATE_ERROR: 'update:error',
   UPDATE_PROGRESS: 'update:progress',
   UPDATE_INSTALL: 'update:install',
-  UPDATE_DOWNLOAD: 'update:download'
+  UPDATE_DOWNLOAD: 'update:download',
+
+  // GitHub Integration
+  GITHUB_SAVE_TOKEN: 'github:saveToken',
+  GITHUB_VALIDATE_TOKEN: 'github:validateToken',
+  GITHUB_GET_STATUS: 'github:getStatus',
+  GITHUB_REMOVE_TOKEN: 'github:removeToken',
+
+  // Repository Management
+  REPO_INIT: 'repo:init',
+  REPO_SET_REMOTE: 'repo:setRemote',
+  REPO_GET_INFO: 'repo:getInfo',
+  REPO_HAS_UNSAVED_CHANGES: 'repo:hasUnsavedChanges',
+
+  // PR Description Generation
+  CHAT_GENERATE_PR_DESCRIPTION: 'chat:generatePrDescription'
 } as const
 
 /**

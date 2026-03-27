@@ -10,6 +10,9 @@ interface ConversationRow {
   status: 'active' | 'archived'
   summary: string | null
   claude_session_id: string | null
+  pr_number: number | null
+  pr_url: string | null
+  branch_name: string | null
 }
 
 function mapRow(row: ConversationRow): Conversation {
@@ -21,7 +24,10 @@ function mapRow(row: ConversationRow): Conversation {
     createdAt: row.created_at,
     status: row.status,
     summary: row.summary ?? undefined,
-    claudeSessionId: row.claude_session_id ?? undefined
+    claudeSessionId: row.claude_session_id ?? undefined,
+    prNumber: row.pr_number ?? undefined,
+    prUrl: row.pr_url ?? undefined,
+    branchName: row.branch_name ?? undefined
   }
 }
 
@@ -104,6 +110,13 @@ export class ConversationRepository {
     const stmt = db.prepare('SELECT claude_session_id FROM conversations WHERE id = ?')
     const row = stmt.get(id) as { claude_session_id: string | null } | undefined
     return row?.claude_session_id ?? undefined
+  }
+
+  updatePrInfo(id: string, prUrl: string, prNumber: number, branchName: string): void {
+    const db = getDatabase()
+    db.prepare(
+      'UPDATE conversations SET pr_url = ?, pr_number = ?, branch_name = ? WHERE id = ?'
+    ).run(prUrl, prNumber, branchName, id)
   }
 }
 

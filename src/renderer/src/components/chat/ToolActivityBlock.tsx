@@ -15,6 +15,7 @@ export default function ToolActivityBlock({
 
   const completedCount = activities.filter((a) => a.status === 'completed').length
   const runningCount = activities.filter((a) => a.status === 'running').length
+  const runningActivities = activities.filter((a) => a.status === 'running')
 
   return (
     <div className="my-2">
@@ -31,6 +32,22 @@ export default function ToolActivityBlock({
         {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
       </button>
 
+      {/* Always show running tools even when collapsed */}
+      {!isExpanded && runningActivities.length > 0 && (
+        <div className="mt-1.5 ml-4 space-y-1 border-l-2 border-border-subtle pl-3">
+          {runningActivities.map((activity) => (
+            <div key={activity.id} className="flex items-center gap-2 text-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
+              <span className="font-mono text-text-body">{activity.toolName}</span>
+              {activity.input && (
+                <span className="text-text-muted truncate max-w-[300px]">{activity.input}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Expanded: show all activities including completed */}
       {isExpanded && (
         <div className="mt-1.5 ml-4 space-y-1 border-l-2 border-border-subtle pl-3">
           {activities.map((activity) => (

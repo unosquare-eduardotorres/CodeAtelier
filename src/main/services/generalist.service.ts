@@ -1,12 +1,10 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import type { AgentStatus, ConversationMode, HandoffBrief } from '../../shared/types'
 import { AGENT_IDS } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
-import { getGeneralistSystemPrompt } from './generalist-prompts'
+import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 
@@ -87,32 +85,27 @@ export class GeneralistService extends AgentBaseService {
     this.currentConversationId = null
     this.accumulatedText = ''
 
-    // Build system prompt with workspace context
-    let fullSystemPrompt = getGeneralistSystemPrompt(this.currentMode)
-    try {
-      const claudeMdPath = join(workspacePath, 'CLAUDE.md')
-      const workspaceContext = readFileSync(claudeMdPath, 'utf-8')
-      fullSystemPrompt += `\n\n---\n\n## Workspace Project Context (from CLAUDE.md)\n\n${workspaceContext}`
-    } catch {
-      // No CLAUDE.md — that's fine
-    }
-
-    // Inject auto memory context (persistent cross-session knowledge) into system prompt
+    // Build system prompt via centralized PromptBuilder
+    let memoryContext: string | undefined
     try {
       const allWorkspaces = workspaceRepository.findAll()
       const workspace = allWorkspaces.find((w) => w.repoPath === workspacePath)
       const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
 
       if (settings.memoryEnabled !== false && workspace) {
-        // default: enabled
-        const memoryContext = memoryService.getContextForPrompt(workspace.id, 10000)
-        if (memoryContext) {
-          fullSystemPrompt += `\n\n---\n\n## Auto Memory\n\n${memoryContext}`
-        }
+        const ctx = memoryService.getContextForPrompt(workspace.id, 10000)
+        if (ctx) memoryContext = ctx
       }
     } catch {
       // Memory context unavailable — not critical
     }
+
+    const fullSystemPrompt = promptBuilder.build({
+      role: 'generalist',
+      mode: this.currentMode,
+      workspacePath,
+      memoryContext
+    })
 
     const isBuildMode = this.currentMode === 'build'
 

@@ -288,6 +288,30 @@ export function getDatabase(): Database.Database {
     // Table already exists — ignore
   }
 
+  // Migration: PR tracking columns on conversations
+  try {
+    db.exec(`ALTER TABLE conversations ADD COLUMN pr_number INTEGER`)
+  } catch {
+    /* column already exists */
+  }
+  try {
+    db.exec(`ALTER TABLE conversations ADD COLUMN pr_url TEXT`)
+  } catch {
+    /* column already exists */
+  }
+  try {
+    db.exec(`ALTER TABLE conversations ADD COLUMN branch_name TEXT`)
+  } catch {
+    /* column already exists */
+  }
+
+  // Migration: isGitRepo flag on workspaces
+  try {
+    db.exec(`ALTER TABLE workspaces ADD COLUMN is_git_repo INTEGER DEFAULT 1`)
+  } catch {
+    /* column already exists */
+  }
+
   return db
 }
 
