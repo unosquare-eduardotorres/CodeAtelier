@@ -8,17 +8,19 @@ Agent Studio is a desktop application that transforms software development by pr
 
 ```mermaid
 flowchart LR
-    You([You]) <-->|chat| G[Generalist Agent]
-    G -->|handoff| O[Orchestrator]
-    O -->|spawn| S1[Specialist 1]
-    O -->|spawn| S2[Specialist 2]
-    O -->|spawn| S3[Specialist N]
+    You([You]) <-->|chat| G["🎨 Da Vinci<br/>(Generalist)"]
+    G -->|handoff| O["🎼 Stravinsky<br/>(Orchestrator)"]
+    O -->|spawn| S1["⚛️ React Architect"]
+    O -->|spawn| S2["⚡ Electron Architect"]
+    O -->|spawn| S3["🗄️ DB Architect"]
+    O -->|spawn| S4["... +11 more"]
 
     style G fill:#7c3aed,color:#fff,stroke:#7c3aed
     style O fill:#f59e0b,color:#fff,stroke:#f59e0b
     style S1 fill:#3b82f6,color:#fff,stroke:#3b82f6
     style S2 fill:#3b82f6,color:#fff,stroke:#3b82f6
     style S3 fill:#3b82f6,color:#fff,stroke:#3b82f6
+    style S4 fill:#64748b,color:#fff,stroke:#64748b
 ```
 
 1. **Chat with the Generalist** — a long-lived Claude CLI session that understands your entire codebase
@@ -27,24 +29,24 @@ flowchart LR
 
 ## Agent Team
 
-| Agent | Role |
-|---|---|
-| **Generalist** | Always-on assistant, read-only codebase analysis, detects handoffs |
-| **Orchestrator** | Spawned on-demand, coordinates specialists with appropriate permissions |
-| React Architect | Frontend architecture, components, state management |
-| Electron Architect | Desktop app patterns, IPC, native integration |
-| Agentic Architect | AI agent design, Claude CLI integration |
-| .NET Architect | Backend services, API design |
-| DB Architect | SQLite patterns, schema design, migrations |
-| UX/UI Specialist | Design system, accessibility, user experience |
-| Git/GitHub Specialist | Branching, PRs, workflow automation |
-| CI/CD & DevOps | Build pipelines, packaging, distribution |
-| Cloud Infrastructure | Deployment, hosting, infrastructure |
-| Code Planner | Task decomposition, implementation strategy |
-| Execution Planner | Sequencing, dependency resolution |
-| Requirements Specialist | Specification, acceptance criteria |
-| Docs & Diagrams | Documentation, Mermaid diagrams, design docs |
-| Generalist Developer | Full-stack implementation, broad coverage |
+| Icon | Agent | Alias | Role |
+|---|---|---|---|
+| 🎨 | **Generalist** | **Da Vinci** | Always-on assistant, read-only codebase analysis, detects handoffs |
+| 🎼 | **Orchestrator** | **Stravinsky** | Spawned on-demand, coordinates specialists with appropriate permissions |
+| ⚛️ | React Architect | | Frontend architecture, components, state management |
+| ⚡ | Electron Architect | | Desktop app patterns, IPC, native integration |
+| 🤖 | Agentic Architect | | AI agent design, Claude CLI integration |
+| 🟣 | .NET Architect | | Backend services, API design |
+| 🗄️ | DB Architect | | SQLite patterns, schema design, migrations |
+| 🎨 | UX/UI Specialist | | Design system, accessibility, user experience |
+| 🔀 | Git/GitHub Specialist | | Branching, PRs, workflow automation |
+| 🚀 | CI/CD DevOps | | Build pipelines, packaging, distribution |
+| ☁️ | Cloud Infrastructure | | Deployment, hosting, infrastructure |
+| 📝 | Code Planner | | Task decomposition, implementation strategy |
+| 📅 | Execution Planner | | Sequencing, dependency resolution |
+| 📋 | Requirements Specialist | | Specification, acceptance criteria |
+| 📐 | Docs & Diagrams | | Documentation, Mermaid diagrams, design docs |
+| 🛠️ | Generalist Developer | | Full-stack implementation, broad coverage |
 
 ## Tech Stack
 
@@ -159,21 +161,21 @@ flowchart TD
     User([User message]) --> G
 
     subgraph Always On
-        G[Generalist<br/><i>long-lived claude session</i><br/>read-only · plan mode]
+        G["🎨 Da Vinci (Generalist)<br/><i>long-lived claude session</i><br/>read-only · plan mode"]
     end
 
     G -->|detects handoff| O
 
     subgraph On Demand
-        O[Orchestrator<br/><i>claude -p per handoff</i><br/>mode-appropriate permissions]
+        O["🎼 Stravinsky (Orchestrator)<br/><i>claude -p per handoff</i><br/>mode-appropriate permissions"]
     end
 
     O -->|spawns| pool
 
     subgraph pool [Specialist Pool — parallel]
-        S1[React Architect<br/>Opus · 31,999 think tokens]
-        S2[DB Architect<br/>Sonnet · 10,000 think tokens]
-        S3[UX/UI Specialist<br/>Haiku · 0 think tokens]
+        S1["⚛️ React Architect<br/>Opus · 31,999 think tokens"]
+        S2["🗄️ DB Architect<br/>Sonnet · 10,000 think tokens"]
+        S3["🎨 UX/UI Specialist<br/>Haiku · 0 think tokens"]
     end
 
     S1 -->|result| O
