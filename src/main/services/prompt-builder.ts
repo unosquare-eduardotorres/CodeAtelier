@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ConversationMode, HandoffBrief, Skill } from '../../shared/types'
+import type { BudgetTier, ConversationMode, HandoffBrief, Skill } from '../../shared/types'
 import { promptBuilderLogger } from '../logger'
 
 // ── Role Prompts (moved from system-prompts.ts and generalist-prompts.ts) ──
@@ -296,9 +296,6 @@ For these, use the Handoff Protocol below.
 // ── Prompt Builder Types ──
 
 export type PromptRole = 'generalist' | 'orchestrator' | 'specialist'
-
-/** Budget tier controls how much context is included in system prompts */
-export type BudgetTier = 'minimal' | 'standard' | 'full'
 
 export interface PromptBuildOptions {
   /** Which agent role is this prompt for */

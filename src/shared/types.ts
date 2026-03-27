@@ -220,6 +220,9 @@ export interface ComplexityScore {
 
 export type CostPreference = 'economy' | 'balanced' | 'power'
 
+/** Budget tier controls how much context is included in system prompts (Strategy 4) */
+export type BudgetTier = 'minimal' | 'standard' | 'full'
+
 export type ComplexityTier = ComplexityScore['tier']
 export type ModelTier = ComplexityScore['model']
 

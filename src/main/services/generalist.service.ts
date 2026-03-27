@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import type { AgentStatus, ConversationMode, HandoffBrief } from '../../shared/types'
+import type { AgentStatus, ConversationMode, CostPreference, HandoffBrief } from '../../shared/types'
 import { AGENT_IDS } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
@@ -55,12 +55,18 @@ export class GeneralistService extends AgentBaseService {
    * Token thresholds for context compaction.
    * Strategy 2: Lowered from 80K/150K to 50K/100K — prompt caching helps but
    * context still grows linearly. Earlier compaction prevents runaway costs.
+   *
+   * Strategy 7: Economy mode uses even lower thresholds (40K/80K).
    */
   private static readonly COMPACT_SUGGEST_THRESHOLD = 50_000
   private static readonly COMPACT_AUTO_THRESHOLD = 100_000
+  private static readonly COMPACT_SUGGEST_THRESHOLD_ECONOMY = 40_000
+  private static readonly COMPACT_AUTO_THRESHOLD_ECONOMY = 80_000
   private compactSuggested: boolean = false
   /** Tracks number of compactions in this session to avoid over-compacting */
   private compactCount: number = 0
+  /** Cost preference from workspace settings — affects compaction aggressiveness */
+  private costPreference: CostPreference = 'balanced'
 
   /** Tracks whether stop() was called intentionally (vs crash) */
   private intentionallyStopped: boolean = false
@@ -100,9 +106,14 @@ export class GeneralistService extends AgentBaseService {
       const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
 
       if (settings.memoryEnabled !== false && workspace) {
-        const ctx = memoryService.getContextForPrompt(workspace.id, 10000)
+        // Strategy 7: Economy mode uses shorter memory context to save tokens
+        const memoryBudget = settings.costPreference === 'economy' ? 5000 : 10000
+        const ctx = memoryService.getContextForPrompt(workspace.id, memoryBudget)
         if (ctx) memoryContext = ctx
       }
+
+      // Strategy 7: Load cost preference to adjust compaction thresholds
+      this.costPreference = (settings.costPreference as CostPreference) || 'balanced'
     } catch {
       // Memory context unavailable — not critical
     }
@@ -342,14 +353,21 @@ export class GeneralistService extends AgentBaseService {
       this.tokenUsage += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
 
       // Emit context size warning when approaching limits
+      // Strategy 7: Economy mode uses tighter thresholds
       const inputTokens = usage.input_tokens ?? 0
-      if (inputTokens >= GeneralistService.COMPACT_AUTO_THRESHOLD) {
+      const autoThreshold =
+        this.costPreference === 'economy'
+          ? GeneralistService.COMPACT_AUTO_THRESHOLD_ECONOMY
+          : GeneralistService.COMPACT_AUTO_THRESHOLD
+      const suggestThreshold =
+        this.costPreference === 'economy'
+          ? GeneralistService.COMPACT_SUGGEST_THRESHOLD_ECONOMY
+          : GeneralistService.COMPACT_SUGGEST_THRESHOLD
+
+      if (inputTokens >= autoThreshold) {
         this.log.warn(`Context very large (${inputTokens} input tokens) — auto-compacting`)
         this.emit('compactNeeded', { level: 'critical', inputTokens })
-      } else if (
-        inputTokens >= GeneralistService.COMPACT_SUGGEST_THRESHOLD &&
-        !this.compactSuggested
-      ) {
+      } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
         this.compactSuggested = true
         this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
         this.emit('compactNeeded', { level: 'suggest', inputTokens })

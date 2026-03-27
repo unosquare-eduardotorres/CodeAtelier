@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type {
+  BudgetTier,
   ConversationMode,
   DecomposedTask,
   HandoffBrief,
@@ -526,6 +527,14 @@ export class SpecialistPoolService extends EventEmitter {
       // Feedback memories unavailable — not critical
     }
 
+    // Strategy 4: Model-aware prompt budgeting — scale context size by model tier.
+    // Haiku tasks: minimal context (skip CLAUDE.md, tiny skill content)
+    // Sonnet tasks: standard context (trimmed CLAUDE.md per Strategy 1)
+    // Opus tasks: full context (complete skills and project context)
+    const model = task.model ?? 'sonnet'
+    const budgetTier: BudgetTier =
+      model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
+
     // Build system prompt via centralized PromptBuilder
     const systemPrompt = promptBuilder.build({
       role: 'specialist',
@@ -535,7 +544,8 @@ export class SpecialistPoolService extends EventEmitter {
       assignedSkills,
       workspacePath: this.workspacePath!,
       brief: this.conversationBrief || undefined,
-      feedbackContext
+      feedbackContext,
+      budgetTier
     })
 
     // Build context from completed dependency outputs

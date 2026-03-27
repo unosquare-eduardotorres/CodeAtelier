@@ -18,12 +18,14 @@ import { WorkspaceSettingsPanel, WorkspaceSettingsContent } from '@renderer/comp
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import { SettingsPage } from '@renderer/components/settings'
 import { UpdateBanner, MemoryFeedBanner, ErrorBoundary } from '@renderer/components/common'
+import { NewConversationModal } from '@renderer/components/chat'
 import {
   useWorkspaceStore,
   useAgentStore,
   useChatStore,
   usePixelOfficeStore
 } from '@renderer/store'
+import type { ConversationMode } from '../../../../shared/types'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
@@ -54,7 +56,9 @@ export default function AppLayout(): React.JSX.Element {
   const [wsSettingsPanelCollapsed, setWsSettingsPanelCollapsed] = useState(false)
   const { activeWorkspace, orchestratorStatus, clearActiveWorkspace } = useWorkspaceStore()
   const { statuses, sessionTokens } = useAgentStore()
-  const { activeConversation, createConversation, updateMode, isStreaming } = useChatStore()
+  const { activeConversation, createConversation, updateMode, isStreaming, sendMessage } =
+    useChatStore()
+  const [showNewChatModal, setShowNewChatModal] = useState(false)
   const { isVisible: showPixelOffice, togglePanel: togglePixelOffice } = usePixelOfficeStore()
 
   const activeAgentCount = statuses.filter(
@@ -119,7 +123,7 @@ export default function AppLayout(): React.JSX.Element {
       if (isMeta && e.key === 'n') {
         e.preventDefault()
         if (activeWorkspace) {
-          createConversation(activeWorkspace.id)
+          setShowNewChatModal(true)
         }
       }
 
@@ -135,15 +139,7 @@ export default function AppLayout(): React.JSX.Element {
         togglePixelOffice()
       }
     },
-    [
-      activeWorkspace,
-      createConversation,
-      togglePixelOffice,
-      activeConversation,
-      updateMode,
-      isStreaming,
-      navigateBack
-    ]
+    [activeWorkspace, togglePixelOffice, activeConversation, updateMode, isStreaming, navigateBack]
   )
 
   useEffect(() => {
@@ -164,6 +160,27 @@ export default function AppLayout(): React.JSX.Element {
   const handleNavigateToChat = (): void => {
     setView('chat')
     setShowWorkspaceSettings(false)
+  }
+
+  const handleCreateChat = async (data: {
+    title: string
+    description?: string
+    mode: ConversationMode
+    attachments?: string[]
+    useIsolatedBranch?: boolean
+  }): Promise<void> => {
+    if (!activeWorkspace) return
+    await createConversation(activeWorkspace.id, data.mode, data.title)
+    if (data.description) {
+      await sendMessage(data.description, data.attachments)
+    }
+    if (data.useIsolatedBranch) {
+      // TODO: integrate worktree IPC — creates a git worktree for this conversation
+      console.info(
+        '[NewConversationModal] Isolated branch requested — worktree integration pending'
+      )
+    }
+    setShowNewChatModal(false)
   }
 
   const renderMainContent = (): React.JSX.Element => {
@@ -368,6 +385,13 @@ export default function AppLayout(): React.JSX.Element {
           </button>
         </div>
       </div>
+
+      {/* New conversation modal (triggered by Cmd+N) */}
+      <NewConversationModal
+        isOpen={showNewChatModal}
+        onClose={() => setShowNewChatModal(false)}
+        onSubmit={handleCreateChat}
+      />
     </div>
   )
 }

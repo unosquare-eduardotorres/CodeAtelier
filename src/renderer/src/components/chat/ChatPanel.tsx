@@ -6,17 +6,20 @@ import {
   MessageInput,
   AttachmentDropzone,
   ModeToggle,
-  RepoWarningBanner
+  RepoWarningBanner,
+  NewConversationModal
 } from '@renderer/components/chat'
+import type { ConversationMode } from '../../../../shared/types'
 
 export default function ChatPanel(): React.JSX.Element {
   const { activeWorkspace, workspaces, openWorkspace, createWorkspace, orchestratorStatus } =
     useWorkspaceStore()
-  const { activeConversation, messages, createConversation, updateMode, isStreaming } =
+  const { activeConversation, messages, createConversation, updateMode, isStreaming, sendMessage } =
     useChatStore()
   const [attachments, setAttachments] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
+  const [showNewChatModal, setShowNewChatModal] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Focus search input when opened
@@ -37,6 +40,27 @@ export default function ChatPanel(): React.JSX.Element {
       console.error('Failed to add workspace:', error)
     }
   }, [createWorkspace])
+
+  const handleCreateChat = async (data: {
+    title: string
+    description?: string
+    mode: ConversationMode
+    attachments?: string[]
+    useIsolatedBranch?: boolean
+  }): Promise<void> => {
+    if (!activeWorkspace) return
+    await createConversation(activeWorkspace.id, data.mode, data.title)
+    if (data.description) {
+      await sendMessage(data.description, data.attachments)
+    }
+    if (data.useIsolatedBranch) {
+      // TODO: integrate worktree IPC — creates a git worktree for this conversation
+      console.info(
+        '[NewConversationModal] Isolated branch requested — worktree integration pending'
+      )
+    }
+    setShowNewChatModal(false)
+  }
 
   // No workspace selected — workspace selector
   if (!activeWorkspace) {
@@ -107,12 +131,17 @@ export default function ChatPanel(): React.JSX.Element {
           Start a conversation with your AI development partner
         </p>
         <button
-          onClick={() => createConversation(activeWorkspace.id, 'plan')}
+          onClick={() => setShowNewChatModal(true)}
           className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 press-scale"
         >
           <MessageSquarePlus size={16} />
           Start a conversation
         </button>
+        <NewConversationModal
+          isOpen={showNewChatModal}
+          onClose={() => setShowNewChatModal(false)}
+          onSubmit={handleCreateChat}
+        />
       </div>
     )
   }

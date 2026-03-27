@@ -45,7 +45,11 @@ interface ChatState {
   grillSession: GrillSessionState | null
 
   loadConversations: (workspaceId: string) => Promise<void>
-  createConversation: (workspaceId: string, mode?: ConversationMode) => Promise<void>
+  createConversation: (
+    workspaceId: string,
+    mode?: ConversationMode,
+    title?: string
+  ) => Promise<void>
   selectConversation: (id: string) => Promise<void>
   deleteConversation: (id: string) => Promise<void>
   updateMode: (mode: ConversationMode) => Promise<void>
@@ -118,8 +122,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  createConversation: async (workspaceId: string, mode?: ConversationMode) => {
-    const conversation = await window.api.createConversation({ workspaceId, mode })
+  createConversation: async (workspaceId: string, mode?: ConversationMode, title?: string) => {
+    const conversation = await window.api.createConversation({ workspaceId, mode, title })
     set((state) => ({
       conversations: [conversation, ...state.conversations],
       activeConversation: conversation,

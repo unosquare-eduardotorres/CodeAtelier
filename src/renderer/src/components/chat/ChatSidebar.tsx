@@ -1,8 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useChatStore, useWorkspaceStore } from '@renderer/store'
-import { ChatItem, UnsavedChangesDialog, CompleteDialog } from '@renderer/components/chat'
+import {
+  ChatItem,
+  UnsavedChangesDialog,
+  CompleteDialog,
+  NewConversationModal
+} from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
+import type { ConversationMode } from '../../../../shared/types'
 
 interface ChatSidebarProps {
   isCollapsed?: boolean
@@ -21,7 +27,8 @@ export default function ChatSidebar({
     createConversation,
     selectConversation,
     closeConversation,
-    renameConversation
+    renameConversation,
+    sendMessage
   } = useChatStore()
 
   const [internalCollapsed, setInternalCollapsed] = useState(false)
@@ -33,6 +40,7 @@ export default function ChatSidebar({
     fileCount: number
   } | null>(null)
   const [completeFromUnsaved, setCompleteFromUnsaved] = useState<string | null>(null)
+  const [showNewChatModal, setShowNewChatModal] = useState(false)
   const autoCreateInFlight = useRef(false)
 
   const isCollapsed = externalCollapsed ?? internalCollapsed
@@ -71,10 +79,29 @@ export default function ChatSidebar({
     createConversation
   ])
 
-  const handleNewChat = async (): Promise<void> => {
-    if (activeWorkspace) {
-      await createConversation(activeWorkspace.id, 'plan')
+  const handleNewChat = (): void => {
+    setShowNewChatModal(true)
+  }
+
+  const handleCreateChat = async (data: {
+    title: string
+    description?: string
+    mode: ConversationMode
+    attachments?: string[]
+    useIsolatedBranch?: boolean
+  }): Promise<void> => {
+    if (!activeWorkspace) return
+    await createConversation(activeWorkspace.id, data.mode, data.title)
+    if (data.description) {
+      await sendMessage(data.description, data.attachments)
     }
+    if (data.useIsolatedBranch) {
+      // TODO: integrate worktree IPC — creates a git worktree for this conversation
+      console.info(
+        '[NewConversationModal] Isolated branch requested — worktree integration pending'
+      )
+    }
+    setShowNewChatModal(false)
   }
 
   const sortedConversations = [...conversations].sort(
@@ -267,6 +294,13 @@ export default function ChatSidebar({
           setCompleteFromUnsaved(null)
         }}
         onCancel={() => setCompleteFromUnsaved(null)}
+      />
+
+      {/* New conversation modal */}
+      <NewConversationModal
+        isOpen={showNewChatModal}
+        onClose={() => setShowNewChatModal(false)}
+        onSubmit={handleCreateChat}
       />
     </>
   )
