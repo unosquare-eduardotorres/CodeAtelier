@@ -119,11 +119,8 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
       const updated = conversationRepository.updateMode(args.conversationId, args.mode)
       if (!updated) throw new Error('Conversation not found')
 
-      // Restart generalist CLI session with the new permission mode
-      if (generalistService.getMode() !== args.mode) {
-        log.info(`Mode changed to "${args.mode}" — restarting generalist session`)
-        await generalistService.switchMode(args.mode)
-      }
+      // Mode is persisted to DB — CLI restart is deferred until next message send
+      log.info(`Mode updated to "${args.mode}" in DB (CLI restart deferred until next send)`)
 
       return updated
     }

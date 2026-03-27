@@ -186,15 +186,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const messages = await window.api.getMessages({ conversationId: id })
     set({ activeConversation: conversation, messages, streamingContent: '', isStreaming: false })
 
-    // Sync generalist CLI mode with the conversation's persisted mode
-    try {
-      await window.api.updateConversationMode({
-        conversationId: conversation.id,
-        mode: conversation.mode
-      })
-    } catch (error) {
-      rendererLog.error('Failed to sync mode on conversation select:', error)
-    }
+    // CLI mode sync is deferred — will happen automatically on next message send
+    // No need to restart the CLI process just because the user switched conversations
   },
 
   renameConversation: async (id: string, title: string) => {

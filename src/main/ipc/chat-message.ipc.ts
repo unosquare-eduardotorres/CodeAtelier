@@ -14,7 +14,7 @@ import {
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { HandoffBrief } from '../../shared/types'
+import type { ConversationMode, HandoffBrief } from '../../shared/types'
 import { memoryService } from '../services/memory.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -254,6 +254,14 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
       }
 
       try {
+        // Deferred mode switch: if the conversation's mode differs from the
+        // running CLI mode, restart the CLI now (just-in-time) before sending.
+        const conversation = conversationRepository.findById(conversationId)
+        if (conversation && conversation.mode !== generalistService.getMode()) {
+          log.info(`Deferred mode switch: ${generalistService.getMode()} → ${conversation.mode}`)
+          await generalistService.switchMode(conversation.mode as ConversationMode)
+        }
+
         // Register listeners before send to avoid race condition
         generalistService.on('chunk', onChunk)
         generalistService.on('complete', onComplete)
