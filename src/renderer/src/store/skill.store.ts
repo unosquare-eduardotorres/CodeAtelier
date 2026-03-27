@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type { Skill } from '../../../shared/types'
 
 interface SkillState {
@@ -27,7 +28,7 @@ export const useSkillStore = create<SkillState>((set) => ({
       const skills = await window.api.listSkills()
       set({ skills, isLoading: false })
     } catch (error) {
-      console.error('Failed to load skills:', error)
+      rendererLog.error('Failed to load skills:', error)
       set({ isLoading: false, error: (error as Error).message })
     }
   },
@@ -44,7 +45,7 @@ export const useSkillStore = create<SkillState>((set) => ({
       return { success: true }
     } catch (error) {
       const message = (error as Error).message
-      console.error('Failed to import skill:', message)
+      rendererLog.error('Failed to import skill:', message)
       set({ importingSkill: false, error: message })
       return { success: false, error: message }
     }
@@ -58,7 +59,7 @@ export const useSkillStore = create<SkillState>((set) => ({
         error: null
       }))
     } catch (error) {
-      console.error('Failed to update skill:', error)
+      rendererLog.error('Failed to update skill:', error)
       set({ error: (error as Error).message })
       throw error
     }
@@ -72,7 +73,7 @@ export const useSkillStore = create<SkillState>((set) => ({
         error: null
       }))
     } catch (error) {
-      console.error('Failed to delete skill:', error)
+      rendererLog.error('Failed to delete skill:', error)
       set({ error: (error as Error).message })
       throw error
     }
@@ -89,7 +90,7 @@ export const useSkillStore = create<SkillState>((set) => ({
       return { success: true }
     } catch (error) {
       const message = (error as Error).message
-      console.error('Failed to activate skill:', message)
+      rendererLog.error('Failed to activate skill:', message)
       set({ error: message })
       return { success: false, error: message }
     }
@@ -106,7 +107,7 @@ export const useSkillStore = create<SkillState>((set) => ({
       return { success: true }
     } catch (error) {
       const message = (error as Error).message
-      console.error('Failed to deactivate skill:', message)
+      rendererLog.error('Failed to deactivate skill:', message)
       set({ error: message })
       return { success: false, error: message }
     }

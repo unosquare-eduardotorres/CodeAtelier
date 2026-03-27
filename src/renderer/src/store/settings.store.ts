@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type {
   DiscoveredAgent,
   DiscoveredSkill,
@@ -103,7 +104,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       })
       set({ claudeStatus: status, isScanning: false })
     } catch (error) {
-      console.error('Failed to scan workspace:', error)
+      rendererLog.error('Failed to scan workspace:', error)
       set({ isScanning: false })
     }
   },
@@ -189,7 +190,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       })
       set({ claudeStatus: status })
     } catch (error) {
-      console.error('Failed to confirm CLAUDE.md:', error)
+      rendererLog.error('Failed to confirm CLAUDE.md:', error)
       set({ isConfirmingClaudeMd: false })
     }
   },
@@ -205,7 +206,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       })
       set({ agents })
     } catch (error) {
-      console.error('Failed to load agents:', error)
+      rendererLog.error('Failed to load agents:', error)
     }
   },
 
@@ -216,7 +217,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       })
       set({ skills })
     } catch (error) {
-      console.error('Failed to load skills:', error)
+      rendererLog.error('Failed to load skills:', error)
     }
   },
 
@@ -234,7 +235,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       const content = await window.api.readWorkspaceFile({ filePath })
       set({ activeFileContent: content, isFileLoading: false })
     } catch (error) {
-      console.error('Failed to read file:', error)
+      rendererLog.error('Failed to read file:', error)
       set({
         activeFileContent: null,
         isFileLoading: false
@@ -248,7 +249,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       await window.api.writeWorkspaceFile({ filePath, content })
       set({ activeFileContent: content, isFileSaving: false })
     } catch (error) {
-      console.error('Failed to save file:', error)
+      rendererLog.error('Failed to save file:', error)
       set({ isFileSaving: false })
       throw error
     }
@@ -259,7 +260,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       const diff = await window.api.computeSyncDiff({ workspacePath })
       set({ syncDiff: diff, syncError: null })
     } catch (error) {
-      console.error('Failed to compute sync diff:', error)
+      rendererLog.error('Failed to compute sync diff:', error)
       set({ syncError: (error as Error).message })
     }
   },
@@ -279,7 +280,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
       return result
     } catch (error) {
-      console.error('Failed to apply sync:', error)
+      rendererLog.error('Failed to apply sync:', error)
       set({ isSyncing: false, syncError: (error as Error).message })
       return null
     }
@@ -335,7 +336,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       const agents = await window.api.scanWorkspaceAgents({ workspacePath })
       set({ claudeStatus: status, agents })
     } catch (error) {
-      console.error('Failed to delete all agents:', error)
+      rendererLog.error('Failed to delete all agents:', error)
     }
   },
 
@@ -347,7 +348,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       const skills = await window.api.scanWorkspaceSkills({ workspacePath })
       set({ claudeStatus: status, skills })
     } catch (error) {
-      console.error('Failed to delete all skills:', error)
+      rendererLog.error('Failed to delete all skills:', error)
     }
   },
 

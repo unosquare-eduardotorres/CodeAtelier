@@ -76,26 +76,15 @@ export class OrchestratorService extends AgentBaseService {
     // No LLM skill matching — skills are resolved deterministically via AgentRegistry
     // when the orchestrator decomposes tasks and assigns them to specialists.
 
-    // Strategy 6: Conditional --verbose flag — only in debug mode to reduce stream noise
-    let debugMode = false
-    try {
-      const settings = this.workspacePath
-        ? workspaceRepository.getSettingsByPath(this.workspacePath)
-        : {}
-      debugMode = settings.debugMode === true
-    } catch {
-      // Default to no verbose
-    }
-
     const orchestratorModel = modelConfigService.getModel(this.workspacePath, 'orchestrator')
     const args = [
       '-p',
       message,
       '--output-format',
       'stream-json',
+      '--verbose',
       '--model',
       orchestratorModel,
-      ...(debugMode ? ['--verbose'] : []),
       '--allowedTools',
       'WebSearch,WebFetch'
     ]

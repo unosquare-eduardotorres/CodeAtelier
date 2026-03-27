@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type { Workspace, RepoInfo } from '../../../shared/types'
 
 interface WorkspaceState {
@@ -44,7 +45,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         get().openWorkspace(workspaces[0].id)
       }
     } catch (error) {
-      console.error('Failed to load workspaces:', error)
+      rendererLog.error('Failed to load workspaces:', error)
       set({ isLoading: false })
     }
   },
@@ -67,7 +68,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // Fire-and-forget: start orchestrator (don't block on readiness)
     set({ orchestratorStatus: 'starting' })
     window.api.startOrchestrator(workspace.repoPath).catch((error) => {
-      console.error('Failed to start orchestrator:', error)
+      rendererLog.error('Failed to start orchestrator:', error)
       set({ orchestratorStatus: 'error' })
     })
     // Load repo info + GitHub status in parallel (fire-and-forget)

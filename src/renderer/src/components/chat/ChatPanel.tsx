@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { Search, X, Bot, FolderOpen, MessageSquarePlus } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Search, X, Bot, MessageSquarePlus } from 'lucide-react'
 import { useChatStore, useWorkspaceStore } from '@renderer/store'
 import {
   MessageList,
@@ -12,8 +12,7 @@ import {
 import type { ConversationMode } from '../../../../shared/types'
 
 export default function ChatPanel(): React.JSX.Element {
-  const { activeWorkspace, workspaces, openWorkspace, createWorkspace, orchestratorStatus } =
-    useWorkspaceStore()
+  const { activeWorkspace, orchestratorStatus } = useWorkspaceStore()
   const { activeConversation, messages, createConversation, updateMode, isStreaming, sendMessage } =
     useChatStore()
   const [attachments, setAttachments] = useState<string[]>([])
@@ -28,18 +27,6 @@ export default function ChatPanel(): React.JSX.Element {
       searchInputRef.current?.focus()
     }
   }, [showSearch])
-
-  const handleAddWorkspace = useCallback(async (): Promise<void> => {
-    try {
-      const dirPath = await window.api.selectDirectory()
-      if (dirPath) {
-        const name = dirPath.split(/[\\/]/).filter(Boolean).pop() || 'Untitled'
-        await createWorkspace(name, dirPath)
-      }
-    } catch (error) {
-      console.error('Failed to add workspace:', error)
-    }
-  }, [createWorkspace])
 
   const handleCreateChat = async (data: {
     title: string
@@ -60,63 +47,6 @@ export default function ChatPanel(): React.JSX.Element {
       )
     }
     setShowNewChatModal(false)
-  }
-
-  // No workspace selected — workspace selector
-  if (!activeWorkspace) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-b from-surface-base via-surface-overlay/30 to-surface-base text-center px-8">
-        {/* Logo */}
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-primary-muted border border-primary/30 flex items-center justify-center">
-            <Bot size={28} className="text-primary-text" />
-          </div>
-          <div className="text-left">
-            <h1 className="text-2xl font-bold text-text-primary">Agent Studio</h1>
-            <p className="text-sm text-text-secondary">AI-Powered Development Team</p>
-          </div>
-        </div>
-
-        {/* Workspace selector card */}
-        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-6 max-w-md w-full mb-6 shadow-lg">
-          <h3 className="text-sm font-semibold text-text-primary mb-4 uppercase tracking-wider">
-            Select a Workspace
-          </h3>
-
-          {workspaces.length > 0 ? (
-            <div className="space-y-2 mb-4">
-              {workspaces.map((ws) => (
-                <button
-                  key={ws.id}
-                  onClick={() => openWorkspace(ws.id)}
-                  className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg hover:bg-surface-float transition-colors text-left focus-visible:ring-2 focus-visible:ring-primary/50"
-                >
-                  <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary-muted text-primary-text text-sm font-semibold">
-                    {ws.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-text-primary truncate">{ws.name}</div>
-                    <div className="text-xs text-text-secondary truncate">{ws.repoPath}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-text-secondary mb-4">
-              No workspaces yet. Add a project folder to get started.
-            </p>
-          )}
-        </div>
-
-        <button
-          onClick={handleAddWorkspace}
-          className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg font-medium text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base press-scale"
-        >
-          <FolderOpen size={16} />
-          Add Workspace
-        </button>
-      </div>
-    )
   }
 
   // Workspace selected but no active conversation — ready placeholder

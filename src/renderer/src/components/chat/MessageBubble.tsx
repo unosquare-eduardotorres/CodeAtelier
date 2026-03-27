@@ -160,7 +160,7 @@ function useMessageIdentity(message: Message): {
       return {
         displayName: profile?.displayName ?? 'You',
         subtitle: null,
-        avatarKey: profile?.avatarKey ?? 'astronaut',
+        avatarKey: profile?.avatarKey ?? 'business-man',
         accentColor: 'var(--color-primary, #6366F1)'
       }
     }

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type { DocFile } from '../../../shared/types'
 
 interface DocsState {
@@ -27,7 +28,7 @@ export const useDocsStore = create<DocsState>((set) => ({
       const docs = await window.api.listDocs({ workspacePath })
       set({ docs, isLoading: false })
     } catch (error) {
-      console.error('Failed to load docs:', error)
+      rendererLog.error('Failed to load docs:', error)
       set({ isLoading: false, error: (error as Error).message })
     }
   },

@@ -1,12 +1,9 @@
 ---
 name: supabase-architect
 description: >
-  Supabase PostgreSQL and Drizzle ORM skill for external projects. Use for ANY Supabase database
-  work including schema design, Drizzle ORM queries, PostgreSQL migrations, indexing strategies,
-  RLS policies, seed data management, query debugging, performance tuning, and pgvector.
-  Trigger when the user mentions Supabase, Drizzle ORM with PostgreSQL, RLS, pgvector, connection
-  pooling, or any Supabase-related database work. NOT for Agent Studio's own SQLite database —
-  use the sqlite-patterns skill instead.
+  Supabase PostgreSQL + Drizzle ORM for external projects: schema design, migrations,
+  RLS, pgvector, indexing, query tuning. Trigger: Supabase, Drizzle ORM, PostgreSQL,
+  RLS policies, pgvector, connection pooling. NOT for Agent Studio SQLite.
 ---
 
 # Supabase Architect

@@ -6,46 +6,39 @@ import { dbLogger } from '../logger'
 
 let db: Database.Database | null = null
 
-export function getDatabase(): Database.Database {
-  if (db) return db
+// ── Versioned Migration System ──────────────────────────────────────────────
+// Each migration runs in a transaction and atomically updates PRAGMA user_version.
+// Only migrations with version > current user_version are executed.
+// Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-  const dbPath = join(app.getPath('userData'), 'agent-studio.db')
-  db = new Database(dbPath)
+const CURRENT_SCHEMA_VERSION = 20
 
-  // Enable WAL mode for crash-safe writes
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
+interface Migration {
+  version: number
+  name: string
+  up: (db: Database.Database) => void
+}
 
-  // Run schema migration
-  const schemaPath = join(__dirname, 'schema.sql')
-  try {
-    const schema = readFileSync(schemaPath, 'utf-8')
-    db.exec(schema)
-  } catch {
-    // If schema.sql isn't bundled, use inline schema
-    db.exec(SCHEMA_SQL)
-  }
+const migrations: Migration[] = [
+  {
+    version: 1,
+    name: 'add-mode-column-to-conversations',
+    up: (db) => {
+      db.exec(
+        `ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build'))`
+      )
+    }
+  },
+  {
+    version: 2,
+    name: 'update-messages-check-constraint-generalist',
+    up: (db) => {
+      const tableInfo = db
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'")
+        .get() as { sql: string } | undefined
 
-  // Migration: add mode column to existing conversations table
-  try {
-    db.exec(
-      `ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build'))`
-    )
-    dbLogger.info('Migration: added mode column to conversations')
-  } catch {
-    // Column already exists — ignore
-  }
-
-  // Migration: update messages table CHECK constraint to include 'generalist' role
-  try {
-    const tableInfo = db
-      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'")
-      .get() as { sql: string } | undefined
-
-    if (tableInfo && !tableInfo.sql.includes("'generalist'")) {
-      dbLogger.info('Migration: updating messages CHECK constraint to include generalist role')
-      db.transaction(() => {
-        db!.exec(`
+      if (tableInfo && !tableInfo.sql.includes("'generalist'")) {
+        db.exec(`
           ALTER TABLE messages RENAME TO messages_old;
 
           CREATE TABLE messages (
@@ -64,286 +57,325 @@ export function getDatabase(): Database.Database {
 
           CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
         `)
-      })()
-      dbLogger.info('Migration: messages CHECK constraint updated successfully')
-    } else {
-      dbLogger.info('✓ Messages table already has generalist role — no migration needed')
+      }
     }
-  } catch (e) {
-    dbLogger.error('Migration: failed to update messages CHECK constraint:', e)
+  },
+  {
+    version: 3,
+    name: 'ensure-generalist-specialist',
+    up: (db) => {
+      const generalistExists = db
+        .prepare("SELECT 1 FROM specialists WHERE agent_id = 'generalist'")
+        .get()
+      if (!generalistExists) {
+        db.prepare(
+          'INSERT INTO specialists (agent_id, display_name, icon, color, priority) VALUES (?, ?, ?, ?, ?)'
+        ).run('generalist', 'Generalist', '💬', '#6366F1', 0)
+      }
+    }
+  },
+  {
+    version: 4,
+    name: 'rename-postgres-to-db-architect',
+    up: (db) => {
+      db.prepare(
+        "UPDATE specialists SET agent_id = 'db-architect', display_name = 'DB Architect', icon = '🗄️' WHERE agent_id = 'postgres-architect'"
+      ).run()
+    }
+  },
+  {
+    version: 5,
+    name: 'add-electron-architect',
+    up: (db) => {
+      const electronExists = db
+        .prepare("SELECT 1 FROM specialists WHERE agent_id = 'electron-architect'")
+        .get()
+      if (!electronExists) {
+        db.prepare(
+          'INSERT INTO specialists (agent_id, display_name, icon, color, priority) VALUES (?, ?, ?, ?, ?)'
+        ).run('electron-architect', 'Electron Architect', '⚡', '#47848F', 4)
+      }
+    }
+  },
+  {
+    version: 6,
+    name: 'add-source-yaml-column',
+    up: (db) => {
+      db.exec('ALTER TABLE specialists ADD COLUMN source_yaml TEXT DEFAULT NULL')
+    }
+  },
+  {
+    version: 7,
+    name: 'add-claude-session-id',
+    up: (db) => {
+      db.exec('ALTER TABLE conversations ADD COLUMN claude_session_id TEXT DEFAULT NULL')
+    }
+  },
+  {
+    version: 8,
+    name: 'create-conversation-file-changes',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_file_changes (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          file_path TEXT NOT NULL,
+          change_type TEXT NOT NULL DEFAULT 'modified' CHECK (change_type IN ('created', 'modified', 'deleted')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(conversation_id, file_path)
+        );
+        CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
+      `)
+    }
+  },
+  {
+    version: 9,
+    name: 'create-agent-worktrees',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_worktrees (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          agent_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          worktree_path TEXT NOT NULL,
+          branch_name TEXT NOT NULL,
+          base_branch TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active'
+            CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          merged_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
+      `)
+    }
+  },
+  {
+    version: 10,
+    name: 'add-session-workspace-columns',
+    up: (db) => {
+      db.exec(
+        'ALTER TABLE agent_sessions ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL'
+      )
+      db.exec(
+        'ALTER TABLE agent_sessions ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE'
+      )
+      db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id)'
+      )
+      db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id)'
+      )
+    }
+  },
+  {
+    version: 11,
+    name: 'add-complexity-scoring-columns',
+    up: (db) => {
+      db.exec('ALTER TABLE agent_sessions ADD COLUMN complexity_score INTEGER')
+      db.exec('ALTER TABLE agent_sessions ADD COLUMN model_used TEXT')
+      db.exec('ALTER TABLE agent_sessions ADD COLUMN complexity_tier TEXT')
+    }
+  },
+  {
+    version: 12,
+    name: 'create-ideas-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ideas (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          description TEXT DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'draft'
+            CHECK (status IN ('draft', 'grilling', 'completed')),
+          grill_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          grill_summary TEXT,
+          converted_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_ideas_workspace ON ideas(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status);
+      `)
+    }
+  },
+  {
+    version: 13,
+    name: 'create-memories-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memories (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+          type TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT DEFAULT '[]' CHECK (json_valid(tags)),
+          source_conversation_id TEXT,
+          source_agent_id TEXT,
+          importance INTEGER NOT NULL DEFAULT 5,
+          last_accessed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
+        CREATE INDEX IF NOT EXISTS idx_memories_context ON memories(workspace_id, type, importance DESC);
+      `)
+    }
+  },
+  {
+    version: 14,
+    name: 'create-dream-runs-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS dream_runs (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+          trigger_type TEXT NOT NULL CHECK (trigger_type IN ('startup', 'idle', 'manual')),
+          memories_created INTEGER DEFAULT 0,
+          memories_merged INTEGER DEFAULT 0,
+          memories_pruned INTEGER DEFAULT 0,
+          token_usage INTEGER DEFAULT 0,
+          started_at TEXT NOT NULL DEFAULT (datetime('now')),
+          ended_at TEXT,
+          error_message TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_dream_runs_workspace ON dream_runs(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_dream_runs_status ON dream_runs(status);
+      `)
+    }
+  },
+  {
+    version: 15,
+    name: 'add-pr-tracking-columns',
+    up: (db) => {
+      db.exec('ALTER TABLE conversations ADD COLUMN pr_number INTEGER')
+      db.exec('ALTER TABLE conversations ADD COLUMN pr_url TEXT')
+      db.exec('ALTER TABLE conversations ADD COLUMN branch_name TEXT')
+    }
+  },
+  {
+    version: 16,
+    name: 'add-is-git-repo-flag',
+    up: (db) => {
+      db.exec('ALTER TABLE workspaces ADD COLUMN is_git_repo INTEGER DEFAULT 1')
+    }
+  },
+  {
+    version: 17,
+    name: 'add-specialist-alias-columns',
+    up: (db) => {
+      db.exec('ALTER TABLE specialists ADD COLUMN alias TEXT DEFAULT NULL')
+      db.exec('ALTER TABLE specialists ADD COLUMN avatar_url TEXT DEFAULT NULL')
+    }
+  },
+  {
+    version: 18,
+    name: 'create-user-profile-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_profile (
+          id TEXT PRIMARY KEY DEFAULT 'default',
+          display_name TEXT NOT NULL DEFAULT 'Developer',
+          avatar_key TEXT NOT NULL DEFAULT 'business-man',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+    }
+  },
+  {
+    version: 19,
+    name: 'create-core-agent-aliases-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS core_agent_aliases (
+          agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('generalist', 'coordinator')),
+          alias TEXT DEFAULT NULL,
+          avatar_key TEXT DEFAULT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+    }
+  },
+  {
+    version: 20,
+    name: 'wal-checkpoint',
+    up: (db) => {
+      // Reclaim WAL file space on upgrade
+      db.pragma('wal_checkpoint(TRUNCATE)')
+    }
+  }
+]
+
+/**
+ * Run only pending migrations (where version > current user_version).
+ * Each migration is wrapped in a transaction that atomically updates user_version.
+ * Failed migrations throw instead of being silently swallowed.
+ */
+function runMigrations(database: Database.Database): void {
+  const currentVersion = (database.pragma('user_version', { simple: true }) as number) ?? 0
+  dbLogger.info(`Schema version: ${currentVersion}, target: ${CURRENT_SCHEMA_VERSION}`)
+
+  const pending = migrations.filter((m) => m.version > currentVersion)
+  if (pending.length === 0) {
+    dbLogger.info('✓ Schema up to date — no migrations needed')
+    return
   }
 
-  dbLogger.info('✓ Messages table CHECK constraint verified (includes generalist)')
+  dbLogger.info(`Running ${pending.length} pending migration(s)...`)
 
-  // Seed default data
+  for (const migration of pending) {
+    dbLogger.info(`Running migration v${migration.version}: ${migration.name}`)
+    try {
+      database.transaction(() => {
+        migration.up(database)
+        database.pragma(`user_version = ${migration.version}`)
+      })()
+      dbLogger.info(`✓ Migration v${migration.version} complete`)
+    } catch (error) {
+      dbLogger.error(`✗ Migration v${migration.version} (${migration.name}) FAILED:`, error)
+      throw error // Don't swallow real errors — surface disk full, corruption, etc.
+    }
+  }
+
+  dbLogger.info(`✓ All migrations complete — schema at v${CURRENT_SCHEMA_VERSION}`)
+}
+
+export function getDatabase(): Database.Database {
+  if (db) return db
+
+  const dbPath = join(app.getPath('userData'), 'agent-studio.db')
+  db = new Database(dbPath)
+
+  // Enable WAL mode for crash-safe writes
+  db.pragma('journal_mode = WAL')
+  db.pragma('foreign_keys = ON')
+
+  // Run schema (creates tables if not exist)
+  const schemaPath = join(__dirname, 'schema.sql')
+  try {
+    const schema = readFileSync(schemaPath, 'utf-8')
+    db.exec(schema)
+  } catch {
+    // If schema.sql isn't bundled, use inline schema
+    db.exec(SCHEMA_SQL)
+  }
+
+  // Run versioned migrations (only pending ones)
+  runMigrations(db)
+
+  // WAL checkpoint to reclaim space (runs every startup, cheap no-op if WAL is small)
+  db.pragma('wal_checkpoint(TRUNCATE)')
+
+  // Seed default data (idempotent — checks count before inserting)
   seedDefaultSpecialists(db)
   seedDefaultSkills(db)
-
-  // Migration: ensure generalist exists in specialists table
-  try {
-    const generalistExists = db
-      .prepare("SELECT 1 FROM specialists WHERE agent_id = 'generalist'")
-      .get()
-    if (!generalistExists) {
-      db.prepare(
-        'INSERT INTO specialists (agent_id, display_name, icon, color, priority) VALUES (?, ?, ?, ?, ?)'
-      ).run('generalist', 'Generalist', '💬', '#6366F1', 0)
-    }
-  } catch {
-    /* ignore */
-  }
-
-  // Migration: rename postgres-architect → db-architect
-  try {
-    db.prepare(
-      "UPDATE specialists SET agent_id = 'db-architect', display_name = 'DB Architect', icon = '🗄️' WHERE agent_id = 'postgres-architect'"
-    ).run()
-  } catch {
-    /* ignore */
-  }
-
-  // Migration: add electron-architect if missing
-  try {
-    const electronExists = db
-      .prepare("SELECT 1 FROM specialists WHERE agent_id = 'electron-architect'")
-      .get()
-    if (!electronExists) {
-      db.prepare(
-        'INSERT INTO specialists (agent_id, display_name, icon, color, priority) VALUES (?, ?, ?, ?, ?)'
-      ).run('electron-architect', 'Electron Architect', '⚡', '#47848F', 4)
-    }
-  } catch {
-    /* ignore */
-  }
-
-  // Migration: add source_yaml column to specialists table
-  try {
-    db.exec('ALTER TABLE specialists ADD COLUMN source_yaml TEXT DEFAULT NULL')
-    dbLogger.info('Migration: added source_yaml column to specialists')
-  } catch {
-    // Column already exists — ignore
-  }
-
-  // Migration: add claude_session_id column to conversations table for --resume support
-  try {
-    db.exec('ALTER TABLE conversations ADD COLUMN claude_session_id TEXT DEFAULT NULL')
-    dbLogger.info('Migration: added claude_session_id column to conversations')
-  } catch {
-    // Column already exists — ignore
-  }
-
-  // Migration: create conversation_file_changes table for per-session file tracking
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS conversation_file_changes (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        file_path TEXT NOT NULL,
-        change_type TEXT NOT NULL DEFAULT 'modified' CHECK (change_type IN ('created', 'modified', 'deleted')),
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(conversation_id, file_path)
-      );
-      CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
-    `)
-    dbLogger.info('Migration: conversation_file_changes table ready')
-  } catch {
-    // Table already exists — ignore
-  }
-
-  // Migration: create agent_worktrees table for worktree-based agent isolation
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS agent_worktrees (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        agent_id TEXT NOT NULL,
-        task_id TEXT NOT NULL,
-        worktree_path TEXT NOT NULL,
-        branch_name TEXT NOT NULL,
-        base_branch TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active'
-          CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        merged_at TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
-      CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
-    `)
-    dbLogger.info('Migration: agent_worktrees table ready')
-  } catch {
-    // Table already exists — ignore
-  }
-
-  // Migration: add conversation_id and workspace_id columns to agent_sessions
-  try {
-    db.exec(
-      'ALTER TABLE agent_sessions ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL'
-    )
-    dbLogger.info('Migration: added conversation_id column to agent_sessions')
-  } catch {
-    // Column already exists — ignore
-  }
-  try {
-    db.exec(
-      'ALTER TABLE agent_sessions ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE'
-    )
-    dbLogger.info('Migration: added workspace_id column to agent_sessions')
-  } catch {
-    // Column already exists — ignore
-  }
-  try {
-    db.exec(
-      'CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id)'
-    )
-    db.exec(
-      'CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id)'
-    )
-    dbLogger.info('Migration: agent_sessions indexes ready')
-  } catch {
-    // Indexes already exist — ignore
-  }
-
-  // Migration: Add complexity scoring columns to agent_sessions
-  try {
-    db.exec('ALTER TABLE agent_sessions ADD COLUMN complexity_score INTEGER')
-    db.exec('ALTER TABLE agent_sessions ADD COLUMN model_used TEXT')
-    db.exec('ALTER TABLE agent_sessions ADD COLUMN complexity_tier TEXT')
-    dbLogger.info('Migration: added complexity scoring columns to agent_sessions')
-  } catch {
-    // Columns already exist — fine
-  }
-
-  // Migration: create ideas table for quick-capture work item drafts
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ideas (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        title TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'draft'
-          CHECK (status IN ('draft', 'grilling', 'completed')),
-        grill_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-        grill_summary TEXT,
-        converted_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_ideas_workspace ON ideas(workspace_id);
-      CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status);
-    `)
-    dbLogger.info('Migration: ideas table ready')
-  } catch {
-    // Table already exists — ignore
-  }
-
-  // Migration: create memories table for auto memory system
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS memories (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
-        type TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
-        title TEXT NOT NULL,
-        content TEXT NOT NULL,
-        tags TEXT DEFAULT '[]' CHECK (json_valid(tags)),
-        source_conversation_id TEXT,
-        source_agent_id TEXT,
-        importance INTEGER NOT NULL DEFAULT 5,
-        last_accessed_at TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id);
-      CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
-      CREATE INDEX IF NOT EXISTS idx_memories_context ON memories(workspace_id, type, importance DESC);
-    `)
-    dbLogger.info('Migration: memories table ready')
-  } catch {
-    // Table already exists — ignore
-  }
-
-  // Migration: create dream_runs table for auto dream consolidation
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS dream_runs (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        status TEXT NOT NULL DEFAULT 'running'
-          CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
-        trigger_type TEXT NOT NULL CHECK (trigger_type IN ('startup', 'idle', 'manual')),
-        memories_created INTEGER DEFAULT 0,
-        memories_merged INTEGER DEFAULT 0,
-        memories_pruned INTEGER DEFAULT 0,
-        token_usage INTEGER DEFAULT 0,
-        started_at TEXT NOT NULL DEFAULT (datetime('now')),
-        ended_at TEXT,
-        error_message TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_dream_runs_workspace ON dream_runs(workspace_id);
-      CREATE INDEX IF NOT EXISTS idx_dream_runs_status ON dream_runs(status);
-    `)
-    dbLogger.info('Migration: dream_runs table ready')
-  } catch {
-    // Table already exists — ignore
-  }
-
-  // Migration: PR tracking columns on conversations
-  try {
-    db.exec(`ALTER TABLE conversations ADD COLUMN pr_number INTEGER`)
-  } catch {
-    /* column already exists */
-  }
-  try {
-    db.exec(`ALTER TABLE conversations ADD COLUMN pr_url TEXT`)
-  } catch {
-    /* column already exists */
-  }
-  try {
-    db.exec(`ALTER TABLE conversations ADD COLUMN branch_name TEXT`)
-  } catch {
-    /* column already exists */
-  }
-
-  // Migration: isGitRepo flag on workspaces
-  try {
-    db.exec(`ALTER TABLE workspaces ADD COLUMN is_git_repo INTEGER DEFAULT 1`)
-  } catch {
-    /* column already exists */
-  }
-
-  // Migration: add alias and avatar_url columns to specialists
-  try {
-    db.exec(`ALTER TABLE specialists ADD COLUMN alias TEXT DEFAULT NULL`)
-  } catch {
-    /* column already exists */
-  }
-  try {
-    db.exec(`ALTER TABLE specialists ADD COLUMN avatar_url TEXT DEFAULT NULL`)
-  } catch {
-    /* column already exists */
-  }
-
-  // Migration: user_profile table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS user_profile (
-      id TEXT PRIMARY KEY DEFAULT 'default',
-      display_name TEXT NOT NULL DEFAULT 'Developer',
-      avatar_key TEXT NOT NULL DEFAULT 'astronaut',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `)
-
-  // Migration: core_agent_aliases table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS core_agent_aliases (
-      agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('generalist', 'coordinator')),
-      alias TEXT DEFAULT NULL,
-      avatar_key TEXT DEFAULT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `)
 
   return db
 }
@@ -356,7 +388,9 @@ export function closeDatabase(): void {
 }
 
 function seedDefaultSpecialists(database: Database.Database): void {
-  const count = database.prepare('SELECT COUNT(*) as cnt FROM specialists').get() as { cnt: number }
+  const count = database.prepare('SELECT COUNT(*) as cnt FROM specialists').get() as {
+    cnt: number
+  }
   if (count.cnt > 0) return
 
   const insert = database.prepare(`
@@ -365,11 +399,11 @@ function seedDefaultSpecialists(database: Database.Database): void {
   `)
 
   const defaults = [
-    { agentId: 'generalist', displayName: 'Generalist', icon: '💬', color: '#6366F1', priority: 0 },
+    { agentId: 'generalist', displayName: 'Da Vinci', icon: '🎨', color: '#D97706', priority: 0 },
     {
       agentId: 'orchestrator',
-      displayName: 'Orchestrator',
-      icon: '🎯',
+      displayName: 'Stravinsky',
+      icon: '🎼',
       color: '#8B5CF6',
       priority: 1
     },

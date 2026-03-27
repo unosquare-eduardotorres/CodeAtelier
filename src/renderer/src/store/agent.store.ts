@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type { AgentStatus } from '../../../shared/types'
 
 interface AgentState {
@@ -67,7 +68,7 @@ export const useAgentStore = create<AgentState>((set) => ({
     try {
       await window.api.stopAllAgents()
     } catch (error) {
-      console.error('Failed to stop agents:', error)
+      rendererLog.error('Failed to stop agents:', error)
     } finally {
       set({ isStopping: false })
     }

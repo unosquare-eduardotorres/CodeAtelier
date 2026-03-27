@@ -5,8 +5,8 @@ import type {
   ExecutionStrategy,
   TaskExecutionProgress
 } from '../../../../shared/types'
-import { AGENT_META } from '../../../../shared/constants'
 import { useSpecialistStore } from '@renderer/store'
+import { getAgentMeta } from '@renderer/utils/agentMeta'
 
 interface TaskPlanCardProps {
   summary: string
@@ -46,9 +46,7 @@ export default function TaskPlanCard({
   const getSpecialistMeta = (
     agentId: string
   ): { icon: string; color: string; displayName: string } => {
-    const dbSpec = specialists.find((s) => s.agentId === agentId)
-    if (dbSpec) return { icon: dbSpec.icon, color: dbSpec.color, displayName: dbSpec.displayName }
-    return AGENT_META[agentId] ?? { icon: '🔧', color: '#6366F1', displayName: agentId }
+    return getAgentMeta(agentId, specialists)
   }
 
   // Group tasks by dependency level for visual layout

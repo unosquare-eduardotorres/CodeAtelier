@@ -202,7 +202,7 @@ app.whenReady().then(() => {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self'; connect-src 'self'"
           ]
         }
       })
@@ -235,29 +235,29 @@ app.on('before-quit', async (event) => {
   // Cleanup skill service (cancel in-progress Opus calls, discard queue)
   try {
     await skillService.shutdown()
-  } catch {
-    // Ignore errors during shutdown
+  } catch (e) {
+    log.debug('Skill service shutdown error (expected during quit):', e)
   }
 
   // Cleanup orchestrator
   try {
     await orchestratorService.stop()
-  } catch {
-    // Ignore errors during shutdown
+  } catch (e) {
+    log.debug('Orchestrator shutdown error (expected during quit):', e)
   }
 
   // Cleanup generalist (long-lived interactive claude process)
   try {
     await generalistService.stop()
-  } catch {
-    // Ignore errors during shutdown
+  } catch (e) {
+    log.debug('Generalist shutdown error (expected during quit):', e)
   }
 
   // Cleanup memory feed (cancel in-progress claude -p summarizer)
   try {
     memoryFeedService.shutdown()
-  } catch {
-    // Ignore errors during shutdown
+  } catch (e) {
+    log.debug('Memory feed shutdown error (expected during quit):', e)
   }
 
   // Stop watching agent YAML files

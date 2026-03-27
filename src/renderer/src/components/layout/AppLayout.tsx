@@ -17,6 +17,7 @@ import { PixelOfficePanel } from '@renderer/components/pixel-office'
 import { WorkspaceSettingsPanel, WorkspaceSettingsContent } from '@renderer/components/workspace'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import { SettingsPage } from '@renderer/components/settings'
+import { WelcomeScreen } from '@renderer/components/welcome'
 import { UpdateBanner, MemoryFeedBanner, ErrorBoundary } from '@renderer/components/common'
 import { NewConversationModal } from '@renderer/components/chat'
 import {
@@ -188,6 +189,11 @@ export default function AppLayout(): React.JSX.Element {
       return <SettingsPage onBack={() => setView('chat')} />
     }
 
+    // No workspace → show welcome/home screen
+    if (!activeWorkspace) {
+      return <WelcomeScreen />
+    }
+
     // When workspace settings panel is active, show selected tab content
     if (showWorkspaceSettings) {
       return (
@@ -203,7 +209,7 @@ export default function AppLayout(): React.JSX.Element {
   }
 
   // Determine if sidebar should show (chat view or workspace settings view)
-  const showLeftSidebar = view === 'chat'
+  const showLeftSidebar = view === 'chat' && activeWorkspace !== null
 
   return (
     <div className="flex flex-col h-screen bg-surface-base">

@@ -1,14 +1,9 @@
 ---
 name: dotnet-architect
 description: >
-  Comprehensive .NET/C# architecture skill for backend development. Use for ANY .NET work including
-  ASP.NET Core Web API design, Entity Framework Core data access, C# coding patterns, Clean Architecture,
-  dependency injection, NuGet package management, MSBuild project configuration, performance optimization,
-  unit testing, and .NET version migrations. Trigger when the user mentions .NET, C#, ASP.NET, EF Core,
-  NuGet, MSBuild, xUnit, MSTest, LINQ, async/await, middleware, dependency injection, Clean Architecture,
-  CQRS, Domain-Driven Design, or any backend API development in the .NET ecosystem.
-  Also trigger for .NET upgrade migrations (net8.0 to net9.0/net10.0), build diagnostics, performance
-  profiling, or CI/CD pipeline configuration for .NET projects.
+  .NET/C# backend architecture: ASP.NET Core, EF Core, Clean Architecture, DI, NuGet,
+  MSBuild, testing, performance, migrations. Trigger: .NET, C#, ASP.NET, EF Core,
+  LINQ, xUnit, CQRS, DDD, middleware, NuGet, MSBuild, net8/net9/net10 upgrades.
 ---
 
 # .NET Architect

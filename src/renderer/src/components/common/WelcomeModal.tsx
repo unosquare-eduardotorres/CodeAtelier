@@ -29,7 +29,7 @@ interface WelcomeModalProps {
 export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.JSX.Element {
   const [step, setStep] = useState<1 | 2>(1)
   const [name, setName] = useState('')
-  const [avatarKey, setAvatarKey] = useState('astronaut')
+  const [avatarKey, setAvatarKey] = useState('business-man')
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)

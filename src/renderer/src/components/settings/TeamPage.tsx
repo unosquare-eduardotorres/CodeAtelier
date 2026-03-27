@@ -20,7 +20,8 @@ import { useSettingsStore } from '@renderer/store/settings.store'
 import { ConfirmDialog } from '@renderer/components/common'
 import CodeEditor from './CodeEditor'
 import SkillImportDropzone from './SkillImportDropzone'
-import { AGENT_META } from '../../../../shared/constants'
+import { useSpecialistStore } from '@renderer/store'
+import { getAgentMeta } from '@renderer/utils/agentMeta'
 import type { DiscoveredAgent, DiscoveredSkill } from '../../../../shared/types'
 
 // ── Helpers ──
@@ -48,11 +49,12 @@ function formatDate(dateStr: string | null): string {
 
 /** Build a map: skillName → list of agent display names that reference it */
 function buildSkillAgentMap(
-  agents: DiscoveredAgent[]
+  agents: DiscoveredAgent[],
+  specialists: import('../../../../shared/types').Specialist[]
 ): Map<string, { name: string; icon: string }[]> {
   const map = new Map<string, { name: string; icon: string }[]>()
   for (const agent of agents) {
-    const meta = AGENT_META[agent.parsed.name]
+    const meta = getAgentMeta(agent.parsed.name, specialists)
     const displayName = meta?.displayName ?? agent.parsed.name
     const icon = meta?.icon ?? '🤖'
     for (const skillName of agent.parsed.skills) {
@@ -81,6 +83,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
     selectSkill,
     deployAll
   } = useSettingsStore()
+  const { specialists } = useSpecialistStore()
 
   // Agent interaction state
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
@@ -109,7 +112,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
   const agentCardsRef = useRef<Map<string, HTMLDivElement>>(new Map())
 
   // Derived data
-  const skillAgentMap = useMemo(() => buildSkillAgentMap(agents), [agents])
+  const skillAgentMap = useMemo(() => buildSkillAgentMap(agents, specialists), [agents, specialists])
 
   // Sort agents: active first, then by name
   const sortedAgents = useMemo(() => {
@@ -298,7 +301,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
 
   const scrollToAgent = (agentName: string): void => {
     const agent = agents.find((a) => {
-      const meta = AGENT_META[a.parsed.name]
+      const meta = getAgentMeta(a.parsed.name, specialists)
       return (meta?.displayName ?? a.parsed.name) === agentName
     })
     if (agent) {
@@ -435,7 +438,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
           {expandedAgent && (() => {
             const agent = agents.find((a) => a.filename === expandedAgent)
             if (!agent) return null
-            const meta = AGENT_META[agent.parsed.name]
+            const meta = getAgentMeta(agent.parsed.name, specialists)
             const displayName = meta?.displayName ?? agent.parsed.name
             const icon = meta?.icon ?? '🤖'
 
@@ -914,7 +917,7 @@ const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
   { agent, isExpanded, isSyncing, isDeleting, isToggling, onExpand, onSync, onDelete, onToggle, onSkillClick },
   ref
 ) {
-  const meta = AGENT_META[agent.parsed.name]
+  const meta = getAgentMeta(agent.parsed.name, specialists)
   const icon = meta?.icon ?? '🤖'
   const displayName = meta?.displayName ?? agent.parsed.name
   const color = meta?.color ?? '#6366F1'

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type {
   CompleteResult,
   Conversation,
@@ -118,7 +119,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const conversations = await window.api.getConversations({ workspaceId })
       set({ conversations })
     } catch (error) {
-      console.error('Failed to load conversations:', error)
+      rendererLog.error('Failed to load conversations:', error)
     }
   },
 
@@ -164,7 +165,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: state.conversations.map((c) => (c.id === updated.id ? updated : c))
       }))
     } catch (error) {
-      console.error('Failed to update mode:', error)
+      rendererLog.error('Failed to update mode:', error)
       // Rollback optimistic update
       set((state) => ({
         activeConversation:
@@ -192,7 +193,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         mode: conversation.mode
       })
     } catch (error) {
-      console.error('Failed to sync mode on conversation select:', error)
+      rendererLog.error('Failed to sync mode on conversation select:', error)
     }
   },
 
@@ -211,7 +212,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       await window.api.stopGeneration()
     } catch (error) {
-      console.error('Failed to stop generation:', error)
+      rendererLog.error('Failed to stop generation:', error)
     }
     set({ isStreaming: false, streamingContent: '', toolActivities: [] })
   },
@@ -243,7 +244,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         attachments
       })
     } catch (error) {
-      console.error('Failed to send message:', error)
+      rendererLog.error('Failed to send message:', error)
       set({ isStreaming: false })
     }
   },
@@ -309,7 +310,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           })
         })
         .catch((error) => {
-          console.error('Failed to reload messages after stream finalize:', error)
+          rendererLog.error('Failed to reload messages after stream finalize:', error)
           set({ streamingContent: '', isStreaming: false, toolActivities: [] })
         })
     } else {
@@ -360,7 +361,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         tasks: activeTaskPlan.tasks
       })
     } catch (error) {
-      console.error('Failed to execute plan:', error)
+      rendererLog.error('Failed to execute plan:', error)
       set({ isExecutingPlan: false })
     }
   },
@@ -401,7 +402,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       await window.api.closeConversation({ conversationId: id })
     } catch (error) {
-      console.error('Failed to close conversation on backend:', error)
+      rendererLog.error('Failed to close conversation on backend:', error)
       // Still remove from UI state even if backend cleanup fails
     }
     const { activeConversation, conversations } = get()
@@ -452,7 +453,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           conversations: [conversation, ...state.conversations]
         }))
       } catch (error) {
-        console.error(`Failed to create item conversation for "${task.title}":`, error)
+        rendererLog.error(`Failed to create item conversation for "${task.title}":`, error)
       }
     }
 

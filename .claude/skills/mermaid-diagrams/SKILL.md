@@ -1,11 +1,9 @@
 ---
 name: mermaid-diagrams
 description: >
-  Mermaid diagram generation — 23 diagram types with syntax references, high-contrast
-  styling, Unicode semantic symbols, and troubleshooting. Use when generating any
-  Mermaid diagram: flowchart, sequence, class, ER, state, Gantt, C4, architecture,
-  mindmap, timeline, git graph, Sankey, pie, XY chart, quadrant, radar, treemap,
-  kanban, block, packet, requirement, user journey, or ZenUML.
+  Mermaid diagram generation: 23 types with syntax, styling, and troubleshooting.
+  Trigger: flowchart, sequence, class, ER, state, Gantt, C4, architecture, mindmap,
+  timeline, git graph, Sankey, pie, XY chart, quadrant, radar, kanban, ZenUML.
 user-invocable: false
 ---
 

@@ -7,8 +7,8 @@ export const CORE_AGENT_DEFAULTS: Record<
   string,
   { displayName: string; avatarKey: string; color: string }
 > = {
-  generalist: { displayName: 'Generalist', avatarKey: 'scholar', color: '#10B981' },
-  coordinator: { displayName: 'Orchestrator', avatarKey: 'architect', color: '#6366F1' }
+  generalist: { displayName: 'Da Vinci', avatarKey: 'da-vinci', color: '#D97706' },
+  coordinator: { displayName: 'Stravinsky', avatarKey: 'stravinsky', color: '#8B5CF6' }
 }
 
 /**
@@ -16,19 +16,19 @@ export const CORE_AGENT_DEFAULTS: Record<
  * Used when no custom avatar_url is set on the specialist.
  */
 export const SPECIALIST_DEFAULT_AVATARS: Record<string, string> = {
-  'react-architect': 'cyborg',
-  'dotnet-architect': 'robot',
-  'electron-architect': 'hacker',
+  'react-architect': 'hoodie-dev',
+  'dotnet-architect': 'business-man',
+  'electron-architect': 'glasses-guy',
   'agentic-architect': 'robot',
-  'db-architect': 'alchemist',
-  'ux-ui-specialist': 'artist',
-  'git-github-specialist': 'detective',
-  'requirements-specialist': 'writer',
-  'code-planner': 'scholar',
-  'execution-planner': 'architect',
-  'cicd-devops': 'rocket-pilot',
-  'cloud-infrastructure': 'explorer',
-  'docs-diagrams-specialist': 'writer'
+  'db-architect': 'scientist',
+  'ux-ui-specialist': 'ponytail-girl',
+  'git-github-specialist': 'ninja',
+  'requirements-specialist': 'business-woman',
+  'code-planner': 'glasses-guy',
+  'execution-planner': 'superhero',
+  'cicd-devops': 'cap-guy',
+  'cloud-infrastructure': 'bearded-man',
+  'docs-diagrams-specialist': 'woman-curly'
 }
 
 /**

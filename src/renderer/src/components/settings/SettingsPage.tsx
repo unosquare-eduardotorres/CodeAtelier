@@ -214,7 +214,7 @@ function ProfileSection(): React.JSX.Element {
   const { profile, saveProfile } = useProfileStore()
   const [isEditing, setIsEditing] = useState(false)
   const [name, setName] = useState(profile?.displayName ?? '')
-  const [avatarKey, setAvatarKey] = useState(profile?.avatarKey ?? 'astronaut')
+  const [avatarKey, setAvatarKey] = useState(profile?.avatarKey ?? 'business-man')
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
@@ -241,7 +241,7 @@ function ProfileSection(): React.JSX.Element {
 
   const handleCancel = useCallback(() => {
     setName(profile?.displayName ?? '')
-    setAvatarKey(profile?.avatarKey ?? 'astronaut')
+    setAvatarKey(profile?.avatarKey ?? 'business-man')
     setIsEditing(false)
     setShowAvatarPicker(false)
   }, [profile])
@@ -342,9 +342,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
         </button>
         <Settings size={16} className="text-primary-text" />
         <span className="text-sm font-semibold text-text-primary">App Settings</span>
-        <div className="ml-auto">
-          <UpdateButton />
-        </div>
       </div>
 
       {/* Content */}

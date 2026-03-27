@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type { Idea, Conversation } from '../../../shared/types'
 
 interface IdeaState {
@@ -31,7 +32,7 @@ export const useIdeaStore = create<IdeaState>((set) => ({
       const ideas = await window.api.listIdeas({ workspaceId })
       set({ ideas, isLoading: false })
     } catch (error) {
-      console.error('Failed to load ideas:', error)
+      rendererLog.error('Failed to load ideas:', error)
       set({ isLoading: false })
     }
   },

@@ -3,7 +3,8 @@ import { Bot, RefreshCw, Trash2, Loader2, Rocket, Save, Power, PowerOff } from '
 import { useSettingsStore } from '@renderer/store/settings.store'
 import { ConfirmDialog } from '@renderer/components/common'
 import CodeEditor from './CodeEditor'
-import { AGENT_META } from '../../../../shared/constants'
+import { useSpecialistStore } from '@renderer/store'
+import { getAgentMeta } from '@renderer/utils/agentMeta'
 import type { DiscoveredAgent } from '../../../../shared/types'
 
 interface AgentsListProps {
@@ -12,6 +13,7 @@ interface AgentsListProps {
 
 export default function AgentsList({ workspacePath }: AgentsListProps): React.JSX.Element {
   const { agents, loadAgents, deployAll } = useSettingsStore()
+  const { specialists } = useSpecialistStore()
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
   const [deleteTarget, setDeleteTarget] = useState<DiscoveredAgent | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -205,7 +207,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
             </h3>
             <div className="space-y-1">
               {sortedAgents.map((agent) => {
-                const meta = AGENT_META[agent.parsed.name]
+                const meta = getAgentMeta(agent.parsed.name, specialists)
                 const icon = meta?.icon ?? '🤖'
                 const displayName = meta?.displayName ?? agent.parsed.name
                 const isSelected = selectedAgent?.filename === agent.filename
@@ -327,11 +329,11 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className="text-xl">
-                    {AGENT_META[selectedAgent.parsed.name]?.icon ?? '🤖'}
+                    {getAgentMeta(selectedAgent.parsed.name, specialists)?.icon ?? '🤖'}
                   </span>
                   <div>
                     <h3 className="text-sm font-semibold text-text-primary">
-                      {AGENT_META[selectedAgent.parsed.name]?.displayName ??
+                      {getAgentMeta(selectedAgent.parsed.name, specialists)?.displayName ??
                         selectedAgent.parsed.name}
                     </h3>
                     {selectedAgent.parsed.description && (

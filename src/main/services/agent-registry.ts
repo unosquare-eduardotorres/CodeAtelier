@@ -35,10 +35,10 @@ export interface AgentDefinition {
 
 /** Default icon/color/displayName for known agents */
 const AGENT_META: Record<string, { icon: string; color: string; displayName: string; priority: number }> = {
-  generalist: { icon: '💬', color: '#6366F1', displayName: 'Generalist', priority: 0 },
-  'generalist-agent': { icon: '💬', color: '#6366F1', displayName: 'Generalist', priority: 0 },
-  'generalist-developer': { icon: '💻', color: '#6366F1', displayName: 'Generalist Developer', priority: 0 },
-  orchestrator: { icon: '🎯', color: '#8B5CF6', displayName: 'Orchestrator', priority: 1 },
+  generalist: { icon: '🎨', color: '#D97706', displayName: 'Da Vinci', priority: 0 },
+  'generalist-agent': { icon: '🎨', color: '#D97706', displayName: 'Da Vinci', priority: 0 },
+  'generalist-developer': { icon: '🎨', color: '#D97706', displayName: 'Da Vinci', priority: 0 },
+  orchestrator: { icon: '🎼', color: '#8B5CF6', displayName: 'Stravinsky', priority: 1 },
   'react-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'React Architect', priority: 2 },
   'dotnet-architect': { icon: '🟣', color: '#512BD4', displayName: '.NET Architect', priority: 3 },
   'electron-architect': { icon: '⚡', color: '#47848F', displayName: 'Electron Architect', priority: 4 },

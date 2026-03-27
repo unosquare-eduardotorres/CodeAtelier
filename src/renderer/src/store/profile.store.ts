@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type { UserProfile, CoreAgentAlias } from '../../../shared/types'
 
 interface ProfileState {
@@ -36,7 +37,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       // Also load core agent aliases
       await get().loadCoreAgentAliases()
     } catch (error) {
-      console.error('Failed to load user profile:', error)
+      rendererLog.error('Failed to load user profile:', error)
       set({ isLoading: false })
     }
   },
@@ -46,7 +47,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       const profile = await window.api.upsertUserProfile({ displayName, avatarKey })
       set({ profile, hasCompletedWelcome: true })
     } catch (error) {
-      console.error('Failed to save user profile:', error)
+      rendererLog.error('Failed to save user profile:', error)
       throw error
     }
   },
@@ -56,7 +57,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       const aliases = await window.api.listCoreAgentAliases()
       set({ coreAgentAliases: aliases })
     } catch (error) {
-      console.error('Failed to load core agent aliases:', error)
+      rendererLog.error('Failed to load core agent aliases:', error)
     }
   },
 
@@ -74,7 +75,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         ]
       }))
     } catch (error) {
-      console.error('Failed to save core agent alias:', error)
+      rendererLog.error('Failed to save core agent alias:', error)
       throw error
     }
   },

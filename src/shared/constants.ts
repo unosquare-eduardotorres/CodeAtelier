@@ -1,24 +1,3 @@
-/**
- * @deprecated Use database-backed specialists via specialistRepository instead.
- * Kept temporarily for backward compatibility during migration.
- */
-export const AGENT_IDS = {
-  GENERALIST: 'generalist',
-  ORCHESTRATOR: 'orchestrator',
-  REACT_ARCHITECT: 'react-architect',
-  DOTNET_ARCHITECT: 'dotnet-architect',
-  ELECTRON_ARCHITECT: 'electron-architect',
-  AGENTIC_ARCHITECT: 'agentic-architect',
-  DB_ARCHITECT: 'db-architect',
-  UX_UI_SPECIALIST: 'ux-ui-specialist',
-  GIT_GITHUB_SPECIALIST: 'git-github-specialist',
-  REQUIREMENTS_SPECIALIST: 'requirements-specialist',
-  CODE_PLANNER: 'code-planner',
-  EXECUTION_PLANNER: 'execution-planner',
-  CICD_DEVOPS: 'cicd-devops',
-  CLOUD_INFRASTRUCTURE: 'cloud-infrastructure'
-} as const
-
 export const IPC_CHANNELS = {
   // Workspace
   WORKSPACE_LIST: 'workspace:list',
@@ -203,33 +182,11 @@ export const IPC_CHANNELS = {
 
   // Core Agent Aliases
   CORE_AGENT_LIST: 'coreAgent:list',
-  CORE_AGENT_UPSERT: 'coreAgent:upsert'
-} as const
+  CORE_AGENT_UPSERT: 'coreAgent:upsert',
 
-/**
- * @deprecated Use database-backed specialists via specialistRepository instead.
- * Kept temporarily for backward compatibility during migration.
- */
-export const AGENT_META: Record<string, { icon: string; color: string; displayName: string }> = {
-  generalist: { icon: '💬', color: '#6366F1', displayName: 'Generalist' },
-  orchestrator: { icon: '🎯', color: '#8B5CF6', displayName: 'Orchestrator' },
-  'react-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'React Architect' },
-  'dotnet-architect': { icon: '🟣', color: '#512BD4', displayName: '.NET Architect' },
-  'electron-architect': { icon: '⚡', color: '#47848F', displayName: 'Electron Architect' },
-  'agentic-architect': { icon: '🤖', color: '#D97706', displayName: 'Agentic Architect' },
-  'db-architect': { icon: '🗄️', color: '#336791', displayName: 'DB Architect' },
-  'ux-ui-specialist': { icon: '🎨', color: '#DB2777', displayName: 'UX/UI Specialist' },
-  'git-github-specialist': { icon: '🔀', color: '#64748B', displayName: 'Git/GitHub Specialist' },
-  'requirements-specialist': {
-    icon: '📋',
-    color: '#059669',
-    displayName: 'Requirements Specialist'
-  },
-  'code-planner': { icon: '📝', color: '#475569', displayName: 'Code Planner' },
-  'execution-planner': { icon: '📅', color: '#DC6843', displayName: 'Execution Planner' },
-  'cicd-devops': { icon: '🚀', color: '#DC2626', displayName: 'CI/CD DevOps' },
-  'cloud-infrastructure': { icon: '☁️', color: '#0D9488', displayName: 'Cloud Infrastructure' }
-}
+  // Renderer logging bridge
+  LOG_FROM_RENDERER: 'log:fromRenderer'
+} as const
 
 export const CONVERSATION_MODES = {
   plan: {

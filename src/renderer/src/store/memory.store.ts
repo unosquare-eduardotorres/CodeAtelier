@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type { Memory, MemoryFeedProgress, MemoryType } from '../../../shared/types'
 
 type FeedSource = 'claude-md' | 'codebase' | 'document'
@@ -50,7 +51,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
       const memories = await window.api.listMemories({ workspaceId })
       set({ memories })
     } catch (error) {
-      console.error('Failed to load memories:', error)
+      rendererLog.error('Failed to load memories:', error)
     }
   },
 
@@ -59,7 +60,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
       const memories = await window.api.searchMemories({ workspaceId, query })
       set({ memories, searchQuery: query })
     } catch (error) {
-      console.error('Failed to search memories:', error)
+      rendererLog.error('Failed to search memories:', error)
     }
   },
 
@@ -73,7 +74,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
         set({ memories })
       }
     } catch (error) {
-      console.error('Failed to create memory:', error)
+      rendererLog.error('Failed to create memory:', error)
     }
   },
 
@@ -84,7 +85,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
         memories: state.memories.map((m) => (m.id === id ? updated : m))
       }))
     } catch (error) {
-      console.error('Failed to update memory:', error)
+      rendererLog.error('Failed to update memory:', error)
     }
   },
 
@@ -95,7 +96,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
         memories: state.memories.filter((m) => m.id !== id)
       }))
     } catch (error) {
-      console.error('Failed to delete memory:', error)
+      rendererLog.error('Failed to delete memory:', error)
     }
   },
 

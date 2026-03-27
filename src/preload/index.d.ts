@@ -337,6 +337,13 @@ interface Api {
     alias: string | null
     avatarKey: string | null
   }) => Promise<CoreAgentAlias>
+
+  // Renderer logging bridge
+  log: (args: {
+    level: 'error' | 'warn' | 'info' | 'debug'
+    message: string
+    data?: unknown[]
+  }) => void
 }
 
 declare global {

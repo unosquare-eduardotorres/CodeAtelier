@@ -26,9 +26,6 @@ export { SpecialistPoolService, specialistPoolService } from './specialist-pool.
 export { GitWorktreeService, gitWorktreeService } from './git-worktree.service'
 export type { MergeResult, MergeAllResult } from './git-worktree.service'
 
-/** @deprecated Use promptBuilder.build({ role: 'generalist', mode }) instead */
-export { GENERALIST_SYSTEM_PROMPT } from './generalist-prompts'
-
 export { WorkspaceDeployService, workspaceDeployService } from './workspace-deploy.service'
 export { memoryService } from './memory.service'
 export { memoryFeedService } from './memory-feed.service'

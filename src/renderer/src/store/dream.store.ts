@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type { DreamRun, DreamProgress } from '../../../shared/types'
 
 interface DreamState {
@@ -25,7 +26,7 @@ export const useDreamStore = create<DreamState>((set) => ({
       const run = await window.api.triggerDream({ workspaceId })
       set({ currentRun: run })
     } catch (error) {
-      console.error('Failed to trigger dream:', error)
+      rendererLog.error('Failed to trigger dream:', error)
     }
   },
 
@@ -34,7 +35,7 @@ export const useDreamStore = create<DreamState>((set) => ({
       await window.api.cancelDream({ workspaceId })
       set({ currentRun: null, progress: null })
     } catch (error) {
-      console.error('Failed to cancel dream:', error)
+      rendererLog.error('Failed to cancel dream:', error)
     }
   },
 
@@ -43,7 +44,7 @@ export const useDreamStore = create<DreamState>((set) => ({
       const run = await window.api.getDreamStatus({ workspaceId })
       set({ currentRun: run })
     } catch (error) {
-      console.error('Failed to load dream status:', error)
+      rendererLog.error('Failed to load dream status:', error)
     }
   },
 
@@ -52,7 +53,7 @@ export const useDreamStore = create<DreamState>((set) => ({
       const history = await window.api.getDreamHistory({ workspaceId })
       set({ history })
     } catch (error) {
-      console.error('Failed to load dream history:', error)
+      rendererLog.error('Failed to load dream history:', error)
     }
   },
 

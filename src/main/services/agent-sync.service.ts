@@ -389,8 +389,8 @@ export class AgentSyncService {
   ): { icon: string; color: string; displayName: string; priority: number } | null {
     // Import at runtime to avoid circular deps
     const AGENT_META: Record<string, { icon: string; color: string; displayName: string }> = {
-      generalist: { icon: '💬', color: '#6366F1', displayName: 'Generalist' },
-      orchestrator: { icon: '🎯', color: '#8B5CF6', displayName: 'Orchestrator' },
+      generalist: { icon: '🎨', color: '#D97706', displayName: 'Da Vinci' },
+      orchestrator: { icon: '🎼', color: '#8B5CF6', displayName: 'Stravinsky' },
       'react-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'React Architect' },
       'dotnet-architect': { icon: '🟣', color: '#512BD4', displayName: '.NET Architect' },
       'electron-architect': { icon: '⚡', color: '#47848F', displayName: 'Electron Architect' },

@@ -10,7 +10,7 @@ import {
   ChevronUp
 } from 'lucide-react'
 import type { AgentStatus, ModelTier, ComplexityTier } from '../../../../shared/types'
-import { AGENT_META } from '../../../../shared/constants'
+import { getAgentMeta } from '@renderer/utils/agentMeta'
 import { useSpecialistStore, useAgentStore } from '@renderer/store'
 
 // Model tier badge config
@@ -100,11 +100,8 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
   const { specialists } = useSpecialistStore()
   const agentOutput = useAgentStore((s) => s.agentOutputs[status.agentId] ?? '')
 
-  // Look up metadata from DB-backed specialists first, fall back to hardcoded AGENT_META
-  const dbSpecialist = specialists.find((s) => s.agentId === status.agentType)
-  const meta = dbSpecialist
-    ? { icon: dbSpecialist.icon, color: dbSpecialist.color, displayName: dbSpecialist.displayName }
-    : AGENT_META[status.agentType]
+  // Look up metadata from DB-backed specialists
+  const meta = getAgentMeta(status.agentType, specialists)
 
   const isActive =
     status.status === 'thinking' || status.status === 'writing' || status.status === 'reviewing'

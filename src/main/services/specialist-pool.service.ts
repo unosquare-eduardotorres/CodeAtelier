@@ -37,6 +37,10 @@ const RETRY_CONFIG = {
 const SPECIALIST_TIMEOUT_MS = 10 * 60 * 1000
 /** Grace period (ms) between SIGTERM and SIGKILL escalation */
 const SIGKILL_GRACE_MS = 5000
+/** Maximum accumulated output size per specialist (5MB) — prevents unbounded memory growth */
+const MAX_OUTPUT_SIZE = 5 * 1024 * 1024
+/** Circuit breaker threshold — consecutive spawn failures before stopping all tasks */
+const CIRCUIT_BREAKER_THRESHOLD = 5
 
 /** Maps a ModelTier to the corresponding specialist ModelAction */
 function tierToModelAction(tier: string): import('../../shared/types').ModelAction {
@@ -88,6 +92,8 @@ export class SpecialistPoolService extends EventEmitter {
   private aborted: boolean = false
   /** Enriched handoff context from the generalist, injected into specialist prompts */
   private conversationBrief: HandoffBrief | null = null
+  /** Circuit breaker: consecutive spawn failures across all tasks */
+  private consecutiveSpawnFailures = 0
 
   setWorkspacePath(path: string): void {
     this.workspacePath = path
@@ -276,7 +282,16 @@ export class SpecialistPoolService extends EventEmitter {
 
     childProcess.stdout?.on('data', (data: Buffer) => {
       const text = data.toString()
-      info.output += text
+      // Cap output size to prevent unbounded memory growth from verbose specialists
+      if (info.output.length < MAX_OUTPUT_SIZE) {
+        info.output += text
+        if (info.output.length >= MAX_OUTPUT_SIZE) {
+          info.output += '\n\n[Output truncated at 5MB]'
+          this.log.warn(
+            `Specialist ${task.specialist}/${task.id} output truncated at ${MAX_OUTPUT_SIZE} bytes`
+          )
+        }
+      }
 
       // Buffer-aware NDJSON parsing — handles partial lines across data events
       const existingBuffer = this.taskBuffers.get(task.id) ?? ''
@@ -329,12 +344,23 @@ export class SpecialistPoolService extends EventEmitter {
             })
           }
 
-          // Extract token usage from stream events (result and assistant events carry usage data)
-          const usage = event.usage as Record<string, number> | undefined
-          if (usage) {
-            const inputTokens = usage.input_tokens ?? 0
-            const outputTokens = usage.output_tokens ?? 0
-            info.tokenUsage += inputTokens + outputTokens
+          // Extract token usage from all stream event types:
+          // - message_start: carries input_tokens in event.message.usage
+          // - message_delta: carries output_tokens in event.usage
+          // - result/assistant: carry usage in event.usage (already handled)
+          if (event.type === 'message_start' && event.message?.usage) {
+            const msgUsage = event.message.usage as Record<string, number>
+            info.tokenUsage += msgUsage.input_tokens ?? 0
+          } else if (event.type === 'message_delta' && event.usage) {
+            const deltaUsage = event.usage as Record<string, number>
+            info.tokenUsage += deltaUsage.output_tokens ?? 0
+          } else {
+            const usage = event.usage as Record<string, number> | undefined
+            if (usage) {
+              const inputTokens = usage.input_tokens ?? 0
+              const outputTokens = usage.output_tokens ?? 0
+              info.tokenUsage += inputTokens + outputTokens
+            }
           }
         } catch {
           // Not JSON — emit raw text
@@ -404,6 +430,8 @@ export class SpecialistPoolService extends EventEmitter {
       }
 
       if (code === 0) {
+        // Reset circuit breaker on successful completion
+        this.consecutiveSpawnFailures = 0
         info.status = 'completed'
         this.taskStatuses.set(task.id, 'completed')
         this.emitProgress(task, 'completed', info.output)
@@ -483,9 +511,22 @@ export class SpecialistPoolService extends EventEmitter {
         }
 
         // Retries exhausted or non-retryable — mark as failed
+        this.consecutiveSpawnFailures++
         info.status = 'failed'
         this.taskStatuses.set(task.id, 'failed')
         this.emitProgress(task, 'failed', undefined, `Process exited with code ${code}`)
+
+        // Circuit breaker: stop all tasks if too many consecutive failures
+        if (this.consecutiveSpawnFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+          this.log.error(
+            `Circuit breaker tripped: ${this.consecutiveSpawnFailures} consecutive failures — stopping all tasks`
+          )
+          this.emit('circuitBreakerTripped', {
+            failures: this.consecutiveSpawnFailures
+          })
+          this.stopAll()
+          return
+        }
 
         // Abandon worktree on failure
         if (info.worktreeId) {
@@ -501,9 +542,21 @@ export class SpecialistPoolService extends EventEmitter {
       this.taskBuffers.delete(task.id)
       this.activeProcesses.delete(task.id)
       this.completedTasks.add(task.id)
+      this.consecutiveSpawnFailures++
       info.status = 'failed'
       this.taskStatuses.set(task.id, 'failed')
       this.emitProgress(task, 'failed', undefined, err.message)
+
+      // Circuit breaker: stop all tasks if too many consecutive failures
+      if (this.consecutiveSpawnFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+        this.log.error(
+          `Circuit breaker tripped: ${this.consecutiveSpawnFailures} consecutive spawn errors — stopping all tasks`
+        )
+        this.emit('circuitBreakerTripped', {
+          failures: this.consecutiveSpawnFailures
+        })
+        this.stopAll()
+      }
 
       // Complete DB session on error with whatever tokens were consumed
       if (info.dbSessionId) {
@@ -592,16 +645,6 @@ export class SpecialistPoolService extends EventEmitter {
       ? `${task.description}${verificationSuffix}${dependencyContext}`
       : `${task.description}${verificationSuffix}`
 
-    // Strategy 6: Conditional --verbose flag — only in debug mode to reduce stream noise
-    let debugMode = false
-    try {
-      const settings = this.workspacePath
-        ? workspaceRepository.getSettingsByPath(this.workspacePath)
-        : {}
-      debugMode = settings.debugMode === true
-    } catch {
-      // Default to no verbose
-    }
 
     // Check for per-action model override, falling back to complexity-scored tier model
     const modelAction = task.model ? tierToModelAction(task.model) : 'specialist:moderate'
@@ -615,7 +658,7 @@ export class SpecialistPoolService extends EventEmitter {
       modelId,
       '--output-format',
       'stream-json',
-      ...(debugMode ? ['--verbose'] : [])
+      '--verbose'
     ]
 
     if (mode === 'build') {
@@ -773,6 +816,7 @@ export class SpecialistPoolService extends EventEmitter {
     this.activeProcesses.clear()
     this.aborted = false
     this.conversationBrief = null
+    this.consecutiveSpawnFailures = 0
     // Note: workspacePath and conversationId are preserved across resets
   }
 }

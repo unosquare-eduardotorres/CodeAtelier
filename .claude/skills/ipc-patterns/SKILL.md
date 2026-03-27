@@ -1,12 +1,9 @@
 ---
 name: ipc-patterns
 description: >
-  Agent Studio IPC communication patterns — typed channels, preload bridge,
-  streaming events, error handling, and security validation. Use when working
-  on any IPC handler, preload bridge method, or renderer-to-main communication.
-  Trigger whenever the task involves: IPC channels, preload bridge, window.api,
-  ipcMain.handle, ipcRenderer.invoke, streaming chunks, message events,
-  validateSender, event listeners, cleanup functions, or renderer-main communication.
+  Agent Studio IPC patterns: typed channels, preload bridge, streaming events,
+  error handling, validateSender. Trigger: IPC handler, preload bridge, window.api,
+  ipcMain.handle, ipcRenderer.invoke, streaming chunks, renderer-main communication.
 user-invocable: false
 ---
 

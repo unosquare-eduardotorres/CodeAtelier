@@ -688,7 +688,18 @@ const api = {
     agentRole: 'generalist' | 'coordinator'
     alias: string | null
     avatarKey: string | null
-  }): Promise<CoreAgentAlias> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_UPSERT, args)
+  }): Promise<CoreAgentAlias> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_UPSERT, args),
+
+  // ── Renderer Logging Bridge ──
+  log: (args: {
+    level: 'error' | 'warn' | 'info' | 'debug'
+    message: string
+    data?: unknown[]
+  }): void => {
+    ipcRenderer.invoke(IPC_CHANNELS.LOG_FROM_RENDERER, args).catch(() => {
+      // Fallback silently — IPC may not be ready during early startup
+    })
+  }
 } as const
 
 if (process.contextIsolated) {
