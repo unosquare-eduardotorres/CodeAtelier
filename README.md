@@ -6,9 +6,19 @@ Agent Studio is a desktop application that transforms software development by pr
 
 ## How It Works
 
-```
-You <-> Generalist Agent <-> Orchestrator <-> Specialist Agents (14)
-         (always-on)         (on demand)      (parallel execution)
+```mermaid
+flowchart LR
+    You([You]) <-->|chat| G[Generalist Agent]
+    G -->|handoff| O[Orchestrator]
+    O -->|spawn| S1[Specialist 1]
+    O -->|spawn| S2[Specialist 2]
+    O -->|spawn| S3[Specialist N]
+
+    style G fill:#7c3aed,color:#fff,stroke:#7c3aed
+    style O fill:#f59e0b,color:#fff,stroke:#f59e0b
+    style S1 fill:#3b82f6,color:#fff,stroke:#3b82f6
+    style S2 fill:#3b82f6,color:#fff,stroke:#3b82f6
+    style S3 fill:#3b82f6,color:#fff,stroke:#3b82f6
 ```
 
 1. **Chat with the Generalist** — a long-lived Claude CLI session that understands your entire codebase
@@ -121,10 +131,21 @@ src/
 
 All communication between the renderer (UI) and main (Node.js) process goes through a typed IPC layer:
 
-```
-Renderer                    Preload                     Main Process
-window.api.invoke() ──> ipcRenderer.invoke() ──> ipcMain.handle()
-window.api.on()     <── ipcRenderer.on()     <── webContents.send()
+```mermaid
+sequenceDiagram
+    participant R as Renderer (React)
+    participant P as Preload (Bridge)
+    participant M as Main Process (Node.js)
+
+    Note over R,M: Request / Response
+    R->>P: window.api.invoke(channel, data)
+    P->>M: ipcRenderer.invoke(channel, data)
+    M-->>P: return result
+    P-->>R: return result
+
+    Note over R,M: Streaming (e.g. chat messages)
+    M-)P: webContents.send(channel, chunk)
+    P-)R: ipcRenderer.on(channel, callback)
 ```
 
 - Channels defined in `src/shared/constants.ts` — no magic strings
@@ -133,10 +154,76 @@ window.api.on()     <── ipcRenderer.on()     <── webContents.send()
 
 ### Agent Execution Model
 
+```mermaid
+flowchart TD
+    User([User message]) --> G
+
+    subgraph Always On
+        G[Generalist<br/><i>long-lived claude session</i><br/>read-only · plan mode]
+    end
+
+    G -->|detects handoff| O
+
+    subgraph On Demand
+        O[Orchestrator<br/><i>claude -p per handoff</i><br/>mode-appropriate permissions]
+    end
+
+    O -->|spawns| pool
+
+    subgraph pool [Specialist Pool — parallel]
+        S1[React Architect<br/>Opus · 31,999 think tokens]
+        S2[DB Architect<br/>Sonnet · 10,000 think tokens]
+        S3[UX/UI Specialist<br/>Haiku · 0 think tokens]
+    end
+
+    S1 -->|result| O
+    S2 -->|result| O
+    S3 -->|result| O
+    O -->|aggregated response| G
+    G -->|reply| User
+
+    style G fill:#7c3aed,color:#fff,stroke:#7c3aed
+    style O fill:#f59e0b,color:#fff,stroke:#f59e0b
+    style S1 fill:#3b82f6,color:#fff,stroke:#3b82f6
+    style S2 fill:#3b82f6,color:#fff,stroke:#3b82f6
+    style S3 fill:#3b82f6,color:#fff,stroke:#3b82f6
+```
+
 - **Generalist**: Long-lived `claude` CLI session in `--permission-mode plan` (read-only)
 - **Orchestrator**: Spawned per handoff via `claude -p` with mode-appropriate permissions
 - **Specialists**: One-shot `claude -p` commands, run in parallel
 - **Thinking budgets**: Opus = 31,999 tokens, Sonnet = 10,000, Haiku = 0
+
+### Electron Process Model
+
+```mermaid
+flowchart LR
+    subgraph Electron
+        direction TB
+        Main["Main Process<br/>(Node.js)"]
+        Preload["Preload Script<br/>(contextBridge)"]
+        Renderer["Renderer Process<br/>(React + Zustand)"]
+    end
+
+    subgraph Storage
+        DB[(SQLite<br/>better-sqlite3)]
+    end
+
+    subgraph External
+        CLI["Claude CLI<br/>(child_process)"]
+    end
+
+    Renderer <-->|IPC| Preload
+    Preload <-->|IPC| Main
+    Main <--> DB
+    Main <-->|spawn / stdin·stdout| CLI
+
+    style Renderer fill:#3b82f6,color:#fff,stroke:#3b82f6
+    style Preload fill:#8b5cf6,color:#fff,stroke:#8b5cf6
+    style Main fill:#059669,color:#fff,stroke:#059669
+    style DB fill:#d97706,color:#fff,stroke:#d97706
+    style CLI fill:#dc2626,color:#fff,stroke:#dc2626
+```
 
 ### Database
 
