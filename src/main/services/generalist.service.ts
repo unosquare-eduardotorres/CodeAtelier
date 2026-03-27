@@ -51,10 +51,16 @@ export class GeneralistService extends AgentBaseService {
   /** Maps conversationId → Claude CLI session_id for --resume support */
   private sessionMap: Map<string, string> = new Map()
 
-  /** Token threshold to suggest compaction (80K tokens — Claude's context is ~200K) */
-  private static readonly COMPACT_SUGGEST_THRESHOLD = 80_000
-  private static readonly COMPACT_AUTO_THRESHOLD = 150_000
+  /**
+   * Token thresholds for context compaction.
+   * Strategy 2: Lowered from 80K/150K to 50K/100K — prompt caching helps but
+   * context still grows linearly. Earlier compaction prevents runaway costs.
+   */
+  private static readonly COMPACT_SUGGEST_THRESHOLD = 50_000
+  private static readonly COMPACT_AUTO_THRESHOLD = 100_000
   private compactSuggested: boolean = false
+  /** Tracks number of compactions in this session to avoid over-compacting */
+  private compactCount: number = 0
 
   /** Tracks whether stop() was called intentionally (vs crash) */
   private intentionallyStopped: boolean = false
@@ -82,6 +88,7 @@ export class GeneralistService extends AgentBaseService {
     this.processReady = false
     this.intentionallyStopped = false
     this.restartAttempts = 0
+    this.compactCount = 0
     this.currentConversationId = null
     this.accumulatedText = ''
 
@@ -109,12 +116,23 @@ export class GeneralistService extends AgentBaseService {
 
     const isBuildMode = this.currentMode === 'build'
 
+    // Strategy 6: Conditional --verbose flag — only in debug mode to reduce stream noise
+    let debugMode = false
+    try {
+      const allWorkspaces2 = workspaceRepository.findAll()
+      const workspace2 = allWorkspaces2.find((w) => w.repoPath === workspacePath)
+      const settings2 = workspace2 ? JSON.parse(workspace2.settingsJson || '{}') : {}
+      debugMode = settings2.debugMode === true
+    } catch {
+      // Default to no verbose
+    }
+
     const args = [
       '--output-format',
       'stream-json',
       '--input-format',
       'stream-json',
-      '--verbose',
+      ...(debugMode ? ['--verbose'] : []),
       ...(isBuildMode
         ? ['--dangerously-skip-permissions']
         : ['--permission-mode', 'plan', '--allowedTools', 'WebSearch,WebFetch']),
@@ -443,6 +461,15 @@ export class GeneralistService extends AgentBaseService {
           specialists: brief.specialists
         })
         this.emit('handoff', brief)
+
+        // Strategy 2: Post-handoff auto-compact — conversation context before the handoff
+        // is mostly historical. Compact it to save tokens on subsequent messages.
+        if (this.tokenUsage > 30_000 && this.compactCount < 5) {
+          this.log.info(
+            `Post-handoff auto-compact triggered (tokens: ${this.tokenUsage}, compacts: ${this.compactCount})`
+          )
+          setTimeout(() => this.compact(), 2000)
+        }
       }
     } catch (error) {
       this.log.error('Failed to parse handoff block:', error)
@@ -579,7 +606,8 @@ export class GeneralistService extends AgentBaseService {
       throw new Error('Generalist not running — nothing to compact')
     }
 
-    this.log.info('Compacting conversation context...')
+    this.log.info(`Compacting conversation context... (compact #${this.compactCount + 1})`)
+    this.compactCount++
     this.compactSuggested = false // Reset so we can re-suggest after compacting if needed
     this.currentStatus = 'thinking'
     this.emit('statusUpdate', this.getStatus())

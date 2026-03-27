@@ -75,12 +75,23 @@ export class OrchestratorService extends AgentBaseService {
     // No LLM skill matching — skills are resolved deterministically via AgentRegistry
     // when the orchestrator decomposes tasks and assigns them to specialists.
 
+    // Strategy 6: Conditional --verbose flag — only in debug mode to reduce stream noise
+    let debugMode = false
+    try {
+      const settings = this.workspacePath
+        ? workspaceRepository.getSettingsByPath(this.workspacePath)
+        : {}
+      debugMode = settings.debugMode === true
+    } catch {
+      // Default to no verbose
+    }
+
     const args = [
       '-p',
       message,
       '--output-format',
       'stream-json',
-      '--verbose',
+      ...(debugMode ? ['--verbose'] : []),
       '--allowedTools',
       'WebSearch,WebFetch'
     ]
@@ -195,10 +206,16 @@ export class OrchestratorService extends AgentBaseService {
         ? `\nFiles discussed/planned:\n${brief.filesDiscussed.map((f) => `- ${f}`).join('\n')}`
         : ''
 
-    const conversationBlock =
+    // Strategy 5: Truncate recentMessages to prevent unbounded context in decomposition.
+    // Long conversations can dump enormous history into the decomposition prompt.
+    const MAX_CONVERSATION_CHARS = 3000
+    const rawConversation =
       brief.recentMessages.length > 0
-        ? `\nRecent conversation context:\n${brief.recentMessages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n')}`
+        ? brief.recentMessages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n')
         : ''
+    const conversationBlock = rawConversation
+      ? `\nRecent conversation context:\n${rawConversation.length > MAX_CONVERSATION_CHARS ? rawConversation.substring(rawConversation.length - MAX_CONVERSATION_CHARS) + '\n[... earlier messages truncated]' : rawConversation}`
+      : ''
 
     const prompt = `Task to decompose: "${brief.summary}"
 ${decisionsBlock}

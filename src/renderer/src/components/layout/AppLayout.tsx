@@ -14,7 +14,8 @@ import { Sidebar } from '@renderer/components/layout'
 import { ChatSidebar, ChatPanel } from '@renderer/components/chat'
 import { AgentMonitor } from '@renderer/components/agents'
 import { PixelOfficePanel } from '@renderer/components/pixel-office'
-import { WorkspaceSettingsPage } from '@renderer/components/workspace'
+import { WorkspaceSettingsPanel, WorkspaceSettingsContent } from '@renderer/components/workspace'
+import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import { SettingsPage } from '@renderer/components/settings'
 import { UpdateBanner, MemoryFeedBanner, ErrorBoundary } from '@renderer/components/common'
 import {
@@ -47,7 +48,10 @@ export default function AppLayout(): React.JSX.Element {
   const [showAgentPanel, setShowAgentPanel] = useState(false)
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [view, setView] = useState<'chat' | 'settings' | 'app-settings'>('chat')
+  const [view, setView] = useState<'chat' | 'app-settings'>('chat')
+  const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false)
+  const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('workspace')
+  const [wsSettingsPanelCollapsed, setWsSettingsPanelCollapsed] = useState(false)
   const { activeWorkspace, orchestratorStatus, clearActiveWorkspace } = useWorkspaceStore()
   const { statuses, sessionTokens } = useAgentStore()
   const { activeConversation, createConversation, updateMode, isStreaming } = useChatStore()
@@ -69,10 +73,38 @@ export default function AppLayout(): React.JSX.Element {
     }
   }, [activeAgentCount])
 
+  // Navigate back — Esc key handler priority
+  const navigateBack = useCallback(() => {
+    // Priority order:
+    // 1. If on app-settings page → go back to chat
+    // 2. If workspace settings panel is open → close it (show chat sidebar)
+    // 3. Otherwise → no-op (already at default chat view)
+
+    if (view === 'app-settings') {
+      setView('chat')
+      return
+    }
+    if (showWorkspaceSettings) {
+      setShowWorkspaceSettings(false)
+      return
+    }
+  }, [view, showWorkspaceSettings])
+
   // #18 - Keyboard shortcuts
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       const isMeta = e.metaKey || e.ctrlKey
+
+      // Esc key — navigate back (context-aware)
+      if (e.key === 'Escape') {
+        const tag = (document.activeElement as HTMLElement)?.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+        // Skip if a modal/dialog is open (portals render into body)
+        if (document.querySelector('[role="dialog"]')) return
+        e.preventDefault()
+        navigateBack()
+        return
+      }
 
       if (isMeta && e.key === 'j') {
         e.preventDefault()
@@ -109,7 +141,8 @@ export default function AppLayout(): React.JSX.Element {
       togglePixelOffice,
       activeConversation,
       updateMode,
-      isStreaming
+      isStreaming,
+      navigateBack
     ]
   )
 
@@ -121,18 +154,39 @@ export default function AppLayout(): React.JSX.Element {
   const handleGoHome = (): void => {
     clearActiveWorkspace()
     setView('chat')
+    setShowWorkspaceSettings(false)
+  }
+
+  const handleCloseWorkspaceSettings = (): void => {
+    setShowWorkspaceSettings(false)
+  }
+
+  const handleNavigateToChat = (): void => {
+    setView('chat')
+    setShowWorkspaceSettings(false)
   }
 
   const renderMainContent = (): React.JSX.Element => {
-    switch (view) {
-      case 'settings':
-        return <WorkspaceSettingsPage onBack={() => setView('chat')} />
-      case 'app-settings':
-        return <SettingsPage onBack={() => setView('chat')} />
-      default:
-        return <ChatPanel />
+    if (view === 'app-settings') {
+      return <SettingsPage onBack={() => setView('chat')} />
     }
+
+    // When workspace settings panel is active, show selected tab content
+    if (showWorkspaceSettings) {
+      return (
+        <WorkspaceSettingsContent
+          tab={workspaceSettingsTab}
+          onNavigateToChat={handleNavigateToChat}
+        />
+      )
+    }
+
+    // Default: chat
+    return <ChatPanel />
   }
+
+  // Determine if sidebar should show (chat view or workspace settings view)
+  const showLeftSidebar = view === 'chat'
 
   return (
     <div className="flex flex-col h-screen bg-surface-base">
@@ -161,8 +215,8 @@ export default function AppLayout(): React.JSX.Element {
           </button>
           {activeWorkspace && (
             <button
-              onClick={() => setView(view === 'settings' ? 'chat' : 'settings')}
-              className={`p-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
+              onClick={() => setShowWorkspaceSettings((prev) => !prev)}
+              className={`p-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${showWorkspaceSettings ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
               title="Workspace Settings"
               aria-label="Workspace Settings"
             >
@@ -188,17 +242,27 @@ export default function AppLayout(): React.JSX.Element {
 
       {/* Main content */}
       <div className="flex flex-1 min-h-0">
-        {/* Left sidebar — only show in chat view */}
-        {view === 'chat' && (
+        {/* Left sidebar — swappable between ChatSidebar and WorkspaceSettingsPanel */}
+        {showLeftSidebar && (
           <Sidebar>
-            <ChatSidebar
-              isCollapsed={sidebarCollapsed}
-              onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
-            />
+            {showWorkspaceSettings ? (
+              <WorkspaceSettingsPanel
+                isCollapsed={wsSettingsPanelCollapsed}
+                onToggleCollapse={() => setWsSettingsPanelCollapsed((prev) => !prev)}
+                activeTab={workspaceSettingsTab}
+                onTabChange={setWorkspaceSettingsTab}
+                onClose={handleCloseWorkspaceSettings}
+              />
+            ) : (
+              <ChatSidebar
+                isCollapsed={sidebarCollapsed}
+                onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+              />
+            )}
           </Sidebar>
         )}
 
-        {/* Main content area — full width in settings views */}
+        {/* Main content area */}
         <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
 
         {/* Agent monitor panel — only in chat view */}

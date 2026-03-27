@@ -551,6 +551,17 @@ export class SpecialistPoolService extends EventEmitter {
       ? `${task.description}${dependencyContext}`
       : task.description
 
+    // Strategy 6: Conditional --verbose flag — only in debug mode to reduce stream noise
+    let debugMode = false
+    try {
+      const settings = this.workspacePath
+        ? workspaceRepository.getSettingsByPath(this.workspacePath)
+        : {}
+      debugMode = settings.debugMode === true
+    } catch {
+      // Default to no verbose
+    }
+
     const modelId = task.model ? getModelId(task.model) : MODEL_TIER_IDS.sonnet
     const args = [
       '-p',
@@ -561,7 +572,7 @@ export class SpecialistPoolService extends EventEmitter {
       modelId,
       '--output-format',
       'stream-json',
-      '--verbose'
+      ...(debugMode ? ['--verbose'] : [])
     ]
 
     if (mode === 'build') {

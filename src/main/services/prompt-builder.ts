@@ -297,6 +297,9 @@ For these, use the Handoff Protocol below.
 
 export type PromptRole = 'generalist' | 'orchestrator' | 'specialist'
 
+/** Budget tier controls how much context is included in system prompts */
+export type BudgetTier = 'minimal' | 'standard' | 'full'
+
 export interface PromptBuildOptions {
   /** Which agent role is this prompt for */
   role: PromptRole
@@ -318,6 +321,8 @@ export interface PromptBuildOptions {
   feedbackContext?: string
   /** Dependency task outputs for context (specialist only) */
   dependencyOutputs?: Map<string, string>
+  /** Budget tier — controls context size for model-aware prompt budgeting (Strategy 4) */
+  budgetTier?: BudgetTier
 }
 
 // ── Prompt Builder ──
@@ -342,6 +347,7 @@ export class PromptBuilder {
    */
   build(options: PromptBuildOptions): string {
     const layers: string[] = []
+    const budgetTier = options.budgetTier ?? 'standard'
 
     // Layer 1: Base role prompt
     layers.push(this.getRolePrompt(options.role, options.mode))
@@ -352,16 +358,19 @@ export class PromptBuilder {
     }
 
     // Layer 3: Skill content — ONLY for specialists, ONLY their assigned skills
+    // Strategy 3: Tiered skill loading with budget-aware truncation
     if (options.role === 'specialist' && options.assignedSkills) {
-      const skillContent = this.buildSkillContent(options.assignedSkills)
+      const skillContent = this.buildSkillContent(options.assignedSkills, budgetTier)
       if (skillContent) {
         layers.push(skillContent)
       }
     }
 
     // Layer 4: Workspace project context (CLAUDE.md — project sections only)
-    if (options.workspacePath) {
-      const projectContext = this.readProjectContext(options.workspacePath)
+    // Strategy 1: Progressive CLAUDE.md — full for generalist, essential sections for specialists
+    // Strategy 4: Minimal tier skips CLAUDE.md entirely (haiku tasks)
+    if (options.workspacePath && budgetTier !== 'minimal') {
+      const projectContext = this.readProjectContext(options.workspacePath, options.role)
       if (projectContext) {
         layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`)
       }
@@ -414,9 +423,16 @@ export class PromptBuilder {
   /**
    * Build deduplicated skill content for a specialist.
    * Each skill's SKILL.md is read once and truncated to a budget.
+   *
+   * Strategy 3: Tiered skill loading — intelligently selects content:
+   * - Tier 1 (core principles, first ~1000 chars) — always included
+   * - Tier 2 (remaining content up to budget) — included for standard/full budgets
+   * Budget per skill scales with tier: minimal=500, standard=3000, full=5000
    */
-  private buildSkillContent(skills: Skill[]): string {
-    const MAX_CHARS_PER_SKILL = 3000
+  private buildSkillContent(skills: Skill[], budgetTier: BudgetTier = 'standard'): string {
+    const budgetPerSkill =
+      budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 5000 : 3000
+
     const sections: string[] = []
 
     for (const skill of skills) {
@@ -424,16 +440,23 @@ export class PromptBuilder {
 
       try {
         const content = readFileSync(skill.filePath, 'utf-8')
-        const truncated =
-          content.length > MAX_CHARS_PER_SKILL
-            ? content.substring(0, MAX_CHARS_PER_SKILL) + '\n\n[... truncated]'
-            : content
 
-        sections.push(`## Skill: ${skill.name}\n${truncated}`)
+        let selected: string
+        if (content.length <= budgetPerSkill) {
+          selected = content
+        } else if (budgetTier === 'minimal') {
+          // Minimal: extract just the first heading + first paragraph (core principles)
+          selected = content.substring(0, budgetPerSkill) + '\n\n[... see full skill file for details]'
+        } else {
+          // Standard/Full: smart section extraction — find section boundaries
+          selected = this.extractSkillSections(content, budgetPerSkill)
+        }
 
-        if (content.length > MAX_CHARS_PER_SKILL) {
-          log.warn(
-            `Skill "${skill.name}" truncated from ${content.length} to ${MAX_CHARS_PER_SKILL} chars`
+        sections.push(`## Skill: ${skill.name}\n${selected}`)
+
+        if (content.length > budgetPerSkill) {
+          log.info(
+            `Skill "${skill.name}" trimmed from ${content.length} to ~${budgetPerSkill} chars (budget: ${budgetTier})`
           )
         }
       } catch {
@@ -445,17 +468,133 @@ export class PromptBuilder {
   }
 
   /**
-   * Read workspace CLAUDE.md as project context.
-   * Returns the raw content — no agent/skill listing stripping (that's handled
-   * by the deterministic CLAUDE.md generator not including those sections).
+   * Extracts skill content intelligently by preserving complete markdown sections
+   * up to the budget limit, rather than cutting mid-sentence.
    */
-  private readProjectContext(workspacePath: string): string {
+  private extractSkillSections(content: string, budget: number): string {
+    // Split into sections by ## headings
+    const sectionRegex = /^## .+$/gm
+    const sections: { start: number; header: string }[] = []
+    let match: RegExpExecArray | null
+
+    while ((match = sectionRegex.exec(content)) !== null) {
+      sections.push({ start: match.index, header: match[0] })
+    }
+
+    if (sections.length === 0) {
+      // No section headers — fall back to simple truncation
+      return content.substring(0, budget) + '\n\n[... truncated]'
+    }
+
+    // Always include content before first heading (preamble) + as many complete sections as fit
+    let result = ''
+    const preamble = content.substring(0, sections[0].start).trim()
+    if (preamble) {
+      result = preamble + '\n\n'
+    }
+
+    for (let i = 0; i < sections.length; i++) {
+      const sectionEnd = i + 1 < sections.length ? sections[i + 1].start : content.length
+      const sectionContent = content.substring(sections[i].start, sectionEnd)
+
+      if (result.length + sectionContent.length <= budget) {
+        result += sectionContent
+      } else {
+        // Can't fit whole section — add truncation notice and stop
+        const remaining = budget - result.length - 30 // leave room for truncation marker
+        if (remaining > 100) {
+          result += sectionContent.substring(0, remaining) + '\n\n[... truncated]'
+        } else {
+          result += '\n\n[... additional sections omitted]'
+        }
+        break
+      }
+    }
+
+    return result.trim()
+  }
+
+  /**
+   * Read workspace CLAUDE.md as project context.
+   *
+   * Strategy 1: Progressive CLAUDE.md injection
+   * - Generalist: full content (needs everything for rich conversation)
+   * - Orchestrator: full content (needs full picture for decomposition)
+   * - Specialist: essential sections only (Tech stack, Conventions, Project structure, Key commands)
+   *   Skips: Skills table, Agent listing, Deprecation notes, Electron docs reference, Architecture notes
+   */
+  private readProjectContext(workspacePath: string, role: PromptRole = 'generalist'): string {
     try {
       const claudeMdPath = join(workspacePath, 'CLAUDE.md')
-      return readFileSync(claudeMdPath, 'utf-8')
+      const content = readFileSync(claudeMdPath, 'utf-8')
+
+      // Generalist and orchestrator get full context
+      if (role !== 'specialist') return content
+
+      // Specialist: extract only essential sections
+      return this.extractEssentialClaudeMdSections(content)
     } catch {
       return ''
     }
+  }
+
+  /**
+   * Extracts essential sections from CLAUDE.md for specialist context.
+   * Keeps: Overview, Tech stack, Conventions, Project structure, Key commands, What NOT to do, Error handling
+   * Skips: Skills table, Agent listing, Deprecation notes, Electron docs reference, Architecture notes
+   *
+   * Strategy 1: Reduces specialist CLAUDE.md from ~15K to ~5K chars.
+   */
+  private extractEssentialClaudeMdSections(content: string): string {
+    // Sections to KEEP for specialists (essential for writing correct code)
+    const essentialHeadings = [
+      'overview',
+      'tech stack',
+      'conventions',
+      'project structure',
+      'key commands',
+      'what not to do',
+      'error handling'
+    ]
+
+    // Sections to explicitly SKIP (not useful for task execution)
+    const skipHeadings = [
+      'skills',
+      'available skills',
+      'electron skill trigger',
+      'deprecation notes',
+      'electron documentation reference',
+      'architecture notes',
+      'agents'
+    ]
+
+    // Split by top-level headings (## )
+    const lines = content.split('\n')
+    const result: string[] = []
+    let currentSection = ''
+    let isKeeping = true // Keep preamble (before first heading)
+
+    for (const line of lines) {
+      const headingMatch = line.match(/^##\s+(.+)$/)
+      if (headingMatch) {
+        currentSection = headingMatch[1].trim().toLowerCase()
+        const isEssential = essentialHeadings.some((h) => currentSection.includes(h))
+        const isSkipped = skipHeadings.some((h) => currentSection.includes(h))
+
+        // Explicit keep > explicit skip > default keep
+        isKeeping = isEssential || !isSkipped
+      }
+
+      if (isKeeping) {
+        result.push(line)
+      }
+    }
+
+    const extracted = result.join('\n').trim()
+    log.info(
+      `CLAUDE.md progressive injection: ${content.length} → ${extracted.length} chars for specialist`
+    )
+    return extracted
   }
 
   /**
