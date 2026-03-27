@@ -1,0 +1,24 @@
+{
+  "id": "TASK-013",
+  "title": "Implement budget alert system",
+  "description": "Add maxBudgetCents to workspace settings. Show yellow warning at 80% spend, block new specialist executions at 100%. Wire into specialist pool.",
+  "feature_ref": "F005",
+  "task_type": "fullstack",
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 4,
+      "estimated_lines": 100,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
+  "dependencies": ["TASK-009", "TASK-007"],
+  "acceptance_criteria": [
+    "Budget setting in workspace settings UI",
+    "Yellow warning notification at 80%",
+    "Execution blocked at 100% with user notification",
+    "Specialist pool checks budget before spawning"
+  ],
+  "suggested_agent": "fullstack:developer"
+}

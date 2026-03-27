@@ -1,0 +1,25 @@
+{
+  "id": "TASK-030",
+  "title": "Implement smart skill matching",
+  "description": "Modify orchestrator.service.ts matchSkill() to use keyword matching first (Tier 1), then LLM fallback with Tier 2 for ambiguous matches. Inject only Tier 2 by default, Tier 3 on demand.",
+  "feature_ref": "F007",
+  "task_type": "backend",
+  "complexity": {
+    "score": 6,
+    "factors": {
+      "files_affected": 2,
+      "estimated_lines": 100,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
+  "dependencies": ["TASK-029"],
+  "acceptance_criteria": [
+    "Keyword matching resolves obvious matches without LLM call",
+    "Ambiguous matches use LLM with Tier 2 content",
+    "Specialist prompts receive Tier 2 by default",
+    "Tier 3 injected only when task needs code examples",
+    "Token usage reduction measurable"
+  ],
+  "suggested_agent": "backend:api-developer-typescript"
+}

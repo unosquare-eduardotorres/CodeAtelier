@@ -1,7 +1,18 @@
-export { ConversationRepository, conversationRepository } from './conversation.repository';
-export { MessageRepository, messageRepository } from './message.repository';
-export { WorkspaceRepository, workspaceRepository } from './workspace.repository';
-export { SpecialistRepository, specialistRepository } from './specialist.repository';
-export type { CreateSpecialistInput, UpdateSpecialistInput } from './specialist.repository';
-export { SkillRepository, skillRepository } from './skill.repository';
-export type { CreateSkillInput, UpdateSkillInput } from './skill.repository';
+export { ConversationRepository, conversationRepository } from './conversation.repository'
+export { MessageRepository, messageRepository } from './message.repository'
+export { WorkspaceRepository, workspaceRepository } from './workspace.repository'
+export { SpecialistRepository, specialistRepository } from './specialist.repository'
+export type { CreateSpecialistInput, UpdateSpecialistInput } from './specialist.repository'
+export { SkillRepository, skillRepository } from './skill.repository'
+export type { CreateSkillInput, UpdateSkillInput } from './skill.repository'
+export { FileChangeRepository, fileChangeRepository } from './file-change.repository'
+export type { FileChange } from './file-change.repository'
+export { WorktreeRepository, worktreeRepository } from './worktree.repository'
+export type { AgentWorktree, WorktreeStatus } from './worktree.repository'
+export { AgentSessionRepository, agentSessionRepository } from './agent-session.repository'
+export type { AgentSession, TokenSummary } from './agent-session.repository'
+export { IdeaRepository, ideaRepository } from './idea.repository'
+export { MemoryRepository, memoryRepository } from './memory.repository'
+export { DreamRunRepository, dreamRunRepository } from './dream-run.repository'
+export { UserProfileRepository, userProfileRepository } from './user-profile.repository'
+export { CoreAgentAliasRepository, coreAgentAliasRepository } from './core-agent-alias.repository'

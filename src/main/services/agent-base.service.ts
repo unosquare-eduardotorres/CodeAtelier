@@ -2,12 +2,45 @@ import { type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type { LogFunctions } from 'electron-log'
 import type { AgentStatus } from '../../shared/types'
+import { buildEnvWithPath } from './env-utils'
+import { agentSessionRepository } from '../db/repositories'
 
 export interface StreamChunk {
   type: 'text' | 'tool_use' | 'tool_result' | 'error' | 'status'
   content?: string
   toolName?: string
+  toolInput?: string
   error?: string
+}
+
+/**
+ * Extracts a human-readable summary from raw tool input for display in the UI.
+ */
+export function summarizeToolInput(toolName: string, input: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'Bash':
+      return (input.description as string) || (input.command as string) || ''
+    case 'Read':
+      return (input.file_path as string) || ''
+    case 'Write':
+    case 'Edit':
+      return (input.file_path as string) || ''
+    case 'Grep':
+      return `/${input.pattern as string}/` + (input.path ? ` in ${input.path}` : '')
+    case 'Glob':
+      return (input.pattern as string) || ''
+    case 'WebSearch':
+      return (input.query as string) || ''
+    case 'WebFetch':
+      return (input.url as string) || ''
+    case 'TodoRead':
+    case 'TodoWrite':
+      return 'Task management'
+    case 'TaskOutput':
+      return `Reading output of task ${(input.id as string)?.slice(0, 7) ?? ''}…`
+    default:
+      return ''
+  }
 }
 
 /**
@@ -26,6 +59,9 @@ export abstract class AgentBaseService extends EventEmitter {
   protected currentToolInput: string = ''
   protected toolIdToName: Map<string, string> = new Map()
 
+  /** Database session ID for token tracking */
+  protected dbSessionId: string | null = null
+
   /** Scoped logger — each subclass provides its own scope */
   protected abstract readonly log: LogFunctions
 
@@ -33,32 +69,39 @@ export abstract class AgentBaseService extends EventEmitter {
 
   /**
    * Builds a process environment with PATH augmented for claude CLI discovery.
-   * Removes CLAUDECODE env var to avoid nested session errors.
+   * Delegates to shared env-utils for cross-platform PATH construction.
    */
   protected buildEnvWithPath(): NodeJS.ProcessEnv {
-    const env = { ...process.env }
-    delete env.CLAUDECODE
+    return buildEnvWithPath()
+  }
 
-    // Add common bin paths — later additions get higher priority (prepended to PATH).
-    // Order: ~/.local/bin (lowest) → /opt/homebrew/bin → /usr/local/bin (highest)
-    // This ensures /usr/local/bin (npm global) takes priority over ~/.local/bin
-    // (auto-downloaded binary that may be stale).
-    const homeDir = process.env.HOME || process.env.USERPROFILE || ''
-    if (homeDir) {
-      const localBin = `${homeDir}/.local/bin`
-      if (env.PATH && !env.PATH.includes(localBin)) {
-        env.PATH = `${localBin}:${env.PATH}`
-      }
+  /**
+   * Creates a DB session record for token tracking.
+   * Call from subclass start() after spawning the process.
+   */
+  protected createDbSession(
+    agentType: string,
+    opts: { pid?: number; conversationId?: string; workspaceId?: string } = {}
+  ): void {
+    try {
+      const session = agentSessionRepository.create(agentType, opts)
+      this.dbSessionId = session.id
+    } catch (err) {
+      this.log.error('Failed to create DB session:', err)
     }
+  }
 
-    if (env.PATH && !env.PATH.includes('/opt/homebrew/bin')) {
-      env.PATH = `/opt/homebrew/bin:${env.PATH}`
+  /**
+   * Completes the DB session record with final status and token usage.
+   */
+  protected completeDbSession(status: 'completed' | 'failed' | 'terminated'): void {
+    if (!this.dbSessionId) return
+    try {
+      agentSessionRepository.complete(this.dbSessionId, status, this.tokenUsage)
+    } catch (err) {
+      this.log.error('Failed to complete DB session:', err)
     }
-    if (env.PATH && !env.PATH.includes('/usr/local/bin')) {
-      env.PATH = `/usr/local/bin:${env.PATH}`
-    }
-
-    return env
+    this.dbSessionId = null
   }
 
   /**
@@ -113,6 +156,7 @@ export abstract class AgentBaseService extends EventEmitter {
               } else if (block.type === 'tool_use') {
                 const toolName = block.name as string
                 const toolId = block.id as string
+                const toolInput = block.input as Record<string, unknown> | undefined
                 if (toolId) {
                   this.toolIdToName.set(toolId, toolName)
                 }
@@ -120,7 +164,8 @@ export abstract class AgentBaseService extends EventEmitter {
                 this.emit('statusUpdate', this.getStatus())
                 this.emit('chunk', {
                   type: 'tool_use',
-                  toolName
+                  toolName,
+                  toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
                 } as StreamChunk)
               }
             }
@@ -181,10 +226,12 @@ export abstract class AgentBaseService extends EventEmitter {
           this.currentStatus = 'reviewing'
           this.currentToolName = contentBlock.name as string
           this.currentToolInput = ''
+          const toolInput = contentBlock.input as Record<string, unknown> | undefined
           this.emit('statusUpdate', this.getStatus())
           this.emit('chunk', {
             type: 'tool_use',
-            toolName: contentBlock.name as string
+            toolName: contentBlock.name as string,
+            toolInput: toolInput ? summarizeToolInput(this.currentToolName, toolInput) : undefined
           } as StreamChunk)
         } else if (contentBlock?.type === 'text' && contentBlock.text) {
           this.emit('chunk', {
@@ -332,6 +379,9 @@ export abstract class AgentBaseService extends EventEmitter {
       this.emit('statusUpdate', this.getStatus())
     }
 
+    // Complete the DB session record
+    this.completeDbSession(code === 0 ? 'completed' : 'failed')
+
     this.toolIdToName.clear()
     this.emit('complete')
     this.process = null
@@ -342,6 +392,9 @@ export abstract class AgentBaseService extends EventEmitter {
    */
   async stop(): Promise<void> {
     if (this.process) {
+      // Complete DB session before killing
+      this.completeDbSession('terminated')
+
       this.process.kill('SIGTERM')
 
       await new Promise<void>((resolve) => {

@@ -1,0 +1,24 @@
+{
+  "id": "TASK-018",
+  "title": "DB migration: task_loop_iterations table",
+  "description": "Create migration 003 adding task_loop_iterations table with agent_session_id, iteration, model_used, gates_passed, failed_gates, gate_output, escalated, duration_ms, created_at.",
+  "feature_ref": "F002",
+  "task_type": "database",
+  "complexity": {
+    "score": 3,
+    "factors": {
+      "files_affected": 3,
+      "estimated_lines": 40,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
+  "dependencies": ["TASK-002"],
+  "acceptance_criteria": [
+    "Migration 003 creates task_loop_iterations table",
+    "Repository created for CRUD operations",
+    "Foreign key to agent_sessions",
+    "Task loop service persists iteration data"
+  ],
+  "suggested_agent": "backend:db-architect"
+}

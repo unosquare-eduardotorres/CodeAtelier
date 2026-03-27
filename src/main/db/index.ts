@@ -1,49 +1,44 @@
-import Database from 'better-sqlite3';
-import { app } from 'electron';
-import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
-import { dbLogger } from '../logger';
+import Database from 'better-sqlite3'
+import { app } from 'electron'
+import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { dbLogger } from '../logger'
 
-let db: Database.Database | null = null;
+let db: Database.Database | null = null
 
-export function getDatabase(): Database.Database {
-  if (db) return db;
+// ── Versioned Migration System ──────────────────────────────────────────────
+// Each migration runs in a transaction and atomically updates PRAGMA user_version.
+// Only migrations with version > current user_version are executed.
+// Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-  const dbPath = join(app.getPath('userData'), 'agent-studio.db');
-  db = new Database(dbPath);
+const CURRENT_SCHEMA_VERSION = 20
 
-  // Enable WAL mode for crash-safe writes
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+interface Migration {
+  version: number
+  name: string
+  up: (db: Database.Database) => void
+}
 
-  // Run schema migration
-  const schemaPath = join(__dirname, 'schema.sql');
-  try {
-    const schema = readFileSync(schemaPath, 'utf-8');
-    db.exec(schema);
-  } catch {
-    // If schema.sql isn't bundled, use inline schema
-    db.exec(SCHEMA_SQL);
-  }
+const migrations: Migration[] = [
+  {
+    version: 1,
+    name: 'add-mode-column-to-conversations',
+    up: (db) => {
+      db.exec(
+        `ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build'))`
+      )
+    }
+  },
+  {
+    version: 2,
+    name: 'update-messages-check-constraint-generalist',
+    up: (db) => {
+      const tableInfo = db
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'")
+        .get() as { sql: string } | undefined
 
-  // Migration: add mode column to existing conversations table
-  try {
-    db.exec(`ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build'))`);
-    dbLogger.info('Migration: added mode column to conversations');
-  } catch {
-    // Column already exists — ignore
-  }
-
-  // Migration: update messages table CHECK constraint to include 'generalist' role
-  try {
-    const tableInfo = db.prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'"
-    ).get() as { sql: string } | undefined;
-
-    if (tableInfo && !tableInfo.sql.includes("'generalist'")) {
-      dbLogger.info('Migration: updating messages CHECK constraint to include generalist role');
-      db.transaction(() => {
-        db!.exec(`
+      if (tableInfo && !tableInfo.sql.includes("'generalist'")) {
+        db.exec(`
           ALTER TABLE messages RENAME TO messages_old;
 
           CREATE TABLE messages (
@@ -61,120 +56,470 @@ export function getDatabase(): Database.Database {
           DROP TABLE messages_old;
 
           CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
-        `);
-      })();
-      dbLogger.info('Migration: messages CHECK constraint updated successfully');
-    } else {
-      dbLogger.info('✓ Messages table already has generalist role — no migration needed');
+        `)
+      }
     }
-  } catch (e) {
-    dbLogger.error('Migration: failed to update messages CHECK constraint:', e);
+  },
+  {
+    version: 3,
+    name: 'ensure-generalist-specialist',
+    up: (db) => {
+      const generalistExists = db
+        .prepare("SELECT 1 FROM specialists WHERE agent_id = 'generalist'")
+        .get()
+      if (!generalistExists) {
+        db.prepare(
+          'INSERT INTO specialists (agent_id, display_name, icon, color, priority) VALUES (?, ?, ?, ?, ?)'
+        ).run('generalist', 'Generalist', '💬', '#6366F1', 0)
+      }
+    }
+  },
+  {
+    version: 4,
+    name: 'rename-postgres-to-db-architect',
+    up: (db) => {
+      db.prepare(
+        "UPDATE specialists SET agent_id = 'db-architect', display_name = 'DB Architect', icon = '🗄️' WHERE agent_id = 'postgres-architect'"
+      ).run()
+    }
+  },
+  {
+    version: 5,
+    name: 'add-electron-architect',
+    up: (db) => {
+      const electronExists = db
+        .prepare("SELECT 1 FROM specialists WHERE agent_id = 'electron-architect'")
+        .get()
+      if (!electronExists) {
+        db.prepare(
+          'INSERT INTO specialists (agent_id, display_name, icon, color, priority) VALUES (?, ?, ?, ?, ?)'
+        ).run('electron-architect', 'Electron Architect', '⚡', '#47848F', 4)
+      }
+    }
+  },
+  {
+    version: 6,
+    name: 'add-source-yaml-column',
+    up: (db) => {
+      db.exec('ALTER TABLE specialists ADD COLUMN source_yaml TEXT DEFAULT NULL')
+    }
+  },
+  {
+    version: 7,
+    name: 'add-claude-session-id',
+    up: (db) => {
+      db.exec('ALTER TABLE conversations ADD COLUMN claude_session_id TEXT DEFAULT NULL')
+    }
+  },
+  {
+    version: 8,
+    name: 'create-conversation-file-changes',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_file_changes (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          file_path TEXT NOT NULL,
+          change_type TEXT NOT NULL DEFAULT 'modified' CHECK (change_type IN ('created', 'modified', 'deleted')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(conversation_id, file_path)
+        );
+        CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
+      `)
+    }
+  },
+  {
+    version: 9,
+    name: 'create-agent-worktrees',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_worktrees (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          agent_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          worktree_path TEXT NOT NULL,
+          branch_name TEXT NOT NULL,
+          base_branch TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active'
+            CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          merged_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
+      `)
+    }
+  },
+  {
+    version: 10,
+    name: 'add-session-workspace-columns',
+    up: (db) => {
+      db.exec(
+        'ALTER TABLE agent_sessions ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL'
+      )
+      db.exec(
+        'ALTER TABLE agent_sessions ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE'
+      )
+      db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id)'
+      )
+      db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id)'
+      )
+    }
+  },
+  {
+    version: 11,
+    name: 'add-complexity-scoring-columns',
+    up: (db) => {
+      db.exec('ALTER TABLE agent_sessions ADD COLUMN complexity_score INTEGER')
+      db.exec('ALTER TABLE agent_sessions ADD COLUMN model_used TEXT')
+      db.exec('ALTER TABLE agent_sessions ADD COLUMN complexity_tier TEXT')
+    }
+  },
+  {
+    version: 12,
+    name: 'create-ideas-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ideas (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          description TEXT DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'draft'
+            CHECK (status IN ('draft', 'grilling', 'completed')),
+          grill_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          grill_summary TEXT,
+          converted_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_ideas_workspace ON ideas(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status);
+      `)
+    }
+  },
+  {
+    version: 13,
+    name: 'create-memories-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memories (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+          type TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT DEFAULT '[]' CHECK (json_valid(tags)),
+          source_conversation_id TEXT,
+          source_agent_id TEXT,
+          importance INTEGER NOT NULL DEFAULT 5,
+          last_accessed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
+        CREATE INDEX IF NOT EXISTS idx_memories_context ON memories(workspace_id, type, importance DESC);
+      `)
+    }
+  },
+  {
+    version: 14,
+    name: 'create-dream-runs-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS dream_runs (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+          trigger_type TEXT NOT NULL CHECK (trigger_type IN ('startup', 'idle', 'manual')),
+          memories_created INTEGER DEFAULT 0,
+          memories_merged INTEGER DEFAULT 0,
+          memories_pruned INTEGER DEFAULT 0,
+          token_usage INTEGER DEFAULT 0,
+          started_at TEXT NOT NULL DEFAULT (datetime('now')),
+          ended_at TEXT,
+          error_message TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_dream_runs_workspace ON dream_runs(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_dream_runs_status ON dream_runs(status);
+      `)
+    }
+  },
+  {
+    version: 15,
+    name: 'add-pr-tracking-columns',
+    up: (db) => {
+      db.exec('ALTER TABLE conversations ADD COLUMN pr_number INTEGER')
+      db.exec('ALTER TABLE conversations ADD COLUMN pr_url TEXT')
+      db.exec('ALTER TABLE conversations ADD COLUMN branch_name TEXT')
+    }
+  },
+  {
+    version: 16,
+    name: 'add-is-git-repo-flag',
+    up: (db) => {
+      db.exec('ALTER TABLE workspaces ADD COLUMN is_git_repo INTEGER DEFAULT 1')
+    }
+  },
+  {
+    version: 17,
+    name: 'add-specialist-alias-columns',
+    up: (db) => {
+      db.exec('ALTER TABLE specialists ADD COLUMN alias TEXT DEFAULT NULL')
+      db.exec('ALTER TABLE specialists ADD COLUMN avatar_url TEXT DEFAULT NULL')
+    }
+  },
+  {
+    version: 18,
+    name: 'create-user-profile-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_profile (
+          id TEXT PRIMARY KEY DEFAULT 'default',
+          display_name TEXT NOT NULL DEFAULT 'Developer',
+          avatar_key TEXT NOT NULL DEFAULT 'business-man',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+    }
+  },
+  {
+    version: 19,
+    name: 'create-core-agent-aliases-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS core_agent_aliases (
+          agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('generalist', 'coordinator')),
+          alias TEXT DEFAULT NULL,
+          avatar_key TEXT DEFAULT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+    }
+  },
+  {
+    version: 20,
+    name: 'wal-checkpoint',
+    up: (db) => {
+      // Reclaim WAL file space on upgrade
+      db.pragma('wal_checkpoint(TRUNCATE)')
+    }
+  }
+]
+
+/**
+ * Run only pending migrations (where version > current user_version).
+ * Each migration is wrapped in a transaction that atomically updates user_version.
+ * Failed migrations throw instead of being silently swallowed.
+ */
+function runMigrations(database: Database.Database): void {
+  const currentVersion = (database.pragma('user_version', { simple: true }) as number) ?? 0
+  dbLogger.info(`Schema version: ${currentVersion}, target: ${CURRENT_SCHEMA_VERSION}`)
+
+  const pending = migrations.filter((m) => m.version > currentVersion)
+  if (pending.length === 0) {
+    dbLogger.info('✓ Schema up to date — no migrations needed')
+    return
   }
 
-  dbLogger.info('✓ Messages table CHECK constraint verified (includes generalist)');
+  dbLogger.info(`Running ${pending.length} pending migration(s)...`)
 
-  // Seed default data
-  seedDefaultSpecialists(db);
-  seedDefaultSkills(db);
-
-  // Migration: ensure generalist exists in specialists table
-  try {
-    const generalistExists = db.prepare(
-      "SELECT 1 FROM specialists WHERE agent_id = 'generalist'"
-    ).get();
-    if (!generalistExists) {
-      db.prepare(
-        "INSERT INTO specialists (agent_id, display_name, icon, color, priority) VALUES (?, ?, ?, ?, ?)"
-      ).run('generalist', 'Generalist', '💬', '#6366F1', 0);
+  for (const migration of pending) {
+    dbLogger.info(`Running migration v${migration.version}: ${migration.name}`)
+    try {
+      database.transaction(() => {
+        migration.up(database)
+        database.pragma(`user_version = ${migration.version}`)
+      })()
+      dbLogger.info(`✓ Migration v${migration.version} complete`)
+    } catch (error) {
+      dbLogger.error(`✗ Migration v${migration.version} (${migration.name}) FAILED:`, error)
+      throw error // Don't swallow real errors — surface disk full, corruption, etc.
     }
-  } catch { /* ignore */ }
+  }
 
-  // Migration: rename postgres-architect → db-architect
-  try {
-    db.prepare(
-      "UPDATE specialists SET agent_id = 'db-architect', display_name = 'DB Architect', icon = '🗄️' WHERE agent_id = 'postgres-architect'"
-    ).run();
-  } catch { /* ignore */ }
+  dbLogger.info(`✓ All migrations complete — schema at v${CURRENT_SCHEMA_VERSION}`)
+}
 
-  // Migration: add electron-architect if missing
-  try {
-    const electronExists = db.prepare(
-      "SELECT 1 FROM specialists WHERE agent_id = 'electron-architect'"
-    ).get();
-    if (!electronExists) {
-      db.prepare(
-        "INSERT INTO specialists (agent_id, display_name, icon, color, priority) VALUES (?, ?, ?, ?, ?)"
-      ).run('electron-architect', 'Electron Architect', '⚡', '#47848F', 4);
-    }
-  } catch { /* ignore */ }
+export function getDatabase(): Database.Database {
+  if (db) return db
 
-  // Migration: add source_yaml column to specialists table
+  const dbPath = join(app.getPath('userData'), 'agent-studio.db')
+  db = new Database(dbPath)
+
+  // Enable WAL mode for crash-safe writes
+  db.pragma('journal_mode = WAL')
+  db.pragma('foreign_keys = ON')
+
+  // Run schema (creates tables if not exist)
+  const schemaPath = join(__dirname, 'schema.sql')
   try {
-    db.exec('ALTER TABLE specialists ADD COLUMN source_yaml TEXT DEFAULT NULL');
-    dbLogger.info('Migration: added source_yaml column to specialists');
+    const schema = readFileSync(schemaPath, 'utf-8')
+    db.exec(schema)
   } catch {
-    // Column already exists — ignore
+    // If schema.sql isn't bundled, use inline schema
+    db.exec(SCHEMA_SQL)
   }
 
-  return db;
+  // Run versioned migrations (only pending ones)
+  runMigrations(db)
+
+  // WAL checkpoint to reclaim space (runs every startup, cheap no-op if WAL is small)
+  db.pragma('wal_checkpoint(TRUNCATE)')
+
+  // Seed default data (idempotent — checks count before inserting)
+  seedDefaultSpecialists(db)
+  seedDefaultSkills(db)
+
+  return db
 }
 
 export function closeDatabase(): void {
   if (db) {
-    db.close();
-    db = null;
+    db.close()
+    db = null
   }
 }
 
 function seedDefaultSpecialists(database: Database.Database): void {
-  const count = database.prepare('SELECT COUNT(*) as cnt FROM specialists').get() as { cnt: number };
-  if (count.cnt > 0) return;
+  const count = database.prepare('SELECT COUNT(*) as cnt FROM specialists').get() as {
+    cnt: number
+  }
+  if (count.cnt > 0) return
 
   const insert = database.prepare(`
     INSERT INTO specialists (agent_id, display_name, icon, color, priority)
     VALUES (?, ?, ?, ?, ?)
-  `);
+  `)
 
   const defaults = [
-    { agentId: 'generalist', displayName: 'Generalist', icon: '💬', color: '#6366F1', priority: 0 },
-    { agentId: 'orchestrator', displayName: 'Orchestrator', icon: '🎯', color: '#8B5CF6', priority: 1 },
-    { agentId: 'react-architect', displayName: 'React Architect', icon: '⚛️', color: '#61DAFB', priority: 2 },
-    { agentId: 'dotnet-architect', displayName: '.NET Architect', icon: '🟣', color: '#512BD4', priority: 3 },
-    { agentId: 'electron-architect', displayName: 'Electron Architect', icon: '⚡', color: '#47848F', priority: 4 },
-    { agentId: 'agentic-architect', displayName: 'Agentic Architect', icon: '🤖', color: '#D97706', priority: 5 },
-    { agentId: 'db-architect', displayName: 'DB Architect', icon: '🗄️', color: '#336791', priority: 6 },
-    { agentId: 'ux-ui-specialist', displayName: 'UX/UI Specialist', icon: '🎨', color: '#DB2777', priority: 7 },
-    { agentId: 'git-github-specialist', displayName: 'Git/GitHub Specialist', icon: '🔀', color: '#64748B', priority: 8 },
-    { agentId: 'requirements-specialist', displayName: 'Requirements Specialist', icon: '📋', color: '#059669', priority: 9 },
-    { agentId: 'code-planner', displayName: 'Code Planner', icon: '📝', color: '#475569', priority: 10 },
-    { agentId: 'execution-planner', displayName: 'Execution Planner', icon: '📅', color: '#DC6843', priority: 11 },
-    { agentId: 'cicd-devops', displayName: 'CI/CD DevOps', icon: '🚀', color: '#DC2626', priority: 12 },
-    { agentId: 'cloud-infrastructure', displayName: 'Cloud Infrastructure', icon: '☁️', color: '#0D9488', priority: 13 }
-  ];
+    { agentId: 'generalist', displayName: 'Da Vinci', icon: '🎨', color: '#D97706', priority: 0 },
+    {
+      agentId: 'orchestrator',
+      displayName: 'Stravinsky',
+      icon: '🎼',
+      color: '#8B5CF6',
+      priority: 1
+    },
+    {
+      agentId: 'react-architect',
+      displayName: 'React Architect',
+      icon: '⚛️',
+      color: '#61DAFB',
+      priority: 2
+    },
+    {
+      agentId: 'dotnet-architect',
+      displayName: '.NET Architect',
+      icon: '🟣',
+      color: '#512BD4',
+      priority: 3
+    },
+    {
+      agentId: 'electron-architect',
+      displayName: 'Electron Architect',
+      icon: '⚡',
+      color: '#47848F',
+      priority: 4
+    },
+    {
+      agentId: 'agentic-architect',
+      displayName: 'Agentic Architect',
+      icon: '🤖',
+      color: '#D97706',
+      priority: 5
+    },
+    {
+      agentId: 'db-architect',
+      displayName: 'DB Architect',
+      icon: '🗄️',
+      color: '#336791',
+      priority: 6
+    },
+    {
+      agentId: 'ux-ui-specialist',
+      displayName: 'UX/UI Specialist',
+      icon: '🎨',
+      color: '#DB2777',
+      priority: 7
+    },
+    {
+      agentId: 'git-github-specialist',
+      displayName: 'Git/GitHub Specialist',
+      icon: '🔀',
+      color: '#64748B',
+      priority: 8
+    },
+    {
+      agentId: 'requirements-specialist',
+      displayName: 'Requirements Specialist',
+      icon: '📋',
+      color: '#059669',
+      priority: 9
+    },
+    {
+      agentId: 'code-planner',
+      displayName: 'Code Planner',
+      icon: '📝',
+      color: '#475569',
+      priority: 10
+    },
+    {
+      agentId: 'execution-planner',
+      displayName: 'Execution Planner',
+      icon: '📅',
+      color: '#DC6843',
+      priority: 11
+    },
+    {
+      agentId: 'cicd-devops',
+      displayName: 'CI/CD DevOps',
+      icon: '🚀',
+      color: '#DC2626',
+      priority: 12
+    },
+    {
+      agentId: 'cloud-infrastructure',
+      displayName: 'Cloud Infrastructure',
+      icon: '☁️',
+      color: '#0D9488',
+      priority: 13
+    }
+  ]
 
   const tx = database.transaction(() => {
     for (const s of defaults) {
-      insert.run(s.agentId, s.displayName, s.icon, s.color, s.priority);
+      insert.run(s.agentId, s.displayName, s.icon, s.color, s.priority)
     }
-  });
-  tx();
+  })
+  tx()
 }
 
 function seedDefaultSkills(database: Database.Database): void {
-  const count = database.prepare('SELECT COUNT(*) as cnt FROM skills').get() as { cnt: number };
-  if (count.cnt > 0) return;
+  const count = database.prepare('SELECT COUNT(*) as cnt FROM skills').get() as { cnt: number }
+  if (count.cnt > 0) return
 
-  database.prepare(`
+  database
+    .prepare(
+      `
     INSERT INTO skills (name, description, filename, file_path, is_active, last_updated_date)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
-    'Electron Pro',
-    'Use this skill for ANY Electron desktop application work including IPC, security, packaging, and native OS integration.',
-    'electron-pro.md',
-    '.claude/skills/electron-pro/SKILL.md',
-    1,
-    '2026-03-21'
-  );
+  `
+    )
+    .run(
+      'Electron Pro',
+      'Use this skill for ANY Electron desktop application work including IPC, security, packaging, and native OS integration.',
+      'electron-pro.md',
+      '.claude/skills/electron-pro/SKILL.md',
+      1,
+      '2026-03-21'
+    )
 }
 
 const SCHEMA_SQL = `
@@ -195,7 +540,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
-  summary TEXT
+  summary TEXT,
+  claude_session_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -228,7 +574,9 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   ended_at TEXT,
   token_usage INTEGER DEFAULT 0,
-  stdout_log_path TEXT
+  stdout_log_path TEXT,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS specialists (
@@ -263,9 +611,35 @@ CREATE TABLE IF NOT EXISTS specialist_skills (
   PRIMARY KEY (specialist_id, skill_id)
 );
 
+CREATE TABLE IF NOT EXISTS conversation_file_changes (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL,
+  change_type TEXT NOT NULL DEFAULT 'modified' CHECK (change_type IN ('created', 'modified', 'deleted')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(conversation_id, file_path)
+);
+
+CREATE TABLE IF NOT EXISTS agent_worktrees (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  branch_name TEXT NOT NULL,
+  base_branch TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  merged_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
-`;
+CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
+`

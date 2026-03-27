@@ -1,0 +1,17 @@
+{
+  "id": "SPRINT-004",
+  "name": "Efficiency & Safety",
+  "goal": "Optimize skill loading with progressive tiers and enforce scope constraints on specialist file modifications",
+  "phases": ["Phase 7: Progressive Skill Loading", "Phase 8: Scope Enforcement Layer"],
+  "tasks": ["TASK-029", "TASK-030", "TASK-031", "TASK-032", "TASK-033", "TASK-034"],
+  "estimated_complexity": 29,
+  "dependencies": { "sprints": ["SPRINT-002"] },
+  "quality_gates": [
+    "Skills parsed into 3 tiers on import",
+    "Keyword matching resolves obvious matches without LLM",
+    "Token usage reduction measurable",
+    "Scope validation catches out-of-scope modifications",
+    "Scope violations trigger task loop retry",
+    "Violating changes reverted cleanly"
+  ]
+}

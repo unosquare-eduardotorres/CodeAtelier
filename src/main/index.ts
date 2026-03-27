@@ -6,6 +6,9 @@ import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
 import { registerAllIpcHandlers } from './ipc'
 import { generalistService, orchestratorService, skillService } from './services'
+import { agentRegistry } from './services/agent-registry'
+import { memoryFeedService } from './services/memory-feed.service'
+import { autoUpdateService } from './services/auto-update.service'
 
 // Initialize electron-log for the main process
 // Must happen before app.whenReady() for early error capture
@@ -26,7 +29,10 @@ function createWindow(): void {
     icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: true
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true
     }
   })
 
@@ -76,8 +82,23 @@ function createWindow(): void {
     )
   }
 
+  // Initialize agent registry from YAML files (single source of truth)
+  try {
+    agentRegistry.loadFromDisk()
+    agentRegistry.startWatching()
+  } catch (error) {
+    dbLogger.warn('Failed to initialize agent registry:', error)
+  }
+
   // Register IPC handlers
   registerAllIpcHandlers(mainWindow)
+
+  // Initialize auto-updater (production only — dev uses electron-vite HMR)
+  if (!is.dev) {
+    autoUpdateService.init(mainWindow)
+    // Check for updates shortly after launch to avoid blocking startup
+    setTimeout(() => autoUpdateService.checkForUpdates(), 5000)
+  }
 
   // HMR for renderer based on electron-vite cli.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -86,6 +107,71 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+// ── Security: Minimal production menu — preserves standard keyboard shortcuts ──
+if (!is.dev) {
+  const isMac = process.platform === 'darwin'
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              { role: 'quit' as const }
+            ]
+          }
+        ]
+      : []),
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    ...(isMac
+      ? [
+          {
+            label: 'Window',
+            submenu: [{ role: 'minimize' as const }, { role: 'zoom' as const }]
+          }
+        ]
+      : [])
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+// ── Security: Validate webview creation — deny all webviews ──
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (webviewEvent, webPreferences) => {
+    // Strip any preload scripts from webview
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    // Agent Studio does not use webviews — deny all
+    webviewEvent.preventDefault()
+  })
+})
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.agent-studio')
@@ -102,16 +188,9 @@ app.whenReady().then(() => {
     uploadToServer: false
   })
 
-  // ── Security: Set application menu (#18) ──
-  // Remove the default menu to avoid unnecessary resource usage
-  // and prevent unintended keyboard shortcuts in production
-  if (!is.dev) {
-    Menu.setApplicationMenu(null)
-  }
-
   // ── Security: Restrict web permissions (#7) ──
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    const allowedPermissions: string[] = ['notifications']
+    const allowedPermissions: string[] = ['notifications', 'media']
     callback(allowedPermissions.includes(permission))
   })
 
@@ -123,7 +202,7 @@ app.whenReady().then(() => {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self'; connect-src 'self'"
           ]
         }
       })
@@ -147,27 +226,43 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', async () => {
+let isQuitting = false
+app.on('before-quit', async (event) => {
+  if (isQuitting) return
+  event.preventDefault()
+  isQuitting = true
+
   // Cleanup skill service (cancel in-progress Opus calls, discard queue)
   try {
     await skillService.shutdown()
-  } catch {
-    // Ignore errors during shutdown
+  } catch (e) {
+    log.debug('Skill service shutdown error (expected during quit):', e)
   }
 
   // Cleanup orchestrator
   try {
     await orchestratorService.stop()
-  } catch {
-    // Ignore errors during shutdown
+  } catch (e) {
+    log.debug('Orchestrator shutdown error (expected during quit):', e)
   }
 
   // Cleanup generalist (long-lived interactive claude process)
   try {
     await generalistService.stop()
-  } catch {
-    // Ignore errors during shutdown
+  } catch (e) {
+    log.debug('Generalist shutdown error (expected during quit):', e)
   }
 
+  // Cleanup memory feed (cancel in-progress claude -p summarizer)
+  try {
+    memoryFeedService.shutdown()
+  } catch (e) {
+    log.debug('Memory feed shutdown error (expected during quit):', e)
+  }
+
+  // Stop watching agent YAML files
+  agentRegistry.stopWatching()
+
   closeDatabase()
+  app.quit()
 })

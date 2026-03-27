@@ -1,26 +1,26 @@
-import { Settings, Trash2 } from 'lucide-react';
-import type { Workspace } from '../../../../shared/types';
+import { Settings, Trash2 } from 'lucide-react'
+import type { Workspace } from '../../../../shared/types'
 
 interface WorkspaceItemProps {
-  workspace: Workspace;
-  isActive: boolean;
-  onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
+  workspace: Workspace
+  isActive: boolean
+  onSelect: (id: string) => void
+  onDelete: (id: string) => void
 }
 
 function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMs / 3600000)
+  const diffDays = Math.floor(diffMs / 86400000)
 
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
+  if (diffMins < 1) return 'Just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  if (diffHours < 24) return `${diffHours}h ago`
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString()
 }
 
 export default function WorkspaceItem({
@@ -42,8 +42,8 @@ export default function WorkspaceItem({
       aria-label={`Open workspace: ${workspace.name}`}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onSelect(workspace.id);
+          e.preventDefault()
+          onSelect(workspace.id)
         }
       }}
     >
@@ -70,7 +70,7 @@ export default function WorkspaceItem({
           <button
             className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-gray-700/50 text-gray-500 hover:text-gray-300 transition-colors"
             onClick={(e) => {
-              e.stopPropagation();
+              e.stopPropagation()
               // Settings coming in Phase 2
             }}
             aria-label="Workspace settings (coming soon)"
@@ -83,8 +83,8 @@ export default function WorkspaceItem({
         <button
           className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors"
           onClick={(e) => {
-            e.stopPropagation();
-            onDelete(workspace.id);
+            e.stopPropagation()
+            onDelete(workspace.id)
           }}
           aria-label={`Remove workspace: ${workspace.name}`}
           title="Remove workspace"
@@ -93,5 +93,5 @@ export default function WorkspaceItem({
         </button>
       </div>
     </div>
-  );
+  )
 }

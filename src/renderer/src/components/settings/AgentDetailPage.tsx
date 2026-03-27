@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { useSettingsStore } from '@renderer/store/settings.store'
-import { AGENT_META } from '../../../../shared/constants'
+import { useSpecialistStore } from '@renderer/store'
+import { getAgentMeta } from '@renderer/utils/agentMeta'
 import AgentYamlEditor from './AgentYamlEditor'
 import type { DiscoveredAgent, DiscoveredSkill } from '../../../../shared/types'
 
@@ -17,12 +18,13 @@ export default function AgentDetailPage({
   onBack
 }: AgentDetailPageProps): React.JSX.Element {
   const { skills, readFile, saveFile, activeFileContent, isFileLoading } = useSettingsStore()
+  const { specialists } = useSpecialistStore()
   const [localSkills, setLocalSkills] = useState<string[]>(agent.parsed.skills)
 
-  const meta = AGENT_META[agent.parsed.name]
-  const icon = meta?.icon ?? '🤖'
-  const color = meta?.color ?? '#6366F1'
-  const displayName = meta?.displayName ?? agent.parsed.name
+  const meta = getAgentMeta(agent.parsed.name, specialists)
+  const icon = meta.icon
+  const color = meta.color
+  const displayName = meta.displayName
 
   // Load file content on mount
   useEffect(() => {
@@ -73,9 +75,7 @@ export default function AgentDetailPage({
         <span className="text-sm font-semibold text-gray-200">{displayName}</span>
         <span
           className={`px-1.5 py-0.5 text-[10px] rounded-full font-medium ${
-            agent.isDeployed
-              ? 'bg-green-500/10 text-green-400'
-              : 'bg-gray-600/30 text-gray-500'
+            agent.isDeployed ? 'bg-green-500/10 text-green-400' : 'bg-gray-600/30 text-gray-500'
           }`}
         >
           {agent.isDeployed ? 'Deployed' : 'Not deployed'}
@@ -123,7 +123,7 @@ export default function AgentDetailPage({
                   {agent.parsed.tools.map((tool) => (
                     <span
                       key={tool}
-                      className="px-1.5 py-0.5 text-[10px] rounded bg-gray-800 text-gray-400"
+                      className="px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500/10 text-indigo-400 font-medium"
                     >
                       {tool}
                     </span>

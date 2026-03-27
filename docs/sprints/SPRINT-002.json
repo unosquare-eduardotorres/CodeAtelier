@@ -1,0 +1,28 @@
+{
+  "id": "SPRINT-002",
+  "name": "Reliability Core",
+  "goal": "Wrap specialist execution in quality-gated task loops with model escalation and add anti-abandonment detection",
+  "phases": ["Phase 2: Task Loop with Quality Gates", "Phase 3: Anti-Abandonment Detection"],
+  "tasks": [
+    "TASK-014",
+    "TASK-015",
+    "TASK-016",
+    "TASK-017",
+    "TASK-018",
+    "TASK-019",
+    "TASK-020",
+    "TASK-021",
+    "TASK-022"
+  ],
+  "estimated_complexity": 45,
+  "dependencies": { "sprints": ["SPRINT-001"] },
+  "quality_gates": [
+    "Quality gates (tsc, eslint, test, build) run after each specialist",
+    "Model escalation works: haiku->sonnet->opus",
+    "Stuck loop detection triggers immediate escalation",
+    "Abandonment patterns detected and re-engagement triggered",
+    "Legitimate completions not blocked",
+    "Task loop iterations persisted in database",
+    "All tests pass"
+  ]
+}

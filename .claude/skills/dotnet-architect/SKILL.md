@@ -1,14 +1,9 @@
 ---
 name: dotnet-architect
 description: >
-  Comprehensive .NET/C# architecture skill for backend development. Use for ANY .NET work including
-  ASP.NET Core Web API design, Entity Framework Core data access, C# coding patterns, Clean Architecture,
-  dependency injection, NuGet package management, MSBuild project configuration, performance optimization,
-  unit testing, and .NET version migrations. Trigger when the user mentions .NET, C#, ASP.NET, EF Core,
-  NuGet, MSBuild, xUnit, MSTest, LINQ, async/await, middleware, dependency injection, Clean Architecture,
-  CQRS, Domain-Driven Design, or any backend API development in the .NET ecosystem.
-  Also trigger for .NET upgrade migrations (net8.0 to net9.0/net10.0), build diagnostics, performance
-  profiling, or CI/CD pipeline configuration for .NET projects.
+  .NET/C# backend architecture: ASP.NET Core, EF Core, Clean Architecture, DI, NuGet,
+  MSBuild, testing, performance, migrations. Trigger: .NET, C#, ASP.NET, EF Core,
+  LINQ, xUnit, CQRS, DDD, middleware, NuGet, MSBuild, net8/net9/net10 upgrades.
 ---
 
 # .NET Architect
@@ -76,6 +71,7 @@ MyApp/
 ```
 
 Key rules:
+
 - **Domain has ZERO dependencies** on other project layers or NuGet packages (except primitives).
 - **Application depends only on Domain.** No references to Infrastructure or EF Core.
 - **Infrastructure implements Domain interfaces.** All external concerns live here.
@@ -179,6 +175,7 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
 For detailed EF Core query optimization patterns including N+1 detection, tracking modes, compiled queries, and common traps, see [references/ef-core-optimization.md](references/ef-core-optimization.md).
 
 **Critical rules (always follow):**
+
 - Use `AsNoTracking()` for all read-only queries
 - Use `Include()` or `Select()` projections to avoid N+1 queries
 - Use `AsSplitQuery()` when including multiple large collections
@@ -222,11 +219,11 @@ public static class DependencyInjection
 
 ### Lifetime rules
 
-| Lifetime | Use for | Never for |
-|----------|---------|-----------|
-| **Singleton** | Stateless services, caches, configuration | DbContext, HttpClient (use factory) |
-| **Scoped** | DbContext, repositories, unit of work | Services injected into singletons |
-| **Transient** | Lightweight stateless operations | Expensive objects, IDisposable without cleanup |
+| Lifetime      | Use for                                   | Never for                                      |
+| ------------- | ----------------------------------------- | ---------------------------------------------- |
+| **Singleton** | Stateless services, caches, configuration | DbContext, HttpClient (use factory)            |
+| **Scoped**    | DbContext, repositories, unit of work     | Services injected into singletons              |
+| **Transient** | Lightweight stateless operations          | Expensive objects, IDisposable without cleanup |
 
 **Critical rule:** Never inject a scoped service into a singleton — this causes a captive dependency. Use `IServiceScopeFactory` if a singleton needs scoped services.
 
@@ -397,14 +394,14 @@ When integrating AI/ML features into .NET applications:
 
 ### Technology selection decision tree
 
-| Task type | Technology | Package |
-|-----------|-----------|---------|
-| Structured data (classification, regression) | ML.NET | `Microsoft.ML` |
-| LLM chat (single prompt/response) | Microsoft.Extensions.AI | `Microsoft.Extensions.AI` |
-| Agentic workflows (tool calling, multi-step) | Microsoft Agent Framework | `Microsoft.Agents.AI` |
-| Custom model inference | ONNX Runtime | `Microsoft.ML.OnnxRuntime` |
-| Local/offline LLM | OllamaSharp | `OllamaSharp` |
-| Vector search / RAG | MEVD | `Microsoft.Extensions.VectorData.Abstractions` |
+| Task type                                    | Technology                | Package                                        |
+| -------------------------------------------- | ------------------------- | ---------------------------------------------- |
+| Structured data (classification, regression) | ML.NET                    | `Microsoft.ML`                                 |
+| LLM chat (single prompt/response)            | Microsoft.Extensions.AI   | `Microsoft.Extensions.AI`                      |
+| Agentic workflows (tool calling, multi-step) | Microsoft Agent Framework | `Microsoft.Agents.AI`                          |
+| Custom model inference                       | ONNX Runtime              | `Microsoft.ML.OnnxRuntime`                     |
+| Local/offline LLM                            | OllamaSharp               | `OllamaSharp`                                  |
+| Vector search / RAG                          | MEVD                      | `Microsoft.Extensions.VectorData.Abstractions` |
 
 **Critical rule:** Never use an LLM for tasks ML.NET handles well. LLMs are slower, more expensive, and non-deterministic for structured data tasks.
 
@@ -421,15 +418,15 @@ When integrating AI/ML features into .NET applications:
 
 The `references/` folder contains **task-workflow guides** with step-by-step procedures. Each follows the format: When to Use → Inputs → Workflow → Validation → Pitfalls. Load the relevant guide when the task matches:
 
-| Reference file | Task workflow | When to load |
-|----------------|--------------|-------------|
-| [references/aspnet-patterns.md](references/aspnet-patterns.md) | Middleware & error handling patterns | Setting up middleware pipeline or ProblemDetails |
-| [references/ef-core-optimization.md](references/ef-core-optimization.md) | 8-step EF Core query optimization | Slow queries, N+1 detection, tracking modes, bulk ops |
-| [references/performance-patterns.md](references/performance-patterns.md) | Performance anti-pattern scan (~50 patterns) | Performance review, optimization pass, code audit |
-| [references/msbuild-best-practices.md](references/msbuild-best-practices.md) | MSBuild audit (AP-01 through AP-15) | Build issues, project modernization, legacy migration |
-| [references/testing-patterns.md](references/testing-patterns.md) | Test runner & testing patterns | Running tests, writing tests, diagnosing failures |
-| [references/convert-to-cpm.md](references/convert-to-cpm.md) | 9-step CPM migration | Multi-project version consolidation |
-| [references/ai-integration.md](references/ai-integration.md) | AI/ML technology selection & integration | Adding AI features to .NET apps |
+| Reference file                                                               | Task workflow                                | When to load                                          |
+| ---------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------- |
+| [references/aspnet-patterns.md](references/aspnet-patterns.md)               | Middleware & error handling patterns         | Setting up middleware pipeline or ProblemDetails      |
+| [references/ef-core-optimization.md](references/ef-core-optimization.md)     | 8-step EF Core query optimization            | Slow queries, N+1 detection, tracking modes, bulk ops |
+| [references/performance-patterns.md](references/performance-patterns.md)     | Performance anti-pattern scan (~50 patterns) | Performance review, optimization pass, code audit     |
+| [references/msbuild-best-practices.md](references/msbuild-best-practices.md) | MSBuild audit (AP-01 through AP-15)          | Build issues, project modernization, legacy migration |
+| [references/testing-patterns.md](references/testing-patterns.md)             | Test runner & testing patterns               | Running tests, writing tests, diagnosing failures     |
+| [references/convert-to-cpm.md](references/convert-to-cpm.md)                 | 9-step CPM migration                         | Multi-project version consolidation                   |
+| [references/ai-integration.md](references/ai-integration.md)                 | AI/ML technology selection & integration     | Adding AI features to .NET apps                       |
 
 ## Validation checklist
 
@@ -449,15 +446,15 @@ Before delivering any .NET implementation:
 
 ## Common pitfalls
 
-| Pitfall | Solution |
-|---------|----------|
-| Injecting scoped into singleton | Use `IServiceScopeFactory` or change lifetime |
-| `async void` methods | Always return `Task` or `ValueTask` (except event handlers) |
-| `.Result` or `.Wait()` on tasks | Use `await` all the way — blocking causes deadlocks |
-| `ToList()` before `Where()` | Filter first, materialize last |
-| Missing `CancellationToken` | Pass through every async method signature |
-| `Count() > 0` for existence | Use `Any()` — stops at first match |
-| Global `DbContext` singleton | DbContext must be scoped (per-request) |
-| `new HttpClient()` per request | Use `IHttpClientFactory` or typed clients |
-| Unsealed classes everywhere | Seal by default for performance and design clarity |
+| Pitfall                                      | Solution                                                         |
+| -------------------------------------------- | ---------------------------------------------------------------- |
+| Injecting scoped into singleton              | Use `IServiceScopeFactory` or change lifetime                    |
+| `async void` methods                         | Always return `Task` or `ValueTask` (except event handlers)      |
+| `.Result` or `.Wait()` on tasks              | Use `await` all the way — blocking causes deadlocks              |
+| `ToList()` before `Where()`                  | Filter first, materialize last                                   |
+| Missing `CancellationToken`                  | Pass through every async method signature                        |
+| `Count() > 0` for existence                  | Use `Any()` — stops at first match                               |
+| Global `DbContext` singleton                 | DbContext must be scoped (per-request)                           |
+| `new HttpClient()` per request               | Use `IHttpClientFactory` or typed clients                        |
+| Unsealed classes everywhere                  | Seal by default for performance and design clarity               |
 | String comparison without `StringComparison` | Always specify `StringComparison.Ordinal` or `OrdinalIgnoreCase` |

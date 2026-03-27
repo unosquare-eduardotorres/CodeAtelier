@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import {
   readFileSync,
   writeFileSync,
@@ -8,11 +7,14 @@ import {
   readdirSync,
   unlinkSync,
   rmSync,
-  renameSync
+  renameSync,
+  symlinkSync,
+  lstatSync
 } from 'node:fs'
 import { join } from 'node:path'
-import { ACTIVATION_MODEL_ID } from '../../shared/constants'
 import { deployLogger } from '../logger'
+import { specialistRepository } from '../db/repositories/specialist.repository'
+import { skillRepository } from '../db/repositories/skill.repository'
 import type {
   DiscoveredSkill,
   DiscoveredAgent,
@@ -80,9 +82,7 @@ function parseAgentYaml(content: string): {
 }
 
 /** Parse SKILL.md frontmatter for name/description */
-function parseSkillMdFrontmatter(
-  content: string
-): { name?: string; description?: string } | null {
+function parseSkillMdFrontmatter(content: string): { name?: string; description?: string } | null {
   const match = content.match(/^---\n([\s\S]*?)\n---/)
   if (!match) return null
 
@@ -132,7 +132,7 @@ function extractLastUpdated(content: string): string | null {
 }
 
 export class WorkspaceDeployService {
-  private currentAbortController: AbortController | null = null
+  // currentAbortController removed — activation is now deterministic (no LLM process to abort)
 
   /** Get Agent Studio's master .claude/ directory */
   private getMasterClaudeDir(): string {
@@ -306,6 +306,21 @@ export class WorkspaceDeployService {
       }
     }
 
+    // Enrich with DB specialist info (accurate isActive + specialistId)
+    try {
+      for (const agent of agents) {
+        const specialist = specialistRepository.findByAgentId(agent.parsed.name)
+        if (specialist) {
+          agent.specialistId = specialist.id
+          agent.isActive = specialist.isActive
+        } else {
+          agent.isActive = false
+        }
+      }
+    } catch {
+      // DB not ready — leave isActive as-is
+    }
+
     return agents
   }
 
@@ -439,15 +454,191 @@ export class WorkspaceDeployService {
       throw new Error(`Skill not found in master: ${skillName}`)
     }
 
-    this.copyDirRecursive(masterDir, targetDir)
+    // Use symlink instead of recursive copy — edits to master are reflected instantly
+    try {
+      // Remove existing target (could be a stale symlink, old copy, or broken link)
+      if (existsSync(targetDir) || this.isSymlink(targetDir)) {
+        rmSync(targetDir, { recursive: true, force: true })
+      }
+      symlinkSync(masterDir, targetDir, 'dir')
+      deployLogger.debug(`Symlinked skill: ${masterDir} → ${targetDir}`)
+    } catch (symlinkErr) {
+      // Fallback to copy if symlink fails (e.g. cross-device, permissions)
+      deployLogger.warn(
+        `Symlink failed for skill "${skillName}", falling back to copy: ${(symlinkErr as Error).message}`
+      )
+      this.copyDirRecursive(masterDir, targetDir)
+    }
   }
 
-  /** Remove a skill directory from workspace */
+  /** Check if a path is a symlink (even if broken) */
+  private isSymlink(targetPath: string): boolean {
+    try {
+      const stats = lstatSync(targetPath)
+      return stats.isSymbolicLink()
+    } catch {
+      return false
+    }
+  }
+
+  /** Remove a skill directory (or symlink) from workspace */
   undeploySkill(workspacePath: string, skillName: string): void {
     const targetDir = join(workspacePath, '.claude', 'skills', skillName)
-    if (existsSync(targetDir)) {
+    if (existsSync(targetDir) || this.isSymlink(targetDir)) {
       rmSync(targetDir, { recursive: true, force: true })
     }
+  }
+
+  // ── Individual Agent/Skill Delete & Sync ──
+
+  /** Delete a single agent from workspace: remove YAML, clean CLAUDE.md references, remove DB record */
+  deleteAgentFromWorkspace(workspacePath: string, filename: string): void {
+    // 1. Remove agent YAML from workspace
+    this.undeployAgent(workspacePath, filename)
+
+    // 2. Remove agent references from workspace CLAUDE.md
+    this.removeFromClaudeMd(workspacePath, filename.replace(/\.ya?ml$/, ''))
+
+    deployLogger.info(`Deleted agent from workspace: ${filename} in ${workspacePath}`)
+  }
+
+  /** Sync a single agent to workspace: copy YAML from master, update CLAUDE.md, upsert DB record */
+  syncAgentToWorkspace(workspacePath: string, filename: string): void {
+    // 1. Copy agent YAML from master to workspace
+    this.deployAgent(workspacePath, filename)
+
+    // 2. Add agent reference to workspace CLAUDE.md
+    const agentName = filename.replace(/\.ya?ml$/, '')
+    this.addToClaudeMd(workspacePath, 'agent', agentName)
+
+    deployLogger.info(`Synced agent to workspace: ${filename} in ${workspacePath}`)
+  }
+
+  /** Delete a single skill from workspace: remove skill dir, clean CLAUDE.md references, remove DB record */
+  deleteSkillFromWorkspace(workspacePath: string, skillName: string): void {
+    // 1. Remove skill directory from workspace
+    this.undeploySkill(workspacePath, skillName)
+
+    // 2. Remove skill references from workspace CLAUDE.md
+    this.removeFromClaudeMd(workspacePath, skillName)
+
+    deployLogger.info(`Deleted skill from workspace: ${skillName} in ${workspacePath}`)
+  }
+
+  /** Sync a single skill to workspace: copy skill dir from master, update CLAUDE.md, upsert DB record */
+  syncSkillToWorkspace(workspacePath: string, skillName: string): void {
+    // 1. Copy skill directory from master to workspace
+    this.deploySkill(workspacePath, skillName)
+
+    // 2. Add skill reference to workspace CLAUDE.md
+    this.addToClaudeMd(workspacePath, 'skill', skillName)
+
+    deployLogger.info(`Synced skill to workspace: ${skillName} in ${workspacePath}`)
+  }
+
+  /** Remove references to an agent or skill name from workspace CLAUDE.md */
+  private removeFromClaudeMd(workspacePath: string, name: string): void {
+    const claudeMdPath = join(workspacePath, 'CLAUDE.md')
+    if (!existsSync(claudeMdPath)) return
+
+    try {
+      let content = readFileSync(claudeMdPath, 'utf-8')
+      const original = content
+
+      // Remove lines containing the agent/skill name (common patterns in CLAUDE.md)
+      // e.g. references like "| `skill-name` | ..." or "- skill-name" or agent YAML references
+      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const patterns = [
+        // Table row: | `name` | ... |
+        new RegExp(`^\\|[^|]*\`${escapedName}\`[^|]*\\|.*$\\n?`, 'gm'),
+        // List item: - name or * name
+        new RegExp(`^\\s*[-*]\\s+\`?${escapedName}\`?\\s*.*$\\n?`, 'gm')
+      ]
+
+      for (const pattern of patterns) {
+        content = content.replace(pattern, '')
+      }
+
+      if (content !== original) {
+        // Clean up any double blank lines left behind
+        content = content.replace(/\n{3,}/g, '\n\n')
+        writeFileSync(claudeMdPath, content, 'utf-8')
+        deployLogger.info(`Removed references to "${name}" from CLAUDE.md`)
+      }
+    } catch (err) {
+      deployLogger.warn(`Failed to clean CLAUDE.md for "${name}": ${(err as Error).message}`)
+    }
+  }
+
+  /** Add a reference to an agent or skill in workspace CLAUDE.md */
+  private addToClaudeMd(workspacePath: string, type: 'agent' | 'skill', name: string): void {
+    const claudeMdPath = join(workspacePath, 'CLAUDE.md')
+    if (!existsSync(claudeMdPath)) return
+
+    try {
+      const content = readFileSync(claudeMdPath, 'utf-8')
+
+      // Check if already referenced
+      if (content.includes(name)) {
+        return // Already referenced
+      }
+
+      // Determine the section to append to
+      const sectionHeader = type === 'agent' ? '### Available agents' : '### Available skills'
+      const sectionIndex = content.indexOf(sectionHeader)
+
+      if (sectionIndex === -1) {
+        // No dedicated section found — append a note at the end
+        const reference =
+          type === 'agent'
+            ? `\n\n### Available agents\n\n| Agent | Path |\n|-------|------|\n| \`${name}\` | \`.claude/agents/${name}.yml\` |\n`
+            : `\n\n### Available skills\n\n| Skill | Path |\n|-------|------|\n| \`${name}\` | \`.claude/skills/${name}/SKILL.md\` |\n`
+        writeFileSync(claudeMdPath, content + reference, 'utf-8')
+      } else {
+        // Find the end of the table in that section and append a row
+        const afterSection = content.substring(sectionIndex)
+        // Find the last table row in the section (before the next heading or EOF)
+        const nextHeading = afterSection.search(/\n##[^#]/)
+        const sectionEnd = nextHeading === -1 ? content.length : sectionIndex + nextHeading
+
+        const newRow =
+          type === 'agent'
+            ? `| \`${name}\` | \`.claude/agents/${name}.yml\` | — |\n`
+            : `| \`${name}\` | \`.claude/skills/${name}/SKILL.md\` | — |\n`
+
+        const updated = content.substring(0, sectionEnd) + newRow + content.substring(sectionEnd)
+        writeFileSync(claudeMdPath, updated, 'utf-8')
+      }
+
+      deployLogger.info(`Added ${type} "${name}" reference to CLAUDE.md`)
+    } catch (err) {
+      deployLogger.warn(
+        `Failed to update CLAUDE.md for ${type} "${name}": ${(err as Error).message}`
+      )
+    }
+  }
+
+  /** Remove all deployed agents, skills, and optionally CLAUDE.md from the workspace */
+  cleanActivation(workspacePath: string, removeClaudeMd = false): void {
+    const agentsDir = join(workspacePath, '.claude', 'agents')
+    const skillsDir = join(workspacePath, '.claude', 'skills')
+
+    if (existsSync(agentsDir)) {
+      rmSync(agentsDir, { recursive: true, force: true })
+    }
+    if (existsSync(skillsDir)) {
+      rmSync(skillsDir, { recursive: true, force: true })
+    }
+    if (removeClaudeMd) {
+      const claudeMdPath = join(workspacePath, 'CLAUDE.md')
+      if (existsSync(claudeMdPath)) {
+        unlinkSync(claudeMdPath)
+      }
+    }
+
+    deployLogger.info(
+      `Cleaned activation for workspace: ${workspacePath} (removeClaudeMd: ${removeClaudeMd})`
+    )
   }
 
   /** Recursive directory copy */
@@ -525,14 +716,17 @@ export class WorkspaceDeployService {
       const { agentSyncService } = await import('./agent-sync.service')
       const syncResult = agentSyncService.autoSyncNewEntries(workspacePath)
       if (syncResult.imported > 0 || syncResult.skillsImported > 0) {
-        emit('status', `Synced ${syncResult.imported} specialists and ${syncResult.skillsImported} skills to database`)
+        emit(
+          'status',
+          `Synced ${syncResult.imported} specialists and ${syncResult.skillsImported} skills to database`
+        )
       }
     } catch (e) {
       deployLogger.warn('Auto-sync after activation failed:', e)
     }
 
-    // ── STEP 2: Generate merged CLAUDE.md with Sonnet ──
-    emit('status', 'Reading existing CLAUDE.md...')
+    // ── STEP 2: Generate merged CLAUDE.md deterministically (no LLM call) ──
+    emit('status', 'Generating CLAUDE.md...')
     const claudeMdPath = join(workspacePath, 'CLAUDE.md')
     let existingClaudeMd: string | null = null
     if (existsSync(claudeMdPath)) {
@@ -543,80 +737,96 @@ export class WorkspaceDeployService {
       }
     }
 
-    // Build a focused agent/skill summary for the prompt (names + descriptions only)
-    const agentSummary = masterAgents
-      .map(
-        (a) =>
-          `- ${a.filename}: ${a.parsed.description || a.parsed.name} (skills: ${a.parsed.skills.join(', ') || 'none'})`
-      )
-      .join('\n')
+    const mergedClaudeMd = this.generateClaudeMdDeterministic(
+      existingClaudeMd,
+      masterAgents,
+      masterSkills,
+      referencedSkills
+    )
 
-    const skillSummary = [...referencedSkills]
-      .map((name) => {
-        const skill = masterSkills.find((s) => s.name === name)
-        return `- ${name}: ${skill?.frontmatter?.description || 'No description'}`
+    emit('status', 'Activation complete!')
+    return {
+      success: true,
+      selectedAgents: deployedAgents,
+      selectedSkills: deployedSkills,
+      existingClaudeMd,
+      proposedClaudeMd: mergedClaudeMd,
+      claudeMdWritten: false
+    }
+  }
+
+  /**
+   * Generate CLAUDE.md content deterministically from templates.
+   * No LLM call needed — assembles from existing content + agent/skill listings.
+   */
+  private generateClaudeMdDeterministic(
+    existingContent: string | null,
+    agents: DiscoveredAgent[],
+    allSkills: DiscoveredSkill[],
+    referencedSkills: Set<string>
+  ): string {
+    const sections: string[] = []
+
+    // Preserve existing project content (strip old agent/skill sections if present)
+    if (existingContent) {
+      const cleaned = this.stripGeneratedSections(existingContent)
+      if (cleaned.trim()) {
+        sections.push(cleaned.trim())
+      }
+    }
+
+    // Build agents table
+    const agentRows = agents
+      .map((a) => {
+        const skills = a.parsed.skills.length > 0 ? a.parsed.skills.join(', ') : 'none'
+        return `| \`${a.parsed.name}\` | ${a.parsed.description || a.parsed.name} | ${skills} |`
       })
       .join('\n')
 
-    // Get workspace file listing for project context
-    let treeListing = ''
-    try {
-      treeListing = this.getTreeListing(workspacePath, 3)
-    } catch {
-      treeListing = '(could not read directory)'
-    }
+    sections.push(`## Agents
 
-    const prompt = `You are generating a CLAUDE.md file for a software project that now has AI specialist agents and skills deployed.
+<!-- AUTO-GENERATED by Agent Studio — do not edit manually -->
 
-Project path: ${workspacePath}
-Project file listing:
-${treeListing}
+| Agent | Description | Skills |
+|-------|-------------|--------|
+${agentRows}`)
 
-${existingClaudeMd ? `Existing CLAUDE.md:\n---\n${existingClaudeMd}\n---` : 'No CLAUDE.md exists yet.'}
+    // Build skills table
+    const skillRows = [...referencedSkills]
+      .map((name) => {
+        const skill = allSkills.find((s) => s.name === name)
+        const description = skill?.frontmatter?.description || 'No description'
+        return `| \`${name}\` | ${description} | \`.claude/skills/${name}/SKILL.md\` |`
+      })
+      .join('\n')
 
-Deployed agents:
-${agentSummary}
+    sections.push(`## Skills
 
-Deployed skills:
-${skillSummary}
+<!-- AUTO-GENERATED by Agent Studio — do not edit manually -->
 
-Instructions:
-1. If an existing CLAUDE.md is present, PRESERVE all its project-specific content (tech stack, conventions, structure, commands, etc.)
-2. If the existing CLAUDE.md has inline instructions for a technology that now has a dedicated skill (e.g., React instructions when there's an electron-pro skill), REPLACE those inline instructions with a reference to the skill instead of duplicating content
-3. Add a "## Skills" section listing each deployed skill with its trigger keywords
-4. Add a "## Agents" section listing deployed agents with brief delegation guidelines
-5. Keep the result clean and well-organized
+| Skill | Description | Path |
+|-------|-------------|------|
+${skillRows}`)
 
-Return ONLY the complete CLAUDE.md content as plain text (no JSON wrapping, no code fences).`
+    return sections.join('\n\n')
+  }
 
-    emit('status', 'Generating CLAUDE.md with Sonnet...')
-
-    try {
-      const mergedClaudeMd = await this.spawnActivationCall(prompt, onProgress)
-
-      emit('status', 'Activation complete!')
-      return {
-        success: true,
-        selectedAgents: deployedAgents,
-        selectedSkills: deployedSkills,
-        existingClaudeMd,
-        proposedClaudeMd: mergedClaudeMd,
-        claudeMdWritten: false
-      }
-    } catch (error) {
-      // Step 1 succeeded (agents/skills deployed), but CLAUDE.md generation failed
-      // Still return partial success so user sees deployed agents
-      emit('error', `CLAUDE.md generation failed: ${(error as Error).message}`)
-      return {
-        success: true,
-        selectedAgents: deployedAgents,
-        selectedSkills: deployedSkills,
-        error: `Agents deployed but CLAUDE.md generation failed: ${(error as Error).message}`,
-        existingClaudeMd,
-        proposedClaudeMd: null,
-        claudeMdWritten: false
-      }
-    }
+  /**
+   * Strip auto-generated ## Agents and ## Skills sections from existing CLAUDE.md content.
+   * Preserves all user-written sections.
+   */
+  private stripGeneratedSections(content: string): string {
+    // Remove ## Agents section (from header to next ## or EOF)
+    let result = content.replace(
+      /\n*## Agents\s*\n<!-- AUTO-GENERATED[^]*?(?=\n## (?!Agents|Skills)|\n*$)/,
+      ''
+    )
+    // Remove ## Skills section
+    result = result.replace(
+      /\n*## Skills\s*\n<!-- AUTO-GENERATED[^]*?(?=\n## (?!Agents|Skills)|\n*$)/,
+      ''
+    )
+    return result
   }
 
   /** Write approved CLAUDE.md content to disk atomically */
@@ -627,129 +837,97 @@ Return ONLY the complete CLAUDE.md content as plain text (no JSON wrapping, no c
     renameSync(tmpPath, claudeMdPath)
   }
 
-  /** Get a simple tree listing for the Opus prompt */
-  private getTreeListing(dirPath: string, maxDepth: number, prefix = '', depth = 0): string {
-    if (depth >= maxDepth) return ''
+  // ── Activate / Deactivate / Delete All / Deploy All ──
 
-    let result = ''
-    try {
-      const entries = readdirSync(dirPath, { withFileTypes: true })
-      const filtered = entries.filter(
-        (e) =>
-          !e.name.startsWith('.') &&
-          e.name !== 'node_modules' &&
-          e.name !== 'dist' &&
-          e.name !== 'out' &&
-          e.name !== 'build' &&
-          e.name !== '.git'
-      )
+  /** Activate agent: set DB is_active=true, add to CLAUDE.md */
+  activateAgent(workspacePath: string, agentName: string): void {
+    const specialist = specialistRepository.findByAgentId(agentName)
+    if (specialist) {
+      specialistRepository.update(specialist.id, { isActive: true })
+    }
+    this.addToClaudeMd(workspacePath, 'agent', agentName)
+    deployLogger.info(`Activated agent: ${agentName}`)
+  }
 
-      for (let i = 0; i < filtered.length; i++) {
-        const entry = filtered[i]
-        const isLast = i === filtered.length - 1
-        const connector = isLast ? '└── ' : '├── '
-        const childPrefix = isLast ? '    ' : '│   '
+  /** Deactivate agent: set DB is_active=false, remove from CLAUDE.md */
+  deactivateAgent(workspacePath: string, agentName: string): void {
+    const specialist = specialistRepository.findByAgentId(agentName)
+    if (specialist) {
+      specialistRepository.update(specialist.id, { isActive: false })
+    }
+    this.removeFromClaudeMd(workspacePath, agentName)
+    deployLogger.info(`Deactivated agent: ${agentName}`)
+  }
 
-        result += `${prefix}${connector}${entry.name}${entry.isDirectory() ? '/' : ''}\n`
+  /** Delete all agents from workspace: rm .claude/agents/, delete all DB specialist records */
+  deleteAllAgents(workspacePath: string): void {
+    const agentsDir = join(workspacePath, '.claude', 'agents')
+    if (existsSync(agentsDir)) {
+      rmSync(agentsDir, { recursive: true, force: true })
+    }
+    specialistRepository.deleteAll()
+    deployLogger.info(`Deleted all agents from workspace: ${workspacePath}`)
+  }
 
-        if (entry.isDirectory()) {
-          result += this.getTreeListing(
-            join(dirPath, entry.name),
-            maxDepth,
-            prefix + childPrefix,
-            depth + 1
-          )
-        }
+  /** Delete all skills from workspace: rm .claude/skills/, delete all DB skill records */
+  deleteAllSkills(workspacePath: string): void {
+    const skillsDir = join(workspacePath, '.claude', 'skills')
+    if (existsSync(skillsDir)) {
+      rmSync(skillsDir, { recursive: true, force: true })
+    }
+    skillRepository.deleteAll()
+    deployLogger.info(`Deleted all skills from workspace: ${workspacePath}`)
+  }
+
+  /** Deploy all master agents & skills to workspace with inactive DB records */
+  async deployAllInactive(workspacePath: string): Promise<{ agents: number; skills: number }> {
+    const masterAgents = this.scanMasterAgents()
+    const masterSkills = this.scanMasterSkills()
+
+    // Create directories
+    mkdirSync(join(workspacePath, '.claude', 'agents'), { recursive: true })
+    mkdirSync(join(workspacePath, '.claude', 'skills'), { recursive: true })
+
+    // Deploy all agent YAMLs
+    let agentCount = 0
+    for (const agent of masterAgents) {
+      try {
+        this.deployAgent(workspacePath, agent.filename)
+        agentCount++
+      } catch {
+        /* skip */
       }
-    } catch {
-      /* ignore */
     }
 
-    return result
+    // Deploy all skills referenced by agents
+    let skillCount = 0
+    const referencedSkills = new Set<string>()
+    for (const agent of masterAgents) {
+      for (const ref of agent.parsed.skills) referencedSkills.add(ref)
+    }
+    // Also include any standalone master skills
+    for (const skill of masterSkills) {
+      referencedSkills.add(skill.name)
+    }
+    for (const skillName of referencedSkills) {
+      try {
+        this.deploySkill(workspacePath, skillName)
+        skillCount++
+      } catch {
+        /* skip */
+      }
+    }
+
+    // Auto-sync to DB (creates DB records, all inactive due to new default)
+    const { agentSyncService } = await import('./agent-sync.service')
+    agentSyncService.autoSyncNewEntries(workspacePath)
+
+    return { agents: agentCount, skills: skillCount }
   }
 
-  /** Spawn activation LLM call (Sonnet) */
-  private spawnActivationCall(
-    prompt: string,
-    onProgress?: (event: ActivationProgressEvent) => void
-  ): Promise<string> {
-    return new Promise((resolve, reject) => {
-      this.currentAbortController = new AbortController()
-      const { signal } = this.currentAbortController
-
-      const env = { ...process.env }
-      delete env.CLAUDECODE
-
-      if (env.PATH && !env.PATH.includes('/usr/local/bin')) {
-        env.PATH = `/usr/local/bin:${env.PATH}`
-      }
-      if (env.PATH && !env.PATH.includes('/opt/homebrew/bin')) {
-        env.PATH = `/opt/homebrew/bin:${env.PATH}`
-      }
-
-      const emit = (type: ActivationProgressEvent['type'], message: string): void => {
-        onProgress?.({ type, message, timestamp: Date.now() })
-      }
-
-      emit('status', 'Spawning Sonnet activation...')
-
-      const child = spawn(
-        'claude',
-        ['-p', prompt, '--model', ACTIVATION_MODEL_ID, '--output-format', 'text', '--permission-mode', 'plan', '--tools', ''],
-        {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env,
-          signal
-        }
-      )
-
-      deployLogger.info(`Sonnet activation spawned (no timeout, prompt length: ${prompt.length} chars)`)
-      emit('status', `Sonnet process started (prompt: ${prompt.length} chars)`)
-
-      let stdout = ''
-      let stderr = ''
-
-      child.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString()
-      })
-
-      child.stderr?.on('data', (data: Buffer) => {
-        const chunk = data.toString()
-        stderr += chunk
-        deployLogger.debug(`Activation stderr: ${chunk.slice(0, 200)}`)
-        emit('stderr', chunk.trim())
-      })
-
-      // NO TIMEOUT — user can cancel manually via shutdown()
-
-      child.on('exit', (code) => {
-        this.currentAbortController = null
-        deployLogger.info(`Sonnet activation exited with code ${code} (stdout: ${stdout.length} chars, stderr: ${stderr.length} chars)`)
-        emit('status', `Sonnet exited with code ${code}`)
-
-        if (code === 0 && stdout.trim()) {
-          resolve(stdout.trim())
-        } else {
-          const msg = `Activation call failed (exit code ${code}): ${stderr.trim() || 'No output received'}`
-          emit('error', msg)
-          reject(new Error(msg))
-        }
-      })
-
-      child.on('error', (err) => {
-        this.currentAbortController = null
-        emit('error', `Failed to spawn: ${err.message}`)
-        reject(new Error(`Failed to spawn activation call: ${err.message}`))
-      })
-    })
-  }
-
-  /** Shutdown — cancel any in-progress Opus call */
+  /** Shutdown — no-op (activation is now deterministic, no background process to cancel) */
   shutdown(): void {
-    if (this.currentAbortController) {
-      this.currentAbortController.abort()
-      this.currentAbortController = null
-    }
+    // Intentionally empty — kept for API compatibility
   }
 }
 

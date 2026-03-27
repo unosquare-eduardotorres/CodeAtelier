@@ -12,16 +12,16 @@ export default function HandoffIndicator({
   mode
 }: HandoffIndicatorProps): React.JSX.Element {
   return (
-    <div className="flex items-center gap-3 px-4 py-3 my-2 rounded-xl bg-indigo-900/30 border border-indigo-500/30">
-      <ArrowRight size={16} className="text-indigo-400 flex-shrink-0" />
+    <div className="flex items-center gap-3 px-5 py-4 my-2 rounded-xl bg-primary-muted border border-primary/30 shadow-sm">
+      <ArrowRight size={16} className="text-primary-text flex-shrink-0" />
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-indigo-300">Handing off to specialists</p>
-        <p className="text-xs text-gray-400 mt-0.5 truncate">{summary}</p>
+        <p className="text-sm font-medium text-primary-text">Handing off to specialists</p>
+        <p className="text-xs text-text-secondary mt-0.5 truncate">{summary}</p>
         <div className="flex flex-wrap gap-1.5 mt-1.5">
           {specialists.map((s) => (
             <span
               key={s}
-              className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/20"
+              className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary-text border border-primary/20"
             >
               {s}
             </span>
@@ -29,7 +29,7 @@ export default function HandoffIndicator({
         </div>
       </div>
       <span
-        className={`text-[10px] px-2 py-0.5 rounded-full ${
+        className={`text-xs px-2 py-0.5 rounded-full font-medium ${
           mode === 'build' ? 'bg-amber-500/20 text-amber-300' : 'bg-purple-500/20 text-purple-300'
         }`}
       >

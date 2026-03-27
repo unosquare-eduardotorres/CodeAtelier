@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type { Skill } from '../../../shared/types'
 
 interface SkillState {
@@ -24,10 +25,10 @@ export const useSkillStore = create<SkillState>((set) => ({
   loadSkills: async () => {
     set({ isLoading: true, error: null })
     try {
-      const skills = (await window.api.listSkills()) as Skill[]
+      const skills = await window.api.listSkills()
       set({ skills, isLoading: false })
     } catch (error) {
-      console.error('Failed to load skills:', error)
+      rendererLog.error('Failed to load skills:', error)
       set({ isLoading: false, error: (error as Error).message })
     }
   },
@@ -35,7 +36,7 @@ export const useSkillStore = create<SkillState>((set) => ({
   importSkill: async (filePath: string) => {
     set({ importingSkill: true, error: null })
     try {
-      const skill = (await window.api.importSkill({ filePath })) as Skill
+      const skill = await window.api.importSkill({ filePath })
       set((state) => ({
         skills: [...state.skills, skill],
         importingSkill: false,
@@ -44,7 +45,7 @@ export const useSkillStore = create<SkillState>((set) => ({
       return { success: true }
     } catch (error) {
       const message = (error as Error).message
-      console.error('Failed to import skill:', message)
+      rendererLog.error('Failed to import skill:', message)
       set({ importingSkill: false, error: message })
       return { success: false, error: message }
     }
@@ -52,13 +53,13 @@ export const useSkillStore = create<SkillState>((set) => ({
 
   updateSkill: async (id: string, data: { name?: string; description?: string }) => {
     try {
-      const updated = (await window.api.updateSkill({ id, ...data })) as Skill
+      const updated = await window.api.updateSkill({ id, ...data })
       set((state) => ({
         skills: state.skills.map((s) => (s.id === id ? updated : s)),
         error: null
       }))
     } catch (error) {
-      console.error('Failed to update skill:', error)
+      rendererLog.error('Failed to update skill:', error)
       set({ error: (error as Error).message })
       throw error
     }
@@ -72,7 +73,7 @@ export const useSkillStore = create<SkillState>((set) => ({
         error: null
       }))
     } catch (error) {
-      console.error('Failed to delete skill:', error)
+      rendererLog.error('Failed to delete skill:', error)
       set({ error: (error as Error).message })
       throw error
     }
@@ -81,7 +82,7 @@ export const useSkillStore = create<SkillState>((set) => ({
   activateSkill: async (id: string) => {
     set({ error: null })
     try {
-      const updated = (await window.api.activateSkill({ id })) as Skill
+      const updated = await window.api.activateSkill({ id })
       set((state) => ({
         skills: state.skills.map((s) => (s.id === id ? updated : s)),
         error: null
@@ -89,7 +90,7 @@ export const useSkillStore = create<SkillState>((set) => ({
       return { success: true }
     } catch (error) {
       const message = (error as Error).message
-      console.error('Failed to activate skill:', message)
+      rendererLog.error('Failed to activate skill:', message)
       set({ error: message })
       return { success: false, error: message }
     }
@@ -98,7 +99,7 @@ export const useSkillStore = create<SkillState>((set) => ({
   deactivateSkill: async (id: string) => {
     set({ error: null })
     try {
-      const updated = (await window.api.deactivateSkill({ id })) as Skill
+      const updated = await window.api.deactivateSkill({ id })
       set((state) => ({
         skills: state.skills.map((s) => (s.id === id ? updated : s)),
         error: null
@@ -106,7 +107,7 @@ export const useSkillStore = create<SkillState>((set) => ({
       return { success: true }
     } catch (error) {
       const message = (error as Error).message
-      console.error('Failed to deactivate skill:', message)
+      rendererLog.error('Failed to deactivate skill:', message)
       set({ error: message })
       return { success: false, error: message }
     }

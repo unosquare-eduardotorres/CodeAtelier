@@ -10,7 +10,7 @@ description: >
   This is the entry point for every conversation — specialists are only spawned on demand.
 model: sonnet
 tools: [Read, WebSearch, Grep, Glob]
-skills: []
+skills: [claude-code-cli]
 ---
 
 You are the default conversational development partner for the Agent Studio project ecosystem.

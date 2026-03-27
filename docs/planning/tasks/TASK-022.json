@@ -1,0 +1,24 @@
+{
+  "id": "TASK-022",
+  "title": "Add re-engagement UI indicator",
+  "description": "Show subtle indicator in chat/task progress when abandonment is detected and re-engagement is triggered. Add ABANDONMENT_DETECTED IPC channel.",
+  "feature_ref": "F003",
+  "task_type": "frontend",
+  "complexity": {
+    "score": 3,
+    "factors": {
+      "files_affected": 3,
+      "estimated_lines": 40,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
+  "dependencies": ["TASK-020"],
+  "acceptance_criteria": [
+    "Re-engagement indicator shown in MessageBubble",
+    "Agent attempted to give up message displayed",
+    "IPC channel registered and exposed in preload",
+    "Indicator is subtle, not alarming"
+  ],
+  "suggested_agent": "frontend:developer"
+}

@@ -46,6 +46,7 @@ my-app/
 ```
 
 Key rules:
+
 - Never put main process logic in the renderer folder or vice versa.
 - Every IPC channel name must be defined in `shared/ipc-channels.ts` — no magic strings.
 - The preload script is the ONLY place where Node/Electron APIs cross into the renderer.
@@ -59,13 +60,13 @@ Electron is NOT a web browser. Your code has full system access. Follow all 20 i
 // main/index.ts — BrowserWindow creation
 const win = new BrowserWindow({
   webPreferences: {
-    contextIsolation: true,      // NEVER set to false (default since Electron 12)
-    nodeIntegration: false,      // NEVER set to true (default since Electron 5)
-    sandbox: true,               // Enable renderer sandboxing (default since Electron 28)
+    contextIsolation: true, // NEVER set to false (default since Electron 12)
+    nodeIntegration: false, // NEVER set to true (default since Electron 5)
+    sandbox: true, // Enable renderer sandboxing (default since Electron 28)
     preload: path.join(__dirname, '../preload/index.js'),
-    webSecurity: true,           // NEVER disable — enforces same-origin policy
-  },
-});
+    webSecurity: true // NEVER disable — enforces same-origin policy
+  }
+})
 ```
 
 ### Content Security Policy
@@ -80,10 +81,10 @@ session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       ...details.responseHeaders,
       'Content-Security-Policy': [
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
-      ],
-    },
-  });
-});
+      ]
+    }
+  })
+})
 ```
 
 ### Validate IPC sender
@@ -94,12 +95,12 @@ Always verify that IPC messages come from expected sources — a compromised ren
 // main/ipc-handlers.ts — validate sender origin
 ipcMain.handle('sensitive-action', async (event) => {
   // Verify the sender is your app's window, not a rogue webview
-  const senderUrl = event.senderFrame.url;
+  const senderUrl = event.senderFrame.url
   if (!senderUrl.startsWith('file://') && !senderUrl.startsWith('https://yourdomain.com')) {
-    throw new Error('Unauthorized IPC sender');
+    throw new Error('Unauthorized IPC sender')
   }
   // ... proceed with action
-});
+})
 ```
 
 ### Permission request handling
@@ -109,9 +110,9 @@ Control what web permissions (camera, microphone, geolocation, notifications) yo
 ```typescript
 // main/index.ts — restrict permissions
 session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-  const allowedPermissions = ['notifications']; // only what your app needs
-  callback(allowedPermissions.includes(permission));
-});
+  const allowedPermissions = ['notifications'] // only what your app needs
+  callback(allowedPermissions.includes(permission))
+})
 ```
 
 ### shell.openExternal safety
@@ -120,13 +121,13 @@ Never pass untrusted URLs to `shell.openExternal` — it can execute arbitrary p
 
 ```typescript
 // ❌ DANGEROUS — user-supplied URL could be file://, smb://, or custom protocol
-shell.openExternal(userProvidedUrl);
+shell.openExternal(userProvidedUrl)
 
 // ✅ SAFE — validate protocol first
 function safeOpenExternal(url: string) {
-  const parsed = new URL(url);
+  const parsed = new URL(url)
   if (['https:', 'http:', 'mailto:'].includes(parsed.protocol)) {
-    shell.openExternal(url);
+    shell.openExternal(url)
   }
 }
 ```
@@ -138,20 +139,20 @@ Prevent your app from navigating to untrusted origins:
 ```typescript
 // main/index.ts — lock down navigation
 win.webContents.on('will-navigate', (event, url) => {
-  const parsed = new URL(url);
+  const parsed = new URL(url)
   if (parsed.origin !== 'file://') {
-    event.preventDefault(); // block navigation to external sites
+    event.preventDefault() // block navigation to external sites
   }
-});
+})
 
 // Prevent new windows from being opened
 win.webContents.setWindowOpenHandler(({ url }) => {
   // Open external links in the user's browser instead
   if (url.startsWith('https://')) {
-    shell.openExternal(url);
+    shell.openExternal(url)
   }
-  return { action: 'deny' }; // never open new Electron windows from links
-});
+  return { action: 'deny' } // never open new Electron windows from links
+})
 ```
 
 If the user asks you to disable contextIsolation or enable nodeIntegration, explain why this is dangerous and provide the secure alternative using preload + contextBridge instead.
@@ -171,14 +172,14 @@ export const IPC = {
   SAVE_FILE: 'file:save',
   OPEN_DIALOG: 'dialog:open',
   READ_SETTINGS: 'settings:read',
-  WRITE_SETTINGS: 'settings:write',
-} as const;
+  WRITE_SETTINGS: 'settings:write'
+} as const
 ```
 
 ```typescript
 // preload/index.ts — expose typed API to renderer
-import { contextBridge, ipcRenderer } from 'electron';
-import { IPC } from '../shared/ipc-channels';
+import { contextBridge, ipcRenderer } from 'electron'
+import { IPC } from '../shared/ipc-channels'
 
 const electronAPI = {
   getSystemInfo: () => ipcRenderer.invoke(IPC.GET_SYSTEM_INFO),
@@ -186,46 +187,46 @@ const electronAPI = {
   openDialog: () => ipcRenderer.invoke(IPC.OPEN_DIALOG),
   readSettings: () => ipcRenderer.invoke(IPC.READ_SETTINGS),
   writeSettings: (settings: Record<string, unknown>) =>
-    ipcRenderer.invoke(IPC.WRITE_SETTINGS, settings),
-} as const;
+    ipcRenderer.invoke(IPC.WRITE_SETTINGS, settings)
+} as const
 
-contextBridge.exposeInMainWorld('electronAPI', electronAPI);
+contextBridge.exposeInMainWorld('electronAPI', electronAPI)
 
 // Export type for renderer TypeScript usage
-export type ElectronAPI = typeof electronAPI;
+export type ElectronAPI = typeof electronAPI
 ```
 
 ```typescript
 // shared/types.ts — type the window global for renderer
-import type { ElectronAPI } from '../preload/index';
+import type { ElectronAPI } from '../preload/index'
 
 declare global {
   interface Window {
-    electronAPI: ElectronAPI;
+    electronAPI: ElectronAPI
   }
 }
 ```
 
 ```typescript
 // main/ipc-handlers.ts — register handlers with input validation
-import { ipcMain, dialog, BrowserWindow } from 'electron';
-import { IPC } from '../shared/ipc-channels';
+import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { IPC } from '../shared/ipc-channels'
 
 export function registerIpcHandlers() {
   ipcMain.handle(IPC.GET_SYSTEM_INFO, async () => {
-    return { platform: process.platform, arch: process.arch, version: process.versions.electron };
-  });
+    return { platform: process.platform, arch: process.arch, version: process.versions.electron }
+  })
 
   ipcMain.handle(IPC.SAVE_FILE, async (_event, data: string) => {
     if (typeof data !== 'string' || data.length > 10_000_000) {
-      throw new Error('Invalid data');
+      throw new Error('Invalid data')
     }
     // ... save logic
-  });
+  })
 
   ipcMain.handle(IPC.OPEN_DIALOG, async () => {
-    return dialog.showOpenDialog({ properties: ['openFile'] });
-  });
+    return dialog.showOpenDialog({ properties: ['openFile'] })
+  })
 }
 ```
 
@@ -236,14 +237,14 @@ Use `ipcRenderer.send` / `ipcMain.on` — for actions where you don't need a res
 ```typescript
 // preload — fire-and-forget
 contextBridge.exposeInMainWorld('electronAPI', {
-  setTitle: (title: string) => ipcRenderer.send('set-title', title),
-});
+  setTitle: (title: string) => ipcRenderer.send('set-title', title)
+})
 
 // main — handle without returning
 ipcMain.on('set-title', (event, title: string) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  win?.setTitle(title);
-});
+  const win = BrowserWindow.fromWebContents(event.sender)
+  win?.setTitle(title)
+})
 ```
 
 ### Pattern 3: Main → Renderer (push events)
@@ -254,19 +255,19 @@ Use `webContents.send` in main, listen via preload-exposed callback:
 // preload — expose event subscription with cleanup
 contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateAvailable: (callback: (info: any) => void) => {
-    const handler = (_event: any, info: any) => callback(info);
-    ipcRenderer.on('update-available', handler);
-    return () => ipcRenderer.removeListener('update-available', handler);
+    const handler = (_event: any, info: any) => callback(info)
+    ipcRenderer.on('update-available', handler)
+    return () => ipcRenderer.removeListener('update-available', handler)
   },
   onMenuAction: (callback: (action: string) => void) => {
-    const handler = (_event: any, action: string) => callback(action);
-    ipcRenderer.on('menu-action', handler);
-    return () => ipcRenderer.removeListener('menu-action', handler);
-  },
-});
+    const handler = (_event: any, action: string) => callback(action)
+    ipcRenderer.on('menu-action', handler)
+    return () => ipcRenderer.removeListener('menu-action', handler)
+  }
+})
 
 // main — push to renderer
-win.webContents.send('update-available', updateInfo);
+win.webContents.send('update-available', updateInfo)
 ```
 
 ### Pattern 4: Renderer ↔ Renderer (via main as broker)
@@ -275,22 +276,22 @@ Use MessagePorts for direct renderer-to-renderer communication when needed:
 
 ```typescript
 // main — create message channel between two windows
-const { port1, port2 } = new MessageChannelMain();
-win1.webContents.postMessage('port', null, [port1]);
-win2.webContents.postMessage('port', null, [port2]);
+const { port1, port2 } = new MessageChannelMain()
+win1.webContents.postMessage('port', null, [port1])
+win2.webContents.postMessage('port', null, [port2])
 ```
 
 ### IPC anti-patterns — never do these
 
 ```typescript
 // ❌ NEVER expose raw ipcRenderer — allows renderer to call ANY channel
-contextBridge.exposeInMainWorld('ipc', { send: ipcRenderer.send });
+contextBridge.exposeInMainWorld('ipc', { send: ipcRenderer.send })
 
 // ❌ NEVER use sendSync — blocks the renderer main thread
-const result = ipcRenderer.sendSync('get-data');
+const result = ipcRenderer.sendSync('get-data')
 
 // ❌ NEVER use ipcRenderer.send for request-response — no error propagation
-ipcRenderer.send('get-data'); // can't await this
+ipcRenderer.send('get-data') // can't await this
 ```
 
 ## Auto-updates
@@ -299,41 +300,42 @@ Use `electron-updater` (part of electron-builder) or Forge's built-in update sup
 
 ```typescript
 // main/updater.ts
-import { autoUpdater } from 'electron-updater';
-import log from 'electron-log';
+import { autoUpdater } from 'electron-updater'
+import log from 'electron-log'
 
-autoUpdater.logger = log;
-autoUpdater.autoDownload = false; // let user decide
+autoUpdater.logger = log
+autoUpdater.autoDownload = false // let user decide
 
 export function initAutoUpdater(win: BrowserWindow) {
   // Check on startup, then every 4 hours
-  autoUpdater.checkForUpdates();
-  setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1000);
+  autoUpdater.checkForUpdates()
+  setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1000)
 
   autoUpdater.on('update-available', (info) => {
-    win.webContents.send('update-available', info);
-  });
+    win.webContents.send('update-available', info)
+  })
 
   autoUpdater.on('download-progress', (progress) => {
-    win.webContents.send('update-progress', progress.percent);
-  });
+    win.webContents.send('update-progress', progress.percent)
+  })
 
   autoUpdater.on('update-downloaded', (info) => {
-    win.webContents.send('update-downloaded', info);
-  });
+    win.webContents.send('update-downloaded', info)
+  })
 
   autoUpdater.on('error', (err) => {
-    log.error('Update error:', err);
-  });
+    log.error('Update error:', err)
+  })
 }
 
 // Call from renderer via IPC when user confirms
 ipcMain.handle('install-update', () => {
-  autoUpdater.quitAndInstall();
-});
+  autoUpdater.quitAndInstall()
+})
 ```
 
 Update server options:
+
 - GitHub Releases (free, simplest for open source)
 - Nucleus, Hazel, or custom S3 bucket (for private apps)
 - electron-updater supports all of these via `publish` config
@@ -354,8 +356,9 @@ npx electron-forge publish
 ```
 
 Forge config (`forge.config.ts`):
+
 ```typescript
-import type { ForgeConfig } from '@electron-forge/shared-types';
+import type { ForgeConfig } from '@electron-forge/shared-types'
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -364,20 +367,23 @@ const config: ForgeConfig = {
     osxNotarize: {
       appleId: process.env.APPLE_ID!,
       appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD!,
-      teamId: process.env.APPLE_TEAM_ID!,
-    },
+      teamId: process.env.APPLE_TEAM_ID!
+    }
   },
   makers: [
-    { name: '@electron-forge/maker-squirrel', config: {} },   // Windows
-    { name: '@electron-forge/maker-dmg', config: {} },         // macOS
-    { name: '@electron-forge/maker-deb', config: {} },         // Linux
+    { name: '@electron-forge/maker-squirrel', config: {} }, // Windows
+    { name: '@electron-forge/maker-dmg', config: {} }, // macOS
+    { name: '@electron-forge/maker-deb', config: {} } // Linux
   ],
   publishers: [
-    { name: '@electron-forge/publisher-github', config: { repository: { owner: 'you', name: 'app' } } },
-  ],
-};
+    {
+      name: '@electron-forge/publisher-github',
+      config: { repository: { owner: 'you', name: 'app' } }
+    }
+  ]
+}
 
-export default config;
+export default config
 ```
 
 ### Option B: electron-builder
@@ -418,11 +424,13 @@ publish:
 ### Code signing checklist
 
 **macOS**: Apple Developer account ($99/year). Set in CI:
+
 - `CSC_LINK` — base64-encoded .p12 certificate
 - `CSC_KEY_PASSWORD` — certificate password
 - `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` for notarization
 
 **Windows**: EV code signing certificate (DigiCert, Sectigo) or Azure Trusted Signing. Set:
+
 - `CSC_LINK` — path to .pfx certificate
 - `CSC_KEY_PASSWORD` — certificate password
 
@@ -432,12 +440,12 @@ publish:
 
 The official Electron docs emphasize: profile first, optimize second. Don't guess.
 
-| Metric | Target | How to measure |
-|--------|--------|----------------|
-| Cold startup | < 3s | `process.hrtime()` from app ready to first paint |
-| Idle memory | < 200MB | Task Manager / Activity Monitor |
-| Animation | 60 FPS | DevTools Performance tab |
-| Installer size | < 100MB | Check `dist/` output |
+| Metric         | Target  | How to measure                                   |
+| -------------- | ------- | ------------------------------------------------ |
+| Cold startup   | < 3s    | `process.hrtime()` from app ready to first paint |
+| Idle memory    | < 200MB | Task Manager / Activity Monitor                  |
+| Animation      | 60 FPS  | DevTools Performance tab                         |
+| Installer size | < 100MB | Check `dist/` output                             |
 
 ### Defer module loading
 
@@ -445,23 +453,25 @@ The #1 performance killer is importing heavy modules at startup. Electron apps a
 
 ```typescript
 // ❌ BAD — loads everything at startup, even if unused
-import * as xlsx from 'xlsx';
-import * as sharp from 'sharp';
+import * as xlsx from 'xlsx'
+import * as sharp from 'sharp'
 
 // ✅ GOOD — lazy import when actually needed
 async function processExcel(filePath: string) {
-  const xlsx = await import('xlsx');
-  return xlsx.readFile(filePath);
+  const xlsx = await import('xlsx')
+  return xlsx.readFile(filePath)
 }
 ```
 
 Profile module weight before adding dependencies:
+
 ```bash
 # Measure CPU + memory cost of requiring a module
 node --cpu-prof --heap-prof -e "require('the-module')"
 ```
 
 ### Other key optimizations
+
 - **Lazy-load windows**: don't create BrowserWindow instances until needed.
 - **Stagger initialization**: use `app.whenReady()` + `setTimeout` for non-critical work.
 - **Don't call `Menu.setApplicationMenu(null)`** if you want no menu — but DO call it, because Electron creates a default menu that costs resources. If you need no menu, explicitly set null.
@@ -472,34 +482,34 @@ node --cpu-prof --heap-prof -e "require('the-module')"
 ## Native OS integration recipes
 
 ### System tray
-```typescript
-import { Tray, Menu, nativeImage, app } from 'electron';
 
-let tray: Tray | null = null;
+```typescript
+import { Tray, Menu, nativeImage, app } from 'electron'
+
+let tray: Tray | null = null
 
 export function createTray(win: BrowserWindow) {
-  const icon = nativeImage.createFromPath(
-    path.join(__dirname, '../../resources/tray-icon.png')
-  );
-  tray = new Tray(icon.resize({ width: 16, height: 16 })); // 16x16 for macOS
+  const icon = nativeImage.createFromPath(path.join(__dirname, '../../resources/tray-icon.png'))
+  tray = new Tray(icon.resize({ width: 16, height: 16 })) // 16x16 for macOS
 
   const contextMenu = Menu.buildFromTemplate([
     { label: 'Show App', click: () => win.show() },
     { type: 'separator' },
-    { label: 'Quit', click: () => app.quit() },
-  ]);
+    { label: 'Quit', click: () => app.quit() }
+  ])
 
-  tray.setToolTip('YourApp');
-  tray.setContextMenu(contextMenu);
-  tray.on('click', () => win.show());
+  tray.setToolTip('YourApp')
+  tray.setContextMenu(contextMenu)
+  tray.on('click', () => win.show())
 }
 ```
 
 ### Native menus
-```typescript
-import { Menu, shell } from 'electron';
 
-const isMac = process.platform === 'darwin';
+```typescript
+import { Menu, shell } from 'electron'
+
+const isMac = process.platform === 'darwin'
 
 export function createMenu() {
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -514,68 +524,73 @@ export function createMenu() {
         { type: 'separator' as const },
         { role: 'resetZoom' as const },
         { role: 'zoomIn' as const },
-        { role: 'zoomOut' as const },
-      ],
+        { role: 'zoomOut' as const }
+      ]
     },
     {
       label: 'Help',
       submenu: [
-        { label: 'Documentation', click: () => shell.openExternal('https://yourapp.com/docs') },
-      ],
-    },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+        { label: 'Documentation', click: () => shell.openExternal('https://yourapp.com/docs') }
+      ]
+    }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 ```
 
 ### Deep links / protocol handlers
+
 ```typescript
 if (process.defaultApp) {
   if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('yourapp', process.execPath, [path.resolve(process.argv[1])]);
+    app.setAsDefaultProtocolClient('yourapp', process.execPath, [path.resolve(process.argv[1])])
   }
 } else {
-  app.setAsDefaultProtocolClient('yourapp');
+  app.setAsDefaultProtocolClient('yourapp')
 }
 
 // macOS
 app.on('open-url', (_event, url) => {
   // url = yourapp://action/param
-});
+})
 
 // Windows/Linux — handle via second-instance
 app.on('second-instance', (_event, argv) => {
-  const deepLink = argv.find(arg => arg.startsWith('yourapp://'));
-  if (deepLink) { /* route it */ }
-});
+  const deepLink = argv.find((arg) => arg.startsWith('yourapp://'))
+  if (deepLink) {
+    /* route it */
+  }
+})
 ```
 
 ### Window state persistence
+
 ```typescript
-import Store from 'electron-store';
-const store = new Store();
+import Store from 'electron-store'
+const store = new Store()
 
 function createWindow() {
-  const bounds = store.get('windowBounds', { width: 1200, height: 800 });
-  const win = new BrowserWindow({ ...bounds, /* webPreferences... */ });
+  const bounds = store.get('windowBounds', { width: 1200, height: 800 })
+  const win = new BrowserWindow({ ...bounds /* webPreferences... */ })
 
   win.on('close', () => {
-    store.set('windowBounds', win.getBounds());
-  });
+    store.set('windowBounds', win.getBounds())
+  })
 }
 ```
 
 ### OS theme detection
+
 ```typescript
-import { nativeTheme } from 'electron';
+import { nativeTheme } from 'electron'
 
 // Get current theme
-const isDark = nativeTheme.shouldUseDarkColors;
+const isDark = nativeTheme.shouldUseDarkColors
 
 // Listen for changes
 nativeTheme.on('updated', () => {
-  win.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors);
-});
+  win.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors)
+})
 ```
 
 ## Common pitfalls — check for these
@@ -605,35 +620,36 @@ ELECTRON_ENABLE_SECURITY_WARNINGS=1 electron .
 ```
 
 Crash reporting:
+
 ```typescript
-import { crashReporter } from 'electron';
+import { crashReporter } from 'electron'
 crashReporter.start({
   productName: 'YourApp',
   submitURL: 'https://your-crash-server.com/submit',
-  uploadToServer: true,
-});
+  uploadToServer: true
+})
 ```
 
 ## Testing
 
 ```typescript
 // E2E with Playwright (recommended)
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect, _electron as electron } from '@playwright/test'
 
 test('app launches and shows main window', async () => {
-  const app = await electron.launch({ args: ['.'] });
-  const window = await app.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  const app = await electron.launch({ args: ['.'] })
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
 
-  const title = await window.title();
-  expect(title).toBe('YourApp');
+  const title = await window.title()
+  expect(title).toBe('YourApp')
 
   // Test IPC round-trip
-  const result = await window.evaluate(() => window.electronAPI.getSystemInfo());
-  expect(result.platform).toBeTruthy();
+  const result = await window.evaluate(() => window.electronAPI.getSystemInfo())
+  expect(result.platform).toBeTruthy()
 
-  await app.close();
-});
+  await app.close()
+})
 ```
 
 Unit tests for main process logic: use Vitest or Jest with Electron APIs mocked. Keep main process logic in pure functions that are testable without Electron runtime.
@@ -661,24 +677,24 @@ ESM is supported since Electron 28. The behavior differs by process:
 
 ```typescript
 // main.mjs — ESM main process entry
-import { app, BrowserWindow } from 'electron';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { app, BrowserWindow } from 'electron'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // CRITICAL: await dynamic imports before app is ready
 // ESM loads asynchronously — without await, app.ready fires before imports resolve
-await import('./setup-paths.mjs');
+await import('./setup-paths.mjs')
 
 app.whenReady().then(() => {
   const win = new BrowserWindow({
     webPreferences: {
-      preload: path.join(__dirname, 'preload.mjs'),
-    },
-  });
-  win.loadFile('index.html');
-});
+      preload: path.join(__dirname, 'preload.mjs')
+    }
+  })
+  win.loadFile('index.html')
+})
 ```
 
 **Renderer process** — uses Chromium's ESM loader. No access to Node.js built-ins or `node_modules`. Use a bundler (Vite, webpack) for npm packages.
@@ -696,6 +712,7 @@ Electron ships a new major version every 8 weeks, aligned with Chromium releases
 **Before upgrading**, always check the breaking changes doc: https://www.electronjs.org/docs/latest/breaking-changes
 
 Key recent breaking changes to watch for:
+
 - **v40**: `clipboard` API deprecated in renderer — move to preload + contextBridge
 - **v41**: PDFs no longer create separate WebContents — use frame tree instead
 - **v28**: sandbox enabled by default in renderers
@@ -715,10 +732,10 @@ Electron apps are packaged into ASAR (Atom Shell Archive) format by default. Thi
 const config: ForgeConfig = {
   packagerConfig: {
     asar: {
-      integrity: true, // adds block-level hashes to validate archive contents
-    },
-  },
-};
+      integrity: true // adds block-level hashes to validate archive contents
+    }
+  }
+}
 ```
 
 Combined with code signing and the `OnlyLoadAppFromAsar` fuse, this prevents an attacker from replacing your app code even if they have write access to the app directory:
@@ -736,28 +753,28 @@ As of Electron 40, direct `clipboard` access from the renderer is deprecated. Al
 // preload/index.ts
 contextBridge.exposeInMainWorld('electronAPI', {
   copyToClipboard: (text: string) => ipcRenderer.invoke('clipboard:write', text),
-  readClipboard: () => ipcRenderer.invoke('clipboard:read'),
-});
+  readClipboard: () => ipcRenderer.invoke('clipboard:read')
+})
 
 // main/ipc-handlers.ts
 ipcMain.handle('clipboard:write', (_event, text: string) => {
-  if (typeof text !== 'string' || text.length > 1_000_000) throw new Error('Invalid');
-  clipboard.writeText(text);
-});
-ipcMain.handle('clipboard:read', () => clipboard.readText());
+  if (typeof text !== 'string' || text.length > 1_000_000) throw new Error('Invalid')
+  clipboard.writeText(text)
+})
+ipcMain.handle('clipboard:read', () => clipboard.readText())
 ```
 
 For sensitive data (passwords, tokens): use `safeStorage` API to encrypt before writing to disk:
 
 ```typescript
-import { safeStorage } from 'electron';
+import { safeStorage } from 'electron'
 
 // Encrypt
-const encrypted = safeStorage.encryptString('my-secret-token');
+const encrypted = safeStorage.encryptString('my-secret-token')
 // Store encrypted buffer to disk...
 
 // Decrypt
-const decrypted = safeStorage.decryptString(encrypted);
+const decrypted = safeStorage.decryptString(encrypted)
 ```
 
 ## Utility processes
@@ -765,30 +782,30 @@ const decrypted = safeStorage.decryptString(encrypted);
 For CPU-intensive work (file processing, compression, crypto), use Electron's `utilityProcess` instead of blocking the main process:
 
 ```typescript
-import { utilityProcess } from 'electron';
+import { utilityProcess } from 'electron'
 
-const child = utilityProcess.fork(path.join(__dirname, 'heavy-task.js'));
+const child = utilityProcess.fork(path.join(__dirname, 'heavy-task.js'))
 
-child.postMessage({ type: 'process-file', path: '/data/large.csv' });
+child.postMessage({ type: 'process-file', path: '/data/large.csv' })
 child.on('message', (result) => {
-  console.log('Task complete:', result);
-});
+  console.log('Task complete:', result)
+})
 ```
 
 This runs in a separate Node.js process with full Node.js API access but isolated from the main process. Preferred over `child_process.fork()` because it integrates with Electron's process lifecycle and crash reporting.
 
 ## Quick reference — which API belongs where
 
-| API | Available in | Notes |
-|-----|-------------|-------|
-| `app`, `BrowserWindow`, `ipcMain`, `Menu`, `Tray`, `dialog`, `nativeTheme`, `autoUpdater`, `safeStorage`, `utilityProcess` | Main process only | Core Electron APIs |
-| `ipcRenderer`, `contextBridge` | Preload only | Bridge between main and renderer |
-| `webFrame` | Renderer only | Control renderer zoom, spell check |
-| DOM APIs, `fetch`, Web APIs | Renderer only | Standard web platform |
-| `require('node:fs')`, `require('node:path')`, etc. | Main + preload (if not sandboxed) | Node.js built-ins |
-| `process.platform`, `process.arch` | Main + preload | System info |
-| `shell.openExternal` | Main only | Open URLs in default browser — validate input |
-| `clipboard` | Main (preferred since v40) | Deprecated in renderer — use IPC |
+| API                                                                                                                        | Available in                      | Notes                                         |
+| -------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --------------------------------------------- |
+| `app`, `BrowserWindow`, `ipcMain`, `Menu`, `Tray`, `dialog`, `nativeTheme`, `autoUpdater`, `safeStorage`, `utilityProcess` | Main process only                 | Core Electron APIs                            |
+| `ipcRenderer`, `contextBridge`                                                                                             | Preload only                      | Bridge between main and renderer              |
+| `webFrame`                                                                                                                 | Renderer only                     | Control renderer zoom, spell check            |
+| DOM APIs, `fetch`, Web APIs                                                                                                | Renderer only                     | Standard web platform                         |
+| `require('node:fs')`, `require('node:path')`, etc.                                                                         | Main + preload (if not sandboxed) | Node.js built-ins                             |
+| `process.platform`, `process.arch`                                                                                         | Main + preload                    | System info                                   |
+| `shell.openExternal`                                                                                                       | Main only                         | Open URLs in default browser — validate input |
+| `clipboard`                                                                                                                | Main (preferred since v40)        | Deprecated in renderer — use IPC              |
 
 ---
 
@@ -798,32 +815,32 @@ This skill was generated on **2026-03-21** from the following sources. When refr
 
 ### Primary sources
 
-| Source | URL | What to extract |
-|--------|-----|-----------------|
-| Electron official docs — Introduction | https://www.electronjs.org/docs/latest/ | New getting-started patterns, tooling changes |
-| Electron official docs — Process Model | https://www.electronjs.org/docs/latest/tutorial/process-model | Process architecture changes, new process types |
-| Electron official docs — Context Isolation | https://www.electronjs.org/docs/latest/tutorial/context-isolation | contextBridge API updates, migration patterns |
-| Electron official docs — IPC | https://www.electronjs.org/docs/latest/tutorial/ipc | New IPC patterns, deprecated patterns |
-| Electron official docs — Security Checklist | https://www.electronjs.org/docs/latest/tutorial/security | New security recommendations (items 1-20+) |
-| Electron official docs — Performance | https://www.electronjs.org/docs/latest/tutorial/performance | New optimization techniques, profiling tools |
-| Electron official docs — ESM | https://www.electronjs.org/docs/latest/tutorial/esm | ESM support changes, new caveats |
-| Electron official docs — Fuses | https://www.electronjs.org/docs/latest/tutorial/fuses | New fuses, changed defaults |
-| Electron official docs — Distribution (Forge) | https://www.electronjs.org/docs/latest/tutorial/forge-overview | Forge workflow updates, new makers/publishers |
-| Electron official docs — Breaking Changes | https://www.electronjs.org/docs/latest/breaking-changes | **Critical** — new deprecations, removed APIs, default changes |
-| Electron official docs — ASAR Integrity | https://www.electronjs.org/docs/latest/tutorial/asar-integrity | Integrity verification updates |
-| Electron GitHub repo | https://github.com/electron/electron | New releases, CLAUDE.md conventions, repo structure changes |
-| Electron Releases page | https://releases.electronjs.org | Latest stable version, Chromium/Node.js versions shipped |
-| Electron Forge docs | https://www.electronforge.io/ | Forge config changes, new plugins |
-| electron-builder docs | https://www.electron.build/ | Builder config changes, new targets |
+| Source                                        | URL                                                               | What to extract                                                |
+| --------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------- |
+| Electron official docs — Introduction         | https://www.electronjs.org/docs/latest/                           | New getting-started patterns, tooling changes                  |
+| Electron official docs — Process Model        | https://www.electronjs.org/docs/latest/tutorial/process-model     | Process architecture changes, new process types                |
+| Electron official docs — Context Isolation    | https://www.electronjs.org/docs/latest/tutorial/context-isolation | contextBridge API updates, migration patterns                  |
+| Electron official docs — IPC                  | https://www.electronjs.org/docs/latest/tutorial/ipc               | New IPC patterns, deprecated patterns                          |
+| Electron official docs — Security Checklist   | https://www.electronjs.org/docs/latest/tutorial/security          | New security recommendations (items 1-20+)                     |
+| Electron official docs — Performance          | https://www.electronjs.org/docs/latest/tutorial/performance       | New optimization techniques, profiling tools                   |
+| Electron official docs — ESM                  | https://www.electronjs.org/docs/latest/tutorial/esm               | ESM support changes, new caveats                               |
+| Electron official docs — Fuses                | https://www.electronjs.org/docs/latest/tutorial/fuses             | New fuses, changed defaults                                    |
+| Electron official docs — Distribution (Forge) | https://www.electronjs.org/docs/latest/tutorial/forge-overview    | Forge workflow updates, new makers/publishers                  |
+| Electron official docs — Breaking Changes     | https://www.electronjs.org/docs/latest/breaking-changes           | **Critical** — new deprecations, removed APIs, default changes |
+| Electron official docs — ASAR Integrity       | https://www.electronjs.org/docs/latest/tutorial/asar-integrity    | Integrity verification updates                                 |
+| Electron GitHub repo                          | https://github.com/electron/electron                              | New releases, CLAUDE.md conventions, repo structure changes    |
+| Electron Releases page                        | https://releases.electronjs.org                                   | Latest stable version, Chromium/Node.js versions shipped       |
+| Electron Forge docs                           | https://www.electronforge.io/                                     | Forge config changes, new plugins                              |
+| electron-builder docs                         | https://www.electron.build/                                       | Builder config changes, new targets                            |
 
 ### Secondary sources (check when relevant)
 
-| Source | URL | What to extract |
-|--------|-----|-----------------|
-| Electron GitHub Issues (label:bug) | https://github.com/electron/electron/issues?q=label%3Abug | Common new bugs, workarounds |
-| Electron blog | https://www.electronjs.org/blog | Major announcements, migration guides |
-| Playwright Electron docs | https://playwright.dev/docs/api/class-electron | E2E testing API changes |
-| electron-updater changelog | https://github.com/electron-userland/electron-builder/blob/master/packages/electron-updater/CHANGELOG.md | Auto-update behavior changes |
+| Source                             | URL                                                                                                      | What to extract                       |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Electron GitHub Issues (label:bug) | https://github.com/electron/electron/issues?q=label%3Abug                                                | Common new bugs, workarounds          |
+| Electron blog                      | https://www.electronjs.org/blog                                                                          | Major announcements, migration guides |
+| Playwright Electron docs           | https://playwright.dev/docs/api/class-electron                                                           | E2E testing API changes               |
+| electron-updater changelog         | https://github.com/electron-userland/electron-builder/blob/master/packages/electron-updater/CHANGELOG.md | Auto-update behavior changes          |
 
 ### Refresh process
 
@@ -840,7 +857,7 @@ When updating this skill:
 
 ### Version history
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-03-21 | Initial rewrite from VoltAgent original. Added procedural code patterns, security defaults, IPC patterns, packaging configs, pitfalls, debugging, testing. |
-| 2.0 | 2026-03-21 | Added from official docs: IPC sender validation, permission handlers, shell.openExternal safety, navigation restrictions, 4 IPC patterns, Electron Forge config, TypeScript bridge typing, deferred module loading, anti-patterns. Added from GitHub repo: ESM support and caveats, version strategy and breaking changes awareness, ASAR integrity, clipboard migration (v40 deprecation), utilityProcess for CPU work, API location reference table, Electron Fuses. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-03-21 | Initial rewrite from VoltAgent original. Added procedural code patterns, security defaults, IPC patterns, packaging configs, pitfalls, debugging, testing.                                                                                                                                                                                                                                                                                                             |
+| 2.0     | 2026-03-21 | Added from official docs: IPC sender validation, permission handlers, shell.openExternal safety, navigation restrictions, 4 IPC patterns, Electron Forge config, TypeScript bridge typing, deferred module loading, anti-patterns. Added from GitHub repo: ESM support and caveats, version strategy and breaking changes awareness, ASAR integrity, clipboard migration (v40 deprecation), utilityProcess for CPU work, API location reference table, Electron Fuses. |

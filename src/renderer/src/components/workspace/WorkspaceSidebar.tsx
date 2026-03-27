@@ -1,12 +1,12 @@
-import { useState } from 'react';
-import { Plus, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react';
-import { useWorkspaceStore } from '@renderer/store';
-import { WorkspaceItem } from '@renderer/components/workspace';
-import { ConfirmDialog } from '@renderer/components/common';
+import { useState } from 'react'
+import { Plus, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useWorkspaceStore } from '@renderer/store'
+import { WorkspaceItem } from '@renderer/components/workspace'
+import { ConfirmDialog } from '@renderer/components/common'
 
 interface WorkspaceSidebarProps {
-  isCollapsed?: boolean;
-  onToggleCollapse?: () => void;
+  isCollapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
 export default function WorkspaceSidebar({
@@ -14,44 +14,44 @@ export default function WorkspaceSidebar({
   onToggleCollapse
 }: WorkspaceSidebarProps): React.JSX.Element {
   const { workspaces, activeWorkspace, openWorkspace, createWorkspace, deleteWorkspace } =
-    useWorkspaceStore();
-  const [internalCollapsed, setInternalCollapsed] = useState(false);
-  const [isAdding, setIsAdding] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+    useWorkspaceStore()
+  const [internalCollapsed, setInternalCollapsed] = useState(false)
+  const [isAdding, setIsAdding] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
-  const isCollapsed = externalCollapsed ?? internalCollapsed;
-  const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c));
+  const isCollapsed = externalCollapsed ?? internalCollapsed
+  const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c))
 
   const handleAddWorkspace = async (): Promise<void> => {
-    setIsAdding(true);
+    setIsAdding(true)
     try {
-      const dirPath = await window.api.selectDirectory();
+      const dirPath = await window.api.selectDirectory()
       if (dirPath) {
         // Use the folder name as workspace name
-        const name = dirPath.split('/').pop() || dirPath.split('\\').pop() || 'Untitled';
-        await createWorkspace(name, dirPath);
+        const name = dirPath.split('/').pop() || dirPath.split('\\').pop() || 'Untitled'
+        await createWorkspace(name, dirPath)
       }
     } catch (error) {
-      console.error('Failed to add workspace:', error);
+      console.error('Failed to add workspace:', error)
     } finally {
-      setIsAdding(false);
+      setIsAdding(false)
     }
-  };
+  }
 
   const handleDeleteRequest = (id: string): void => {
-    setDeleteTarget(id);
-  };
+    setDeleteTarget(id)
+  }
 
   const handleDeleteConfirm = async (): Promise<void> => {
     if (deleteTarget) {
-      await deleteWorkspace(deleteTarget);
-      setDeleteTarget(null);
+      await deleteWorkspace(deleteTarget)
+      setDeleteTarget(null)
     }
-  };
+  }
 
   const sortedWorkspaces = [...workspaces].sort(
     (a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime()
-  );
+  )
 
   if (isCollapsed) {
     return (
@@ -90,7 +90,7 @@ export default function WorkspaceSidebar({
           <Plus size={14} />
         </button>
       </div>
-    );
+    )
   }
 
   return (
@@ -155,5 +155,5 @@ export default function WorkspaceSidebar({
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
-  );
+  )
 }

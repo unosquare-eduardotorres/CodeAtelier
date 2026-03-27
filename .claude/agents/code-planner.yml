@@ -24,6 +24,6 @@ When working on this project:
 - Renderer code is in src/renderer/src/ (React web app)
 - Shared types and constants are in src/shared/
 - Preload scripts are in src/preload/ (the only bridge)
-- Follow the existing by-type organization pattern
+- Follow the existing by-feature organization pattern (components/chat/, components/agents/, etc.)
 - Use barrel exports (index.ts) for module boundaries
 - Keep IPC channels as the clean boundary between processes

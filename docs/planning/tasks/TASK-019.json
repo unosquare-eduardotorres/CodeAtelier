@@ -1,0 +1,25 @@
+{
+  "id": "TASK-019",
+  "title": "Create abandonment detector service",
+  "description": "Create src/main/services/abandonment-detector.service.ts with regex patterns for direct abandonment, premature completion, deflection, and permission seeking. Include whitelist for legitimate completions. Generate category-specific re-engagement prompts.",
+  "feature_ref": "F003",
+  "task_type": "backend",
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 2,
+      "estimated_lines": 150,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
+  "dependencies": ["TASK-002"],
+  "acceptance_criteria": [
+    "4 pattern categories with comprehensive regex sets",
+    "Whitelist for legitimate completion phrases",
+    "detect() returns AbandonmentDetection with category and confidence",
+    "getReEngagementPrompt() returns category-specific prompt",
+    "Confidence scoring based on pattern match strength"
+  ],
+  "suggested_agent": "backend:api-developer-typescript"
+}

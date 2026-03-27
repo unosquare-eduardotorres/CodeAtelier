@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, type BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { mainLogger } from '../logger'
 import { generalistService, orchestratorService } from '../services'
@@ -6,7 +6,7 @@ import { validateSender } from './validate-sender'
 
 const log = mainLogger
 
-export function registerOrchestratorIpc(): void {
+export function registerOrchestratorIpc(mainWindow: BrowserWindow): void {
   let startingWorkspace: string | null = null // guard against double-start (React strict mode)
 
   ipcMain.handle(IPC_CHANNELS.ORCHESTRATOR_START, async (event, workspacePath: string) => {
@@ -22,9 +22,11 @@ export function registerOrchestratorIpc(): void {
       return
     }
 
-    // Skip if already running for this workspace
+    // Already running for this workspace — re-send ready event so the renderer
+    // transitions out of 'starting' state (fixes Home → re-select same workspace)
     if (generalistService.isRunning() && generalistService.getWorkspacePath() === workspacePath) {
-      log.info('Generalist already running for:', workspacePath, '— skipping')
+      log.info('Generalist already running for:', workspacePath, '— re-sending ready')
+      mainWindow.webContents.send(IPC_CHANNELS.ORCHESTRATOR_READY)
       return
     }
 
@@ -38,10 +40,7 @@ export function registerOrchestratorIpc(): void {
       // after spawn — no need to wait for the system init event (which only arrives after
       // the first stdin message). Notify the renderer right away so the chat UI is shown.
       log.info('Generalist ready (stream-json mode) for:', workspacePath)
-      const win = BrowserWindow.getAllWindows()[0]
-      if (win) {
-        win.webContents.send(IPC_CHANNELS.ORCHESTRATOR_READY)
-      }
+      mainWindow.webContents.send(IPC_CHANNELS.ORCHESTRATOR_READY)
 
       // Pre-initialize orchestrator workspace path (no process spawned yet)
       await orchestratorService.start(workspacePath)

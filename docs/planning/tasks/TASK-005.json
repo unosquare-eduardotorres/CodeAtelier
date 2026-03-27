@@ -1,0 +1,24 @@
+{
+  "id": "TASK-005",
+  "title": "Add model routing to specialist pool",
+  "description": "In specialist-pool.service.ts, modify spawnSpecialist() to include --model flag based on task.model or fallback to complexity score. Add getModelForComplexity() private method.",
+  "feature_ref": "F001",
+  "task_type": "backend",
+  "complexity": {
+    "score": 4,
+    "factors": {
+      "files_affected": 1,
+      "estimated_lines": 40,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
+  "dependencies": ["TASK-004"],
+  "acceptance_criteria": [
+    "Specialist CLI args include --model flag",
+    "Model selected from task.model or complexity score",
+    "Fallback to sonnet if no scoring data available",
+    "Model recorded in agent session DB record"
+  ],
+  "suggested_agent": "backend:api-developer-typescript"
+}

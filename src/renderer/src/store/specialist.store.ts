@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import type { Specialist, CreateSpecialistInput, UpdateSpecialistInput } from '../../../shared/types'
+import { rendererLog } from '@renderer/utils/logger'
+import type {
+  Specialist,
+  CreateSpecialistInput,
+  UpdateSpecialistInput
+} from '../../../shared/types'
 
 interface SpecialistState {
   specialists: Specialist[]
@@ -22,20 +27,20 @@ export const useSpecialistStore = create<SpecialistState>((set, get) => ({
   loadSpecialists: async () => {
     set({ isLoading: true, error: null })
     try {
-      const specialists = (await window.api.listSpecialists()) as Specialist[]
+      const specialists = await window.api.listSpecialists()
       set({ specialists, isLoading: false })
     } catch (error) {
-      console.error('Failed to load specialists:', error)
+      rendererLog.error('Failed to load specialists:', error)
       set({ isLoading: false, error: (error as Error).message })
     }
   },
 
   createSpecialist: async (data: CreateSpecialistInput) => {
     try {
-      const specialist = (await window.api.createSpecialist(data)) as Specialist
+      const specialist = await window.api.createSpecialist(data)
       set((state) => ({ specialists: [...state.specialists, specialist], error: null }))
     } catch (error) {
-      console.error('Failed to create specialist:', error)
+      rendererLog.error('Failed to create specialist:', error)
       set({ error: (error as Error).message })
       throw error
     }
@@ -43,13 +48,13 @@ export const useSpecialistStore = create<SpecialistState>((set, get) => ({
 
   updateSpecialist: async (id: string, data: UpdateSpecialistInput) => {
     try {
-      const updated = (await window.api.updateSpecialist({ id, ...data })) as Specialist
+      const updated = await window.api.updateSpecialist({ id, ...data })
       set((state) => ({
         specialists: state.specialists.map((s) => (s.id === id ? updated : s)),
         error: null
       }))
     } catch (error) {
-      console.error('Failed to update specialist:', error)
+      rendererLog.error('Failed to update specialist:', error)
       set({ error: (error as Error).message })
       throw error
     }
@@ -65,7 +70,7 @@ export const useSpecialistStore = create<SpecialistState>((set, get) => ({
       return { success: true }
     } catch (error) {
       const message = (error as Error).message
-      console.error('Failed to delete specialist:', message)
+      rendererLog.error('Failed to delete specialist:', message)
       set({ error: message })
       return { success: false, error: message }
     }
@@ -77,7 +82,7 @@ export const useSpecialistStore = create<SpecialistState>((set, get) => ({
       // Reload to get updated data
       await get().loadSpecialists()
     } catch (error) {
-      console.error('Failed to assign skill:', error)
+      rendererLog.error('Failed to assign skill:', error)
       set({ error: (error as Error).message })
       throw error
     }
@@ -88,7 +93,7 @@ export const useSpecialistStore = create<SpecialistState>((set, get) => ({
       await window.api.removeSkillFromSpecialist({ specialistId, skillId })
       await get().loadSpecialists()
     } catch (error) {
-      console.error('Failed to remove skill:', error)
+      rendererLog.error('Failed to remove skill:', error)
       set({ error: (error as Error).message })
       throw error
     }

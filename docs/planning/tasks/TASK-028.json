@@ -1,0 +1,26 @@
+{
+  "id": "TASK-028",
+  "title": "Create checkpoint UI modal and store",
+  "description": "Create CheckpointModal.tsx and checkpoint.store.ts. Modal shows title, summary, what/why/risk, changed files, test results. Approve (green) and Reject (red) buttons. Blocks further UI until resolved.",
+  "feature_ref": "F006",
+  "task_type": "frontend",
+  "complexity": {
+    "score": 6,
+    "factors": {
+      "files_affected": 5,
+      "estimated_lines": 200,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
+  "dependencies": ["TASK-026"],
+  "acceptance_criteria": [
+    "Modal displays all checkpoint details",
+    "Approve/Reject buttons with appropriate colors",
+    "Changed files shown as collapsible list",
+    "Risk level shown with color indicator",
+    "IPC channels for checkpoint events",
+    "Zustand store manages checkpoint state"
+  ],
+  "suggested_agent": "frontend:developer"
+}

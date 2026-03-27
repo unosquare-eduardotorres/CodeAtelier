@@ -17,10 +17,10 @@ Step-by-step workflow for auditing MSBuild project files for anti-patterns with 
 
 ## Inputs
 
-| Input | Required | Description |
-|-------|----------|-------------|
-| Solution or directory path | Yes | Root containing .csproj/.props/.targets files |
-| Legacy migration? | No | Whether this is a legacy-to-SDK migration (triggers modernization checklist) |
+| Input                      | Required | Description                                                                  |
+| -------------------------- | -------- | ---------------------------------------------------------------------------- |
+| Solution or directory path | Yes      | Root containing .csproj/.props/.targets files                                |
+| Legacy migration?          | No       | Whether this is a legacy-to-SDK migration (triggers modernization checklist) |
 
 ## Workflow
 
@@ -37,11 +37,11 @@ For each file found, check against AP-01 through AP-15 below.
 
 ### Step 3: Classify findings by severity
 
-| Severity | Anti-patterns | Action |
-|----------|---------------|--------|
-| Critical | AP-03 (hardcoded paths), AP-06 (HintPath) | Must fix — breaks on other machines |
-| Moderate | AP-01, AP-02, AP-07, AP-08, AP-09, AP-11 | Should fix — build quality/correctness |
-| Info | AP-04, AP-05, AP-10, AP-12, AP-13, AP-14, AP-15 | Clean up — maintainability |
+| Severity | Anti-patterns                                   | Action                                 |
+| -------- | ----------------------------------------------- | -------------------------------------- |
+| Critical | AP-03 (hardcoded paths), AP-06 (HintPath)       | Must fix — breaks on other machines    |
+| Moderate | AP-01, AP-02, AP-07, AP-08, AP-09, AP-11        | Should fix — build quality/correctness |
+| Info     | AP-04, AP-05, AP-10, AP-12, AP-13, AP-14, AP-15 | Clean up — maintainability             |
 
 ### Step 4: Apply fixes per anti-pattern
 
@@ -84,6 +84,7 @@ Built-in tasks are cross-platform, support incremental build, and emit structure
 ```
 
 Preferred path properties:
+
 - `$(MSBuildThisFileDirectory)` — directory of the current .props/.targets file
 - `$(MSBuildProjectDirectory)` — directory of the .csproj
 - `$([MSBuild]::NormalizePath(...))` — combine and normalize path segments
@@ -209,6 +210,7 @@ Split large targets into single-responsibility targets with `Inputs`/`Outputs` f
 ### SDK-style migration indicators
 
 Legacy indicators:
+
 - `<Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />`
 - Explicit `<Compile Include="..." />` for every .cs file
 - `ToolsVersion` attribute on `<Project>`
@@ -229,14 +231,14 @@ Quick check: if a .csproj is more than 50 lines for a simple project, it's likel
 
 ### TFM mapping
 
-| Legacy | SDK-style |
-|--------|-----------|
-| `v4.6.1` | `net461` |
-| `v4.7.2` | `net472` |
-| `v4.8` | `net48` |
-| .NET 8 | `net8.0` |
-| .NET 9 | `net9.0` |
-| .NET 10 | `net10.0` |
+| Legacy   | SDK-style |
+| -------- | --------- |
+| `v4.6.1` | `net461`  |
+| `v4.7.2` | `net472`  |
+| `v4.8`   | `net48`   |
+| .NET 8   | `net8.0`  |
+| .NET 9   | `net9.0`  |
+| .NET 10  | `net10.0` |
 
 ## Validation checklist
 
@@ -249,8 +251,8 @@ Quick check: if a .csproj is more than 50 lines for a simple project, it's likel
 
 ## Tools
 
-| Tool | Usage |
-|------|-------|
-| `dotnet try-convert` | Automated legacy-to-SDK conversion |
-| .NET Upgrade Assistant | Full migration including API changes |
-| Visual Studio | Right-click packages.config to migrate |
+| Tool                   | Usage                                  |
+| ---------------------- | -------------------------------------- |
+| `dotnet try-convert`   | Automated legacy-to-SDK conversion     |
+| .NET Upgrade Assistant | Full migration including API changes   |
+| Visual Studio          | Right-click packages.config to migrate |

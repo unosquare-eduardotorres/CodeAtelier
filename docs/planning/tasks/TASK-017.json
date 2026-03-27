@@ -1,0 +1,25 @@
+{
+  "id": "TASK-017",
+  "title": "Add task loop IPC events and UI progress",
+  "description": "Add TASK_LOOP_* IPC channels. Forward loop events to renderer. Update TaskProgress component to show iteration count, model tier badge, gate results.",
+  "feature_ref": "F002",
+  "task_type": "fullstack",
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 5,
+      "estimated_lines": 150,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
+  "dependencies": ["TASK-016"],
+  "acceptance_criteria": [
+    "IPC channels for iteration/gateResult/escalation/complete",
+    "UI shows current iteration (e.g. 2/10)",
+    "Model tier shown with color badge",
+    "Gate results shown as pass/fail icons",
+    "Escalation events displayed to user"
+  ],
+  "suggested_agent": "fullstack:developer"
+}

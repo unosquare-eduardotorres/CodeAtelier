@@ -1,0 +1,25 @@
+{
+  "id": "TASK-020",
+  "title": "Wire abandonment detection into specialist pool",
+  "description": "In specialist-pool.service.ts, accumulate specialist stdout text. Before marking task complete, check for abandonment. On detection, mark iteration as abandoned and integrate with task loop for re-engagement.",
+  "feature_ref": "F003",
+  "task_type": "backend",
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 1,
+      "estimated_lines": 60,
+      "new_dependencies": 0,
+      "risk_flags": []
+    }
+  },
+  "dependencies": ["TASK-019", "TASK-016"],
+  "acceptance_criteria": [
+    "Specialist output text accumulated during execution",
+    "Abandonment check runs before marking complete",
+    "Detected abandonment triggers re-engagement via task loop",
+    "Abandonment counts toward escalation threshold",
+    "Events emitted for UI notification"
+  ],
+  "suggested_agent": "backend:api-developer-typescript"
+}

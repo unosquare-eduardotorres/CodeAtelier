@@ -85,9 +85,7 @@ export function registerSkillIpc(): void {
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],
       title: 'Select Skill File (.md)',
-      filters: [
-        { name: 'Markdown Files', extensions: ['md'] }
-      ]
+      filters: [{ name: 'Markdown Files', extensions: ['md'] }]
     })
 
     if (result.canceled || result.filePaths.length === 0) {

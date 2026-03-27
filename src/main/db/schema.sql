@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
-  summary TEXT
+  summary TEXT,
+  claude_session_id TEXT
 );
 
 -- Messages: individual chat messages
@@ -43,7 +44,7 @@ CREATE TABLE IF NOT EXISTS attachments (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Agent sessions: basic tracking for Phase 1
+-- Agent sessions: tracking with workspace/conversation context
 CREATE TABLE IF NOT EXISTS agent_sessions (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   task_id TEXT,
@@ -53,7 +54,12 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   ended_at TEXT,
   token_usage INTEGER DEFAULT 0,
-  stdout_log_path TEXT
+  stdout_log_path TEXT,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  complexity_score INTEGER,
+  model_used TEXT,
+  complexity_tier TEXT
 );
 
 -- Specialists: dynamic agent definitions (app-global)
@@ -91,8 +97,111 @@ CREATE TABLE IF NOT EXISTS specialist_skills (
   PRIMARY KEY (specialist_id, skill_id)
 );
 
+-- File changes tracked per conversation (for selective git commit)
+CREATE TABLE IF NOT EXISTS conversation_file_changes (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL,
+  change_type TEXT NOT NULL DEFAULT 'modified' CHECK (change_type IN ('created', 'modified', 'deleted')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(conversation_id, file_path)
+);
+
+-- Git worktrees for agent isolation during parallel execution
+CREATE TABLE IF NOT EXISTS agent_worktrees (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  branch_name TEXT NOT NULL,
+  base_branch TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  merged_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
+
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id);
+
+-- Ideas: quick-capture work item drafts per workspace
+CREATE TABLE IF NOT EXISTS ideas (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'grilling', 'completed')),
+  grill_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  grill_summary TEXT,
+  converted_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ideas_workspace ON ideas(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status);
+
+-- Memories: auto memory system (persistent cross-session knowledge)
+CREATE TABLE IF NOT EXISTS memories (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  tags TEXT DEFAULT '[]' CHECK (json_valid(tags)),
+  source_conversation_id TEXT,
+  source_agent_id TEXT,
+  importance INTEGER NOT NULL DEFAULT 5,
+  last_accessed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
+CREATE INDEX IF NOT EXISTS idx_memories_context ON memories(workspace_id, type, importance DESC);
+
+-- Dream runs: consolidation cycles that process and refine memories
+CREATE TABLE IF NOT EXISTS dream_runs (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('startup', 'idle', 'manual')),
+  memories_created INTEGER DEFAULT 0,
+  memories_merged INTEGER DEFAULT 0,
+  memories_pruned INTEGER DEFAULT 0,
+  token_usage INTEGER DEFAULT 0,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ended_at TEXT,
+  error_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dream_runs_workspace ON dream_runs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_dream_runs_status ON dream_runs(status);
+
+-- User profile: app-wide identity (singleton row)
+CREATE TABLE IF NOT EXISTS user_profile (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  display_name TEXT NOT NULL DEFAULT 'Developer',
+  avatar_key TEXT NOT NULL DEFAULT 'astronaut',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Core agent aliases: personality overrides for generalist & orchestrator
+CREATE TABLE IF NOT EXISTS core_agent_aliases (
+  agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('generalist', 'coordinator')),
+  alias TEXT DEFAULT NULL,
+  avatar_key TEXT DEFAULT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

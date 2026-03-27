@@ -15,35 +15,36 @@ ELECTRON_ENABLE_SECURITY_WARNINGS=1 electron .
 ```
 
 Crash reporting:
+
 ```typescript
-import { crashReporter } from 'electron';
+import { crashReporter } from 'electron'
 crashReporter.start({
   productName: 'YourApp',
   submitURL: 'https://your-crash-server.com/submit',
-  uploadToServer: true,
-});
+  uploadToServer: true
+})
 ```
 
 ## Testing
 
 ```typescript
 // E2E with Playwright (recommended)
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect, _electron as electron } from '@playwright/test'
 
 test('app launches and shows main window', async () => {
-  const app = await electron.launch({ args: ['.'] });
-  const window = await app.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
+  const app = await electron.launch({ args: ['.'] })
+  const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
 
-  const title = await window.title();
-  expect(title).toBe('YourApp');
+  const title = await window.title()
+  expect(title).toBe('YourApp')
 
   // Test IPC round-trip
-  const result = await window.evaluate(() => window.electronAPI.getSystemInfo());
-  expect(result.platform).toBeTruthy();
+  const result = await window.evaluate(() => window.electronAPI.getSystemInfo())
+  expect(result.platform).toBeTruthy()
 
-  await app.close();
-});
+  await app.close()
+})
 ```
 
 Unit tests for main process logic: use Vitest or Jest with Electron APIs mocked. Keep main process logic in pure functions that are testable without Electron runtime.
@@ -71,29 +72,36 @@ ESM is supported since Electron 28. The behavior differs by process:
 
 ```typescript
 // main.mjs — ESM main process entry
-import { app, BrowserWindow } from 'electron';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { app, BrowserWindow } from 'electron'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // CRITICAL: await dynamic imports before app is ready
 // ESM loads asynchronously — without await, app.ready fires before imports resolve
-await import('./setup-paths.mjs');
+await import('./setup-paths.mjs')
 
 app.whenReady().then(() => {
   const win = new BrowserWindow({
     webPreferences: {
-      preload: path.join(__dirname, 'preload.mjs'),
-    },
-  });
-  win.loadFile('index.html');
-});
+      preload: path.join(__dirname, 'preload.mjs')
+    }
+  })
+  win.loadFile('index.html')
+})
 ```
 
 **Renderer process** — uses Chromium's ESM loader. No access to Node.js built-ins or `node_modules`. Use a bundler (Vite, webpack) for npm packages.
 
 **Preload scripts** — ESM preload scripts MUST use `.mjs` extension (`"type": "module"` in package.json is ignored for preloads). Sandboxed preloads CANNOT use ESM imports — use a bundler or stick to CommonJS with `require('electron')`.
+
+**ESM preload critical caveats:**
+
+- Sandboxed preloads CANNOT use ESM imports at all — must use CJS or a bundler
+- ESM preload scripts MUST have `.mjs` extension (package.json `"type": "module"` is ignored)
+- Dynamic `import()` in preload requires `contextIsolation: true`
+- ESM loads asynchronously — use `await` before `app.ready` to prevent race conditions
 
 **Migration gotcha**: if you're migrating from transpiled CJS (Babel/TypeScript converting `import` to `require`), be aware that native ESM loads asynchronously. Code that relied on synchronous `require()` timing may break. Always `await` dynamic imports before `app.ready`.
 
@@ -106,8 +114,11 @@ Electron ships a new major version every 8 weeks, aligned with Chromium releases
 **Before upgrading**, always check the breaking changes doc: https://www.electronjs.org/docs/latest/breaking-changes
 
 Key recent breaking changes to watch for:
+
 - **v40**: `clipboard` API deprecated in renderer — move to preload + contextBridge
 - **v41**: PDFs no longer create separate WebContents — use frame tree instead
+- **v39**: ASAR Integrity graduates to stable for runtime tamper detection
+- **v41**: ASAR Integrity digest for macOS, MSIX auto-updating, improved Wayland support
 - **v28**: sandbox enabled by default in renderers
 - **v12**: contextIsolation enabled by default
 - **v5**: nodeIntegration disabled by default
@@ -125,10 +136,10 @@ Electron apps are packaged into ASAR (Atom Shell Archive) format by default. Thi
 const config: ForgeConfig = {
   packagerConfig: {
     asar: {
-      integrity: true, // adds block-level hashes to validate archive contents
-    },
-  },
-};
+      integrity: true // adds block-level hashes to validate archive contents
+    }
+  }
+}
 ```
 
 Combined with code signing and the `OnlyLoadAppFromAsar` fuse, this prevents an attacker from replacing your app code even if they have write access to the app directory:
@@ -146,28 +157,28 @@ As of Electron 40, direct `clipboard` access from the renderer is deprecated. Al
 // preload/index.ts
 contextBridge.exposeInMainWorld('electronAPI', {
   copyToClipboard: (text: string) => ipcRenderer.invoke('clipboard:write', text),
-  readClipboard: () => ipcRenderer.invoke('clipboard:read'),
-});
+  readClipboard: () => ipcRenderer.invoke('clipboard:read')
+})
 
 // main/ipc-handlers.ts
 ipcMain.handle('clipboard:write', (_event, text: string) => {
-  if (typeof text !== 'string' || text.length > 1_000_000) throw new Error('Invalid');
-  clipboard.writeText(text);
-});
-ipcMain.handle('clipboard:read', () => clipboard.readText());
+  if (typeof text !== 'string' || text.length > 1_000_000) throw new Error('Invalid')
+  clipboard.writeText(text)
+})
+ipcMain.handle('clipboard:read', () => clipboard.readText())
 ```
 
 For sensitive data (passwords, tokens): use `safeStorage` API to encrypt before writing to disk:
 
 ```typescript
-import { safeStorage } from 'electron';
+import { safeStorage } from 'electron'
 
 // Encrypt
-const encrypted = safeStorage.encryptString('my-secret-token');
+const encrypted = safeStorage.encryptString('my-secret-token')
 // Store encrypted buffer to disk...
 
 // Decrypt
-const decrypted = safeStorage.decryptString(encrypted);
+const decrypted = safeStorage.decryptString(encrypted)
 ```
 
 ## Utility processes
@@ -175,27 +186,62 @@ const decrypted = safeStorage.decryptString(encrypted);
 For CPU-intensive work (file processing, compression, crypto), use Electron's `utilityProcess` instead of blocking the main process:
 
 ```typescript
-import { utilityProcess } from 'electron';
+import { utilityProcess } from 'electron'
 
-const child = utilityProcess.fork(path.join(__dirname, 'heavy-task.js'));
+const child = utilityProcess.fork(path.join(__dirname, 'heavy-task.js'))
 
-child.postMessage({ type: 'process-file', path: '/data/large.csv' });
+child.postMessage({ type: 'process-file', path: '/data/large.csv' })
 child.on('message', (result) => {
-  console.log('Task complete:', result);
-});
+  console.log('Task complete:', result)
+})
 ```
 
 This runs in a separate Node.js process with full Node.js API access but isolated from the main process. Preferred over `child_process.fork()` because it integrates with Electron's process lifecycle and crash reporting.
 
+### utilityProcess options
+
+```typescript
+const child = utilityProcess.fork(modulePath, args, {
+  serviceName: 'my-heavy-task', // Shows in app.getAppMetrics()
+  stdio: 'pipe', // Enable stdout/stderr capture
+  env: { ...process.env }, // Custom environment
+  cwd: workspacePath // Working directory
+})
+```
+
+**Why utilityProcess over child_process.fork():**
+
+- Tracked by `app.getAppMetrics()` — visible in process monitoring
+- Integrates with Electron's crash reporting
+- Supports MessagePort for structured communication
+- Managed by Electron's process lifecycle
+
+**Communication pattern:**
+
+```typescript
+// Main process
+child.postMessage({ type: 'task', data: payload })
+child.on('message', (result) => {
+  /* handle */
+})
+
+// Utility process (in modulePath)
+process.parentPort.on('message', (e) => {
+  const { type, data } = e.data
+  // ... process
+  process.parentPort.postMessage({ type: 'result', data: output })
+})
+```
+
 ## Quick reference — which API belongs where
 
-| API | Available in | Notes |
-|-----|-------------|-------|
-| `app`, `BrowserWindow`, `ipcMain`, `Menu`, `Tray`, `dialog`, `nativeTheme`, `autoUpdater`, `safeStorage`, `utilityProcess` | Main process only | Core Electron APIs |
-| `ipcRenderer`, `contextBridge` | Preload only | Bridge between main and renderer |
-| `webFrame` | Renderer only | Control renderer zoom, spell check |
-| DOM APIs, `fetch`, Web APIs | Renderer only | Standard web platform |
-| `require('node:fs')`, `require('node:path')`, etc. | Main + preload (if not sandboxed) | Node.js built-ins |
-| `process.platform`, `process.arch` | Main + preload | System info |
-| `shell.openExternal` | Main only | Open URLs in default browser — validate input |
-| `clipboard` | Main (preferred since v40) | Deprecated in renderer — use IPC |
+| API                                                                                                                        | Available in                      | Notes                                         |
+| -------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --------------------------------------------- |
+| `app`, `BrowserWindow`, `ipcMain`, `Menu`, `Tray`, `dialog`, `nativeTheme`, `autoUpdater`, `safeStorage`, `utilityProcess` | Main process only                 | Core Electron APIs                            |
+| `ipcRenderer`, `contextBridge`                                                                                             | Preload only                      | Bridge between main and renderer              |
+| `webFrame`                                                                                                                 | Renderer only                     | Control renderer zoom, spell check            |
+| DOM APIs, `fetch`, Web APIs                                                                                                | Renderer only                     | Standard web platform                         |
+| `require('node:fs')`, `require('node:path')`, etc.                                                                         | Main + preload (if not sandboxed) | Node.js built-ins                             |
+| `process.platform`, `process.arch`                                                                                         | Main + preload                    | System info                                   |
+| `shell.openExternal`                                                                                                       | Main only                         | Open URLs in default browser — validate input |
+| `clipboard`                                                                                                                | Main (preferred since v40)        | Deprecated in renderer — use IPC              |

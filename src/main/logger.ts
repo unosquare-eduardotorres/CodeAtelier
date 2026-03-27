@@ -23,5 +23,10 @@ export const chatIpcLogger = log.scope('ChatIPC')
 export const agentIpcLogger = log.scope('AgentIPC')
 export const skillLogger = log.scope('Skill')
 export const deployLogger = log.scope('Deploy')
+export const specialistPoolLogger = log.scope('SpecialistPool')
+export const gitWorktreeLogger = log.scope('GitWorktree')
+export const brainFeedLogger = log.scope('BrainFeed')
+export const promptBuilderLogger = log.scope('PromptBuilder')
+export const agentRegistryLogger = log.scope('AgentRegistry')
 
 export default log

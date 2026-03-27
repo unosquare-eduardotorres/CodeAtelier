@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { rendererLog } from '@renderer/utils/logger'
 import type {
   DiscoveredAgent,
   DiscoveredSkill,
@@ -57,7 +58,14 @@ interface SettingsState {
   readFile: (filePath: string) => Promise<void>
   saveFile: (filePath: string, content: string) => Promise<void>
   computeSyncDiff: (workspacePath: string) => Promise<void>
-  applySync: (workspacePath: string, options?: { skipRemoved?: boolean }) => Promise<SyncResult | null>
+  applySync: (
+    workspacePath: string,
+    options?: { skipRemoved?: boolean }
+  ) => Promise<SyncResult | null>
+  cleanAndReactivate: (workspacePath: string) => Promise<void>
+  deployAll: (workspacePath: string) => Promise<{ agents: number; skills: number } | null>
+  deleteAllAgents: (workspacePath: string) => Promise<void>
+  deleteAllSkills: (workspacePath: string) => Promise<void>
   dismissSync: () => void
   reset: () => void
 }
@@ -91,12 +99,12 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   scanWorkspace: async (workspacePath: string) => {
     set({ isScanning: true })
     try {
-      const status = (await window.api.scanWorkspaceClaude({
+      const status = await window.api.scanWorkspaceClaude({
         workspacePath
-      })) as WorkspaceClaudeStatus
+      })
       set({ claudeStatus: status, isScanning: false })
     } catch (error) {
-      console.error('Failed to scan workspace:', error)
+      rendererLog.error('Failed to scan workspace:', error)
       set({ isScanning: false })
     }
   },
@@ -112,9 +120,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     })
 
     try {
-      const result = (await window.api.activateAgents({
+      const result = await window.api.activateAgents({
         workspacePath
-      })) as ActivationResult
+      })
 
       if (!result.success) {
         set({
@@ -137,15 +145,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       }
 
       // Refresh scan and lists after activation
-      const status = (await window.api.scanWorkspaceClaude({
+      const status = await window.api.scanWorkspaceClaude({
         workspacePath
-      })) as WorkspaceClaudeStatus
-      const agents = (await window.api.scanWorkspaceAgents({
+      })
+      const agents = await window.api.scanWorkspaceAgents({
         workspacePath
-      })) as DiscoveredAgent[]
-      const skills = (await window.api.scanWorkspaceSkills({
+      })
+      const skills = await window.api.scanWorkspaceSkills({
         workspacePath
-      })) as DiscoveredSkill[]
+      })
 
       set({ claudeStatus: status, agents, skills })
       return result
@@ -177,12 +185,12 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       await window.api.confirmClaudeMd({ workspacePath, content })
       set({ pendingClaudeMd: null, isConfirmingClaudeMd: false })
       // Refresh scan to reflect the new CLAUDE.md
-      const status = (await window.api.scanWorkspaceClaude({
+      const status = await window.api.scanWorkspaceClaude({
         workspacePath
-      })) as WorkspaceClaudeStatus
+      })
       set({ claudeStatus: status })
     } catch (error) {
-      console.error('Failed to confirm CLAUDE.md:', error)
+      rendererLog.error('Failed to confirm CLAUDE.md:', error)
       set({ isConfirmingClaudeMd: false })
     }
   },
@@ -193,23 +201,23 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   loadAgents: async (workspacePath: string) => {
     try {
-      const agents = (await window.api.scanWorkspaceAgents({
+      const agents = await window.api.scanWorkspaceAgents({
         workspacePath
-      })) as DiscoveredAgent[]
+      })
       set({ agents })
     } catch (error) {
-      console.error('Failed to load agents:', error)
+      rendererLog.error('Failed to load agents:', error)
     }
   },
 
   loadSkills: async (workspacePath: string) => {
     try {
-      const skills = (await window.api.scanWorkspaceSkills({
+      const skills = await window.api.scanWorkspaceSkills({
         workspacePath
-      })) as DiscoveredSkill[]
+      })
       set({ skills })
     } catch (error) {
-      console.error('Failed to load skills:', error)
+      rendererLog.error('Failed to load skills:', error)
     }
   },
 
@@ -224,10 +232,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   readFile: async (filePath: string) => {
     set({ isFileLoading: true, activeFilePath: filePath })
     try {
-      const content = (await window.api.readWorkspaceFile({ filePath })) as string
+      const content = await window.api.readWorkspaceFile({ filePath })
       set({ activeFileContent: content, isFileLoading: false })
     } catch (error) {
-      console.error('Failed to read file:', error)
+      rendererLog.error('Failed to read file:', error)
       set({
         activeFileContent: null,
         isFileLoading: false
@@ -241,7 +249,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       await window.api.writeWorkspaceFile({ filePath, content })
       set({ activeFileContent: content, isFileSaving: false })
     } catch (error) {
-      console.error('Failed to save file:', error)
+      rendererLog.error('Failed to save file:', error)
       set({ isFileSaving: false })
       throw error
     }
@@ -249,10 +257,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   computeSyncDiff: async (workspacePath: string) => {
     try {
-      const diff = (await window.api.computeSyncDiff({ workspacePath })) as SyncDiff
+      const diff = await window.api.computeSyncDiff({ workspacePath })
       set({ syncDiff: diff, syncError: null })
     } catch (error) {
-      console.error('Failed to compute sync diff:', error)
+      rendererLog.error('Failed to compute sync diff:', error)
       set({ syncError: (error as Error).message })
     }
   },
@@ -260,21 +268,87 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   applySync: async (workspacePath: string, options?: { skipRemoved?: boolean }) => {
     set({ isSyncing: true, syncError: null })
     try {
-      const result = (await window.api.applySync({
+      const result = await window.api.applySync({
         workspacePath,
         skipRemoved: options?.skipRemoved
-      })) as SyncResult
+      })
       set({ isSyncing: false, lastSyncResult: result, syncDiff: null })
 
       // Re-compute diff to reflect new state
-      const diff = (await window.api.computeSyncDiff({ workspacePath })) as SyncDiff
+      const diff = await window.api.computeSyncDiff({ workspacePath })
       set({ syncDiff: diff })
 
       return result
     } catch (error) {
-      console.error('Failed to apply sync:', error)
+      rendererLog.error('Failed to apply sync:', error)
       set({ isSyncing: false, syncError: (error as Error).message })
       return null
+    }
+  },
+
+  cleanAndReactivate: async (workspacePath: string) => {
+    // Step 1: Clean existing deployment
+    await window.api.cleanActivation({ workspacePath })
+
+    // Step 2: Refresh scan (will now show needsActivation = true)
+    const status = await window.api.scanWorkspaceClaude({
+      workspacePath
+    })
+    set({
+      claudeStatus: status,
+      agents: [],
+      skills: [],
+      activationResult: null,
+      activationError: null,
+      activationLog: [],
+      pendingClaudeMd: null
+    })
+
+    // Step 3: Immediately trigger re-activation
+    const { activateWorkspace } = useSettingsStore.getState()
+    await activateWorkspace(workspacePath)
+  },
+
+  deployAll: async (workspacePath: string) => {
+    set({ isActivating: true, activationError: null })
+    try {
+      const result = await window.api.deployAll({ workspacePath })
+
+      // Refresh scan and lists after deploy
+      const status = await window.api.scanWorkspaceClaude({ workspacePath })
+      const agents = await window.api.scanWorkspaceAgents({ workspacePath })
+      const skills = await window.api.scanWorkspaceSkills({ workspacePath })
+
+      set({ claudeStatus: status, agents, skills, isActivating: false })
+      return result
+    } catch (error) {
+      const message = (error as Error).message
+      set({ isActivating: false, activationError: message })
+      return null
+    }
+  },
+
+  deleteAllAgents: async (workspacePath: string) => {
+    try {
+      await window.api.deleteAllAgents({ workspacePath })
+      // Refresh
+      const status = await window.api.scanWorkspaceClaude({ workspacePath })
+      const agents = await window.api.scanWorkspaceAgents({ workspacePath })
+      set({ claudeStatus: status, agents })
+    } catch (error) {
+      rendererLog.error('Failed to delete all agents:', error)
+    }
+  },
+
+  deleteAllSkills: async (workspacePath: string) => {
+    try {
+      await window.api.deleteAllSkills({ workspacePath })
+      // Refresh
+      const status = await window.api.scanWorkspaceClaude({ workspacePath })
+      const skills = await window.api.scanWorkspaceSkills({ workspacePath })
+      set({ claudeStatus: status, skills })
+    } catch (error) {
+      rendererLog.error('Failed to delete all skills:', error)
     }
   },
 

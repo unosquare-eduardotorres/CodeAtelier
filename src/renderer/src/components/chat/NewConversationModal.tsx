@@ -1,0 +1,282 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { ClipboardList, Hammer, GitBranch, X, Paperclip } from 'lucide-react'
+import type { ConversationMode } from '../../../../shared/types'
+import { AttachmentDropzone } from '@renderer/components/chat'
+
+interface NewConversationModalProps {
+  isOpen: boolean
+  onClose: () => void
+  onSubmit: (data: {
+    title: string
+    description?: string
+    mode: ConversationMode
+    attachments?: string[]
+    useIsolatedBranch?: boolean
+  }) => void
+}
+
+const TITLE_MAX = 500
+const DESCRIPTION_MAX = 15_000
+
+export default function NewConversationModal({
+  isOpen,
+  onClose,
+  onSubmit
+}: NewConversationModalProps): React.JSX.Element | null {
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [mode, setMode] = useState<ConversationMode>('plan')
+  const [attachments, setAttachments] = useState<string[]>([])
+  const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
+  const titleInputRef = useRef<HTMLInputElement>(null)
+
+  // Auto-focus title input when opened
+  useEffect(() => {
+    if (isOpen) {
+      // Small delay to ensure the modal is rendered before focusing
+      const timer = setTimeout(() => titleInputRef.current?.focus(), 50)
+      return (): void => clearTimeout(timer)
+    }
+    return undefined
+  }, [isOpen])
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setTitle('')
+      setDescription('')
+      setMode('plan')
+      setAttachments([])
+      setUseIsolatedBranch(false)
+    }
+  }, [isOpen])
+
+  // Escape key closes modal
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose])
+
+  const handleSubmit = useCallback((): void => {
+    const trimmedTitle = title.trim()
+    if (!trimmedTitle) return
+
+    onSubmit({
+      title: trimmedTitle,
+      description: description.trim() || undefined,
+      mode,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined
+    })
+  }, [title, description, mode, attachments, useIsolatedBranch, onSubmit])
+
+  // Submit on Cmd/Ctrl+Enter
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault()
+        handleSubmit()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, handleSubmit])
+
+  if (!isOpen) return null
+
+  const isValid = title.trim().length > 0
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="new-conversation-title"
+    >
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl max-w-2xl w-full mx-4 animate-in fade-in zoom-in-95 flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border-subtle">
+          <h2 id="new-conversation-title" className="text-lg font-semibold text-text-primary">
+            Create New Chat
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
+            aria-label="Close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {/* Title */}
+          <div>
+            <label
+              htmlFor="conv-title"
+              className="block text-sm font-medium text-text-primary mb-1.5"
+            >
+              Title <span className="text-red-400">*</span>
+            </label>
+            <input
+              ref={titleInputRef}
+              id="conv-title"
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value.slice(0, TITLE_MAX))}
+              placeholder="e.g., Add user authentication system"
+              className="w-full px-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-sm text-text-primary placeholder-text-muted outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 transition-colors"
+              maxLength={TITLE_MAX}
+              autoComplete="off"
+            />
+            <div className="flex justify-end mt-1">
+              <span className="text-xs text-text-muted">
+                {title.length}/{TITLE_MAX}
+              </span>
+            </div>
+          </div>
+
+          {/* Mode Toggle */}
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">Mode</label>
+            <div className="flex items-center gap-2 bg-surface-overlay rounded-lg p-1 border border-border-subtle w-fit">
+              <button
+                onClick={() => setMode('plan')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-purple-500/50 ${
+                  mode === 'plan'
+                    ? 'bg-purple-600/30 text-purple-300 border border-purple-500/30'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                <ClipboardList size={14} />
+                📋 Plan
+              </button>
+              <button
+                onClick={() => {
+                  setMode('build')
+                }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/50 ${
+                  mode === 'build'
+                    ? 'bg-amber-600/30 text-amber-300 border border-amber-500/30'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                <Hammer size={14} />
+                🔨 Build
+              </button>
+            </div>
+            <p className="text-xs text-text-muted mt-1.5">
+              {mode === 'plan'
+                ? 'Plan mode — read-only analysis, brainstorming, code review'
+                : 'Build mode — the agent can create and modify files in your workspace'}
+            </p>
+          </div>
+
+          {/* Description */}
+          <div>
+            <label
+              htmlFor="conv-description"
+              className="block text-sm font-medium text-text-primary mb-1.5"
+            >
+              Description <span className="text-text-muted font-normal">(optional)</span>
+            </label>
+            <textarea
+              id="conv-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value.slice(0, DESCRIPTION_MAX))}
+              placeholder="Describe what needs to be done, acceptance criteria, technical requirements, etc."
+              rows={5}
+              className="w-full px-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-sm text-text-primary placeholder-text-muted outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 transition-colors resize-y min-h-[80px] max-h-[240px]"
+              maxLength={DESCRIPTION_MAX}
+            />
+            <div className="flex items-center justify-between mt-1">
+              <span className="text-xs text-text-muted">Supports @path file references</span>
+              <span className="text-xs text-text-muted">
+                {description.length.toLocaleString()}/{DESCRIPTION_MAX.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {/* Attachments */}
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">
+              Attachments <span className="text-text-muted font-normal">(optional)</span>
+            </label>
+            <AttachmentDropzone attachments={attachments} onAttachmentsChange={setAttachments}>
+              <div className="flex items-center gap-2 text-sm text-text-muted py-1">
+                <Paperclip size={14} />
+                <span>Drop files here or click the clip icon to attach</span>
+              </div>
+            </AttachmentDropzone>
+          </div>
+
+          {/* Isolated branch checkbox — only in Build mode */}
+          {mode === 'build' && (
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={useIsolatedBranch}
+                onChange={(e) => setUseIsolatedBranch(e.target.checked)}
+                className="w-4 h-4 rounded border-border-subtle bg-surface-overlay text-primary focus:ring-primary/30 focus:ring-2 cursor-pointer"
+              />
+              <div className="flex items-center gap-2">
+                <GitBranch
+                  size={14}
+                  className="text-text-secondary group-hover:text-text-primary transition-colors"
+                />
+                <span className="text-sm text-text-secondary group-hover:text-text-primary transition-colors">
+                  Use isolated branch
+                </span>
+              </div>
+              <span className="text-xs text-text-muted ml-auto">
+                Creates a git worktree for this conversation
+              </span>
+            </label>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-border-subtle">
+          <span className="text-xs text-text-muted">
+            {navigator.platform.toUpperCase().includes('MAC') ? '⌘' : 'Ctrl+'}↵ to create
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-text-body hover:text-text-primary bg-surface-overlay hover:bg-surface-raised rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-border-default"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={!isValid}
+              className={`px-5 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary press-scale ${
+                isValid
+                  ? 'bg-primary hover:bg-primary-hover text-white'
+                  : 'bg-primary/30 text-white/40 cursor-not-allowed'
+              }`}
+            >
+              Create Chat
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

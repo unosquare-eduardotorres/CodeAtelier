@@ -86,13 +86,30 @@ export default function ClaudeMdDiffModal({
       <div className="flex items-center gap-4 px-6 py-2 border-b border-gray-800 bg-gray-900/50 text-xs text-gray-500">
         <span>
           Lines: {stats.existingLines} {'\u2192'} {stats.proposedLines}{' '}
-          <span className={stats.lineDelta > 0 ? 'text-emerald-400' : stats.lineDelta < 0 ? 'text-red-400' : 'text-gray-500'}>
+          <span
+            className={
+              stats.lineDelta > 0
+                ? 'text-emerald-400'
+                : stats.lineDelta < 0
+                  ? 'text-red-400'
+                  : 'text-gray-500'
+            }
+          >
             ({formatDelta(stats.lineDelta)})
           </span>
         </span>
         <span>
-          Chars: {stats.existingChars.toLocaleString()} {'\u2192'} {stats.proposedChars.toLocaleString()}{' '}
-          <span className={stats.charDelta > 0 ? 'text-emerald-400' : stats.charDelta < 0 ? 'text-red-400' : 'text-gray-500'}>
+          Chars: {stats.existingChars.toLocaleString()} {'\u2192'}{' '}
+          {stats.proposedChars.toLocaleString()}{' '}
+          <span
+            className={
+              stats.charDelta > 0
+                ? 'text-emerald-400'
+                : stats.charDelta < 0
+                  ? 'text-red-400'
+                  : 'text-gray-500'
+            }
+          >
             ({formatDelta(stats.charDelta)})
           </span>
         </span>

@@ -17,9 +17,9 @@
 
 ## Inputs
 
-| Input | Required | Description |
-|-------|----------|-------------|
-| Solution path | Yes | Path to .sln or .slnx file |
+| Input         | Required | Description                |
+| ------------- | -------- | -------------------------- |
+| Solution path | Yes      | Path to .sln or .slnx file |
 
 ## Workflow
 
@@ -61,11 +61,11 @@ Build a deduplicated list of all packages with their versions. Note any version 
 
 When multiple versions of the same package exist across projects:
 
-| Strategy | When to use |
-|----------|-------------|
-| Align to highest version | Default — safest for most packages |
+| Strategy                              | When to use                                           |
+| ------------------------------------- | ----------------------------------------------------- |
+| Align to highest version              | Default — safest for most packages                    |
 | `VersionOverride` in specific .csproj | Project has a tested dependency on a specific version |
-| Separate ItemGroup with condition | Different versions needed per TFM |
+| Separate ItemGroup with condition     | Different versions needed per TFM                     |
 
 Document all conflict resolutions for the post-conversion report.
 
@@ -169,19 +169,19 @@ Generate a summary:
 
 ## Common pitfalls
 
-| Pitfall | Solution |
-|---------|----------|
-| Forgetting to strip `Version=` from .csproj | Run grep verification in Step 6 |
-| `packages.config` still present | Must migrate to PackageReference before CPM |
-| Conditional PackageReference losing versions | Move conditions to `Directory.Packages.props` ItemGroup |
-| NU1510 warning (version defined but not used) | Remove unused `PackageVersion` entries from props |
-| Transitive dependency version conflicts | Enable `CentralPackageTransitivePinningEnabled` |
+| Pitfall                                       | Solution                                                       |
+| --------------------------------------------- | -------------------------------------------------------------- |
+| Forgetting to strip `Version=` from .csproj   | Run grep verification in Step 6                                |
+| `packages.config` still present               | Must migrate to PackageReference before CPM                    |
+| Conditional PackageReference losing versions  | Move conditions to `Directory.Packages.props` ItemGroup        |
+| NU1510 warning (version defined but not used) | Remove unused `PackageVersion` entries from props              |
+| Transitive dependency version conflicts       | Enable `CentralPackageTransitivePinningEnabled`                |
 | Version attributes in `Directory.Build.props` | CPM versions go in `Directory.Packages.props`, not Build.props |
 
 ## Error codes reference
 
-| Error | Meaning | Fix |
-|-------|---------|-----|
-| NU1008 | Projects with and without CPM in same restore graph | Enable CPM in all projects or none |
-| NU1510 | PackageVersion defined but not referenced | Remove the unused entry |
-| NU1507 | Package version specified in both CPM and .csproj | Remove Version from .csproj or use VersionOverride |
+| Error  | Meaning                                             | Fix                                                |
+| ------ | --------------------------------------------------- | -------------------------------------------------- |
+| NU1008 | Projects with and without CPM in same restore graph | Enable CPM in all projects or none                 |
+| NU1510 | PackageVersion defined but not referenced           | Remove the unused entry                            |
+| NU1507 | Package version specified in both CPM and .csproj   | Remove Version from .csproj or use VersionOverride |

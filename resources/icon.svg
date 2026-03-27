@@ -12,26 +12,26 @@
     </linearGradient>
   </defs>
 
-  <!-- Rounded square background -->
-  <rect width="1024" height="1024" rx="228" ry="228" fill="url(#bg)"/>
+  <!-- Rounded square background (inset 100px for macOS dock padding) -->
+  <rect x="100" y="100" width="824" height="824" rx="183" ry="183" fill="url(#bg)"/>
 
   <!-- Antenna nub (small rectangle on top) -->
-  <rect x="480" y="248" width="64" height="52" rx="14" ry="14"
-        fill="none" stroke="url(#botStroke)" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="487" y="300" width="52" height="42" rx="11" ry="11"
+        fill="none" stroke="url(#botStroke)" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
 
   <!-- Antenna stem -->
-  <line x1="512" y1="300" x2="512" y2="348"
-        stroke="url(#botStroke)" stroke-width="32" stroke-linecap="round"/>
+  <line x1="512" y1="342" x2="512" y2="380"
+        stroke="url(#botStroke)" stroke-width="28" stroke-linecap="round"/>
 
   <!-- Robot head (rounded rectangle) -->
-  <rect x="280" y="348" width="464" height="360" rx="80" ry="80"
-        fill="none" stroke="url(#botStroke)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="326" y="380" width="373" height="290" rx="64" ry="64"
+        fill="none" stroke="url(#botStroke)" stroke-width="33" stroke-linecap="round" stroke-linejoin="round"/>
 
   <!-- Left eye (small rounded square) -->
-  <rect x="390" y="468" width="72" height="72" rx="16" ry="16"
+  <rect x="414" y="477" width="58" height="58" rx="13" ry="13"
         fill="#a5b4fc"/>
 
   <!-- Right eye (small rounded square) -->
-  <rect x="562" y="468" width="72" height="72" rx="16" ry="16"
+  <rect x="553" y="477" width="58" height="58" rx="13" ry="13"
         fill="#a5b4fc"/>
 </svg>

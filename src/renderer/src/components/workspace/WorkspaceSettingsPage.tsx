@@ -1,262 +1,287 @@
-import { useState } from 'react';
-import { ArrowLeft, FolderOpen, Plus, Trash2, Check, Settings } from 'lucide-react';
-import { useWorkspaceStore } from '@renderer/store';
-import { ConfirmDialog } from '@renderer/components/common';
-import { AGENT_META } from '../../../../shared/constants';
+import { useState, useEffect } from 'react'
+import {
+  ArrowLeft,
+  FolderOpen,
+  Settings,
+  Zap,
+  Lightbulb,
+  Database,
+  Users,
+  Cpu,
+  Loader2,
+  Trash2,
+  FileText,
+  GitBranch
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { useWorkspaceStore } from '@renderer/store'
+import { useSettingsStore } from '@renderer/store/settings.store'
+import WorkspaceGeneralTab from './WorkspaceGeneralTab'
+import TokenUsagePage from './TokenUsagePage'
+import IdeasList from './IdeasList'
+import MemorySettingsPage from './MemorySettingsPage'
+import DocumentsPage from './DocumentsPage'
+import ModelConfigTab from './ModelConfigTab'
+import RepositorySettingsTab from './RepositorySettingsTab'
+import {
+  SkillDetailPage,
+  ActivationBanner
+} from '@renderer/components/settings'
+import TeamPage from '@renderer/components/settings/TeamPage'
+import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
+import SyncBanner from '@renderer/components/settings/SyncBanner'
+import SyncReviewModal from '@renderer/components/settings/SyncReviewModal'
+
+type SettingsTab =
+  | 'workspace'
+  | 'models'
+  | 'repository'
+  | 'team'
+  | 'ideas'
+  | 'memory'
+  | 'documents'
+  | 'tokens'
+
+const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
+  { id: 'workspace', label: 'Workspace', icon: FolderOpen },
+  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
+  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
+  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
+  { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
+  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
+  { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-cyan-400' },
+  { id: 'tokens', label: 'Tokens', icon: Zap }
+]
 
 interface WorkspaceSettingsPageProps {
-  onBack: () => void;
+  onBack: () => void
 }
 
 export default function WorkspaceSettingsPage({
   onBack
 }: WorkspaceSettingsPageProps): React.JSX.Element {
-  const { workspaces, activeWorkspace, openWorkspace, createWorkspace, deleteWorkspace } =
-    useWorkspaceStore();
-  const [isAdding, setIsAdding] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [agentConfig, setAgentConfig] = useState<Record<string, { enabled: boolean; systemPrompt?: string }>>({});
-  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('workspace')
+  const [showSyncReview, setShowSyncReview] = useState(false)
+  const { activeWorkspace } = useWorkspaceStore()
 
-  const toggleAgent = (agentId: string): void => {
-    setAgentConfig((prev) => ({
-      ...prev,
-      [agentId]: {
-        ...prev[agentId],
-        enabled: prev[agentId]?.enabled === false ? true : false
-      }
-    }));
-  };
+  const {
+    claudeStatus,
+    isScanning,
+    selectedSkill,
+    pendingClaudeMd,
+    isConfirmingClaudeMd,
+    syncDiff,
+    isSyncing,
+    isActivating,
+    scanWorkspace,
+    loadAgents,
+    loadSkills,
+    selectSkill,
+    confirmClaudeMd,
+    dismissClaudeMdPreview,
+    computeSyncDiff,
+    applySync,
+    deleteAllAgents,
+    deleteAllSkills,
+    reset
+  } = useSettingsStore()
 
-  const updateAgentPrompt = (agentId: string, prompt: string): void => {
-    setAgentConfig((prev) => ({
-      ...prev,
-      [agentId]: {
-        ...prev[agentId],
-        enabled: prev[agentId]?.enabled !== false,
-        systemPrompt: prompt
-      }
-    }));
-  };
+  const workspacePath = activeWorkspace?.repoPath ?? null
 
-  const sortedWorkspaces = [...workspaces].sort(
-    (a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime()
-  );
-
-  const handleAddWorkspace = async (): Promise<void> => {
-    setIsAdding(true);
-    try {
-      const dirPath = await window.api.selectDirectory();
-      if (dirPath) {
-        const name = dirPath.split('/').pop() || dirPath.split('\\').pop() || 'Untitled';
-        await createWorkspace(name, dirPath);
-      }
-    } catch (error) {
-      console.error('Failed to add workspace:', error);
-    } finally {
-      setIsAdding(false);
+  // Scan workspace on mount (for agents/skills tabs)
+  useEffect(() => {
+    if (workspacePath) {
+      scanWorkspace(workspacePath)
+      loadAgents(workspacePath)
+      loadSkills(workspacePath)
+      computeSyncDiff(workspacePath)
     }
-  };
-
-  const handleDeleteConfirm = async (): Promise<void> => {
-    if (deleteTarget) {
-      await deleteWorkspace(deleteTarget);
-      setDeleteTarget(null);
+    return () => {
+      reset()
     }
-  };
+  }, [workspacePath, scanWorkspace, loadAgents, loadSkills, computeSyncDiff, reset])
 
-  const handleSwitchWorkspace = async (id: string): Promise<void> => {
-    await openWorkspace(id);
-  };
+  const needsActivation = claudeStatus && !claudeStatus.hasAgentsDir && !claudeStatus.hasSkillsDir
+
+  // Sync review modal (full page overlay)
+  if (showSyncReview && syncDiff?.hasChanges) {
+    return (
+      <SyncReviewModal
+        syncDiff={syncDiff}
+        isSyncing={isSyncing}
+        onApply={async (options) => {
+          const result = await applySync(workspacePath!, options)
+          return result
+        }}
+        onDismiss={() => setShowSyncReview(false)}
+      />
+    )
+  }
+
+  // CLAUDE.md diff review (full page overlay)
+  if (pendingClaudeMd && workspacePath) {
+    return (
+      <ClaudeMdDiffModal
+        existing={pendingClaudeMd.existing}
+        proposed={pendingClaudeMd.proposed}
+        workspacePath={workspacePath}
+        onConfirm={(content) => confirmClaudeMd(workspacePath, content)}
+        onDismiss={dismissClaudeMdPreview}
+        isConfirming={isConfirmingClaudeMd}
+      />
+    )
+  }
+
+  // Detail views (full page)
+  if (selectedSkill) {
+    return <SkillDetailPage skill={selectedSkill} onBack={() => selectSkill(null)} />
+  }
 
   return (
-    <>
-      <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
-        {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-700 bg-gray-900">
-          <button
-            onClick={onBack}
-            className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
-            aria-label="Back to chat"
-            title="Back to chat"
-          >
-            <ArrowLeft size={16} />
-          </button>
-          <Settings size={16} className="text-indigo-400" />
-          <span className="text-sm font-semibold text-gray-200">Workspace Settings</span>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-2xl mx-auto px-6 py-8">
-            {/* Active workspace section */}
-            {activeWorkspace && (
-              <div className="mb-8">
-                <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-3 font-medium">
-                  Active Workspace
-                </h3>
-                <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-indigo-600 text-white text-sm font-semibold">
-                      {activeWorkspace.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-200">
-                        {activeWorkspace.name}
-                      </div>
-                      <div className="text-xs text-gray-500 truncate mt-0.5">
-                        {activeWorkspace.repoPath}
-                      </div>
-                    </div>
-                    <Check size={16} className="text-indigo-400 flex-shrink-0" />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* All workspaces section */}
-            <div className="mb-8">
-              <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-3 font-medium">
-                All Workspaces
-              </h3>
-              <div className="space-y-1">
-                {sortedWorkspaces.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <FolderOpen size={32} className="text-gray-700 mb-3" />
-                    <p className="text-sm text-gray-500 mb-1">No workspaces yet</p>
-                    <p className="text-xs text-gray-600">Add a project folder to get started</p>
-                  </div>
-                ) : (
-                  sortedWorkspaces.map((ws) => (
-                    <div
-                      key={ws.id}
-                      className={`group flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors cursor-pointer ${
-                        activeWorkspace?.id === ws.id
-                          ? 'bg-indigo-600/20 border border-indigo-500/30'
-                          : 'hover:bg-gray-800/60 border border-transparent'
-                      }`}
-                      onClick={() => handleSwitchWorkspace(ws.id)}
-                    >
-                      <div
-                        className={`flex items-center justify-center w-9 h-9 rounded-lg text-sm font-semibold ${
-                          activeWorkspace?.id === ws.id
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-gray-700 text-gray-400'
-                        }`}
-                      >
-                        {ws.name.charAt(0).toUpperCase()}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-200 truncate">
-                          {ws.name}
-                        </div>
-                        <div className="text-xs text-gray-500 truncate">{ws.repoPath}</div>
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        {activeWorkspace?.id === ws.id && (
-                          <Check size={14} className="text-indigo-400 mr-1" />
-                        )}
-                        <button
-                          className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteTarget(ws.id);
-                          }}
-                          aria-label={`Remove workspace: ${ws.name}`}
-                          title="Remove workspace"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Add workspace button */}
-            <button
-              onClick={handleAddWorkspace}
-              disabled={isAdding}
-              className="flex items-center gap-2 px-4 py-2.5 w-full justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 mb-8"
-            >
-              <Plus size={16} />
-              <span>Add Workspace</span>
-            </button>
-
-            {/* Agent Configuration section */}
-            {activeWorkspace && (
-              <div className="mb-8">
-                <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-3 font-medium">
-                  Agent Configuration
-                </h3>
-                <div className="space-y-2">
-                  {Object.entries(AGENT_META).map(([agentId, meta]) => (
-                    <div key={agentId} className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-3">
-                      <div className="flex items-center justify-between">
-                        <button
-                          onClick={() => setExpandedAgent(expandedAgent === agentId ? null : agentId)}
-                          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-                        >
-                          <span className="text-base">{meta.icon}</span>
-                          <span className="text-sm font-medium text-gray-200">{meta.displayName}</span>
-                        </button>
-                        {/* Toggle switch */}
-                        <button
-                          onClick={() => toggleAgent(agentId)}
-                          className={`relative w-9 h-5 rounded-full transition-colors ${
-                            agentConfig[agentId]?.enabled !== false ? 'bg-indigo-600' : 'bg-gray-600'
-                          }`}
-                          aria-label={`Toggle ${meta.displayName}`}
-                        >
-                          <span
-                            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                              agentConfig[agentId]?.enabled !== false ? 'translate-x-4' : ''
-                            }`}
-                          />
-                        </button>
-                      </div>
-                      {/* Expandable custom prompt area */}
-                      {expandedAgent === agentId && (
-                        <div className="mt-3 pt-3 border-t border-gray-700/50">
-                          <label className="text-xs text-gray-500 mb-1.5 block">Custom System Prompt</label>
-                          <textarea
-                            value={agentConfig[agentId]?.systemPrompt ?? ''}
-                            onChange={(e) => updateAgentPrompt(agentId, e.target.value)}
-                            placeholder={`Custom instructions for ${meta.displayName}...`}
-                            className="w-full bg-gray-900/50 border border-gray-700/50 rounded-md px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 resize-none"
-                            rows={3}
-                          />
-                          <p className="text-xs text-gray-600 mt-1.5">
-                            Skill files support coming soon.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <p className="text-xs text-gray-600 mt-3">
-                  Agent configuration will be saved to this workspace&apos;s settings.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+    <div className="flex-1 flex flex-col bg-surface-raised min-w-0">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-6 py-3 border-b border-border-subtle bg-surface-raised">
+        <button
+          onClick={onBack}
+          className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
+          aria-label="Back to chat"
+          title="Back to chat"
+        >
+          <ArrowLeft size={16} />
+        </button>
+        <Settings size={16} className="text-primary-text" />
+        <span className="text-sm font-semibold text-text-primary">Workspace Settings</span>
+        {activeWorkspace && (
+          <span className="text-xs text-text-secondary">— {activeWorkspace.name}</span>
+        )}
       </div>
 
-      {/* Confirm delete dialog */}
-      <ConfirmDialog
-        isOpen={deleteTarget !== null}
-        title="Remove Workspace"
-        message="Remove this workspace? The project files will not be deleted."
-        confirmLabel="Remove"
-        cancelLabel="Cancel"
-        variant="danger"
-        onConfirm={handleDeleteConfirm}
-        onCancel={() => setDeleteTarget(null)}
-      />
-    </>
-  );
+      {/* Two-column layout: left nav + content */}
+      <div className="flex flex-1 min-h-0">
+        {/* Left navigation */}
+        <nav className="w-[200px] border-r border-border-subtle p-3 flex-shrink-0">
+          <div className="space-y-0.5">
+            {SETTINGS_MENU.map((item) => {
+              const Icon = item.icon
+              const isActive = activeTab === item.id
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  className={`flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                    isActive
+                      ? 'bg-primary-muted text-primary-text border border-primary/20'
+                      : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
+                  }`}
+                >
+                  <Icon size={16} className={isActive ? undefined : item.iconColor} />
+                  <span>{item.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </nav>
+
+        {/* Content area */}
+        <div className="flex-1 overflow-y-auto">
+          {/* Delete All buttons for team tab */}
+          {activeTab === 'team' && workspacePath && !needsActivation && !isActivating && (
+            <div className="px-6 pt-4 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  if (
+                    confirm(
+                      'Delete ALL agents from workspace? This removes .claude/agents/, all DB records, and CLAUDE.md references.'
+                    )
+                  ) {
+                    deleteAllAgents(workspacePath)
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/30 hover:bg-danger-muted transition-colors"
+              >
+                <Trash2 size={12} />
+                Delete All Agents
+              </button>
+              <button
+                onClick={() => {
+                  if (
+                    confirm(
+                      'Delete ALL skills from workspace? This removes .claude/skills/, all DB records, and CLAUDE.md references.'
+                    )
+                  ) {
+                    deleteAllSkills(workspacePath)
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/30 hover:bg-danger-muted transition-colors"
+              >
+                <Trash2 size={12} />
+                Delete All Skills
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'workspace' && <WorkspaceGeneralTab />}
+          {activeTab === 'models' && <ModelConfigTab />}
+          {activeTab === 'repository' && <RepositorySettingsTab />}
+
+          {activeTab === 'team' && workspacePath && (
+            <div className="flex-1 flex flex-col min-h-0">
+              {isScanning ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="flex items-center gap-3 text-text-secondary">
+                    <Loader2 size={18} className="animate-spin" />
+                    <span className="text-sm">Scanning workspace...</span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {needsActivation && (
+                    <div className="px-6 pt-4">
+                      <ActivationBanner workspacePath={workspacePath} />
+                    </div>
+                  )}
+                  {syncDiff?.hasChanges && (
+                    <div className="px-6 pt-4">
+                      <SyncBanner
+                        syncDiff={syncDiff}
+                        isSyncing={isSyncing}
+                        onReviewSync={() => setShowSyncReview(true)}
+                        onAutoSync={async () => {
+                          await applySync(workspacePath, { skipRemoved: true })
+                          loadAgents(workspacePath)
+                          loadSkills(workspacePath)
+                        }}
+                      />
+                    </div>
+                  )}
+                  {!needsActivation && (
+                    <div className="flex-1 min-h-0">
+                      <TeamPage workspacePath={workspacePath} />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'ideas' && (
+            <div className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Lightbulb size={16} className="text-yellow-400" />
+                <h3 className="text-sm font-semibold text-text-primary">Ideas</h3>
+              </div>
+              <p className="text-xs text-text-secondary mb-4">
+                Captured ideas for future work items. Refine them with &quot;Grill Me&quot; or
+                convert directly into conversations.
+              </p>
+              <IdeasList onNavigateToChat={onBack} />
+            </div>
+          )}
+          {activeTab === 'memory' && <MemorySettingsPage />}
+          {activeTab === 'documents' && <DocumentsPage />}
+          {activeTab === 'tokens' && <TokenUsagePage />}
+        </div>
+      </div>
+    </div>
+  )
 }

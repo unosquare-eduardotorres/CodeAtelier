@@ -42,35 +42,31 @@ export function registerWorkspaceIpc(): void {
         throw new Error(`Path does not exist: ${normalizedPath}`)
       }
 
-      // Validate it's a git repository
+      // Check if it's a git repository (no longer required)
+      let isGitRepo = false
+      let gitRemoteUrl: string | undefined
       try {
         const git = simpleGit(normalizedPath)
-        const isRepo = await git.checkIsRepo()
-        if (!isRepo) {
-          throw new Error(`Not a Git repository: ${normalizedPath}`)
+        isGitRepo = await git.checkIsRepo()
+        if (isGitRepo) {
+          try {
+            const remotes = await git.getRemotes(true)
+            const origin = remotes.find((r) => r.name === 'origin')
+            gitRemoteUrl = origin?.refs?.fetch
+          } catch {
+            // No remote is fine
+          }
         }
-
-        // Try to get remote URL
-        let gitRemoteUrl: string | undefined
-        try {
-          const remotes = await git.getRemotes(true)
-          const origin = remotes.find((r) => r.name === 'origin')
-          gitRemoteUrl = origin?.refs?.fetch
-        } catch {
-          // No remote is fine
-        }
-
-        return workspaceRepository.create(
-          name.trim() || basename(normalizedPath),
-          normalizedPath,
-          gitRemoteUrl
-        )
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('Not a Git repository')) {
-          throw error
-        }
-        throw new Error(`Failed to validate Git repository: ${(error as Error).message}`)
+      } catch {
+        // Not a repo — fine, we allow non-git directories
       }
+
+      return workspaceRepository.create(
+        name.trim() || basename(normalizedPath),
+        normalizedPath,
+        gitRemoteUrl,
+        isGitRepo
+      )
     }
   )
 
@@ -98,6 +94,8 @@ export function registerWorkspaceIpc(): void {
       dbLogger.warn('Auto-sync on workspace open failed:', e)
     }
 
+    // Auto memory is DB-backed — no directory initialization needed
+
     return workspace
   })
 
@@ -110,6 +108,31 @@ export function registerWorkspaceIpc(): void {
 
     workspaceRepository.delete(args.id)
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_GET_SETTINGS,
+    async (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
+        throw new Error('Invalid workspace ID')
+      }
+      return workspaceRepository.getSettings(args.workspaceId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS,
+    async (event, args: { workspaceId: string; settings: Record<string, unknown> }) => {
+      validateSender(event)
+      if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
+        throw new Error('Invalid workspace ID')
+      }
+      if (!args.settings || typeof args.settings !== 'object' || Array.isArray(args.settings)) {
+        throw new Error('Invalid settings object')
+      }
+      return workspaceRepository.updateSettings(args.workspaceId, args.settings)
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_DIRECTORY, async (event) => {
     validateSender(event)

@@ -1,0 +1,25 @@
+{
+  "id": "TASK-001",
+  "title": "Create database migration system",
+  "description": "Build a lightweight migration runner for better-sqlite3. Each migration is a numbered SQL file with up/down sections. Runner tracks current version in a schema_version table, executes pending migrations on app startup, and supports rollback.",
+  "feature_ref": "F000",
+  "task_type": "database",
+  "complexity": {
+    "score": 5,
+    "factors": {
+      "files_affected": 3,
+      "estimated_lines": 200,
+      "new_dependencies": 0,
+      "risk_flags": ["breaking_change"]
+    }
+  },
+  "dependencies": [],
+  "acceptance_criteria": [
+    "schema_version table created on first run",
+    "Migration files in src/main/db/migrations/ with numeric prefixes",
+    "Runner executes pending migrations in order on app startup",
+    "Failed migrations roll back within a transaction",
+    "Existing schema.sql becomes migration 001"
+  ],
+  "suggested_agent": "backend:db-architect"
+}
