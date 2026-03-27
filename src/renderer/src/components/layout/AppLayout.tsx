@@ -230,7 +230,7 @@ export default function AppLayout(): React.JSX.Element {
         >
           <button
             onClick={handleGoHome}
-            className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
+            className="p-2.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
             title="Home"
             aria-label="Home"
           >
@@ -239,7 +239,7 @@ export default function AppLayout(): React.JSX.Element {
           {activeWorkspace && (
             <button
               onClick={() => setShowWorkspaceSettings((prev) => !prev)}
-              className={`p-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${showWorkspaceSettings ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
+              className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${showWorkspaceSettings ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
               title="Workspace Settings"
               aria-label="Workspace Settings"
             >
@@ -248,7 +248,7 @@ export default function AppLayout(): React.JSX.Element {
           )}
           <button
             onClick={() => setView(view === 'app-settings' ? 'chat' : 'app-settings')}
-            className={`p-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'app-settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
+            className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'app-settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title="Settings"
             aria-label="Settings"
           >
@@ -292,7 +292,7 @@ export default function AppLayout(): React.JSX.Element {
         {showAgentPanel && view === 'chat' && (
           <ErrorBoundary
             fallback={
-              <div className="w-64 flex items-center justify-center p-4 text-sm text-red-400 bg-surface-raised border-l border-border-subtle">
+              <div className="w-64 flex items-center justify-center p-4 text-sm text-danger bg-surface-raised border-l border-border-subtle">
                 Agent panel error — click to retry
               </div>
             }
@@ -309,7 +309,7 @@ export default function AppLayout(): React.JSX.Element {
       {showPixelOffice && view === 'chat' && (
         <ErrorBoundary
           fallback={
-            <div className="p-4 text-sm text-red-400 bg-surface-raised border-t border-border-subtle">
+            <div className="p-4 text-sm text-danger bg-surface-raised border-t border-border-subtle">
               Pixel Office error — click to retry
             </div>
           }
@@ -319,7 +319,7 @@ export default function AppLayout(): React.JSX.Element {
       )}
 
       {/* Status bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-xs">
+      <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-[13px]">
         <div className="flex items-center gap-4">
           {activeWorkspace ? (
             <span className="flex items-center gap-1.5 text-text-secondary">

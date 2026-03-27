@@ -1,5 +1,4 @@
 import {
-  FolderOpen,
   Settings,
   Zap,
   Lightbulb,
@@ -16,7 +15,6 @@ import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 
 export type SettingsTab =
-  | 'workspace'
   | 'models'
   | 'repository'
   | 'team'
@@ -26,7 +24,6 @@ export type SettingsTab =
   | 'tokens'
 
 const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
-  { id: 'workspace', label: 'Workspace', icon: FolderOpen },
   { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
   { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
   { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },

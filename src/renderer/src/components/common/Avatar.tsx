@@ -19,6 +19,10 @@ const SIZE_MAP = {
  * Renders a built-in SVG avatar from the avatar library.
  * Falls back to initials in a colored circle if the key isn't found.
  *
+ * Multi-color rendering: Injects CSS custom properties (--av-bg, --av-skin,
+ * --av-hair, --av-clothing, --av-accessory, --av-eyes) from the avatar's
+ * palette so each character has distinct, vibrant colors.
+ *
  * Follows UI/UX Pro Max guidelines:
  * - Touch targets ≥ 44px when interactive (handled by parent)
  * - Smooth transitions on avatar changes
@@ -72,17 +76,29 @@ export default function Avatar({
     )
   }
 
+  // Build CSS variables from palette for multi-color rendering
+  const palette = definition.palette
+  const style: React.CSSProperties = {
+    minWidth: px,
+    minHeight: px,
+    // Legacy: keep color for any remaining currentColor references
+    color: accentColor ?? definition.defaultColor,
+    // Palette variables consumed by SVG content
+    '--av-bg': definition.bgColor,
+    '--av-skin': palette.skin,
+    '--av-hair': palette.hair,
+    '--av-clothing': palette.clothing,
+    '--av-accessory': palette.accessory,
+    '--av-eyes': palette.eyes
+  } as React.CSSProperties
+
   return (
     <svg
       viewBox="0 0 48 48"
       width={px}
       height={px}
       className={`inline-block rounded-full transition-all duration-150 ${className}`}
-      style={{
-        minWidth: px,
-        minHeight: px,
-        color: accentColor ?? definition.defaultColor
-      }}
+      style={style}
       aria-hidden="true"
       role="img"
       dangerouslySetInnerHTML={{ __html: definition.svgContent }}

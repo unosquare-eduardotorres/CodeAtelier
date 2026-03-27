@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import {
   ArrowLeft,
-  FolderOpen,
   Settings,
   Zap,
   Lightbulb,
@@ -16,7 +15,6 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
-import WorkspaceGeneralTab from './WorkspaceGeneralTab'
 import TokenUsagePage from './TokenUsagePage'
 import IdeasList from './IdeasList'
 import MemorySettingsPage from './MemorySettingsPage'
@@ -33,7 +31,6 @@ import SyncBanner from '@renderer/components/settings/SyncBanner'
 import SyncReviewModal from '@renderer/components/settings/SyncReviewModal'
 
 type SettingsTab =
-  | 'workspace'
   | 'models'
   | 'repository'
   | 'team'
@@ -43,7 +40,6 @@ type SettingsTab =
   | 'tokens'
 
 const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
-  { id: 'workspace', label: 'Workspace', icon: FolderOpen },
   { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
   { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
   { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
@@ -60,7 +56,7 @@ interface WorkspaceSettingsPageProps {
 export default function WorkspaceSettingsPage({
   onBack
 }: WorkspaceSettingsPageProps): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('workspace')
+  const [activeTab, setActiveTab] = useState<SettingsTab>('models')
   const [showSyncReview, setShowSyncReview] = useState(false)
   const { activeWorkspace } = useWorkspaceStore()
 
@@ -220,7 +216,6 @@ export default function WorkspaceSettingsPage({
             </div>
           )}
 
-          {activeTab === 'workspace' && <WorkspaceGeneralTab />}
           {activeTab === 'models' && <ModelConfigTab />}
           {activeTab === 'repository' && <RepositorySettingsTab />}
 

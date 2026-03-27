@@ -339,8 +339,17 @@ function runMigrations(database: Database.Database): void {
       })()
       dbLogger.info(`✓ Migration v${migration.version} complete`)
     } catch (error) {
-      dbLogger.error(`✗ Migration v${migration.version} (${migration.name}) FAILED:`, error)
-      throw error // Don't swallow real errors — surface disk full, corruption, etc.
+      // Tolerate "duplicate column" errors when schema.sql already includes the column.
+      // This happens on fresh DBs where CREATE TABLE includes columns that ALTER TABLE
+      // migrations try to re-add. Advance user_version so we don't retry.
+      const msg = error instanceof Error ? error.message : String(error)
+      if (msg.includes('duplicate column name')) {
+        dbLogger.warn(`⚠ Migration v${migration.version} skipped (column already exists)`)
+        database.pragma(`user_version = ${migration.version}`)
+      } else {
+        dbLogger.error(`✗ Migration v${migration.version} (${migration.name}) FAILED:`, error)
+        throw error // Don't swallow real errors — surface disk full, corruption, etc.
+      }
     }
   }
 

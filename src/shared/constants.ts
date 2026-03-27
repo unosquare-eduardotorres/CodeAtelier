@@ -226,6 +226,15 @@ export const COMPLEXITY_THRESHOLDS = {
   complex: { min: 9, max: 14 }
 } as const
 
+/**
+ * @deprecated Use database-backed agent IDs instead.
+ * Kept temporarily for backward compatibility in generalist/orchestrator services.
+ */
+export const AGENT_IDS = {
+  GENERALIST: 'generalist',
+  ORCHESTRATOR: 'orchestrator'
+} as const
+
 /** Default cost preference for new workspaces */
 export const DEFAULT_COST_PREFERENCE = 'balanced' as const
 

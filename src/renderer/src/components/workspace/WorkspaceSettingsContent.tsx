@@ -6,7 +6,6 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
-import WorkspaceGeneralTab from './WorkspaceGeneralTab'
 import TokenUsagePage from './TokenUsagePage'
 import IdeasList from './IdeasList'
 import MemorySettingsPage from './MemorySettingsPage'
@@ -146,7 +145,6 @@ export default function WorkspaceSettingsContent({
         </div>
       )}
 
-      {tab === 'workspace' && <WorkspaceGeneralTab />}
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
 
