@@ -51,14 +51,16 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const isExecutingPlan = useChatStore((s) => s.isExecutingPlan)
   const compactSuggestion = useChatStore((s) => s.compactSuggestion)
 
-  const { taskProgress, executePlan, setCompactSuggestion, sendMessage } = useChatStore(
-    useShallow((s) => ({
-      taskProgress: s.taskProgress,
-      executePlan: s.executePlan,
-      setCompactSuggestion: s.setCompactSuggestion,
-      sendMessage: s.sendMessage
-    }))
-  )
+  const { taskProgress, executePlan, clearTaskPlan, setCompactSuggestion, sendMessage } =
+    useChatStore(
+      useShallow((s) => ({
+        taskProgress: s.taskProgress,
+        executePlan: s.executePlan,
+        clearTaskPlan: s.clearTaskPlan,
+        setCompactSuggestion: s.setCompactSuggestion,
+        sendMessage: s.sendMessage
+      }))
+    )
 
   const scrollRef = useAutoScroll([messages.length, streamingContent])
 
@@ -109,6 +111,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             taskProgress={taskProgress}
             isExecuting={isExecutingPlan}
             onExecute={executePlan}
+            onDismiss={clearTaskPlan}
           />
         )}
 

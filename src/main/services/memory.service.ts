@@ -44,14 +44,6 @@ class MemoryService {
         )
       }
 
-      // Feedback (corrections to approach)
-      if (grouped.feedback) {
-        sections.push(
-          '### Feedback & Corrections\n' +
-            grouped.feedback.map((m) => `- **${m.title}**: ${m.content}`).join('\n')
-        )
-      }
-
       // Project memories (per-workspace)
       if (grouped.project) {
         sections.push(
@@ -65,6 +57,16 @@ class MemoryService {
         sections.push(
           '### References\n' +
             grouped.reference.map((m) => `- **${m.title}**: ${m.content}`).join('\n')
+        )
+      }
+
+      // Feedback & corrections placed LAST — recency bias in attention means
+      // content at the end of the context window gets stronger weighting.
+      // This ensures behavioral corrections are most likely to be followed.
+      if (grouped.feedback) {
+        sections.push(
+          '### Feedback & Corrections (IMPORTANT — follow these)\n' +
+            grouped.feedback.map((m) => `- **${m.title}**: ${m.content}`).join('\n')
         )
       }
 

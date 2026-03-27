@@ -126,6 +126,90 @@ function isMemoryEnabled(workspacePath: string): boolean {
   }
 }
 
+/** Check if post-specialist code review is enabled for the given workspace path */
+function isPostReviewEnabled(workspacePath: string): boolean {
+  const workspace = workspaceRepository.findAll().find((w) => w.repoPath === workspacePath)
+  if (!workspace) return false // default disabled — opt-in feature
+  try {
+    const settings = JSON.parse(workspace.settingsJson || '{}')
+    return settings.postReviewEnabled === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Spawns a short-lived review agent in plan mode to examine the combined
+ * specialist output and report issues. Opt-in via workspace setting.
+ */
+async function runPostSpecialistReview(
+  mainWindow: BrowserWindow,
+  conversationId: string,
+  tasks: DecomposedTask[],
+  workspacePath: string
+): Promise<void> {
+  const taskSummary = tasks
+    .map((t) => `- ${t.specialist} (${t.id}): ${t.description}`)
+    .join('\n')
+
+  const reviewPrompt = `Review the changes made by the following specialist tasks for integration issues, bugs, or convention violations:
+
+${taskSummary}
+
+Check:
+1. Are there any obvious integration conflicts between the tasks?
+2. Do the changes follow the project conventions from CLAUDE.md?
+3. Are there any missing imports, type errors, or broken references?
+4. Any security concerns?
+
+Be concise. Only report actual issues found — do not speculate. If everything looks good, say so briefly.`
+
+  const env = buildEnvWithPath()
+
+  return new Promise<void>((resolve) => {
+    const child = spawn(
+      'claude',
+      ['-p', reviewPrompt, '--permission-mode', 'plan', '--output-format', 'text'],
+      { cwd: workspacePath, stdio: ['ignore', 'pipe', 'pipe'], env }
+    )
+
+    let output = ''
+    child.stdout?.on('data', (data: Buffer) => {
+      output += data.toString()
+    })
+    child.stderr?.on('data', (data: Buffer) => {
+      log.warn('Review agent stderr:', data.toString().substring(0, 200))
+    })
+    child.on('exit', (code) => {
+      if (code === 0 && output.trim()) {
+        const reviewContent = `## 🔍 Post-Execution Review\n\n${output.trim()}`
+        const savedMsg = messageRepository.create(conversationId, 'coordinator', reviewContent)
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+          conversationId,
+          chunk: reviewContent,
+          role: 'coordinator'
+        })
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+          conversationId,
+          messageId: savedMsg.id
+        })
+      }
+      resolve()
+    })
+    child.on('error', () => resolve())
+
+    // 60s timeout for review
+    setTimeout(() => {
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        /* ignore */
+      }
+      resolve()
+    }, 60000)
+  })
+}
+
 export function registerChatIpc(mainWindow: BrowserWindow): void {
   // Persistent listener: forward compact suggestions to the renderer
   generalistService.on('compactNeeded', (data: { level: string; inputTokens: number }) => {
@@ -582,6 +666,19 @@ export function registerChatIpc(mainWindow: BrowserWindow): void {
           }
         } catch (e) {
           log.warn('Memory update on task complete failed:', e)
+        }
+
+        // Post-specialist code review (opt-in via workspace settings)
+        try {
+          const wpPath = generalistService.getWorkspacePath()
+          if (wpPath && isPostReviewEnabled(wpPath)) {
+            log.info('Post-specialist review enabled — spawning review agent')
+            runPostSpecialistReview(mainWindow, conversationId, tasks, wpPath).catch((e) => {
+              log.warn('Post-specialist review failed:', e)
+            })
+          }
+        } catch (e) {
+          log.warn('Post-review check failed:', e)
         }
 
         // Clean up

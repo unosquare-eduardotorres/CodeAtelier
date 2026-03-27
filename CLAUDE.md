@@ -216,6 +216,8 @@ npm run format        # Run Prettier
 - **Database**: SQLite via `better-sqlite3`, schema in `src/main/db/schema.sql`, repositories in `src/main/db/repositories/`
 - **State**: Zustand stores in `src/renderer/src/store/` — one per domain (agent, chat, workspace)
 - **Git integration**: `simple-git` library for Git operations in the main process
+- **Fast mode**: User-facing preference in workspace settings. Only affects the generalist (long-lived Claude CLI session). Specialist agents (`claude -p` one-shot processes) are NOT sessions and operate independently of fast mode. Rate limit fallback is detected in GeneralistService stderr handler and surfaced as a status notification.
+- **Extended thinking budgets**: `MAX_THINKING_TOKENS` env var set per specialist process based on model tier (Opus=31999, Sonnet=10000, Haiku=0). Defined in `THINKING_BUDGETS` constant in `src/shared/constants.ts`.
 
 ## Error handling patterns
 

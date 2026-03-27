@@ -4,10 +4,10 @@ import {
   Zap,
   Lightbulb,
   Database,
-  Bot,
-  Sparkles,
+  Users,
   FileText,
   GitBranch,
+  Cpu,
   ChevronLeft,
   ChevronRight,
   X
@@ -17,9 +17,9 @@ import { useWorkspaceStore } from '@renderer/store'
 
 export type SettingsTab =
   | 'workspace'
+  | 'models'
   | 'repository'
-  | 'agents'
-  | 'skills'
+  | 'team'
   | 'ideas'
   | 'memory'
   | 'documents'
@@ -27,9 +27,9 @@ export type SettingsTab =
 
 const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
   { id: 'workspace', label: 'Workspace', icon: FolderOpen },
+  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
   { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
-  { id: 'agents', label: 'Agents', icon: Bot, iconColor: 'text-blue-400' },
-  { id: 'skills', label: 'Skills', icon: Sparkles, iconColor: 'text-amber-400' },
+  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
   { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
   { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-cyan-400' },

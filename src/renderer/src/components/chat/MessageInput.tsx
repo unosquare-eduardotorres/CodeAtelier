@@ -8,13 +8,17 @@ import {
   GitPullRequestArrow,
   X,
   Flame,
-  Lightbulb
+  Lightbulb,
+  Mic,
+  MicOff
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useChatStore, useWorkspaceStore } from '@renderer/store'
+import { useVoiceInput } from '@renderer/hooks'
 import { ConfirmDialog } from '@renderer/components/common'
 import CompleteDialog from './CompleteDialog'
 import IdeaPopover from './IdeaPopover'
+import VoiceIndicator from './VoiceIndicator'
 
 interface MessageInputProps {
   attachments: string[]
@@ -58,6 +62,12 @@ const SLASH_COMMANDS: Array<{
     iconColor: 'text-orange-500'
   },
   {
+    command: '/voice',
+    description: 'Toggle push-to-talk voice input',
+    icon: Mic,
+    iconColor: 'text-purple-400'
+  },
+  {
     command: '/help',
     description: 'Show available commands',
     icon: HelpCircle,
@@ -90,6 +100,34 @@ export default function MessageInput({
   const { orchestratorStatus } = useWorkspaceStore()
   const isInitializing = orchestratorStatus === 'starting'
 
+  // Voice mode state
+  const [voiceEnabled, setVoiceEnabled] = useState(false)
+  const [interimText, setInterimText] = useState('')
+
+  const handleTranscript = useCallback((transcript: string) => {
+    setText((prev) => {
+      const separator = prev.length > 0 && !prev.endsWith(' ') ? ' ' : ''
+      return prev + separator + transcript
+    })
+    setInterimText('')
+  }, [])
+
+  const handleInterimTranscript = useCallback((interim: string) => {
+    setInterimText(interim)
+  }, [])
+
+  const {
+    isListening,
+    isSupported: isVoiceSupported,
+    error: voiceError,
+    startListening,
+    stopListening,
+    clearError: clearVoiceError
+  } = useVoiceInput({
+    onTranscript: handleTranscript,
+    onInterimTranscript: handleInterimTranscript
+  })
+
   const adjustHeight = useCallback(() => {
     const textarea = textareaRef.current
     if (textarea) {
@@ -116,6 +154,39 @@ export default function MessageInput({
   useEffect(() => {
     setSelectedCommandIndex(0)
   }, [filteredCommands.length])
+
+  // Push-to-talk keyboard shortcut: hold V when input not focused
+  useEffect(() => {
+    if (!voiceEnabled || !isVoiceSupported) return
+
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (
+        e.code === 'KeyV' &&
+        !e.repeat &&
+        document.activeElement !== textareaRef.current &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
+        e.preventDefault()
+        startListening()
+      }
+    }
+
+    const handleKeyUp = (e: KeyboardEvent): void => {
+      if (e.code === 'KeyV' && isListening) {
+        e.preventDefault()
+        stopListening()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    return (): void => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [voiceEnabled, isVoiceSupported, isListening, startListening, stopListening])
 
   const handleSend = async (): Promise<void> => {
     const trimmed = text.trim()
@@ -159,6 +230,24 @@ export default function MessageInput({
         return
       }
 
+      if (cmd === '/voice') {
+        setText('')
+        if (!isVoiceSupported) {
+          appendLocalMessage(
+            '**Voice input is not supported** in this environment. Speech recognition requires a Chromium-based runtime with internet access.'
+          )
+          return
+        }
+        const newState = !voiceEnabled
+        setVoiceEnabled(newState)
+        appendLocalMessage(
+          newState
+            ? '**Voice mode enabled.** Hold the mic button or press `V` (when input is not focused) to speak. Release to insert transcribed text.'
+            : '**Voice mode disabled.**'
+        )
+        return
+      }
+
       if (cmd === '/help') {
         setText('')
         const helpLines = [
@@ -167,6 +256,7 @@ export default function MessageInput({
           '**`/compact`** — Compress conversation context to save tokens',
           '**`/clear`** — Clear chat display (keeps AI context)',
           '**`/grillme`** — Deep-dive interview to clarify your plan',
+          '**`/voice`** — Toggle push-to-talk voice input',
           '**`/help`** — Show available commands'
         ]
         appendLocalMessage(`### Available Commands\n\n${helpLines.join('\n')}`)
@@ -217,6 +307,16 @@ export default function MessageInput({
 
   return (
     <>
+      {/* Voice recording indicator */}
+      {voiceEnabled && (
+        <VoiceIndicator
+          isListening={isListening}
+          interimText={interimText}
+          error={voiceError}
+          onDismissError={clearVoiceError}
+        />
+      )}
+
       <div className="relative flex-1 min-w-0 flex items-end gap-2">
         {/* Slash command autocomplete dropdown */}
         {showCommands && (
@@ -292,6 +392,30 @@ export default function MessageInput({
 
         {/* Idea popover */}
         {showIdeaPopover && <IdeaPopover onClose={() => setShowIdeaPopover(false)} />}
+
+        {/* Voice mic button — visible when voice mode enabled */}
+        {voiceEnabled && isVoiceSupported && (
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault() // Prevent textarea blur
+              startListening()
+            }}
+            onMouseUp={stopListening}
+            onMouseLeave={() => {
+              if (isListening) stopListening()
+            }}
+            disabled={isDisabled}
+            className={`flex-shrink-0 p-2 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base ${
+              isListening
+                ? 'bg-red-500/20 text-red-400 ring-2 ring-red-500/40 animate-pulse focus-visible:ring-red-500'
+                : 'text-purple-400 hover:bg-purple-500/10 disabled:opacity-30 focus-visible:ring-purple-500'
+            }`}
+            aria-label={isListening ? 'Release to stop recording' : 'Hold to speak'}
+            title={isListening ? 'Release to stop recording' : 'Hold to speak (or hold V key)'}
+          >
+            {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+          </button>
+        )}
 
         {/* Send button */}
         <button

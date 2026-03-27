@@ -1,5 +1,7 @@
-import { ArrowLeft, Settings, RefreshCw, Download, CheckCircle2 } from 'lucide-react'
-import { useUpdateStore } from '@renderer/store'
+import { useState, useEffect, useCallback } from 'react'
+import { ArrowLeft, Settings, RefreshCw, Download, CheckCircle2, Pencil, Check } from 'lucide-react'
+import { useUpdateStore, useProfileStore } from '@renderer/store'
+import { Avatar, AvatarPicker } from '@renderer/components/common'
 
 function UpdateButton(): React.JSX.Element {
   const { status, availableVersion, checkForUpdates, installUpdate } = useUpdateStore()
@@ -48,6 +50,283 @@ interface SettingsPageProps {
   onBack: () => void
 }
 
+function AgentIdentityCard({
+  role,
+  defaultAvatarKey,
+  defaultDisplayName,
+  defaultColor,
+  alias,
+  avatarKey,
+  onSave
+}: {
+  role: string
+  defaultAvatarKey: string
+  defaultDisplayName: string
+  defaultColor: string
+  alias: string | null
+  avatarKey: string | null
+  onSave: (alias: string | null, avatarKey: string | null) => Promise<void>
+}): React.JSX.Element {
+  const [isEditing, setIsEditing] = useState(false)
+  const [editAlias, setEditAlias] = useState(alias ?? '')
+  const [editAvatarKey, setEditAvatarKey] = useState(avatarKey ?? defaultAvatarKey)
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+
+  const handleSave = useCallback(async () => {
+    setIsSaving(true)
+    try {
+      await onSave(
+        editAlias.trim() || null,
+        editAvatarKey !== defaultAvatarKey ? editAvatarKey : null
+      )
+      setIsEditing(false)
+      setShowAvatarPicker(false)
+    } catch (err) {
+      console.error('Failed to save agent alias:', err)
+    } finally {
+      setIsSaving(false)
+    }
+  }, [editAlias, editAvatarKey, defaultAvatarKey, onSave])
+
+  const handleCancel = useCallback(() => {
+    setEditAlias(alias ?? '')
+    setEditAvatarKey(avatarKey ?? defaultAvatarKey)
+    setIsEditing(false)
+    setShowAvatarPicker(false)
+  }, [alias, avatarKey, defaultAvatarKey])
+
+  return (
+    <div className="bg-surface-base border border-border-subtle rounded-lg p-3">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => {
+            setIsEditing(true)
+            setShowAvatarPicker(true)
+          }}
+          className="relative group cursor-pointer"
+          aria-label={`Change ${role} avatar`}
+        >
+          <Avatar avatarKey={avatarKey ?? defaultAvatarKey} size="lg" accentColor={defaultColor} />
+          <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            <Pencil size={12} className="text-white" />
+          </div>
+        </button>
+        <div className="flex-1 min-w-0">
+          {isEditing ? (
+            <input
+              type="text"
+              value={editAlias}
+              onChange={(e) => setEditAlias(e.target.value)}
+              placeholder={`Alias (e.g., "Da Vinci")`}
+              maxLength={50}
+              className="w-full h-9 px-3 rounded-lg bg-surface-overlay border border-border-subtle text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSave()
+                if (e.key === 'Escape') handleCancel()
+              }}
+            />
+          ) : (
+            <div>
+              <span className="text-sm font-medium text-text-primary">
+                {alias || defaultDisplayName}
+              </span>
+              {alias && (
+                <span className="text-xs text-text-muted ml-1.5">{defaultDisplayName}</span>
+              )}
+            </div>
+          )}
+          <span className="text-[11px] text-text-muted capitalize">{role}</span>
+        </div>
+        {isEditing ? (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={handleCancel}
+              className="px-2.5 py-1 text-xs text-text-body hover:text-text-primary bg-surface-float hover:bg-surface-overlay rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors disabled:opacity-50"
+            >
+              <Check size={10} />
+              Save
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setIsEditing(true)}
+            className="p-1.5 rounded-md hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+            aria-label={`Edit ${role} alias`}
+          >
+            <Pencil size={12} />
+          </button>
+        )}
+      </div>
+      {showAvatarPicker && (
+        <div className="mt-3 pt-3 border-t border-border-subtle">
+          <AvatarPicker value={editAvatarKey} onChange={setEditAvatarKey} columns={8} size="md" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CoreAgentsSection(): React.JSX.Element {
+  const { getCoreAgentAlias, saveCoreAgentAlias } = useProfileStore()
+  const generalistAlias = getCoreAgentAlias('generalist')
+  const orchestratorAlias = getCoreAgentAlias('coordinator')
+
+  return (
+    <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+      <h4 className="text-sm font-medium text-text-primary">Core Agents</h4>
+      <p className="text-xs text-text-secondary mt-0.5 mb-4">
+        Customize how the Generalist and Orchestrator appear in your conversations
+      </p>
+      <div className="space-y-3">
+        <AgentIdentityCard
+          role="generalist"
+          defaultAvatarKey="scholar"
+          defaultDisplayName="Generalist"
+          defaultColor="#10B981"
+          alias={generalistAlias?.alias ?? null}
+          avatarKey={generalistAlias?.avatarKey ?? null}
+          onSave={(alias, avatarKey) => saveCoreAgentAlias('generalist', alias, avatarKey)}
+        />
+        <AgentIdentityCard
+          role="orchestrator"
+          defaultAvatarKey="architect"
+          defaultDisplayName="Orchestrator"
+          defaultColor="#6366F1"
+          alias={orchestratorAlias?.alias ?? null}
+          avatarKey={orchestratorAlias?.avatarKey ?? null}
+          onSave={(alias, avatarKey) => saveCoreAgentAlias('coordinator', alias, avatarKey)}
+        />
+      </div>
+    </div>
+  )
+}
+
+function ProfileSection(): React.JSX.Element {
+  const { profile, saveProfile } = useProfileStore()
+  const [isEditing, setIsEditing] = useState(false)
+  const [name, setName] = useState(profile?.displayName ?? '')
+  const [avatarKey, setAvatarKey] = useState(profile?.avatarKey ?? 'astronaut')
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+
+  useEffect(() => {
+    if (profile) {
+      setName(profile.displayName)
+      setAvatarKey(profile.avatarKey)
+    }
+  }, [profile])
+
+  const handleSave = useCallback(async () => {
+    if (!name.trim()) return
+    setIsSaving(true)
+    try {
+      await saveProfile(name.trim(), avatarKey)
+      setIsEditing(false)
+      setShowAvatarPicker(false)
+    } catch (err) {
+      console.error('Failed to save profile:', err)
+    } finally {
+      setIsSaving(false)
+    }
+  }, [name, avatarKey, saveProfile])
+
+  const handleCancel = useCallback(() => {
+    setName(profile?.displayName ?? '')
+    setAvatarKey(profile?.avatarKey ?? 'astronaut')
+    setIsEditing(false)
+    setShowAvatarPicker(false)
+  }, [profile])
+
+  return (
+    <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+      <h4 className="text-sm font-medium text-text-primary">Your Profile</h4>
+      <p className="text-xs text-text-secondary mt-0.5 mb-4">
+        Your name and avatar appear in all conversations
+      </p>
+      <div className="flex items-center gap-4">
+        <button
+          onClick={() => {
+            setIsEditing(true)
+            setShowAvatarPicker(true)
+          }}
+          className="relative group cursor-pointer"
+          aria-label="Change avatar"
+        >
+          <Avatar avatarKey={avatarKey} size="lg" />
+          <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            <Pencil size={14} className="text-white" />
+          </div>
+        </button>
+        <div className="flex-1">
+          {isEditing ? (
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name"
+              maxLength={50}
+              className="w-full h-10 px-3 rounded-lg bg-surface-base border border-border-subtle text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSave()
+                if (e.key === 'Escape') handleCancel()
+              }}
+            />
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-text-primary">
+                {profile?.displayName ?? 'Developer'}
+              </span>
+              <button
+                onClick={() => setIsEditing(true)}
+                className="p-1 rounded-md hover:bg-surface-float text-text-muted hover:text-text-primary transition-colors"
+                aria-label="Edit name"
+              >
+                <Pencil size={12} />
+              </button>
+            </div>
+          )}
+        </div>
+        {isEditing && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCancel}
+              className="px-3 py-1.5 text-xs font-medium text-text-body hover:text-text-primary bg-surface-float hover:bg-surface-overlay rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!name.trim() || isSaving}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors disabled:opacity-50"
+            >
+              <Check size={12} />
+              Save
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Avatar picker overlay */}
+      {showAvatarPicker && (
+        <div className="mt-4 pt-4 border-t border-border-subtle">
+          <p className="text-xs text-text-secondary mb-3">Choose an avatar</p>
+          <AvatarPicker value={avatarKey} onChange={setAvatarKey} columns={8} size="lg" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.Element {
   return (
     <div className="flex-1 flex flex-col bg-surface-raised min-w-0">
@@ -79,6 +358,12 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
                 Workspace Settings.
               </p>
             </div>
+
+            {/* Profile section */}
+            <ProfileSection />
+
+            {/* Core Agents section */}
+            <CoreAgentsSection />
 
             {/* Update section */}
             <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">

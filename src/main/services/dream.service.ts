@@ -2,10 +2,10 @@ import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { dbLogger } from '../logger'
 import { memoryRepository, dreamRunRepository } from '../db/repositories'
-import { DREAM_MODEL_ID } from '../../shared/constants'
 import { DREAM_SYSTEM_PROMPT } from './dream-prompts'
 import type { DreamRun, DreamProgress, DreamTriggerType } from '../../shared/types'
 import { buildEnvWithPath } from './env-utils'
+import { modelConfigService } from './model-config.service'
 
 const log = dbLogger
 
@@ -79,7 +79,7 @@ class DreamService extends EventEmitter {
 
       // Run the consolidation via claude -p
       const prompt = `Here are the current memories to consolidate:\n\n${JSON.stringify(memoryPayload, null, 2)}`
-      const result = await this.spawnConsolidator(prompt)
+      const result = await this.spawnConsolidator(prompt, workspaceId)
 
       // Parse and apply the consolidation actions
       const stats = this.applyActions(result, workspaceId)
@@ -212,9 +212,10 @@ class DreamService extends EventEmitter {
   /**
    * Spawn a read-only claude -p process for memory consolidation.
    */
-  private spawnConsolidator(prompt: string): Promise<string> {
+  private spawnConsolidator(prompt: string, workspaceId?: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const env = buildEnvWithPath()
+      const dreamModel = modelConfigService.getModelById(workspaceId, 'dream')
 
       const child = spawn(
         'claude',
@@ -224,7 +225,7 @@ class DreamService extends EventEmitter {
           '--system-prompt',
           DREAM_SYSTEM_PROMPT,
           '--model',
-          DREAM_MODEL_ID,
+          dreamModel,
           '--output-format',
           'text',
           '--permission-mode',

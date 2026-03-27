@@ -13,6 +13,7 @@ import { specialistRepository, workspaceRepository } from '../db/repositories'
 import { enrichTasksWithComplexity } from './complexity-scorer.service'
 import { promptBuilder } from './prompt-builder'
 import { AgentBaseService } from './agent-base.service'
+import { modelConfigService } from './model-config.service'
 import type { StreamChunk } from './agent-base.service'
 
 /** Maximum number of session entries before evicting oldest */
@@ -86,18 +87,21 @@ export class OrchestratorService extends AgentBaseService {
       // Default to no verbose
     }
 
+    const orchestratorModel = modelConfigService.getModel(this.workspacePath, 'orchestrator')
     const args = [
       '-p',
       message,
       '--output-format',
       'stream-json',
+      '--model',
+      orchestratorModel,
       ...(debugMode ? ['--verbose'] : []),
       '--allowedTools',
       'WebSearch,WebFetch'
     ]
 
     if (mode === 'build') {
-      args.push('--dangerously-skip-permissions')
+      args.push('--permission-mode', 'auto')
     } else {
       args.push('--permission-mode', 'plan')
     }
@@ -217,7 +221,9 @@ export class OrchestratorService extends AgentBaseService {
       ? `\nRecent conversation context:\n${rawConversation.length > MAX_CONVERSATION_CHARS ? rawConversation.substring(rawConversation.length - MAX_CONVERSATION_CHARS) + '\n[... earlier messages truncated]' : rawConversation}`
       : ''
 
-    const prompt = `Task to decompose: "${brief.summary}"
+    const prompt = `Think step by step about the dependencies and potential file conflicts before decomposing.
+
+Task to decompose: "${brief.summary}"
 ${decisionsBlock}
 ${constraintsBlock}
 ${filesBlock}
@@ -293,7 +299,8 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
       specialist: t.specialist,
       description: t.description,
       dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn : [],
-      complexity: t.complexity // raw from LLM — will be validated next
+      complexity: t.complexity, // raw from LLM — will be validated next
+      verificationCommand: typeof t.verificationCommand === 'string' ? t.verificationCommand : undefined
     }))
 
     // Read workspace cost preference and enrich tasks with validated complexity scores

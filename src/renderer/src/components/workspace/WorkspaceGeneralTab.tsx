@@ -1,40 +1,13 @@
-import { useState, useEffect } from 'react'
-import { FolderOpen, Plus, Trash2, Check, Coins, Scale, Rocket } from 'lucide-react'
-import type { CostPreference } from '../../../../shared/types'
+import { useState } from 'react'
+import { FolderOpen, Plus, Trash2, Check } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { ConfirmDialog } from '@renderer/components/common'
-
-const COST_PREF_ICON: Record<CostPreference, React.ReactNode> = {
-  economy: <Coins size={16} />,
-  balanced: <Scale size={16} />,
-  power: <Rocket size={16} />
-}
 
 export default function WorkspaceGeneralTab(): React.JSX.Element {
   const { workspaces, activeWorkspace, openWorkspace, createWorkspace, deleteWorkspace } =
     useWorkspaceStore()
   const [isAdding, setIsAdding] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const [costPreference, setCostPreference] = useState<CostPreference>('balanced')
-
-  useEffect(() => {
-    if (activeWorkspace) {
-      window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id }).then((settings) => {
-        setCostPreference((settings.costPreference as CostPreference) || 'balanced')
-      })
-    }
-  }, [activeWorkspace])
-
-  const handleCostPreferenceChange = async (pref: CostPreference): Promise<void> => {
-    setCostPreference(pref)
-    if (activeWorkspace) {
-      const settings = await window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id })
-      await window.api.updateWorkspaceSettings({
-        workspaceId: activeWorkspace.id,
-        settings: { ...settings, costPreference: pref }
-      })
-    }
-  }
 
   const sortedWorkspaces = [...workspaces].sort(
     (a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime()
@@ -89,46 +62,6 @@ export default function WorkspaceGeneralTab(): React.JSX.Element {
                   </div>
                 </div>
                 <Check size={16} className="text-primary-text flex-shrink-0" />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Model Routing section — only show when a workspace is active */}
-        {activeWorkspace && (
-          <div className="mb-8">
-            <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-3 font-medium">
-              Model Routing
-            </h3>
-            <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
-              <div className="mb-3">
-                <h4 className="text-sm font-medium text-text-primary">Cost Preference</h4>
-                <p className="text-xs text-text-muted mt-0.5">
-                  Controls which AI model is used for specialist tasks based on task complexity.
-                </p>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {(['economy', 'balanced', 'power'] as const).map((pref) => (
-                  <button
-                    key={pref}
-                    onClick={() => handleCostPreferenceChange(pref)}
-                    className={`flex flex-col items-center gap-1.5 px-3 py-3 rounded-lg border text-xs font-medium transition-colors ${
-                      costPreference === pref
-                        ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300'
-                        : 'border-border-subtle hover:bg-surface-overlay text-text-secondary'
-                    }`}
-                  >
-                    <span className="text-base">{COST_PREF_ICON[pref]}</span>
-                    <span className="capitalize">{pref}</span>
-                    <span className="text-[10px] text-text-muted">
-                      {pref === 'economy'
-                        ? 'Always Haiku'
-                        : pref === 'balanced'
-                          ? 'Auto-route'
-                          : 'Always Opus'}
-                    </span>
-                  </button>
-                ))}
               </div>
             </div>
           </div>

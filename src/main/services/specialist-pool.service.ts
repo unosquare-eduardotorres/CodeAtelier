@@ -7,7 +7,7 @@ import type {
   HandoffBrief,
   TaskExecutionProgress
 } from '../../shared/types'
-import { MODEL_TIER_IDS } from '../../shared/constants'
+import { THINKING_BUDGETS } from '../../shared/constants'
 import { specialistPoolLogger } from '../logger'
 import {
   specialistRepository,
@@ -18,10 +18,10 @@ import {
 import { promptBuilder } from './prompt-builder'
 import { agentRegistry } from './agent-registry'
 import { memoryService } from './memory.service'
-import { getModelId } from './complexity-scorer.service'
 import { gitWorktreeService } from './git-worktree.service'
 import type { MergeResult } from './git-worktree.service'
 import { buildEnvWithPath } from './env-utils'
+import { modelConfigService } from './model-config.service'
 
 /** Retry configuration for specialist tasks */
 const RETRY_CONFIG = {
@@ -38,6 +38,20 @@ const SPECIALIST_TIMEOUT_MS = 10 * 60 * 1000
 /** Grace period (ms) between SIGTERM and SIGKILL escalation */
 const SIGKILL_GRACE_MS = 5000
 
+/** Maps a ModelTier to the corresponding specialist ModelAction */
+function tierToModelAction(tier: string): import('../../shared/types').ModelAction {
+  switch (tier) {
+    case 'haiku':
+      return 'specialist:simple'
+    case 'sonnet':
+      return 'specialist:moderate'
+    case 'opus':
+      return 'specialist:complex'
+    default:
+      return 'specialist:moderate'
+  }
+}
+
 interface SpecialistProcessInfo {
   task: DecomposedTask
   process: ChildProcess
@@ -48,6 +62,8 @@ interface SpecialistProcessInfo {
   attempt: number
   rateLimited?: boolean
   timeoutTimer?: ReturnType<typeof setTimeout>
+  /** Accumulated token usage from stream events (input + output) */
+  tokenUsage: number
 }
 
 /**
@@ -202,7 +218,8 @@ export class SpecialistPoolService extends EventEmitter {
     // Create DB session for token tracking
     let dbSessionId: string | undefined
     try {
-      const sessionModelId = task.model ? getModelId(task.model) : MODEL_TIER_IDS.sonnet
+      const sessionAction = task.model ? tierToModelAction(task.model) : 'specialist:moderate'
+      const sessionModelId = modelConfigService.getModel(this.workspacePath ?? undefined, sessionAction)
       const session = agentSessionRepository.create(task.specialist, {
         taskId: task.id,
         pid: childProcess.pid,
@@ -224,7 +241,8 @@ export class SpecialistPoolService extends EventEmitter {
       status: 'running',
       worktreeId,
       dbSessionId,
-      attempt
+      attempt,
+      tokenUsage: 0
     }
     this.activeProcesses.set(task.id, info)
 
@@ -310,6 +328,14 @@ export class SpecialistPoolService extends EventEmitter {
               chunk: event.result as string
             })
           }
+
+          // Extract token usage from stream events (result and assistant events carry usage data)
+          const usage = event.usage as Record<string, number> | undefined
+          if (usage) {
+            const inputTokens = usage.input_tokens ?? 0
+            const outputTokens = usage.output_tokens ?? 0
+            info.tokenUsage += inputTokens + outputTokens
+          }
         } catch {
           // Not JSON — emit raw text
           if (trimmed) {
@@ -364,13 +390,13 @@ export class SpecialistPoolService extends EventEmitter {
       this.completedTasks.add(task.id)
       this.taskResults.set(task.id, info.output)
 
-      // Complete DB session record
+      // Complete DB session record with accumulated token usage
       if (info.dbSessionId) {
         try {
           agentSessionRepository.complete(
             info.dbSessionId,
             code === 0 ? 'completed' : 'failed',
-            0 // Specialists don't track token usage from stream events yet
+            info.tokenUsage
           )
         } catch (err) {
           this.log.error('Failed to complete DB session:', err)
@@ -479,10 +505,10 @@ export class SpecialistPoolService extends EventEmitter {
       this.taskStatuses.set(task.id, 'failed')
       this.emitProgress(task, 'failed', undefined, err.message)
 
-      // Complete DB session on error
+      // Complete DB session on error with whatever tokens were consumed
       if (info.dbSessionId) {
         try {
-          agentSessionRepository.complete(info.dbSessionId, 'failed', 0)
+          agentSessionRepository.complete(info.dbSessionId, 'failed', info.tokenUsage)
         } catch (dbErr) {
           this.log.error('Failed to complete DB session on error:', dbErr)
         }
@@ -557,9 +583,14 @@ export class SpecialistPoolService extends EventEmitter {
       }
     }
 
+    // Append verification command to task description if provided
+    const verificationSuffix = task.verificationCommand
+      ? `\n\nVerification command (run before finishing): \`${task.verificationCommand}\``
+      : ''
+
     const fullPrompt = dependencyContext
-      ? `${task.description}${dependencyContext}`
-      : task.description
+      ? `${task.description}${verificationSuffix}${dependencyContext}`
+      : `${task.description}${verificationSuffix}`
 
     // Strategy 6: Conditional --verbose flag — only in debug mode to reduce stream noise
     let debugMode = false
@@ -572,7 +603,9 @@ export class SpecialistPoolService extends EventEmitter {
       // Default to no verbose
     }
 
-    const modelId = task.model ? getModelId(task.model) : MODEL_TIER_IDS.sonnet
+    // Check for per-action model override, falling back to complexity-scored tier model
+    const modelAction = task.model ? tierToModelAction(task.model) : 'specialist:moderate'
+    const modelId = modelConfigService.getModel(this.workspacePath ?? undefined, modelAction)
     const args = [
       '-p',
       fullPrompt,
@@ -586,12 +619,17 @@ export class SpecialistPoolService extends EventEmitter {
     ]
 
     if (mode === 'build') {
-      args.push('--dangerously-skip-permissions')
+      args.push('--permission-mode', 'auto')
     } else {
       args.push('--permission-mode', 'plan')
     }
 
-    const env = this.buildEnvWithPath()
+    // Set thinking budget based on model tier — Opus gets full thinking, Haiku skips it
+    const thinkingBudget = THINKING_BUDGETS[model as keyof typeof THINKING_BUDGETS] ?? THINKING_BUDGETS.sonnet
+    const env = {
+      ...this.buildEnvWithPath(),
+      MAX_THINKING_TOKENS: thinkingBudget
+    }
 
     // Use worktree path if available, otherwise fall back to workspace path
     let cwd = this.workspacePath!

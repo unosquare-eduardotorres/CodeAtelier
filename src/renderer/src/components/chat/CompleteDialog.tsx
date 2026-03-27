@@ -153,7 +153,7 @@ export default function CompleteDialog({
         {/* Header */}
         <div className="flex items-center gap-3 mb-5">
           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-success-muted flex items-center justify-center">
-            <GitBranch size={20} className="text-green-400" />
+            <GitBranch size={20} className="text-success" />
           </div>
           <div>
             <h3 className="text-base font-semibold text-text-primary">Complete Conversation</h3>
@@ -275,7 +275,7 @@ export default function CompleteDialog({
           <button
             onClick={handleConfirm}
             disabled={isSubmitting || isGenerating || !commitMessage.trim() || !branchName.trim()}
-            className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500 bg-green-600 hover:bg-green-500 text-white disabled:opacity-50 disabled:hover:bg-green-600 flex items-center gap-2"
+            className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-success bg-success hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-2"
           >
             {isSubmitting ? (
               <>

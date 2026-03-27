@@ -1,19 +1,63 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { ideaRepository, conversationRepository } from '../db/repositories'
+import type { Idea } from '../../shared/types'
+import { ideaRepository, conversationRepository, memoryRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 
 /**
- * Sync ideas as project memories after any idea mutation.
- * Replaces the old brain project-state.md sync.
- * Note: This is a no-op for now — ideas are tracked in their own table
- * and memories are created via conversation flow. The old syncBrain
- * wrote ideas to a file; the new system stores them as memories on completion.
+ * Sync a completed idea into the auto memory system.
+ * Creates a 'project' memory so the generalist and dream system
+ * can reference refined ideas in future conversations.
  */
-function syncMemory(_workspaceId: string): void {
-  // Ideas are already persisted in the ideas table.
-  // Memory creation happens when ideas complete via conversation flow.
-  // This function is kept as a no-op hook for future use.
+function syncIdeaToMemory(idea: Idea): void {
+  // Only completed ideas become memories
+  if (idea.status !== 'completed') return
+
+  // Check if a memory already exists for this idea (idempotency)
+  // Use a stable tag convention: idea:{id}
+  const ideaTag = `idea:${idea.id}`
+  const existing = memoryRepository
+    .findByType(idea.workspaceId, 'project')
+    .filter((m) => m.tags.includes(ideaTag))
+
+  // Build memory content from idea + optional grill summary
+  const contentParts = [idea.description]
+  if (idea.grillSummary) {
+    contentParts.push(`\n### Grill Summary\n${idea.grillSummary}`)
+  }
+  const content = contentParts.filter(Boolean).join('\n')
+
+  if (existing.length > 0) {
+    // Update existing memory (in case grillSummary was added later)
+    memoryRepository.update(existing[0].id, {
+      title: `Idea: ${idea.title}`,
+      content,
+      tags: ['idea', ideaTag]
+    })
+  } else {
+    // Create new memory
+    memoryRepository.create({
+      workspaceId: idea.workspaceId,
+      type: 'project',
+      title: `Idea: ${idea.title}`,
+      content,
+      tags: ['idea', ideaTag],
+      importance: idea.grillSummary ? 7 : 5 // Grilled ideas are more important
+    })
+  }
+}
+
+/**
+ * Remove the memory linked to a deleted idea.
+ */
+function removeIdeaMemory(idea: Idea): void {
+  const ideaTag = `idea:${idea.id}`
+  const existing = memoryRepository
+    .findByType(idea.workspaceId, 'project')
+    .filter((m) => m.tags.includes(ideaTag))
+  for (const memory of existing) {
+    memoryRepository.delete(memory.id)
+  }
 }
 
 export function registerIdeaIpc(): void {
@@ -38,7 +82,6 @@ export function registerIdeaIpc(): void {
         args.title.trim(),
         args.description?.trim() ?? ''
       )
-      syncMemory(args.workspaceId)
       return idea
     }
   )
@@ -49,12 +92,10 @@ export function registerIdeaIpc(): void {
     (event, args: { id: string; title?: string; description?: string }) => {
       validateSender(event)
       if (!args?.id) throw new Error('id is required')
-      const existing = ideaRepository.findById(args.id)
       const updated = ideaRepository.update(args.id, {
         title: args.title,
         description: args.description
       })
-      if (existing) syncMemory(existing.workspaceId)
       return updated
     }
   )
@@ -65,7 +106,7 @@ export function registerIdeaIpc(): void {
     if (!args?.id) throw new Error('id is required')
     const idea = ideaRepository.findById(args.id)
     ideaRepository.delete(args.id)
-    if (idea) syncMemory(idea.workspaceId)
+    if (idea) removeIdeaMemory(idea)
   })
 
   // idea:startGrill — create/resume a grill conversation for this idea
@@ -96,7 +137,6 @@ export function registerIdeaIpc(): void {
       ideaRepository.setGrillConversation(args.ideaId, conv.id)
       const updated = ideaRepository.updateStatus(args.ideaId, 'grilling')
 
-      syncMemory(args.workspaceId)
       return { idea: updated, conversation: conv }
     }
   )
@@ -119,7 +159,7 @@ export function registerIdeaIpc(): void {
       ideaRepository.setConvertedConversation(args.ideaId, conv.id)
       const updated = ideaRepository.updateStatus(args.ideaId, 'completed')
 
-      syncMemory(args.workspaceId)
+      if (updated) syncIdeaToMemory(updated)
       return { idea: updated, conversation: conv }
     }
   )
@@ -138,7 +178,11 @@ export function registerIdeaIpc(): void {
         ideaRepository.setGrillSummary(idea.id, args.summary)
       }
       const updated = ideaRepository.updateStatus(idea.id, 'completed')
-      syncMemory(idea.workspaceId)
+      if (updated) {
+        // Re-fetch to get the full data including grillSummary set above
+        const refreshed = ideaRepository.findById(updated.id)
+        if (refreshed) syncIdeaToMemory(refreshed)
+      }
       return updated
     }
   )

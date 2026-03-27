@@ -34,7 +34,9 @@ import type {
   AgentSessionRecord,
   Idea,
   DocFile,
-  RepoInfo
+  RepoInfo,
+  UserProfile,
+  CoreAgentAlias
 } from '../shared/types'
 
 interface Api {
@@ -323,6 +325,18 @@ interface Api {
   hasUnsavedChanges: (args: {
     conversationId: string
   }) => Promise<{ hasChanges: boolean; fileCount: number; files: string[] }>
+
+  // User Profile
+  getUserProfile: () => Promise<UserProfile | null>
+  upsertUserProfile: (args: { displayName: string; avatarKey: string }) => Promise<UserProfile>
+
+  // Core Agent Aliases
+  listCoreAgentAliases: () => Promise<CoreAgentAlias[]>
+  upsertCoreAgentAlias: (args: {
+    agentRole: 'generalist' | 'coordinator'
+    alias: string | null
+    avatarKey: string | null
+  }) => Promise<CoreAgentAlias>
 }
 
 declare global {

@@ -11,13 +11,13 @@ import TokenUsagePage from './TokenUsagePage'
 import IdeasList from './IdeasList'
 import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
+import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
 import {
-  AgentsList,
-  SkillsList,
   SkillDetailPage,
   ActivationBanner
 } from '@renderer/components/settings'
+import TeamPage from '@renderer/components/settings/TeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import SyncBanner from '@renderer/components/settings/SyncBanner'
 import SyncReviewModal from '@renderer/components/settings/SyncReviewModal'
@@ -110,9 +110,9 @@ export default function WorkspaceSettingsContent({
 
   return (
     <div className="flex-1 flex flex-col bg-surface-raised min-w-0 overflow-y-auto">
-      {/* Delete All buttons for agents/skills */}
-      {tab === 'agents' && workspacePath && !needsActivation && !isActivating && (
-        <div className="px-6 pt-4 flex justify-end">
+      {/* Delete All buttons for team tab */}
+      {tab === 'team' && workspacePath && !needsActivation && !isActivating && (
+        <div className="px-6 pt-4 flex justify-end gap-2">
           <button
             onClick={() => {
               if (
@@ -128,10 +128,6 @@ export default function WorkspaceSettingsContent({
             <Trash2 size={12} />
             Delete All Agents
           </button>
-        </div>
-      )}
-      {tab === 'skills' && workspacePath && !needsActivation && !isActivating && (
-        <div className="px-6 pt-4 flex justify-end">
           <button
             onClick={() => {
               if (
@@ -151,9 +147,10 @@ export default function WorkspaceSettingsContent({
       )}
 
       {tab === 'workspace' && <WorkspaceGeneralTab />}
+      {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
 
-      {tab === 'agents' && workspacePath && (
+      {tab === 'team' && workspacePath && (
         <div className="flex-1 flex flex-col min-h-0">
           {isScanning ? (
             <div className="flex items-center justify-center py-16">
@@ -185,33 +182,9 @@ export default function WorkspaceSettingsContent({
               )}
               {!needsActivation && (
                 <div className="flex-1 min-h-0">
-                  <AgentsList workspacePath={workspacePath} />
+                  <TeamPage workspacePath={workspacePath} />
                 </div>
               )}
-            </>
-          )}
-        </div>
-      )}
-
-      {tab === 'skills' && workspacePath && (
-        <div className="flex-1 overflow-y-auto">
-          {isScanning ? (
-            <div className="flex items-center justify-center py-16">
-              <div className="flex items-center gap-3 text-text-secondary">
-                <Loader2 size={18} className="animate-spin" />
-                <span className="text-sm">Scanning workspace...</span>
-              </div>
-            </div>
-          ) : (
-            <>
-              {needsActivation && (
-                <div className="px-6 pt-4">
-                  <ActivationBanner workspacePath={workspacePath} />
-                </div>
-              )}
-              <div className="max-w-3xl mx-auto px-6 py-6">
-                <SkillsList workspacePath={workspacePath} />
-              </div>
             </>
           )}
         </div>

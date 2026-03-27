@@ -190,7 +190,7 @@ app.whenReady().then(() => {
 
   // ── Security: Restrict web permissions (#7) ──
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    const allowedPermissions: string[] = ['notifications']
+    const allowedPermissions: string[] = ['notifications', 'media']
     callback(allowedPermissions.includes(permission))
   })
 

@@ -7,6 +7,7 @@ import type { StreamChunk } from './agent-base.service'
 import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
+import { modelConfigService } from './model-config.service'
 
 /** Regex to detect handoff blocks emitted by the generalist. */
 const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
@@ -138,14 +139,17 @@ export class GeneralistService extends AgentBaseService {
       // Default to no verbose
     }
 
+    const generalistModel = modelConfigService.getModel(workspacePath, 'generalist')
     const args = [
       '--output-format',
       'stream-json',
       '--input-format',
       'stream-json',
+      '--model',
+      generalistModel,
       ...(debugMode ? ['--verbose'] : []),
       ...(isBuildMode
-        ? ['--dangerously-skip-permissions']
+        ? ['--permission-mode', 'auto']
         : ['--permission-mode', 'plan', '--allowedTools', 'WebSearch,WebFetch']),
       '--system-prompt',
       fullSystemPrompt
@@ -367,6 +371,11 @@ export class GeneralistService extends AgentBaseService {
       if (inputTokens >= autoThreshold) {
         this.log.warn(`Context very large (${inputTokens} input tokens) — auto-compacting`)
         this.emit('compactNeeded', { level: 'critical', inputTokens })
+        // Auto-trigger compaction at critical threshold to prevent lossy auto-compaction
+        // at 83.5% (Claude CLI's built-in threshold). Max 5 compactions per session.
+        if (this.compactCount < 5) {
+          setTimeout(() => this.compact(), 1000)
+        }
       } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
         this.compactSuggested = true
         this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
@@ -514,6 +523,32 @@ export class GeneralistService extends AgentBaseService {
     } catch (error) {
       this.log.error('Failed to parse grill-summary block:', error)
     }
+  }
+
+  /**
+   * Override to detect fast mode rate limit fallback from Claude CLI stderr.
+   * When fast mode hits a rate limit, the CLI falls back to standard speed — we
+   * surface this to the user as a status notification instead of a scary error.
+   */
+  protected handleError(data: Buffer): void {
+    const text = data.toString().trim()
+    if (!text) return
+
+    // Detect fast mode rate limit fallback
+    if (
+      (text.includes('fast mode') || text.includes('fast_mode') || text.includes('Fast mode')) &&
+      (text.includes('fallback') || text.includes('rate limit') || text.includes('rate_limit'))
+    ) {
+      this.log.warn('Fast mode rate limit detected — falling back to standard speed')
+      this.emit('chunk', {
+        type: 'status',
+        content: 'Fast mode rate limit reached — temporarily using standard speed'
+      } as StreamChunk)
+      return
+    }
+
+    // Delegate all other stderr to base handler
+    super.handleError(data)
   }
 
   /**

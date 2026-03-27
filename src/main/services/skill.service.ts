@@ -10,10 +10,11 @@ import {
 } from 'node:fs'
 import { join, basename } from 'node:path'
 import { app } from 'electron'
-import { ACTIVATION_MODEL_ID, SKILL_MAX_FILE_SIZE_BYTES } from '../../shared/constants'
+import { SKILL_MAX_FILE_SIZE_BYTES } from '../../shared/constants'
 import type { Skill } from '../../shared/types'
 import { skillLogger } from '../logger'
 import { skillRepository } from '../db/repositories'
+import { modelConfigService } from './model-config.service'
 
 interface QueueItem {
   operation: () => Promise<void>
@@ -306,7 +307,7 @@ Instructions:
           '-p',
           prompt,
           '--model',
-          ACTIVATION_MODEL_ID,
+          modelConfigService.getModel(undefined, 'activation'),
           '--output-format',
           'text',
           '--permission-mode',

@@ -5,67 +5,24 @@ import { promptBuilderLogger } from '../logger'
 
 // ── Role Prompts (moved from system-prompts.ts and generalist-prompts.ts) ──
 
-const PLAN_MODE_SYSTEM_PROMPT = `You are a senior software architect in Plan mode. Your role is to:
-- Analyze codebases, discuss architecture, brainstorm solutions
-- Read and search files to understand the codebase
-- Create detailed implementation plans with file paths, code snippets, and step-by-step instructions
-- You CANNOT modify files — you are in read-only mode
-- When you produce a plan, format it clearly with markdown headings, numbered steps, and code blocks
+const PLAN_MODE_SYSTEM_PROMPT = `Senior software architect. Plan mode (read-only — cannot modify files).
 
-When the user's request would benefit from having multiple specialists work on it (e.g., it spans React + Database + CI/CD), proactively suggest:
-"This task spans multiple domains. Would you like me to create a team of specialists to work on this in parallel, or should I coordinate each specialist sequentially?"
+Capabilities: analyze codebases, discuss architecture, brainstorm, create implementation plans.
 
-Format your final plan inside a markdown code block with the language identifier \`plan\`:
-\`\`\`plan
-## Plan Title
-### Step 1: ...
-### Step 2: ...
-\`\`\`
-This allows the UI to render it as an actionable plan card.
+Rules:
+- Plans: use markdown headings, numbered steps, code blocks. Wrap in \`\`\`plan fence for UI rendering.
+- Multi-domain tasks: suggest parallel specialists or sequential coordination.
+- Diagrams: use \`\`\`mermaid for architecture, flows, state machines, sequences. One concept per diagram.
+  Types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph`
 
-## Visual Explanations
+const BUILD_MODE_SYSTEM_PROMPT = `Senior software engineer. Build mode (full read/write/execute access).
 
-When explaining processes, architecture, data flows, or complex systems, include a \`\`\`mermaid fenced code block. The UI renders these as interactive SVG diagrams automatically.
+Capabilities: read, write, edit files; run commands; implement features, fix bugs, refactor.
 
-Use mermaid diagrams when:
-- The user asks "how does X work?" or "I don't understand the process" for multi-step flows
-- Planning complex tasks — show the execution order, dependencies, or decision points
-- Explaining system architecture (component relationships, service boundaries)
-- Showing state transitions, sequence interactions, or decision trees
-- Breaking down a handoff into parallel vs sequential specialist work
-
-Supported diagram types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph
-
-Keep diagrams focused — one concept per diagram. If the explanation involves multiple concerns (e.g., data flow + state machine), use separate diagrams with a brief explanation between them.`
-
-const BUILD_MODE_SYSTEM_PROMPT = `You are a senior software engineer in Build mode with full access to modify the codebase. You can:
-- Read, write, and edit files
-- Run commands and tools
-- Make direct changes to implement features, fix bugs, and refactor code
-
-When you detect that a task requires work across multiple specialist domains (e.g., React frontend + PostgreSQL database + CI/CD pipeline), ask the user:
-"This task spans multiple domains ([list domains]). Would you like me to:
-1. **Create a team** — spawn specialist agents working in parallel for faster delivery
-2. **Work sequentially** — I'll handle each domain one at a time for more control
-
-Which approach do you prefer?"
-
-Based on their answer, either coordinate sub-agents or work through each domain yourself.
-
-## Visual Explanations
-
-When explaining processes, architecture, data flows, or complex systems, include a \`\`\`mermaid fenced code block. The UI renders these as interactive SVG diagrams automatically.
-
-Use mermaid diagrams when:
-- The user asks "how does X work?" or "I don't understand the process" for multi-step flows
-- Planning complex tasks — show the execution order, dependencies, or decision points
-- Explaining system architecture (component relationships, service boundaries)
-- Showing state transitions, sequence interactions, or decision trees
-- Visualizing the specialist team composition and task dependencies before execution
-
-Supported diagram types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph
-
-Keep diagrams focused — one concept per diagram. If the explanation involves multiple concerns (e.g., data flow + state machine), use separate diagrams with a brief explanation between them.`
+Rules:
+- Multi-domain tasks: ask user to choose parallel specialists or sequential execution.
+- Diagrams: use \`\`\`mermaid for architecture, flows, state machines, sequences. One concept per diagram.
+  Types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph`
 
 const DECOMPOSITION_SYSTEM_PROMPT = `You are a task decomposition and complexity scoring engine. Given a task summary and a list of available specialists, break the task into concrete sub-tasks AND score each sub-task's complexity.
 
@@ -95,6 +52,12 @@ Total = sum of all dimensions (0-14). Assign tier:
 - 5-8: "moderate" → model: "sonnet"
 - 9-14: "complex" → model: "opus"
 
+9. For each task, include a "verificationCommand" — a shell command the specialist should run after completing its work to verify correctness. Use the project's available tooling:
+   - For code changes: "npm run lint" or "npm run typecheck" (prefer typecheck for type safety)
+   - For test-related work: "npm test" or the relevant test command
+   - For config/docs changes: null (no verification needed)
+   - Keep it to a single, fast command — no chained commands
+
 Respond with ONLY valid JSON, no markdown, no explanation. Use this exact schema:
 {
   "tasks": [
@@ -103,6 +66,7 @@ Respond with ONLY valid JSON, no markdown, no explanation. Use this exact schema
       "specialist": "specialist-id",
       "description": "What to do",
       "dependsOn": [],
+      "verificationCommand": "npm run typecheck",
       "complexity": {
         "filesAffected": 1,
         "estimatedLines": 2,
@@ -121,7 +85,29 @@ const SPECIALIST_TASK_SYSTEM_PROMPT = `You are a specialist agent executing a sp
 
 - Complete ONLY the task described — do not expand scope
 - If you encounter a blocker that requires work outside your task, describe it clearly but do not attempt it
-- When done, summarize what you accomplished in 2-3 sentences`
+- **Verification (stop hook):** If your task description includes a verification command, you MUST run it before finishing. If it fails, fix the issues and re-run verification. Only mark the task complete when verification passes or you've made 2 fix attempts.
+- When done, summarize what you accomplished using this exact format:
+
+## Task Summary
+**Files changed:** [list of files created/modified/deleted]
+**What was done:** [1-2 sentences]
+**Verification:** [passed/failed/skipped — include the command and result]
+**Blockers:** [none, or description of what blocked you]`
+
+/**
+ * Self-critique appendix for Opus-tier tasks (budgetTier === 'full').
+ * Adds iterative refinement — the specialist reviews its own work before finishing.
+ * Adds ~100 output tokens but catches bugs and convention violations pre-merge.
+ */
+const OPUS_SPECIALIST_APPENDIX = `
+
+## Self-Review (required before finishing)
+
+After completing your implementation, briefly critique it:
+- Are there edge cases you missed?
+- Does it follow the project conventions from CLAUDE.md?
+- Could any part cause a merge conflict with parallel tasks?
+If you find issues, fix them before finishing.`
 
 const GENERALIST_BASE_PROMPT = `You are the default conversational development partner in Agent Studio — an AI-powered desktop IDE. You are the **first point of contact** for every user interaction.
 
@@ -251,46 +237,18 @@ Do NOT emit memories for:
 `
 
 const GENERALIST_PLAN_MODE_SECTION = `
-## Your Role
+## Mode: Plan (read-only)
 
-You handle chat, Q&A, code review, brainstorming, troubleshooting, concept explanations, error debugging, and quick code snippets. You are in **plan mode** (read-only) — you can read project files but you never write files or run commands.
-
-## Boundaries
-
-- You do NOT generate files or write to disk — you only chat and advise
-- You do NOT run bash commands or execute code — you discuss and suggest
-- You CAN read project files to understand context and review code
-- You CAN write short code snippets inline in the conversation
+Chat, Q&A, code review, brainstorming, troubleshooting, debugging, quick snippets.
+CAN: read files, write inline snippets. CANNOT: write to disk, run commands.
 `
 
 const GENERALIST_BUILD_MODE_SECTION = `
-## Your Role
+## Mode: Build (read + execute)
 
-You are in **build mode**. You can read files AND run commands directly. For simple operational tasks you execute them yourself. For multi-file code changes you hand off to specialist agents.
-
-## What you do directly (no handoff needed)
-
-- Run the app: \`npm run dev\`, \`dotnet run\`, \`docker-compose up\`, etc.
-- Install dependencies: \`npm install\`, \`dotnet restore\`, \`pip install\`, etc.
-- Run tests: \`npm test\`, \`dotnet test\`, \`pytest\`, etc.
-- Run linters, formatters, build commands
-- Check status: \`git status\`, \`git log\`, \`ls\`, etc.
-- Any single-command or few-command operational task
-
-## What you hand off to specialists
-
-- Multi-file code changes (new features, refactoring, bug fixes across files)
-- Database schema changes and migrations
-- CI/CD pipeline configuration
-- Architecture changes that touch multiple modules
-
-For these, use the Handoff Protocol below.
-
-## Boundaries
-
-- You CAN read project files to understand context
-- You CAN run bash commands and execute scripts
-- You do NOT write or modify source code files directly — hand off to specialists for that
+Direct execution: run apps, install deps, run tests/lints, check git status — any operational command.
+Hand off to specialists: multi-file code changes, schema migrations, CI/CD config, cross-module refactors.
+CAN: read files, run commands. Do NOT write source code directly — hand off for that.
 `
 
 // ── Prompt Builder Types ──
@@ -354,10 +312,17 @@ export class PromptBuilder {
       layers.push(`## Specialist Role\n${options.specialistPrompt}`)
     }
 
+    // Layer 2b: Self-critique appendix for Opus-tier tasks (full budget = complex tasks)
+    if (options.role === 'specialist' && budgetTier === 'full') {
+      layers.push(OPUS_SPECIALIST_APPENDIX)
+    }
+
     // Layer 3: Skill content — ONLY for specialists, ONLY their assigned skills
     // Strategy 3: Tiered skill loading with budget-aware truncation
+    // Strategy 8: Selective loading — pass task context for relevance ranking
     if (options.role === 'specialist' && options.assignedSkills) {
-      const skillContent = this.buildSkillContent(options.assignedSkills, budgetTier)
+      const taskContext = options.brief?.summary || options.specialistPrompt || ''
+      const skillContent = this.buildSkillContent(options.assignedSkills, budgetTier, taskContext)
       if (skillContent) {
         layers.push(skillContent)
       }
@@ -425,35 +390,61 @@ export class PromptBuilder {
    * - Tier 1 (core principles, first ~1000 chars) — always included
    * - Tier 2 (remaining content up to budget) — included for standard/full budgets
    * Budget per skill scales with tier: minimal=500, standard=3000, full=5000
+   *
+   * Strategy 8 (Selective Skill Loading): When multiple skills are assigned,
+   * the most relevant skill (by keyword match against task context) gets the
+   * full budget; remaining skills get a condensed summary (~300 chars) to
+   * save 2,000-4,000 tokens per specialist.
    */
-  private buildSkillContent(skills: Skill[], budgetTier: BudgetTier = 'standard'): string {
-    const budgetPerSkill =
+  private buildSkillContent(
+    skills: Skill[],
+    budgetTier: BudgetTier = 'standard',
+    taskContext?: string
+  ): string {
+    const activeSkills = skills.filter((s) => s.isActive)
+    if (activeSkills.length === 0) return ''
+
+    const baseBudget =
       budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 5000 : 3000
+
+    // Selective skill loading: rank skills by relevance when >1 skill and we have task context
+    let rankedSkills = activeSkills
+    if (activeSkills.length > 1 && taskContext && budgetTier !== 'full') {
+      const contextLower = taskContext.toLowerCase()
+      rankedSkills = [...activeSkills].sort((a, b) => {
+        const scoreA = this.skillRelevanceScore(a, contextLower)
+        const scoreB = this.skillRelevanceScore(b, contextLower)
+        return scoreB - scoreA // highest relevance first
+      })
+    }
 
     const sections: string[] = []
 
-    for (const skill of skills) {
-      if (!skill.isActive) continue
+    for (let i = 0; i < rankedSkills.length; i++) {
+      const skill = rankedSkills[i]
+      // Primary skill gets full budget; secondary skills get condensed summary
+      const isPrimary = i === 0 || budgetTier === 'full'
+      const budget = isPrimary ? baseBudget : Math.min(300, baseBudget)
 
       try {
         const content = readFileSync(skill.filePath, 'utf-8')
 
         let selected: string
-        if (content.length <= budgetPerSkill) {
+        if (content.length <= budget) {
           selected = content
-        } else if (budgetTier === 'minimal') {
-          // Minimal: extract just the first heading + first paragraph (core principles)
-          selected = content.substring(0, budgetPerSkill) + '\n\n[... see full skill file for details]'
+        } else if (!isPrimary || budgetTier === 'minimal') {
+          // Condensed: extract skill title + first paragraph only
+          selected = content.substring(0, budget) + '\n\n[... see full skill file for details]'
         } else {
-          // Standard/Full: smart section extraction — find section boundaries
-          selected = this.extractSkillSections(content, budgetPerSkill)
+          // Primary skill: smart section extraction
+          selected = this.extractSkillSections(content, budget)
         }
 
         sections.push(`## Skill: ${skill.name}\n${selected}`)
 
-        if (content.length > budgetPerSkill) {
+        if (content.length > budget) {
           log.info(
-            `Skill "${skill.name}" trimmed from ${content.length} to ~${budgetPerSkill} chars (budget: ${budgetTier})`
+            `Skill "${skill.name}" ${isPrimary ? 'trimmed' : 'condensed'} from ${content.length} to ~${budget} chars (budget: ${budgetTier})`
           )
         }
       } catch {
@@ -462,6 +453,19 @@ export class PromptBuilder {
     }
 
     return sections.join('\n\n')
+  }
+
+  /**
+   * Scores a skill's relevance to the given task context by keyword matching.
+   * Returns a count of how many words from the skill name/description appear in the context.
+   */
+  private skillRelevanceScore(skill: Skill, contextLower: string): number {
+    const keywords = skill.name
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .split(/[\s-]+/)
+      .filter((w) => w.length > 2) // skip tiny words like "a", "of"
+    return keywords.reduce((score, kw) => score + (contextLower.includes(kw) ? 1 : 0), 0)
   }
 
   /**

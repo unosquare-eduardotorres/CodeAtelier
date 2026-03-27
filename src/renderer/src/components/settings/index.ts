@@ -1,4 +1,5 @@
 export { default as SettingsPage } from './SettingsPage'
+export { default as TeamPage } from './TeamPage'
 export { default as AgentsList } from './AgentsList'
 export { default as AgentDetailPage } from './AgentDetailPage'
 export { default as AgentYamlEditor } from './AgentYamlEditor'

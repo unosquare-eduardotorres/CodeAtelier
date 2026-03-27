@@ -1,13 +1,15 @@
-import { useEffect } from 'react'
+import { useEffect, useCallback } from 'react'
 import { AppLayout } from '@renderer/components/layout'
 import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
+import { WelcomeModal } from '@renderer/components/common'
 import {
   useWorkspaceStore,
   useChatStore,
   useAgentStore,
   useUpdateStore,
   useMemoryStore,
-  useDreamStore
+  useDreamStore,
+  useProfileStore
 } from '@renderer/store'
 import type { ConversationMode, TaskPlan } from '../../shared/types'
 
@@ -32,8 +34,23 @@ function App(): React.JSX.Element {
   const { setAvailable, setNotAvailable, setDownloaded, setProgress, setError } = useUpdateStore()
   const { onFeedProgress: onMemoryFeedProgress } = useMemoryStore()
   const { onProgress: onDreamProgress } = useDreamStore()
+  const {
+    isLoading: isProfileLoading,
+    hasCompletedWelcome,
+    loadProfile,
+    saveProfile
+  } = useProfileStore()
+
+  const handleWelcomeComplete = useCallback(
+    async (displayName: string, avatarKey: string) => {
+      await saveProfile(displayName, avatarKey)
+    },
+    [saveProfile]
+  )
 
   useEffect(() => {
+    // Load user profile on mount
+    loadProfile()
     // Load workspaces on mount
     loadWorkspaces()
 
@@ -156,6 +173,7 @@ function App(): React.JSX.Element {
       unsubDreamProgress()
     }
   }, [
+    loadProfile,
     loadWorkspaces,
     appendStreamChunk,
     finalizeStream,
@@ -180,6 +198,23 @@ function App(): React.JSX.Element {
   // Pop-out mode: render only the Pixel Office fullscreen
   if (isPixelOfficePopout) {
     return <PixelOfficeFullscreen />
+  }
+
+  // Brief loading state while profile loads
+  if (isProfileLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-surface-base">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm text-text-muted">Loading...</span>
+        </div>
+      </div>
+    )
+  }
+
+  // Show welcome modal on first launch
+  if (!hasCompletedWelcome) {
+    return <WelcomeModal onComplete={handleWelcomeComplete} />
   }
 
   return <AppLayout />

@@ -188,3 +188,20 @@ CREATE TABLE IF NOT EXISTS dream_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_dream_runs_workspace ON dream_runs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_dream_runs_status ON dream_runs(status);
+
+-- User profile: app-wide identity (singleton row)
+CREATE TABLE IF NOT EXISTS user_profile (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  display_name TEXT NOT NULL DEFAULT 'Developer',
+  avatar_key TEXT NOT NULL DEFAULT 'astronaut',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Core agent aliases: personality overrides for generalist & orchestrator
+CREATE TABLE IF NOT EXISTS core_agent_aliases (
+  agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('generalist', 'coordinator')),
+  alias TEXT DEFAULT NULL,
+  avatar_key TEXT DEFAULT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

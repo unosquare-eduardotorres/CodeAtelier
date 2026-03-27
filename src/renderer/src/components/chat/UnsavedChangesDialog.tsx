@@ -121,7 +121,7 @@ export default function UnsavedChangesDialog({
           <button
             onClick={onCommit}
             disabled={isDiscarding}
-            className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium bg-success hover:brightness-110 text-white rounded-lg transition-colors disabled:opacity-50"
           >
             {getCommitLabel()}
           </button>

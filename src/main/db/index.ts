@@ -312,6 +312,39 @@ export function getDatabase(): Database.Database {
     /* column already exists */
   }
 
+  // Migration: add alias and avatar_url columns to specialists
+  try {
+    db.exec(`ALTER TABLE specialists ADD COLUMN alias TEXT DEFAULT NULL`)
+  } catch {
+    /* column already exists */
+  }
+  try {
+    db.exec(`ALTER TABLE specialists ADD COLUMN avatar_url TEXT DEFAULT NULL`)
+  } catch {
+    /* column already exists */
+  }
+
+  // Migration: user_profile table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_profile (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      display_name TEXT NOT NULL DEFAULT 'Developer',
+      avatar_key TEXT NOT NULL DEFAULT 'astronaut',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `)
+
+  // Migration: core_agent_aliases table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS core_agent_aliases (
+      agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('generalist', 'coordinator')),
+      alias TEXT DEFAULT NULL,
+      avatar_key TEXT DEFAULT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `)
+
   return db
 }
 

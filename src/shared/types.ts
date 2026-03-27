@@ -1,6 +1,21 @@
 // ── Data Models ──
 export type ConversationMode = 'plan' | 'build'
 
+export interface UserProfile {
+  id: string
+  displayName: string
+  avatarKey: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CoreAgentAlias {
+  agentRole: 'generalist' | 'coordinator'
+  alias: string | null
+  avatarKey: string | null
+  updatedAt: string
+}
+
 export interface Workspace {
   id: string
   name: string
@@ -84,6 +99,8 @@ export interface Specialist {
   priority: number
   isActive: boolean
   sourceYaml: string | null
+  alias: string | null
+  avatarUrl: string | null
   skills?: Skill[]
   createdAt: string
   updatedAt: string
@@ -118,6 +135,8 @@ export interface UpdateSpecialistInput {
   prompt?: string
   priority?: number
   isActive?: boolean
+  alias?: string | null
+  avatarUrl?: string | null
 }
 
 // ── Workspace Deploy Models ──
@@ -226,6 +245,22 @@ export type BudgetTier = 'minimal' | 'standard' | 'full'
 export type ComplexityTier = ComplexityScore['tier']
 export type ModelTier = ComplexityScore['model']
 
+/** Actions that consume a Claude model — each can be independently configured */
+export type ModelAction =
+  | 'generalist'
+  | 'orchestrator'
+  | 'specialist:simple'
+  | 'specialist:moderate'
+  | 'specialist:complex'
+  | 'dream'
+  | 'memoryFeed'
+  | 'activation'
+
+/** Per-action model overrides stored in workspace settings_json */
+export interface ModelOverrides {
+  [key: string]: string // ModelAction → model ID string
+}
+
 /** A single decomposed sub-task assigned to a specialist */
 export interface DecomposedTask {
   id: string
@@ -235,6 +270,8 @@ export interface DecomposedTask {
   // Populated by combined decompose+score call
   complexity?: ComplexityScore
   model?: ModelTier
+  /** Optional verification command to run after task completion (e.g. "npm run lint", "npm test") */
+  verificationCommand?: string
 }
 
 /** The full task plan returned by the orchestrator's decomposition step */
@@ -682,6 +719,20 @@ export interface IpcChannels {
   'idea:completeFromGrill': {
     args: { conversationId: string; summary?: string }
     return: Idea | null
+  }
+
+  // User Profile
+  'user:getProfile': { args: void; return: UserProfile | null }
+  'user:upsertProfile': {
+    args: { displayName: string; avatarKey: string }
+    return: UserProfile
+  }
+
+  // Core Agent Aliases
+  'coreAgent:list': { args: void; return: CoreAgentAlias[] }
+  'coreAgent:upsert': {
+    args: { agentRole: 'generalist' | 'coordinator'; alias: string | null; avatarKey: string | null }
+    return: CoreAgentAlias
   }
 }
 

@@ -1,17 +1,18 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import type { Plugin } from 'unified'
 import type { Root, Text, PhrasingContent } from 'mdast'
 import { visit } from 'unist-util-visit'
-import { Bot, User, Copy, Check, MessageCircle, Wrench, Paperclip } from 'lucide-react'
+import { Copy, Check, Paperclip } from 'lucide-react'
 import type { Message, ToolActivity, GrillProposedTask } from '../../../../shared/types'
 import PlanCard from './PlanCard'
 import GrillResultCard from './GrillResultCard'
 import ToolActivityBlock from './ToolActivityBlock'
-import { useChatStore } from '@renderer/store'
-import { MermaidDiagram } from '@renderer/components/common'
+import { useChatStore, useProfileStore, useSpecialistStore } from '@renderer/store'
+import { MermaidDiagram, Avatar } from '@renderer/components/common'
+import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 
 /**
  * Remark plugin: wraps emoji characters inside headings with a styled <span class="emoji">
@@ -141,23 +142,70 @@ function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Eleme
   )
 }
 
-const avatarConfig: Record<string, { icon: React.ReactNode; bg: string; label: string }> = {
-  user: { icon: <User size={16} className="text-white" />, bg: 'bg-primary', label: 'You' },
-  generalist: {
-    icon: <MessageCircle size={16} className="text-emerald-300" />,
-    bg: 'bg-emerald-600',
-    label: 'Generalist'
-  },
-  coordinator: {
-    icon: <Bot size={16} className="text-primary-text" />,
-    bg: 'bg-surface-overlay',
-    label: 'Coordinator'
-  },
-  specialist: {
-    icon: <Wrench size={16} className="text-amber-300" />,
-    bg: 'bg-amber-600',
-    label: 'Specialist'
-  }
+/**
+ * Resolves the display identity (name, subtitle, avatar, color) for a message.
+ * Uses profile store for user messages, specialist store + core agent aliases for agent messages.
+ */
+function useMessageIdentity(message: Message): {
+  displayName: string
+  subtitle: string | null
+  avatarKey: string
+  accentColor: string
+} {
+  const { profile, getCoreAgentAlias } = useProfileStore()
+  const { specialists } = useSpecialistStore()
+
+  return useMemo(() => {
+    if (message.role === 'user') {
+      return {
+        displayName: profile?.displayName ?? 'You',
+        subtitle: null,
+        avatarKey: profile?.avatarKey ?? 'astronaut',
+        accentColor: 'var(--color-primary, #6366F1)'
+      }
+    }
+
+    // Check if this is a core agent (generalist or coordinator/orchestrator)
+    const coreRole =
+      message.role === 'generalist'
+        ? 'generalist'
+        : message.role === 'coordinator'
+          ? 'coordinator'
+          : null
+    if (coreRole) {
+      const coreAlias = getCoreAgentAlias(coreRole)
+      const defaults = CORE_AGENT_DEFAULTS[coreRole]
+      const alias = coreAlias?.alias ?? null
+      const roleName = defaults?.displayName ?? coreRole
+      return {
+        displayName: alias ?? roleName,
+        subtitle: alias ? roleName : null,
+        avatarKey: coreAlias?.avatarKey ?? defaults?.avatarKey ?? 'robot',
+        accentColor: defaults?.color ?? '#6366F1'
+      }
+    }
+
+    // For specialist messages, find the specialist by agentId
+    const specialist = specialists.find((s) => s.agentId === message.agentId)
+    if (specialist) {
+      const alias = specialist.alias
+      const roleName = specialist.displayName
+      return {
+        displayName: alias ?? roleName,
+        subtitle: alias ? roleName : null,
+        avatarKey: specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId),
+        accentColor: specialist.color ?? '#F59E0B'
+      }
+    }
+
+    // Fallback for unknown agent
+    return {
+      displayName: message.agentId ?? message.role,
+      subtitle: null,
+      avatarKey: getDefaultAvatarForRole(message.agentId ?? message.role),
+      accentColor: '#6366F1'
+    }
+  }, [message.role, message.agentId, profile, specialists, getCoreAgentAlias])
 }
 
 function MessageBubbleInner({
@@ -167,7 +215,7 @@ function MessageBubbleInner({
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const { updateMode, sendMessage, clearGrillSession, createItemsFromGrill } = useChatStore()
-  const avatar = avatarConfig[message.role] ?? avatarConfig.coordinator
+  const identity = useMessageIdentity(message)
 
   // Parse attachments from JSON
   const attachments: string[] = (() => {
@@ -309,17 +357,27 @@ function MessageBubbleInner({
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
       {/* Avatar */}
-      <div
-        className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${avatar.bg}`}
-      >
-        {avatar.icon}
+      <div className="flex-shrink-0 mt-0.5">
+        <Avatar
+          avatarKey={identity.avatarKey}
+          size="md"
+          accentColor={identity.accentColor}
+          fallbackInitials={identity.displayName}
+        />
       </div>
 
       {/* Content */}
       <div
         className={`flex flex-col ${isUser ? 'max-w-[75%] items-end' : 'max-w-[85%] items-start'}`}
       >
-        <span className="text-xs text-text-secondary mb-1 px-1">{avatar.label}</span>
+        <div className={`flex flex-col mb-1 px-1 ${isUser ? 'items-end' : 'items-start'}`}>
+          <span className="text-sm font-semibold text-text-primary leading-tight">
+            {identity.displayName}
+          </span>
+          {identity.subtitle && (
+            <span className="text-xs text-text-muted leading-tight">{identity.subtitle}</span>
+          )}
+        </div>
 
         {grillSummary ? (
           /* Message with a grill-summary block — split into before/grill/after */

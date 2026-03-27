@@ -11,6 +11,8 @@ interface SpecialistRow {
   priority: number
   is_active: number
   source_yaml: string | null
+  alias: string | null
+  avatar_url: string | null
   created_at: string
   updated_at: string
 }
@@ -38,6 +40,8 @@ function mapRow(row: SpecialistRow): Specialist {
     priority: row.priority,
     isActive: row.is_active === 1,
     sourceYaml: row.source_yaml ?? null,
+    alias: row.alias ?? null,
+    avatarUrl: row.avatar_url ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -76,6 +80,8 @@ export interface UpdateSpecialistInput {
   priority?: number
   isActive?: boolean
   sourceYaml?: string | null
+  alias?: string | null
+  avatarUrl?: string | null
 }
 
 export class SpecialistRepository {
@@ -166,6 +172,14 @@ export class SpecialistRepository {
     if (data.sourceYaml !== undefined) {
       sets.push('source_yaml = ?')
       values.push(data.sourceYaml)
+    }
+    if (data.alias !== undefined) {
+      sets.push('alias = ?')
+      values.push(data.alias)
+    }
+    if (data.avatarUrl !== undefined) {
+      sets.push('avatar_url = ?')
+      values.push(data.avatarUrl)
     }
 
     if (sets.length === 0) {

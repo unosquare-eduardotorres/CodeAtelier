@@ -33,7 +33,9 @@ import type {
   AgentSessionRecord,
   Idea,
   DocFile,
-  RepoInfo
+  RepoInfo,
+  UserProfile,
+  CoreAgentAlias
 } from '../shared/types'
 
 const api = {
@@ -153,6 +155,8 @@ const api = {
     prompt?: string
     priority?: number
     isActive?: boolean
+    alias?: string | null
+    avatarUrl?: string | null
   }): Promise<Specialist> => ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_UPDATE, args),
 
   deleteSpecialist: (args: { id: string }): Promise<void> =>
@@ -667,7 +671,24 @@ const api = {
   hasUnsavedChanges: (args: {
     conversationId: string
   }): Promise<{ hasChanges: boolean; fileCount: number; files: string[] }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.REPO_HAS_UNSAVED_CHANGES, args)
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_HAS_UNSAVED_CHANGES, args),
+
+  // ── User Profile ──
+  getUserProfile: (): Promise<UserProfile | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.USER_PROFILE_GET),
+
+  upsertUserProfile: (args: { displayName: string; avatarKey: string }): Promise<UserProfile> =>
+    ipcRenderer.invoke(IPC_CHANNELS.USER_PROFILE_UPSERT, args),
+
+  // ── Core Agent Aliases ──
+  listCoreAgentAliases: (): Promise<CoreAgentAlias[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_LIST),
+
+  upsertCoreAgentAlias: (args: {
+    agentRole: 'generalist' | 'coordinator'
+    alias: string | null
+    avatarKey: string | null
+  }): Promise<CoreAgentAlias> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_UPSERT, args)
 } as const
 
 if (process.contextIsolated) {

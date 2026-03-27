@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Users, UserRound, ArrowRight, CheckCircle2, Clock, Loader2, XCircle } from 'lucide-react'
+import { Users, UserRound, ArrowRight, CheckCircle2, Clock, Loader2, XCircle, X } from 'lucide-react'
 import type {
   DecomposedTask,
   ExecutionStrategy,
@@ -15,6 +15,7 @@ interface TaskPlanCardProps {
   taskProgress: Map<string, TaskExecutionProgress>
   isExecuting: boolean
   onExecute: (strategy: ExecutionStrategy) => void
+  onDismiss?: () => void
 }
 
 const STATUS_ICONS: Record<TaskExecutionProgress['status'], React.ReactNode> = {
@@ -30,7 +31,8 @@ export default function TaskPlanCard({
   mode,
   taskProgress,
   isExecuting,
-  onExecute
+  onExecute,
+  onDismiss
 }: TaskPlanCardProps): React.JSX.Element {
   const [hoveredStrategy, setHoveredStrategy] = useState<ExecutionStrategy | null>(null)
   const { specialists } = useSpecialistStore()
@@ -71,6 +73,15 @@ export default function TaskPlanCard({
         >
           {mode}
         </span>
+        {!hasUserChosen && onDismiss && (
+          <button
+            onClick={onDismiss}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-gray-700/50 transition-colors"
+            title="Dismiss plan"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
 
       {/* Task list */}

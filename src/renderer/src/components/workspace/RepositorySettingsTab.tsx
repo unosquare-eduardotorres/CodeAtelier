@@ -1,15 +1,7 @@
 import { useState, useEffect } from 'react'
-import {
-  GitBranch,
-  Github,
-  Check,
-  X,
-  Loader2,
-  ExternalLink,
-  AlertTriangle,
-  FolderGit2
-} from 'lucide-react'
+import { GitBranch, Check, X, Loader2, ExternalLink, AlertTriangle } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
+import { SettingsCard } from '@renderer/components/common'
 import type { RepoInfo } from '../../../../shared/types'
 
 export default function RepositorySettingsTab(): React.JSX.Element {
@@ -114,38 +106,39 @@ export default function RepositorySettingsTab(): React.JSX.Element {
   if (!activeWorkspace) return <div />
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-6 space-y-8">
+    <div className="max-w-2xl mx-auto px-6 py-8 space-y-8">
       {/* Section 1: Repository Status */}
       <section>
-        <div className="flex items-center gap-2 mb-4">
-          <FolderGit2 size={16} className="text-orange-400" />
-          <h3 className="text-sm font-semibold text-text-primary">Repository</h3>
-        </div>
+        <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
+          Repository
+        </h3>
 
-        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 space-y-3">
+        <SettingsCard className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs text-text-secondary">Path</span>
-            <span className="text-xs text-text-body font-mono">{activeWorkspace.repoPath}</span>
+            <span className="text-sm text-text-body font-mono truncate max-w-[60%] text-right">
+              {activeWorkspace.repoPath}
+            </span>
           </div>
 
           {localRepoInfo?.isRepo ? (
             <>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-text-secondary">Status</span>
-                <span className="flex items-center gap-1.5 text-xs text-green-400">
+                <span className="flex items-center gap-1.5 text-xs text-success">
                   <Check size={12} />
                   Git repository
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-text-secondary">Branch</span>
-                <span className="text-xs text-text-body font-mono">
+                <span className="text-sm text-text-body font-mono">
                   {localRepoInfo.currentBranch}
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-text-secondary">Remote</span>
-                <span className="text-xs text-text-body font-mono">
+                <span className="text-xs text-text-secondary">Remote:</span>
+                <span className="text-sm text-text-body font-mono truncate max-w-[60%] text-right">
                   {localRepoInfo.remoteUrl || 'None'}
                 </span>
               </div>
@@ -175,7 +168,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
             </>
           ) : (
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs text-amber-400">
+              <div className="flex items-center gap-2 text-xs text-warning">
                 <AlertTriangle size={12} />
                 <span>Not a git repository</span>
               </div>
@@ -193,28 +186,27 @@ export default function RepositorySettingsTab(): React.JSX.Element {
               </button>
             </div>
           )}
-        </div>
+        </SettingsCard>
       </section>
 
       {/* Section 2: GitHub Connection */}
       <section>
-        <div className="flex items-center gap-2 mb-4">
-          <Github size={16} className="text-text-primary" />
-          <h3 className="text-sm font-semibold text-text-primary">GitHub Connection</h3>
-        </div>
+        <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
+          GitHub Connection
+        </h3>
 
-        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 space-y-3">
+        <SettingsCard className="space-y-3">
           {githubStatus?.configured ? (
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Check size={14} className="text-green-400" />
+                <Check size={14} className="text-success" />
                 <span className="text-sm text-text-body">
                   Connected as <strong className="text-text-primary">{githubStatus.login}</strong>
                 </span>
               </div>
               <button
                 onClick={handleDisconnectGitHub}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 border border-red-500/30 hover:bg-danger-muted rounded-lg transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-danger border border-danger/30 hover:bg-danger-muted rounded-lg transition-colors"
               >
                 <X size={12} />
                 Disconnect
@@ -236,7 +228,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
                 <button
                   onClick={handleSaveToken}
                   disabled={isSavingToken || !token.trim()}
-                  className="px-3 py-1.5 text-xs font-medium bg-green-600 hover:bg-green-500 text-white rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                  className="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5"
                 >
                   {isSavingToken ? <Loader2 size={12} className="animate-spin" /> : 'Connect'}
                 </button>
@@ -248,7 +240,6 @@ export default function RepositorySettingsTab(): React.JSX.Element {
                 className="inline-flex items-center gap-1 text-xs text-primary-text hover:underline"
                 onClick={(e) => {
                   e.preventDefault()
-                  // Use Electron shell to open external link safely
                   window.open('https://github.com/settings/tokens/new?scopes=repo', '_blank')
                 }}
               >
@@ -256,30 +247,29 @@ export default function RepositorySettingsTab(): React.JSX.Element {
                 <ExternalLink size={10} />
               </a>
               {tokenError && (
-                <p className="text-xs text-red-400 flex items-center gap-1">
+                <p className="text-xs text-danger flex items-center gap-1">
                   <AlertTriangle size={10} />
                   {tokenError}
                 </p>
               )}
               {tokenSuccess && (
-                <p className="text-xs text-green-400 flex items-center gap-1">
+                <p className="text-xs text-success flex items-center gap-1">
                   <Check size={10} />
                   {tokenSuccess}
                 </p>
               )}
             </>
           )}
-        </div>
+        </SettingsCard>
       </section>
 
       {/* Section 3: Automation */}
       <section>
-        <div className="flex items-center gap-2 mb-4">
-          <GitBranch size={16} className="text-purple-400" />
-          <h3 className="text-sm font-semibold text-text-primary">Automation</h3>
-        </div>
+        <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
+          Automation
+        </h3>
 
-        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 space-y-4">
+        <SettingsCard className="space-y-4">
           <ToggleRow
             label="Auto-create branches"
             description="Create a git branch for each conversation automatically"
@@ -298,7 +288,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
             checked={!!settings.gitAutoCleanup}
             onChange={(v) => handleToggleSetting('gitAutoCleanup', v)}
           />
-        </div>
+        </SettingsCard>
       </section>
     </div>
   )
@@ -323,15 +313,15 @@ function ToggleRow({
       </div>
       <button
         onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
           checked ? 'bg-primary' : 'bg-surface-base border border-border-default'
         }`}
         role="switch"
         aria-checked={checked}
       >
         <span
-          className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-            checked ? 'translate-x-4' : 'translate-x-0.5'
+          className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+            checked ? 'translate-x-6' : 'translate-x-1'
           }`}
         />
       </button>

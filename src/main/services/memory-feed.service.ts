@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { dbLogger } from '../logger'
 import { memoryRepository } from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
-import { MEMORY_FEED_MODEL_ID } from '../../shared/constants'
 import type { MemoryFeedProgress, MemoryFeedResult, MemoryType } from '../../shared/types'
+import { modelConfigService } from './model-config.service'
 
 const log = dbLogger
 
@@ -81,7 +81,7 @@ Output ONLY valid JSON objects, one per line. No markdown, no explanation. Extra
 
 ${content.substring(0, 50000)}`
 
-      const result = await this.spawnSummarizer(prompt)
+      const result = await this.spawnSummarizer(prompt, workspacePath)
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-claude-md')
 
       emit(`Created ${memories} memories from CLAUDE.md`, 'complete')
@@ -152,7 +152,7 @@ ${treeListing}
 ## Key Files
 ${keyFiles}`
 
-      const result = await this.spawnSummarizer(prompt)
+      const result = await this.spawnSummarizer(prompt, workspacePath)
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-codebase')
 
       emit(`Created ${memories} memories from codebase analysis`, 'complete')
@@ -228,7 +228,7 @@ Output ONLY valid JSON objects, one per line. No markdown, no explanation. Extra
 
 ${content.substring(0, 50000)}`
 
-      const result = await this.spawnSummarizer(prompt)
+      const result = await this.spawnSummarizer(prompt, workspacePath)
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-document')
 
       emit(`Created ${memories} memories from document`, 'complete')
@@ -355,7 +355,7 @@ ${content.substring(0, 50000)}`
   /**
    * Spawn a claude -p summarizer process.
    */
-  private spawnSummarizer(prompt: string, model?: string): Promise<string> {
+  private spawnSummarizer(prompt: string, workspacePath?: string): Promise<string> {
     return new Promise((resolve, reject) => {
       this.currentAbortController = new AbortController()
       const { signal } = this.currentAbortController
@@ -376,13 +376,15 @@ ${content.substring(0, 50000)}`
         env.PATH = `/opt/homebrew/bin:${env.PATH}`
       }
 
+      const memoryFeedModel = modelConfigService.getModel(workspacePath, 'memoryFeed')
+
       const child = spawn(
         'claude',
         [
           '-p',
           prompt,
           '--model',
-          model ?? MEMORY_FEED_MODEL_ID,
+          memoryFeedModel,
           '--output-format',
           'text',
           '--permission-mode',

@@ -195,7 +195,15 @@ export const IPC_CHANNELS = {
   REPO_HAS_UNSAVED_CHANGES: 'repo:hasUnsavedChanges',
 
   // PR Description Generation
-  CHAT_GENERATE_PR_DESCRIPTION: 'chat:generatePrDescription'
+  CHAT_GENERATE_PR_DESCRIPTION: 'chat:generatePrDescription',
+
+  // User Profile
+  USER_PROFILE_GET: 'user:getProfile',
+  USER_PROFILE_UPSERT: 'user:upsertProfile',
+
+  // Core Agent Aliases
+  CORE_AGENT_LIST: 'coreAgent:list',
+  CORE_AGENT_UPSERT: 'coreAgent:upsert'
 } as const
 
 /**
@@ -263,6 +271,109 @@ export const COMPLEXITY_THRESHOLDS = {
 
 /** Default cost preference for new workspaces */
 export const DEFAULT_COST_PREFERENCE = 'balanced' as const
+
+/** Available Claude models for configuration UI */
+export const AVAILABLE_MODELS = [
+  {
+    id: 'claude-haiku-4-20250414',
+    label: 'Haiku',
+    tier: 'haiku' as const,
+    description: 'Fast & lightweight'
+  },
+  {
+    id: 'claude-sonnet-4-20250514',
+    label: 'Sonnet',
+    tier: 'sonnet' as const,
+    description: 'Balanced performance'
+  },
+  {
+    id: 'claude-opus-4-20250514',
+    label: 'Opus',
+    tier: 'opus' as const,
+    description: 'Most capable'
+  }
+] as const
+
+/** Default model for each configurable action */
+export const DEFAULT_MODEL_CONFIG: Record<
+  import('./types').ModelAction,
+  string
+> = {
+  generalist: 'claude-sonnet-4-20250514',
+  orchestrator: 'claude-sonnet-4-20250514',
+  'specialist:simple': 'claude-haiku-4-20250414',
+  'specialist:moderate': 'claude-sonnet-4-20250514',
+  'specialist:complex': 'claude-opus-4-20250514',
+  dream: 'claude-haiku-4-20250414',
+  memoryFeed: 'claude-haiku-4-20250414',
+  activation: 'claude-sonnet-4-20250514'
+} as const
+
+/** Human-readable metadata for each model action — used in the Models config UI */
+export const MODEL_ACTIONS_META: Record<
+  import('./types').ModelAction,
+  { label: string; description: string; icon: string; section: 'agent' | 'specialist' | 'background' }
+> = {
+  generalist: {
+    label: 'Generalist',
+    description: 'Main chat agent that handles conversations',
+    icon: '💬',
+    section: 'agent'
+  },
+  orchestrator: {
+    label: 'Orchestrator',
+    description: 'Task decomposition & coordination',
+    icon: '🎯',
+    section: 'agent'
+  },
+  'specialist:simple': {
+    label: 'Simple Tasks',
+    description: 'Quick fixes, docs, formatting (score 0–4)',
+    icon: '⚡',
+    section: 'specialist'
+  },
+  'specialist:moderate': {
+    label: 'Moderate Tasks',
+    description: 'Feature work, refactoring (score 5–8)',
+    icon: '🔧',
+    section: 'specialist'
+  },
+  'specialist:complex': {
+    label: 'Complex Tasks',
+    description: 'Architecture, multi-file, risky changes (score 9–14)',
+    icon: '🧠',
+    section: 'specialist'
+  },
+  dream: {
+    label: 'Dream Consolidation',
+    description: 'Memory consolidation cycles',
+    icon: '🌙',
+    section: 'background'
+  },
+  memoryFeed: {
+    label: 'Memory Feed',
+    description: 'Summarization of CLAUDE.md and memory feeds',
+    icon: '📝',
+    section: 'background'
+  },
+  activation: {
+    label: 'Workspace Activation',
+    description: 'CLAUDE.md generation during agent activation',
+    icon: '🚀',
+    section: 'background'
+  }
+} as const
+
+/**
+ * MAX_THINKING_TOKENS budget per model tier.
+ * Controls extended thinking depth: Opus gets full thinking, Sonnet moderate, Haiku none.
+ * Set as env var on specialist `claude -p` processes to improve output quality.
+ */
+export const THINKING_BUDGETS = {
+  haiku: '0',
+  sonnet: '10000',
+  opus: '31999'
+} as const
 
 /** Maximum skill file size in bytes (500 KB) */
 export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const // 500 * 1024

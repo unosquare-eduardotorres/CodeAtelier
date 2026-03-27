@@ -17,6 +17,8 @@ import { registerUpdateIpc } from './update.ipc'
 import { registerDocsIpc } from './docs.ipc'
 import { registerGithubIpc } from './github.ipc'
 import { registerRepoIpc } from './repo.ipc'
+import { registerUserProfileIpc } from './user-profile.ipc'
+import { registerCoreAgentAliasIpc } from './core-agent-alias.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -37,4 +39,6 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerDocsIpc()
   registerGithubIpc()
   registerRepoIpc()
+  registerUserProfileIpc()
+  registerCoreAgentAliasIpc()
 }
