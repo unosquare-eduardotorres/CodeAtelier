@@ -18,10 +18,29 @@ For example:
 
 ## How Skills Work
 
-1. **Skills are stored** as markdown files in your workspace's `.claude/skills/` directory
-2. **Specialists are assigned** specific skills based on their area of expertise
-3. **When a specialist starts**, it reads its assigned skills before beginning work
-4. **Skills guide behavior** — the specialist follows the patterns and rules defined in the skill
+```mermaid
+flowchart LR
+  Files["📁 .claude/skills/\nSKILL.md files"] -->|"assigned to"| Spec["🤖 Specialist\nAgent"]
+  Spec -->|"reads skills\nbefore starting"| Work["💻 Produces\nBetter Code"]
+
+  subgraph "Example: Database Architect"
+    direction TB
+    SK1["📘 SQLite Patterns\n— queries, migrations"]
+    SK2["📘 IPC Patterns\n— data access layer"]
+  end
+
+  SK1 --> DB["🗄️ DB Architect"]
+  SK2 --> DB
+  DB --> Result["✅ Code follows\nproject conventions"]
+
+  style Files fill:#7c3aed,color:#fff,stroke:#7c3aed
+  style Spec fill:#2563eb,color:#fff,stroke:#2563eb
+  style Work fill:#059669,color:#fff,stroke:#059669
+  style SK1 fill:#d97706,color:#fff,stroke:#d97706
+  style SK2 fill:#d97706,color:#fff,stroke:#d97706
+  style DB fill:#2563eb,color:#fff,stroke:#2563eb
+  style Result fill:#16a34a,color:#fff,stroke:#16a34a
+```
 
 > **Think of it like this:** If a specialist is the employee, a skill is the training manual they read before starting work. A database specialist with the "SQLite Patterns" skill knows exactly how your project handles migrations, queries, and error handling.
 

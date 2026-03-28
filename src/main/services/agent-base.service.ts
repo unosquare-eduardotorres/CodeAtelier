@@ -148,10 +148,13 @@ export abstract class AgentBaseService extends EventEmitter {
           if (content) {
             for (const block of content) {
               if (block.type === 'text') {
-                this.emit('chunk', {
-                  type: 'text',
-                  content: block.text as string
-                } as StreamChunk)
+                // Only emit if content wasn't already streamed via content_block_delta/start
+                if (!this.hasEmittedContent) {
+                  this.emit('chunk', {
+                    type: 'text',
+                    content: block.text as string
+                  } as StreamChunk)
+                }
                 this.hasEmittedContent = true
               } else if (block.type === 'tool_use') {
                 const toolName = block.name as string
@@ -213,6 +216,7 @@ export abstract class AgentBaseService extends EventEmitter {
             type: 'text',
             content: delta.text as string
           } as StreamChunk)
+          this.hasEmittedContent = true
         } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
           // Accumulate tool input for display
           this.currentToolInput += delta.partial_json as string
@@ -238,6 +242,7 @@ export abstract class AgentBaseService extends EventEmitter {
             type: 'text',
             content: contentBlock.text as string
           } as StreamChunk)
+          this.hasEmittedContent = true
         }
         break
       }

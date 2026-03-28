@@ -19,6 +19,24 @@ Every interaction with Agent Studio uses tokens in two ways:
 1. **Input tokens** — The text you send (your message + the context the AI needs to understand your request)
 2. **Output tokens** — The text the AI generates in its response
 
+```mermaid
+flowchart LR
+  You["🧑 Your Message\n+ Context"] -->|"Input Tokens"| Model["🧠 AI Model\n(Haiku/Sonnet/Opus)"]
+  Model -->|"Output Tokens"| Response["📝 AI Response"]
+
+  subgraph "Token Usage"
+    direction TB
+    In["📥 Input Tokens\n— your message\n— conversation history\n— code context"]
+    Out["📤 Output Tokens\n— AI's response\n— generated code"]
+  end
+
+  style You fill:#7c3aed,color:#fff,stroke:#7c3aed
+  style Model fill:#2563eb,color:#fff,stroke:#2563eb
+  style Response fill:#059669,color:#fff,stroke:#059669
+  style In fill:#d97706,color:#fff,stroke:#d97706
+  style Out fill:#0891b2,color:#fff,stroke:#0891b2
+```
+
 ---
 
 ## Understanding Token Usage

@@ -1,0 +1,333 @@
+import { useState, useCallback, useRef, useEffect } from 'react'
+import { Flame, SkipForward, Send, Star } from 'lucide-react'
+import type { GrillQuestion, GrillAnswerPayload } from '../../../../shared/types'
+
+interface GrillQuestionCardProps {
+  questions: GrillQuestion[]
+  onSubmit: (answers: GrillAnswerPayload[]) => void
+  onSkipAll: () => void
+}
+
+interface QuestionState {
+  selectedOptions: string[]
+  otherText: string
+  skipped: boolean
+}
+
+// ── Individual question item ──
+function QuestionItem({
+  question,
+  questionIndex,
+  totalQuestions,
+  state,
+  onChange
+}: {
+  question: GrillQuestion
+  questionIndex: number
+  totalQuestions: number
+  state: QuestionState
+  onChange: (state: QuestionState) => void
+}): React.JSX.Element {
+  const otherInputRef = useRef<HTMLInputElement>(null)
+
+  const handleOptionToggle = (label: string): void => {
+    if (state.skipped) return
+
+    if (question.multiSelect) {
+      const newSelected = state.selectedOptions.includes(label)
+        ? state.selectedOptions.filter((o) => o !== label)
+        : [...state.selectedOptions, label]
+      onChange({ ...state, selectedOptions: newSelected })
+    } else {
+      onChange({ ...state, selectedOptions: [label] })
+    }
+  }
+
+  const handleSkip = (): void => {
+    onChange({ selectedOptions: [], otherText: '', skipped: !state.skipped })
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent, optionIndex: number): void => {
+    const optionCount = question.options.length + (question.allowOther !== false ? 1 : 0)
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+      e.preventDefault()
+      const nextIndex = (optionIndex + 1) % optionCount
+      const container = (e.currentTarget as HTMLElement).closest('[role]')
+      const buttons = container?.querySelectorAll<HTMLElement>('[data-option-index]')
+      buttons?.[nextIndex]?.focus()
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault()
+      const prevIndex = (optionIndex - 1 + optionCount) % optionCount
+      const container = (e.currentTarget as HTMLElement).closest('[role]')
+      const buttons = container?.querySelectorAll<HTMLElement>('[data-option-index]')
+      buttons?.[prevIndex]?.focus()
+    }
+  }
+
+  return (
+    <div
+      className={`rounded-lg border overflow-hidden transition-all duration-200 ${
+        state.skipped
+          ? 'border-border-subtle bg-surface-base/50 opacity-60'
+          : 'border-orange-500/20 bg-orange-950/10'
+      }`}
+    >
+      {/* Question header with progress + skip button */}
+      <div className="px-4 py-3 border-b border-orange-500/10">
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            {question.header && (
+              <span
+                className="text-xs font-semibold text-orange-400 uppercase tracking-wider"
+                id={`question-header-${question.id}`}
+              >
+                {question.header}
+              </span>
+            )}
+            <span className="text-xs text-text-muted">
+              Question {questionIndex + 1} of {totalQuestions}
+            </span>
+          </div>
+          <button
+            onClick={handleSkip}
+            className={`text-xs px-2.5 py-1 rounded border transition-colors ${
+              state.skipped
+                ? 'border-orange-500/30 text-orange-400 bg-orange-500/10'
+                : 'border-border-subtle text-text-muted hover:text-orange-400 hover:border-orange-500/30'
+            }`}
+          >
+            {state.skipped ? 'Unskip' : 'Skip'}
+          </button>
+        </div>
+        <p className="text-sm text-text-primary font-medium">{question.question}</p>
+      </div>
+
+      {/* Options — table-style rows */}
+      {!state.skipped && (
+        <div
+          role={question.multiSelect ? 'group' : 'radiogroup'}
+          aria-labelledby={question.header ? `question-header-${question.id}` : undefined}
+          className="divide-y divide-orange-500/10"
+        >
+          {question.options.map((option, optIdx) => {
+            const isSelected = state.selectedOptions.includes(option.label)
+            const isRecommended = !!option.recommended
+
+            return (
+              <button
+                key={option.label}
+                data-option-index={optIdx}
+                role={question.multiSelect ? 'checkbox' : 'radio'}
+                aria-checked={isSelected}
+                tabIndex={optIdx === 0 ? 0 : -1}
+                onClick={() => handleOptionToggle(option.label)}
+                onKeyDown={(e) => handleKeyDown(e, optIdx)}
+                className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors duration-150 min-h-[44px] outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-inset ${
+                  isSelected
+                    ? 'bg-orange-500/15'
+                    : isRecommended
+                      ? 'bg-yellow-500/5 hover:bg-orange-500/10'
+                      : 'hover:bg-orange-900/10'
+                }`}
+              >
+                {question.multiSelect ? (
+                  <CheckboxIcon selected={isSelected} />
+                ) : (
+                  <RadioIcon selected={isSelected} />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm text-text-primary font-medium">{option.label}</span>
+                    {isRecommended && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-500/20 text-yellow-300 border border-yellow-500/20">
+                        <Star size={10} className="fill-yellow-300" />
+                        Recommended
+                      </span>
+                    )}
+                  </div>
+                  {option.description && (
+                    <p className="text-xs text-text-muted mt-0.5">{option.description}</p>
+                  )}
+                </div>
+              </button>
+            )
+          })}
+
+          {/* Other option row */}
+          {question.allowOther !== false && (
+            <div
+              data-option-index={question.options.length}
+              className="flex items-start gap-3 px-4 py-3"
+              tabIndex={-1}
+              onKeyDown={(e) => handleKeyDown(e, question.options.length)}
+            >
+              <RadioIcon
+                selected={state.otherText.length > 0 && state.selectedOptions.length === 0}
+              />
+              <div className="flex-1">
+                <span className="text-sm text-text-muted">Other:</span>
+                <input
+                  ref={otherInputRef}
+                  type="text"
+                  value={state.otherText}
+                  onChange={(e) => onChange({ ...state, otherText: e.target.value })}
+                  placeholder="Type your answer..."
+                  className="mt-1 w-full bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-orange-500 transition-colors"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Icons ──
+function RadioIcon({ selected }: { selected: boolean }): React.JSX.Element {
+  return (
+    <div
+      className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors ${
+        selected ? 'border-orange-400 bg-orange-400' : 'border-text-muted'
+      }`}
+    >
+      {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+    </div>
+  )
+}
+
+function CheckboxIcon({ selected }: { selected: boolean }): React.JSX.Element {
+  return (
+    <div
+      className={`mt-0.5 w-4 h-4 rounded shrink-0 border-2 flex items-center justify-center transition-colors ${
+        selected ? 'border-orange-400 bg-orange-400' : 'border-text-muted'
+      }`}
+    >
+      {selected && (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path
+            d="M2 5L4 7L8 3"
+            stroke="white"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </div>
+  )
+}
+
+// ── Main card ──
+export default function GrillQuestionCard({
+  questions,
+  onSubmit,
+  onSkipAll
+}: GrillQuestionCardProps): React.JSX.Element {
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  const [questionStates, setQuestionStates] = useState<Record<string, QuestionState>>(() => {
+    const initial: Record<string, QuestionState> = {}
+    for (const q of questions) {
+      // Pre-select recommended options
+      const recommended = q.options.filter((o) => o.recommended).map((o) => o.label)
+      initial[q.id] = { selectedOptions: recommended, otherText: '', skipped: false }
+    }
+    return initial
+  })
+
+  // Auto-scroll into view when card appears
+  useEffect(() => {
+    cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [])
+
+  const updateQuestion = useCallback((questionId: string, state: QuestionState) => {
+    setQuestionStates((prev) => ({ ...prev, [questionId]: state }))
+  }, [])
+
+  const canSubmit = questions.every((q) => {
+    const state = questionStates[q.id]
+    if (!state) return false
+    if (state.skipped) return true
+    return state.selectedOptions.length > 0 || state.otherText.trim().length > 0
+  })
+
+  const answeredCount = questions.filter((q) => {
+    const state = questionStates[q.id]
+    if (!state) return false
+    return state.skipped || state.selectedOptions.length > 0 || state.otherText.trim().length > 0
+  }).length
+
+  const handleSubmit = (): void => {
+    const answers: GrillAnswerPayload[] = questions.map((q) => {
+      const state = questionStates[q.id] ?? { selectedOptions: [], otherText: '', skipped: true }
+      return {
+        questionId: q.id,
+        selectedOptions: state.selectedOptions,
+        otherText: state.otherText.trim() || undefined,
+        skipped: state.skipped
+      }
+    })
+    onSubmit(answers)
+  }
+
+  return (
+    <div
+      ref={cardRef}
+      className="rounded-xl border border-orange-500/30 bg-surface-overlay overflow-hidden shadow-sm"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2.5 bg-orange-900/30 border-b border-orange-500/20">
+        <div className="flex items-center gap-2">
+          <Flame size={16} className="text-orange-400" />
+          <span className="text-sm font-semibold text-orange-300">
+            Grill Questions — {questions.length} decision{questions.length !== 1 ? 's' : ''} to make
+          </span>
+        </div>
+        <span className="text-xs text-orange-300/60">
+          {answeredCount}/{questions.length} answered
+        </span>
+      </div>
+
+      {/* Questions */}
+      <div className="px-4 py-4 space-y-3">
+        {questions.map((question, idx) => (
+          <QuestionItem
+            key={question.id}
+            question={question}
+            questionIndex={idx}
+            totalQuestions={questions.length}
+            state={
+              questionStates[question.id] ?? {
+                selectedOptions: [],
+                otherText: '',
+                skipped: false
+              }
+            }
+            onChange={(state) => updateQuestion(question.id, state)}
+          />
+        ))}
+      </div>
+
+      {/* Footer actions */}
+      <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-orange-500/20 bg-surface-base/50">
+        <button
+          onClick={onSkipAll}
+          className="flex items-center gap-1.5 px-4 py-2 text-text-muted hover:text-orange-400 rounded-lg text-sm font-medium transition-colors border border-transparent hover:border-border-subtle focus-visible:ring-2 focus-visible:ring-orange-500/50"
+        >
+          <SkipForward size={14} />
+          Skip All
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className="flex items-center gap-1.5 px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-orange-500/50 press-scale"
+        >
+          <Send size={14} />
+          Submit Answers
+        </button>
+      </div>
+    </div>
+  )
+}

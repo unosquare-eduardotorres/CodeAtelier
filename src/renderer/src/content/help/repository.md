@@ -41,6 +41,19 @@ A **PAT** is like a password that gives Agent Studio permission to interact with
 - You can revoke it at any time without changing your password
 - It expires automatically after a set period
 
+```mermaid
+gitgraph
+  commit id: "your code"
+  commit id: "latest"
+  branch agent/add-validation
+  checkout agent/add-validation
+  commit id: "add form validation"
+  commit id: "add unit tests"
+  checkout main
+  merge agent/add-validation id: "PR merged ✅"
+  commit id: "continues..."
+```
+
 ---
 
 ## Setting Up GitHub Integration
@@ -76,12 +89,22 @@ Once your token is saved, you can configure:
 
 ## How Agents Use GitHub
 
-When you ask an agent to make code changes in **Build mode**, it can:
+When you ask an agent to make code changes in **Build mode**, here's the flow:
 
-1. **Create a branch** — The agent creates a new branch for its work (e.g., `agent/add-validation`)
-2. **Make changes** — Code modifications happen on this branch, keeping your main branch safe
-3. **Open a PR** — When done, the agent creates a pull request with a description of what changed and why
-4. **You review** — You can review the PR on GitHub just like any other team member's work
+```mermaid
+sequenceDiagram
+  participant You
+  participant Agent
+  participant GitHub
+
+  You->>Agent: "Add input validation"
+  Agent->>GitHub: Create branch agent/add-validation
+  Agent->>Agent: Write code changes
+  Agent->>GitHub: Push commits
+  Agent->>GitHub: Open Pull Request
+  GitHub-->>You: PR ready for review
+  You->>GitHub: Review & merge ✅
+```
 
 > **Important:** Agents never push directly to your main branch. They always create a separate branch and a pull request, giving you full control over what gets merged.
 

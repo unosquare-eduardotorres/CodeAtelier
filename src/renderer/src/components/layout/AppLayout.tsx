@@ -4,7 +4,6 @@ import {
   Bot,
   Zap,
   Home,
-  Settings,
   Sliders,
   Building2,
   ClipboardList,
@@ -13,11 +12,11 @@ import {
   ZoomOut,
   CircleHelp
 } from 'lucide-react'
-import { Sidebar } from '@renderer/components/layout'
-import { ChatSidebar, ChatPanel } from '@renderer/components/chat'
+import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
+import { ChatPanel } from '@renderer/components/chat'
 import { AgentMonitor } from '@renderer/components/agents'
 import { PixelOfficePanel } from '@renderer/components/pixel-office'
-import { WorkspaceSettingsPanel, WorkspaceSettingsContent } from '@renderer/components/workspace'
+import { WorkspaceSettingsContent } from '@renderer/components/workspace'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import { SettingsPage } from '@renderer/components/settings'
 import { HelpView } from '@renderer/components/help'
@@ -28,6 +27,7 @@ import {
   useWorkspaceStore,
   useAgentStore,
   useChatStore,
+  useChatActions,
   usePixelOfficeStore,
   useIdeaStore
 } from '@renderer/store'
@@ -57,13 +57,16 @@ export default function AppLayout(): React.JSX.Element {
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [view, setView] = useState<'chat' | 'app-settings' | 'help'>('chat')
-  const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false)
-  const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('models')
-  const [wsSettingsPanelCollapsed, setWsSettingsPanelCollapsed] = useState(false)
-  const { activeWorkspace, orchestratorStatus, clearActiveWorkspace } = useWorkspaceStore()
-  const { statuses, sessionTokens } = useAgentStore()
-  const { activeConversation, createConversation, updateMode, isStreaming, sendMessage } =
-    useChatStore()
+  const [sidebarView, setSidebarView] = useState<'chat' | 'settings'>('chat')
+  const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('ideas')
+  const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
+  const orchestratorStatus = useWorkspaceStore((s) => s.orchestratorStatus)
+  const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
+  const statuses = useAgentStore((s) => s.statuses)
+  const sessionTokens = useAgentStore((s) => s.sessionTokens)
+  const { createConversation, updateMode, sendMessage } = useChatActions()
+  const activeConversation = useChatStore((s) => s.activeConversation)
+  const isStreaming = useChatStore((s) => s.isStreaming)
   const [showNewChatModal, setShowNewChatModal] = useState(false)
   const { isVisible: showPixelOffice, togglePanel: togglePixelOffice } = usePixelOfficeStore()
   const { createIdea } = useIdeaStore()
@@ -105,8 +108,8 @@ export default function AppLayout(): React.JSX.Element {
   // Navigate back — Esc key handler priority
   const navigateBack = useCallback(() => {
     // Priority order:
-    // 1. If on app-settings page → go back to chat
-    // 2. If workspace settings panel is open → close it (show chat sidebar)
+    // 1. If on app-settings or help page → go back to chat
+    // 2. If sidebar is on settings tab → switch back to chats tab
     // 3. Otherwise → no-op (already at default chat view)
 
     if (view === 'help') {
@@ -117,11 +120,11 @@ export default function AppLayout(): React.JSX.Element {
       setView('chat')
       return
     }
-    if (showWorkspaceSettings) {
-      setShowWorkspaceSettings(false)
+    if (sidebarView === 'settings') {
+      setSidebarView('chat')
       return
     }
-  }, [view, showWorkspaceSettings])
+  }, [view, sidebarView])
 
   // #18 - Keyboard shortcuts
   const handleKeyDown = useCallback(
@@ -198,21 +201,17 @@ export default function AppLayout(): React.JSX.Element {
   const handleGoHome = (): void => {
     clearActiveWorkspace()
     setView('chat')
-    setShowWorkspaceSettings(false)
-  }
-
-  const handleCloseWorkspaceSettings = (): void => {
-    setShowWorkspaceSettings(false)
+    setSidebarView('chat')
   }
 
   const handleNavigateToChat = (): void => {
     setView('chat')
-    setShowWorkspaceSettings(false)
+    setSidebarView('chat')
   }
 
   const handleOpenIdeas = (): void => {
     setWorkspaceSettingsTab('ideas')
-    setShowWorkspaceSettings(true)
+    setSidebarView('settings')
   }
 
   const handleCreateIdea = async (data: {
@@ -259,8 +258,8 @@ export default function AppLayout(): React.JSX.Element {
       return <WelcomeScreen />
     }
 
-    // When workspace settings panel is active, show selected tab content
-    if (showWorkspaceSettings) {
+    // When sidebar's settings tab is active, show selected settings content
+    if (sidebarView === 'settings') {
       return (
         <WorkspaceSettingsContent
           tab={workspaceSettingsTab}
@@ -294,14 +293,6 @@ export default function AppLayout(): React.JSX.Element {
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <button
-            onClick={() => setView(view === 'help' ? 'chat' : 'help')}
-            className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'help' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
-            title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
-            aria-label="Help"
-          >
-            <CircleHelp size={16} />
-          </button>
-          <button
             onClick={handleGoHome}
             className="p-2.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
             title="Home"
@@ -309,16 +300,6 @@ export default function AppLayout(): React.JSX.Element {
           >
             <Home size={16} />
           </button>
-          {activeWorkspace && (
-            <button
-              onClick={() => setShowWorkspaceSettings((prev) => !prev)}
-              className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${showWorkspaceSettings ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
-              title="Workspace Settings"
-              aria-label="Workspace Settings"
-            >
-              <Settings size={16} />
-            </button>
-          )}
           <button
             onClick={() => setView(view === 'app-settings' ? 'chat' : 'app-settings')}
             className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'app-settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
@@ -326,6 +307,14 @@ export default function AppLayout(): React.JSX.Element {
             aria-label="Settings"
           >
             <Sliders size={16} />
+          </button>
+          <button
+            onClick={() => setView(view === 'help' ? 'chat' : 'help')}
+            className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'help' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
+            title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
+            aria-label="Help"
+          >
+            <CircleHelp size={16} />
           </button>
         </div>
       </div>
@@ -338,24 +327,17 @@ export default function AppLayout(): React.JSX.Element {
 
       {/* Main content */}
       <div className="flex flex-1 min-h-0">
-        {/* Left sidebar — swappable between ChatSidebar and WorkspaceSettingsPanel */}
+        {/* Left sidebar — unified with Chats + Settings tabs */}
         {showLeftSidebar && (
           <Sidebar>
-            {showWorkspaceSettings ? (
-              <WorkspaceSettingsPanel
-                isCollapsed={wsSettingsPanelCollapsed}
-                onToggleCollapse={() => setWsSettingsPanelCollapsed((prev) => !prev)}
-                activeTab={workspaceSettingsTab}
-                onTabChange={setWorkspaceSettingsTab}
-                onClose={handleCloseWorkspaceSettings}
-              />
-            ) : (
-              <ChatSidebar
-                isCollapsed={sidebarCollapsed}
-                onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
-                onCreateIdea={handleCreateIdea}
-              />
-            )}
+            <UnifiedSidebar
+              isCollapsed={sidebarCollapsed}
+              onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+              onCreateIdea={handleCreateIdea}
+              activeSettingsTab={workspaceSettingsTab}
+              onSettingsTabChange={setWorkspaceSettingsTab}
+              onViewChange={setSidebarView}
+            />
           </Sidebar>
         )}
 

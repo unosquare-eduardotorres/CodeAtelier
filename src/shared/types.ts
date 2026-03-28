@@ -388,6 +388,53 @@ export interface GrillSummary {
   proposedTasks: GrillProposedTask[]
 }
 
+export interface GrillQuestionOption {
+  label: string
+  description?: string
+  recommended?: boolean
+}
+
+export interface GrillQuestion {
+  id: string
+  question: string
+  header?: string
+  options: GrillQuestionOption[]
+  multiSelect?: boolean
+  allowOther?: boolean
+}
+
+export interface GrillAnswerPayload {
+  questionId: string
+  selectedOptions: string[]
+  otherText?: string
+  skipped: boolean
+}
+
+// ── Structured Plan Types ──
+export interface PlanStep {
+  number: number
+  title: string
+  description: string
+  file?: string
+  complexity?: 'low' | 'medium' | 'high'
+}
+
+export interface PlanSection {
+  heading: string
+  icon?: string
+  content: string
+  mermaid?: string
+}
+
+export interface StructuredPlan {
+  title: string
+  summary: string
+  sections?: PlanSection[]
+  steps?: PlanStep[]
+  files?: string[]
+  risks?: string[]
+}
+
 // ── Agent Session & Token Tracking ──
 export interface AgentSessionRecord {
   id: string

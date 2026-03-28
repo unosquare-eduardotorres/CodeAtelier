@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useChatStore, useWorkspaceStore } from '@renderer/store'
+import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import {
   ChatItem,
   UnsavedChangesDialog,
@@ -23,18 +23,17 @@ export default function ChatSidebar({
 }: ChatSidebarProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const {
-    conversations,
-    activeConversation,
     loadConversations,
     createConversation,
     selectConversation,
     closeConversation,
     renameConversation,
     sendMessage
-  } = useChatStore()
+  } = useChatActions()
+  const conversations = useChatStore((s) => s.conversations)
+  const activeConversation = useChatStore((s) => s.activeConversation)
 
   const [internalCollapsed, setInternalCollapsed] = useState(false)
-  const [conversationsLoaded, setConversationsLoaded] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [unsavedTarget, setUnsavedTarget] = useState<{
     id: string
@@ -43,8 +42,6 @@ export default function ChatSidebar({
   } | null>(null)
   const [completeFromUnsaved, setCompleteFromUnsaved] = useState<string | null>(null)
   const [showNewChatModal, setShowNewChatModal] = useState(false)
-  const autoCreateInFlight = useRef(false)
-  const initialAutoCreateDone = useRef(false)
 
   const isCollapsed = externalCollapsed ?? internalCollapsed
   const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c))
@@ -52,44 +49,10 @@ export default function ChatSidebar({
   // Load conversations when workspace changes
   useEffect(() => {
     if (activeWorkspace) {
-      // Reset auto-create guard when switching workspaces
-      initialAutoCreateDone.current = false
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setConversationsLoaded(false)
-      loadConversations(activeWorkspace.id).then(() => {
-        setConversationsLoaded(true)
-      })
+      loadConversations(activeWorkspace.id)
     }
   }, [activeWorkspace, loadConversations])
 
-  // Auto-create conversation only on initial workspace load when there are no conversations.
-  // Does NOT re-trigger after the user deletes the last conversation.
-  useEffect(() => {
-    if (
-      activeWorkspace &&
-      conversationsLoaded &&
-      conversations.length === 0 &&
-      !activeConversation &&
-      !autoCreateInFlight.current &&
-      !initialAutoCreateDone.current
-    ) {
-      initialAutoCreateDone.current = true
-      autoCreateInFlight.current = true
-      createConversation(activeWorkspace.id).finally(() => {
-        autoCreateInFlight.current = false
-      })
-    }
-    // Mark initial check as done once conversations are loaded (even if list is non-empty)
-    if (conversationsLoaded && !initialAutoCreateDone.current) {
-      initialAutoCreateDone.current = true
-    }
-  }, [
-    activeWorkspace,
-    conversationsLoaded,
-    conversations.length,
-    activeConversation,
-    createConversation
-  ])
 
   const handleNewChat = (): void => {
     setShowNewChatModal(true)
@@ -116,9 +79,9 @@ export default function ChatSidebar({
     setShowNewChatModal(false)
   }
 
-  const sortedConversations = [...conversations].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  )
+  const sortedConversations = [...conversations]
+    .filter((c) => !c.title.startsWith('\u{1F4A1} Grill:'))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
   if (isCollapsed) {
     return (

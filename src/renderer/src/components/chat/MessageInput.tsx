@@ -13,7 +13,7 @@ import {
   MicOff
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useChatStore, useWorkspaceStore } from '@renderer/store'
+import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import { useVoiceInput } from '@renderer/hooks'
 import { ConfirmDialog } from '@renderer/components/common'
 import CompleteDialog from './CompleteDialog'
@@ -88,16 +88,19 @@ export default function MessageInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const {
     sendMessage,
-    isStreaming,
-    activeConversation,
     stopGeneration,
     clearDisplay,
     appendLocalMessage,
     completeConversation,
     closeConversation,
     startGrillSession
-  } = useChatStore()
-  const { orchestratorStatus } = useWorkspaceStore()
+  } = useChatActions()
+  const isStreaming = useChatStore((s) => s.isStreaming)
+  const activeConversation = useChatStore((s) => s.activeConversation)
+  const hasPendingGrillQuestions = useChatStore(
+    (s) => (s.grillSession?.pendingQuestions?.length ?? 0) > 0
+  )
+  const orchestratorStatus = useWorkspaceStore((s) => s.orchestratorStatus)
   const isInitializing = orchestratorStatus === 'starting'
 
   // Voice mode state
@@ -303,7 +306,7 @@ export default function MessageInput({
     }
   }
 
-  const isDisabled = isStreaming || !activeConversation || isInitializing
+  const isDisabled = isStreaming || !activeConversation || isInitializing || hasPendingGrillQuestions
 
   return (
     <>
@@ -336,11 +339,11 @@ export default function MessageInput({
                       : 'hover:bg-surface-overlay/50 text-text-body'
                   }`}
                 >
-                  <Icon size={18} className={cmd.iconColor} />
-                  <span className="text-primary-text font-mono text-sm font-medium">
+                  <Icon size={18} className={`${cmd.iconColor} flex-shrink-0`} />
+                  <span className="text-primary-text font-mono text-sm font-medium w-28 flex-shrink-0">
                     {cmd.command}
                   </span>
-                  <span className="text-text-secondary ml-auto text-sm">{cmd.description}</span>
+                  <span className="text-text-secondary text-sm">{cmd.description}</span>
                 </button>
               )
             })}
@@ -353,13 +356,15 @@ export default function MessageInput({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            isInitializing
-              ? 'Waiting for AI agent to initialize...'
-              : !activeConversation
-                ? 'Select or create a conversation...'
-                : activeConversation.mode === 'plan'
-                  ? `Ask anything — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
-                  : `Describe what to build — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
+            hasPendingGrillQuestions
+              ? 'Answer the grill questions above to continue...'
+              : isInitializing
+                ? 'Waiting for AI agent to initialize...'
+                : !activeConversation
+                  ? 'Select or create a conversation...'
+                  : activeConversation.mode === 'plan'
+                    ? `Ask anything — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
+                    : `Describe what to build — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
           }
           disabled={isDisabled}
           rows={1}

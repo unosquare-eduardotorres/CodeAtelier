@@ -24,6 +24,16 @@ All three models come from **Anthropic's Claude** family. You already have acces
 | **Sonnet** | Fast | Very good | Day-to-day coding, code review, explanations, most tasks |
 | **Opus** | Slower | Excellent | Complex architecture decisions, difficult bugs, nuanced analysis |
 
+```mermaid
+quadrantChart
+  title Model Selection Guide
+  x-axis "Faster Response" --> "Deeper Thinking"
+  y-axis "Simple Tasks" --> "Complex Tasks"
+  Haiku: [0.2, 0.25]
+  Sonnet: [0.5, 0.55]
+  Opus: [0.85, 0.85]
+```
+
 ---
 
 ## How to Choose a Model

@@ -18,6 +18,28 @@ Agent Studio uses a **team-based** approach to AI assistance:
    - A **Testing Specialist** for writing tests
    - A **Git/GitHub Specialist** for version control operations
 
+```mermaid
+flowchart TD
+  You["🧑 You"] <-->|"chat"| Gen["🤖 Generalist\n— Your main contact —"]
+  Gen -->|"complex task"| Orch["🎯 Orchestrator\n— Coordinator —"]
+  Orch --> S1["⚛️ React\nArchitect"]
+  Orch --> S2["🗄️ Database\nArchitect"]
+  Orch --> S3["🧪 Testing\nSpecialist"]
+  Orch --> S4["🔀 Git/GitHub\nSpecialist"]
+  Orch --> S5["🎨 UX/UI\nSpecialist"]
+  Orch --> Sn["... 9 more"]
+
+  style You fill:#7c3aed,color:#fff,stroke:#7c3aed
+  style Gen fill:#2563eb,color:#fff,stroke:#2563eb
+  style Orch fill:#d97706,color:#fff,stroke:#d97706
+  style S1 fill:#059669,color:#fff,stroke:#059669
+  style S2 fill:#059669,color:#fff,stroke:#059669
+  style S3 fill:#059669,color:#fff,stroke:#059669
+  style S4 fill:#059669,color:#fff,stroke:#059669
+  style S5 fill:#059669,color:#fff,stroke:#059669
+  style Sn fill:#059669,color:#fff,stroke:#059669
+```
+
 > You don't need to pick which specialist to use — the Orchestrator does this automatically based on your request. Just describe what you need, and the right expert gets assigned.
 
 ---
@@ -63,13 +85,30 @@ See the **Specialists** help section for detailed configuration instructions.
 
 When you send a complex request, multiple agents may work simultaneously:
 
-1. You say: *"Add a login page with form validation and database storage"*
-2. The Orchestrator breaks this into subtasks:
-   - **React Architect** → Builds the login form UI
-   - **Database Architect** → Creates the user table and queries
-   - **Testing Specialist** → Writes tests for the new feature
-3. Each specialist works in parallel on their piece
-4. Results are combined and delivered back to you through the chat
+```mermaid
+sequenceDiagram
+  participant You
+  participant Generalist
+  participant Orchestrator
+  participant React as React Architect
+  participant DB as DB Architect
+  participant Test as Testing Specialist
+
+  You->>Generalist: "Add login page with validation and storage"
+  Generalist->>Orchestrator: Task requires multiple specialists
+
+  par Parallel Execution
+    Orchestrator->>React: Build login form UI
+    Orchestrator->>DB: Create user table & queries
+    Orchestrator->>Test: Write tests for login feature
+  end
+
+  React-->>Orchestrator: UI complete
+  DB-->>Orchestrator: Schema + queries ready
+  Test-->>Orchestrator: Tests written
+  Orchestrator-->>Generalist: All subtasks complete
+  Generalist-->>You: "Here's your login page! 🎉"
+```
 
 You can watch this collaboration happen in real-time through the Agent Panel.
 

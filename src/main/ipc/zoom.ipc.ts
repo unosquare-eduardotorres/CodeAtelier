@@ -7,15 +7,17 @@ const MAX_ZOOM = 2.0
 const ZOOM_STEP = 0.1
 
 export function registerZoomIpc(mainWindow: BrowserWindow): void {
-  const clamp = (val: number): number =>
-    Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, val)) * 100) / 100
+  const clamp = (val: number): number => {
+    const snapped = Math.round(val / ZOOM_STEP) * ZOOM_STEP
+    return Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, snapped)) * 100) / 100
+  }
 
   const notifyRenderer = (factor: number): void => {
     mainWindow.webContents.send(IPC_CHANNELS.ZOOM_CHANGED, factor)
   }
 
   ipcMain.handle(IPC_CHANNELS.ZOOM_GET, () => {
-    return mainWindow.webContents.getZoomFactor()
+    return clamp(mainWindow.webContents.getZoomFactor())
   })
 
   ipcMain.handle(IPC_CHANNELS.ZOOM_IN, () => {
@@ -50,7 +52,7 @@ export function registerZoomIpc(mainWindow: BrowserWindow): void {
   // Sync UI when zoom changes via native menu (⌘+, ⌘-, ⌘0) or trackpad pinch
   mainWindow.webContents.on('zoom-changed', () => {
     const factor = mainWindow.webContents.getZoomFactor()
-    notifyRenderer(factor)
+    notifyRenderer(clamp(factor))
   })
 
   log.info('[Zoom] IPC handlers registered')

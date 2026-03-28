@@ -1,11 +1,14 @@
 import { create } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
 import type {
   CompleteResult,
   Conversation,
   ConversationMode,
   ExecutionStrategy,
+  GrillAnswerPayload,
   GrillProposedTask,
+  GrillQuestion,
   Message,
   TaskExecutionProgress,
   TaskPlan,
@@ -22,6 +25,8 @@ interface GrillSessionState {
   active: boolean
   summary: string | null
   proposedTasks: GrillProposedTask[]
+  pendingQuestions: GrillQuestion[]
+  answers: Record<string, GrillAnswerPayload>
 }
 
 interface ChatState {
@@ -81,6 +86,9 @@ interface ChatState {
   startGrillSession: () => void
   endGrillSession: (summary: string, proposedTasks: GrillProposedTask[]) => void
   clearGrillSession: () => void
+  setGrillQuestions: (questions: GrillQuestion[]) => void
+  submitGrillAnswers: (answers: GrillAnswerPayload[]) => void
+  skipAllGrillQuestions: () => void
   createItemsFromGrill: (
     tasks: Array<{ title: string; context: string; description: string }>
   ) => Promise<void>
@@ -408,15 +416,97 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   startGrillSession: () => {
-    set({ grillSession: { active: true, summary: null, proposedTasks: [] } })
+    set({
+      grillSession: {
+        active: true,
+        summary: null,
+        proposedTasks: [],
+        pendingQuestions: [],
+        answers: {}
+      }
+    })
   },
 
   endGrillSession: (summary: string, proposedTasks: GrillProposedTask[]) => {
-    set({ grillSession: { active: false, summary, proposedTasks } })
+    set((state) => ({
+      grillSession: {
+        active: false,
+        summary,
+        proposedTasks,
+        pendingQuestions: [],
+        answers: state.grillSession?.answers ?? {}
+      }
+    }))
   },
 
   clearGrillSession: () => {
     set({ grillSession: null })
+  },
+
+  setGrillQuestions: (questions: GrillQuestion[]) => {
+    set((state) => ({
+      grillSession: {
+        active: state.grillSession?.active ?? true,
+        summary: state.grillSession?.summary ?? null,
+        proposedTasks: state.grillSession?.proposedTasks ?? [],
+        pendingQuestions: questions,
+        answers: {}
+      }
+    }))
+  },
+
+  submitGrillAnswers: (answers: GrillAnswerPayload[]) => {
+    // Format answers into a readable message for the AI
+    const lines: string[] = ['Here are my answers:\n']
+    for (const answer of answers) {
+      const question = get().grillSession?.pendingQuestions.find((q) => q.id === answer.questionId)
+      const header = question?.header || question?.question || answer.questionId
+
+      if (answer.skipped) {
+        lines.push(`**${header}**: [SKIPPED]`)
+      } else {
+        const selections = answer.selectedOptions.map((opt) => {
+          const option = question?.options.find((o) => o.label === opt)
+          return option?.recommended ? `${opt} (recommended)` : opt
+        })
+        let line = `**${header}**: ${selections.join(', ')}`
+        if (answer.otherText) {
+          line += ` + "${answer.otherText}"`
+        }
+        lines.push(line)
+      }
+    }
+
+    const formattedMessage = lines.join('\n')
+
+    // Clear pending questions
+    set((state) => ({
+      grillSession: state.grillSession
+        ? {
+            ...state.grillSession,
+            pendingQuestions: [],
+            answers: {}
+          }
+        : null
+    }))
+
+    // Send the formatted message
+    get().sendMessage(formattedMessage)
+  },
+
+  skipAllGrillQuestions: () => {
+    // Clear pending questions and notify the AI
+    set((state) => ({
+      grillSession: state.grillSession
+        ? {
+            ...state.grillSession,
+            pendingQuestions: [],
+            answers: {}
+          }
+        : null
+    }))
+
+    get().sendMessage('All questions skipped — proceeding with defaults.')
   },
 
   createItemsFromGrill: async (
@@ -496,6 +586,76 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   }
 }))
+
+// ── Stable action selectors (never trigger re-renders) ──
+// Zustand actions are referentially stable — extracting them into a dedicated hook
+// prevents components from re-rendering on every streaming chunk (~50+/sec) when
+// they only need actions (functions) and not state values.
+export const useChatActions = (): Pick<
+  ChatState,
+  | 'sendMessage'
+  | 'stopGeneration'
+  | 'clearDisplay'
+  | 'appendLocalMessage'
+  | 'completeConversation'
+  | 'closeConversation'
+  | 'createConversation'
+  | 'selectConversation'
+  | 'deleteConversation'
+  | 'updateMode'
+  | 'renameConversation'
+  | 'loadConversations'
+  | 'startGrillSession'
+  | 'clearGrillSession'
+  | 'submitGrillAnswers'
+  | 'skipAllGrillQuestions'
+  | 'createItemsFromGrill'
+  | 'setCompactSuggestion'
+  | 'setTaskPlan'
+  | 'updateTaskProgress'
+  | 'executePlan'
+  | 'clearTaskPlan'
+  | 'setGrillQuestions'
+  | 'endGrillSession'
+  | 'appendStreamChunk'
+  | 'finalizeStream'
+  | 'addToolActivity'
+  | 'updateToolActivity'
+  | 'setHandoff'
+  | 'clearHandoff'
+> =>
+  useChatStore(useShallow((s) => ({
+    sendMessage: s.sendMessage,
+    stopGeneration: s.stopGeneration,
+    clearDisplay: s.clearDisplay,
+    appendLocalMessage: s.appendLocalMessage,
+    completeConversation: s.completeConversation,
+    closeConversation: s.closeConversation,
+    createConversation: s.createConversation,
+    selectConversation: s.selectConversation,
+    deleteConversation: s.deleteConversation,
+    updateMode: s.updateMode,
+    renameConversation: s.renameConversation,
+    loadConversations: s.loadConversations,
+    startGrillSession: s.startGrillSession,
+    clearGrillSession: s.clearGrillSession,
+    submitGrillAnswers: s.submitGrillAnswers,
+    skipAllGrillQuestions: s.skipAllGrillQuestions,
+    createItemsFromGrill: s.createItemsFromGrill,
+    setCompactSuggestion: s.setCompactSuggestion,
+    setTaskPlan: s.setTaskPlan,
+    updateTaskProgress: s.updateTaskProgress,
+    executePlan: s.executePlan,
+    clearTaskPlan: s.clearTaskPlan,
+    setGrillQuestions: s.setGrillQuestions,
+    endGrillSession: s.endGrillSession,
+    appendStreamChunk: s.appendStreamChunk,
+    finalizeStream: s.finalizeStream,
+    addToolActivity: s.addToolActivity,
+    updateToolActivity: s.updateToolActivity,
+    setHandoff: s.setHandoff,
+    clearHandoff: s.clearHandoff
+  })))
 
 // Preserve state on HMR dispose
 if (import.meta.hot) {

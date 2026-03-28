@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertTriangle, Copy, Check } from 'lucide-react'
 
 interface MermaidDiagramProps {
@@ -6,6 +6,37 @@ interface MermaidDiagramProps {
   id?: string
   className?: string
 }
+
+/**
+ * Lazily loads and initializes the mermaid library in the renderer process.
+ * Rendering happens client-side in real Chromium DOM — no JSDOM limitations.
+ *
+ * Mermaid v11 is ESM-only. When bundled by electron-vite the default export
+ * may be nested under `.default`, so we handle both shapes.
+ */
+let mermaidInstance: typeof import('mermaid').default | null = null
+let mermaidReady: Promise<typeof import('mermaid').default> | null = null
+
+function getMermaid(): Promise<typeof import('mermaid').default> {
+  if (mermaidInstance) return Promise.resolve(mermaidInstance)
+  if (mermaidReady) return mermaidReady
+
+  mermaidReady = import('mermaid').then((mod) => {
+    const m = (mod.default as unknown as { default: typeof mod.default }).default ?? mod.default
+    m.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      securityLevel: 'strict',
+      fontFamily: 'ui-monospace, monospace'
+    })
+    mermaidInstance = m
+    return m
+  })
+
+  return mermaidReady
+}
+
+let renderCounter = 0
 
 export default function MermaidDiagram({
   definition,
@@ -23,11 +54,13 @@ export default function MermaidDiagram({
     setLoading(true)
     setError(null)
 
-    window.api
-      .renderMermaid({ definition, id })
-      .then(({ svg }) => {
+    const diagramId = id ?? `mermaid-r-${++renderCounter}`
+
+    getMermaid()
+      .then((mermaid) => mermaid.render(diagramId, definition.trim()))
+      .then(({ svg: renderedSvg }) => {
         if (!cancelled) {
-          setSvg(svg)
+          setSvg(renderedSvg)
           setLoading(false)
         }
       })
@@ -43,7 +76,7 @@ export default function MermaidDiagram({
     }
   }, [definition, id])
 
-  const handleCopy = async (): Promise<void> => {
+  const handleCopy = useCallback(async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(definition)
       setCopied(true)
@@ -51,7 +84,7 @@ export default function MermaidDiagram({
     } catch {
       /* ignore */
     }
-  }
+  }, [definition])
 
   if (loading) {
     return (

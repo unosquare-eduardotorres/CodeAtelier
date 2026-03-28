@@ -24,6 +24,7 @@ import type {
   AgentWorktree,
   MergeAllResult,
   GrillProposedTask,
+  GrillQuestion,
   Memory,
   MemoryType,
   MemoryFeedProgress,
@@ -283,6 +284,9 @@ interface Api {
       summary: string
       proposedTasks: GrillProposedTask[]
     }) => void
+  ) => () => void
+  onGrillQuestion: (
+    callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
   ) => () => void
   onTaskPlan: (callback: (data: TaskPlan) => void) => () => void
   onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void

@@ -17,6 +17,7 @@ import { useWorkspaceStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
 import IdeasList from './IdeasList'
+import GrillSessionView from './GrillSessionView'
 import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
@@ -58,6 +59,13 @@ export default function WorkspaceSettingsPage({
 }: WorkspaceSettingsPageProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<SettingsTab>('models')
   const [showSyncReview, setShowSyncReview] = useState(false)
+  const [activeGrill, setActiveGrill] = useState<{
+    ideaId: string
+    conversationId: string
+    ideaTitle: string
+    ideaDescription?: string
+    isNewSession?: boolean
+  } | null>(null)
   const { activeWorkspace } = useWorkspaceStore()
 
   const {
@@ -257,19 +265,38 @@ export default function WorkspaceSettingsPage({
             </div>
           )}
 
-          {activeTab === 'ideas' && (
-            <div className="p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <Lightbulb size={16} className="text-yellow-400" />
-                <h3 className="text-sm font-semibold text-text-primary">Ideas</h3>
+          {activeTab === 'ideas' &&
+            (activeGrill ? (
+              <GrillSessionView
+                ideaId={activeGrill.ideaId}
+                conversationId={activeGrill.conversationId}
+                ideaTitle={activeGrill.ideaTitle}
+                ideaDescription={activeGrill.ideaDescription}
+                isNewSession={activeGrill.isNewSession}
+                onBack={() => setActiveGrill(null)}
+                onComplete={() => {
+                  setActiveGrill(null)
+                  onBack()
+                }}
+              />
+            ) : (
+              <div className="p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Lightbulb size={16} className="text-yellow-400" />
+                  <h3 className="text-sm font-semibold text-text-primary">Ideas</h3>
+                </div>
+                <p className="text-xs text-text-secondary mb-4">
+                  Captured ideas for future work items. Refine them with &quot;Grill Me&quot; or
+                  convert directly into conversations.
+                </p>
+                <IdeasList
+                  onNavigateToChat={onBack}
+                  onOpenGrillSession={(ideaId, conversationId, ideaTitle, isNewSession, ideaDescription) =>
+                    setActiveGrill({ ideaId, conversationId, ideaTitle, ideaDescription, isNewSession })
+                  }
+                />
               </div>
-              <p className="text-xs text-text-secondary mb-4">
-                Captured ideas for future work items. Refine them with &quot;Grill Me&quot; or
-                convert directly into conversations.
-              </p>
-              <IdeasList onNavigateToChat={onBack} />
-            </div>
-          )}
+            ))}
           {activeTab === 'memory' && <MemorySettingsPage />}
           {activeTab === 'documents' && <DocumentsPage />}
           {activeTab === 'tokens' && <TokenUsagePage />}

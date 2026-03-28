@@ -12,11 +12,28 @@ Agent Studio is a desktop application that gives you access to a team of AI spec
 
 Here's how it works at a high level:
 
-1. **You** chat with the Generalist agent in natural language
-2. The **Generalist** understands your request and decides if it needs help
-3. If the task is complex, the **Orchestrator** assigns it to the right specialist(s)
-4. **Specialists** work in parallel — one might write code while another writes tests
-5. Results flow back to you through the chat
+```mermaid
+flowchart LR
+  You["🧑 You"] -->|"chat"| G["🤖 Generalist"]
+  G -->|"simple task"| R1["✅ Direct Response"]
+  G -->|"complex task"| O["🎯 Orchestrator"]
+  O -->|"assign"| S1["⚛️ React\nArchitect"]
+  O -->|"assign"| S2["🗄️ Database\nArchitect"]
+  O -->|"assign"| S3["🧪 Testing\nSpecialist"]
+  S1 -->|"result"| O
+  S2 -->|"result"| O
+  S3 -->|"result"| O
+  O -->|"combined result"| G
+  G -->|"response"| You
+
+  style You fill:#7c3aed,color:#fff,stroke:#7c3aed
+  style G fill:#2563eb,color:#fff,stroke:#2563eb
+  style O fill:#d97706,color:#fff,stroke:#d97706
+  style S1 fill:#059669,color:#fff,stroke:#059669
+  style S2 fill:#059669,color:#fff,stroke:#059669
+  style S3 fill:#059669,color:#fff,stroke:#059669
+  style R1 fill:#16a34a,color:#fff,stroke:#16a34a
+```
 
 > Think of it like a software company: you talk to the project manager (Generalist), who delegates to the right team members (Specialists) based on what needs to be done.
 
@@ -72,6 +89,20 @@ Here's a quick tour of the main areas:
 | **Chat Panel** | Center | Where you read and send messages |
 | **Agent Panel** | Right panel | Shows which specialist agents are active and what they're doing |
 | **Status Bar** | Bottom | Shows your current workspace, conversation mode, and token usage |
+
+```mermaid
+block-beta
+  columns 3
+  Header["🏠 Header Bar — Navigation icons"]:3
+  Sidebar["💬 Chat\nSidebar"] Chat["📝 Chat Panel — Messages"]:1 Agents["🤖 Agent\nPanel"]
+  Status["📊 Status Bar — Workspace · Mode · Tokens"]:3
+
+  style Header fill:#1e1b4b,color:#c7d2fe,stroke:#4338ca
+  style Sidebar fill:#1e293b,color:#94a3b8,stroke:#334155
+  style Chat fill:#0f172a,color:#e2e8f0,stroke:#1e293b
+  style Agents fill:#1e293b,color:#94a3b8,stroke:#334155
+  style Status fill:#1e1b4b,color:#c7d2fe,stroke:#4338ca
+```
 
 **Keyboard shortcuts you'll use often:**
 

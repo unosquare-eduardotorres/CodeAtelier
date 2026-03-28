@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Lightbulb, Flame, Play, Trash2, CheckCircle, ExternalLink } from 'lucide-react'
-import { useIdeaStore, useChatStore, useWorkspaceStore } from '@renderer/store'
+import { useIdeaStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import { ConfirmDialog, Skeleton } from '@renderer/components/common'
 import type { Idea } from '../../../../shared/types'
 
 interface IdeasListProps {
   onNavigateToChat: () => void
+  onOpenGrillSession?: (ideaId: string, conversationId: string, ideaTitle: string, isNewSession?: boolean, ideaDescription?: string) => void
 }
 
 function StatusBadge({ status }: { status: Idea['status'] }): React.JSX.Element {
@@ -39,10 +40,10 @@ function StatusBadge({ status }: { status: Idea['status'] }): React.JSX.Element 
   )
 }
 
-export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.JSX.Element {
+export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: IdeasListProps): React.JSX.Element {
   const { ideas, loadIdeas, deleteIdea, startGrill, convertDirect, isLoading } = useIdeaStore()
   const { activeWorkspace } = useWorkspaceStore()
-  const { selectConversation, sendMessage, loadConversations } = useChatStore()
+  const { selectConversation, sendMessage, loadConversations } = useChatActions()
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   useEffect(() => {
@@ -70,27 +71,50 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
     if (!activeWorkspace) return
     try {
       const { idea: updatedIdea, conversation } = await startGrill(idea.id, activeWorkspace.id)
-      // Refresh conversations so the newly-created grill conversation is in the chat store
-      await loadConversations(activeWorkspace.id)
-      await selectConversation(conversation.id)
 
-      // Only auto-send the grill prompt if this is a new grill session
-      if (!idea.grillConversationId) {
-        const grillPrompt = `[GRILL MODE ACTIVATED]\n\n## Idea to Refine\n**${updatedIdea.title}**\n\n${updatedIdea.description || 'No description provided.'}\n\nInterview me relentlessly about every aspect of this idea until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. If a question can be answered by exploring the codebase, explore the codebase instead.`
-        await sendMessage(grillPrompt)
+      // Determine if this is a brand-new grill session (needs initial prompt)
+      const isNewSession = !idea.grillConversationId || idea.grillConversationId !== conversation.id
+
+      // Open the dedicated grill session view — prompt will be sent AFTER conversation loads
+      if (onOpenGrillSession) {
+        onOpenGrillSession(updatedIdea.id, conversation.id, updatedIdea.title, isNewSession, updatedIdea.description)
+      } else {
+        // Fallback: navigate to chat
+        await loadConversations(activeWorkspace.id)
+        await selectConversation(conversation.id)
+        if (isNewSession) {
+          const grillPrompt = `[GRILL MODE ACTIVATED]\n\n## Idea to Refine\n**${updatedIdea.title}**\n\n${updatedIdea.description || 'No description provided.'}\n\nInterview me relentlessly about every aspect of this idea until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. If a question can be answered by exploring the codebase, explore the codebase instead.`
+          await sendMessage(grillPrompt)
+        }
+        onNavigateToChat()
       }
-      onNavigateToChat()
     } catch (error) {
       console.error('Failed to start grill:', error)
     }
   }
 
-  const handleContinueGrill = async (grillConversationId: string): Promise<void> => {
+  const handleContinueGrill = async (idea: Idea): Promise<void> => {
     if (!activeWorkspace) return
     try {
-      await loadConversations(activeWorkspace.id)
-      await selectConversation(grillConversationId)
-      onNavigateToChat()
+      // Always go through startGrill — it handles resume (conv exists) or
+      // fresh-start (conv was lost/deleted) transparently on the backend.
+      const { idea: updatedIdea, conversation } = await startGrill(idea.id, activeWorkspace.id)
+
+      const isNewConversation = idea.grillConversationId !== conversation.id
+
+      // Open the dedicated grill session view — prompt will be sent AFTER conversation loads
+      if (onOpenGrillSession) {
+        onOpenGrillSession(updatedIdea.id, conversation.id, updatedIdea.title, isNewConversation, updatedIdea.description)
+      } else {
+        // Fallback: navigate to chat if no grill view handler provided
+        await loadConversations(activeWorkspace.id)
+        await selectConversation(conversation.id)
+        if (isNewConversation) {
+          const grillPrompt = `[GRILL MODE ACTIVATED]\n\n## Idea to Refine\n**${updatedIdea.title}**\n\n${updatedIdea.description || 'No description provided.'}\n\nInterview me relentlessly about every aspect of this idea until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. If a question can be answered by exploring the codebase, explore the codebase instead.`
+          await sendMessage(grillPrompt)
+        }
+        onNavigateToChat()
+      }
     } catch (error) {
       console.error('Failed to continue grill:', error)
     }
@@ -205,9 +229,7 @@ export default function IdeasList({ onNavigateToChat }: IdeasListProps): React.J
               {idea.status === 'grilling' && (
                 <>
                   <button
-                    onClick={() =>
-                      idea.grillConversationId && handleContinueGrill(idea.grillConversationId)
-                    }
+                    onClick={() => handleContinueGrill(idea)}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-orange-300 bg-orange-500/10 border border-orange-500/20 rounded-lg hover:bg-orange-500/20 transition-colors"
                   >
                     <Flame size={12} />

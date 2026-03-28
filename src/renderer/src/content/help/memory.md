@@ -24,11 +24,22 @@ This knowledge is stored locally and made available to all agents in future conv
 
 Here's a simplified view of the memory flow:
 
-1. **You chat** with the Generalist about your project
-2. **Agents analyze** your code and discover patterns, conventions, and architecture
-3. **Important facts get captured** automatically as memory entries
-4. **Future conversations** reference these memories, so agents already understand your project context
-5. **Memory evolves** as your project changes — new facts are added, outdated ones are updated
+```mermaid
+flowchart LR
+  Chat["💬 You Chat\nwith Agents"] --> Analyze["🔍 Agents Analyze\nYour Code"]
+  Analyze --> Capture["🧠 Important Facts\nCaptured"]
+  Capture --> Store["💾 Stored in\nLocal Database"]
+  Store --> Recall["📖 Future Conversations\nReference Memories"]
+  Recall --> Evolve["🔄 Memory Evolves\nAs Project Changes"]
+  Evolve --> Recall
+
+  style Chat fill:#7c3aed,color:#fff,stroke:#7c3aed
+  style Analyze fill:#2563eb,color:#fff,stroke:#2563eb
+  style Capture fill:#d97706,color:#fff,stroke:#d97706
+  style Store fill:#059669,color:#fff,stroke:#059669
+  style Recall fill:#0891b2,color:#fff,stroke:#0891b2
+  style Evolve fill:#7c3aed,color:#fff,stroke:#7c3aed
+```
 
 ---
 

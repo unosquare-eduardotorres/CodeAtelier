@@ -23,13 +23,13 @@ export type SettingsTab =
   | 'documents'
   | 'tokens'
 
-const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
-  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
-  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
-  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
+export const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
-  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
+  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
+  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
+  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
   { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-cyan-400' },
+  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
   { id: 'tokens', label: 'Tokens', icon: Zap }
 ]
 

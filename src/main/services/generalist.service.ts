@@ -1,5 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process'
-import type { AgentStatus, ConversationMode, CostPreference, HandoffBrief } from '../../shared/types'
+import type {
+  AgentStatus,
+  ConversationMode,
+  CostPreference,
+  GrillQuestion,
+  HandoffBrief
+} from '../../shared/types'
 import { AGENT_IDS } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
@@ -15,6 +21,9 @@ const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
 /** Regex to detect grill-summary blocks emitted by the generalist. */
 const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
 
+/** Regex to detect grill-question blocks emitted by the generalist. */
+const GRILL_QUESTION_REGEX = /```grill-question\n([\s\S]*?)```/g
+
 /**
  * @deprecated Use HandoffBrief from shared/types.ts instead.
  * Kept for backward compatibility with legacy listeners.
@@ -28,6 +37,10 @@ export interface HandoffEvent {
 export interface GrillCompleteEvent {
   summary: string
   proposedTasks: Array<{ title: string; description: string }>
+}
+
+export interface GrillQuestionEvent {
+  questions: GrillQuestion[]
 }
 
 /**
@@ -128,26 +141,15 @@ export class GeneralistService extends AgentBaseService {
 
     const isBuildMode = this.currentMode === 'build'
 
-    // Strategy 6: Conditional --verbose flag — only in debug mode to reduce stream noise
-    let debugMode = false
-    try {
-      const allWorkspaces2 = workspaceRepository.findAll()
-      const workspace2 = allWorkspaces2.find((w) => w.repoPath === workspacePath)
-      const settings2 = workspace2 ? JSON.parse(workspace2.settingsJson || '{}') : {}
-      debugMode = settings2.debugMode === true
-    } catch {
-      // Default to no verbose
-    }
-
     const generalistModel = modelConfigService.getModel(workspacePath, 'generalist')
     const args = [
       '--output-format',
       'stream-json',
       '--input-format',
       'stream-json',
+      '--verbose',
       '--model',
       generalistModel,
-      ...(debugMode ? ['--verbose'] : []),
       ...(isBuildMode
         ? ['--permission-mode', 'auto']
         : ['--permission-mode', 'plan', '--allowedTools', 'WebSearch,WebFetch']),
@@ -233,8 +235,8 @@ export class GeneralistService extends AgentBaseService {
       this.emit('complete')
     })
 
-    // Process spawned — return immediately (non-blocking)
-    // Readiness is gated in send() via waitForReady()
+    // Process spawned — return immediately (non-blocking).
+    // Readiness is gated in send() via waitForReady() which awaits the '_processReady' event.
     this.emit('statusUpdate', this.getStatus())
   }
 
@@ -268,6 +270,15 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
+    // Wait for CLI to be ready before writing to stdin — the process needs to
+    // emit a 'system' event before it can accept user messages via stream-json.
+    // Without this gate, messages sent immediately after start() or switchMode()
+    // get written to stdin before the CLI is initialized, causing "No response received."
+    if (!this.processReady) {
+      this.log.info('Waiting for CLI process to become ready...')
+      await this.waitForReady()
+    }
+
     this.log.info('send() called', {
       conversationId,
       msgLen: message.length,
@@ -294,6 +305,29 @@ export class GeneralistService extends AgentBaseService {
     if (!writeOk) {
       this.log.warn('stdin write buffer full, waiting for drain...')
     }
+  }
+
+  /**
+   * Waits for the CLI process to emit its 'system' init event, indicating it's
+   * ready to accept user messages. Times out after 30 seconds.
+   */
+  private waitForReady(): Promise<void> {
+    if (this.processReady) return Promise.resolve()
+
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.removeListener('_processReady', onReady)
+        reject(new Error('CLI process did not become ready within 30 seconds'))
+      }, 30_000)
+
+      const onReady = (): void => {
+        clearTimeout(timeout)
+        this.log.info('CLI process is ready')
+        resolve()
+      }
+
+      this.once('_processReady', onReady)
+    })
   }
 
   private startResponseTimeout(): void {
@@ -353,6 +387,9 @@ export class GeneralistService extends AgentBaseService {
     }
 
     const usage = event.usage as Record<string, number> | undefined
+    this.log.info(
+      `Result event usage: ${usage ? JSON.stringify(usage) : 'MISSING'}, tokenUsage total: ${this.tokenUsage}`
+    )
     if (usage) {
       this.tokenUsage += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
 
@@ -383,9 +420,10 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
-    // Check for handoff or grill summary in accumulated text
+    // Check for handoff, grill summary, or grill questions in accumulated text
     this.detectHandoff()
     this.detectGrillSummary()
+    this.detectGrillQuestion()
 
     this.currentStatus = 'idle'
     this.emit('statusUpdate', this.getStatus())
@@ -522,6 +560,31 @@ export class GeneralistService extends AgentBaseService {
       }
     } catch (error) {
       this.log.error('Failed to parse grill-summary block:', error)
+    }
+  }
+
+  /**
+   * Checks the accumulated response text for grill-question blocks and emits a `grillQuestion` event if found.
+   */
+  private detectGrillQuestion(): void {
+    const matches = [...this.accumulatedText.matchAll(GRILL_QUESTION_REGEX)]
+    if (matches.length === 0) return
+
+    const allQuestions: GrillQuestion[] = []
+    for (const match of matches) {
+      try {
+        const data = JSON.parse(match[1].trim())
+        if (data.questions && Array.isArray(data.questions)) {
+          allQuestions.push(...data.questions)
+        }
+      } catch (error) {
+        this.log.error('Failed to parse grill-question block:', error)
+      }
+    }
+
+    if (allQuestions.length > 0) {
+      this.log.info(`Grill questions detected: ${allQuestions.length} questions`)
+      this.emit('grillQuestion', { questions: allQuestions } as GrillQuestionEvent)
     }
   }
 

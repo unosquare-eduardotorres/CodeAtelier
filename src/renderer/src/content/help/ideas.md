@@ -15,6 +15,19 @@ For example, you might add an idea like:
 
 Later, when you chat with your AI team and say *"Let's work on that dark mode feature,"* the Generalist already knows what you're referring to.
 
+```mermaid
+stateDiagram-v2
+  [*] --> Draft: Create idea
+  Draft --> Grilling: "Grill Me" 🔥
+  Draft --> Completed: "Convert Directly" ▶️
+  Grilling --> Completed: Grill finished
+  Completed --> [*]: Work item created
+
+  note right of Draft: Capture your idea\nwith title + description
+  note right of Grilling: AI interviews you\nto refine the idea
+  note right of Completed: Ready to become\na conversation
+```
+
 ---
 
 ## Adding an Idea

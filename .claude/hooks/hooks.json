@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "DevTeam declarative hooks configuration — includes command, prompt, and agent hook types",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.js\" pre-tool-use-hook",
+            "description": "Validate tool calls, check iteration limits, circuit breaker"
+          },
+          {
+            "type": "prompt",
+            "prompt": "The agent is about to modify a file. Check if this modification is within the current task scope. The task scope should be defined in the agent's prompt context. If the file being modified is clearly unrelated to the task (e.g., modifying auth code when the task is about UI styling), return ok:false with a reason. If it's reasonable, return ok:true.",
+            "description": "LLM-based scope pre-check — catches obvious scope violations before they happen"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.js\" pre-tool-use-hook",
+            "description": "Validate bash commands, check for dangerous operations"
+          }
+        ]
+      }
+    ],
+
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.js\" post-tool-use-hook",
+            "description": "Detect quality gate results from bash output"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.js\" post-tool-use-hook",
+            "description": "Track file modifications in state"
+          }
+        ]
+      }
+    ],
+
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.js\" stop-hook",
+            "description": "Block exit unless EXIT_SIGNAL:true or quality gates pass"
+          }
+        ]
+      }
+    ],
+
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/log-event.js\" agent_start orchestration \"Subagent started\"",
+            "description": "Track agent start time for cost tracking"
+          }
+        ]
+      }
+    ],
+
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/log-event.js\" agent_stop orchestration \"Subagent completed\"",
+            "description": "Track agent completion for cost tracking and metrics"
+          }
+        ]
+      }
+    ],
+
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/log-event.js\" task_completed orchestration \"Task marked complete\"",
+            "description": "Log task completion — triggers downstream task assignment in Agent Teams mode"
+          }
+        ]
+      }
+    ],
+
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/log-event.js\" worktree_created infrastructure \"Git worktree created\"",
+            "description": "Track worktree creation for parallel track management"
+          }
+        ]
+      }
+    ],
+
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/log-event.js\" worktree_removed infrastructure \"Git worktree removed\"",
+            "description": "Track worktree removal for cleanup verification"
+          }
+        ]
+      }
+    ],
+
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A teammate agent has gone idle. Check if there are remaining tasks in the shared task list that this teammate could work on. If yes, return ok:false with reason 'Assign next task from backlog'. If all tasks are complete or claimed, return ok:true.",
+            "description": "Prevent teammates from going idle when work remains"
+          }
+        ]
+      }
+    ],
+
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.js\" pre-compact",
+            "description": "Save state to SQLite before context compaction"
+          }
+        ]
+      }
+    ],
+
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.js\" session-start",
+            "description": "Initialize or resume session in SQLite"
+          }
+        ]
+      }
+    ],
+
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.js\" session-end",
+            "description": "Finalize session, calculate costs"
+          }
+        ]
+      }
+    ],
+
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.js\" persistence-hook",
+            "description": "Detect and prevent abandonment during autonomous execution"
+          }
+        ]
+      }
+    ]
+  }
+}

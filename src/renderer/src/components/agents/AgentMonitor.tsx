@@ -18,8 +18,13 @@ export default function AgentMonitor({
   isCollapsed,
   onToggleCollapse
 }: AgentMonitorProps): React.JSX.Element {
-  const { statuses, stopAllAgents, isStopping, sessionTokens, appendOutput } = useAgentStore()
-  const { specialists, loadSpecialists } = useSpecialistStore()
+  const statuses = useAgentStore((s) => s.statuses)
+  const stopAllAgents = useAgentStore((s) => s.stopAllAgents)
+  const isStopping = useAgentStore((s) => s.isStopping)
+  const sessionTokens = useAgentStore((s) => s.sessionTokens)
+  const appendOutput = useAgentStore((s) => s.appendOutput)
+  const specialists = useSpecialistStore((s) => s.specialists)
+  const loadSpecialists = useSpecialistStore((s) => s.loadSpecialists)
 
   // Load specialists on mount so AgentStatusCard can read metadata from DB
   useEffect(() => {

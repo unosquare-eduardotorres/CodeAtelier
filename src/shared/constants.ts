@@ -21,6 +21,7 @@ export const IPC_CHANNELS = {
   CHAT_COMPACT: 'chat:compact',
   CHAT_HANDOFF: 'chat:handoff',
   CHAT_GRILL_COMPLETE: 'chat:grillComplete',
+  CHAT_GRILL_QUESTION: 'chat:grillQuestion',
   CHAT_TASK_PLAN: 'chat:taskPlan',
   CHAT_EXECUTE_PLAN: 'chat:executePlan',
   CHAT_TASK_PROGRESS: 'chat:taskProgress',

@@ -52,6 +52,25 @@ When you mention a topic that relates to an uploaded document, agents can:
 - **Match coding standards** defined in style guides
 - **Reference API details** from technical documentation
 
+```mermaid
+flowchart TD
+  Upload["📄 You Upload\nDocuments"] --> Store["💾 Stored in\nWorkspace DB"]
+  Store --> Available["📚 Available to\nAll Agents"]
+
+  You["🧑 You ask:\n'Integrate the payment API'"] --> Gen["🤖 Generalist"]
+  Gen --> Lookup["🔍 Agent searches\nrelevant documents"]
+  Available --> Lookup
+  Lookup --> Response["✅ Code generated\nfollowing the API spec"]
+
+  style Upload fill:#7c3aed,color:#fff,stroke:#7c3aed
+  style Store fill:#059669,color:#fff,stroke:#059669
+  style Available fill:#0891b2,color:#fff,stroke:#0891b2
+  style You fill:#7c3aed,color:#fff,stroke:#7c3aed
+  style Gen fill:#2563eb,color:#fff,stroke:#2563eb
+  style Lookup fill:#d97706,color:#fff,stroke:#d97706
+  style Response fill:#16a34a,color:#fff,stroke:#16a34a
+```
+
 > **Example:** You upload an API specification document. When you ask the AI to "integrate with the payment service," it can read the API spec and generate code that matches the exact endpoints, parameters, and response formats documented there.
 
 ---

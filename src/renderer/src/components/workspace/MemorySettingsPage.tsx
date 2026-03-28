@@ -7,9 +7,6 @@ import {
   Code2,
   Upload,
   Moon,
-  Loader2,
-  AlertCircle,
-  CheckCircle2,
   Sparkles
 } from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore, useDreamStore } from '@renderer/store'
@@ -29,14 +26,11 @@ export default function MemorySettingsPage(): React.JSX.Element {
     memories,
     searchQuery,
     feedStatus,
-    feedMessage,
-    feedError,
     loadMemories,
     searchMemories,
     deleteMemory,
     setSearchQuery,
-    startFeed,
-    dismissFeed
+    startFeed
   } = useMemoryStore()
   const { triggerDream, currentRun } = useDreamStore()
   const [filterType, setFilterType] = useState<MemoryType | 'all'>('all')
@@ -178,40 +172,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
           </button>
         </div>
       </div>
-
-      {/* Inline feed status */}
-      {feedStatus === 'running' && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-primary/10 border border-primary/20 text-sm mb-6">
-          <Loader2 size={14} className="text-primary animate-spin" />
-          <span className="text-text-secondary text-xs flex-1">{feedMessage ?? 'Processing...'}</span>
-        </div>
-      )}
-      {feedStatus === 'error' && feedError && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-900/20 border border-red-800/30 text-sm mb-6">
-          <AlertCircle size={14} className="text-red-400" />
-          <span className="text-red-300 text-xs flex-1">{feedError}</span>
-          <button
-            onClick={dismissFeed}
-            className="text-xs text-red-400 hover:text-red-300"
-            aria-label="Dismiss error"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-      {feedStatus === 'completed' && feedMessage && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-900/20 border border-emerald-800/30 text-sm mb-6">
-          <CheckCircle2 size={14} className="text-emerald-400" />
-          <span className="text-emerald-200 text-xs flex-1">{feedMessage}</span>
-          <button
-            onClick={dismissFeed}
-            className="text-xs text-emerald-400 hover:text-emerald-300"
-            aria-label="Dismiss message"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
 
       {/* Memories Section */}
       <div>

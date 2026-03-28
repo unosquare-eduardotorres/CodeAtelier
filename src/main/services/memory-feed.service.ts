@@ -419,11 +419,16 @@ ${content.substring(0, 50000)}`
         if (code === 0 && stdout.trim()) {
           resolve(stdout.trim())
         } else {
-          reject(
-            new Error(
-              `Memory feed summarization failed (exit ${code}): ${stderr.trim() || 'No output received'}`
-            )
+          const stderrMsg = stderr.trim()
+          const details =
+            stderrMsg ||
+            (stdout.trim()
+              ? `Unexpected output: ${stdout.slice(0, 200)}`
+              : 'No output received')
+          log.error(
+            `Memory feed summarizer failed — exit code: ${code}, stderr: ${stderrMsg.slice(0, 500)}, stdout length: ${stdout.length}`
           )
+          reject(new Error(`Memory feed summarization failed (exit ${code}): ${details}`))
         }
       })
 

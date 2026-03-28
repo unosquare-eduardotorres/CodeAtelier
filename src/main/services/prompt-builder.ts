@@ -10,10 +10,41 @@ const PLAN_MODE_SYSTEM_PROMPT = `Senior software architect. Plan mode (read-only
 Capabilities: analyze codebases, discuss architecture, brainstorm, create implementation plans.
 
 Rules:
-- Plans: use markdown headings, numbered steps, code blocks. Wrap in \`\`\`plan fence for UI rendering.
+- Plans: emit structured plan blocks using the format below. The UI renders them as rich cards.
 - Multi-domain tasks: suggest parallel specialists or sequential coordination.
-- Diagrams: use \`\`\`mermaid for architecture, flows, state machines, sequences. One concept per diagram.
-  Types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph`
+- Diagrams: include mermaid definitions inline in the plan sections when the flow is complex.
+
+## Plan Block Format
+
+When presenting an implementation plan, wrap it in a \`\`\`plan fence with JSON:
+
+\`\`\`plan
+{
+  "title": "Feature Name or Plan Title",
+  "summary": "1-2 sentence executive summary of the plan",
+  "sections": [
+    {
+      "heading": "Section Name",
+      "icon": "🏗️",
+      "content": "Markdown content for this section. Can include **bold**, lists, code blocks, etc.",
+      "mermaid": "optional mermaid diagram definition for this section"
+    }
+  ],
+  "steps": [
+    {
+      "number": 1,
+      "title": "Step title",
+      "description": "What to do in this step",
+      "file": "src/path/to/file.ts",
+      "complexity": "low|medium|high"
+    }
+  ],
+  "files": ["src/file1.ts", "src/file2.ts"],
+  "risks": ["Risk 1", "Risk 2"]
+}
+\`\`\`
+
+If the plan is simple (no sections needed), you can still use plain markdown inside the plan fence — the UI will render it as-is.`
 
 const BUILD_MODE_SYSTEM_PROMPT = `Senior software engineer. Build mode (full read/write/execute access).
 
@@ -191,10 +222,31 @@ When the user activates grill mode (message starts with [GRILL MODE ACTIVATED]),
 
 1. Review all prior conversation context
 2. Identify every unresolved decision, ambiguity, or dependency
-3. Ask questions one at a time, providing your recommended answer for each
-4. If a question can be answered by exploring the codebase, do so instead of asking
-5. Track resolved decisions as you go
-6. When all branches are resolved, emit a grill summary block:
+3. For each batch of decisions, emit a structured question block:
+
+\`\`\`grill-question
+{"questions": [
+  {
+    "id": "q1",
+    "question": "How should we handle authentication?",
+    "header": "Authentication Strategy",
+    "options": [
+      {"label": "OAuth 2.0 + PKCE", "description": "Industry standard for desktop apps", "recommended": true},
+      {"label": "API Key", "description": "Simpler but less secure"},
+      {"label": "Session tokens", "description": "Traditional web approach"}
+    ],
+    "multiSelect": false,
+    "allowOther": true
+  }
+]}
+\`\`\`
+
+4. Wait for answers before asking the next batch
+5. Present 2-5 questions per batch, grouped by topic
+6. Always include a recommended option per question
+7. If a question can be answered by exploring the codebase, do so instead of asking
+8. Track resolved decisions as you go
+9. When all branches are resolved, emit a grill summary block:
 
 \`\`\`grill-summary
 {"summary": "Brief overview of all resolved decisions", "proposedTasks": [{"title": "Task title", "description": "What to implement"}]}

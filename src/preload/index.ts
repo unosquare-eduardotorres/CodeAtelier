@@ -31,6 +31,7 @@ import type {
   DreamProgress,
   TokenSummary,
   AgentSessionRecord,
+  GrillQuestion,
   Idea,
   DocFile,
   RepoInfo,
@@ -529,6 +530,19 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.CHAT_GRILL_COMPLETE, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.CHAT_GRILL_COMPLETE, handler)
+    }
+  },
+
+  onGrillQuestion: (
+    callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; questions: GrillQuestion[] }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_GRILL_QUESTION, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_GRILL_QUESTION, handler)
     }
   },
 

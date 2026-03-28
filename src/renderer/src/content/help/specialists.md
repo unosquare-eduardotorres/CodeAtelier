@@ -29,12 +29,27 @@ Think of specialists like departments in a software company:
 
 You don't need to manually select specialists. Here's how the process works:
 
-1. **You send a message** to the Generalist
-2. The **Generalist evaluates** whether it can handle the request alone
-3. If the task needs specialized expertise, the **Orchestrator** activates
-4. The Orchestrator **analyzes the task** and selects the best specialist(s)
-5. **Specialists work** on their assigned subtasks (often in parallel)
-6. **Results come back** through the chat as agent responses
+```mermaid
+sequenceDiagram
+  participant You
+  participant Gen as Generalist
+  participant Orch as Orchestrator
+  participant Spec as Best Specialist(s)
+
+  You->>Gen: Send message
+  Gen->>Gen: Can I handle this alone?
+
+  alt Simple task
+    Gen-->>You: Direct response
+  else Needs expertise
+    Gen->>Orch: Hand off task
+    Orch->>Orch: Analyze & select specialist(s)
+    Orch->>Spec: Assign subtask(s)
+    Spec-->>Orch: Results
+    Orch-->>Gen: Combined result
+    Gen-->>You: Final response
+  end
+```
 
 > **Example:** You say *"Redesign the settings page with better accessibility."* The Orchestrator might assign the **UX/UI Specialist** for the design and the **React Architect** for the implementation.
 
@@ -74,10 +89,19 @@ Specialist configurations are stored as `.yml` files in your workspace's `.claud
 
 Understanding how specialists start and stop:
 
-1. **Idle** — Specialists don't run until needed. There's zero overhead when they're not active.
-2. **Spawned** — When assigned a task, a specialist process starts. Each specialist runs as a separate Claude CLI instance.
-3. **Working** — The specialist reads code, writes code, and produces output.
-4. **Completed** — Once the task is done, the specialist process ends. Results are captured and delivered.
+```mermaid
+stateDiagram-v2
+  [*] --> Idle: Specialist registered
+  Idle --> Spawned: Task assigned by Orchestrator
+  Spawned --> Working: CLI process started
+  Working --> Completed: Task finished
+  Completed --> [*]: Process ends, results captured
+
+  note right of Idle: Zero overhead —\nnot running
+  note right of Spawned: Separate Claude\nCLI instance
+  note right of Working: Reading & writing\ncode
+  note right of Completed: One-shot — no\npersistent state
+```
 
 Unlike the Generalist (which maintains a long-running session), specialists are **one-shot** — they start, do their job, and finish. This means they don't carry conversation history between tasks.
 
