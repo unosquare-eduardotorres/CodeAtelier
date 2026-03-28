@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Search, X, Bot, MessageSquarePlus } from 'lucide-react'
-import { useChatStore, useWorkspaceStore } from '@renderer/store'
+import { useChatStore, useChatActions, useWorkspaceStore, useProfileStore } from '@renderer/store'
 import {
   MessageList,
   MessageInput,
@@ -11,10 +11,17 @@ import {
 } from '@renderer/components/chat'
 import type { ConversationMode } from '../../../../shared/types'
 
-export default function ChatPanel(): React.JSX.Element {
+interface ChatPanelProps {
+  onCreateIdea?: (data: { title: string; description?: string }) => void
+}
+
+export default function ChatPanel({ onCreateIdea }: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, orchestratorStatus } = useWorkspaceStore()
-  const { activeConversation, messages, createConversation, updateMode, isStreaming, sendMessage } =
-    useChatStore()
+  const { createConversation, updateMode, sendMessage } = useChatActions()
+  const activeConversation = useChatStore((s) => s.activeConversation)
+  const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
+  const messages = useChatStore((s) => s.messages)
+  const isStreaming = useChatStore((s) => s.isStreaming)
   const [attachments, setAttachments] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
@@ -56,9 +63,13 @@ export default function ChatPanel(): React.JSX.Element {
         <div className="w-16 h-16 rounded-2xl bg-primary-muted border border-primary/20 flex items-center justify-center mb-4">
           <Bot size={32} className="text-primary-text/60" />
         </div>
-        <h2 className="text-lg font-semibold text-text-primary mb-1">Ready to work</h2>
+        <h2 className="text-lg font-semibold text-text-primary mb-1">
+          {userName ? `Hey ${userName}, ready to build?` : 'Ready to work'}
+        </h2>
         <p className="text-sm text-text-secondary mb-6">
-          Start a conversation with your AI development partner
+          {userName
+            ? 'Kick off a new conversation — brainstorm, plan, or jump straight into code.'
+            : 'Start a conversation with your AI development partner'}
         </p>
         <button
           onClick={() => setShowNewChatModal(true)}
@@ -71,6 +82,7 @@ export default function ChatPanel(): React.JSX.Element {
           isOpen={showNewChatModal}
           onClose={() => setShowNewChatModal(false)}
           onSubmit={handleCreateChat}
+          onCreateIdea={onCreateIdea}
         />
       </div>
     )

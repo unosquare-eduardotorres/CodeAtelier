@@ -1,5 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process'
-import type { AgentStatus, ConversationMode, CostPreference, HandoffBrief } from '../../shared/types'
+import type {
+  AgentStatus,
+  ConversationMode,
+  CostPreference,
+  GrillQuestion,
+  HandoffBrief
+} from '../../shared/types'
 import { AGENT_IDS } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
@@ -8,12 +14,20 @@ import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
+import { hookRunnerService } from './hook-runner.service'
+import { eventLoggerService } from './event-logger.service'
 
 /** Regex to detect handoff blocks emitted by the generalist. */
 const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
 
 /** Regex to detect grill-summary blocks emitted by the generalist. */
 const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
+
+/** Regex to detect grill-question blocks emitted by the generalist. */
+const GRILL_QUESTION_REGEX = /```grill-question\n([\s\S]*?)```/g
+
+/** Regex to detect grill-evaluation blocks (new structured format with score + questions). */
+const GRILL_EVAL_REGEX = /```grill-evaluation\n([\s\S]*?)```/g
 
 /**
  * @deprecated Use HandoffBrief from shared/types.ts instead.
@@ -30,6 +44,10 @@ export interface GrillCompleteEvent {
   proposedTasks: Array<{ title: string; description: string }>
 }
 
+export interface GrillQuestionEvent {
+  questions: GrillQuestion[]
+}
+
 /**
  * Manages a long-lived interactive Claude CLI session for the generalist agent.
  *
@@ -40,6 +58,8 @@ export interface GrillCompleteEvent {
  */
 /** Timeout for receiving the first response chunk (in ms) */
 const RESPONSE_TIMEOUT_MS = 60_000 // 1 minute
+/** Absolute cap per interaction — never resets on stdout activity (inspired by DevTeam's total_timeout_minutes) */
+const MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
 
 export class GeneralistService extends AgentBaseService {
   protected readonly log = generalistLogger
@@ -47,6 +67,7 @@ export class GeneralistService extends AgentBaseService {
   private currentConversationId: string | null = null
   private accumulatedText: string = ''
   private responseTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+  private interactionTimeoutTimer: ReturnType<typeof setTimeout> | null = null
   private processReady: boolean = false
   private currentMode: ConversationMode = 'plan'
   /** Maps conversationId → Claude CLI session_id for --resume support */
@@ -128,32 +149,37 @@ export class GeneralistService extends AgentBaseService {
 
     const isBuildMode = this.currentMode === 'build'
 
-    // Strategy 6: Conditional --verbose flag — only in debug mode to reduce stream noise
-    let debugMode = false
-    try {
-      const allWorkspaces2 = workspaceRepository.findAll()
-      const workspace2 = allWorkspaces2.find((w) => w.repoPath === workspacePath)
-      const settings2 = workspace2 ? JSON.parse(workspace2.settingsJson || '{}') : {}
-      debugMode = settings2.debugMode === true
-    } catch {
-      // Default to no verbose
-    }
-
     const generalistModel = modelConfigService.getModel(workspacePath, 'generalist')
     const args = [
       '--output-format',
       'stream-json',
       '--input-format',
       'stream-json',
+      '--verbose',
       '--model',
       generalistModel,
-      ...(debugMode ? ['--verbose'] : []),
       ...(isBuildMode
-        ? ['--permission-mode', 'auto']
-        : ['--permission-mode', 'plan', '--allowedTools', 'WebSearch,WebFetch']),
+        ? ['--permission-mode', 'bypassPermissions']
+        : [
+            '--permission-mode',
+            'plan',
+            '--allowedTools',
+            'WebSearch,WebFetch',
+            // Note: --disallowedTools may not block plan mode's built-in tools (ExitPlanMode,
+            // Write to .claude/plans/). The real fix is the safety net in agent-base.service.ts
+            // that intercepts Write to .claude/plans/ and emits the content as a ```plan block.
+            '--disallowedTools',
+            'ExitPlanMode'
+          ]),
       '--system-prompt',
       fullSystemPrompt
     ]
+
+    // Add hook scripts for safety and quality gate interception
+    const hookArgs = hookRunnerService.getHookArgs(this.currentMode)
+    if (hookArgs.length > 0) {
+      args.push(...hookArgs)
+    }
 
     // Resume existing session if available (preserves conversation context)
     if (resumeSessionId) {
@@ -186,11 +212,18 @@ export class GeneralistService extends AgentBaseService {
       pid: currentProcess.pid
     })
 
+    // Log session started event
+    eventLoggerService.logSessionStarted({
+      agentId: AGENT_IDS.GENERALIST,
+      model: generalistModel
+    })
+
     // Handle stdin errors (EPIPE when process dies unexpectedly)
     currentProcess.stdin?.on('error', (err: Error) => {
       this.log.error('stdin error:', err.message)
       if (this.process === currentProcess && this.currentStatus !== 'idle') {
         this.clearResponseTimeout()
+        this.clearInteractionTimeout()
         this.currentStatus = 'failed'
         this.emit('statusUpdate', this.getStatus())
         this.emit('chunk', {
@@ -233,8 +266,8 @@ export class GeneralistService extends AgentBaseService {
       this.emit('complete')
     })
 
-    // Process spawned — return immediately (non-blocking)
-    // Readiness is gated in send() via waitForReady()
+    // Process spawned — return immediately (non-blocking).
+    // Readiness is gated in send() via waitForReady() which awaits the '_processReady' event.
     this.emit('statusUpdate', this.getStatus())
   }
 
@@ -268,6 +301,15 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
+    // Wait for CLI to be ready before writing to stdin — the process needs to
+    // emit a 'system' event before it can accept user messages via stream-json.
+    // Without this gate, messages sent immediately after start() or switchMode()
+    // get written to stdin before the CLI is initialized, causing "No response received."
+    if (!this.processReady) {
+      this.log.info('Waiting for CLI process to become ready...')
+      await this.waitForReady()
+    }
+
     this.log.info('send() called', {
       conversationId,
       msgLen: message.length,
@@ -277,12 +319,17 @@ export class GeneralistService extends AgentBaseService {
     this.currentStatus = 'thinking'
     this.hasEmittedContent = false
     this.messageStartedAt = Date.now()
+    this.processedToolIds.clear()
     this.currentConversationId = conversationId
     this.accumulatedText = ''
     this.emit('statusUpdate', this.getStatus())
 
     // Start response timeout — if no stdout data arrives within the limit, auto-fail
     this.startResponseTimeout()
+    // Start absolute interaction timeout — never resets, catches slow tool loops
+    this.startInteractionTimeout()
+    // Reset tool call counter for new interaction (circuit breaker in base class)
+    this.toolCallCount = 0
 
     // Format as stream-json message (required for --input-format stream-json)
     const jsonMessage = JSON.stringify({
@@ -294,6 +341,29 @@ export class GeneralistService extends AgentBaseService {
     if (!writeOk) {
       this.log.warn('stdin write buffer full, waiting for drain...')
     }
+  }
+
+  /**
+   * Waits for the CLI process to emit its 'system' init event, indicating it's
+   * ready to accept user messages. Times out after 30 seconds.
+   */
+  private waitForReady(): Promise<void> {
+    if (this.processReady) return Promise.resolve()
+
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.removeListener('_processReady', onReady)
+        reject(new Error('CLI process did not become ready within 30 seconds'))
+      }, 30_000)
+
+      const onReady = (): void => {
+        clearTimeout(timeout)
+        this.log.info('CLI process is ready')
+        resolve()
+      }
+
+      this.once('_processReady', onReady)
+    })
   }
 
   private startResponseTimeout(): void {
@@ -324,10 +394,51 @@ export class GeneralistService extends AgentBaseService {
   }
 
   /**
+   * Absolute interaction timeout — unlike responseTimeoutTimer, this does NOT
+   * reset on stdout activity. Inspired by DevTeam's total_timeout_minutes.
+   */
+  private startInteractionTimeout(): void {
+    this.clearInteractionTimeout()
+    const startedAt = Date.now()
+    this.interactionTimeoutTimer = setTimeout(() => {
+      if (this.currentStatus !== 'idle') {
+        const elapsedSec = Math.round((Date.now() - startedAt) / 1000)
+        this.log.error(
+          `Interaction timeout after ${elapsedSec}s — ${this.toolCallCount} tool calls made`
+        )
+
+        // Log timeout event for Event Log UI
+        eventLoggerService.logAgentTimeout({
+          agentId: 'generalist',
+          conversationId: this.currentConversationId ?? undefined,
+          elapsedMs: Date.now() - startedAt,
+          toolCallCount: this.toolCallCount
+        })
+
+        this.currentStatus = 'failed'
+        this.emit('statusUpdate', this.getStatus())
+        this.emit('chunk', {
+          type: 'error',
+          error: `Response exceeded maximum time (${MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes) after ${this.toolCallCount} tool calls. The agent may be stuck in a tool loop. Try simplifying your request or sending it again.`
+        } as StreamChunk)
+        this.emit('complete')
+      }
+    }, MAX_INTERACTION_TIMEOUT_MS)
+  }
+
+  private clearInteractionTimeout(): void {
+    if (this.interactionTimeoutTimer) {
+      clearTimeout(this.interactionTimeoutTimer)
+      this.interactionTimeoutTimer = null
+    }
+  }
+
+  /**
    * Override to detect handoff signals in the accumulated text on result/complete.
    */
   protected onResultEvent(event: Record<string, unknown>): void {
     this.clearResponseTimeout()
+    this.clearInteractionTimeout()
 
     // Capture session info and persist for --resume support
     const sessionId = event.session_id as string | undefined
@@ -353,6 +464,9 @@ export class GeneralistService extends AgentBaseService {
     }
 
     const usage = event.usage as Record<string, number> | undefined
+    this.log.info(
+      `Result event usage: ${usage ? JSON.stringify(usage) : 'MISSING'}, tokenUsage total: ${this.tokenUsage}`
+    )
     if (usage) {
       this.tokenUsage += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
 
@@ -383,9 +497,11 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
-    // Check for handoff or grill summary in accumulated text
+    // Check for handoff, grill summary, grill evaluation, or grill questions in accumulated text
     this.detectHandoff()
     this.detectGrillSummary()
+    this.detectGrillEvaluation()
+    this.detectGrillQuestion()
 
     this.currentStatus = 'idle'
     this.emit('statusUpdate', this.getStatus())
@@ -442,6 +558,14 @@ export class GeneralistService extends AgentBaseService {
           const contentBlock = event.content_block as Record<string, unknown> | undefined
           if (contentBlock?.type === 'text' && contentBlock.text) {
             this.accumulatedText += contentBlock.text as string
+          } else if (contentBlock?.type === 'tool_use') {
+            // Log tool call to Event Log for UI visibility
+            eventLoggerService.logAgentToolCall({
+              agentId: 'generalist',
+              conversationId: this.currentConversationId ?? undefined,
+              toolName: contentBlock.name as string,
+              toolCallNumber: this.toolCallCount
+            })
           }
         }
         this.processStreamEvent(event)
@@ -526,6 +650,59 @@ export class GeneralistService extends AgentBaseService {
   }
 
   /**
+   * Checks the accumulated response text for grill-question blocks and emits a `grillQuestion` event if found.
+   */
+  private detectGrillQuestion(): void {
+    const matches = [...this.accumulatedText.matchAll(GRILL_QUESTION_REGEX)]
+    if (matches.length === 0) return
+
+    const allQuestions: GrillQuestion[] = []
+    for (const match of matches) {
+      try {
+        const data = JSON.parse(match[1].trim())
+        if (data.questions && Array.isArray(data.questions)) {
+          allQuestions.push(...data.questions)
+        }
+      } catch (error) {
+        this.log.error('Failed to parse grill-question block:', error)
+      }
+    }
+
+    if (allQuestions.length > 0) {
+      this.log.info(`Grill questions detected: ${allQuestions.length} questions`)
+      this.emit('grillQuestion', { questions: allQuestions } as GrillQuestionEvent)
+    }
+  }
+
+  /**
+   * Checks the accumulated response text for grill-evaluation blocks (new structured format)
+   * and emits a `grillEvaluation` event if found. Contains score + feedback + questions.
+   */
+  private detectGrillEvaluation(): void {
+    const matches = [...this.accumulatedText.matchAll(GRILL_EVAL_REGEX)]
+    if (matches.length === 0) return
+
+    for (const match of matches) {
+      try {
+        const data = JSON.parse(match[1].trim())
+        if (typeof data.score === 'number' && Array.isArray(data.questions)) {
+          this.log.info(
+            `Grill evaluation detected: score=${data.score}, questions=${data.questions.length}`
+          )
+          this.emit('grillEvaluation', {
+            score: data.score,
+            scoreLabel: data.scoreLabel ?? '',
+            feedback: data.feedback ?? '',
+            questions: data.questions
+          })
+        }
+      } catch (error) {
+        this.log.error('Failed to parse grill-evaluation block:', error)
+      }
+    }
+  }
+
+  /**
    * Override to detect fast mode rate limit fallback from Claude CLI stderr.
    * When fast mode hits a rate limit, the CLI falls back to standard speed — we
    * surface this to the user as a status notification instead of a scary error.
@@ -556,6 +733,7 @@ export class GeneralistService extends AgentBaseService {
    */
   protected handleExit(code: number | null): void {
     this.clearResponseTimeout()
+    this.clearInteractionTimeout()
     super.handleExit(code)
 
     // Auto-restart if crashed unexpectedly (not intentional stop)
@@ -604,6 +782,7 @@ export class GeneralistService extends AgentBaseService {
   async stop(): Promise<void> {
     this.intentionallyStopped = true
     this.clearResponseTimeout()
+    this.clearInteractionTimeout()
     await super.stop()
     this.currentConversationId = null
     this.accumulatedText = ''
@@ -636,6 +815,11 @@ export class GeneralistService extends AgentBaseService {
 
   getCurrentConversationId(): string | null {
     return this.currentConversationId
+  }
+
+  /** Returns the streamed content accumulated so far in the current response cycle */
+  getStreamedContent(): string {
+    return this.accumulatedText
   }
 
   isReady(): boolean {

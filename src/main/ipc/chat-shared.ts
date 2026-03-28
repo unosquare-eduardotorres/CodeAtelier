@@ -56,21 +56,45 @@ export function forwardChunkToRenderer(
       try {
         const parsed = JSON.parse(chunk.content) as Record<string, unknown>
         toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed)
+
+        // Safety net: detect plan file writes and inject content as a plan block
+        // so the UI renders a PlanCard even when Claude CLI writes plans to files.
+        // We extract the content from the tool input JSON (available at tool_result time)
+        // instead of reading from disk, avoiding the timing bug where the file doesn't exist yet.
+        if (
+          chunk.toolName === 'Write' &&
+          typeof parsed.file_path === 'string' &&
+          parsed.file_path.includes('.claude/plans/') &&
+          typeof parsed.content === 'string'
+        ) {
+          const planBlock = `\n\n\`\`\`\`plan\n${parsed.content}\n\`\`\`\`\n`
+          contentAccumulator.value += planBlock
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: planBlock,
+            role
+          })
+          log.info('Injected plan content from Write to .claude/plans/', parsed.file_path)
+        }
       } catch {
         toolInputSummary = chunk.content.slice(0, 120)
       }
+    }
+    const toolActivity: Record<string, unknown> = {
+      id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      toolName: chunk.toolName ?? 'Unknown',
+      status: 'completed',
+      completedAt: Date.now()
+    }
+    // Only include input if we have a real summary — don't overwrite existing input with undefined
+    if (toolInputSummary) {
+      toolActivity.input = toolInputSummary
     }
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId,
       chunk: '',
       role,
-      toolActivity: {
-        id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        toolName: chunk.toolName ?? 'Unknown',
-        status: 'completed',
-        input: toolInputSummary,
-        completedAt: Date.now()
-      }
+      toolActivity
     })
   } else if (chunk.type === 'error') {
     contentAccumulator.value += `\n\n**Error:** ${chunk.error}`

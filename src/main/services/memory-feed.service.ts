@@ -4,8 +4,15 @@ import { join } from 'node:path'
 import { dbLogger } from '../logger'
 import { memoryRepository } from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
-import type { MemoryFeedProgress, MemoryFeedResult, MemoryType } from '../../shared/types'
+import type {
+  DiscoveredAgent,
+  DiscoveredSkill,
+  MemoryFeedProgress,
+  MemoryFeedResult,
+  MemoryType
+} from '../../shared/types'
 import { modelConfigService } from './model-config.service'
+import { workspaceDeployService } from './workspace-deploy.service'
 
 const log = dbLogger
 
@@ -84,6 +91,7 @@ ${content.substring(0, 50000)}`
       const result = await this.spawnSummarizer(prompt, workspacePath)
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-claude-md')
 
+      this.saveFeedTimestamp(workspacePath, 'claude-md')
       emit(`Created ${memories} memories from CLAUDE.md`, 'complete')
       return { success: true, source: 'claude-md', memoriesCreated: memories }
     } catch (error) {
@@ -155,6 +163,7 @@ ${keyFiles}`
       const result = await this.spawnSummarizer(prompt, workspacePath)
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-codebase')
 
+      this.saveFeedTimestamp(workspacePath, 'codebase')
       emit(`Created ${memories} memories from codebase analysis`, 'complete')
       return { success: true, source: 'codebase', memoriesCreated: memories }
     } catch (error) {
@@ -231,6 +240,7 @@ ${content.substring(0, 50000)}`
       const result = await this.spawnSummarizer(prompt, workspacePath)
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-document')
 
+      this.saveFeedTimestamp(workspacePath, 'document')
       emit(`Created ${memories} memories from document`, 'complete')
       return { success: true, source: 'document', memoriesCreated: memories }
     } catch (error) {
@@ -419,11 +429,14 @@ ${content.substring(0, 50000)}`
         if (code === 0 && stdout.trim()) {
           resolve(stdout.trim())
         } else {
-          reject(
-            new Error(
-              `Memory feed summarization failed (exit ${code}): ${stderr.trim() || 'No output received'}`
-            )
+          const stderrMsg = stderr.trim()
+          const details =
+            stderrMsg ||
+            (stdout.trim() ? `Unexpected output: ${stdout.slice(0, 200)}` : 'No output received')
+          log.error(
+            `Memory feed summarizer failed — exit code: ${code}, stderr: ${stderrMsg.slice(0, 500)}, stdout length: ${stdout.length}`
           )
+          reject(new Error(`Memory feed summarization failed (exit ${code}): ${details}`))
         }
       })
 
@@ -433,6 +446,28 @@ ${content.substring(0, 50000)}`
         reject(new Error(`Failed to spawn memory feed summarizer: ${err.message}`))
       })
     })
+  }
+
+  /**
+   * Save a feed timestamp to workspace settings_json.
+   */
+  private saveFeedTimestamp(workspacePath: string, feedKey: string): void {
+    try {
+      const workspaceId = this.getWorkspaceId(workspacePath)
+      if (!workspaceId) return
+      const currentSettings = workspaceRepository.getSettings(workspaceId)
+      const lastFed =
+        ((currentSettings as Record<string, unknown>).lastFed as Record<string, unknown>) ?? {}
+      workspaceRepository.updateSettings(workspaceId, {
+        ...currentSettings,
+        lastFed: {
+          ...lastFed,
+          [feedKey]: new Date().toISOString()
+        }
+      })
+    } catch (err) {
+      log.warn('Failed to save feed timestamp:', err)
+    }
   }
 
   /**
@@ -448,6 +483,94 @@ ${content.substring(0, 50000)}`
     }
   }
 
+  /**
+   * Regenerate CLAUDE.md from project truth sources using AI.
+   * Gathers package.json, tsconfig, project tree, agents, skills, schema,
+   * and spawns Claude CLI to produce a high-quality CLAUDE.md.
+   */
+  async regenerateClaudeMd(
+    workspacePath: string,
+    onProgress?: ProgressCallback
+  ): Promise<{ success: boolean; content: string; error?: string }> {
+    if (this.isBusy) {
+      return { success: false, content: '', error: 'A feed operation is already in progress' }
+    }
+
+    this.isBusy = true
+    try {
+      onProgress?.({
+        source: 'claude-md',
+        status: 'running',
+        message: 'Gathering project sources...'
+      })
+
+      // 1. Gather truth sources
+      const keyFiles = this.readKeyFiles(workspacePath)
+      const treeListing = this.getTreeListing(workspacePath)
+
+      let agents: DiscoveredAgent[] = []
+      let skills: DiscoveredSkill[] = []
+      try {
+        agents = workspaceDeployService.scanWorkspaceAgents(workspacePath)
+        skills = workspaceDeployService.scanWorkspaceSkills(workspacePath)
+      } catch (err) {
+        log.warn('Failed to scan agents/skills for CLAUDE.md regeneration:', err)
+      }
+
+      // 2. Read existing CLAUDE.md (if any) for user-written sections to preserve
+      let existingClaudeMd: string | null = null
+      try {
+        existingClaudeMd = readFileSync(join(workspacePath, 'CLAUDE.md'), 'utf-8')
+      } catch {
+        // No existing CLAUDE.md
+      }
+
+      // 3. Read schema.sql if present (DB structure)
+      let schemaContent: string | null = null
+      try {
+        schemaContent = readFileSync(
+          join(workspacePath, 'src/main/db/schema.sql'),
+          'utf-8'
+        )?.substring(0, 5000)
+      } catch {
+        // No schema file
+      }
+
+      onProgress?.({
+        source: 'claude-md',
+        status: 'running',
+        message: 'Generating CLAUDE.md with AI...'
+      })
+
+      // 4. Spawn Claude with expert generation prompt
+      const prompt = buildRegeneratePrompt({
+        keyFiles,
+        treeListing,
+        agents,
+        skills,
+        existingClaudeMd,
+        schemaContent
+      })
+
+      const content = await this.spawnSummarizer(prompt, workspacePath)
+
+      onProgress?.({
+        source: 'claude-md',
+        status: 'done',
+        message: 'CLAUDE.md generated successfully'
+      })
+
+      return { success: true, content }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      log.error('Failed to regenerate CLAUDE.md:', errorMsg)
+      onProgress?.({ source: 'claude-md', status: 'error', message: errorMsg })
+      return { success: false, content: '', error: errorMsg }
+    } finally {
+      this.isBusy = false
+    }
+  }
+
   /** Cancel in-progress feed */
   shutdown(): void {
     if (this.currentAbortController) {
@@ -459,3 +582,86 @@ ${content.substring(0, 50000)}`
 }
 
 export const memoryFeedService = new MemoryFeedService()
+
+// ── Regeneration prompt builder ──
+
+interface RegenerateSources {
+  keyFiles: string
+  treeListing: string
+  agents: DiscoveredAgent[]
+  skills: DiscoveredSkill[]
+  existingClaudeMd: string | null
+  schemaContent: string | null
+}
+
+function buildRegeneratePrompt(sources: RegenerateSources): string {
+  const agentLines =
+    sources.agents.length > 0
+      ? sources.agents
+          .map(
+            (a) =>
+              `- ${a.parsed.name}: ${a.parsed.description || 'no description'} (model: ${a.parsed.model}, skills: ${a.parsed.skills.join(', ') || 'none'})`
+          )
+          .join('\n')
+      : '(none deployed)'
+
+  const skillLines =
+    sources.skills.length > 0
+      ? sources.skills
+          .map((s) => `- ${s.name}: ${s.frontmatter?.description || 'no description'}`)
+          .join('\n')
+      : '(none deployed)'
+
+  const existingSection = sources.existingClaudeMd
+    ? `### Existing CLAUDE.md (for reference — preserve user-written sections)\n${sources.existingClaudeMd.substring(0, 10000)}`
+    : '### No existing CLAUDE.md — generate from scratch'
+
+  const schemaSection = sources.schemaContent ? `### Database Schema\n${sources.schemaContent}` : ''
+
+  return `You are an expert CLAUDE.md generator for Claude Code projects. Your job is to produce a high-quality, accurate CLAUDE.md file based ONLY on the actual project sources provided below.
+
+## Output Format
+Generate a complete CLAUDE.md following this exact structure:
+
+### Required Sections:
+1. **# Project: {name}** — from package.json name
+2. **## Overview** — 2-3 sentences from package.json description + what the tree reveals
+3. **## Tech stack** — ONLY dependencies actually in package.json (with versions)
+4. **## Conventions** — Inferred from tsconfig strict mode, import aliases, file patterns
+5. **## Project structure** — Simplified tree of src/ showing key directories
+6. **## Key commands** — From package.json scripts (dev, build, test, lint)
+7. **## What NOT to do** — Framework-specific anti-patterns (e.g., Electron: no nodeIntegration, no remote module)
+8. **## Error handling patterns** — Inferred from code structure
+9. **## Agents** — Table from deployed agents (with <!-- AGENTS:AUTO-GENERATED --> comment)
+10. **## Skills** — Table from deployed skills (with <!-- SKILLS:AUTO-GENERATED --> comment)
+
+### Critical Rules:
+- ONLY include technologies that appear in package.json dependencies/devDependencies
+- ONLY include commands that exist in package.json scripts
+- NEVER invent conventions you can't verify from the sources
+- If the project uses Electron, include Electron security rules (contextIsolation, no nodeIntegration, etc.)
+- If existing CLAUDE.md has user-written sections not covered above, preserve them at the end under their original headings
+- Use "as const" style if tsconfig shows strict mode
+- Match the import style visible in the tree (barrel exports, alias prefixes)
+- Keep the file concise but comprehensive — aim for 100-300 lines
+
+## Project Sources
+
+### package.json & config files
+${sources.keyFiles}
+
+### Project Tree
+${sources.treeListing}
+
+${schemaSection}
+
+### Deployed Agents (${sources.agents.length})
+${agentLines}
+
+### Deployed Skills (${sources.skills.length})
+${skillLines}
+
+${existingSection}
+
+Output ONLY the CLAUDE.md content. No explanation, no code fences wrapping the entire output.`
+}

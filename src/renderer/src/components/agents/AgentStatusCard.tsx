@@ -99,6 +99,8 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
   const config = STATUS_CONFIG[status.status] || STATUS_CONFIG.idle
   const { specialists } = useSpecialistStore()
   const agentOutput = useAgentStore((s) => s.agentOutputs[status.agentId] ?? '')
+  const gates = useAgentStore((s) => s.gateResults[status.agentId]) ?? []
+  const abandonment = useAgentStore((s) => s.abandonments[status.agentId])
 
   // Look up metadata from DB-backed specialists
   const meta = getAgentMeta(status.agentType, specialists)
@@ -202,6 +204,35 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
         <span>·</span>
         <span>{formatTokens(status.tokenUsage)} tokens</span>
       </div>
+
+      {/* Gate results badges */}
+      {gates.length > 0 && (
+        <div className="flex items-center gap-1 mt-1 flex-wrap">
+          {gates.map((g, i) => (
+            <span
+              key={i}
+              className={`text-[10px] px-1.5 py-0.5 rounded ${
+                g.passed ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'
+              }`}
+              title={g.summary}
+            >
+              {g.passed ? '✓' : '✗'} {g.type}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Abandonment warning */}
+      {abandonment && (
+        <div className="mt-1">
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-400"
+            title={`Pattern: ${abandonment.pattern}`}
+          >
+            ⚠ Possible abandonment
+          </span>
+        </div>
+      )}
 
       {/* Expandable detail view */}
       {isExpanded && (

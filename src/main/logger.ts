@@ -28,5 +28,9 @@ export const gitWorktreeLogger = log.scope('GitWorktree')
 export const brainFeedLogger = log.scope('BrainFeed')
 export const promptBuilderLogger = log.scope('PromptBuilder')
 export const agentRegistryLogger = log.scope('AgentRegistry')
+export const hookRunnerLogger = log.scope('HookRunner')
+export const eventLoggerLogger = log.scope('EventLogger')
+export const costTrackerLogger = log.scope('CostTracker')
+export const checkpointLogger = log.scope('Checkpoint')
 
 export default log

@@ -4,27 +4,37 @@ import {
   Bot,
   Zap,
   Home,
-  Settings,
   Sliders,
   Building2,
   ClipboardList,
-  Hammer
+  Hammer,
+  ZoomIn,
+  ZoomOut,
+  CircleHelp
 } from 'lucide-react'
-import { Sidebar } from '@renderer/components/layout'
-import { ChatSidebar, ChatPanel } from '@renderer/components/chat'
+import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
+import { ChatPanel } from '@renderer/components/chat'
 import { AgentMonitor } from '@renderer/components/agents'
 import { PixelOfficePanel } from '@renderer/components/pixel-office'
-import { WorkspaceSettingsPanel, WorkspaceSettingsContent } from '@renderer/components/workspace'
+import { WorkspaceSettingsContent } from '@renderer/components/workspace'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import { SettingsPage } from '@renderer/components/settings'
+import { HelpView } from '@renderer/components/help'
 import { WelcomeScreen } from '@renderer/components/welcome'
-import { UpdateBanner, MemoryFeedBanner, ErrorBoundary } from '@renderer/components/common'
+import {
+  UpdateBanner,
+  MemoryFeedBanner,
+  BudgetWarningBanner,
+  ErrorBoundary
+} from '@renderer/components/common'
 import { NewConversationModal } from '@renderer/components/chat'
 import {
   useWorkspaceStore,
   useAgentStore,
   useChatStore,
-  usePixelOfficeStore
+  useChatActions,
+  usePixelOfficeStore,
+  useIdeaStore
 } from '@renderer/store'
 import type { ConversationMode } from '../../../../shared/types'
 
@@ -51,16 +61,38 @@ export default function AppLayout(): React.JSX.Element {
   const [showAgentPanel, setShowAgentPanel] = useState(false)
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [view, setView] = useState<'chat' | 'app-settings'>('chat')
-  const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false)
-  const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('workspace')
-  const [wsSettingsPanelCollapsed, setWsSettingsPanelCollapsed] = useState(false)
-  const { activeWorkspace, orchestratorStatus, clearActiveWorkspace } = useWorkspaceStore()
-  const { statuses, sessionTokens } = useAgentStore()
-  const { activeConversation, createConversation, updateMode, isStreaming, sendMessage } =
-    useChatStore()
+  const [view, setView] = useState<'chat' | 'app-settings' | 'help'>('chat')
+  const [sidebarView, setSidebarView] = useState<'chat' | 'settings'>('chat')
+  const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('ideas')
+  const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
+  const orchestratorStatus = useWorkspaceStore((s) => s.orchestratorStatus)
+  const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
+  const statuses = useAgentStore((s) => s.statuses)
+  const sessionTokens = useAgentStore((s) => s.sessionTokens)
+  const { createConversation, updateMode, sendMessage } = useChatActions()
+  const activeConversation = useChatStore((s) => s.activeConversation)
+  const isStreaming = useChatStore((s) => s.isStreaming)
   const [showNewChatModal, setShowNewChatModal] = useState(false)
   const { isVisible: showPixelOffice, togglePanel: togglePixelOffice } = usePixelOfficeStore()
+  const { createIdea } = useIdeaStore()
+  const [zoomFactor, setZoomFactor] = useState(1.0)
+
+  // Load initial zoom and subscribe to changes
+  useEffect(() => {
+    window.api.zoomGet().then(setZoomFactor).catch(console.error)
+    const unsub = window.api.onZoomChanged((factor) => setZoomFactor(factor))
+    return unsub
+  }, [])
+
+  const handleZoomIn = useCallback(() => {
+    window.api.zoomIn()
+  }, [])
+  const handleZoomOut = useCallback(() => {
+    window.api.zoomOut()
+  }, [])
+  const handleZoomReset = useCallback(() => {
+    window.api.zoomReset()
+  }, [])
 
   const activeAgentCount = statuses.filter(
     (s) => s.status === 'thinking' || s.status === 'writing' || s.status === 'reviewing'
@@ -81,19 +113,23 @@ export default function AppLayout(): React.JSX.Element {
   // Navigate back — Esc key handler priority
   const navigateBack = useCallback(() => {
     // Priority order:
-    // 1. If on app-settings page → go back to chat
-    // 2. If workspace settings panel is open → close it (show chat sidebar)
+    // 1. If on app-settings or help page → go back to chat
+    // 2. If sidebar is on settings tab → switch back to chats tab
     // 3. Otherwise → no-op (already at default chat view)
 
+    if (view === 'help') {
+      setView('chat')
+      return
+    }
     if (view === 'app-settings') {
       setView('chat')
       return
     }
-    if (showWorkspaceSettings) {
-      setShowWorkspaceSettings(false)
+    if (sidebarView === 'settings') {
+      setSidebarView('chat')
       return
     }
-  }, [view, showWorkspaceSettings])
+  }, [view, sidebarView])
 
   // #18 - Keyboard shortcuts
   const handleKeyDown = useCallback(
@@ -135,9 +171,28 @@ export default function AppLayout(): React.JSX.Element {
         }
       }
 
+      if (isMeta && e.key === '/') {
+        e.preventDefault()
+        setView((prev) => (prev === 'help' ? 'chat' : 'help'))
+      }
+
       if (isMeta && e.shiftKey && e.key === 'o') {
         e.preventDefault()
         togglePixelOffice()
+      }
+
+      // Zoom shortcuts — ⌘+/⌘= to zoom in, ⌘- to zoom out, ⌘0 to reset
+      if (isMeta && (e.key === '=' || e.key === '+')) {
+        e.preventDefault()
+        window.api.zoomIn()
+      }
+      if (isMeta && e.key === '-') {
+        e.preventDefault()
+        window.api.zoomOut()
+      }
+      if (isMeta && e.key === '0') {
+        e.preventDefault()
+        window.api.zoomReset()
       }
     },
     [activeWorkspace, togglePixelOffice, activeConversation, updateMode, isStreaming, navigateBack]
@@ -151,16 +206,26 @@ export default function AppLayout(): React.JSX.Element {
   const handleGoHome = (): void => {
     clearActiveWorkspace()
     setView('chat')
-    setShowWorkspaceSettings(false)
-  }
-
-  const handleCloseWorkspaceSettings = (): void => {
-    setShowWorkspaceSettings(false)
+    setSidebarView('chat')
   }
 
   const handleNavigateToChat = (): void => {
     setView('chat')
-    setShowWorkspaceSettings(false)
+    setSidebarView('chat')
+  }
+
+  const handleOpenIdeas = (): void => {
+    setWorkspaceSettingsTab('ideas')
+    setSidebarView('settings')
+  }
+
+  const handleCreateIdea = async (data: {
+    title: string
+    description?: string
+  }): Promise<void> => {
+    if (!activeWorkspace) return
+    await createIdea(activeWorkspace.id, data.title, data.description ?? '')
+    handleOpenIdeas()
   }
 
   const handleCreateChat = async (data: {
@@ -185,6 +250,10 @@ export default function AppLayout(): React.JSX.Element {
   }
 
   const renderMainContent = (): React.JSX.Element => {
+    if (view === 'help') {
+      return <HelpView onBack={() => setView('chat')} />
+    }
+
     if (view === 'app-settings') {
       return <SettingsPage onBack={() => setView('chat')} />
     }
@@ -194,8 +263,8 @@ export default function AppLayout(): React.JSX.Element {
       return <WelcomeScreen />
     }
 
-    // When workspace settings panel is active, show selected tab content
-    if (showWorkspaceSettings) {
+    // When sidebar's settings tab is active, show selected settings content
+    if (sidebarView === 'settings') {
       return (
         <WorkspaceSettingsContent
           tab={workspaceSettingsTab}
@@ -205,7 +274,7 @@ export default function AppLayout(): React.JSX.Element {
     }
 
     // Default: chat
-    return <ChatPanel />
+    return <ChatPanel onCreateIdea={handleCreateIdea} />
   }
 
   // Determine if sidebar should show (chat view or workspace settings view)
@@ -230,29 +299,27 @@ export default function AppLayout(): React.JSX.Element {
         >
           <button
             onClick={handleGoHome}
-            className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
+            className="p-2.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
             title="Home"
             aria-label="Home"
           >
             <Home size={16} />
           </button>
-          {activeWorkspace && (
-            <button
-              onClick={() => setShowWorkspaceSettings((prev) => !prev)}
-              className={`p-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${showWorkspaceSettings ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
-              title="Workspace Settings"
-              aria-label="Workspace Settings"
-            >
-              <Settings size={16} />
-            </button>
-          )}
           <button
             onClick={() => setView(view === 'app-settings' ? 'chat' : 'app-settings')}
-            className={`p-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'app-settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
+            className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'app-settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title="Settings"
             aria-label="Settings"
           >
             <Sliders size={16} />
+          </button>
+          <button
+            onClick={() => setView(view === 'help' ? 'chat' : 'help')}
+            className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'help' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
+            title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
+            aria-label="Help"
+          >
+            <CircleHelp size={16} />
           </button>
         </div>
       </div>
@@ -263,25 +330,22 @@ export default function AppLayout(): React.JSX.Element {
       {/* Memory feed progress banner */}
       <MemoryFeedBanner />
 
+      {/* Budget warning/exceeded banner */}
+      <BudgetWarningBanner />
+
       {/* Main content */}
       <div className="flex flex-1 min-h-0">
-        {/* Left sidebar — swappable between ChatSidebar and WorkspaceSettingsPanel */}
+        {/* Left sidebar — unified with Chats + Settings tabs */}
         {showLeftSidebar && (
           <Sidebar>
-            {showWorkspaceSettings ? (
-              <WorkspaceSettingsPanel
-                isCollapsed={wsSettingsPanelCollapsed}
-                onToggleCollapse={() => setWsSettingsPanelCollapsed((prev) => !prev)}
-                activeTab={workspaceSettingsTab}
-                onTabChange={setWorkspaceSettingsTab}
-                onClose={handleCloseWorkspaceSettings}
-              />
-            ) : (
-              <ChatSidebar
-                isCollapsed={sidebarCollapsed}
-                onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
-              />
-            )}
+            <UnifiedSidebar
+              isCollapsed={sidebarCollapsed}
+              onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+              onCreateIdea={handleCreateIdea}
+              activeSettingsTab={workspaceSettingsTab}
+              onSettingsTabChange={setWorkspaceSettingsTab}
+              onViewChange={setSidebarView}
+            />
           </Sidebar>
         )}
 
@@ -292,7 +356,7 @@ export default function AppLayout(): React.JSX.Element {
         {showAgentPanel && view === 'chat' && (
           <ErrorBoundary
             fallback={
-              <div className="w-64 flex items-center justify-center p-4 text-sm text-red-400 bg-surface-raised border-l border-border-subtle">
+              <div className="w-64 flex items-center justify-center p-4 text-sm text-danger bg-surface-raised border-l border-border-subtle">
                 Agent panel error — click to retry
               </div>
             }
@@ -309,7 +373,7 @@ export default function AppLayout(): React.JSX.Element {
       {showPixelOffice && view === 'chat' && (
         <ErrorBoundary
           fallback={
-            <div className="p-4 text-sm text-red-400 bg-surface-raised border-t border-border-subtle">
+            <div className="p-4 text-sm text-danger bg-surface-raised border-t border-border-subtle">
               Pixel Office error — click to retry
             </div>
           }
@@ -319,7 +383,7 @@ export default function AppLayout(): React.JSX.Element {
       )}
 
       {/* Status bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-xs">
+      <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-[13px]">
         <div className="flex items-center gap-4">
           {activeWorkspace ? (
             <span className="flex items-center gap-1.5 text-text-secondary">
@@ -360,6 +424,33 @@ export default function AppLayout(): React.JSX.Element {
             {sessionTokens > 0 ? `${(sessionTokens / 1000).toFixed(1)}k tokens` : '0 tokens'}
           </span>
 
+          {/* Zoom controls */}
+          <div className="flex items-center gap-0.5 border-l border-border-subtle pl-3 ml-1">
+            <button
+              onClick={handleZoomOut}
+              className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-secondary transition-colors"
+              aria-label="Zoom out"
+              title={`Zoom Out (${isMac ? '⌘' : 'Ctrl+'}−)`}
+            >
+              <ZoomOut size={12} />
+            </button>
+            <button
+              onClick={handleZoomReset}
+              className="px-1 py-0.5 rounded hover:bg-surface-overlay text-text-muted hover:text-text-secondary transition-colors min-w-[36px] text-center"
+              title={`Reset Zoom (${isMac ? '⌘' : 'Ctrl+'}0)`}
+            >
+              <span className="text-[11px] font-mono">{Math.round(zoomFactor * 100)}%</span>
+            </button>
+            <button
+              onClick={handleZoomIn}
+              className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-secondary transition-colors"
+              aria-label="Zoom in"
+              title={`Zoom In (${isMac ? '⌘' : 'Ctrl+'}+)`}
+            >
+              <ZoomIn size={12} />
+            </button>
+          </div>
+
           <button
             onClick={togglePixelOffice}
             className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
@@ -397,6 +488,7 @@ export default function AppLayout(): React.JSX.Element {
         isOpen={showNewChatModal}
         onClose={() => setShowNewChatModal(false)}
         onSubmit={handleCreateChat}
+        onCreateIdea={handleCreateIdea}
       />
     </div>
   )

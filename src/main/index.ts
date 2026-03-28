@@ -9,6 +9,7 @@ import { generalistService, orchestratorService, skillService } from './services
 import { agentRegistry } from './services/agent-registry'
 import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
+import { eventLoggerService } from './services/event-logger.service'
 
 // Initialize electron-log for the main process
 // Must happen before app.whenReady() for early error capture
@@ -80,6 +81,13 @@ function createWindow(): void {
       'Database Error',
       `Agent Studio failed to initialize its database. The application may not work correctly.\n\n${(error as Error).message}`
     )
+  }
+
+  // Prune old events to prevent unbounded DB growth
+  try {
+    eventLoggerService.prune(30)
+  } catch (error) {
+    dbLogger.debug('Event pruning on startup failed (non-critical):', error)
   }
 
   // Initialize agent registry from YAML files (single source of truth)
@@ -221,9 +229,10 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  // Quit on all platforms — including macOS.
+  // Agent Studio runs background CLI processes that should be cleaned up
+  // via the before-quit handler rather than lingering in the dock.
+  app.quit()
 })
 
 let isQuitting = false

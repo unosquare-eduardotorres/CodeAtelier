@@ -11,7 +11,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 20
+const CURRENT_SCHEMA_VERSION = 25
 
 interface Migration {
   version: number
@@ -310,6 +310,105 @@ const migrations: Migration[] = [
       // Reclaim WAL file space on upgrade
       db.pragma('wal_checkpoint(TRUNCATE)')
     }
+  },
+  {
+    version: 21,
+    name: 'add_grill_decisions_to_ideas',
+    up: (db) => {
+      db.exec(`ALTER TABLE ideas ADD COLUMN grill_decisions TEXT DEFAULT NULL`)
+    }
+  },
+  {
+    version: 22,
+    name: 'create_events_table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          session_id TEXT,
+          conversation_id TEXT,
+          workspace_id TEXT,
+          event_type TEXT NOT NULL,
+          category TEXT NOT NULL CHECK (category IN (
+            'session', 'agent', 'escalation', 'gate', 'abandonment',
+            'checkpoint', 'hook', 'budget', 'error'
+          )),
+          message TEXT NOT NULL,
+          data_json TEXT DEFAULT '{}',
+          agent_id TEXT,
+          model TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_events_category ON events(category)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_events_conversation ON events(conversation_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC)`
+      )
+    }
+  },
+  {
+    version: 23,
+    name: 'create_checkpoints_table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS checkpoints (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL,
+          workspace_id TEXT,
+          label TEXT NOT NULL,
+          state_json TEXT NOT NULL DEFAULT '{}',
+          git_branch TEXT,
+          git_commit_sha TEXT,
+          active_task_ids TEXT DEFAULT '[]',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation ON checkpoints(conversation_id)`
+      )
+    }
+  },
+  {
+    version: 24,
+    name: 'add_cost_tracking_to_sessions',
+    up: (db) => {
+      db.exec(
+        `ALTER TABLE agent_sessions ADD COLUMN estimated_cost_cents REAL DEFAULT 0`
+      )
+      db.exec(
+        `ALTER TABLE agent_sessions ADD COLUMN input_tokens INTEGER DEFAULT 0`
+      )
+      db.exec(
+        `ALTER TABLE agent_sessions ADD COLUMN output_tokens INTEGER DEFAULT 0`
+      )
+    }
+  },
+  {
+    version: 25,
+    name: 'create_gate_results_table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS gate_results (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          session_id TEXT,
+          conversation_id TEXT,
+          task_id TEXT,
+          agent_id TEXT,
+          gate_type TEXT NOT NULL CHECK (gate_type IN ('test', 'lint', 'typecheck', 'build')),
+          passed INTEGER NOT NULL DEFAULT 0,
+          summary TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_gate_results_conversation ON gate_results(conversation_id)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_gate_results_task ON gate_results(task_id)`
+      )
+    }
   }
 ]
 
@@ -339,8 +438,17 @@ function runMigrations(database: Database.Database): void {
       })()
       dbLogger.info(`✓ Migration v${migration.version} complete`)
     } catch (error) {
-      dbLogger.error(`✗ Migration v${migration.version} (${migration.name}) FAILED:`, error)
-      throw error // Don't swallow real errors — surface disk full, corruption, etc.
+      // Tolerate "duplicate column" errors when schema.sql already includes the column.
+      // This happens on fresh DBs where CREATE TABLE includes columns that ALTER TABLE
+      // migrations try to re-add. Advance user_version so we don't retry.
+      const msg = error instanceof Error ? error.message : String(error)
+      if (msg.includes('duplicate column name')) {
+        dbLogger.warn(`⚠ Migration v${migration.version} skipped (column already exists)`)
+        database.pragma(`user_version = ${migration.version}`)
+      } else {
+        dbLogger.error(`✗ Migration v${migration.version} (${migration.name}) FAILED:`, error)
+        throw error // Don't swallow real errors — surface disk full, corruption, etc.
+      }
     }
   }
 

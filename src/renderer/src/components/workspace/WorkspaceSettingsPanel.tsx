@@ -1,5 +1,4 @@
 import {
-  FolderOpen,
   Settings,
   Zap,
   Lightbulb,
@@ -10,13 +9,13 @@ import {
   Cpu,
   ChevronLeft,
   ChevronRight,
-  X
+  X,
+  ScrollText
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 
 export type SettingsTab =
-  | 'workspace'
   | 'models'
   | 'repository'
   | 'team'
@@ -24,16 +23,17 @@ export type SettingsTab =
   | 'memory'
   | 'documents'
   | 'tokens'
+  | 'events'
 
-const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
-  { id: 'workspace', label: 'Workspace', icon: FolderOpen },
-  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
-  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
-  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
+export const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
-  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
+  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
+  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
+  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
   { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-cyan-400' },
-  { id: 'tokens', label: 'Tokens', icon: Zap }
+  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
+  { id: 'tokens', label: 'Tokens', icon: Zap },
+  { id: 'events', label: 'Events', icon: ScrollText, iconColor: 'text-rose-400' }
 ]
 
 interface WorkspaceSettingsPanelProps {

@@ -139,6 +139,36 @@ export class SkillRepository {
     db.prepare('DELETE FROM skills').run()
   }
 
+  upsertByFilename(data: CreateSkillInput): Skill {
+    const existing = this.findByFilename(data.filename)
+    if (existing) {
+      // Update existing — preserve active status
+      const db = getDatabase()
+      const row = db
+        .prepare(
+          `
+        UPDATE skills SET
+          name = COALESCE(?, name),
+          description = COALESCE(?, description),
+          file_path = COALESCE(?, file_path),
+          last_updated_date = COALESCE(?, last_updated_date),
+          updated_at = datetime('now')
+        WHERE filename = ?
+        RETURNING *
+      `
+        )
+        .get(
+          data.name,
+          data.description ?? null,
+          data.filePath,
+          data.lastUpdatedDate ?? null,
+          data.filename
+        ) as SkillRow
+      return mapRow(row)
+    }
+    return this.create(data)
+  }
+
   setActive(id: string, isActive: boolean): Skill {
     const db = getDatabase()
     const row = db

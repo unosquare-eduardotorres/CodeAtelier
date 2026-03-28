@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Lightbulb, X } from 'lucide-react'
+import { Lightbulb, X, CheckCircle2 } from 'lucide-react'
 import { useIdeaStore, useWorkspaceStore } from '@renderer/store'
 
 interface IdeaPopoverProps {
@@ -10,6 +10,7 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
   const { createIdea } = useIdeaStore()
   const { activeWorkspace } = useWorkspaceStore()
 
@@ -18,10 +19,10 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
     setIsSaving(true)
     try {
       await createIdea(activeWorkspace.id, title.trim(), description.trim())
-      onClose()
+      setSaved(true)
+      setTimeout(() => onClose(), 800)
     } catch (error) {
       console.error('Failed to save idea:', error)
-    } finally {
       setIsSaving(false)
     }
   }
@@ -55,49 +56,59 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
         </button>
       </div>
 
-      {/* Body */}
-      <div className="p-4 space-y-3">
-        <p className="text-xs text-gray-400 leading-relaxed">
-          Save this idea for later. You can find it in{' '}
-          <span className="text-gray-300 font-medium">Workspace Settings → Ideas</span>, then refine
-          it with &quot;Grill Me&quot; or convert it directly into a work item.
-        </p>
-        <input
-          type="text"
-          placeholder="Idea title..."
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="w-full bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/20 transition-colors"
-          autoFocus
-        />
-        <textarea
-          placeholder="Description (optional)..."
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          rows={3}
-          className="w-full bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/20 transition-colors resize-none"
-        />
-      </div>
-
-      {/* Footer */}
-      <div className="flex items-center justify-between px-4 py-3 border-t border-gray-700/50">
-        <span className="text-xs text-gray-500">⌘+Enter to save</span>
-        <div className="flex gap-2">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-gray-200 rounded-lg hover:bg-gray-700 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!title.trim() || isSaving}
-            className="px-3 py-1.5 text-xs font-medium text-yellow-900 bg-yellow-400 rounded-lg hover:bg-yellow-300 disabled:opacity-30 disabled:hover:bg-yellow-400 transition-colors"
-          >
-            {isSaving ? 'Saving...' : 'Save Idea'}
-          </button>
+      {saved ? (
+        /* Success feedback */
+        <div className="flex flex-col items-center justify-center py-8 gap-2 animate-in fade-in duration-200">
+          <CheckCircle2 size={28} className="text-green-400" />
+          <span className="text-sm font-medium text-green-300">Idea saved!</span>
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Body */}
+          <div className="p-4 space-y-3">
+            <p className="text-xs text-gray-400 leading-relaxed">
+              Save this idea for later. You can find it in{' '}
+              <span className="text-gray-300 font-medium">Workspace Settings → Ideas</span>, then
+              refine it with &quot;Grill Me&quot; or convert it directly into a work item.
+            </p>
+            <input
+              type="text"
+              placeholder="Idea title..."
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/20 transition-colors"
+              autoFocus
+            />
+            <textarea
+              placeholder="Description (optional)..."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              className="w-full bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/20 transition-colors resize-none"
+            />
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-700/50">
+            <span className="text-xs text-gray-500">⌘+Enter to save</span>
+            <div className="flex gap-2">
+              <button
+                onClick={onClose}
+                className="px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-gray-200 rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={!title.trim() || isSaving}
+                className="px-3 py-1.5 text-xs font-medium text-yellow-900 bg-yellow-400 rounded-lg hover:bg-yellow-300 disabled:opacity-30 disabled:hover:bg-yellow-400 transition-colors"
+              >
+                {isSaving ? 'Saving...' : 'Save Idea'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

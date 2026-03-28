@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useChatStore, useWorkspaceStore } from '@renderer/store'
+import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import {
   ChatItem,
   UnsavedChangesDialog,
@@ -13,26 +13,27 @@ import type { ConversationMode } from '../../../../shared/types'
 interface ChatSidebarProps {
   isCollapsed?: boolean
   onToggleCollapse?: () => void
+  onCreateIdea?: (data: { title: string; description?: string }) => void
 }
 
 export default function ChatSidebar({
   isCollapsed: externalCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  onCreateIdea
 }: ChatSidebarProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const {
-    conversations,
-    activeConversation,
     loadConversations,
     createConversation,
     selectConversation,
     closeConversation,
     renameConversation,
     sendMessage
-  } = useChatStore()
+  } = useChatActions()
+  const conversations = useChatStore((s) => s.conversations)
+  const activeConversation = useChatStore((s) => s.activeConversation)
 
   const [internalCollapsed, setInternalCollapsed] = useState(false)
-  const [conversationsLoaded, setConversationsLoaded] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [unsavedTarget, setUnsavedTarget] = useState<{
     id: string
@@ -41,7 +42,6 @@ export default function ChatSidebar({
   } | null>(null)
   const [completeFromUnsaved, setCompleteFromUnsaved] = useState<string | null>(null)
   const [showNewChatModal, setShowNewChatModal] = useState(false)
-  const autoCreateInFlight = useRef(false)
 
   const isCollapsed = externalCollapsed ?? internalCollapsed
   const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c))
@@ -49,35 +49,10 @@ export default function ChatSidebar({
   // Load conversations when workspace changes
   useEffect(() => {
     if (activeWorkspace) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setConversationsLoaded(false)
-      loadConversations(activeWorkspace.id).then(() => {
-        setConversationsLoaded(true)
-      })
+      loadConversations(activeWorkspace.id)
     }
   }, [activeWorkspace, loadConversations])
 
-  // Auto-create conversation when workspace is opened with no conversations
-  useEffect(() => {
-    if (
-      activeWorkspace &&
-      conversationsLoaded &&
-      conversations.length === 0 &&
-      !activeConversation &&
-      !autoCreateInFlight.current
-    ) {
-      autoCreateInFlight.current = true
-      createConversation(activeWorkspace.id).finally(() => {
-        autoCreateInFlight.current = false
-      })
-    }
-  }, [
-    activeWorkspace,
-    conversationsLoaded,
-    conversations.length,
-    activeConversation,
-    createConversation
-  ])
 
   const handleNewChat = (): void => {
     setShowNewChatModal(true)
@@ -104,9 +79,9 @@ export default function ChatSidebar({
     setShowNewChatModal(false)
   }
 
-  const sortedConversations = [...conversations].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  )
+  const sortedConversations = [...conversations]
+    .filter((c) => !c.title.startsWith('\u{1F4A1} Grill:'))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
   if (isCollapsed) {
     return (
@@ -132,7 +107,6 @@ export default function ChatSidebar({
           >
             <Plus size={14} />
           </button>
-
           {/* Conversation initials */}
           {sortedConversations.slice(0, 8).map((conv) => (
             <button
@@ -301,6 +275,7 @@ export default function ChatSidebar({
         isOpen={showNewChatModal}
         onClose={() => setShowNewChatModal(false)}
         onSubmit={handleCreateChat}
+        onCreateIdea={onCreateIdea}
       />
     </>
   )

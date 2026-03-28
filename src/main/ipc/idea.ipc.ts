@@ -164,6 +164,17 @@ export function registerIdeaIpc(): void {
     }
   )
 
+  // idea:saveGrillDecisions — save grill iteration state (score, description, history) as JSON
+  ipcMain.handle(
+    IPC_CHANNELS.IDEA_SAVE_GRILL_DECISIONS,
+    (event, args: { ideaId: string; decisions: string }) => {
+      validateSender(event)
+      if (!args?.ideaId) throw new Error('ideaId is required')
+      if (!args?.decisions) throw new Error('decisions is required')
+      return ideaRepository.saveGrillDecisions(args.ideaId, args.decisions)
+    }
+  )
+
   // idea:completeFromGrill — find the idea linked to a grill conversation and mark completed
   ipcMain.handle(
     IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL,

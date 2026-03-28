@@ -5,6 +5,9 @@ import type { AgentStatus } from '../../shared/types'
 import { buildEnvWithPath } from './env-utils'
 import { agentSessionRepository } from '../db/repositories'
 
+/** Circuit breaker — prevent infinite tool-calling loops (inspired by DevTeam's max_iterations) */
+const MAX_TOOL_CALLS_PER_INTERACTION = 75
+
 export interface StreamChunk {
   type: 'text' | 'tool_use' | 'tool_result' | 'error' | 'status'
   content?: string
@@ -58,6 +61,10 @@ export abstract class AgentBaseService extends EventEmitter {
   protected currentToolName: string | null = null
   protected currentToolInput: string = ''
   protected toolIdToName: Map<string, string> = new Map()
+  /** Track tool IDs already processed via streaming (content_block_start/stop) to skip duplicates from full messages */
+  protected processedToolIds: Set<string> = new Set()
+  /** Counts tool calls in the current interaction for circuit-breaker protection */
+  protected toolCallCount: number = 0
 
   /** Database session ID for token tracking */
   protected dbSessionId: string | null = null
@@ -148,10 +155,13 @@ export abstract class AgentBaseService extends EventEmitter {
           if (content) {
             for (const block of content) {
               if (block.type === 'text') {
-                this.emit('chunk', {
-                  type: 'text',
-                  content: block.text as string
-                } as StreamChunk)
+                // Only emit if content wasn't already streamed via content_block_delta/start
+                if (!this.hasEmittedContent) {
+                  this.emit('chunk', {
+                    type: 'text',
+                    content: block.text as string
+                  } as StreamChunk)
+                }
                 this.hasEmittedContent = true
               } else if (block.type === 'tool_use') {
                 const toolName = block.name as string
@@ -160,6 +170,10 @@ export abstract class AgentBaseService extends EventEmitter {
                 if (toolId) {
                   this.toolIdToName.set(toolId, toolName)
                 }
+                // Skip if already processed via content_block_start/stop streaming
+                if (toolId && this.processedToolIds.has(toolId)) {
+                  break
+                }
                 this.currentStatus = 'reviewing'
                 this.emit('statusUpdate', this.getStatus())
                 this.emit('chunk', {
@@ -167,6 +181,27 @@ export abstract class AgentBaseService extends EventEmitter {
                   toolName,
                   toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
                 } as StreamChunk)
+
+                // Plan file safety net (full-message path): When Claude CLI writes a plan to
+                // .claude/plans/ via its built-in plan mode, extract the content from the tool
+                // input and emit it as a ```plan block so the UI renders a PlanCard.
+                // The streaming path (content_block_start/stop) handles this via
+                // forwardChunkToRenderer instead — processedToolIds prevents duplication.
+                if (
+                  toolName === 'Write' &&
+                  toolInput &&
+                  typeof toolInput.file_path === 'string' &&
+                  (toolInput.file_path as string).includes('.claude/plans/') &&
+                  typeof toolInput.content === 'string'
+                ) {
+                  this.emit('chunk', {
+                    type: 'text',
+                    content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`
+                  } as StreamChunk)
+                  this.log.info(
+                    'Injected plan content from Write to .claude/plans/ (full-message path)'
+                  )
+                }
               }
             }
           }
@@ -191,6 +226,12 @@ export abstract class AgentBaseService extends EventEmitter {
             for (const block of userContent) {
               if (block.type === 'tool_result') {
                 const toolUseId = block.tool_use_id as string
+                // Skip if already handled by content_block_stop streaming
+                if (toolUseId && this.processedToolIds.has(toolUseId)) {
+                  this.processedToolIds.delete(toolUseId)
+                  this.toolIdToName.delete(toolUseId)
+                  break
+                }
                 const toolName = this.toolIdToName.get(toolUseId) ?? 'Unknown'
                 if (toolUseId) {
                   this.toolIdToName.delete(toolUseId)
@@ -213,6 +254,7 @@ export abstract class AgentBaseService extends EventEmitter {
             type: 'text',
             content: delta.text as string
           } as StreamChunk)
+          this.hasEmittedContent = true
         } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
           // Accumulate tool input for display
           this.currentToolInput += delta.partial_json as string
@@ -223,10 +265,39 @@ export abstract class AgentBaseService extends EventEmitter {
       case 'content_block_start': {
         const contentBlock = event.content_block as Record<string, unknown> | undefined
         if (contentBlock?.type === 'tool_use') {
+          this.toolCallCount++
+
+          // Circuit breaker: too many tool calls suggests an infinite loop
+          if (this.toolCallCount > MAX_TOOL_CALLS_PER_INTERACTION) {
+            this.log.error(
+              `Circuit breaker: ${this.toolCallCount} tool calls exceeded limit of ${MAX_TOOL_CALLS_PER_INTERACTION}`
+            )
+            this.currentStatus = 'failed'
+            this.emit('statusUpdate', this.getStatus())
+            this.emit('chunk', {
+              type: 'error',
+              error: `The agent made ${this.toolCallCount} tool calls, which suggests it got stuck in a loop. The response has been stopped. Try rephrasing your request.`
+            } as StreamChunk)
+            this.emit('complete')
+            return // Stop processing further events
+          }
+
           this.currentStatus = 'reviewing'
           this.currentToolName = contentBlock.name as string
           this.currentToolInput = ''
+          const toolId = contentBlock.id as string
+          if (toolId) {
+            this.processedToolIds.add(toolId)
+          }
           const toolInput = contentBlock.input as Record<string, unknown> | undefined
+
+          // Pre-fill with serialized input when the full input is available at start time.
+          // In this case, no input_json_delta events will follow, so currentToolInput
+          // would otherwise remain empty when content_block_stop fires.
+          if (toolInput && Object.keys(toolInput).length > 0) {
+            this.currentToolInput = JSON.stringify(toolInput)
+          }
+
           this.emit('statusUpdate', this.getStatus())
           this.emit('chunk', {
             type: 'tool_use',
@@ -238,6 +309,7 @@ export abstract class AgentBaseService extends EventEmitter {
             type: 'text',
             content: contentBlock.text as string
           } as StreamChunk)
+          this.hasEmittedContent = true
         }
         break
       }
@@ -275,9 +347,8 @@ export abstract class AgentBaseService extends EventEmitter {
       }
 
       case 'message_stop': {
-        this.currentStatus = 'idle'
-        this.emit('statusUpdate', this.getStatus())
-        this.emit('complete')
+        // No-op: message_stop fires between turns in multi-turn tool use.
+        // The 'result' event handles final status update + completion.
         break
       }
 

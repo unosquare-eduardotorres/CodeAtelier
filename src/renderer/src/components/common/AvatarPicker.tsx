@@ -52,16 +52,17 @@ export default function AvatarPicker({
             aria-checked={isSelected}
             aria-label={`Select ${avatar.label} avatar`}
             onClick={() => handleSelect(avatar.key)}
+            style={{ '--ring-color': avatar.defaultColor } as React.CSSProperties}
             className={`
               flex items-center justify-center p-1.5 rounded-xl
               transition-all duration-150 ease-out cursor-pointer
-              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base
+              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring-color)] focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base
               hover:scale-[1.08] active:scale-95
               motion-reduce:transition-none motion-reduce:hover:scale-100
               ${
                 isSelected
-                  ? 'ring-2 ring-primary ring-offset-2 ring-offset-surface-base scale-105 bg-primary/10'
-                  : 'hover:bg-surface-overlay'
+                  ? 'ring-2 ring-[var(--ring-color)] ring-offset-2 ring-offset-surface-base scale-105 bg-primary/10'
+                  : 'hover:bg-surface-overlay hover:ring-1 hover:ring-[var(--ring-color)]/50'
               }
             `}
           >

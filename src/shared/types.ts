@@ -139,6 +139,25 @@ export interface UpdateSpecialistInput {
   avatarUrl?: string | null
 }
 
+// ── Marketplace Models ──
+
+export interface MarketplaceSpecialist {
+  id: string
+  agentId: string
+  displayName: string
+  description: string
+  icon: string
+  color: string
+  model: string
+  tools: string[]
+  skills: Skill[]
+  isActive: boolean
+  isDeployed: boolean
+  alias: string | null
+  avatarUrl: string | null
+  priority: number
+}
+
 // ── Workspace Deploy Models ──
 
 /** Represents a skill directory discovered on the filesystem */
@@ -369,6 +388,60 @@ export interface GrillSummary {
   proposedTasks: GrillProposedTask[]
 }
 
+export interface GrillQuestionOption {
+  label: string
+  description?: string
+  recommended?: boolean
+}
+
+export interface GrillQuestion {
+  id: string
+  question: string
+  header?: string
+  options: GrillQuestionOption[]
+  multiSelect?: boolean
+  allowOther?: boolean
+}
+
+export interface GrillAnswerPayload {
+  questionId: string
+  selectedOptions: string[]
+  otherText?: string
+  skipped: boolean
+}
+
+export interface GrillEvaluation {
+  score: number
+  scoreLabel: string
+  feedback: string
+  questions: GrillQuestion[]
+}
+
+// ── Structured Plan Types ──
+export interface PlanStep {
+  number: number
+  title: string
+  description: string
+  file?: string
+  complexity?: 'low' | 'medium' | 'high'
+}
+
+export interface PlanSection {
+  heading: string
+  icon?: string
+  content: string
+  mermaid?: string
+}
+
+export interface StructuredPlan {
+  title: string
+  summary: string
+  sections?: PlanSection[]
+  steps?: PlanStep[]
+  files?: string[]
+  risks?: string[]
+}
+
 // ── Agent Session & Token Tracking ──
 export interface AgentSessionRecord {
   id: string
@@ -440,6 +513,12 @@ export interface MemoryFeedProgress {
   timestamp: number
 }
 
+export interface WorkspaceFeedTimestamps {
+  'claude-md'?: string
+  'codebase'?: string
+  'document'?: string
+}
+
 export interface MemoryFeedResult {
   success: boolean
   source: 'claude-md' | 'codebase' | 'document'
@@ -475,6 +554,7 @@ export interface Idea {
   grillConversationId?: string
   grillSummary?: string
   convertedConversationId?: string
+  grillDecisions?: string
   createdAt: string
   updatedAt: string
 }
@@ -542,6 +622,32 @@ export interface IpcChannels {
   'specialist:delete': { args: { id: string }; return: void }
   'specialist:assignSkill': { args: { specialistId: string; skillId: string }; return: void }
   'specialist:removeSkill': { args: { specialistId: string; skillId: string }; return: void }
+
+  // Specialist Marketplace
+  'specialist:deploy': {
+    args: { workspacePath: string; specialistId: string }
+    return: void
+  }
+  'specialist:undeploy': {
+    args: { workspacePath: string; specialistId: string }
+    return: void
+  }
+  'specialist:updateConfig': {
+    args: {
+      id: string
+      displayName?: string
+      icon?: string
+      color?: string
+      alias?: string | null
+      avatarUrl?: string | null
+      priority?: number
+    }
+    return: Specialist
+  }
+  'specialist:getMarketplace': {
+    args: { workspacePath: string }
+    return: MarketplaceSpecialist[]
+  }
 
   // Skills
   'skill:list': { args: void; return: Skill[] }
@@ -682,6 +788,14 @@ export interface IpcChannels {
   }
   'memory:feedCancel': { args: void; return: void }
   'memory:selectDocument': { args: void; return: string | null }
+  'memory:getFeedTimestamps': {
+    args: { workspaceId: string }
+    return: WorkspaceFeedTimestamps
+  }
+  'memory:regenerateClaudeMd': {
+    args: { workspacePath: string }
+    return: { success: boolean; content: string; existing: string | null; error?: string }
+  }
 
   // Dream (auto consolidation)
   'dream:trigger': { args: { workspaceId: string }; return: DreamRun }

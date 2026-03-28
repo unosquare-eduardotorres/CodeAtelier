@@ -10,19 +10,85 @@ const PLAN_MODE_SYSTEM_PROMPT = `Senior software architect. Plan mode (read-only
 Capabilities: analyze codebases, discuss architecture, brainstorm, create implementation plans.
 
 Rules:
-- Plans: use markdown headings, numbered steps, code blocks. Wrap in \`\`\`plan fence for UI rendering.
+- Plans: emit structured plan blocks using the format below. The UI renders them as rich cards with Build/Refine buttons.
+  CRITICAL: Always output plans directly in your response — NEVER use the Write tool to save plans to files. The UI cannot display file-based plans.
 - Multi-domain tasks: suggest parallel specialists or sequential coordination.
-- Diagrams: use \`\`\`mermaid for architecture, flows, state machines, sequences. One concept per diagram.
-  Types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph`
+- Diagrams: include mermaid definitions inline in the plan sections when the flow is complex.
+
+## Plan Block Format
+
+When presenting an implementation plan, wrap it in a \`\`\`plan fence with JSON:
+
+\`\`\`plan
+{
+  "title": "Feature Name or Plan Title",
+  "summary": "1-2 sentence executive summary of the plan",
+  "sections": [
+    {
+      "heading": "Section Name",
+      "icon": "🏗️",
+      "content": "Markdown content for this section. Can include **bold**, lists, code blocks, etc.",
+      "mermaid": "optional mermaid diagram definition for this section"
+    }
+  ],
+  "steps": [
+    {
+      "number": 1,
+      "title": "Step title",
+      "description": "What to do in this step",
+      "file": "src/path/to/file.ts",
+      "complexity": "low|medium|high"
+    }
+  ],
+  "files": ["src/file1.ts", "src/file2.ts"],
+  "risks": ["Risk 1", "Risk 2"]
+}
+\`\`\`
+
+If the plan is simple (no sections needed), you can still use plain markdown inside the plan fence — the UI will render it as-is.`
 
 const BUILD_MODE_SYSTEM_PROMPT = `Senior software engineer. Build mode (full read/write/execute access).
 
 Capabilities: read, write, edit files; run commands; implement features, fix bugs, refactor.
 
 Rules:
+- Plans: emit structured plan blocks using the format below. The UI renders them as rich cards with Build/Refine buttons. NEVER write plans to files — always output them directly in chat.
 - Multi-domain tasks: ask user to choose parallel specialists or sequential execution.
 - Diagrams: use \`\`\`mermaid for architecture, flows, state machines, sequences. One concept per diagram.
-  Types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph`
+  Types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph
+
+## Plan Block Format
+
+When presenting an implementation plan, wrap it in a \`\`\`plan fence with JSON:
+
+\`\`\`plan
+{
+  "title": "Feature Name or Plan Title",
+  "summary": "1-2 sentence executive summary of the plan",
+  "sections": [
+    {
+      "heading": "Section Name",
+      "icon": "🏗️",
+      "content": "Markdown content for this section. Can include **bold**, lists, code blocks, etc.",
+      "mermaid": "optional mermaid diagram definition for this section"
+    }
+  ],
+  "steps": [
+    {
+      "number": 1,
+      "title": "Step title",
+      "description": "What to do in this step",
+      "file": "src/path/to/file.ts",
+      "complexity": "low|medium|high"
+    }
+  ],
+  "files": ["src/file1.ts", "src/file2.ts"],
+  "risks": ["Risk 1", "Risk 2"]
+}
+\`\`\`
+
+If the plan is simple (no sections needed), you can still use plain markdown inside the plan fence — the UI will render it as-is.
+IMPORTANT: Always output plans directly in chat — never write them to files.`
 
 const DECOMPOSITION_SYSTEM_PROMPT = `You are a task decomposition and complexity scoring engine. Given a task summary and a list of available specialists, break the task into concrete sub-tasks AND score each sub-task's complexity.
 
@@ -187,18 +253,41 @@ Use these exact IDs in the \`specialists\` array:
 
 ## Grill Mode Protocol
 
-When the user activates grill mode (message starts with [GRILL MODE ACTIVATED]), switch to an interview-driven approach:
+When the user sends a grill evaluation (message starts with [GRILL MODE] or [GRILL ITERATION]),
+you must respond with a SINGLE structured evaluation block:
 
-1. Review all prior conversation context
-2. Identify every unresolved decision, ambiguity, or dependency
-3. Ask questions one at a time, providing your recommended answer for each
-4. If a question can be answered by exploring the codebase, do so instead of asking
-5. Track resolved decisions as you go
-6. When all branches are resolved, emit a grill summary block:
-
-\`\`\`grill-summary
-{"summary": "Brief overview of all resolved decisions", "proposedTasks": [{"title": "Task title", "description": "What to implement"}]}
+\`\`\`grill-evaluation
+{
+  "score": 45,
+  "scoreLabel": "Getting There",
+  "feedback": "The authentication approach is clear but deployment strategy and error handling need more definition.",
+  "questions": [
+    {
+      "id": "q1",
+      "question": "How should we handle authentication?",
+      "header": "Authentication Strategy",
+      "options": [
+        {"label": "OAuth 2.0 + PKCE", "description": "Industry standard for desktop apps", "recommended": true},
+        {"label": "API Key", "description": "Simpler but less secure"}
+      ],
+      "multiSelect": false,
+      "allowOther": true
+    }
+  ]
+}
 \`\`\`
+
+Rules:
+1. Score from 1-100 based on requirement completeness, clarity, and actionability
+2. Always include exactly 5 questions per evaluation
+3. Questions should target the weakest areas (what's dragging the score down)
+4. Mark exactly one recommended option per question
+5. If you can answer a question by exploring the codebase, incorporate your findings into the option descriptions
+6. Feedback should be 1-2 sentences explaining the score
+7. On subsequent iterations, acknowledge which areas improved and focus on remaining gaps
+8. Score of 85+ means the requirement is strong, but always provide 5 questions — the user decides when to stop
+9. Be a tough grader — don't give 85+ until the requirement truly covers edge cases, error handling, testing strategy, and deployment concerns
+10. Score labels: 0-20 "Needs Work", 21-40 "Early Stage", 41-60 "Getting There", 61-80 "Almost Ready", 81-100 "Ship It!"
 
 ## Memory Protocol
 
@@ -234,6 +323,48 @@ Do NOT emit memories for:
 - Ask clarifying questions when the request is ambiguous, but don't interrogate
 - Give one recommendation first, then alternatives if asked
 - Use code snippets to illustrate points, not walls of text
+
+## Plan Output Format
+
+When the user asks you to generate, create, or produce an implementation plan, you MUST respond with a structured plan block using this exact JSON format inside a \`\`\`\`plan fence:
+
+\`\`\`\`plan
+{
+  "title": "Plan Title",
+  "summary": "1-2 sentence executive summary",
+  "sections": [
+    {
+      "heading": "Phase 1: Foundation",
+      "icon": "🏗️",
+      "content": "Markdown content describing this phase. Include goals, scope, key decisions."
+    },
+    {
+      "heading": "Phase 2: Core Implementation",
+      "icon": "⚙️",
+      "content": "Markdown content for this phase."
+    }
+  ],
+  "steps": [
+    { "number": 1, "title": "Step title", "description": "What to do", "file": "src/path.ts", "complexity": "low" }
+  ],
+  "files": ["src/file1.ts", "src/file2.ts"],
+  "risks": ["Risk description"]
+}
+\`\`\`\`
+
+Rules:
+- ALWAYS use the \`\`\`\`plan JSON fence — NEVER write plans to files on disk and NEVER use the ExitPlanMode tool. Output plans directly in your response.
+- Break large plans into phases using sections (one section per phase)
+- Include steps with file paths and complexity estimates
+- The UI renders this as a rich interactive card the user can act on directly
+
+### Large Plan Execution Protocol
+
+When the user accepts a multi-phase plan for building, analyze the plan size:
+- If the plan has 3+ phases or 8+ steps, scope the handoff to ONLY the first phase
+- Tell the user: "This plan has [N] phases. I'll start with [Phase 1 name] first — once it's complete, we can continue with the remaining phases."
+- In the handoff block, include ONLY the files, decisions, and scope for the first phase
+- After Phase 1 completes, remind the user about the remaining phases
 `
 
 const GENERALIST_PLAN_MODE_SECTION = `
@@ -404,8 +535,7 @@ export class PromptBuilder {
     const activeSkills = skills.filter((s) => s.isActive)
     if (activeSkills.length === 0) return ''
 
-    const baseBudget =
-      budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 5000 : 3000
+    const baseBudget = budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 5000 : 3000
 
     // Selective skill loading: rank skills by relevance when >1 skill and we have task context
     let rankedSkills = activeSkills
@@ -615,6 +745,56 @@ export class PromptBuilder {
     }
 
     return context
+  }
+
+  // ── Prompt Size Estimation (Strategy: prevent context overflow) ──
+
+  /**
+   * Estimate token count from character length.
+   * Rule of thumb: ~4 characters per token for English text / code.
+   * Returns a conservative (high) estimate.
+   */
+  static estimateTokens(text: string): number {
+    return Math.ceil(text.length / 3.5) // Slightly conservative — 3.5 chars/token
+  }
+
+  /** Token budget thresholds per model tier */
+  static readonly TOKEN_BUDGETS: Record<string, { warn: number; max: number }> = {
+    haiku: { warn: 30_000, max: 50_000 },
+    sonnet: { warn: 60_000, max: 100_000 },
+    opus: { warn: 100_000, max: 180_000 }
+  } as const
+
+  /**
+   * Check if a prompt exceeds safe size for the target model.
+   * Returns warning/error info if the prompt is too large.
+   */
+  static checkPromptSize(
+    systemPrompt: string,
+    userPrompt: string,
+    modelTier: string
+  ): { ok: boolean; estimatedTokens: number; warning?: string } {
+    const totalChars = systemPrompt.length + userPrompt.length
+    const estimatedTokens = PromptBuilder.estimateTokens(systemPrompt + userPrompt)
+    const budget = PromptBuilder.TOKEN_BUDGETS[modelTier] ?? PromptBuilder.TOKEN_BUDGETS.sonnet
+
+    if (estimatedTokens > budget.max) {
+      return {
+        ok: false,
+        estimatedTokens,
+        warning: `Prompt exceeds ${modelTier} max budget: ~${estimatedTokens} tokens > ${budget.max} limit (${totalChars} chars). Context will be truncated by the model.`
+      }
+    }
+
+    if (estimatedTokens > budget.warn) {
+      return {
+        ok: true,
+        estimatedTokens,
+        warning: `Prompt approaching ${modelTier} budget: ~${estimatedTokens} tokens > ${budget.warn} warning threshold (${totalChars} chars)`
+      }
+    }
+
+    return { ok: true, estimatedTokens }
   }
 }
 

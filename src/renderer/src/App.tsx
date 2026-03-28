@@ -4,7 +4,7 @@ import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
 import { WelcomeModal } from '@renderer/components/common'
 import {
   useWorkspaceStore,
-  useChatStore,
+  useChatActions,
   useAgentStore,
   useUpdateStore,
   useMemoryStore,
@@ -18,7 +18,11 @@ const isPixelOfficePopout =
   new URLSearchParams(window.location.search).get('view') === 'pixel-office'
 
 function App(): React.JSX.Element {
-  const { loadWorkspaces, setOrchestratorReady } = useWorkspaceStore()
+  // Workspace actions (stable refs — individual selectors prevent full-store re-renders)
+  const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces)
+  const setOrchestratorReady = useWorkspaceStore((s) => s.setOrchestratorReady)
+
+  // Chat actions (already uses useShallow internally)
   const {
     appendStreamChunk,
     finalizeStream,
@@ -28,18 +32,29 @@ function App(): React.JSX.Element {
     setTaskPlan,
     updateTaskProgress,
     setCompactSuggestion,
-    endGrillSession
-  } = useChatStore()
-  const { updateStatus } = useAgentStore()
-  const { setAvailable, setNotAvailable, setDownloaded, setProgress, setError } = useUpdateStore()
-  const { onFeedProgress: onMemoryFeedProgress } = useMemoryStore()
-  const { onProgress: onDreamProgress } = useDreamStore()
-  const {
-    isLoading: isProfileLoading,
-    hasCompletedWelcome,
-    loadProfile,
-    saveProfile
-  } = useProfileStore()
+    endGrillSession,
+    setGrillQuestions
+  } = useChatActions()
+
+  // Agent actions
+  const updateStatus = useAgentStore((s) => s.updateStatus)
+
+  // Update actions
+  const setAvailable = useUpdateStore((s) => s.setAvailable)
+  const setNotAvailable = useUpdateStore((s) => s.setNotAvailable)
+  const setDownloaded = useUpdateStore((s) => s.setDownloaded)
+  const setProgress = useUpdateStore((s) => s.setProgress)
+  const setError = useUpdateStore((s) => s.setError)
+
+  // Memory & Dream actions
+  const onMemoryFeedProgress = useMemoryStore((s) => s.onFeedProgress)
+  const onDreamProgress = useDreamStore((s) => s.onProgress)
+
+  // Profile state + actions
+  const isProfileLoading = useProfileStore((s) => s.isLoading)
+  const hasCompletedWelcome = useProfileStore((s) => s.hasCompletedWelcome)
+  const loadProfile = useProfileStore((s) => s.loadProfile)
+  const saveProfile = useProfileStore((s) => s.saveProfile)
 
   const handleWelcomeComplete = useCallback(
     async (displayName: string, avatarKey: string) => {
@@ -96,6 +111,10 @@ function App(): React.JSX.Element {
 
     const unsubGrillComplete = window.api.onGrillComplete((data) => {
       endGrillSession(data.summary, data.proposedTasks)
+    })
+
+    const unsubGrillQuestion = window.api.onGrillQuestion((data) => {
+      setGrillQuestions(data.questions)
     })
 
     const unsubTaskPlan = window.api.onTaskPlan((data) => {
@@ -160,6 +179,7 @@ function App(): React.JSX.Element {
       unsubComplete()
       unsubHandoff()
       unsubGrillComplete()
+      unsubGrillQuestion()
       unsubTaskPlan()
       unsubTaskProgress()
       unsubReady()
@@ -186,6 +206,7 @@ function App(): React.JSX.Element {
     setOrchestratorReady,
     setCompactSuggestion,
     endGrillSession,
+    setGrillQuestions,
     setAvailable,
     setNotAvailable,
     setDownloaded,

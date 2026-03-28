@@ -6,3 +6,5 @@ out
 *.log*
 *.tgz
 .claude/worktrees/
+e2e/screenshots/
+e2e/test-results/

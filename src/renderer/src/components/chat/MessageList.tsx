@@ -1,8 +1,8 @@
-import { useShallow } from 'zustand/react/shallow'
 import { MessageSquarePlus } from 'lucide-react'
-import { useChatStore } from '@renderer/store'
+import { useChatStore, useChatActions, useProfileStore } from '@renderer/store'
+import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
 import { useAutoScroll } from '@renderer/hooks'
-import { MessageBubble, HandoffIndicator, TaskPlanCard } from '@renderer/components/chat'
+import { MessageBubble, HandoffIndicator, TaskPlanCard, GrillQuestionCard } from '@renderer/components/chat'
 import FloatingRobots from './FloatingRobots'
 
 function CompactSuggestionBanner({
@@ -50,17 +50,19 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const activeTaskPlan = useChatStore((s) => s.activeTaskPlan)
   const isExecutingPlan = useChatStore((s) => s.isExecutingPlan)
   const compactSuggestion = useChatStore((s) => s.compactSuggestion)
+  const pendingGrillQuestions = useChatStore((s) => s.grillSession?.pendingQuestions ?? null)
+  const hasPendingGrillQuestions = (pendingGrillQuestions?.length ?? 0) > 0
 
-  const { taskProgress, executePlan, clearTaskPlan, setCompactSuggestion, sendMessage } =
-    useChatStore(
-      useShallow((s) => ({
-        taskProgress: s.taskProgress,
-        executePlan: s.executePlan,
-        clearTaskPlan: s.clearTaskPlan,
-        setCompactSuggestion: s.setCompactSuggestion,
-        sendMessage: s.sendMessage
-      }))
-    )
+  const { executePlan, clearTaskPlan, setCompactSuggestion, sendMessage, submitGrillAnswers, skipAllGrillQuestions } =
+    useChatActions()
+  const taskProgress = useChatStore((s) => s.taskProgress)
+
+  const generalistAlias = useProfileStore((s) => {
+    const alias = s.coreAgentAliases.find((a) => a.agentRole === 'generalist')
+    return alias?.alias || CORE_AGENT_DEFAULTS.generalist.displayName
+  })
+
+  const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
 
   const scrollRef = useAutoScroll([messages.length, streamingContent])
 
@@ -72,11 +74,12 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           <MessageSquarePlus size={24} className="text-primary-text" />
         </div>
         <h3 className="relative z-10 text-lg font-medium text-text-secondary mb-2">
-          Start a conversation
+          {userName ? `What are we building, ${userName}?` : 'Start a conversation'}
         </h3>
         <p className="relative z-10 text-sm text-text-muted max-w-md">
-          Chat with your AI development partner. Ask questions, brainstorm ideas, review code, or
-          describe what you want built — the generalist will handle it or hand off to specialists.
+          {userName
+            ? `Ask anything, brainstorm ideas, or describe what you want built — ${generalistAlias} and the specialists are standing by.`
+            : `Chat with your AI development partner. Ask questions, brainstorm ideas, review code, or describe what you want built — ${generalistAlias} will handle it or hand off to specialists.`}
         </p>
       </div>
     )
@@ -89,8 +92,17 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         ref={scrollRef}
         className="relative z-10 flex-1 overflow-y-auto px-6 py-4 space-y-4 h-full"
       >
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} searchHighlight={searchQuery} />
+        {messages.map((msg, idx) => (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            searchHighlight={searchQuery}
+            suppressInlineGrillCard={
+              hasPendingGrillQuestions &&
+              msg.role !== 'user' &&
+              idx === messages.length - 1
+            }
+          />
         ))}
 
         {/* Handoff indicator — shown when generalist triggers a handoff */}
@@ -125,6 +137,19 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             }}
             onDismiss={() => setCompactSuggestion(null)}
           />
+        )}
+
+        {/* Store-driven Grill Question Card — authoritative rendering */}
+        {hasPendingGrillQuestions && pendingGrillQuestions && (
+          <div className="flex justify-start px-4">
+            <div className="max-w-[85%]">
+              <GrillQuestionCard
+                questions={pendingGrillQuestions}
+                onSubmit={submitGrillAnswers}
+                onSkipAll={skipAllGrillQuestions}
+              />
+            </div>
+          </div>
         )}
 
         {/* Thinking indicator: shows when streaming but no content yet */}

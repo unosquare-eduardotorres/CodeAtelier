@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import {
   ArrowLeft,
-  FolderOpen,
   Settings,
   Zap,
   Lightbulb,
@@ -16,9 +15,9 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
-import WorkspaceGeneralTab from './WorkspaceGeneralTab'
 import TokenUsagePage from './TokenUsagePage'
 import IdeasList from './IdeasList'
+import GrillPage from './GrillPage'
 import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
@@ -33,7 +32,6 @@ import SyncBanner from '@renderer/components/settings/SyncBanner'
 import SyncReviewModal from '@renderer/components/settings/SyncReviewModal'
 
 type SettingsTab =
-  | 'workspace'
   | 'models'
   | 'repository'
   | 'team'
@@ -43,7 +41,6 @@ type SettingsTab =
   | 'tokens'
 
 const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
-  { id: 'workspace', label: 'Workspace', icon: FolderOpen },
   { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
   { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
   { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
@@ -60,8 +57,15 @@ interface WorkspaceSettingsPageProps {
 export default function WorkspaceSettingsPage({
   onBack
 }: WorkspaceSettingsPageProps): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('workspace')
+  const [activeTab, setActiveTab] = useState<SettingsTab>('models')
   const [showSyncReview, setShowSyncReview] = useState(false)
+  const [activeGrill, setActiveGrill] = useState<{
+    ideaId: string
+    conversationId: string
+    ideaTitle: string
+    ideaDescription?: string
+    isNewSession?: boolean
+  } | null>(null)
   const { activeWorkspace } = useWorkspaceStore()
 
   const {
@@ -183,7 +187,7 @@ export default function WorkspaceSettingsPage({
         </nav>
 
         {/* Content area */}
-        <div className="flex-1 overflow-y-auto">
+        <div className={`flex-1 ${activeTab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           {/* Delete All buttons for team tab */}
           {activeTab === 'team' && workspacePath && !needsActivation && !isActivating && (
             <div className="px-6 pt-4 flex justify-end gap-2">
@@ -220,7 +224,6 @@ export default function WorkspaceSettingsPage({
             </div>
           )}
 
-          {activeTab === 'workspace' && <WorkspaceGeneralTab />}
           {activeTab === 'models' && <ModelConfigTab />}
           {activeTab === 'repository' && <RepositorySettingsTab />}
 
@@ -254,29 +257,46 @@ export default function WorkspaceSettingsPage({
                       />
                     </div>
                   )}
-                  {!needsActivation && (
-                    <div className="flex-1 min-h-0">
-                      <TeamPage workspacePath={workspacePath} />
-                    </div>
-                  )}
+                  <div className="flex-1 min-h-0">
+                    <TeamPage workspacePath={workspacePath} />
+                  </div>
                 </>
               )}
             </div>
           )}
 
-          {activeTab === 'ideas' && (
-            <div className="p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <Lightbulb size={16} className="text-yellow-400" />
-                <h3 className="text-sm font-semibold text-text-primary">Ideas</h3>
+          {activeTab === 'ideas' &&
+            (activeGrill ? (
+              <GrillPage
+                ideaId={activeGrill.ideaId}
+                conversationId={activeGrill.conversationId}
+                ideaTitle={activeGrill.ideaTitle}
+                ideaDescription={activeGrill.ideaDescription}
+                isNewSession={activeGrill.isNewSession}
+                onBack={() => setActiveGrill(null)}
+                onComplete={() => {
+                  setActiveGrill(null)
+                  onBack()
+                }}
+              />
+            ) : (
+              <div className="p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Lightbulb size={16} className="text-yellow-400" />
+                  <h3 className="text-sm font-semibold text-text-primary">Ideas</h3>
+                </div>
+                <p className="text-xs text-text-secondary mb-4">
+                  Captured ideas for future work items. Refine them with &quot;Grill Me&quot; or
+                  convert directly into conversations.
+                </p>
+                <IdeasList
+                  onNavigateToChat={onBack}
+                  onOpenGrillSession={(ideaId, conversationId, ideaTitle, isNewSession, ideaDescription) =>
+                    setActiveGrill({ ideaId, conversationId, ideaTitle, ideaDescription, isNewSession })
+                  }
+                />
               </div>
-              <p className="text-xs text-text-secondary mb-4">
-                Captured ideas for future work items. Refine them with &quot;Grill Me&quot; or
-                convert directly into conversations.
-              </p>
-              <IdeasList onNavigateToChat={onBack} />
-            </div>
-          )}
+            ))}
           {activeTab === 'memory' && <MemorySettingsPage />}
           {activeTab === 'documents' && <DocumentsPage />}
           {activeTab === 'tokens' && <TokenUsagePage />}

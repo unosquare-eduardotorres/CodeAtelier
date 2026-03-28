@@ -1,4 +1,6 @@
 import type { BrowserWindow } from 'electron'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { ipcMain, dialog } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { MemoryType } from '../../shared/types'
@@ -132,6 +134,37 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     validateSender(event)
     memoryFeedService.shutdown()
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_GET_FEED_TIMESTAMPS,
+    (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      if (!args.workspaceId) throw new Error('Workspace ID is required')
+      const settings = workspaceRepository.getSettings(args.workspaceId)
+      return (settings as Record<string, unknown>).lastFed ?? {}
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_REGENERATE_CLAUDE_MD,
+    async (event, args: { workspacePath: string }) => {
+      validateSender(event)
+      if (!args.workspacePath) throw new Error('Workspace path is required')
+
+      // Read existing CLAUDE.md for diff comparison
+      let existing: string | null = null
+      try {
+        existing = readFileSync(join(args.workspacePath, 'CLAUDE.md'), 'utf-8')
+      } catch {
+        // No existing file
+      }
+
+      const result = await memoryFeedService.regenerateClaudeMd(args.workspacePath, (progress) => {
+        mainWindow.webContents.send(IPC_CHANNELS.MEMORY_FEED_PROGRESS, progress)
+      })
+      return { ...result, existing }
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.MEMORY_SELECT_DOCUMENT, async (event) => {
     validateSender(event)

@@ -9,7 +9,8 @@ import {
 import {
   generalistService,
   orchestratorService,
-  specialistPoolService
+  specialistPoolService,
+  costTrackerService
 } from '../services'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -23,6 +24,7 @@ import type {
 import { memoryService } from '../services/memory.service'
 import { buildEnvWithPath } from '../services/env-utils'
 import { chatIpcLogger } from '../logger'
+import { eventLoggerService } from '../services/event-logger.service'
 import { validateSender } from './validate-sender'
 import { forwardChunkToRenderer, isMemoryEnabled, isPostReviewEnabled } from './chat-shared'
 
@@ -137,6 +139,24 @@ export async function runLegacyOrchestrator(
 }
 
 export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
+  // ── Forward specialist pool events to renderer ──
+  specialistPoolService.on('abandonmentDetected', (data) => {
+    mainWindow.webContents.send(IPC_CHANNELS.AGENT_ABANDONMENT_DETECTED, data)
+  })
+
+  specialistPoolService.on('gateFailure', (data) => {
+    mainWindow.webContents.send(IPC_CHANNELS.AGENT_GATE_FAILURE, data)
+  })
+
+  // ── Forward cost tracker budget events to renderer ──
+  costTrackerService.on('budgetWarning', (data) => {
+    mainWindow.webContents.send(IPC_CHANNELS.COST_BUDGET_WARNING, data)
+  })
+
+  costTrackerService.on('budgetExceeded', (data) => {
+    mainWindow.webContents.send(IPC_CHANNELS.COST_BUDGET_EXCEEDED, data)
+  })
+
   // ── Execute task plan (user chose sequential or parallel) ──
   ipcMain.handle(
     IPC_CHANNELS.CHAT_EXECUTE_PLAN,
@@ -150,6 +170,13 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       log.info(
         `Executing plan: strategy=${strategy}, tasks=${tasks.length}, conversation=${conversationId}`
       )
+
+      // ── Event: plan execution started ──
+      eventLoggerService.logPlanExecutionStarted({
+        conversationId,
+        strategy,
+        taskCount: tasks.length
+      })
 
       // Determine mode from conversation
       const conversation = conversationRepository.findById(conversationId)
@@ -209,6 +236,13 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
 
       const onAllComplete = (): void => {
         log.info('All specialist tasks completed')
+
+        // ── Event: plan execution completed ──
+        eventLoggerService.logPlanExecutionCompleted({
+          conversationId,
+          strategy,
+          taskCount: tasks.length
+        })
 
         // Save a summary message
         const summaryLines = tasks
@@ -292,6 +326,14 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         }
       } catch (error) {
         log.error('Plan execution failed:', error)
+
+        // ── Event: plan execution failed ──
+        eventLoggerService.logPlanExecutionFailed({
+          conversationId,
+          strategy,
+          error: (error as Error).message
+        })
+
         const errorMsg = `**Execution Error:** ${(error as Error).message}`
         const savedMsg = messageRepository.create(conversationId, 'coordinator', errorMsg)
 

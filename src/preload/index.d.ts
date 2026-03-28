@@ -24,10 +24,12 @@ import type {
   AgentWorktree,
   MergeAllResult,
   GrillProposedTask,
+  GrillQuestion,
   Memory,
   MemoryType,
   MemoryFeedProgress,
   MemoryFeedResult,
+  WorkspaceFeedTimestamps,
   DreamRun,
   DreamProgress,
   TokenSummary,
@@ -36,7 +38,8 @@ import type {
   DocFile,
   RepoInfo,
   UserProfile,
-  CoreAgentAlias
+  CoreAgentAlias,
+  MarketplaceSpecialist
 } from '../shared/types'
 
 interface Api {
@@ -106,6 +109,20 @@ interface Api {
   deleteSpecialist: (args: { id: string }) => Promise<void>
   assignSkillToSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
   removeSkillFromSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
+
+  // Specialist Marketplace
+  deploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
+  undeploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
+  updateSpecialistConfig: (args: {
+    id: string
+    displayName?: string
+    icon?: string
+    color?: string
+    alias?: string | null
+    avatarUrl?: string | null
+    priority?: number
+  }) => Promise<Specialist>
+  getMarketplace: (args: { workspacePath: string }) => Promise<MarketplaceSpecialist[]>
 
   // Skills
   listSkills: () => Promise<Skill[]>
@@ -181,7 +198,11 @@ interface Api {
   // Memory Feed
   memorySelectDocument: () => Promise<string | null>
   memoryFeedCancel: () => Promise<void>
+  memoryGetFeedTimestamps: (args: { workspaceId: string }) => Promise<WorkspaceFeedTimestamps>
   memoryFeedClaudeMd: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
+  memoryRegenerateClaudeMd: (args: {
+    workspacePath: string
+  }) => Promise<{ success: boolean; content: string; existing: string | null; error?: string }>
   memoryFeedCodebase: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
   memoryFeedDocument: (args: {
     workspacePath: string
@@ -224,6 +245,10 @@ interface Api {
     conversationId: string
     summary?: string
   }) => Promise<Idea | null>
+  saveIdeaGrillDecisions: (args: {
+    ideaId: string
+    decisions: string
+  }) => Promise<Idea>
 
   // Auto-update
   checkForUpdate: () => Promise<void>
@@ -267,6 +292,18 @@ interface Api {
       conversationId: string
       summary: string
       proposedTasks: GrillProposedTask[]
+    }) => void
+  ) => () => void
+  onGrillQuestion: (
+    callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
+  ) => () => void
+  onGrillEvaluation: (
+    callback: (data: {
+      conversationId: string
+      score: number
+      scoreLabel: string
+      feedback: string
+      questions: GrillQuestion[]
     }) => void
   ) => () => void
   onTaskPlan: (callback: (data: TaskPlan) => void) => () => void
@@ -344,6 +381,118 @@ interface Api {
     message: string
     data?: unknown[]
   }) => void
+
+  // Zoom
+  zoomIn: () => Promise<number>
+  zoomOut: () => Promise<number>
+  zoomReset: () => Promise<number>
+  zoomSet: (factor: number) => Promise<number>
+  zoomGet: () => Promise<number>
+  onZoomChanged: (callback: (factor: number) => void) => () => void
+
+  // Shell
+  showItemInFolder: (filePath: string) => Promise<void>
+
+  // Checkpoints
+  listCheckpoints: (args: { conversationId: string }) => Promise<
+    { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
+  >
+  restoreCheckpoint: (args: {
+    checkpointId: string
+  }) => Promise<{ success: boolean; message: string }>
+
+  // Cost tracking
+  getCostSummary: (args: { workspaceId: string }) => Promise<{
+    totalCostCents: number
+    totalTokens: number
+    sessionCount: number
+    byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
+  }>
+  checkBudget: (args: { workspaceId: string }) => Promise<{
+    currentCostCents: number
+    dailyBudgetCents: number
+    sessionBudgetCents: number
+    dailyPercentUsed: number
+    dailyWarning: boolean
+    dailyExceeded: boolean
+  }>
+  onBudgetWarning: (
+    callback: (data: {
+      workspaceId: string
+      currentCostCents: number
+      budgetCents: number
+      percentUsed: number
+    }) => void
+  ) => () => void
+  onBudgetExceeded: (
+    callback: (data: {
+      workspaceId: string
+      currentCostCents: number
+      budgetCents: number
+    }) => void
+  ) => () => void
+
+  // Events (audit log)
+  getRecentEvents: (args?: { limit?: number }) => Promise<
+    {
+      id: string
+      sessionId: string | null
+      conversationId: string | null
+      workspaceId: string | null
+      eventType: string
+      category: string
+      message: string
+      dataJson: string
+      agentId: string | null
+      model: string | null
+      createdAt: string
+    }[]
+  >
+  getConversationEvents: (args: {
+    conversationId: string
+    limit?: number
+  }) => Promise<
+    {
+      id: string
+      sessionId: string | null
+      conversationId: string | null
+      workspaceId: string | null
+      eventType: string
+      category: string
+      message: string
+      dataJson: string
+      agentId: string | null
+      model: string | null
+      createdAt: string
+    }[]
+  >
+
+  // Gate results
+  getGateResults: (args: { conversationId: string }) => Promise<
+    {
+      id: string
+      sessionId: string | null
+      conversationId: string | null
+      taskId: string | null
+      agentId: string | null
+      gateType: string
+      passed: boolean
+      summary: string
+      createdAt: string
+    }[]
+  >
+
+  // Agent events (specialist pool)
+  onAbandonmentDetected: (
+    callback: (data: { taskId: string; specialist: string; pattern: string }) => void
+  ) => () => void
+  onGateFailure: (
+    callback: (data: {
+      taskId: string
+      specialist: string
+      gate: { type: string; passed: boolean; summary: string }
+    }) => void
+  ) => () => void
 }
 
 declare global {

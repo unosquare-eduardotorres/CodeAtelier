@@ -264,6 +264,48 @@ export class SpecialistRepository {
     return rows.map(mapRow)
   }
 
+  upsertByAgentId(data: CreateSpecialistInput): Specialist {
+    const db = getDatabase()
+    const existing = this.findByAgentId(data.agentId)
+    if (existing) {
+      // Update existing — preserve user customizations (alias, avatarUrl)
+      const row = db
+        .prepare(
+          `
+        UPDATE specialists SET
+          display_name = COALESCE(?, display_name),
+          icon = COALESCE(?, icon),
+          color = COALESCE(?, color),
+          prompt = COALESCE(?, prompt),
+          priority = COALESCE(?, priority),
+          source_yaml = COALESCE(?, source_yaml),
+          updated_at = datetime('now')
+        WHERE agent_id = ?
+        RETURNING *
+      `
+        )
+        .get(
+          data.displayName,
+          data.icon ?? null,
+          data.color ?? null,
+          data.prompt ?? null,
+          data.priority ?? null,
+          data.sourceYaml ?? null,
+          data.agentId
+        ) as SpecialistRow
+      return mapRow(row)
+    }
+    return this.create(data)
+  }
+
+  findAllWithSkills(): (Specialist & { skills: Skill[] })[] {
+    const specialists = this.findAll()
+    return specialists.map((s) => ({
+      ...s,
+      skills: this.getSkills(s.id)
+    }))
+  }
+
   canDelete(id: string): { allowed: boolean; blockingSkills?: string[] } {
     const db = getDatabase()
     // Find active skills where this specialist is the ONLY specialist assigned

@@ -21,6 +21,8 @@ export const IPC_CHANNELS = {
   CHAT_COMPACT: 'chat:compact',
   CHAT_HANDOFF: 'chat:handoff',
   CHAT_GRILL_COMPLETE: 'chat:grillComplete',
+  CHAT_GRILL_QUESTION: 'chat:grillQuestion',
+  CHAT_GRILL_EVALUATION: 'chat:grillEvaluation',
   CHAT_TASK_PLAN: 'chat:taskPlan',
   CHAT_EXECUTE_PLAN: 'chat:executePlan',
   CHAT_TASK_PROGRESS: 'chat:taskProgress',
@@ -49,6 +51,12 @@ export const IPC_CHANNELS = {
   SPECIALIST_DELETE: 'specialist:delete',
   SPECIALIST_ASSIGN_SKILL: 'specialist:assignSkill',
   SPECIALIST_REMOVE_SKILL: 'specialist:removeSkill',
+
+  // Specialist Marketplace
+  SPECIALIST_DEPLOY: 'specialist:deploy',
+  SPECIALIST_UNDEPLOY: 'specialist:undeploy',
+  SPECIALIST_UPDATE_CONFIG: 'specialist:updateConfig',
+  SPECIALIST_GET_MARKETPLACE: 'specialist:getMarketplace',
 
   // Skills
   SKILL_LIST: 'skill:list',
@@ -121,6 +129,8 @@ export const IPC_CHANNELS = {
   MEMORY_FEED_PROGRESS: 'memory:feedProgress',
   MEMORY_FEED_CANCEL: 'memory:feedCancel',
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
+  MEMORY_GET_FEED_TIMESTAMPS: 'memory:getFeedTimestamps',
+  MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
 
   // Dream (auto consolidation)
   DREAM_TRIGGER: 'dream:trigger',
@@ -145,6 +155,7 @@ export const IPC_CHANNELS = {
   IDEA_START_GRILL: 'idea:startGrill',
   IDEA_CONVERT_DIRECT: 'idea:convertDirect',
   IDEA_COMPLETE_FROM_GRILL: 'idea:completeFromGrill',
+  IDEA_SAVE_GRILL_DECISIONS: 'idea:saveGrillDecisions',
 
   // Documents
   DOCS_LIST: 'docs:list',
@@ -185,7 +196,40 @@ export const IPC_CHANNELS = {
   CORE_AGENT_UPSERT: 'coreAgent:upsert',
 
   // Renderer logging bridge
-  LOG_FROM_RENDERER: 'log:fromRenderer'
+  LOG_FROM_RENDERER: 'log:fromRenderer',
+
+  // Zoom
+  ZOOM_IN: 'zoom:in',
+  ZOOM_OUT: 'zoom:out',
+  ZOOM_RESET: 'zoom:reset',
+  ZOOM_SET: 'zoom:set',
+  ZOOM_GET: 'zoom:get',
+  ZOOM_CHANGED: 'zoom:changed',
+
+  // Shell
+  SHELL_SHOW_ITEM_IN_FOLDER: 'shell:showItemInFolder',
+
+  // Checkpoints
+  CHECKPOINT_LIST: 'checkpoint:list',
+  CHECKPOINT_RESTORE: 'checkpoint:restore',
+
+  // Cost tracking
+  COST_GET_WORKSPACE_SUMMARY: 'cost:getWorkspaceSummary',
+  COST_CHECK_BUDGET: 'cost:checkBudget',
+  COST_BUDGET_WARNING: 'cost:budgetWarning',
+  COST_BUDGET_EXCEEDED: 'cost:budgetExceeded',
+
+  // Events (audit log)
+  EVENTS_GET_RECENT: 'events:getRecent',
+  EVENTS_GET_BY_CONVERSATION: 'events:getByConversation',
+
+  // Gate results
+  GATE_RESULTS_GET: 'gate:getResults',
+
+  // Agent events (new from audit)
+  AGENT_ABANDONMENT_DETECTED: 'agent:abandonmentDetected',
+  AGENT_GATE_FAILURE: 'agent:gateFailure',
+  AGENT_MODEL_ESCALATED: 'agent:modelEscalated'
 } as const
 
 export const CONVERSATION_MODES = {
@@ -207,14 +251,14 @@ export const CONVERSATION_MODES = {
 export const ACTIVATION_MODEL_ID = 'claude-sonnet-4-20250514' as const
 
 /** Fast model used for memory feed summarization tasks (structured extraction) */
-export const MEMORY_FEED_MODEL_ID = 'claude-haiku-4-20250414' as const
+export const MEMORY_FEED_MODEL_ID = 'claude-sonnet-4-20250514' as const
 
 /** Model used for dream consolidation cycles */
-export const DREAM_MODEL_ID = 'claude-haiku-4-20250414' as const
+export const DREAM_MODEL_ID = 'claude-sonnet-4-20250514' as const
 
 /** Model IDs per complexity tier — used for specialist routing */
 export const MODEL_TIER_IDS = {
-  haiku: 'claude-haiku-4-20250414',
+  haiku: 'claude-sonnet-4-20250514',
   sonnet: 'claude-sonnet-4-20250514',
   opus: 'claude-opus-4-20250514'
 } as const
@@ -226,17 +270,20 @@ export const COMPLEXITY_THRESHOLDS = {
   complex: { min: 9, max: 14 }
 } as const
 
+/**
+ * @deprecated Use database-backed agent IDs instead.
+ * Kept temporarily for backward compatibility in generalist/orchestrator services.
+ */
+export const AGENT_IDS = {
+  GENERALIST: 'generalist',
+  ORCHESTRATOR: 'orchestrator'
+} as const
+
 /** Default cost preference for new workspaces */
 export const DEFAULT_COST_PREFERENCE = 'balanced' as const
 
 /** Available Claude models for configuration UI */
 export const AVAILABLE_MODELS = [
-  {
-    id: 'claude-haiku-4-20250414',
-    label: 'Haiku',
-    tier: 'haiku' as const,
-    description: 'Fast & lightweight'
-  },
   {
     id: 'claude-sonnet-4-20250514',
     label: 'Sonnet',
@@ -258,11 +305,11 @@ export const DEFAULT_MODEL_CONFIG: Record<
 > = {
   generalist: 'claude-sonnet-4-20250514',
   orchestrator: 'claude-sonnet-4-20250514',
-  'specialist:simple': 'claude-haiku-4-20250414',
+  'specialist:simple': 'claude-sonnet-4-20250514',
   'specialist:moderate': 'claude-sonnet-4-20250514',
   'specialist:complex': 'claude-opus-4-20250514',
-  dream: 'claude-haiku-4-20250414',
-  memoryFeed: 'claude-haiku-4-20250414',
+  dream: 'claude-sonnet-4-20250514',
+  memoryFeed: 'claude-sonnet-4-20250514',
   activation: 'claude-sonnet-4-20250514'
 } as const
 
@@ -334,3 +381,24 @@ export const THINKING_BUDGETS = {
 
 /** Maximum skill file size in bytes (500 KB) */
 export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const // 500 * 1024
+
+/**
+ * Model pricing table — $/1M tokens for input and output.
+ * Used for estimated cost calculations in the cost tracker service.
+ * Based on Claude pricing as of March 2026.
+ */
+export const MODEL_PRICING_TABLE = {
+  'claude-sonnet-4-20250514': { inputPer1M: 3.0, outputPer1M: 15.0 },
+  'claude-opus-4-20250514': { inputPer1M: 15.0, outputPer1M: 75.0 },
+  'claude-3-5-sonnet-20241022': { inputPer1M: 3.0, outputPer1M: 15.0 },
+  'claude-3-5-haiku-20241022': { inputPer1M: 0.8, outputPer1M: 4.0 }
+} as const
+
+/**
+ * Model escalation chain for failure-based retries.
+ * Maps current tier → escalated tier. 'opus' has no further escalation.
+ */
+export const MODEL_ESCALATION_CHAIN = {
+  haiku: 'sonnet',
+  sonnet: 'opus'
+} as const

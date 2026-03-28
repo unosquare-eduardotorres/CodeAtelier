@@ -102,15 +102,15 @@ export default function AttachmentDropzone({
       onPaste={handlePaste}
       className={`relative rounded-xl transition-colors ${
         isDragActive
-          ? 'border border-indigo-500 bg-indigo-500/5 border-dashed'
-          : 'border border-gray-700/60 bg-gray-800/40'
+          ? 'border border-primary bg-primary-muted border-dashed'
+          : 'border border-border-subtle bg-surface-overlay'
       }`}
     >
       <input {...getInputProps()} />
 
       {isDragActive && (
-        <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-indigo-500/10 border-2 border-dashed border-indigo-500 z-10">
-          <p className="text-sm text-indigo-400 font-medium">Drop files here...</p>
+        <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-primary-muted border-2 border-dashed border-primary z-10">
+          <p className="text-sm text-primary-text font-medium">Drop files here...</p>
         </div>
       )}
 
@@ -122,7 +122,7 @@ export default function AttachmentDropzone({
             return (
               <span
                 key={idx}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-700 text-xs text-gray-300"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-surface-raised text-xs text-text-secondary"
               >
                 {isImage ? (
                   <img
@@ -157,7 +157,7 @@ export default function AttachmentDropzone({
             e.stopPropagation()
             open()
           }}
-          className="flex-shrink-0 p-2 rounded-lg hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors mr-1"
+          className="flex-shrink-0 p-2 rounded-lg hover:bg-surface-raised text-text-muted hover:text-text-secondary transition-colors mr-1"
           aria-label="Attach files"
           title="Attach files"
         >

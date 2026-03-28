@@ -1,13 +1,10 @@
 /**
- * Playwright screenshot audit script for Agent Studio.
- *
- * Launches the Electron app via electron-vite dev, waits for the renderer
- * to be ready, then captures screenshots of every major page/state.
+ * Playwright Electron screenshot audit for Agent Studio.
+ * Launches the built app and captures every major page/state.
  *
  * Usage:  node scripts/screenshot-audit.mjs
  */
 import { _electron as electron } from 'playwright'
-import { execSync, spawn } from 'child_process'
 import { existsSync, mkdirSync } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -18,241 +15,192 @@ const SCREENSHOTS = path.join(ROOT, 'screenshots')
 
 if (!existsSync(SCREENSHOTS)) mkdirSync(SCREENSHOTS, { recursive: true })
 
-async function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms))
-}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function screenshot(page, name, waitMs = 500) {
+async function snap(page, name, waitMs = 800) {
   await sleep(waitMs)
   const filePath = path.join(SCREENSHOTS, `${name}.png`)
-  await page.screenshot({ path: filePath, fullPage: false })
-  console.log(`  -> ${name}.png`)
+  await page.screenshot({ path: filePath })
+  console.log(`  [+] ${name}.png`)
 }
 
 async function main() {
-  console.log('\n=== Agent Studio Screenshot Audit ===\n')
+  console.log('\n========================================')
+  console.log('  Agent Studio — Screenshot Audit')
+  console.log('========================================\n')
 
-  // Build the renderer first so we have something to load
-  console.log('1. Building renderer for dev...')
-
-  // Launch electron-vite in dev mode
-  console.log('2. Starting electron-vite dev...')
-  const devProcess = spawn('npx', ['electron-vite', 'dev'], {
-    cwd: ROOT,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, NODE_ENV: 'development' }
+  // Launch Electron — pass the project root (which has package.json with main: ./out/main/index.js)
+  console.log('Launching Electron app...')
+  const app = await electron.launch({
+    args: [ROOT],
+    timeout: 30000,
+    cwd: ROOT
   })
 
-  // Wait for vite to be ready
-  let viteReady = false
-  const readyPromise = new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(false), 60000)
-    const handler = (data) => {
-      const text = data.toString()
-      if (text.includes('Electron') || text.includes('ready') || text.includes('localhost')) {
-        viteReady = true
-        clearTimeout(timeout)
-        resolve(true)
-      }
-    }
-    devProcess.stdout.on('data', handler)
-    devProcess.stderr.on('data', handler)
-  })
+  const win = await app.firstWindow()
+  await win.waitForLoadState('domcontentloaded')
+  console.log('Window loaded. Waiting for React to render...\n')
+  await sleep(4000)
 
-  const ready = await readyPromise
-  if (!ready) {
-    console.error('Timed out waiting for electron-vite dev')
-    devProcess.kill()
-    process.exit(1)
-  }
+  // ─── 1. Initial state (Welcome Modal or Home) ───
+  console.log('--- Page 1: Initial Load ---')
+  await snap(win, '01-initial-load', 1000)
 
-  // Give the app a few seconds to fully initialize
-  console.log('3. Waiting for app to initialize...')
-  await sleep(5000)
+  // Check if we see the Welcome Modal
+  const welcomeVisible = await win.locator('text=Welcome to Agent Studio').count().catch(() => 0)
 
-  // Now connect to the Electron app using Playwright
-  console.log('4. Connecting to Electron via Playwright...\n')
+  if (welcomeVisible > 0) {
+    console.log('--- Page 2: Welcome Modal (Step 1) ---')
+    await snap(win, '02-welcome-modal-step1')
 
-  let app
-  try {
-    app = await electron.launch({
-      executablePath: path.join(ROOT, 'node_modules', '.bin', 'electron'),
-      args: [path.join(ROOT, 'out', 'main', 'index.js')],
-      timeout: 30000
-    })
-  } catch (e) {
-    // If out/main doesn't exist, try launching via electron-vite directly
-    console.log('   Direct launch failed, trying alternative approach...')
-    // Kill the dev process, we will do a build + launch instead
-    devProcess.kill()
-
-    console.log('   Building project...')
-    execSync('npx electron-vite build', { cwd: ROOT, stdio: 'inherit' })
-
-    app = await electron.launch({
-      executablePath: path.join(ROOT, 'node_modules', '.bin', 'electron'),
-      args: [path.join(ROOT, 'out', 'main', 'index.js')],
-      timeout: 30000
-    })
-  }
-
-  const window = await app.firstWindow()
-  await window.waitForLoadState('domcontentloaded')
-  await sleep(3000) // Let React fully render
-
-  console.log('Capturing screenshots...\n')
-
-  // ── Page 1: Welcome Modal (first-launch state) or Welcome Screen ──
-  await screenshot(window, '01-initial-load', 2000)
-
-  // Check what state we're in
-  const hasWelcomeModal = await window.locator('text=Welcome').count()
-  if (hasWelcomeModal > 0) {
-    await screenshot(window, '02-welcome-modal', 500)
-
-    // Fill in the welcome modal to get past it
-    const nameInput = window.locator('input[type="text"]').first()
-    if (await nameInput.count()) {
+    // Fill name
+    const nameInput = win.locator('input').first()
+    if ((await nameInput.count()) > 0) {
       await nameInput.fill('Audit User')
       await sleep(300)
-      await screenshot(window, '03-welcome-modal-filled', 500)
+      await snap(win, '03-welcome-modal-filled')
+    }
 
-      // Try to click "Next" or "Continue"
-      const nextBtn = window.locator('button:has-text("Next")').first()
-      if (await nextBtn.count()) {
-        await nextBtn.click()
-        await sleep(500)
-        await screenshot(window, '04-welcome-modal-step2', 500)
+    // Click Next/Continue
+    for (const label of ['Next', 'Continue']) {
+      const btn = win.locator(`button:has-text("${label}")`).first()
+      if ((await btn.count()) > 0) {
+        await btn.click()
+        await sleep(800)
+        await snap(win, '04-welcome-modal-step2')
+        break
       }
+    }
 
-      // Try to complete it
-      const completeBtn = window
-        .locator('button:has-text("Get Started"), button:has-text("Continue"), button:has-text("Done"), button:has-text("Save")')
-        .first()
-      if (await completeBtn.count()) {
-        await completeBtn.click()
-        await sleep(1000)
+    // Complete the modal
+    for (const label of ['Get Started', 'Done', 'Save', 'Continue', 'Finish']) {
+      const btn = win.locator(`button:has-text("${label}")`).first()
+      if ((await btn.count()) > 0) {
+        await btn.click()
+        await sleep(1500)
+        break
       }
     }
   }
 
-  // ── Page 2: Home / Welcome Screen (no workspace) ──
-  await screenshot(window, '05-home-welcome-screen', 1000)
+  // ─── 2. Home / Welcome Screen (no workspace selected) ───
+  console.log('--- Page 3: Home Screen ---')
+  await snap(win, '05-home-screen', 1500)
 
-  // Try to open a workspace (click first one if any exist)
-  const workspaceCard = window.locator('[class*="workspace"], [class*="card"]').first()
-  if (await workspaceCard.count()) {
-    await workspaceCard.click()
-    await sleep(1500)
-    await screenshot(window, '06-workspace-selected', 500)
+  // ─── 3. Try to select a workspace ───
+  // Look for any clickable workspace card or Open Folder button
+  const openFolderBtn = win.locator('button:has-text("Open Folder"), button:has-text("Open Project"), button:has-text("Select Folder")').first()
+  if ((await openFolderBtn.count()) > 0) {
+    await snap(win, '06-open-folder-button-visible')
   }
 
-  // ── Page 3: Try "Open Folder" or "Add Workspace" to get into workspace state ──
-  const openBtn = window
-    .locator(
-      'button:has-text("Open"), button:has-text("Add"), button:has-text("New Workspace"), button:has-text("Select")'
-    )
-    .first()
-  if (await openBtn.count()) {
-    await screenshot(window, '07-pre-workspace-buttons', 300)
+  // Look for existing workspace cards
+  const workspaceItems = win.locator('[role="button"], button').filter({ hasText: /workspace|project/i }).first()
+  if ((await workspaceItems.count()) > 0) {
+    await workspaceItems.click()
+    await sleep(2000)
+    console.log('--- Page 4: Workspace Selected ---')
+    await snap(win, '07-workspace-selected')
   }
 
-  // ── Page 4: Chat panel (if workspace is active) ──
-  const chatArea = window.locator('[class*="chat"], [class*="Chat"]').first()
-  if (await chatArea.count()) {
-    await screenshot(window, '08-chat-panel', 500)
-  }
-
-  // ── Page 5: Settings Page ──
-  // Click the settings/sliders button in the title bar
-  const settingsBtn = window.locator('button[aria-label="Settings"]').first()
-  if (await settingsBtn.count()) {
+  // ─── 4. App Settings Page ───
+  console.log('--- Page 5: App Settings ---')
+  const settingsBtn = win.locator('button[aria-label="Settings"]').first()
+  if ((await settingsBtn.count()) > 0) {
     await settingsBtn.click()
-    await sleep(1000)
-    await screenshot(window, '09-settings-page', 500)
+    await sleep(1200)
+    await snap(win, '08-app-settings')
 
-    // Scroll down to see more settings
-    await window.evaluate(() => {
-      const main = document.querySelector('main') || document.querySelector('[class*="settings"]')
-      if (main) main.scrollTop = main.scrollHeight / 2
+    // Scroll settings
+    await win.evaluate(() => {
+      const el = document.querySelector('[class*="overflow-y"]') || document.querySelector('main')
+      if (el) el.scrollTop = 400
     })
-    await screenshot(window, '10-settings-page-scrolled', 500)
+    await snap(win, '09-app-settings-scrolled')
+
+    // Scroll more
+    await win.evaluate(() => {
+      const el = document.querySelector('[class*="overflow-y"]') || document.querySelector('main')
+      if (el) el.scrollTop = el.scrollHeight
+    })
+    await snap(win, '10-app-settings-bottom')
 
     // Go back
-    const backBtn = window
-      .locator('button:has-text("Back"), button[aria-label="Back"]')
-      .first()
-    if (await backBtn.count()) {
-      await backBtn.click()
-      await sleep(500)
-    } else {
-      // Press Escape to go back
-      await window.keyboard.press('Escape')
-      await sleep(500)
-    }
-  }
-
-  // ── Page 6: Workspace Settings ──
-  const wsSettingsBtn = window.locator('button[aria-label="Workspace Settings"]').first()
-  if (await wsSettingsBtn.count()) {
-    await wsSettingsBtn.click()
-    await sleep(1000)
-    await screenshot(window, '11-workspace-settings', 500)
-
-    // Click through workspace settings tabs
-    const tabs = ['Agents', 'Skills', 'Team', 'Memory', 'Dream']
-    for (const tabName of tabs) {
-      const tab = window.locator(`text="${tabName}"`).first()
-      if (await tab.count()) {
-        await tab.click()
-        await sleep(800)
-        await screenshot(window, `12-ws-settings-${tabName.toLowerCase()}`, 300)
-      }
-    }
-
-    // Close workspace settings
-    await window.keyboard.press('Escape')
+    await win.keyboard.press('Escape')
     await sleep(500)
   }
 
-  // ── Page 7: Agent Monitor Panel ──
-  const agentPanelBtn = window.locator('button:has-text("Agents")').first()
-  if (await agentPanelBtn.count()) {
-    await agentPanelBtn.click()
-    await sleep(800)
-    await screenshot(window, '13-agent-monitor-panel', 500)
+  // ─── 5. Workspace Settings ───
+  console.log('--- Page 6: Workspace Settings ---')
+  const wsBtn = win.locator('button[aria-label="Workspace Settings"]').first()
+  if ((await wsBtn.count()) > 0) {
+    await wsBtn.click()
+    await sleep(1200)
+    await snap(win, '11-workspace-settings')
+
+    // Click through tabs
+    const tabs = ['Agents', 'Skills', 'Team']
+    for (let i = 0; i < tabs.length; i++) {
+      const tab = win.locator(`button:has-text("${tabs[i]}"), [role="tab"]:has-text("${tabs[i]}")`).first()
+      if ((await tab.count()) > 0) {
+        await tab.click()
+        await sleep(1000)
+        await snap(win, `12-ws-${tabs[i].toLowerCase()}-tab`)
+      }
+    }
+
+    // Close
+    await wsBtn.click()
+    await sleep(500)
   }
 
-  // ── Page 8: New Conversation Modal ──
-  // Trigger via keyboard shortcut Cmd+N
-  await window.keyboard.press('Meta+n')
+  // ─── 6. Chat Panel (if workspace active) ───
+  console.log('--- Page 7: Chat Panel ---')
+  await snap(win, '13-chat-panel')
+
+  // ─── 7. New Conversation Modal ───
+  console.log('--- Page 8: New Conversation Modal ---')
+  await win.keyboard.press('Meta+n')
+  await sleep(1000)
+  const modalVisible = await win.locator('[role="dialog"]').count().catch(() => 0)
+  if (modalVisible > 0) {
+    await snap(win, '14-new-conversation-modal')
+    await win.keyboard.press('Escape')
+    await sleep(500)
+  }
+
+  // ─── 8. Agent Monitor Panel ───
+  console.log('--- Page 9: Agent Monitor ---')
+  const agentBtn = win.locator('button[aria-label*="agent" i], button:has-text("Agents")').first()
+  if ((await agentBtn.count()) > 0) {
+    await agentBtn.click()
+    await sleep(1000)
+    await snap(win, '15-agent-monitor-panel')
+  }
+
+  // ─── 9. Different viewport sizes ───
+  console.log('--- Viewport Tests ---')
+  await win.setViewportSize({ width: 1440, height: 900 })
   await sleep(800)
-  await screenshot(window, '14-new-conversation-modal', 500)
-  await window.keyboard.press('Escape')
-  await sleep(300)
+  await snap(win, '16-viewport-1440x900')
 
-  // ── Final: Full-app overview ──
-  await screenshot(window, '15-final-overview', 500)
+  await win.setViewportSize({ width: 1920, height: 1080 })
+  await sleep(800)
+  await snap(win, '17-viewport-1920x1080')
 
-  // Set a large viewport to capture at 1440px
-  await window.setViewportSize({ width: 1440, height: 900 })
-  await sleep(500)
-  await screenshot(window, '16-viewport-1440', 500)
+  await win.setViewportSize({ width: 1024, height: 768 })
+  await sleep(800)
+  await snap(win, '18-viewport-1024x768')
 
-  // And 1920px
-  await window.setViewportSize({ width: 1920, height: 1080 })
-  await sleep(500)
-  await screenshot(window, '17-viewport-1920', 500)
+  console.log('\n========================================')
+  console.log('  All screenshots captured!')
+  console.log(`  Location: ${SCREENSHOTS}`)
+  console.log('========================================\n')
 
-  console.log('\n=== All screenshots captured ===')
-  console.log(`Location: ${SCREENSHOTS}\n`)
-
-  // Cleanup
   await app.close()
-  devProcess.kill()
 }
 
 main().catch((err) => {
-  console.error('Screenshot audit failed:', err)
+  console.error('Screenshot audit failed:', err.message)
   process.exit(1)
 })
