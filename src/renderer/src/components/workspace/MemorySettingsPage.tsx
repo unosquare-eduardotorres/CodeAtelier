@@ -34,12 +34,23 @@ export default function MemorySettingsPage(): React.JSX.Element {
   } = useMemoryStore()
   const { triggerDream, currentRun } = useDreamStore()
   const [filterType, setFilterType] = useState<MemoryType | 'all'>('all')
+  const [feedTimestamps, setFeedTimestamps] = useState<WorkspaceFeedTimestamps>({})
+
+  const loadFeedTimestamps = useCallback(() => {
+    if (activeWorkspace?.id) {
+      window.api
+        .memoryGetFeedTimestamps({ workspaceId: activeWorkspace.id })
+        .then(setFeedTimestamps)
+        .catch(() => {})
+    }
+  }, [activeWorkspace?.id])
 
   useEffect(() => {
     if (activeWorkspace?.id) {
       loadMemories(activeWorkspace.id)
+      loadFeedTimestamps()
     }
-  }, [activeWorkspace?.id, loadMemories])
+  }, [activeWorkspace?.id, loadMemories, loadFeedTimestamps])
 
   const handleSearch = useCallback(
     (query: string) => {
