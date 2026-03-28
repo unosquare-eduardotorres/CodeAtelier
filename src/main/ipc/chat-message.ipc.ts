@@ -180,10 +180,13 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
           log.info('Generalist complete — saving to DB:', {
             contentLen: streamedContent.value.length
           })
+          // Strip handoff block before saving — it's structural, not user-facing content
+          const cleanedContent = streamedContent.value.replace(/```handoff\n[\s\S]*?```/, '').trim()
+
           const savedMessage = messageRepository.create(
             conversationId,
             'generalist',
-            streamedContent.value || '_No response received._'
+            cleanedContent || '_No response received._'
           )
           log.info('Generalist message saved, id:', savedMessage.id)
 

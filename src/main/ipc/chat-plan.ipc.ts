@@ -194,9 +194,42 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       const taskPlanBrief = (args as { brief?: HandoffBrief }).brief ?? null
       specialistPoolService.setConversationBrief(taskPlanBrief)
 
+      // ── Per-task content tracking for message segmentation ──
+      const taskContents = new Map<string, string>()
+      /** Tracks final status of each task for context injection into generalist */
+      const taskStatuses = new Map<string, string>()
+
       // Forward task progress events to the renderer
       const onTaskProgress = (progress: TaskExecutionProgress): void => {
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PROGRESS, progress)
+
+        // Track final status for context injection into generalist
+        taskStatuses.set(progress.taskId, progress.status)
+
+        // When a task completes or fails, save its accumulated content as a separate message
+        if (progress.status === 'completed' || progress.status === 'failed') {
+          const taskContent = taskContents.get(progress.taskId)
+          if (taskContent) {
+            const task = tasks.find((t) => t.id === progress.taskId)
+            const statusEmoji = progress.status === 'completed' ? '✅' : '❌'
+            const header = `### ${statusEmoji} ${progress.specialist} — ${task?.description ?? progress.taskId}\n\n`
+            const savedMsg = messageRepository.create(
+              conversationId,
+              'specialist',
+              header + taskContent,
+              progress.specialist
+            )
+
+            // Complete this task's message in the renderer
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+              conversationId,
+              messageId: savedMsg.id,
+              taskId: progress.taskId
+            })
+
+            taskContents.delete(progress.taskId)
+          }
+        }
 
         // Emit agent status updates so the AgentMonitor panel tracks each specialist
         mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, {
@@ -220,21 +253,28 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
 
       // Forward streaming chunks from each specialist to the chat AND agent monitor
       const onTaskChunk = (data: { taskId: string; specialist: string; chunk: string }): void => {
+        // Accumulate per-task content for message segmentation
+        const existing = taskContents.get(data.taskId) ?? ''
+        taskContents.set(data.taskId, existing + data.chunk)
+
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
           conversationId,
           chunk: data.chunk,
-          role: 'coordinator'
+          role: 'coordinator',
+          taskId: data.taskId,
+          specialist: data.specialist
         })
 
         // Also send to agent monitor for live output display
+        // Use composite key matching AGENT_STATUS_UPDATE's agentId format
         mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_CHUNK, {
-          agentId: data.specialist,
+          agentId: `${data.specialist}-${data.taskId}`,
           taskId: data.taskId,
           text: data.chunk
         })
       }
 
-      const onAllComplete = (): void => {
+      const onAllComplete = async (): Promise<void> => {
         log.info('All specialist tasks completed')
 
         // ── Event: plan execution completed ──
@@ -244,11 +284,11 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           taskCount: tasks.length
         })
 
-        // Save a summary message
+        // Save a SHORT summary message — individual task content already saved per-task
         const summaryLines = tasks
           .map((t) => `- **${t.specialist}** (${t.id}): ${t.description}`)
           .join('\n')
-        const summaryContent = `## Task Execution Complete (${strategy})\n\n${summaryLines}`
+        const summaryContent = `## ✅ All Tasks Complete (${strategy})\n\n${summaryLines}`
         const savedMsg = messageRepository.create(conversationId, 'coordinator', summaryContent)
 
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
@@ -288,6 +328,33 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           }
         } catch (e) {
           log.warn('Post-review check failed:', e)
+        }
+
+        // ── Feed results back to generalist for follow-up context ──
+        try {
+          const taskResultLines = tasks
+            .map((t) => {
+              const rawStatus = taskStatuses.get(t.id) ?? 'unknown'
+              const status = rawStatus === 'completed' ? '✅ completed' : `❌ ${rawStatus}`
+              return `- ${t.specialist} (${t.id}): ${t.description} → ${status}`
+            })
+            .join('\n')
+
+          const contextMessage = [
+            `[SYSTEM CONTEXT UPDATE — Orchestrator/Specialist Execution Complete]`,
+            ``,
+            `The following task plan was executed (strategy: ${strategy}):`,
+            ``,
+            taskResultLines,
+            ``,
+            `Internalize these results. The user may ask follow-up questions about task outcomes.`,
+            `Do NOT use tools to investigate. Do NOT produce a visible response.`,
+            `Simply wait for the user's next message.`
+          ].join('\n')
+
+          await generalistService.injectContext(contextMessage, conversationId)
+        } catch (feedbackErr) {
+          log.warn('Failed to inject task results into generalist:', feedbackErr)
         }
 
         // Clean up

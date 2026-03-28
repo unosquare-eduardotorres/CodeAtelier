@@ -1,8 +1,10 @@
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageSquarePlus } from 'lucide-react'
 import { useChatStore, useChatActions, useProfileStore } from '@renderer/store'
 import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
-import { useAutoScroll } from '@renderer/hooks'
 import { MessageBubble, HandoffIndicator, TaskPlanCard, GrillQuestionCard } from '@renderer/components/chat'
+import type { MessageBubbleActions } from './MessageBubble'
 import FloatingRobots from './FloatingRobots'
 
 function CompactSuggestionBanner({
@@ -53,9 +55,20 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const pendingGrillQuestions = useChatStore((s) => s.grillSession?.pendingQuestions ?? null)
   const hasPendingGrillQuestions = (pendingGrillQuestions?.length ?? 0) > 0
 
-  const { executePlan, clearTaskPlan, setCompactSuggestion, sendMessage, submitGrillAnswers, skipAllGrillQuestions } =
+  const { executePlan, clearTaskPlan, setCompactSuggestion, sendMessage, submitGrillAnswers, skipAllGrillQuestions, updateMode, appendLocalMessage, clearGrillSession, createItemsFromGrill } =
     useChatActions()
   const taskProgress = useChatStore((s) => s.taskProgress)
+
+  // Single actions object passed to all MessageBubbles — avoids N×useShallow subscriptions
+  const bubbleActions: MessageBubbleActions = useMemo(() => ({
+    updateMode,
+    sendMessage,
+    appendLocalMessage,
+    clearGrillSession,
+    createItemsFromGrill,
+    submitGrillAnswers,
+    skipAllGrillQuestions
+  }), [updateMode, sendMessage, appendLocalMessage, clearGrillSession, createItemsFromGrill, submitGrillAnswers, skipAllGrillQuestions])
 
   const generalistAlias = useProfileStore((s) => {
     const alias = s.coreAgentAliases.find((a) => a.agentRole === 'generalist')
@@ -64,7 +77,62 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
   const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
 
-  const scrollRef = useAutoScroll([messages.length, streamingContent])
+  // Scroll container ref for virtualizer
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll state
+  const shouldAutoScroll = useRef(true)
+  const isUserScrolling = useRef(false)
+
+  // Handle scroll events to determine if user is at bottom
+  useEffect(() => {
+    const container = scrollRef.current
+    if (!container) return
+
+    let scrollTimeout: ReturnType<typeof setTimeout>
+
+    const handleScroll = (): void => {
+      const { scrollTop, scrollHeight, clientHeight } = container
+      shouldAutoScroll.current = scrollHeight - scrollTop - clientHeight < 100
+
+      isUserScrolling.current = true
+      clearTimeout(scrollTimeout)
+      scrollTimeout = setTimeout(() => {
+        isUserScrolling.current = false
+      }, 150)
+    }
+
+    container.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      container.removeEventListener('scroll', handleScroll)
+      clearTimeout(scrollTimeout)
+    }
+  }, [])
+
+  // Virtualizer for messages
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 150,
+    overscan: 5
+  })
+
+  // Auto-scroll to bottom when new messages arrive or streaming content updates
+  useEffect(() => {
+    if (shouldAutoScroll.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [messages.length, streamingContent])
+
+  // Measure callback for virtualizer — wrapped in useCallback for stable reference
+  const measureElement = useCallback(
+    (el: HTMLElement | null) => {
+      if (el) {
+        virtualizer.measureElement(el)
+      }
+    },
+    [virtualizer]
+  )
 
   if (messages.length === 0 && !isStreaming) {
     return (
@@ -85,25 +153,56 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     )
   }
 
+  const virtualItems = virtualizer.getVirtualItems()
+
   return (
     <div className="relative flex-1 min-h-0">
       <FloatingRobots />
       <div
         ref={scrollRef}
-        className="relative z-10 flex-1 overflow-y-auto px-6 py-4 space-y-4 h-full"
+        className="relative z-10 flex-1 overflow-y-auto px-6 py-4 h-full"
       >
-        {messages.map((msg, idx) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            searchHighlight={searchQuery}
-            suppressInlineGrillCard={
-              hasPendingGrillQuestions &&
-              msg.role !== 'user' &&
-              idx === messages.length - 1
-            }
-          />
-        ))}
+        {/* Virtualized message list */}
+        <div
+          style={{
+            height: virtualizer.getTotalSize(),
+            width: '100%',
+            position: 'relative'
+          }}
+        >
+          {virtualItems.map((virtualRow) => {
+            const msg = messages[virtualRow.index]
+            return (
+              <div
+                key={msg.id}
+                ref={measureElement}
+                data-index={virtualRow.index}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualRow.start}px)`
+                }}
+              >
+                <div className="pb-4">
+                  <MessageBubble
+                    message={msg}
+                    searchHighlight={searchQuery}
+                    actions={bubbleActions}
+                    suppressInlineGrillCard={
+                      hasPendingGrillQuestions &&
+                      msg.role !== 'user' &&
+                      virtualRow.index === messages.length - 1
+                    }
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Non-virtualized footer items — always rendered below the virtual list */}
 
         {/* Handoff indicator — shown when generalist triggers a handoff */}
         {activeHandoff && !activeTaskPlan && (
@@ -216,6 +315,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             }}
             isStreaming
             toolActivities={toolActivities}
+            actions={bubbleActions}
           />
         )}
       </div>

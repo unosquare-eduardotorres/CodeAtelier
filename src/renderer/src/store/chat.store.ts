@@ -35,6 +35,7 @@ interface ChatState {
   messages: Message[]
   streamingContent: string
   streamingRole: 'generalist' | 'coordinator'
+  streamingTaskId: string | null
   isStreaming: boolean
   activeHandoff: HandoffState | null
   toolActivities: ToolActivity[]
@@ -62,8 +63,8 @@ interface ChatState {
   renameConversation: (id: string, title: string) => Promise<void>
   stopGeneration: () => Promise<void>
   sendMessage: (text: string, attachments?: string[]) => Promise<void>
-  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator') => void
-  finalizeStream: (messageId: string) => void
+  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator', taskId?: string) => void
+  finalizeStream: (messageId: string, taskId?: string) => void
   addToolActivity: (activity: ToolActivity) => void
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => void
   setHandoff: (handoff: HandoffState) => void
@@ -113,6 +114,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: previousChatState?.messages ?? [],
   streamingContent: previousChatState?.streamingContent ?? '',
   streamingRole: previousChatState?.streamingRole ?? ('generalist' as const),
+  streamingTaskId: previousChatState?.streamingTaskId ?? null,
   isStreaming: previousChatState?.isStreaming ?? false,
   activeHandoff: previousChatState?.activeHandoff ?? null,
   toolActivities: previousChatState?.toolActivities ?? [],
@@ -287,12 +289,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator') => {
+  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator', taskId?: string) => {
     if (!chunk) return // Skip empty chunks (tool-only messages)
-    set((state) => ({
-      streamingContent: state.streamingContent + chunk,
-      streamingRole: role ?? state.streamingRole
-    }))
+    set((state) => {
+      // If taskId changed, a new specialist is streaming — start fresh content
+      const isNewTask = taskId != null && taskId !== state.streamingTaskId
+      return {
+        streamingContent: isNewTask ? chunk : state.streamingContent + chunk,
+        streamingRole: role ?? state.streamingRole,
+        streamingTaskId: taskId ?? state.streamingTaskId
+      }
+    })
   },
 
   addToolActivity: (activity: ToolActivity) => {
@@ -321,7 +328,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  finalizeStream: (messageId: string) => {
+  finalizeStream: (messageId: string, taskId?: string) => {
     const { streamingContent, streamingRole, activeConversation } = get()
 
     if (streamingContent && activeConversation) {
@@ -337,9 +344,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => ({
         messages: [...state.messages, finalMessage],
         streamingContent: '',
-        isStreaming: false,
-        toolActivities: []
+        // Only stop streaming if this is the final complete (no taskId = final summary)
+        isStreaming: !!taskId,
+        toolActivities: taskId ? state.toolActivities : [],
+        streamingTaskId: null
       }))
+    } else if (taskId) {
+      // Per-task complete with no accumulated content — just reset task tracking
+      set({ streamingContent: '', streamingTaskId: null })
     } else if (activeConversation) {
       // No streaming content received — reload messages from DB
       // The backend saved a message (possibly an error or "No response received")
@@ -350,15 +362,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             messages,
             streamingContent: '',
             isStreaming: false,
-            toolActivities: []
+            toolActivities: [],
+            streamingTaskId: null
           })
         })
         .catch((error) => {
           rendererLog.error('Failed to reload messages after stream finalize:', error)
-          set({ streamingContent: '', isStreaming: false, toolActivities: [] })
+          set({ streamingContent: '', isStreaming: false, toolActivities: [], streamingTaskId: null })
         })
     } else {
-      set({ streamingContent: '', isStreaming: false, toolActivities: [] })
+      set({ streamingContent: '', isStreaming: false, toolActivities: [], streamingTaskId: null })
     }
   },
 

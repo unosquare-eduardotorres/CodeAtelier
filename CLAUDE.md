@@ -86,6 +86,12 @@ dialog, shell.openExternal, Notification, frameless window, electron-builder, el
 code signing, notarize, auto-update, electron-updater, electron-vite, electron-rebuild, desktop app,
 cross-platform app, system tray, context menu, file dialog.
 
+## Design System — Code Atelier Brand
+
+All UI work follows the **Code Atelier** brand system. Full spec: `docs/CodeAtelier/Code-Atelier-Brand-System.md`.
+Detailed implementation rules are in the UX/UI specialist agent (`.claude/agents/ux-ui-specialist.yml`).
+PR checklist: `docs/CodeAtelier/design-checklist.md`.
+
 ## What NOT to do
 
 - Do not use `require()` in renderer — use preload + contextBridge

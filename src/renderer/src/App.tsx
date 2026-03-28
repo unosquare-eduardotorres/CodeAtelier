@@ -72,7 +72,7 @@ function App(): React.JSX.Element {
     // Set up IPC event listeners for streaming
     const unsubChunk = window.api.onMessageChunk((data) => {
       if (data.chunk) {
-        appendStreamChunk(data.chunk, data.role as 'generalist' | 'coordinator')
+        appendStreamChunk(data.chunk, data.role as 'generalist' | 'coordinator', data.taskId)
       }
       if (data.toolActivity) {
         if (data.toolActivity.status === 'running') {
@@ -98,7 +98,7 @@ function App(): React.JSX.Element {
     })
 
     const unsubComplete = window.api.onMessageComplete((data) => {
-      finalizeStream(data.messageId)
+      finalizeStream(data.messageId, data.taskId)
     })
 
     const unsubHandoff = window.api.onHandoff((data) => {

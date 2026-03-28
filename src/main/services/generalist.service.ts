@@ -89,6 +89,12 @@ export class GeneralistService extends AgentBaseService {
   /** Cost preference from workspace settings — affects compaction aggressiveness */
   private costPreference: CostPreference = 'balanced'
 
+  /** When true, the next response from the CLI is consumed silently (context injection) */
+  private suppressNextResponse = false
+
+  /** Tighter tool call limit for conversational generalist (vs 75 in base) */
+  private static readonly MAX_GENERALIST_TOOL_CALLS = 40
+
   /** Tracks whether stop() was called intentionally (vs crash) */
   private intentionallyStopped: boolean = false
   /** Number of auto-restart attempts since last successful start */
@@ -297,6 +303,33 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
+    // If conversation changed while the process is still alive, restart the CLI
+    // with the correct session so the agent has the right context.
+    if (
+      this.currentConversationId &&
+      this.currentConversationId !== conversationId &&
+      this.workspacePath
+    ) {
+      this.log.info(
+        `Conversation switch detected: ${this.currentConversationId} → ${conversationId}`
+      )
+      // Look up session ID for the target conversation
+      let sessionId = this.sessionMap.get(conversationId)
+      if (!sessionId) {
+        try {
+          sessionId = conversationRepository.getSessionId(conversationId)
+          if (sessionId) {
+            this.sessionMap.set(conversationId, sessionId)
+            this.log.info('Session loaded from DB for conversation switch:', sessionId)
+          }
+        } catch (err) {
+          this.log.error('Failed to load session for conversation switch:', err)
+        }
+      }
+      // Restart CLI with the new conversation's session (or fresh if no session)
+      await this.start(this.workspacePath, this.currentMode, sessionId)
+    }
+
     // Wait for CLI to be ready before writing to stdin — the process needs to
     // emit a 'system' event before it can accept user messages via stream-json.
     // Without this gate, messages sent immediately after start() or switchMode()
@@ -324,8 +357,9 @@ export class GeneralistService extends AgentBaseService {
     this.startResponseTimeout()
     // Start absolute interaction timeout — never resets, catches slow tool loops
     this.startInteractionTimeout()
-    // Reset tool call counter for new interaction (circuit breaker in base class)
+    // Reset tool call counter and circuit breaker for new interaction
     this.toolCallCount = 0
+    this.circuitBroken = false
 
     // Format as stream-json message (required for --input-format stream-json)
     const jsonMessage = JSON.stringify({
@@ -337,6 +371,59 @@ export class GeneralistService extends AgentBaseService {
     if (!writeOk) {
       this.log.warn('stdin write buffer full, waiting for drain...')
     }
+  }
+
+  /**
+   * Injects a context message into the generalist's conversation without
+   * triggering the full send/response cycle. Used to feed orchestrator/specialist
+   * results back so the generalist has awareness for follow-up questions.
+   * The generalist's response is silently consumed (not forwarded to renderer).
+   */
+  async injectContext(context: string, conversationId: string): Promise<void> {
+    if (!this.process || !this.process.stdin || this.process.killed) {
+      this.log.warn('Cannot inject context — generalist process not running')
+      return
+    }
+
+    if (!this.processReady) {
+      this.log.warn('Cannot inject context — generalist process not ready')
+      return
+    }
+
+    // Don't inject if the generalist is currently busy responding
+    if (this.currentStatus !== 'idle') {
+      this.log.warn('Cannot inject context — generalist is busy:', this.currentStatus)
+      return
+    }
+
+    this.log.info('Injecting orchestrator/specialist results into generalist context')
+    this.suppressNextResponse = true
+    this.currentConversationId = conversationId
+    this.currentStatus = 'thinking'
+    this.hasEmittedContent = false
+    this.accumulatedText = ''
+    this.toolCallCount = 0
+    this.circuitBroken = false
+
+    const jsonMessage = JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: context
+      }
+    })
+
+    this.process.stdin.write(jsonMessage + '\n')
+
+    // Safety: auto-clear suppress flag after 60s in case something goes wrong
+    setTimeout(() => {
+      if (this.suppressNextResponse) {
+        this.log.warn('Suppress flag auto-cleared after timeout')
+        this.suppressNextResponse = false
+        this.currentStatus = 'idle'
+        this.emit('statusUpdate', this.getStatus())
+      }
+    }, 60_000)
   }
 
   /**
@@ -430,9 +517,84 @@ export class GeneralistService extends AgentBaseService {
   }
 
   /**
+   * Override processStreamEvent to:
+   * 1. Short-circuit during context injection suppression
+   * 2. Apply tighter tool call limit for conversational generalist
+   */
+  protected processStreamEvent(event: Record<string, unknown>): void {
+    if (this.suppressNextResponse) {
+      const type = event.type as string
+      if (type === 'result') {
+        this.onResultEvent(event)
+      } else if (type === 'system') {
+        this.onSystemEvent(event)
+      } else if (type === 'content_block_start') {
+        // If the generalist tries to use tools during suppressed response, log a warning
+        const cb = event.content_block as Record<string, unknown> | undefined
+        if (cb?.type === 'tool_use') {
+          this.log.warn('Generalist attempted tool use during context injection — suppressing')
+        }
+      }
+      // Silently ignore assistant, content_block_delta, content_block_stop, message_* events
+      return
+    }
+
+    // Apply tighter tool call limit for generalist (40 vs base 75).
+    // The generalist is conversational — 40 tool calls is already very generous.
+    const type = event.type as string
+    if (type === 'content_block_start') {
+      const contentBlock = event.content_block as Record<string, unknown> | undefined
+      if (contentBlock?.type === 'tool_use' && this.toolCallCount >= GeneralistService.MAX_GENERALIST_TOOL_CALLS) {
+        this.log.error(
+          `Generalist circuit breaker: ${this.toolCallCount} tool calls exceeded generalist limit of ${GeneralistService.MAX_GENERALIST_TOOL_CALLS}`
+        )
+        this.currentStatus = 'failed'
+        this.emit('statusUpdate', this.getStatus())
+        this.emit('chunk', {
+          type: 'error',
+          error: `The generalist made ${this.toolCallCount} tool calls, which suggests it got stuck in a loop. The response has been stopped. Try rephrasing your request.`
+        })
+        this.emit('complete')
+        this.circuitBroken = true
+        return
+      }
+    }
+
+    super.processStreamEvent(event)
+  }
+
+  /**
    * Override to detect handoff signals in the accumulated text on result/complete.
    */
   protected onResultEvent(event: Record<string, unknown>): void {
+    // If this response was triggered by context injection, consume silently
+    if (this.suppressNextResponse) {
+      this.suppressNextResponse = false
+      this.log.info('Context injection response consumed silently')
+
+      // Still capture session ID for resume support
+      const sessionId = event.session_id as string | undefined
+      if (sessionId && this.currentConversationId) {
+        this.sessionMap.set(this.currentConversationId, sessionId)
+        try {
+          conversationRepository.updateSessionId(this.currentConversationId, sessionId)
+        } catch (err) {
+          this.log.error('Failed to persist session ID:', err)
+        }
+      }
+
+      // Still track token usage
+      const usage = event.usage as Record<string, number> | undefined
+      if (usage) {
+        this.tokenUsage += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
+      }
+
+      this.currentStatus = 'idle'
+      this.emit('statusUpdate', this.getStatus())
+      // Don't emit 'complete' or 'chunk' — suppress all renderer output
+      return
+    }
+
     this.clearResponseTimeout()
     this.clearInteractionTimeout()
 
@@ -521,6 +683,9 @@ export class GeneralistService extends AgentBaseService {
    * Override handleOutput to also accumulate text for handoff detection.
    */
   protected handleOutput(data: Buffer): void {
+    // Circuit breaker tripped — ignore all further output
+    if (this.circuitBroken) return
+
     this.buffer += data.toString()
 
     const lines = this.buffer.split('\n')
@@ -609,13 +774,14 @@ export class GeneralistService extends AgentBaseService {
         })
         this.emit('handoff', brief)
 
-        // Strategy 2: Post-handoff auto-compact — conversation context before the handoff
-        // is mostly historical. Compact it to save tokens on subsequent messages.
+        // Strategy 2: Post-handoff auto-compact — delay until specialist results
+        // have been injected back. The specialist execution takes at minimum 30s,
+        // so 120s gives enough buffer for context injection before compaction.
         if (this.tokenUsage > 30_000 && this.compactCount < 5) {
           this.log.info(
-            `Post-handoff auto-compact triggered (tokens: ${this.tokenUsage}, compacts: ${this.compactCount})`
+            `Post-handoff auto-compact scheduled (tokens: ${this.tokenUsage}, compacts: ${this.compactCount}) — delayed 120s for result injection`
           )
-          setTimeout(() => this.compact(), 2000)
+          setTimeout(() => this.compact(), 120_000)
         }
       }
     } catch (error) {
