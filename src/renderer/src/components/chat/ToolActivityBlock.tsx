@@ -4,23 +4,49 @@ import type { ToolActivity } from '../../../../shared/types'
 
 /**
  * Shortens long absolute paths to show `…/parentFolder/file.ext`.
- * Non-path strings (grep patterns, globs, etc.) are returned as-is.
+ * Handles paths with spaces, command strings containing paths, and Grep summaries.
  */
 function shortenInput(input: string): string {
-  // Match absolute paths (unix or windows-style) that are "long"
-  const pathMatch = input.match(/^(\/[^\s]+)(.*)$/)
-  if (!pathMatch) return input
+  // If already short enough, return as-is
+  if (input.length <= 45) return input
 
-  const fullPath = pathMatch[1]
-  const rest = pathMatch[2] // anything after the path (e.g. " in /Users/...")
+  // For Grep-style inputs like `/pattern/ in /some/long/path`, shorten the path part
+  const grepMatch = input.match(/^(\/.*?\/)\s+in\s+(.+)$/)
+  if (grepMatch) {
+    const pattern = grepMatch[1]
+    const pathPart = shortenPath(grepMatch[2])
+    return `${pattern} in ${pathPart}`
+  }
 
-  const segments = fullPath.split('/')
-  // If path is short enough (≤3 segments like /foo/bar), keep as-is
-  if (segments.length <= 3) return input
+  // For command strings, try to extract and shorten any embedded absolute path
+  // e.g., "find /Users/foo/bar -name *.ts" or "ls -la /Users/foo/bar"
+  const cmdPathMatch = input.match(/^(.+?\s)(\/\S.*?)(\s+.*)?$/)
+  if (cmdPathMatch) {
+    const prefix = cmdPathMatch[1] // e.g. "find " or "ls -la "
+    const rawPath = cmdPathMatch[2] // e.g. "/Users/foo/bar"
+    const suffix = cmdPathMatch[3] || '' // e.g. " -name *.ts"
+    // For commands, show just the command + shortened path + suffix
+    const shortened = shortenPath(rawPath)
+    const result = prefix + shortened + suffix
+    return result.length <= 60 ? result : prefix + shortened
+  }
 
-  // Take the last 2 meaningful segments (parent folder + filename)
-  const shortPath = '…/' + segments.slice(-2).join('/')
-  return shortPath + rest
+  // For pure paths (starts with /)
+  if (input.startsWith('/')) {
+    return shortenPath(input)
+  }
+
+  return input
+}
+
+/**
+ * Shortens an absolute path to its last 2 meaningful segments.
+ * e.g., "/Users/eduardo/Downloads/COE Operation Nexus/src/App.tsx" → "…/src/App.tsx"
+ */
+function shortenPath(fullPath: string): string {
+  const segments = fullPath.split('/').filter(Boolean)
+  if (segments.length <= 2) return fullPath
+  return '…/' + segments.slice(-2).join('/')
 }
 
 interface ToolActivityBlockProps {

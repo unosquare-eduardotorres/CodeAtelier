@@ -14,6 +14,8 @@ import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
+import { hookRunnerService } from './hook-runner.service'
+import { eventLoggerService } from './event-logger.service'
 
 /** Regex to detect handoff blocks emitted by the generalist. */
 const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
@@ -56,6 +58,8 @@ export interface GrillQuestionEvent {
  */
 /** Timeout for receiving the first response chunk (in ms) */
 const RESPONSE_TIMEOUT_MS = 60_000 // 1 minute
+/** Absolute cap per interaction — never resets on stdout activity (inspired by DevTeam's total_timeout_minutes) */
+const MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
 
 export class GeneralistService extends AgentBaseService {
   protected readonly log = generalistLogger
@@ -63,6 +67,7 @@ export class GeneralistService extends AgentBaseService {
   private currentConversationId: string | null = null
   private accumulatedText: string = ''
   private responseTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+  private interactionTimeoutTimer: ReturnType<typeof setTimeout> | null = null
   private processReady: boolean = false
   private currentMode: ConversationMode = 'plan'
   /** Maps conversationId → Claude CLI session_id for --resume support */
@@ -154,11 +159,27 @@ export class GeneralistService extends AgentBaseService {
       '--model',
       generalistModel,
       ...(isBuildMode
-        ? ['--permission-mode', 'auto']
-        : ['--permission-mode', 'plan', '--allowedTools', 'WebSearch,WebFetch']),
+        ? ['--permission-mode', 'bypassPermissions']
+        : [
+            '--permission-mode',
+            'plan',
+            '--allowedTools',
+            'WebSearch,WebFetch',
+            // Note: --disallowedTools may not block plan mode's built-in tools (ExitPlanMode,
+            // Write to .claude/plans/). The real fix is the safety net in agent-base.service.ts
+            // that intercepts Write to .claude/plans/ and emits the content as a ```plan block.
+            '--disallowedTools',
+            'ExitPlanMode'
+          ]),
       '--system-prompt',
       fullSystemPrompt
     ]
+
+    // Add hook scripts for safety and quality gate interception
+    const hookArgs = hookRunnerService.getHookArgs(this.currentMode)
+    if (hookArgs.length > 0) {
+      args.push(...hookArgs)
+    }
 
     // Resume existing session if available (preserves conversation context)
     if (resumeSessionId) {
@@ -191,11 +212,18 @@ export class GeneralistService extends AgentBaseService {
       pid: currentProcess.pid
     })
 
+    // Log session started event
+    eventLoggerService.logSessionStarted({
+      agentId: AGENT_IDS.GENERALIST,
+      model: generalistModel
+    })
+
     // Handle stdin errors (EPIPE when process dies unexpectedly)
     currentProcess.stdin?.on('error', (err: Error) => {
       this.log.error('stdin error:', err.message)
       if (this.process === currentProcess && this.currentStatus !== 'idle') {
         this.clearResponseTimeout()
+        this.clearInteractionTimeout()
         this.currentStatus = 'failed'
         this.emit('statusUpdate', this.getStatus())
         this.emit('chunk', {
@@ -298,6 +326,10 @@ export class GeneralistService extends AgentBaseService {
 
     // Start response timeout — if no stdout data arrives within the limit, auto-fail
     this.startResponseTimeout()
+    // Start absolute interaction timeout — never resets, catches slow tool loops
+    this.startInteractionTimeout()
+    // Reset tool call counter for new interaction (circuit breaker in base class)
+    this.toolCallCount = 0
 
     // Format as stream-json message (required for --input-format stream-json)
     const jsonMessage = JSON.stringify({
@@ -362,10 +394,51 @@ export class GeneralistService extends AgentBaseService {
   }
 
   /**
+   * Absolute interaction timeout — unlike responseTimeoutTimer, this does NOT
+   * reset on stdout activity. Inspired by DevTeam's total_timeout_minutes.
+   */
+  private startInteractionTimeout(): void {
+    this.clearInteractionTimeout()
+    const startedAt = Date.now()
+    this.interactionTimeoutTimer = setTimeout(() => {
+      if (this.currentStatus !== 'idle') {
+        const elapsedSec = Math.round((Date.now() - startedAt) / 1000)
+        this.log.error(
+          `Interaction timeout after ${elapsedSec}s — ${this.toolCallCount} tool calls made`
+        )
+
+        // Log timeout event for Event Log UI
+        eventLoggerService.logAgentTimeout({
+          agentId: 'generalist',
+          conversationId: this.currentConversationId ?? undefined,
+          elapsedMs: Date.now() - startedAt,
+          toolCallCount: this.toolCallCount
+        })
+
+        this.currentStatus = 'failed'
+        this.emit('statusUpdate', this.getStatus())
+        this.emit('chunk', {
+          type: 'error',
+          error: `Response exceeded maximum time (${MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes) after ${this.toolCallCount} tool calls. The agent may be stuck in a tool loop. Try simplifying your request or sending it again.`
+        } as StreamChunk)
+        this.emit('complete')
+      }
+    }, MAX_INTERACTION_TIMEOUT_MS)
+  }
+
+  private clearInteractionTimeout(): void {
+    if (this.interactionTimeoutTimer) {
+      clearTimeout(this.interactionTimeoutTimer)
+      this.interactionTimeoutTimer = null
+    }
+  }
+
+  /**
    * Override to detect handoff signals in the accumulated text on result/complete.
    */
   protected onResultEvent(event: Record<string, unknown>): void {
     this.clearResponseTimeout()
+    this.clearInteractionTimeout()
 
     // Capture session info and persist for --resume support
     const sessionId = event.session_id as string | undefined
@@ -485,6 +558,14 @@ export class GeneralistService extends AgentBaseService {
           const contentBlock = event.content_block as Record<string, unknown> | undefined
           if (contentBlock?.type === 'text' && contentBlock.text) {
             this.accumulatedText += contentBlock.text as string
+          } else if (contentBlock?.type === 'tool_use') {
+            // Log tool call to Event Log for UI visibility
+            eventLoggerService.logAgentToolCall({
+              agentId: 'generalist',
+              conversationId: this.currentConversationId ?? undefined,
+              toolName: contentBlock.name as string,
+              toolCallNumber: this.toolCallCount
+            })
           }
         }
         this.processStreamEvent(event)
@@ -605,7 +686,9 @@ export class GeneralistService extends AgentBaseService {
       try {
         const data = JSON.parse(match[1].trim())
         if (typeof data.score === 'number' && Array.isArray(data.questions)) {
-          this.log.info(`Grill evaluation detected: score=${data.score}, questions=${data.questions.length}`)
+          this.log.info(
+            `Grill evaluation detected: score=${data.score}, questions=${data.questions.length}`
+          )
           this.emit('grillEvaluation', {
             score: data.score,
             scoreLabel: data.scoreLabel ?? '',
@@ -650,6 +733,7 @@ export class GeneralistService extends AgentBaseService {
    */
   protected handleExit(code: number | null): void {
     this.clearResponseTimeout()
+    this.clearInteractionTimeout()
     super.handleExit(code)
 
     // Auto-restart if crashed unexpectedly (not intentional stop)
@@ -698,6 +782,7 @@ export class GeneralistService extends AgentBaseService {
   async stop(): Promise<void> {
     this.intentionallyStopped = true
     this.clearResponseTimeout()
+    this.clearInteractionTimeout()
     await super.stop()
     this.currentConversationId = null
     this.accumulatedText = ''
@@ -730,6 +815,11 @@ export class GeneralistService extends AgentBaseService {
 
   getCurrentConversationId(): string | null {
     return this.currentConversationId
+  }
+
+  /** Returns the streamed content accumulated so far in the current response cycle */
+  getStreamedContent(): string {
+    return this.accumulatedText
   }
 
   isReady(): boolean {

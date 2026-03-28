@@ -50,13 +50,12 @@ const remarkEmojiSpan: Plugin<[], Root> = () => {
           })
           lastIndex = match.index + match[0].length
         }
-        // Remainder after last emoji
-        if (lastIndex < text.length) {
-          newChildren.push({ type: 'text', value: text.slice(lastIndex) })
-        }
-        // If no emoji was found, keep original
+        // If no emoji was found, keep original child unchanged
         if (lastIndex === 0) {
           newChildren.push(child)
+        } else if (lastIndex < text.length) {
+          // Remainder text after the last emoji
+          newChildren.push({ type: 'text', value: text.slice(lastIndex) })
         }
       }
       node.children = newChildren
@@ -243,7 +242,7 @@ function MessageBubbleInner({
   suppressInlineGrillCard
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
-  const { updateMode, sendMessage, clearGrillSession, createItemsFromGrill, submitGrillAnswers, skipAllGrillQuestions } = useChatActions()
+  const { updateMode, sendMessage, appendLocalMessage, clearGrillSession, createItemsFromGrill, submitGrillAnswers, skipAllGrillQuestions } = useChatActions()
   const identity = useMessageIdentity(message)
 
   // Parse attachments from JSON
@@ -276,7 +275,7 @@ function MessageBubbleInner({
   }, [message.contentMd, isGrillActivation, ideaToRefineMatch])
 
   // Detect plan blocks in coordinator/generalist messages
-  const planRegex = /```plan\n([\s\S]*?)```/
+  const planRegex = /````plan\n([\s\S]*?)````/
   const planMatch = !isUser ? message.contentMd.match(planRegex) : null
 
   // Detect grill-summary blocks
@@ -353,8 +352,8 @@ function MessageBubbleInner({
     )
   }
 
-  const handleRefine = (feedback: string): void => {
-    sendMessage(`Please refine the plan: ${feedback}`)
+  const handleRefine = (): void => {
+    appendLocalMessage('📋 Plan cancelled. Please provide a new prompt to generate a fresh plan.')
   }
 
   const handleGrillKeepIterating = (): void => {
@@ -402,6 +401,17 @@ function MessageBubbleInner({
     : null
 
   const markdownComponents = {
+    p: ({ children }: { children?: React.ReactNode }) => {
+      // Strip orphaned backtick characters that leak as text nodes around inline code elements
+      const cleaned = React.Children.map(children, (child) => {
+        if (typeof child === 'string') {
+          const stripped = child.replace(/`/g, '')
+          return stripped || null
+        }
+        return child
+      })
+      return <p>{cleaned}</p>
+    },
     pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
     code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
       const isBlock = className?.includes('language-')
@@ -410,7 +420,7 @@ function MessageBubbleInner({
       }
 
       // Check if the code content is a URL — render as clickable link
-      const text = String(children).trim()
+      const text = String(children).replace(/`/g, '').trim()
       const isUrl = /^https?:\/\/\S+$/.test(text)
       if (isUrl) {
         return (
@@ -424,7 +434,7 @@ function MessageBubbleInner({
               if (text) window.open(text, '_blank')
             }}
           >
-            {children}
+            {text}
           </a>
         )
       }
@@ -436,11 +446,13 @@ function MessageBubbleInner({
         const shortenedPath = shortenFilePath(text)
         return (
           <code
-            className="inline-flex items-center gap-1 bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-primary-text hover:text-primary-hover cursor-pointer underline decoration-dotted underline-offset-2"
+            role="button"
+            aria-label={`Reveal ${text} in file manager`}
+            className="flex items-center gap-1.5 w-fit bg-primary-muted px-2.5 py-1 rounded-md text-sm font-medium text-primary-text hover:bg-primary/25 cursor-pointer transition-colors my-1"
             title={`Reveal in file manager: ${text}`}
             onClick={() => window.api.showItemInFolder(text)}
           >
-            <FileText size={12} className="shrink-0 opacity-60" />
+            <FileText size={13} className="shrink-0" />
             {shortenedPath}
           </code>
         )
@@ -448,7 +460,7 @@ function MessageBubbleInner({
 
       return (
         <code className="bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-primary-text">
-          {children}
+          {text}
         </code>
       )
     },

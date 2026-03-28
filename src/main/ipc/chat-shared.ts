@@ -56,6 +56,26 @@ export function forwardChunkToRenderer(
       try {
         const parsed = JSON.parse(chunk.content) as Record<string, unknown>
         toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed)
+
+        // Safety net: detect plan file writes and inject content as a plan block
+        // so the UI renders a PlanCard even when Claude CLI writes plans to files.
+        // We extract the content from the tool input JSON (available at tool_result time)
+        // instead of reading from disk, avoiding the timing bug where the file doesn't exist yet.
+        if (
+          chunk.toolName === 'Write' &&
+          typeof parsed.file_path === 'string' &&
+          parsed.file_path.includes('.claude/plans/') &&
+          typeof parsed.content === 'string'
+        ) {
+          const planBlock = `\n\n\`\`\`\`plan\n${parsed.content}\n\`\`\`\`\n`
+          contentAccumulator.value += planBlock
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: planBlock,
+            role
+          })
+          log.info('Injected plan content from Write to .claude/plans/', parsed.file_path)
+        }
       } catch {
         toolInputSummary = chunk.content.slice(0, 120)
       }

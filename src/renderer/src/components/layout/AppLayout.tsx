@@ -21,7 +21,12 @@ import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettin
 import { SettingsPage } from '@renderer/components/settings'
 import { HelpView } from '@renderer/components/help'
 import { WelcomeScreen } from '@renderer/components/welcome'
-import { UpdateBanner, MemoryFeedBanner, ErrorBoundary } from '@renderer/components/common'
+import {
+  UpdateBanner,
+  MemoryFeedBanner,
+  BudgetWarningBanner,
+  ErrorBoundary
+} from '@renderer/components/common'
 import { NewConversationModal } from '@renderer/components/chat'
 import {
   useWorkspaceStore,
@@ -324,6 +329,9 @@ export default function AppLayout(): React.JSX.Element {
 
       {/* Memory feed progress banner */}
       <MemoryFeedBanner />
+
+      {/* Budget warning/exceeded banner */}
+      <BudgetWarningBanner />
 
       {/* Main content */}
       <div className="flex flex-1 min-h-0">

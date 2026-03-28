@@ -40,3 +40,13 @@ export {
 } from './complexity-scorer.service'
 export { GitHubService, githubService } from './github.service'
 export { RepoService, repoService } from './repo.service'
+
+// Audit & observability services (DevTeam practice alignment)
+export { hookRunnerService } from './hook-runner.service'
+export { eventLoggerService } from './event-logger.service'
+export { costTrackerService, estimateCostCents, estimateCostFromTotal, MODEL_PRICING } from './cost-tracker.service'
+export type { CostSummary, BudgetStatus } from './cost-tracker.service'
+export { checkpointService } from './checkpoint.service'
+export type { CheckpointState } from './checkpoint.service'
+export { detectAbandonment, detectQualityGates } from './abandonment-detector.service'
+export type { AbandonmentResult, QualityGateResult } from './abandonment-detector.service'

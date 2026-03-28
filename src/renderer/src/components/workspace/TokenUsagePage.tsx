@@ -1,8 +1,24 @@
 import { useState, useEffect } from 'react'
-import { Zap, Activity, Clock, Users } from 'lucide-react'
+import { Zap, Activity, Clock, Users, DollarSign, ShieldCheck } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { Skeleton } from '@renderer/components/common'
 import type { TokenSummary, AgentSessionRecord } from '../../../../shared/types'
+
+interface CostSummary {
+  totalCostCents: number
+  totalTokens: number
+  sessionCount: number
+  byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
+}
+
+interface BudgetStatus {
+  currentCostCents: number
+  dailyBudgetCents: number
+  sessionBudgetCents: number
+  dailyPercentUsed: number
+  dailyWarning: boolean
+  dailyExceeded: boolean
+}
 
 function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
@@ -47,26 +63,39 @@ export default function TokenUsagePage(): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const [summary, setSummary] = useState<TokenSummary | null>(null)
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([])
+  const [costSummary, setCostSummary] = useState<CostSummary | null>(null)
+  const [budgetStatus, setBudgetStatus] = useState<BudgetStatus | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     if (!activeWorkspace) return
 
+    let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true)
     Promise.all([
       window.api.getWorkspaceTokenSummary({ workspaceId: activeWorkspace.id }),
-      window.api.getRecentSessions({ workspaceId: activeWorkspace.id, limit: 50 })
+      window.api.getRecentSessions({ workspaceId: activeWorkspace.id, limit: 50 }),
+      window.api.getCostSummary({ workspaceId: activeWorkspace.id }),
+      window.api.checkBudget({ workspaceId: activeWorkspace.id })
     ])
-      .then(([sum, sess]) => {
+      .then(([sum, sess, cost, budget]) => {
+        if (cancelled) return
         setSummary(sum)
         setSessions(sess)
+        setCostSummary(cost)
+        setBudgetStatus(budget)
       })
       .catch((err) => {
         console.error('Failed to load token data:', err)
       })
       .finally(() => {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       })
+
+    return () => {
+      cancelled = true
+    }
   }, [activeWorkspace])
 
   if (!activeWorkspace) {
@@ -120,8 +149,77 @@ export default function TokenUsagePage(): React.JSX.Element {
     'bg-orange-500'
   ]
 
+  // Build a cost lookup by agent type
+  const agentCostMap = new Map((costSummary?.byAgent ?? []).map((a) => [a.agentType, a]))
+
+  // Budget badge logic
+  const budgetHasDailyLimit = (budgetStatus?.dailyBudgetCents ?? 0) > 0
+  const budgetPct = budgetStatus?.dailyPercentUsed ?? 0
+  const budgetBadge = budgetStatus?.dailyExceeded
+    ? { bg: 'bg-red-500/15', text: 'text-red-400', label: 'Exceeded' }
+    : budgetStatus?.dailyWarning
+      ? { bg: 'bg-yellow-500/15', text: 'text-yellow-400', label: `${Math.round(budgetPct)}% used` }
+      : { bg: 'bg-green-500/15', text: 'text-green-400', label: 'On track' }
+
   return (
     <div className="max-w-4xl mx-auto px-6 py-8">
+      {/* Cost Summary Row */}
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
+            <DollarSign size={12} />
+            Estimated Cost
+          </div>
+          <div className="text-2xl font-bold text-text-primary">
+            ${((costSummary?.totalCostCents ?? 0) / 100).toFixed(2)}
+          </div>
+          <div className="text-xs text-text-secondary mt-1">Based on model pricing</div>
+        </div>
+
+        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
+            <ShieldCheck size={12} />
+            Budget Status
+          </div>
+          {budgetHasDailyLimit ? (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl font-bold text-text-primary">
+                  ${((budgetStatus?.currentCostCents ?? 0) / 100).toFixed(2)}
+                </span>
+                <span className="text-sm text-text-secondary">
+                  / ${((budgetStatus?.dailyBudgetCents ?? 0) / 100).toFixed(2)}
+                </span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${budgetBadge.bg} ${budgetBadge.text}`}
+                >
+                  {budgetBadge.label}
+                </span>
+              </div>
+              <div className="w-full bg-surface-base rounded-full h-1.5 mt-2">
+                <div
+                  className={`h-1.5 rounded-full transition-all ${
+                    budgetStatus?.dailyExceeded
+                      ? 'bg-red-500'
+                      : budgetStatus?.dailyWarning
+                        ? 'bg-yellow-500'
+                        : 'bg-green-500'
+                  }`}
+                  style={{ width: `${Math.min(budgetPct, 100)}%` }}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-2xl font-bold text-text-primary">No limit</div>
+              <div className="text-xs text-text-secondary mt-1">
+                Set a daily budget in Models settings
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-4 mb-8">
         <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
@@ -168,6 +266,7 @@ export default function TokenUsagePage(): React.JSX.Element {
                   <th className="text-right px-4 py-2.5 font-medium">Tokens</th>
                   <th className="text-right px-4 py-2.5 font-medium">Sessions</th>
                   <th className="text-right px-4 py-2.5 font-medium">Avg/Session</th>
+                  <th className="text-right px-4 py-2.5 font-medium">Est. Cost</th>
                   <th className="px-4 py-2.5 font-medium w-32">Usage</th>
                 </tr>
               </thead>
@@ -199,6 +298,11 @@ export default function TokenUsagePage(): React.JSX.Element {
                       <td className="px-4 py-2.5 text-right">
                         <span className="text-sm text-text-secondary font-mono">
                           {formatTokens(avg)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="text-sm text-text-body font-mono">
+                          ${((agentCostMap.get(agent.agentType)?.costCents ?? 0) / 100).toFixed(2)}
                         </span>
                       </td>
                       <td className="px-4 py-2.5">

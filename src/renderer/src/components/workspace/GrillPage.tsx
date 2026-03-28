@@ -247,6 +247,7 @@ export default function GrillPage({
     const updatedHistory = [...history, newHistory]
     setHistory(updatedHistory)
     setPhase('evaluating')
+    setQuestionsRepeated(false)
 
     // Build the full enriched description for saving (base + all decisions)
     const fullDescription = buildFullDescription(updatedHistory)

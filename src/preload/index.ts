@@ -339,6 +339,11 @@ const api = {
   memoryFeedClaudeMd: (args: { workspacePath: string }): Promise<MemoryFeedResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CLAUDE_MD, args),
 
+  memoryRegenerateClaudeMd: (args: {
+    workspacePath: string
+  }): Promise<{ success: boolean; content: string; existing: string | null; error?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REGENERATE_CLAUDE_MD, args),
+
   memoryFeedCodebase: (args: { workspacePath: string }): Promise<MemoryFeedResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CODEBASE, args),
 
@@ -420,10 +425,8 @@ const api = {
     summary?: string
   }): Promise<Idea | null> => ipcRenderer.invoke(IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL, args),
 
-  saveIdeaGrillDecisions: (args: {
-    ideaId: string
-    decisions: string
-  }): Promise<Idea> => ipcRenderer.invoke(IPC_CHANNELS.IDEA_SAVE_GRILL_DECISIONS, args),
+  saveIdeaGrillDecisions: (args: { ideaId: string; decisions: string }): Promise<Idea> =>
+    ipcRenderer.invoke(IPC_CHANNELS.IDEA_SAVE_GRILL_DECISIONS, args),
 
   // ── Auto-update ──
   checkForUpdate: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
@@ -786,7 +789,160 @@ const api = {
 
   // ── Shell ──
   showItemInFolder: (filePath: string): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_ITEM_IN_FOLDER, filePath)
+    ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_ITEM_IN_FOLDER, filePath),
+
+  // ── Checkpoints ──
+  listCheckpoints: (args: { conversationId: string }): Promise<
+    { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
+  > => ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_LIST, args),
+
+  restoreCheckpoint: (args: {
+    checkpointId: string
+  }): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_RESTORE, args),
+
+  // ── Cost Tracking ──
+  getCostSummary: (args: { workspaceId: string }): Promise<{
+    totalCostCents: number
+    totalTokens: number
+    sessionCount: number
+    byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
+  }> => ipcRenderer.invoke(IPC_CHANNELS.COST_GET_WORKSPACE_SUMMARY, args),
+
+  checkBudget: (args: { workspaceId: string }): Promise<{
+    currentCostCents: number
+    dailyBudgetCents: number
+    sessionBudgetCents: number
+    dailyPercentUsed: number
+    dailyWarning: boolean
+    dailyExceeded: boolean
+  }> => ipcRenderer.invoke(IPC_CHANNELS.COST_CHECK_BUDGET, args),
+
+  onBudgetWarning: (
+    callback: (data: {
+      workspaceId: string
+      currentCostCents: number
+      budgetCents: number
+      percentUsed: number
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        workspaceId: string
+        currentCostCents: number
+        budgetCents: number
+        percentUsed: number
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.COST_BUDGET_WARNING, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.COST_BUDGET_WARNING, handler)
+    }
+  },
+
+  onBudgetExceeded: (
+    callback: (data: {
+      workspaceId: string
+      currentCostCents: number
+      budgetCents: number
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { workspaceId: string; currentCostCents: number; budgetCents: number }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.COST_BUDGET_EXCEEDED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.COST_BUDGET_EXCEEDED, handler)
+    }
+  },
+
+  // ── Events (audit log) ──
+  getRecentEvents: (args?: { limit?: number }): Promise<
+    {
+      id: string
+      sessionId: string | null
+      conversationId: string | null
+      workspaceId: string | null
+      eventType: string
+      category: string
+      message: string
+      dataJson: string
+      agentId: string | null
+      model: string | null
+      createdAt: string
+    }[]
+  > => ipcRenderer.invoke(IPC_CHANNELS.EVENTS_GET_RECENT, args),
+
+  getConversationEvents: (args: {
+    conversationId: string
+    limit?: number
+  }): Promise<
+    {
+      id: string
+      sessionId: string | null
+      conversationId: string | null
+      workspaceId: string | null
+      eventType: string
+      category: string
+      message: string
+      dataJson: string
+      agentId: string | null
+      model: string | null
+      createdAt: string
+    }[]
+  > => ipcRenderer.invoke(IPC_CHANNELS.EVENTS_GET_BY_CONVERSATION, args),
+
+  // ── Gate Results ──
+  getGateResults: (args: { conversationId: string }): Promise<
+    {
+      id: string
+      sessionId: string | null
+      conversationId: string | null
+      taskId: string | null
+      agentId: string | null
+      gateType: string
+      passed: boolean
+      summary: string
+      createdAt: string
+    }[]
+  > => ipcRenderer.invoke(IPC_CHANNELS.GATE_RESULTS_GET, args),
+
+  // ── Agent Events (from specialist pool) ──
+  onAbandonmentDetected: (
+    callback: (data: { taskId: string; specialist: string; pattern: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { taskId: string; specialist: string; pattern: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.AGENT_ABANDONMENT_DETECTED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_ABANDONMENT_DETECTED, handler)
+    }
+  },
+
+  onGateFailure: (
+    callback: (data: {
+      taskId: string
+      specialist: string
+      gate: { type: string; passed: boolean; summary: string }
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        taskId: string
+        specialist: string
+        gate: { type: string; passed: boolean; summary: string }
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.AGENT_GATE_FAILURE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_GATE_FAILURE, handler)
+    }
+  }
 } as const
 
 if (process.contextIsolated) {

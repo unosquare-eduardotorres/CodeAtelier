@@ -16,8 +16,8 @@ Format the plan with:
 - Code snippets in fenced blocks
 - A mermaid diagram showing the change flow if the plan involves 3+ files
 
-```plan
+````plan
 ## [Plan Title]
 ### Step 1: ...
 ### Step 2: ...
-```
+````

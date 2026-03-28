@@ -18,7 +18,7 @@ import { MermaidDiagram } from '@renderer/components/common'
 interface PlanCardProps {
   planContent: string
   onBuild: () => void
-  onRefine: (feedback: string) => void
+  onRefine: () => void
 }
 
 /** Complexity badge colors */
@@ -161,11 +161,8 @@ function StructuredPlanView({
 }: {
   plan: StructuredPlan
   onBuild: () => void
-  onRefine: (feedback: string) => void
+  onRefine: () => void
 }): React.JSX.Element {
-  const [showRefineInput, setShowRefineInput] = useState(false)
-  const [refineFeedback, setRefineFeedback] = useState('')
-
   return (
     <div className="rounded-xl border border-green-500/30 bg-surface-overlay overflow-hidden shadow-sm">
       {/* Green header */}
@@ -254,45 +251,13 @@ function StructuredPlanView({
           Accept & Build
         </button>
         <button
-          onClick={() => setShowRefineInput(!showRefineInput)}
+          onClick={onRefine}
           className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
         >
           <RefreshCw size={14} />
           Revise Plan
         </button>
       </div>
-
-      {/* Inline refinement input */}
-      {showRefineInput && (
-        <div className="flex items-center gap-2 px-4 py-3 border-t border-purple-500/20">
-          <input
-            type="text"
-            value={refineFeedback}
-            onChange={(e) => setRefineFeedback(e.target.value)}
-            placeholder="What should change?"
-            className="flex-1 bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-purple-500"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && refineFeedback.trim()) {
-                onRefine(refineFeedback.trim())
-                setRefineFeedback('')
-                setShowRefineInput(false)
-              }
-            }}
-          />
-          <button
-            onClick={() => {
-              if (refineFeedback.trim()) {
-                onRefine(refineFeedback.trim())
-                setRefineFeedback('')
-                setShowRefineInput(false)
-              }
-            }}
-            className="p-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white transition-colors"
-          >
-            <Check size={14} />
-          </button>
-        </div>
-      )}
     </div>
   )
 }
@@ -302,9 +267,6 @@ export default function PlanCard({
   onBuild,
   onRefine
 }: PlanCardProps): React.JSX.Element {
-  const [showRefineInput, setShowRefineInput] = useState(false)
-  const [refineFeedback, setRefineFeedback] = useState('')
-
   // Try to parse as structured plan JSON
   const structuredPlan = useMemo<StructuredPlan | null>(() => {
     try {
@@ -347,45 +309,13 @@ export default function PlanCard({
           Build This
         </button>
         <button
-          onClick={() => setShowRefineInput(!showRefineInput)}
+          onClick={onRefine}
           className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
         >
           <RefreshCw size={14} />
           Refine Plan
         </button>
       </div>
-
-      {/* Inline refinement input */}
-      {showRefineInput && (
-        <div className="flex items-center gap-2 px-4 py-3 border-t border-purple-500/20">
-          <input
-            type="text"
-            value={refineFeedback}
-            onChange={(e) => setRefineFeedback(e.target.value)}
-            placeholder="What should change?"
-            className="flex-1 bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-purple-500"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && refineFeedback.trim()) {
-                onRefine(refineFeedback.trim())
-                setRefineFeedback('')
-                setShowRefineInput(false)
-              }
-            }}
-          />
-          <button
-            onClick={() => {
-              if (refineFeedback.trim()) {
-                onRefine(refineFeedback.trim())
-                setRefineFeedback('')
-                setShowRefineInput(false)
-              }
-            }}
-            className="p-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white transition-colors"
-          >
-            <Check size={14} />
-          </button>
-        </div>
-      )}
     </div>
   )
 }

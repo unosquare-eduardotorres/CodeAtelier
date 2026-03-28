@@ -14,6 +14,8 @@ import { enrichTasksWithComplexity } from './complexity-scorer.service'
 import { promptBuilder } from './prompt-builder'
 import { AgentBaseService } from './agent-base.service'
 import { modelConfigService } from './model-config.service'
+import { hookRunnerService } from './hook-runner.service'
+import { eventLoggerService } from './event-logger.service'
 import type { StreamChunk } from './agent-base.service'
 
 /** Maximum number of session entries before evicting oldest */
@@ -91,9 +93,15 @@ export class OrchestratorService extends AgentBaseService {
     ]
 
     if (mode === 'build') {
-      args.push('--permission-mode', 'auto')
+      args.push('--permission-mode', 'bypassPermissions')
     } else {
       args.push('--permission-mode', 'plan')
+    }
+
+    // Add hook scripts for safety and quality gate interception
+    const hookArgs = hookRunnerService.getHookArgs(mode)
+    if (hookArgs.length > 0) {
+      args.push(...hookArgs)
     }
 
     const existingSession = conversationId ? this.sessionMap.get(conversationId) : null
@@ -226,9 +234,18 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
 
     this.log.info('Decomposing task for specialists:', brief.specialists.join(', '))
 
+    // ── Event: decomposition started ──
+    eventLoggerService.logDecompositionStarted({
+      conversationId,
+      summary: brief.summary,
+      specialists: brief.specialists
+    })
+
     const env = this.buildEnvWithPath()
 
-    const result = await new Promise<string>((resolve, reject) => {
+    let result: string
+    try {
+      result = await new Promise<string>((resolve, reject) => {
       const child = spawn(
         'claude',
         ['-p', prompt, '--system-prompt', promptBuilder.getDecompositionPrompt(), '--output-format', 'text'],
@@ -263,6 +280,15 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
         reject(new Error('Task decomposition timed out'))
       }, 30000)
     })
+    } catch (error) {
+      // ── Event: decomposition failed (CLI spawn, timeout, or exit code) ──
+      eventLoggerService.logDecompositionFailed({
+        conversationId,
+        error: (error as Error).message,
+        fallback: 'legacy'
+      })
+      throw error
+    }
 
     // Parse the JSON response — strip markdown fences if present
     let jsonStr = result
@@ -276,11 +302,23 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
       parsed = JSON.parse(jsonStr)
     } catch {
       this.log.error('Failed to parse decomposition JSON:', jsonStr.substring(0, 500))
-      throw new Error('Failed to parse task decomposition — LLM returned invalid JSON')
+      const parseError = 'Failed to parse task decomposition — LLM returned invalid JSON'
+      eventLoggerService.logDecompositionFailed({
+        conversationId,
+        error: parseError,
+        fallback: 'legacy'
+      })
+      throw new Error(parseError)
     }
 
     if (!parsed.tasks || !Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
-      throw new Error('Task decomposition returned no tasks')
+      const emptyError = 'Task decomposition returned no tasks'
+      eventLoggerService.logDecompositionFailed({
+        conversationId,
+        error: emptyError,
+        fallback: 'legacy'
+      })
+      throw new Error(emptyError)
     }
 
     // Validate and normalize tasks — including raw complexity from LLM
@@ -305,6 +343,17 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
     for (const t of enrichedTasks) {
       this.log.info(`  ${t.id}: ${t.complexity?.tier}/${t.model} (score: ${t.complexity?.total})`)
     }
+
+    // ── Event: decomposition completed ──
+    eventLoggerService.logDecompositionCompleted({
+      conversationId,
+      taskCount: enrichedTasks.length,
+      tasks: enrichedTasks.map((t) => ({
+        id: t.id,
+        specialist: t.specialist,
+        model: t.model
+      }))
+    })
 
     return {
       conversationId,
@@ -341,6 +390,22 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
         'for conversation:',
         this.currentConversationId
       )
+    }
+  }
+
+  /**
+   * Override to capture orchestrator stderr to the event log for debugging.
+   * Filters out trivial noise (progress bars, blank lines) and logs substantial errors.
+   */
+  protected handleError(data: Buffer): void {
+    super.handleError(data)
+    const text = data.toString().trim()
+    // Only log non-trivial stderr (skip blank lines, progress indicators, etc.)
+    if (text && text.length > 10 && !text.startsWith('�') && !text.startsWith('Progress:')) {
+      eventLoggerService.logOrchestratorStderr({
+        conversationId: this.currentConversationId ?? undefined,
+        stderr: text
+      })
     }
   }
 

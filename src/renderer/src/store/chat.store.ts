@@ -210,12 +210,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   stopGeneration: async () => {
+    const { streamingContent, streamingRole, activeConversation } = get()
+
     try {
       await window.api.stopGeneration()
     } catch (error) {
       rendererLog.error('Failed to stop generation:', error)
     }
-    set({ isStreaming: false, streamingContent: '', toolActivities: [] })
+
+    // Preserve partial streaming content as a message with a "stopped" suffix
+    if (streamingContent && activeConversation) {
+      const stoppedMessage: Message = {
+        id: `stopped-${Date.now()}`,
+        conversationId: activeConversation.id,
+        role: streamingRole,
+        contentMd: streamingContent + '\n\n---\n\n⏹ *Generation stopped by user.*',
+        attachmentsJson: '[]',
+        createdAt: new Date().toISOString()
+      }
+      set((state) => ({
+        messages: [...state.messages, stoppedMessage],
+        streamingContent: '',
+        isStreaming: false,
+        toolActivities: []
+      }))
+    } else if (activeConversation) {
+      // No partial content — still show a local indicator
+      const stoppedMessage: Message = {
+        id: `stopped-${Date.now()}`,
+        conversationId: activeConversation.id,
+        role: 'generalist',
+        contentMd: '⏹ *Generation stopped by user.*',
+        attachmentsJson: '[]',
+        createdAt: new Date().toISOString()
+      }
+      set((state) => ({
+        messages: [...state.messages, stoppedMessage],
+        streamingContent: '',
+        isStreaming: false,
+        toolActivities: []
+      }))
+    } else {
+      set({ isStreaming: false, streamingContent: '', toolActivities: [] })
+    }
   },
 
   sendMessage: async (text: string, attachments?: string[]) => {
@@ -630,38 +667,40 @@ export const useChatActions = (): Pick<
   | 'setHandoff'
   | 'clearHandoff'
 > =>
-  useChatStore(useShallow((s) => ({
-    sendMessage: s.sendMessage,
-    stopGeneration: s.stopGeneration,
-    clearDisplay: s.clearDisplay,
-    appendLocalMessage: s.appendLocalMessage,
-    completeConversation: s.completeConversation,
-    closeConversation: s.closeConversation,
-    createConversation: s.createConversation,
-    selectConversation: s.selectConversation,
-    deleteConversation: s.deleteConversation,
-    updateMode: s.updateMode,
-    renameConversation: s.renameConversation,
-    loadConversations: s.loadConversations,
-    startGrillSession: s.startGrillSession,
-    clearGrillSession: s.clearGrillSession,
-    submitGrillAnswers: s.submitGrillAnswers,
-    skipAllGrillQuestions: s.skipAllGrillQuestions,
-    createItemsFromGrill: s.createItemsFromGrill,
-    setCompactSuggestion: s.setCompactSuggestion,
-    setTaskPlan: s.setTaskPlan,
-    updateTaskProgress: s.updateTaskProgress,
-    executePlan: s.executePlan,
-    clearTaskPlan: s.clearTaskPlan,
-    setGrillQuestions: s.setGrillQuestions,
-    endGrillSession: s.endGrillSession,
-    appendStreamChunk: s.appendStreamChunk,
-    finalizeStream: s.finalizeStream,
-    addToolActivity: s.addToolActivity,
-    updateToolActivity: s.updateToolActivity,
-    setHandoff: s.setHandoff,
-    clearHandoff: s.clearHandoff
-  })))
+  useChatStore(
+    useShallow((s) => ({
+      sendMessage: s.sendMessage,
+      stopGeneration: s.stopGeneration,
+      clearDisplay: s.clearDisplay,
+      appendLocalMessage: s.appendLocalMessage,
+      completeConversation: s.completeConversation,
+      closeConversation: s.closeConversation,
+      createConversation: s.createConversation,
+      selectConversation: s.selectConversation,
+      deleteConversation: s.deleteConversation,
+      updateMode: s.updateMode,
+      renameConversation: s.renameConversation,
+      loadConversations: s.loadConversations,
+      startGrillSession: s.startGrillSession,
+      clearGrillSession: s.clearGrillSession,
+      submitGrillAnswers: s.submitGrillAnswers,
+      skipAllGrillQuestions: s.skipAllGrillQuestions,
+      createItemsFromGrill: s.createItemsFromGrill,
+      setCompactSuggestion: s.setCompactSuggestion,
+      setTaskPlan: s.setTaskPlan,
+      updateTaskProgress: s.updateTaskProgress,
+      executePlan: s.executePlan,
+      clearTaskPlan: s.clearTaskPlan,
+      setGrillQuestions: s.setGrillQuestions,
+      endGrillSession: s.endGrillSession,
+      appendStreamChunk: s.appendStreamChunk,
+      finalizeStream: s.finalizeStream,
+      addToolActivity: s.addToolActivity,
+      updateToolActivity: s.updateToolActivity,
+      setHandoff: s.setHandoff,
+      clearHandoff: s.clearHandoff
+    }))
+  )
 
 // Preserve state on HMR dispose
 if (import.meta.hot) {

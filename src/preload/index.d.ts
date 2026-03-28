@@ -200,6 +200,9 @@ interface Api {
   memoryFeedCancel: () => Promise<void>
   memoryGetFeedTimestamps: (args: { workspaceId: string }) => Promise<WorkspaceFeedTimestamps>
   memoryFeedClaudeMd: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
+  memoryRegenerateClaudeMd: (args: {
+    workspacePath: string
+  }) => Promise<{ success: boolean; content: string; existing: string | null; error?: string }>
   memoryFeedCodebase: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
   memoryFeedDocument: (args: {
     workspacePath: string
@@ -389,6 +392,107 @@ interface Api {
 
   // Shell
   showItemInFolder: (filePath: string) => Promise<void>
+
+  // Checkpoints
+  listCheckpoints: (args: { conversationId: string }) => Promise<
+    { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
+  >
+  restoreCheckpoint: (args: {
+    checkpointId: string
+  }) => Promise<{ success: boolean; message: string }>
+
+  // Cost tracking
+  getCostSummary: (args: { workspaceId: string }) => Promise<{
+    totalCostCents: number
+    totalTokens: number
+    sessionCount: number
+    byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
+  }>
+  checkBudget: (args: { workspaceId: string }) => Promise<{
+    currentCostCents: number
+    dailyBudgetCents: number
+    sessionBudgetCents: number
+    dailyPercentUsed: number
+    dailyWarning: boolean
+    dailyExceeded: boolean
+  }>
+  onBudgetWarning: (
+    callback: (data: {
+      workspaceId: string
+      currentCostCents: number
+      budgetCents: number
+      percentUsed: number
+    }) => void
+  ) => () => void
+  onBudgetExceeded: (
+    callback: (data: {
+      workspaceId: string
+      currentCostCents: number
+      budgetCents: number
+    }) => void
+  ) => () => void
+
+  // Events (audit log)
+  getRecentEvents: (args?: { limit?: number }) => Promise<
+    {
+      id: string
+      sessionId: string | null
+      conversationId: string | null
+      workspaceId: string | null
+      eventType: string
+      category: string
+      message: string
+      dataJson: string
+      agentId: string | null
+      model: string | null
+      createdAt: string
+    }[]
+  >
+  getConversationEvents: (args: {
+    conversationId: string
+    limit?: number
+  }) => Promise<
+    {
+      id: string
+      sessionId: string | null
+      conversationId: string | null
+      workspaceId: string | null
+      eventType: string
+      category: string
+      message: string
+      dataJson: string
+      agentId: string | null
+      model: string | null
+      createdAt: string
+    }[]
+  >
+
+  // Gate results
+  getGateResults: (args: { conversationId: string }) => Promise<
+    {
+      id: string
+      sessionId: string | null
+      conversationId: string | null
+      taskId: string | null
+      agentId: string | null
+      gateType: string
+      passed: boolean
+      summary: string
+      createdAt: string
+    }[]
+  >
+
+  // Agent events (specialist pool)
+  onAbandonmentDetected: (
+    callback: (data: { taskId: string; specialist: string; pattern: string }) => void
+  ) => () => void
+  onGateFailure: (
+    callback: (data: {
+      taskId: string
+      specialist: string
+      gate: { type: string; passed: boolean; summary: string }
+    }) => void
+  ) => () => void
 }
 
 declare global {

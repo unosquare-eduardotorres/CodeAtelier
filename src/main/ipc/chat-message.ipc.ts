@@ -14,9 +14,15 @@ import {
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { ConversationMode, GrillEvaluation, GrillQuestion, HandoffBrief } from '../../shared/types'
+import type {
+  ConversationMode,
+  GrillEvaluation,
+  GrillQuestion,
+  HandoffBrief
+} from '../../shared/types'
 import { memoryService } from '../services/memory.service'
 import { chatIpcLogger } from '../logger'
+import { eventLoggerService } from '../services/event-logger.service'
 import { validateSender } from './validate-sender'
 import { forwardChunkToRenderer } from './chat-shared'
 import { runLegacyOrchestrator } from './chat-plan.ipc'
@@ -27,6 +33,9 @@ const log = chatIpcLogger
 const MAX_MESSAGE_LENGTH = 1_000_000
 /** Maximum number of attachments per message */
 const MAX_ATTACHMENTS = 20
+
+/** Module-level flag to prevent duplicate message saves when stop is called mid-stream */
+let isStopped = false
 
 export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
   // Persistent listener: forward compact suggestions to the renderer
@@ -71,6 +80,9 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.CHAT_SEND,
     async (event, args: { conversationId: string; text: string; attachments?: string[] }) => {
       validateSender(event)
+
+      // Reset stop flag for new message cycle
+      isStopped = false
 
       // Input validation
       if (!args || typeof args !== 'object') {
@@ -158,6 +170,12 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
       }
 
       const onComplete = (): void => {
+        // If stop was called, the stop handler already saved the message — skip to avoid duplicates
+        if (isStopped) {
+          cleanupListeners()
+          return
+        }
+
         try {
           log.info('Generalist complete — saving to DB:', {
             contentLen: streamedContent.value.length
@@ -213,6 +231,14 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
       const onHandoff = async (brief: HandoffBrief): Promise<void> => {
         log.info('Handoff received from generalist:', brief.summary)
 
+        // ── Event: handoff detected ──
+        eventLoggerService.logHandoffDetected({
+          conversationId,
+          summary: brief.summary,
+          specialists: brief.specialists,
+          mode: brief.mode
+        })
+
         // ── Enrich with recent conversation messages ──
         try {
           const allMessages = messageRepository.findByConversation(conversationId)
@@ -253,6 +279,13 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
         } catch (error) {
           log.error('Task decomposition failed, falling back to single orchestrator:', error)
 
+          // ── Event: decomposition fallback ──
+          eventLoggerService.logDecompositionFailed({
+            conversationId,
+            error: (error as Error).message,
+            fallback: 'legacy'
+          })
+
           // Fallback: run orchestrator in legacy single-process mode
           await runLegacyOrchestrator(mainWindow, conversationId, brief)
         }
@@ -287,6 +320,13 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
         // Clean up listeners to prevent leaks on error
         cleanupListeners()
 
+        // ── Event: generalist send failure ──
+        eventLoggerService.logSessionFailed({
+          conversationId,
+          agentId: 'generalist',
+          error: (error as Error).message
+        })
+
         // If generalist isn't running, save error message
         log.error('Generalist send failed:', (error as Error).message)
         const errorMsg = `**Generalist Error:** ${(error as Error).message}\n\nMake sure Claude CLI is installed and a workspace is open.`
@@ -314,12 +354,40 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC_CHANNELS.CHAT_STOP, async (event) => {
     validateSender(event)
+
+    // Set flag to prevent onComplete from saving a duplicate message
+    isStopped = true
+
+    // Capture context before stopping
+    const conversationId = generalistService.getCurrentConversationId()
+
     // Stop orchestrator if running (ephemeral per-handoff process)
     if (orchestratorService.isRunning()) {
       await orchestratorService.stop()
     }
     // Stop any running specialist pool tasks
     await specialistPoolService.stopAll()
+
+    // Save partial content to DB so it persists across conversation reloads
+    if (conversationId) {
+      try {
+        const partialContent = generalistService.getStreamedContent()
+        const contentToSave = partialContent
+          ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
+          : '⏹ *Generation stopped by user.*'
+
+        const savedMessage = messageRepository.create(conversationId, 'generalist', contentToSave)
+        log.info('Stopped message saved to DB, id:', savedMessage.id)
+
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+          conversationId,
+          messageId: savedMessage.id
+        })
+      } catch (error) {
+        log.error('Failed to save stopped message:', error)
+      }
+    }
+
     // Don't kill the generalist process — it persists across messages
     // Just signal that streaming should stop from the UI perspective
   })

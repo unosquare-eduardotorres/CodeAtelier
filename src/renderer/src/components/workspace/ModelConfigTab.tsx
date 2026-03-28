@@ -40,6 +40,8 @@ export default function ModelConfigTab(): React.JSX.Element {
   const [isSaving, setIsSaving] = useState(false)
   const [costPreference, setCostPreference] = useState<CostPreference>('balanced')
   const [fastMode, setFastMode] = useState(false)
+  const [dailyBudget, setDailyBudget] = useState<number>(0)
+  const [sessionBudget, setSessionBudget] = useState<number>(0)
 
   // Load current overrides + workspace settings
   useEffect(() => {
@@ -50,6 +52,8 @@ export default function ModelConfigTab(): React.JSX.Element {
         setOverrides((settings.modelOverrides as ModelOverrides) ?? {})
         setCostPreference((settings.costPreference as CostPreference) || 'balanced')
         setFastMode(settings.fastMode === true)
+        setDailyBudget((settings.dailyBudgetUsd as number) ?? 0)
+        setSessionBudget((settings.sessionBudgetUsd as number) ?? 0)
       })
       .catch(console.error)
   }, [activeWorkspace])
@@ -125,6 +129,27 @@ export default function ModelConfigTab(): React.JSX.Element {
         workspaceId: activeWorkspace.id,
         settings: { ...settings, fastMode: newValue }
       })
+    }
+  }
+
+  const handleBudgetChange = async (
+    field: 'dailyBudgetUsd' | 'sessionBudgetUsd',
+    value: number
+  ): Promise<void> => {
+    const clamped = Math.max(0, value)
+    if (field === 'dailyBudgetUsd') setDailyBudget(clamped)
+    else setSessionBudget(clamped)
+
+    if (activeWorkspace) {
+      try {
+        const settings = await window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id })
+        await window.api.updateWorkspaceSettings({
+          workspaceId: activeWorkspace.id,
+          settings: { ...settings, [field]: clamped }
+        })
+      } catch (err) {
+        console.error('Failed to save budget setting:', err)
+      }
     }
   }
 
@@ -248,6 +273,49 @@ export default function ModelConfigTab(): React.JSX.Element {
                     </span>
                   </button>
                 ))}
+              </div>
+            </SettingsCard>
+          </div>
+
+          {/* Budget Limits */}
+          <div>
+            <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
+              Budget Limits
+            </h3>
+            <SettingsCard>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-text-secondary">Daily Budget (USD)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.50"
+                    value={dailyBudget}
+                    onChange={(e) =>
+                      handleBudgetChange('dailyBudgetUsd', parseFloat(e.target.value) || 0)
+                    }
+                    className="w-full mt-1 bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                  <p className="text-[11px] text-text-muted mt-1">
+                    0 = unlimited. Specialists stop when exceeded.
+                  </p>
+                </div>
+                <div>
+                  <label className="text-xs text-text-secondary">Session Budget (USD)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.50"
+                    value={sessionBudget}
+                    onChange={(e) =>
+                      handleBudgetChange('sessionBudgetUsd', parseFloat(e.target.value) || 0)
+                    }
+                    className="w-full mt-1 bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                  <p className="text-[11px] text-text-muted mt-1">
+                    Per-conversation limit. 0 = unlimited.
+                  </p>
+                </div>
               </div>
             </SettingsCard>
           </div>

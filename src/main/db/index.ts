@@ -11,7 +11,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 21
+const CURRENT_SCHEMA_VERSION = 25
 
 interface Migration {
   version: number
@@ -316,6 +316,98 @@ const migrations: Migration[] = [
     name: 'add_grill_decisions_to_ideas',
     up: (db) => {
       db.exec(`ALTER TABLE ideas ADD COLUMN grill_decisions TEXT DEFAULT NULL`)
+    }
+  },
+  {
+    version: 22,
+    name: 'create_events_table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          session_id TEXT,
+          conversation_id TEXT,
+          workspace_id TEXT,
+          event_type TEXT NOT NULL,
+          category TEXT NOT NULL CHECK (category IN (
+            'session', 'agent', 'escalation', 'gate', 'abandonment',
+            'checkpoint', 'hook', 'budget', 'error'
+          )),
+          message TEXT NOT NULL,
+          data_json TEXT DEFAULT '{}',
+          agent_id TEXT,
+          model TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_events_category ON events(category)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_events_conversation ON events(conversation_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC)`
+      )
+    }
+  },
+  {
+    version: 23,
+    name: 'create_checkpoints_table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS checkpoints (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL,
+          workspace_id TEXT,
+          label TEXT NOT NULL,
+          state_json TEXT NOT NULL DEFAULT '{}',
+          git_branch TEXT,
+          git_commit_sha TEXT,
+          active_task_ids TEXT DEFAULT '[]',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation ON checkpoints(conversation_id)`
+      )
+    }
+  },
+  {
+    version: 24,
+    name: 'add_cost_tracking_to_sessions',
+    up: (db) => {
+      db.exec(
+        `ALTER TABLE agent_sessions ADD COLUMN estimated_cost_cents REAL DEFAULT 0`
+      )
+      db.exec(
+        `ALTER TABLE agent_sessions ADD COLUMN input_tokens INTEGER DEFAULT 0`
+      )
+      db.exec(
+        `ALTER TABLE agent_sessions ADD COLUMN output_tokens INTEGER DEFAULT 0`
+      )
+    }
+  },
+  {
+    version: 25,
+    name: 'create_gate_results_table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS gate_results (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          session_id TEXT,
+          conversation_id TEXT,
+          task_id TEXT,
+          agent_id TEXT,
+          gate_type TEXT NOT NULL CHECK (gate_type IN ('test', 'lint', 'typecheck', 'build')),
+          passed INTEGER NOT NULL DEFAULT 0,
+          summary TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_gate_results_conversation ON gate_results(conversation_id)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_gate_results_task ON gate_results(task_id)`
+      )
     }
   }
 ]

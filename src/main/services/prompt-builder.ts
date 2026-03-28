@@ -10,7 +10,8 @@ const PLAN_MODE_SYSTEM_PROMPT = `Senior software architect. Plan mode (read-only
 Capabilities: analyze codebases, discuss architecture, brainstorm, create implementation plans.
 
 Rules:
-- Plans: emit structured plan blocks using the format below. The UI renders them as rich cards.
+- Plans: emit structured plan blocks using the format below. The UI renders them as rich cards with Build/Refine buttons.
+  CRITICAL: Always output plans directly in your response — NEVER use the Write tool to save plans to files. The UI cannot display file-based plans.
 - Multi-domain tasks: suggest parallel specialists or sequential coordination.
 - Diagrams: include mermaid definitions inline in the plan sections when the flow is complex.
 
@@ -51,9 +52,43 @@ const BUILD_MODE_SYSTEM_PROMPT = `Senior software engineer. Build mode (full rea
 Capabilities: read, write, edit files; run commands; implement features, fix bugs, refactor.
 
 Rules:
+- Plans: emit structured plan blocks using the format below. The UI renders them as rich cards with Build/Refine buttons. NEVER write plans to files — always output them directly in chat.
 - Multi-domain tasks: ask user to choose parallel specialists or sequential execution.
 - Diagrams: use \`\`\`mermaid for architecture, flows, state machines, sequences. One concept per diagram.
-  Types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph`
+  Types: flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, mindmap, gitgraph
+
+## Plan Block Format
+
+When presenting an implementation plan, wrap it in a \`\`\`plan fence with JSON:
+
+\`\`\`plan
+{
+  "title": "Feature Name or Plan Title",
+  "summary": "1-2 sentence executive summary of the plan",
+  "sections": [
+    {
+      "heading": "Section Name",
+      "icon": "🏗️",
+      "content": "Markdown content for this section. Can include **bold**, lists, code blocks, etc.",
+      "mermaid": "optional mermaid diagram definition for this section"
+    }
+  ],
+  "steps": [
+    {
+      "number": 1,
+      "title": "Step title",
+      "description": "What to do in this step",
+      "file": "src/path/to/file.ts",
+      "complexity": "low|medium|high"
+    }
+  ],
+  "files": ["src/file1.ts", "src/file2.ts"],
+  "risks": ["Risk 1", "Risk 2"]
+}
+\`\`\`
+
+If the plan is simple (no sections needed), you can still use plain markdown inside the plan fence — the UI will render it as-is.
+IMPORTANT: Always output plans directly in chat — never write them to files.`
 
 const DECOMPOSITION_SYSTEM_PROMPT = `You are a task decomposition and complexity scoring engine. Given a task summary and a list of available specialists, break the task into concrete sub-tasks AND score each sub-task's complexity.
 
@@ -291,9 +326,9 @@ Do NOT emit memories for:
 
 ## Plan Output Format
 
-When the user asks you to generate, create, or produce an implementation plan, you MUST respond with a structured plan block using this exact JSON format inside a \`\`\`plan fence:
+When the user asks you to generate, create, or produce an implementation plan, you MUST respond with a structured plan block using this exact JSON format inside a \`\`\`\`plan fence:
 
-\`\`\`plan
+\`\`\`\`plan
 {
   "title": "Plan Title",
   "summary": "1-2 sentence executive summary",
@@ -315,10 +350,10 @@ When the user asks you to generate, create, or produce an implementation plan, y
   "files": ["src/file1.ts", "src/file2.ts"],
   "risks": ["Risk description"]
 }
-\`\`\`
+\`\`\`\`
 
 Rules:
-- ALWAYS use the \`\`\`plan JSON fence — NEVER write plans as plain markdown or to files on disk
+- ALWAYS use the \`\`\`\`plan JSON fence — NEVER write plans to files on disk and NEVER use the ExitPlanMode tool. Output plans directly in your response.
 - Break large plans into phases using sections (one section per phase)
 - Include steps with file paths and complexity estimates
 - The UI renders this as a rich interactive card the user can act on directly
@@ -500,8 +535,7 @@ export class PromptBuilder {
     const activeSkills = skills.filter((s) => s.isActive)
     if (activeSkills.length === 0) return ''
 
-    const baseBudget =
-      budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 5000 : 3000
+    const baseBudget = budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 5000 : 3000
 
     // Selective skill loading: rank skills by relevance when >1 skill and we have task context
     let rankedSkills = activeSkills
@@ -711,6 +745,56 @@ export class PromptBuilder {
     }
 
     return context
+  }
+
+  // ── Prompt Size Estimation (Strategy: prevent context overflow) ──
+
+  /**
+   * Estimate token count from character length.
+   * Rule of thumb: ~4 characters per token for English text / code.
+   * Returns a conservative (high) estimate.
+   */
+  static estimateTokens(text: string): number {
+    return Math.ceil(text.length / 3.5) // Slightly conservative — 3.5 chars/token
+  }
+
+  /** Token budget thresholds per model tier */
+  static readonly TOKEN_BUDGETS: Record<string, { warn: number; max: number }> = {
+    haiku: { warn: 30_000, max: 50_000 },
+    sonnet: { warn: 60_000, max: 100_000 },
+    opus: { warn: 100_000, max: 180_000 }
+  } as const
+
+  /**
+   * Check if a prompt exceeds safe size for the target model.
+   * Returns warning/error info if the prompt is too large.
+   */
+  static checkPromptSize(
+    systemPrompt: string,
+    userPrompt: string,
+    modelTier: string
+  ): { ok: boolean; estimatedTokens: number; warning?: string } {
+    const totalChars = systemPrompt.length + userPrompt.length
+    const estimatedTokens = PromptBuilder.estimateTokens(systemPrompt + userPrompt)
+    const budget = PromptBuilder.TOKEN_BUDGETS[modelTier] ?? PromptBuilder.TOKEN_BUDGETS.sonnet
+
+    if (estimatedTokens > budget.max) {
+      return {
+        ok: false,
+        estimatedTokens,
+        warning: `Prompt exceeds ${modelTier} max budget: ~${estimatedTokens} tokens > ${budget.max} limit (${totalChars} chars). Context will be truncated by the model.`
+      }
+    }
+
+    if (estimatedTokens > budget.warn) {
+      return {
+        ok: true,
+        estimatedTokens,
+        warning: `Prompt approaching ${modelTier} budget: ~${estimatedTokens} tokens > ${budget.warn} warning threshold (${totalChars} chars)`
+      }
+    }
+
+    return { ok: true, estimatedTokens }
   }
 }
 

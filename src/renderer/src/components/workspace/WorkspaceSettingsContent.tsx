@@ -3,6 +3,7 @@ import { Lightbulb } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
+import EventLogPage from './EventLogPage'
 import IdeasList from './IdeasList'
 import GrillPage from './GrillPage'
 import MemorySettingsPage from './MemorySettingsPage'
@@ -116,6 +117,7 @@ export default function WorkspaceSettingsContent({
       {tab === 'memory' && <MemorySettingsPage />}
       {tab === 'documents' && <DocumentsPage />}
       {tab === 'tokens' && <TokenUsagePage />}
+      {tab === 'events' && <EventLogPage />}
     </div>
   )
 }

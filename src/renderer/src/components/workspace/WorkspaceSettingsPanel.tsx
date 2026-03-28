@@ -9,7 +9,8 @@ import {
   Cpu,
   ChevronLeft,
   ChevronRight,
-  X
+  X,
+  ScrollText
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
@@ -22,6 +23,7 @@ export type SettingsTab =
   | 'memory'
   | 'documents'
   | 'tokens'
+  | 'events'
 
 export const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
@@ -30,7 +32,8 @@ export const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; 
   { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
   { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-cyan-400' },
   { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
-  { id: 'tokens', label: 'Tokens', icon: Zap }
+  { id: 'tokens', label: 'Tokens', icon: Zap },
+  { id: 'events', label: 'Events', icon: ScrollText, iconColor: 'text-rose-400' }
 ]
 
 interface WorkspaceSettingsPanelProps {

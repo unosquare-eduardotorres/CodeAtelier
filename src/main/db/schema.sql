@@ -205,3 +205,54 @@ CREATE TABLE IF NOT EXISTS core_agent_aliases (
   avatar_key TEXT DEFAULT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Events: structured audit log for agent lifecycle, gates, escalations
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  session_id TEXT,
+  conversation_id TEXT,
+  workspace_id TEXT,
+  event_type TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN (
+    'session', 'agent', 'escalation', 'gate', 'abandonment',
+    'checkpoint', 'hook', 'budget', 'error'
+  )),
+  message TEXT NOT NULL,
+  data_json TEXT DEFAULT '{}',
+  agent_id TEXT,
+  model TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
+CREATE INDEX IF NOT EXISTS idx_events_conversation ON events(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
+
+-- Checkpoints: state snapshots for rollback on multi-specialist execution failure
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL,
+  workspace_id TEXT,
+  label TEXT NOT NULL,
+  state_json TEXT NOT NULL DEFAULT '{}',
+  git_branch TEXT,
+  git_commit_sha TEXT,
+  active_task_ids TEXT DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation ON checkpoints(conversation_id);
+
+-- Gate results: quality gate pass/fail records from specialist output
+CREATE TABLE IF NOT EXISTS gate_results (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  session_id TEXT,
+  conversation_id TEXT,
+  task_id TEXT,
+  agent_id TEXT,
+  gate_type TEXT NOT NULL CHECK (gate_type IN ('test', 'lint', 'typecheck', 'build')),
+  passed INTEGER NOT NULL DEFAULT 0,
+  summary TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_gate_results_conversation ON gate_results(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_gate_results_task ON gate_results(task_id);

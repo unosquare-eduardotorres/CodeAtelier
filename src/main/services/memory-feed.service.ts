@@ -498,7 +498,11 @@ ${content.substring(0, 50000)}`
 
     this.isBusy = true
     try {
-      onProgress?.({ source: 'claude-md', status: 'running', message: 'Gathering project sources...' })
+      onProgress?.({
+        source: 'claude-md',
+        status: 'running',
+        message: 'Gathering project sources...'
+      })
 
       // 1. Gather truth sources
       const keyFiles = this.readKeyFiles(workspacePath)
@@ -578,3 +582,86 @@ ${content.substring(0, 50000)}`
 }
 
 export const memoryFeedService = new MemoryFeedService()
+
+// ── Regeneration prompt builder ──
+
+interface RegenerateSources {
+  keyFiles: string
+  treeListing: string
+  agents: DiscoveredAgent[]
+  skills: DiscoveredSkill[]
+  existingClaudeMd: string | null
+  schemaContent: string | null
+}
+
+function buildRegeneratePrompt(sources: RegenerateSources): string {
+  const agentLines =
+    sources.agents.length > 0
+      ? sources.agents
+          .map(
+            (a) =>
+              `- ${a.parsed.name}: ${a.parsed.description || 'no description'} (model: ${a.parsed.model}, skills: ${a.parsed.skills.join(', ') || 'none'})`
+          )
+          .join('\n')
+      : '(none deployed)'
+
+  const skillLines =
+    sources.skills.length > 0
+      ? sources.skills
+          .map((s) => `- ${s.name}: ${s.frontmatter?.description || 'no description'}`)
+          .join('\n')
+      : '(none deployed)'
+
+  const existingSection = sources.existingClaudeMd
+    ? `### Existing CLAUDE.md (for reference — preserve user-written sections)\n${sources.existingClaudeMd.substring(0, 10000)}`
+    : '### No existing CLAUDE.md — generate from scratch'
+
+  const schemaSection = sources.schemaContent ? `### Database Schema\n${sources.schemaContent}` : ''
+
+  return `You are an expert CLAUDE.md generator for Claude Code projects. Your job is to produce a high-quality, accurate CLAUDE.md file based ONLY on the actual project sources provided below.
+
+## Output Format
+Generate a complete CLAUDE.md following this exact structure:
+
+### Required Sections:
+1. **# Project: {name}** — from package.json name
+2. **## Overview** — 2-3 sentences from package.json description + what the tree reveals
+3. **## Tech stack** — ONLY dependencies actually in package.json (with versions)
+4. **## Conventions** — Inferred from tsconfig strict mode, import aliases, file patterns
+5. **## Project structure** — Simplified tree of src/ showing key directories
+6. **## Key commands** — From package.json scripts (dev, build, test, lint)
+7. **## What NOT to do** — Framework-specific anti-patterns (e.g., Electron: no nodeIntegration, no remote module)
+8. **## Error handling patterns** — Inferred from code structure
+9. **## Agents** — Table from deployed agents (with <!-- AGENTS:AUTO-GENERATED --> comment)
+10. **## Skills** — Table from deployed skills (with <!-- SKILLS:AUTO-GENERATED --> comment)
+
+### Critical Rules:
+- ONLY include technologies that appear in package.json dependencies/devDependencies
+- ONLY include commands that exist in package.json scripts
+- NEVER invent conventions you can't verify from the sources
+- If the project uses Electron, include Electron security rules (contextIsolation, no nodeIntegration, etc.)
+- If existing CLAUDE.md has user-written sections not covered above, preserve them at the end under their original headings
+- Use "as const" style if tsconfig shows strict mode
+- Match the import style visible in the tree (barrel exports, alias prefixes)
+- Keep the file concise but comprehensive — aim for 100-300 lines
+
+## Project Sources
+
+### package.json & config files
+${sources.keyFiles}
+
+### Project Tree
+${sources.treeListing}
+
+${schemaSection}
+
+### Deployed Agents (${sources.agents.length})
+${agentLines}
+
+### Deployed Skills (${sources.skills.length})
+${skillLines}
+
+${existingSection}
+
+Output ONLY the CLAUDE.md content. No explanation, no code fences wrapping the entire output.`
+}

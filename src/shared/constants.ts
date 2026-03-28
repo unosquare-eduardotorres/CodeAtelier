@@ -207,7 +207,29 @@ export const IPC_CHANNELS = {
   ZOOM_CHANGED: 'zoom:changed',
 
   // Shell
-  SHELL_SHOW_ITEM_IN_FOLDER: 'shell:showItemInFolder'
+  SHELL_SHOW_ITEM_IN_FOLDER: 'shell:showItemInFolder',
+
+  // Checkpoints
+  CHECKPOINT_LIST: 'checkpoint:list',
+  CHECKPOINT_RESTORE: 'checkpoint:restore',
+
+  // Cost tracking
+  COST_GET_WORKSPACE_SUMMARY: 'cost:getWorkspaceSummary',
+  COST_CHECK_BUDGET: 'cost:checkBudget',
+  COST_BUDGET_WARNING: 'cost:budgetWarning',
+  COST_BUDGET_EXCEEDED: 'cost:budgetExceeded',
+
+  // Events (audit log)
+  EVENTS_GET_RECENT: 'events:getRecent',
+  EVENTS_GET_BY_CONVERSATION: 'events:getByConversation',
+
+  // Gate results
+  GATE_RESULTS_GET: 'gate:getResults',
+
+  // Agent events (new from audit)
+  AGENT_ABANDONMENT_DETECTED: 'agent:abandonmentDetected',
+  AGENT_GATE_FAILURE: 'agent:gateFailure',
+  AGENT_MODEL_ESCALATED: 'agent:modelEscalated'
 } as const
 
 export const CONVERSATION_MODES = {
@@ -359,3 +381,24 @@ export const THINKING_BUDGETS = {
 
 /** Maximum skill file size in bytes (500 KB) */
 export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const // 500 * 1024
+
+/**
+ * Model pricing table — $/1M tokens for input and output.
+ * Used for estimated cost calculations in the cost tracker service.
+ * Based on Claude pricing as of March 2026.
+ */
+export const MODEL_PRICING_TABLE = {
+  'claude-sonnet-4-20250514': { inputPer1M: 3.0, outputPer1M: 15.0 },
+  'claude-opus-4-20250514': { inputPer1M: 15.0, outputPer1M: 75.0 },
+  'claude-3-5-sonnet-20241022': { inputPer1M: 3.0, outputPer1M: 15.0 },
+  'claude-3-5-haiku-20241022': { inputPer1M: 0.8, outputPer1M: 4.0 }
+} as const
+
+/**
+ * Model escalation chain for failure-based retries.
+ * Maps current tier → escalated tier. 'opus' has no further escalation.
+ */
+export const MODEL_ESCALATION_CHAIN = {
+  haiku: 'sonnet',
+  sonnet: 'opus'
+} as const

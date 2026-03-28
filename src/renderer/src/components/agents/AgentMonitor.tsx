@@ -1,6 +1,6 @@
-import { useEffect, useCallback } from 'react'
-import { Monitor, ChevronLeft, ChevronRight, OctagonX } from 'lucide-react'
-import { useAgentStore, useSpecialistStore } from '@renderer/store'
+import { useState, useEffect, useCallback } from 'react'
+import { Monitor, ChevronLeft, ChevronRight, OctagonX, RotateCcw } from 'lucide-react'
+import { useAgentStore, useSpecialistStore, useChatStore } from '@renderer/store'
 import { AgentStatusCard } from '@renderer/components/agents'
 
 function formatTokens(count: number): string {
@@ -23,8 +23,16 @@ export default function AgentMonitor({
   const isStopping = useAgentStore((s) => s.isStopping)
   const sessionTokens = useAgentStore((s) => s.sessionTokens)
   const appendOutput = useAgentStore((s) => s.appendOutput)
+  const addGateResult = useAgentStore((s) => s.addGateResult)
+  const markAbandonment = useAgentStore((s) => s.markAbandonment)
   const specialists = useSpecialistStore((s) => s.specialists)
   const loadSpecialists = useSpecialistStore((s) => s.loadSpecialists)
+  const activeConversation = useChatStore((s) => s.activeConversation)
+
+  const [checkpoints, setCheckpoints] = useState<
+    { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
+  >([])
+  const [showCheckpoints, setShowCheckpoints] = useState(false)
 
   // Load specialists on mount so AgentStatusCard can read metadata from DB
   useEffect(() => {
@@ -46,6 +54,54 @@ export default function AgentMonitor({
     const cleanup = window.api.onAgentTaskChunk(handleTaskChunk)
     return cleanup
   }, [handleTaskChunk])
+
+  // Listen for gate failure events
+  useEffect(() => {
+    const cleanup = window.api.onGateFailure((data) => {
+      addGateResult(data.specialist, data.gate)
+    })
+    return cleanup
+  }, [addGateResult])
+
+  // Listen for abandonment detection events
+  useEffect(() => {
+    const cleanup = window.api.onAbandonmentDetected((data) => {
+      markAbandonment(data.specialist, data.pattern)
+    })
+    return cleanup
+  }, [markAbandonment])
+
+  // Fetch checkpoints when conversation changes or all agents complete
+  const allComplete =
+    statuses.length > 0 && statuses.every((s) => s.status === 'completed' || s.status === 'failed')
+
+  useEffect(() => {
+    if (!activeConversation?.id) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCheckpoints([])
+      return
+    }
+    const convId = activeConversation.id
+    window.api
+      .listCheckpoints({ conversationId: convId })
+      .then(setCheckpoints)
+      .catch(() => setCheckpoints([]))
+  }, [activeConversation?.id, allComplete])
+
+  const handleRestore = async (checkpointId: string): Promise<void> => {
+    const confirmed = window.confirm(
+      'Restore this checkpoint? This will revert files to the checkpoint state.'
+    )
+    if (!confirmed) return
+    try {
+      const result = await window.api.restoreCheckpoint({ checkpointId })
+      if (!result.success) {
+        console.error('Checkpoint restore failed:', result.message)
+      }
+    } catch (err) {
+      console.error('Failed to restore checkpoint:', err)
+    }
+  }
 
   // Filter: only show agents that are active or have been used (have tokens)
   const visibleStatuses = statuses.filter((s) => s.status !== 'idle' || s.tokenUsage > 0)
@@ -132,6 +188,39 @@ export default function AgentMonitor({
           visibleStatuses.map((status) => <AgentStatusCard key={status.agentId} status={status} />)
         )}
       </div>
+
+      {/* Checkpoints section */}
+      {checkpoints.length > 0 && (
+        <div className="px-3 py-2 border-t border-border-subtle">
+          <button
+            onClick={() => setShowCheckpoints(!showCheckpoints)}
+            className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors w-full"
+          >
+            <RotateCcw size={12} />
+            <span className="font-medium">Checkpoints ({checkpoints.length})</span>
+          </button>
+          {showCheckpoints && (
+            <div className="mt-2 space-y-1">
+              {checkpoints.map((cp) => (
+                <div
+                  key={cp.id}
+                  className="flex items-center justify-between text-xs py-1 px-1 rounded hover:bg-surface-overlay"
+                >
+                  <span className="text-text-secondary truncate flex-1 mr-2" title={cp.label}>
+                    {cp.label}
+                  </span>
+                  <button
+                    onClick={() => handleRestore(cp.id)}
+                    className="text-primary-text hover:underline flex-shrink-0"
+                  >
+                    Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Summary footer */}
       {visibleStatuses.length > 0 && (

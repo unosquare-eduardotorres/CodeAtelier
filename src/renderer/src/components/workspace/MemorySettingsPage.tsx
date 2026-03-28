@@ -1,7 +1,18 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Database, Search, Trash2, FileText, Code2, Upload, Moon, Sparkles } from 'lucide-react'
+import {
+  Database,
+  Search,
+  Trash2,
+  FileText,
+  Code2,
+  Upload,
+  Moon,
+  Sparkles,
+  RefreshCw
+} from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore, useDreamStore } from '@renderer/store'
 import { SettingsCard } from '@renderer/components/common'
+import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import type { Memory, MemoryType, WorkspaceFeedTimestamps } from '../../../../shared/types'
 
 const TYPE_BADGES: Record<MemoryType, { label: string; color: string }> = {
@@ -26,6 +37,13 @@ export default function MemorySettingsPage(): React.JSX.Element {
   const { triggerDream, currentRun } = useDreamStore()
   const [filterType, setFilterType] = useState<MemoryType | 'all'>('all')
   const [feedTimestamps, setFeedTimestamps] = useState<WorkspaceFeedTimestamps>({})
+  const [showDiffModal, setShowDiffModal] = useState(false)
+  const [regenerateResult, setRegenerateResult] = useState<{
+    existing: string | null
+    proposed: string
+  } | null>(null)
+  const [isConfirmingRegenerate, setIsConfirmingRegenerate] = useState(false)
+  const [isRegenerating, setIsRegenerating] = useState(false)
 
   const refreshFeedTimestamps = useCallback(
     (workspaceId: string) => {
@@ -57,6 +75,50 @@ export default function MemorySettingsPage(): React.JSX.Element {
     },
     [activeWorkspace?.id, searchMemories, loadMemories, setSearchQuery]
   )
+
+  const handleRegenerateAndFeed = async (): Promise<void> => {
+    if (!activeWorkspace?.repoPath) return
+    setIsRegenerating(true)
+    try {
+      const result = await window.api.memoryRegenerateClaudeMd({
+        workspacePath: activeWorkspace.repoPath
+      })
+      if (result.success) {
+        setRegenerateResult({
+          existing: result.existing,
+          proposed: result.content
+        })
+        setShowDiffModal(true)
+      }
+    } finally {
+      setIsRegenerating(false)
+    }
+  }
+
+  const handleConfirmRegenerate = async (editedContent: string): Promise<void> => {
+    if (!activeWorkspace?.repoPath) return
+    setIsConfirmingRegenerate(true)
+    try {
+      // 1. Write the approved CLAUDE.md to disk
+      await window.api.confirmClaudeMd({
+        workspacePath: activeWorkspace.repoPath,
+        content: editedContent
+      })
+      // 2. Feed it into memories
+      startFeed('claude-md')
+      await window.api.memoryFeedClaudeMd({
+        workspacePath: activeWorkspace.repoPath
+      })
+      setShowDiffModal(false)
+      setRegenerateResult(null)
+      if (activeWorkspace.id) {
+        loadMemories(activeWorkspace.id)
+        refreshFeedTimestamps(activeWorkspace.id)
+      }
+    } finally {
+      setIsConfirmingRegenerate(false)
+    }
+  }
 
   const handleFeedClaudeMd = async (): Promise<void> => {
     if (!activeWorkspace?.repoPath) return
@@ -120,18 +182,23 @@ export default function MemorySettingsPage(): React.JSX.Element {
         </h3>
         <div className="grid grid-cols-2 gap-3">
           <button
-            onClick={handleFeedClaudeMd}
-            disabled={feedStatus === 'running'}
-            title="Reads CLAUDE.md from your workspace root and extracts project conventions, tech stack, and patterns into memories"
-            aria-label="Feed CLAUDE.md — Extract project conventions, tech stack, and patterns from your CLAUDE.md"
+            onClick={handleRegenerateAndFeed}
+            disabled={feedStatus === 'running' || isRegenerating}
+            title="AI-generates a CLAUDE.md from project sources, lets you review it, then writes to disk and feeds into memories"
+            aria-label="Regenerate & Feed CLAUDE.md — AI-generate from project sources, review, then feed"
             className="flex flex-col gap-1.5 p-3 rounded-xl bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="flex items-center gap-2">
-              <FileText size={14} className="text-purple-400" />
-              <span className="text-sm font-medium text-text-primary">Feed CLAUDE.md</span>
+              <RefreshCw
+                size={14}
+                className={`text-purple-400 ${isRegenerating ? 'animate-spin' : ''}`}
+              />
+              <span className="text-sm font-medium text-text-primary">
+                {isRegenerating ? 'Generating...' : 'Regenerate & Feed CLAUDE.md'}
+              </span>
             </div>
             <p className="text-xs text-text-muted leading-relaxed">
-              Extract project conventions, tech stack, and patterns from your CLAUDE.md
+              AI-generate from project sources, review, then feed into memories
             </p>
             <FeedTimestamp timestamp={feedTimestamps['claude-md']} />
           </button>
@@ -168,6 +235,22 @@ export default function MemorySettingsPage(): React.JSX.Element {
               Import any .md, .txt, .json, or .yaml file and extract knowledge from it
             </p>
             <FeedTimestamp timestamp={feedTimestamps['document']} />
+          </button>
+
+          <button
+            onClick={handleFeedClaudeMd}
+            disabled={feedStatus === 'running'}
+            title="Reads existing CLAUDE.md from disk and extracts memories without regenerating (skip if you just want to re-extract)"
+            aria-label="Feed Existing CLAUDE.md — Extract memories from existing CLAUDE.md without regenerating"
+            className="flex flex-col gap-1.5 p-3 rounded-xl bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <div className="flex items-center gap-2">
+              <FileText size={14} className="text-gray-400" />
+              <span className="text-sm font-medium text-text-primary">Feed Existing CLAUDE.md</span>
+            </div>
+            <p className="text-xs text-text-muted leading-relaxed">
+              Extract memories from existing CLAUDE.md without regenerating
+            </p>
           </button>
 
           <button
@@ -266,9 +349,11 @@ export default function MemorySettingsPage(): React.JSX.Element {
                     1
                   </span>
                   <div>
-                    <span className="text-xs font-medium text-text-primary">Feed CLAUDE.md</span>
+                    <span className="text-xs font-medium text-text-primary">
+                      Regenerate & Feed CLAUDE.md
+                    </span>
                     <span className="text-xs text-text-muted ml-1">
-                      — Extracts project conventions and tech stack
+                      — AI-generates and extracts project conventions
                     </span>
                   </div>
                 </div>
@@ -322,6 +407,25 @@ export default function MemorySettingsPage(): React.JSX.Element {
           )}
         </div>
       </div>
+
+      {/* Regenerate CLAUDE.md diff modal */}
+      {showDiffModal && regenerateResult && activeWorkspace?.repoPath && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-[90vw] h-[85vh] rounded-2xl overflow-hidden border border-border-subtle shadow-2xl flex">
+            <ClaudeMdDiffModal
+              existing={regenerateResult.existing}
+              proposed={regenerateResult.proposed}
+              workspacePath={activeWorkspace.repoPath}
+              onConfirm={handleConfirmRegenerate}
+              onDismiss={() => {
+                setShowDiffModal(false)
+                setRegenerateResult(null)
+              }}
+              isConfirming={isConfirmingRegenerate}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
