@@ -130,6 +130,7 @@ export const IPC_CHANNELS = {
   MEMORY_FEED_CANCEL: 'memory:feedCancel',
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
   MEMORY_GET_FEED_TIMESTAMPS: 'memory:getFeedTimestamps',
+  MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
 
   // Dream (auto consolidation)
   DREAM_TRIGGER: 'dream:trigger',

@@ -4,8 +4,15 @@ import { join } from 'node:path'
 import { dbLogger } from '../logger'
 import { memoryRepository } from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
-import type { MemoryFeedProgress, MemoryFeedResult, MemoryType } from '../../shared/types'
+import type {
+  DiscoveredAgent,
+  DiscoveredSkill,
+  MemoryFeedProgress,
+  MemoryFeedResult,
+  MemoryType
+} from '../../shared/types'
 import { modelConfigService } from './model-config.service'
+import { workspaceDeployService } from './workspace-deploy.service'
 
 const log = dbLogger
 
