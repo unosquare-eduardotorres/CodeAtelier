@@ -483,6 +483,90 @@ ${content.substring(0, 50000)}`
     }
   }
 
+  /**
+   * Regenerate CLAUDE.md from project truth sources using AI.
+   * Gathers package.json, tsconfig, project tree, agents, skills, schema,
+   * and spawns Claude CLI to produce a high-quality CLAUDE.md.
+   */
+  async regenerateClaudeMd(
+    workspacePath: string,
+    onProgress?: ProgressCallback
+  ): Promise<{ success: boolean; content: string; error?: string }> {
+    if (this.isBusy) {
+      return { success: false, content: '', error: 'A feed operation is already in progress' }
+    }
+
+    this.isBusy = true
+    try {
+      onProgress?.({ source: 'claude-md', status: 'running', message: 'Gathering project sources...' })
+
+      // 1. Gather truth sources
+      const keyFiles = this.readKeyFiles(workspacePath)
+      const treeListing = this.getTreeListing(workspacePath)
+
+      let agents: DiscoveredAgent[] = []
+      let skills: DiscoveredSkill[] = []
+      try {
+        agents = workspaceDeployService.scanWorkspaceAgents(workspacePath)
+        skills = workspaceDeployService.scanWorkspaceSkills(workspacePath)
+      } catch (err) {
+        log.warn('Failed to scan agents/skills for CLAUDE.md regeneration:', err)
+      }
+
+      // 2. Read existing CLAUDE.md (if any) for user-written sections to preserve
+      let existingClaudeMd: string | null = null
+      try {
+        existingClaudeMd = readFileSync(join(workspacePath, 'CLAUDE.md'), 'utf-8')
+      } catch {
+        // No existing CLAUDE.md
+      }
+
+      // 3. Read schema.sql if present (DB structure)
+      let schemaContent: string | null = null
+      try {
+        schemaContent = readFileSync(
+          join(workspacePath, 'src/main/db/schema.sql'),
+          'utf-8'
+        )?.substring(0, 5000)
+      } catch {
+        // No schema file
+      }
+
+      onProgress?.({
+        source: 'claude-md',
+        status: 'running',
+        message: 'Generating CLAUDE.md with AI...'
+      })
+
+      // 4. Spawn Claude with expert generation prompt
+      const prompt = buildRegeneratePrompt({
+        keyFiles,
+        treeListing,
+        agents,
+        skills,
+        existingClaudeMd,
+        schemaContent
+      })
+
+      const content = await this.spawnSummarizer(prompt, workspacePath)
+
+      onProgress?.({
+        source: 'claude-md',
+        status: 'done',
+        message: 'CLAUDE.md generated successfully'
+      })
+
+      return { success: true, content }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      log.error('Failed to regenerate CLAUDE.md:', errorMsg)
+      onProgress?.({ source: 'claude-md', status: 'error', message: errorMsg })
+      return { success: false, content: '', error: errorMsg }
+    } finally {
+      this.isBusy = false
+    }
+  }
+
   /** Cancel in-progress feed */
   shutdown(): void {
     if (this.currentAbortController) {

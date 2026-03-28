@@ -59,9 +59,18 @@ export default function GrillPage({
   const [questionStates, setQuestionStates] = useState<Record<string, QuestionState>>({})
   const [isEditingDescription, setIsEditingDescription] = useState(false)
   const [editedDescription, setEditedDescription] = useState('')
+  const [questionsRepeated, setQuestionsRepeated] = useState(false)
 
   const mountedRef = useRef(false)
   const previousConversationIdRef = useRef<string | null>(null)
+  const previousQuestionsRef = useRef<string[]>([])
+
+  const areQuestionsRepeated = (newQuestions: GrillQuestion[]): boolean => {
+    const newTexts = newQuestions.map((q) => q.question).sort()
+    const prevTexts = [...previousQuestionsRef.current].sort()
+    if (newTexts.length !== prevTexts.length) return false
+    return newTexts.every((text, i) => text === prevTexts[i])
+  }
 
   // Restore previous conversation on unmount
   useEffect(() => {
