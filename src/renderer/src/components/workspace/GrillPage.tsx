@@ -150,6 +150,12 @@ export default function GrillPage({
       setIterationCount((prev) => prev + 1)
       setPhase('answering')
 
+      // Detect if questions are the same as previous iteration
+      const repeated =
+        previousQuestionsRef.current.length > 0 && areQuestionsRepeated(data.questions)
+      setQuestionsRepeated(repeated)
+      previousQuestionsRef.current = data.questions.map((q) => q.question)
+
       // Initialize question states with recommended options pre-selected
       const states: Record<string, QuestionState> = {}
       for (const q of data.questions) {
@@ -179,6 +185,12 @@ export default function GrillPage({
       setCurrentIteration(iteration)
       setIterationCount((prev) => prev + 1)
       setPhase('answering')
+
+      // Detect if questions are the same as previous iteration
+      const repeated =
+        previousQuestionsRef.current.length > 0 && areQuestionsRepeated(data.questions)
+      setQuestionsRepeated(repeated)
+      previousQuestionsRef.current = data.questions.map((q) => q.question)
 
       const states: Record<string, QuestionState> = {}
       for (const q of data.questions) {
@@ -562,7 +574,7 @@ export default function GrillPage({
                 Convert Directly
               </button>
             )}
-            {phase === 'answering' && (
+            {phase === 'answering' && !questionsRepeated && (
               <button
                 onClick={handleSubmit}
                 disabled={!canSubmit || isAtCharLimit}
