@@ -22,8 +22,8 @@ import { memoryService } from './memory.service'
 import { gitWorktreeService } from './git-worktree.service'
 import type { MergeResult } from './git-worktree.service'
 import { buildEnvWithPath } from './env-utils'
+import { summarizeToolInput } from './agent-base.service'
 import { modelConfigService } from './model-config.service'
-import { hookRunnerService } from './hook-runner.service'
 import { checkpointService } from './checkpoint.service'
 import { eventLoggerService } from './event-logger.service'
 import { detectAbandonment, detectQualityGates } from './abandonment-detector.service'
@@ -459,6 +459,16 @@ export class SpecialistPoolService extends EventEmitter {
                 specialist: task.specialist,
                 chunk: cb.text
               })
+            } else if (cb?.type === 'tool_use') {
+              // Emit tool activity so user sees what the agent is doing
+              const toolName = cb.name as string
+              const toolInput = cb.input as Record<string, unknown> | undefined
+              const summary = toolInput ? summarizeToolInput(toolName, toolInput) : ''
+              this.emit('taskChunk', {
+                taskId: task.id,
+                specialist: task.specialist,
+                chunk: `\n🔧 **${toolName}** ${summary}\n`
+              })
             }
           } else if (event.type === 'content_block_delta') {
             const delta = event.delta
@@ -511,6 +521,15 @@ export class SpecialistPoolService extends EventEmitter {
     childProcess.stderr?.on('data', (data: Buffer) => {
       const text = data.toString().trim()
       this.log.error(`[${task.specialist}/${task.id}] stderr:`, text)
+
+      // Forward stderr to agent monitor so users can see errors
+      if (text) {
+        this.emit('taskChunk', {
+          taskId: task.id,
+          specialist: task.specialist,
+          chunk: `\n⚠️ ${text}\n`
+        })
+      }
 
       // Detect rate limiting from Claude CLI
       if (text.includes('rate limit') || text.includes('429') || text.includes('overloaded')) {
@@ -886,11 +905,8 @@ export class SpecialistPoolService extends EventEmitter {
       args.push('--permission-mode', 'plan')
     }
 
-    // Add hook scripts for safety and quality gate interception
-    const hookArgs = hookRunnerService.getHookArgs(mode)
-    if (hookArgs.length > 0) {
-      args.push(...hookArgs)
-    }
+    // Hooks are configured declaratively via .claude/hooks/hooks.json
+    // (CLI flags --pre-tool-use-hook / --post-tool-use-hook are not supported)
 
     // Set thinking budget based on model tier — Opus gets full thinking, Haiku skips it
     const thinkingBudget =

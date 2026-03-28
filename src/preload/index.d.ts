@@ -262,6 +262,8 @@ interface Api {
       conversationId: string
       chunk: string
       role: string
+      taskId?: string
+      specialist?: string
       toolActivity?: {
         id: string
         toolName: string
@@ -277,7 +279,7 @@ interface Api {
     }) => void
   ) => () => void
   onMessageComplete: (
-    callback: (data: { conversationId: string; messageId: string }) => void
+    callback: (data: { conversationId: string; messageId: string; taskId?: string }) => void
   ) => () => void
   onHandoff: (
     callback: (data: {
