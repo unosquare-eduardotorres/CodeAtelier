@@ -94,10 +94,6 @@ export default function WorkspaceSettingsContent({
               setActiveGrill(null)
               onNavigateToChat()
             }}
-            onExitToChat={() => {
-              setActiveGrill(null)
-              onNavigateToChat()
-            }}
           />
         ) : (
           <div className="p-6">

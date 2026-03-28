@@ -203,7 +203,10 @@ export const IPC_CHANNELS = {
   ZOOM_RESET: 'zoom:reset',
   ZOOM_SET: 'zoom:set',
   ZOOM_GET: 'zoom:get',
-  ZOOM_CHANGED: 'zoom:changed'
+  ZOOM_CHANGED: 'zoom:changed',
+
+  // Shell
+  SHELL_SHOW_ITEM_IN_FOLDER: 'shell:showItemInFolder'
 } as const
 
 export const CONVERSATION_MODES = {

@@ -5,19 +5,19 @@ interface ScoreGaugeProps {
 }
 
 function getScoreColor(score: number): string {
-  if (score <= 20) return '#ef4444' // red-500
-  if (score <= 40) return '#f97316' // orange-500
-  if (score <= 60) return '#eab308' // yellow-500
-  if (score <= 80) return '#10b981' // emerald-500
-  return '#22c55e' // green-500
+  if (score <= 20) return '#dc2626' // red-600 (cold/raw)
+  if (score <= 40) return '#ea580c' // orange-600 (warming up)
+  if (score <= 60) return '#d97706' // amber-600 (medium heat)
+  if (score <= 80) return '#65a30d' // lime-600 (well done)
+  return '#16a34a' // green-600 (perfectly grilled)
 }
 
 function getScoreLabel(score: number): string {
-  if (score <= 20) return 'Needs Work'
-  if (score <= 40) return 'Early Stage'
-  if (score <= 60) return 'Getting There'
-  if (score <= 80) return 'Almost Ready'
-  return 'Ship It! 🚀'
+  if (score <= 20) return 'Raw'
+  if (score <= 40) return 'Warming Up'
+  if (score <= 60) return 'Medium Rare'
+  if (score <= 80) return 'Well Done'
+  return 'Perfectly Grilled 🔥'
 }
 
 export default function ScoreGauge({

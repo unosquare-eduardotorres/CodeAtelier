@@ -278,10 +278,6 @@ export default function WorkspaceSettingsPage({
                   setActiveGrill(null)
                   onBack()
                 }}
-                onExitToChat={() => {
-                  setActiveGrill(null)
-                  onBack()
-                }}
               />
             ) : (
               <div className="p-6">

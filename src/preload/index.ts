@@ -782,7 +782,11 @@ const api = {
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.ZOOM_CHANGED, handler)
     }
-  }
+  },
+
+  // ── Shell ──
+  showItemInFolder: (filePath: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_ITEM_IN_FOLDER, filePath)
 } as const
 
 if (process.contextIsolated) {

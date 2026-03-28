@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { ArrowLeft, Flame, Pause, Play, MessageSquare, Loader2, Edit3, Check } from 'lucide-react'
+import { ArrowLeft, Flame, Play, Loader2, Edit3, Check } from 'lucide-react'
 import { useChatActions, useWorkspaceStore } from '@renderer/store'
 import { useIdeaStore } from '@renderer/store/idea.store'
 import { QuestionItem } from '@renderer/components/chat'
@@ -15,7 +15,6 @@ interface GrillPageProps {
   isNewSession?: boolean
   onBack: () => void
   onComplete: () => void
-  onExitToChat: () => void
 }
 
 interface GrillIteration {
@@ -31,6 +30,12 @@ interface HistoryEntry {
   answersFormatted: string
 }
 
+/** Soft cap for enriched description — suggest completion after this length */
+const MAX_DESCRIPTION_CHARS = 15_000
+
+/** Minimum iterations before suggesting completion */
+const MIN_ITERATIONS = 5
+
 type GrillPhase = 'evaluating' | 'answering' | 'paused'
 
 export default function GrillPage({
@@ -40,12 +45,11 @@ export default function GrillPage({
   ideaDescription,
   isNewSession,
   onBack,
-  onComplete,
-  onExitToChat
+  onComplete
 }: GrillPageProps): React.JSX.Element {
   const { selectConversation, loadConversations, sendMessage } = useChatActions()
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
-  const { completeFromGrill } = useIdeaStore()
+  const { completeFromGrill, convertDirect } = useIdeaStore()
 
   const [phase, setPhase] = useState<GrillPhase>('evaluating')
   const [description, setDescription] = useState(ideaDescription || '')
@@ -84,10 +88,12 @@ export default function GrillPage({
         if (idea?.grillDecisions) {
           const saved = JSON.parse(idea.grillDecisions)
           if (saved.iterationCount) setIterationCount(saved.iterationCount)
-          if (saved.enrichedDescription) setDescription(saved.enrichedDescription)
+          // Note: Do NOT restore enrichedDescription into description state.
+          // The description state holds only the base description; buildFullDescription
+          // appends history entries on top. Restoring the enriched version would cause
+          // duplication of "Decisions from Iteration N" headings.
           if (saved.history) setHistory(saved.history)
           if (saved.currentScore && !isNewSession) {
-            // We have saved state but no active evaluation — show as paused
             setPhase('paused')
             return
           }
@@ -139,7 +145,7 @@ export default function GrillPage({
       const states: Record<string, QuestionState> = {}
       for (const q of data.questions) {
         const recommended = q.options.filter((o) => o.recommended).map((o) => o.label)
-        states[q.id] = { selectedOptions: recommended, otherText: '', skipped: false }
+        states[q.id] = { selectedOptions: recommended, otherText: '', otherSelected: false, skipped: false }
       }
       setQuestionStates(states)
     })
@@ -168,7 +174,7 @@ export default function GrillPage({
       const states: Record<string, QuestionState> = {}
       for (const q of data.questions) {
         const recommended = q.options.filter((o) => o.recommended).map((o) => o.label)
-        states[q.id] = { selectedOptions: recommended, otherText: '', skipped: false }
+        states[q.id] = { selectedOptions: recommended, otherText: '', otherSelected: false, skipped: false }
       }
       setQuestionStates(states)
     })
@@ -192,37 +198,67 @@ export default function GrillPage({
     return parts.join('\n')
   }, [currentIteration, questionStates])
 
+  /** Build the full enriched description from the base description + all history entries */
+  const buildFullDescription = useCallback(
+    (historyEntries: HistoryEntry[]): string => {
+      if (historyEntries.length === 0) return description
+      return [
+        description,
+        ...historyEntries.map(
+          (h) => `### Decisions from Iteration ${h.iteration}\n${h.answersFormatted}`
+        )
+      ].join('\n\n')
+    },
+    [description]
+  )
+
   const handleSubmit = useCallback(async () => {
     if (!currentIteration) return
+    if (description.length >= MAX_DESCRIPTION_CHARS) return
 
     const answersText = formatAnswers()
-    const enrichedDescription = `${description}\n\n### Decisions from Iteration ${iterationCount}\n${answersText}`
 
-    // Save history entry
     const newHistory: HistoryEntry = {
       iteration: iterationCount,
       score: currentIteration.score,
       answersFormatted: answersText
     }
-    setHistory((prev) => [...prev, newHistory])
-    setDescription(enrichedDescription)
+    const updatedHistory = [...history, newHistory]
+    setHistory(updatedHistory)
     setPhase('evaluating')
 
-    // Send re-evaluation prompt
-    const historyText = [...history, newHistory]
+    // Build the full enriched description for saving (base + all decisions)
+    const fullDescription = buildFullDescription(updatedHistory)
+
+    // Auto-save decisions to DB on every iteration
+    const decisions = JSON.stringify({
+      iterationCount,
+      currentScore: currentIteration.score,
+      enrichedDescription: fullDescription,
+      history: updatedHistory
+    })
+    try {
+      await window.api.saveIdeaGrillDecisions({ ideaId, decisions })
+    } catch (error) {
+      console.error('Failed to auto-save grill decisions:', error)
+    }
+
+    // Send re-evaluation prompt — use base description + history as separate sections
+    const historyText = updatedHistory
       .map((h) => `Iteration ${h.iteration} (score: ${h.score}): ${h.answersFormatted}`)
       .join('\n')
 
-    const grillPrompt = `[GRILL ITERATION ${iterationCount + 1}]\n\n## Re-evaluate This Requirement\n**${ideaTitle}**\n\n${enrichedDescription}\n\n### Previous Decisions\n${historyText}\n\nRe-evaluate the updated requirement. Respond with a grill-evaluation JSON block with updated score and 5 new questions targeting remaining gaps.`
+    const grillPrompt = `[GRILL ITERATION ${iterationCount + 1}]\n\n## Re-evaluate This Requirement\n**${ideaTitle}**\n\n${description}\n\n### Decisions from Previous Iterations\n${historyText}\n\nRe-evaluate the updated requirement. Respond with a grill-evaluation JSON block with updated score and 5 new questions targeting remaining gaps.`
     await sendMessage(grillPrompt)
-  }, [currentIteration, formatAnswers, description, iterationCount, history, ideaTitle, sendMessage])
+  }, [currentIteration, formatAnswers, description, iterationCount, history, ideaTitle, sendMessage, ideaId, buildFullDescription])
 
-  const handlePause = useCallback(async () => {
+  const handleSaveAndExit = useCallback(async () => {
     // Save state to DB
+    const fullDescription = buildFullDescription(history)
     const decisions = JSON.stringify({
       iterationCount,
       currentScore: currentIteration?.score ?? 0,
-      enrichedDescription: description,
+      enrichedDescription: fullDescription,
       history
     })
     try {
@@ -232,23 +268,17 @@ export default function GrillPage({
     }
     setPhase('paused')
     onBack()
-  }, [iterationCount, currentIteration, description, history, ideaId, onBack])
-
-  const handleResume = useCallback(async () => {
-    setPhase('evaluating')
-    const historyText = history
-      .map((h) => `Iteration ${h.iteration} (score: ${h.score}): ${h.answersFormatted}`)
-      .join('\n')
-    const grillPrompt = `[GRILL ITERATION ${iterationCount + 1}]\n\n## Re-evaluate This Requirement\n**${ideaTitle}**\n\n${description}\n\n### Previous Decisions\n${historyText || 'None yet.'}\n\nRe-evaluate the updated requirement. Respond with a grill-evaluation JSON block with updated score and 5 new questions targeting remaining gaps.`
-    await sendMessage(grillPrompt)
-  }, [history, iterationCount, ideaTitle, description, sendMessage])
+  }, [iterationCount, currentIteration, history, ideaId, onBack, buildFullDescription])
 
   const handleConvertDirectly = useCallback(async () => {
+    // Build the full enriched description from base + all decisions
+    const fullDescription = buildFullDescription(history)
+
     // Save current state first
     const decisions = JSON.stringify({
       iterationCount,
       currentScore: currentIteration?.score ?? 0,
-      enrichedDescription: description,
+      enrichedDescription: fullDescription,
       history
     })
     try {
@@ -257,18 +287,35 @@ export default function GrillPage({
       // continue anyway
     }
 
-    await completeFromGrill(conversationId, description)
-    onComplete()
-  }, [iterationCount, currentIteration, description, history, ideaId, completeFromGrill, conversationId, onComplete])
+    // Complete the grill (marks idea as completed, saves summary)
+    try {
+      await completeFromGrill(conversationId, fullDescription)
+    } catch (error) {
+      console.error('Failed to complete from grill:', error)
+    }
 
-  const handleExitToChat = useCallback(() => {
-    onExitToChat()
-  }, [onExitToChat])
+    // Create a NEW conversation for planning via convertDirect
+    if (activeWorkspace) {
+      try {
+        const { conversation: newConv } = await convertDirect(ideaId, activeWorkspace.id)
+        await loadConversations(activeWorkspace.id)
+        await selectConversation(newConv.id)
+
+        // Send "Generate a plan" prompt with the full enriched context
+        const planPrompt = `## ${ideaTitle}\n\n${fullDescription}\n\nGenerate a comprehensive implementation plan for this requirement. Use the structured \`\`\`plan block format with sections (one per phase), steps, affected files, complexity estimates, and risks. Do NOT write the plan to a file — emit it inline.`
+        await sendMessage(planPrompt)
+      } catch (error) {
+        console.error('Failed to create planning conversation:', error)
+      }
+    }
+
+    onComplete()
+  }, [iterationCount, currentIteration, history, ideaId, completeFromGrill, conversationId, onComplete, activeWorkspace, ideaTitle, buildFullDescription, convertDirect, loadConversations, selectConversation, sendMessage])
 
   const answeredCount = currentIteration?.questions.filter((q) => {
     const state = questionStates[q.id]
     if (!state) return false
-    return state.skipped || state.selectedOptions.length > 0 || state.otherText.trim().length > 0
+    return state.skipped || state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
   }).length ?? 0
 
   const totalQuestions = currentIteration?.questions.length ?? 0
@@ -277,8 +324,13 @@ export default function GrillPage({
     const state = questionStates[q.id]
     if (!state) return false
     if (state.skipped) return true
-    return state.selectedOptions.length > 0 || state.otherText.trim().length > 0
+    return state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
   }) ?? false
+
+  const shouldSuggestCompletion =
+    iterationCount >= MIN_ITERATIONS || description.length >= MAX_DESCRIPTION_CHARS
+
+  const isAtCharLimit = description.length >= MAX_DESCRIPTION_CHARS
 
   const handleStartEdit = (): void => {
     setEditedDescription(description)
@@ -317,23 +369,6 @@ export default function GrillPage({
         <div className="max-w-3xl mx-auto space-y-6">
           {/* Score + Iteration header */}
           <div className="flex items-start gap-6">
-            {/* Score Gauge */}
-            <div className="flex-shrink-0">
-              {phase === 'evaluating' ? (
-                <div className="flex flex-col items-center gap-2" style={{ width: 120 }}>
-                  <div className="w-[120px] h-[120px] flex items-center justify-center">
-                    <Loader2 size={32} className="text-orange-400 animate-spin" />
-                  </div>
-                  <span className="text-xs font-semibold text-text-muted">Analyzing...</span>
-                </div>
-              ) : (
-                <ScoreGauge
-                  score={currentIteration?.score ?? 0}
-                  label={currentIteration?.scoreLabel}
-                />
-              )}
-            </div>
-
             {/* Iteration info + feedback */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-2">
@@ -350,6 +385,23 @@ export default function GrillPage({
                 <p className="text-sm text-text-secondary leading-relaxed">
                   {currentIteration.feedback}
                 </p>
+              )}
+            </div>
+
+            {/* Score Gauge */}
+            <div className="flex-shrink-0">
+              {phase === 'evaluating' ? (
+                <div className="flex flex-col items-center gap-2" style={{ width: 120 }}>
+                  <div className="w-[120px] h-[120px] flex items-center justify-center">
+                    <Loader2 size={32} className="text-orange-400 animate-spin" />
+                  </div>
+                  <span className="text-xs font-semibold text-text-muted">Analyzing...</span>
+                </div>
+              ) : (
+                <ScoreGauge
+                  score={currentIteration?.score ?? 0}
+                  label={currentIteration?.scoreLabel}
+                />
               )}
             </div>
           </div>
@@ -417,6 +469,7 @@ export default function GrillPage({
                       questionStates[question.id] ?? {
                         selectedOptions: [],
                         otherText: '',
+                        otherSelected: false,
                         skipped: false
                       }
                     }
@@ -425,6 +478,27 @@ export default function GrillPage({
                     }
                   />
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Completion suggestion — non-blocking, user decides */}
+          {shouldSuggestCompletion && phase === 'answering' && currentIteration && (
+            <div className="rounded-xl border border-green-500/30 bg-green-500/5 overflow-hidden">
+              <div className="px-4 py-4 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
+                  <Check size={16} className="text-green-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-green-300">
+                    {isAtCharLimit
+                      ? 'Character limit reached — your requirement is detailed enough for implementation.'
+                      : `Score: ${currentIteration.score}/100 — your requirement looks ${currentIteration.score >= 85 ? 'ready' : 'solid'}. You can keep refining or convert now.`}
+                  </p>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    {iterationCount} iteration{iterationCount !== 1 ? 's' : ''} completed · {description.length.toLocaleString()} / {MAX_DESCRIPTION_CHARS.toLocaleString()} chars
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -449,53 +523,47 @@ export default function GrillPage({
       {/* Footer actions — always visible */}
       <div className="flex-shrink-0 border-t border-border-subtle bg-surface-raised px-6 py-3">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
+          {/* Left: Pause & Exit */}
           <div className="flex items-center gap-2">
+            {phase !== 'evaluating' && (
+              <button
+                onClick={handleSaveAndExit}
+                aria-label="Pause and exit grill"
+                className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-overlay border border-border-subtle transition-colors text-sm"
+              >
+                <ArrowLeft size={14} />
+                Pause &amp; Exit
+              </button>
+            )}
+          </div>
+
+          {/* Right: Convert Directly, Submit & Re-evaluate */}
+          <div className="flex items-center gap-2">
+            {phase !== 'evaluating' && (
+              <button
+                onClick={handleConvertDirectly}
+                aria-label="Convert idea directly to conversation"
+                className={`flex items-center gap-1.5 rounded-lg text-sm transition-colors press-scale ${
+                  shouldSuggestCompletion
+                    ? 'px-5 py-2.5 bg-green-600 hover:bg-green-500 text-white font-semibold'
+                    : 'px-3 py-2.5 border border-green-600 text-green-400 hover:bg-green-600/10 font-medium'
+                }`}
+              >
+                {shouldSuggestCompletion && <Check size={14} />}
+                Convert Directly
+              </button>
+            )}
             {phase === 'answering' && (
               <button
                 onClick={handleSubmit}
-                disabled={!canSubmit}
-                className="flex items-center gap-1.5 px-5 py-2 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition-colors press-scale"
+                disabled={!canSubmit || isAtCharLimit}
+                aria-label="Submit answers and re-evaluate"
+                className="flex items-center gap-1.5 px-5 py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition-colors press-scale"
               >
                 <Play size={14} />
                 Submit &amp; Re-evaluate
               </button>
             )}
-            {phase === 'paused' && (
-              <button
-                onClick={handleResume}
-                className="flex items-center gap-1.5 px-5 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-semibold transition-colors press-scale"
-              >
-                <Play size={14} />
-                Resume
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            {phase !== 'evaluating' && (
-              <>
-                <button
-                  onClick={handlePause}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-overlay border border-border-subtle transition-colors text-sm"
-                >
-                  <Pause size={14} />
-                  Pause
-                </button>
-                <button
-                  onClick={handleConvertDirectly}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition-colors press-scale"
-                >
-                  Convert Directly
-                </button>
-              </>
-            )}
-            <button
-              onClick={handleExitToChat}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-overlay border border-border-subtle transition-colors text-sm"
-            >
-              <MessageSquare size={14} />
-              Exit to Chat
-            </button>
           </div>
         </div>
       </div>

@@ -1,14 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import {
-  Database,
-  Search,
-  Trash2,
-  FileText,
-  Code2,
-  Upload,
-  Moon,
-  Sparkles
-} from 'lucide-react'
+import { Database, Search, Trash2, FileText, Code2, Upload, Moon, Sparkles } from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore, useDreamStore } from '@renderer/store'
 import { SettingsCard } from '@renderer/components/common'
 import type { Memory, MemoryType, WorkspaceFeedTimestamps } from '../../../../shared/types'
@@ -36,21 +27,22 @@ export default function MemorySettingsPage(): React.JSX.Element {
   const [filterType, setFilterType] = useState<MemoryType | 'all'>('all')
   const [feedTimestamps, setFeedTimestamps] = useState<WorkspaceFeedTimestamps>({})
 
-  const loadFeedTimestamps = useCallback(() => {
-    if (activeWorkspace?.id) {
+  const refreshFeedTimestamps = useCallback(
+    (workspaceId: string) => {
       window.api
-        .memoryGetFeedTimestamps({ workspaceId: activeWorkspace.id })
+        .memoryGetFeedTimestamps({ workspaceId })
         .then(setFeedTimestamps)
         .catch(() => {})
-    }
-  }, [activeWorkspace?.id])
+    },
+    [setFeedTimestamps]
+  )
 
   useEffect(() => {
     if (activeWorkspace?.id) {
       loadMemories(activeWorkspace.id)
-      loadFeedTimestamps()
+      refreshFeedTimestamps(activeWorkspace.id)
     }
-  }, [activeWorkspace?.id, loadMemories, loadFeedTimestamps])
+  }, [activeWorkspace?.id, loadMemories, refreshFeedTimestamps])
 
   const handleSearch = useCallback(
     (query: string) => {
@@ -70,14 +62,20 @@ export default function MemorySettingsPage(): React.JSX.Element {
     if (!activeWorkspace?.repoPath) return
     startFeed('claude-md')
     await window.api.memoryFeedClaudeMd({ workspacePath: activeWorkspace.repoPath })
-    if (activeWorkspace.id) loadMemories(activeWorkspace.id)
+    if (activeWorkspace.id) {
+      loadMemories(activeWorkspace.id)
+      refreshFeedTimestamps(activeWorkspace.id)
+    }
   }
 
   const handleFeedCodebase = async (): Promise<void> => {
     if (!activeWorkspace?.repoPath) return
     startFeed('codebase')
     await window.api.memoryFeedCodebase({ workspacePath: activeWorkspace.repoPath })
-    if (activeWorkspace.id) loadMemories(activeWorkspace.id)
+    if (activeWorkspace.id) {
+      loadMemories(activeWorkspace.id)
+      refreshFeedTimestamps(activeWorkspace.id)
+    }
   }
 
   const handleFeedDocument = async (): Promise<void> => {
@@ -86,7 +84,10 @@ export default function MemorySettingsPage(): React.JSX.Element {
     if (!filePath) return
     startFeed('document')
     await window.api.memoryFeedDocument({ workspacePath: activeWorkspace.repoPath, filePath })
-    if (activeWorkspace.id) loadMemories(activeWorkspace.id)
+    if (activeWorkspace.id) {
+      loadMemories(activeWorkspace.id)
+      refreshFeedTimestamps(activeWorkspace.id)
+    }
   }
 
   const handleTriggerDream = async (): Promise<void> => {
@@ -132,6 +133,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
             <p className="text-xs text-text-muted leading-relaxed">
               Extract project conventions, tech stack, and patterns from your CLAUDE.md
             </p>
+            <FeedTimestamp timestamp={feedTimestamps['claude-md']} />
           </button>
 
           <button
@@ -148,6 +150,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
             <p className="text-xs text-text-muted leading-relaxed">
               Analyze project structure, dependencies, and key files for architectural context
             </p>
+            <FeedTimestamp timestamp={feedTimestamps['codebase']} />
           </button>
 
           <button
@@ -164,6 +167,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
             <p className="text-xs text-text-muted leading-relaxed">
               Import any .md, .txt, .json, or .yaml file and extract knowledge from it
             </p>
+            <FeedTimestamp timestamp={feedTimestamps['document']} />
           </button>
 
           <button
@@ -191,9 +195,12 @@ export default function MemorySettingsPage(): React.JSX.Element {
         </h3>
 
         {/* Search & Filter */}
-        <div className="flex gap-3 mb-3">
-          <div className="flex-1 relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+        <div className="flex flex-col gap-2.5 mb-3">
+          <div className="relative">
+            <Search
+              size={14}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
+            />
             <input
               type="text"
               value={searchQuery}
@@ -202,17 +209,33 @@ export default function MemorySettingsPage(): React.JSX.Element {
               className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface-overlay border border-border-subtle text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50"
             />
           </div>
-          <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value as MemoryType | 'all')}
-            className="px-3 py-2 text-sm rounded-xl bg-surface-overlay border border-border-subtle text-text-primary"
-          >
-            <option value="all">All Types</option>
-            <option value="user">User</option>
-            <option value="feedback">Feedback</option>
-            <option value="project">Project</option>
-            <option value="reference">Reference</option>
-          </select>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {(
+              [
+                { value: 'all', label: 'All', color: 'bg-white/10 text-text-primary' },
+                { value: 'project', label: 'Project', color: 'bg-emerald-500/20 text-emerald-300' },
+                {
+                  value: 'reference',
+                  label: 'Reference',
+                  color: 'bg-purple-500/20 text-purple-300'
+                },
+                { value: 'user', label: 'User', color: 'bg-blue-500/20 text-blue-300' },
+                { value: 'feedback', label: 'Feedback', color: 'bg-amber-500/20 text-amber-300' }
+              ] as const
+            ).map(({ value, label, color }) => (
+              <button
+                key={value}
+                onClick={() => setFilterType(value)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-all ${
+                  filterType === value
+                    ? `${color} border-current ring-1 ring-current/30`
+                    : 'bg-surface-overlay border-border-subtle text-text-muted hover:text-text-secondary hover:border-border-default'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Memory Count — badge style */}
@@ -290,12 +313,32 @@ export default function MemorySettingsPage(): React.JSX.Element {
             </SettingsCard>
           ) : (
             filteredMemories.map((memory) => (
-              <MemoryCard key={memory.id} memory={memory} onDelete={() => deleteMemory(memory.id)} />
+              <MemoryCard
+                key={memory.id}
+                memory={memory}
+                onDelete={() => deleteMemory(memory.id)}
+              />
             ))
           )}
         </div>
       </div>
     </div>
+  )
+}
+
+function FeedTimestamp({ timestamp }: { timestamp?: string }): React.JSX.Element | null {
+  if (!timestamp) return null
+  return (
+    <p className="text-[10px] text-text-muted mt-1 flex items-center gap-1">
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+      Last synced{' '}
+      {new Date(timestamp).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}
+    </p>
   )
 }
 

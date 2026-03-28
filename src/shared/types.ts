@@ -792,6 +792,10 @@ export interface IpcChannels {
     args: { workspaceId: string }
     return: WorkspaceFeedTimestamps
   }
+  'memory:regenerateClaudeMd': {
+    args: { workspacePath: string }
+    return: { success: boolean; content: string; existing: string | null; error?: string }
+  }
 
   // Dream (auto consolidation)
   'dream:trigger': { args: { workspaceId: string }; return: DreamRun }

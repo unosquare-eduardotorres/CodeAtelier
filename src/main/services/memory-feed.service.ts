@@ -425,9 +425,7 @@ ${content.substring(0, 50000)}`
           const stderrMsg = stderr.trim()
           const details =
             stderrMsg ||
-            (stdout.trim()
-              ? `Unexpected output: ${stdout.slice(0, 200)}`
-              : 'No output received')
+            (stdout.trim() ? `Unexpected output: ${stdout.slice(0, 200)}` : 'No output received')
           log.error(
             `Memory feed summarizer failed — exit code: ${code}, stderr: ${stderrMsg.slice(0, 500)}, stdout length: ${stdout.length}`
           )
@@ -451,7 +449,8 @@ ${content.substring(0, 50000)}`
       const workspaceId = this.getWorkspaceId(workspacePath)
       if (!workspaceId) return
       const currentSettings = workspaceRepository.getSettings(workspaceId)
-      const lastFed = (currentSettings as Record<string, unknown>).lastFed as Record<string, unknown> ?? {}
+      const lastFed =
+        ((currentSettings as Record<string, unknown>).lastFed as Record<string, unknown>) ?? {}
       workspaceRepository.updateSettings(workspaceId, {
         ...currentSettings,
         lastFed: {

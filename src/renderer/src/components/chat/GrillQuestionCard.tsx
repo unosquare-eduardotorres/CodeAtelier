@@ -11,6 +11,7 @@ interface GrillQuestionCardProps {
 export interface QuestionState {
   selectedOptions: string[]
   otherText: string
+  otherSelected: boolean
   skipped: boolean
 }
 
@@ -39,12 +40,22 @@ export function QuestionItem({
         : [...state.selectedOptions, label]
       onChange({ ...state, selectedOptions: newSelected })
     } else {
-      onChange({ ...state, selectedOptions: [label] })
+      onChange({ ...state, selectedOptions: [label], otherText: '', otherSelected: false })
     }
   }
 
+  const handleOtherSelect = (): void => {
+    if (state.skipped) return
+    if (question.multiSelect) {
+      onChange({ ...state, otherSelected: !state.otherSelected })
+    } else {
+      onChange({ ...state, selectedOptions: [], otherSelected: true })
+    }
+    otherInputRef.current?.focus()
+  }
+
   const handleSkip = (): void => {
-    onChange({ selectedOptions: [], otherText: '', skipped: !state.skipped })
+    onChange({ selectedOptions: [], otherText: '', otherSelected: false, skipped: !state.skipped })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent, optionIndex: number): void => {
@@ -91,7 +102,7 @@ export function QuestionItem({
           </div>
           <button
             onClick={handleSkip}
-            className={`text-xs px-2.5 py-1 rounded border transition-colors ${
+            className={`text-xs px-2.5 py-1.5 rounded border transition-colors ${
               state.skipped
                 ? 'border-primary/30 text-primary bg-primary/10'
                 : 'border-border-subtle text-text-muted hover:text-text-secondary hover:border-border-default'
@@ -158,20 +169,41 @@ export function QuestionItem({
           {question.allowOther !== false && (
             <div
               data-option-index={question.options.length}
-              className="flex items-start gap-3 px-4 py-3"
+              className={`flex items-start gap-3 px-4 py-3 transition-colors duration-150 ${
+                state.otherSelected
+                  ? 'bg-primary/10'
+                  : 'hover:bg-surface-hover'
+              }`}
               tabIndex={-1}
               onKeyDown={(e) => handleKeyDown(e, question.options.length)}
             >
-              <RadioIcon
-                selected={state.otherText.length > 0 && state.selectedOptions.length === 0}
-              />
-              <div className="flex-1">
+              <button
+                type="button"
+                className="mt-0.5 outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-full"
+                onClick={handleOtherSelect}
+                aria-label="Other option"
+              >
+                {question.multiSelect ? (
+                  <CheckboxIcon selected={state.otherSelected} />
+                ) : (
+                  <RadioIcon selected={state.otherSelected} />
+                )}
+              </button>
+              <div className="flex-1 cursor-pointer" onClick={handleOtherSelect}>
                 <span className="text-sm text-text-muted">Other:</span>
                 <input
                   ref={otherInputRef}
                   type="text"
                   value={state.otherText}
-                  onChange={(e) => onChange({ ...state, otherText: e.target.value })}
+                  onChange={(e) => {
+                    const newState = { ...state, otherText: e.target.value, otherSelected: true }
+                    if (!question.multiSelect) {
+                      newState.selectedOptions = []
+                    }
+                    onChange(newState)
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
                   placeholder="Type your answer..."
                   className="mt-1 w-full bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-primary transition-colors"
                 />
@@ -232,7 +264,7 @@ export default function GrillQuestionCard({
     for (const q of questions) {
       // Pre-select recommended options
       const recommended = q.options.filter((o) => o.recommended).map((o) => o.label)
-      initial[q.id] = { selectedOptions: recommended, otherText: '', skipped: false }
+      initial[q.id] = { selectedOptions: recommended, otherText: '', otherSelected: false, skipped: false }
     }
     return initial
   })
@@ -250,18 +282,18 @@ export default function GrillQuestionCard({
     const state = questionStates[q.id]
     if (!state) return false
     if (state.skipped) return true
-    return state.selectedOptions.length > 0 || state.otherText.trim().length > 0
+    return state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
   })
 
   const answeredCount = questions.filter((q) => {
     const state = questionStates[q.id]
     if (!state) return false
-    return state.skipped || state.selectedOptions.length > 0 || state.otherText.trim().length > 0
+    return state.skipped || state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
   }).length
 
   const handleSubmit = (): void => {
     const answers: GrillAnswerPayload[] = questions.map((q) => {
-      const state = questionStates[q.id] ?? { selectedOptions: [], otherText: '', skipped: true }
+      const state = questionStates[q.id] ?? { selectedOptions: [], otherText: '', otherSelected: false, skipped: true }
       return {
         questionId: q.id,
         selectedOptions: state.selectedOptions,
@@ -302,6 +334,7 @@ export default function GrillQuestionCard({
               questionStates[question.id] ?? {
                 selectedOptions: [],
                 otherText: '',
+                otherSelected: false,
                 skipped: false
               }
             }

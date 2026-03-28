@@ -5,9 +5,10 @@ import remarkBreaks from 'remark-breaks'
 import type { Plugin } from 'unified'
 import type { Root, Text, PhrasingContent } from 'mdast'
 import { visit } from 'unist-util-visit'
-import { Copy, Check, Paperclip, Flame, Lightbulb } from 'lucide-react'
+import { Copy, Check, Paperclip, Flame, Lightbulb, FileText } from 'lucide-react'
 import type { Message, ToolActivity, GrillProposedTask, GrillQuestion } from '../../../../shared/types'
 import PlanCard from './PlanCard'
+import GrillEvaluationCard from './GrillEvaluationCard'
 import GrillResultCard from './GrillResultCard'
 import GrillQuestionCard from './GrillQuestionCard'
 import ToolActivityBlock from './ToolActivityBlock'
@@ -288,9 +289,45 @@ function MessageBubbleInner({
     }
   }
 
+  // Detect grill-evaluation blocks
+  const grillEvalRegex = /```grill-evaluation\n([\s\S]*?)```/
+  const grillEvalMatch = !isUser ? message.contentMd.match(grillEvalRegex) : null
+  let grillEvalData: {
+    score: number
+    scoreLabel: string
+    feedback: string
+    questions: GrillQuestion[]
+  } | null = null
+
+  if (grillEvalMatch) {
+    try {
+      const parsed = JSON.parse(grillEvalMatch[1].trim())
+      if (typeof parsed.score === 'number' && Array.isArray(parsed.questions)) {
+        grillEvalData = {
+          score: parsed.score,
+          scoreLabel: parsed.scoreLabel ?? '',
+          feedback: parsed.feedback ?? '',
+          questions: parsed.questions
+        }
+      }
+    } catch {
+      // Failed to parse grill evaluation — will render as normal markdown
+    }
+  }
+
+  // Split content around grill-evaluation block if found
+  const beforeGrillEval = grillEvalMatch
+    ? message.contentMd.substring(0, grillEvalMatch.index!)
+    : null
+  const afterGrillEval = grillEvalMatch
+    ? message.contentMd.substring(grillEvalMatch.index! + grillEvalMatch[0].length)
+    : null
+
   const handleBuild = (): void => {
     updateMode('build')
-    sendMessage('Implement the plan we just discussed. Follow the steps exactly.')
+    sendMessage(
+      'Implement the plan we just discussed. If the plan has multiple phases (3+ sections or 8+ steps), start with only the first phase and let me know you will continue with the remaining phases afterward. If the plan is small enough, implement it all at once.'
+    )
   }
 
   const handleRefine = (feedback: string): void => {
@@ -366,6 +403,23 @@ function MessageBubbleInner({
           >
             {children}
           </a>
+        )
+      }
+
+      // Check if the code content is a file path — render as clickable to reveal in Finder/Explorer
+      const isFilePath =
+        /^[\/~][\w.\-\/@ ]+\.\w{1,10}$/.test(text) || /^[A-Z]:\\/.test(text)
+      if (isFilePath) {
+        const shortenedPath = shortenFilePath(text)
+        return (
+          <code
+            className="inline-flex items-center gap-1 bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-primary-text hover:text-primary-hover cursor-pointer underline decoration-dotted underline-offset-2"
+            title={`Reveal in file manager: ${text}`}
+            onClick={() => window.api.showItemInFolder(text)}
+          >
+            <FileText size={12} className="shrink-0 opacity-60" />
+            {shortenedPath}
+          </code>
         )
       }
 
@@ -500,6 +554,40 @@ function MessageBubbleInner({
                     components={markdownComponents}
                   >
                     {afterGrill}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : grillEvalData ? (
+          /* Message with a grill-evaluation block — split into before/eval/after */
+          <div className="space-y-3 max-w-full">
+            {beforeGrillEval?.trim() && (
+              <div className={aiBubbleClass}>
+                <div className="prose prose-sm max-w-none prose-invert">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    components={markdownComponents}
+                  >
+                    {beforeGrillEval}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+            <GrillEvaluationCard
+              score={grillEvalData.score}
+              scoreLabel={grillEvalData.scoreLabel}
+              feedback={grillEvalData.feedback}
+              questions={grillEvalData.questions}
+            />
+            {afterGrillEval?.trim() && (
+              <div className={aiBubbleClass}>
+                <div className="prose prose-sm max-w-none prose-invert">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    components={markdownComponents}
+                  >
+                    {afterGrillEval}
                   </ReactMarkdown>
                 </div>
               </div>

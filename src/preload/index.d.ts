@@ -386,6 +386,9 @@ interface Api {
   zoomSet: (factor: number) => Promise<number>
   zoomGet: () => Promise<number>
   onZoomChanged: (callback: (factor: number) => void) => () => void
+
+  // Shell
+  showItemInFolder: (filePath: string) => Promise<void>
 }
 
 declare global {
