@@ -78,6 +78,29 @@ function formatTime(dateStr: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+/**
+ * Shorten absolute file paths for display:
+ * - /Users/x/.claude/plans/foo.md → /plans/foo.md
+ * - /Users/x/.claude/agents/bar.yaml → /agents/bar.yaml
+ * - /Users/x/Projects/AgentStudio/src/main/index.ts → /…/src/main/index.ts
+ * - Keeps the full path in the title tooltip for reference
+ */
+function shortenFilePath(filePath: string): string {
+  // Strip home directory prefix for .claude paths
+  const claudeMatch = filePath.match(/^(?:\/Users\/[^/]+|\/home\/[^/]+|~)\/.claude\/(.+)$/)
+  if (claudeMatch) {
+    return `/${claudeMatch[1]}`
+  }
+
+  // For other long paths, show last 3 segments
+  const segments = filePath.split('/')
+  if (segments.length > 4) {
+    return '/…/' + segments.slice(-3).join('/')
+  }
+
+  return filePath
+}
+
 function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
 
