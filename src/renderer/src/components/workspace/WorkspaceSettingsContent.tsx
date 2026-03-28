@@ -4,7 +4,7 @@ import { useWorkspaceStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
 import IdeasList from './IdeasList'
-import GrillSessionView from './GrillSessionView'
+import GrillPage from './GrillPage'
 import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
@@ -71,7 +71,7 @@ export default function WorkspaceSettingsContent({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-surface-raised min-w-0 overflow-y-auto">
+    <div className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${tab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}>
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
 
@@ -83,7 +83,7 @@ export default function WorkspaceSettingsContent({
 
       {tab === 'ideas' &&
         (activeGrill ? (
-          <GrillSessionView
+          <GrillPage
             ideaId={activeGrill.ideaId}
             conversationId={activeGrill.conversationId}
             ideaTitle={activeGrill.ideaTitle}
@@ -91,6 +91,10 @@ export default function WorkspaceSettingsContent({
             isNewSession={activeGrill.isNewSession}
             onBack={() => setActiveGrill(null)}
             onComplete={() => {
+              setActiveGrill(null)
+              onNavigateToChat()
+            }}
+            onExitToChat={() => {
               setActiveGrill(null)
               onNavigateToChat()
             }}

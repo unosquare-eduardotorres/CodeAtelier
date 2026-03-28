@@ -27,6 +27,7 @@ import type {
   MemoryType,
   MemoryFeedProgress,
   MemoryFeedResult,
+  WorkspaceFeedTimestamps,
   DreamRun,
   DreamProgress,
   TokenSummary,
@@ -332,6 +333,9 @@ const api = {
 
   memoryFeedCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CANCEL),
 
+  memoryGetFeedTimestamps: (args: { workspaceId: string }): Promise<WorkspaceFeedTimestamps> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_GET_FEED_TIMESTAMPS, args),
+
   memoryFeedClaudeMd: (args: { workspacePath: string }): Promise<MemoryFeedResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CLAUDE_MD, args),
 
@@ -415,6 +419,11 @@ const api = {
     conversationId: string
     summary?: string
   }): Promise<Idea | null> => ipcRenderer.invoke(IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL, args),
+
+  saveIdeaGrillDecisions: (args: {
+    ideaId: string
+    decisions: string
+  }): Promise<Idea> => ipcRenderer.invoke(IPC_CHANNELS.IDEA_SAVE_GRILL_DECISIONS, args),
 
   // ── Auto-update ──
   checkForUpdate: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
@@ -543,6 +552,31 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.CHAT_GRILL_QUESTION, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.CHAT_GRILL_QUESTION, handler)
+    }
+  },
+
+  onGrillEvaluation: (
+    callback: (data: {
+      conversationId: string
+      score: number
+      scoreLabel: string
+      feedback: string
+      questions: GrillQuestion[]
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        conversationId: string
+        score: number
+        scoreLabel: string
+        feedback: string
+        questions: GrillQuestion[]
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_GRILL_EVALUATION, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_GRILL_EVALUATION, handler)
     }
   },
 

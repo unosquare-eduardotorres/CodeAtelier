@@ -272,12 +272,12 @@ function MessageBubbleInner({
   }
 
   // Detect grill-question blocks
-  // When suppressInlineGrillCard is true, skip parsing — the store-driven card in MessageList takes precedence
+  // Always detect the block so we can strip the raw JSON from display
   const grillQuestionRegex = /```grill-question\n([\s\S]*?)```/
-  const grillQuestionMatch = !isUser && !suppressInlineGrillCard ? message.contentMd.match(grillQuestionRegex) : null
+  const grillQuestionMatch = !isUser ? message.contentMd.match(grillQuestionRegex) : null
   let grillQuestions: GrillQuestion[] = []
 
-  if (grillQuestionMatch) {
+  if (grillQuestionMatch && !suppressInlineGrillCard) {
     try {
       const parsed = JSON.parse(grillQuestionMatch[1].trim())
       if (parsed.questions && Array.isArray(parsed.questions)) {
@@ -430,7 +430,7 @@ function MessageBubbleInner({
           <div className="space-y-3 max-w-full">
             {beforeGrillQuestion?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose max-w-none prose-invert">
+                <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
@@ -447,7 +447,7 @@ function MessageBubbleInner({
             />
             {afterGrillQuestion?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose max-w-none prose-invert">
+                <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
@@ -458,12 +458,24 @@ function MessageBubbleInner({
               </div>
             )}
           </div>
+        ) : grillQuestionMatch && suppressInlineGrillCard ? (
+          /* Grill-question block detected but suppressed (store-driven card active) — render surrounding text only, hide JSON */
+          <div className={aiBubbleClass}>
+            <div className="prose prose-sm max-w-none prose-invert">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                components={markdownComponents}
+              >
+                {[beforeGrillQuestion?.trim(), afterGrillQuestion?.trim()].filter(Boolean).join('\n\n')}
+              </ReactMarkdown>
+            </div>
+          </div>
         ) : grillSummary ? (
           /* Message with a grill-summary block — split into before/grill/after */
           <div className="space-y-3 max-w-full">
             {beforeGrill?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose max-w-none prose-invert">
+                <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
@@ -482,7 +494,7 @@ function MessageBubbleInner({
             />
             {afterGrill?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose max-w-none prose-invert">
+                <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
@@ -498,7 +510,7 @@ function MessageBubbleInner({
           <div className="space-y-3 max-w-full">
             {beforePlan?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose max-w-none prose-invert">
+                <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
@@ -511,7 +523,7 @@ function MessageBubbleInner({
             <PlanCard planContent={planContent} onBuild={handleBuild} onRefine={handleRefine} />
             {afterPlan?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose max-w-none prose-invert">
+                <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                     components={markdownComponents}
@@ -581,7 +593,7 @@ function MessageBubbleInner({
             )}
 
             {(isUser ? displayContent : message.contentMd) ? (
-              <div className={`prose max-w-none ${isUser ? 'prose-invert' : 'prose-invert'}`}>
+              <div className={`prose prose-sm max-w-none ${isUser ? 'prose-invert' : 'prose-invert'}`}>
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
                   components={markdownComponents}

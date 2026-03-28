@@ -178,19 +178,19 @@
   }
 
   .prose h1 {
-    font-size: 1.5em; /* 24px — clear 4px step from h2 */
+    font-size: 1.5em; /* ~21px — clear step from h2 */
     margin-top: 1.2em;
     margin-bottom: 0.6em;
   }
 
   .prose h2 {
-    font-size: 1.25em; /* 20px — clear 2px step from h3 */
+    font-size: 1.25em; /* ~17.5px — clear step from h3 */
     margin-top: 1.1em;
     margin-bottom: 0.5em;
   }
 
   .prose h3 {
-    font-size: 1.125em; /* 18px — clear 2px step from body */
+    font-size: 1.125em; /* ~15.75px — clear step from body */
     margin-top: 0.9em;
     margin-bottom: 0.4em;
   }

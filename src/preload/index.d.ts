@@ -29,6 +29,7 @@ import type {
   MemoryType,
   MemoryFeedProgress,
   MemoryFeedResult,
+  WorkspaceFeedTimestamps,
   DreamRun,
   DreamProgress,
   TokenSummary,
@@ -197,6 +198,7 @@ interface Api {
   // Memory Feed
   memorySelectDocument: () => Promise<string | null>
   memoryFeedCancel: () => Promise<void>
+  memoryGetFeedTimestamps: (args: { workspaceId: string }) => Promise<WorkspaceFeedTimestamps>
   memoryFeedClaudeMd: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
   memoryFeedCodebase: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
   memoryFeedDocument: (args: {
@@ -240,6 +242,10 @@ interface Api {
     conversationId: string
     summary?: string
   }) => Promise<Idea | null>
+  saveIdeaGrillDecisions: (args: {
+    ideaId: string
+    decisions: string
+  }) => Promise<Idea>
 
   // Auto-update
   checkForUpdate: () => Promise<void>
@@ -287,6 +293,15 @@ interface Api {
   ) => () => void
   onGrillQuestion: (
     callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
+  ) => () => void
+  onGrillEvaluation: (
+    callback: (data: {
+      conversationId: string
+      score: number
+      scoreLabel: string
+      feedback: string
+      questions: GrillQuestion[]
+    }) => void
   ) => () => void
   onTaskPlan: (callback: (data: TaskPlan) => void) => () => void
   onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void

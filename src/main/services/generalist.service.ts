@@ -24,6 +24,9 @@ const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
 /** Regex to detect grill-question blocks emitted by the generalist. */
 const GRILL_QUESTION_REGEX = /```grill-question\n([\s\S]*?)```/g
 
+/** Regex to detect grill-evaluation blocks (new structured format with score + questions). */
+const GRILL_EVAL_REGEX = /```grill-evaluation\n([\s\S]*?)```/g
+
 /**
  * @deprecated Use HandoffBrief from shared/types.ts instead.
  * Kept for backward compatibility with legacy listeners.
@@ -288,6 +291,7 @@ export class GeneralistService extends AgentBaseService {
     this.currentStatus = 'thinking'
     this.hasEmittedContent = false
     this.messageStartedAt = Date.now()
+    this.processedToolIds.clear()
     this.currentConversationId = conversationId
     this.accumulatedText = ''
     this.emit('statusUpdate', this.getStatus())
@@ -420,9 +424,10 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
-    // Check for handoff, grill summary, or grill questions in accumulated text
+    // Check for handoff, grill summary, grill evaluation, or grill questions in accumulated text
     this.detectHandoff()
     this.detectGrillSummary()
+    this.detectGrillEvaluation()
     this.detectGrillQuestion()
 
     this.currentStatus = 'idle'
@@ -585,6 +590,32 @@ export class GeneralistService extends AgentBaseService {
     if (allQuestions.length > 0) {
       this.log.info(`Grill questions detected: ${allQuestions.length} questions`)
       this.emit('grillQuestion', { questions: allQuestions } as GrillQuestionEvent)
+    }
+  }
+
+  /**
+   * Checks the accumulated response text for grill-evaluation blocks (new structured format)
+   * and emits a `grillEvaluation` event if found. Contains score + feedback + questions.
+   */
+  private detectGrillEvaluation(): void {
+    const matches = [...this.accumulatedText.matchAll(GRILL_EVAL_REGEX)]
+    if (matches.length === 0) return
+
+    for (const match of matches) {
+      try {
+        const data = JSON.parse(match[1].trim())
+        if (typeof data.score === 'number' && Array.isArray(data.questions)) {
+          this.log.info(`Grill evaluation detected: score=${data.score}, questions=${data.questions.length}`)
+          this.emit('grillEvaluation', {
+            score: data.score,
+            scoreLabel: data.scoreLabel ?? '',
+            feedback: data.feedback ?? '',
+            questions: data.questions
+          })
+        }
+      } catch (error) {
+        this.log.error('Failed to parse grill-evaluation block:', error)
+      }
     }
   }
 

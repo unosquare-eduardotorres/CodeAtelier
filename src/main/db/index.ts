@@ -11,7 +11,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 20
+const CURRENT_SCHEMA_VERSION = 21
 
 interface Migration {
   version: number
@@ -309,6 +309,13 @@ const migrations: Migration[] = [
     up: (db) => {
       // Reclaim WAL file space on upgrade
       db.pragma('wal_checkpoint(TRUNCATE)')
+    }
+  },
+  {
+    version: 21,
+    name: 'add_grill_decisions_to_ideas',
+    up: (db) => {
+      db.exec(`ALTER TABLE ideas ADD COLUMN grill_decisions TEXT DEFAULT NULL`)
     }
   }
 ]

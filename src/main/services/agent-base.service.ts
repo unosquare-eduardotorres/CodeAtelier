@@ -58,6 +58,8 @@ export abstract class AgentBaseService extends EventEmitter {
   protected currentToolName: string | null = null
   protected currentToolInput: string = ''
   protected toolIdToName: Map<string, string> = new Map()
+  /** Track tool IDs already processed via streaming (content_block_start/stop) to skip duplicates from full messages */
+  protected processedToolIds: Set<string> = new Set()
 
   /** Database session ID for token tracking */
   protected dbSessionId: string | null = null
@@ -163,6 +165,10 @@ export abstract class AgentBaseService extends EventEmitter {
                 if (toolId) {
                   this.toolIdToName.set(toolId, toolName)
                 }
+                // Skip if already processed via content_block_start/stop streaming
+                if (toolId && this.processedToolIds.has(toolId)) {
+                  break
+                }
                 this.currentStatus = 'reviewing'
                 this.emit('statusUpdate', this.getStatus())
                 this.emit('chunk', {
@@ -194,6 +200,12 @@ export abstract class AgentBaseService extends EventEmitter {
             for (const block of userContent) {
               if (block.type === 'tool_result') {
                 const toolUseId = block.tool_use_id as string
+                // Skip if already handled by content_block_stop streaming
+                if (toolUseId && this.processedToolIds.has(toolUseId)) {
+                  this.processedToolIds.delete(toolUseId)
+                  this.toolIdToName.delete(toolUseId)
+                  break
+                }
                 const toolName = this.toolIdToName.get(toolUseId) ?? 'Unknown'
                 if (toolUseId) {
                   this.toolIdToName.delete(toolUseId)
@@ -230,6 +242,10 @@ export abstract class AgentBaseService extends EventEmitter {
           this.currentStatus = 'reviewing'
           this.currentToolName = contentBlock.name as string
           this.currentToolInput = ''
+          const toolId = contentBlock.id as string
+          if (toolId) {
+            this.processedToolIds.add(toolId)
+          }
           const toolInput = contentBlock.input as Record<string, unknown> | undefined
           this.emit('statusUpdate', this.getStatus())
           this.emit('chunk', {

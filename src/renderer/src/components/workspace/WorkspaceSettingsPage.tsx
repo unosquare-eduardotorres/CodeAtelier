@@ -17,7 +17,7 @@ import { useWorkspaceStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
 import IdeasList from './IdeasList'
-import GrillSessionView from './GrillSessionView'
+import GrillPage from './GrillPage'
 import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
@@ -187,7 +187,7 @@ export default function WorkspaceSettingsPage({
         </nav>
 
         {/* Content area */}
-        <div className="flex-1 overflow-y-auto">
+        <div className={`flex-1 ${activeTab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           {/* Delete All buttons for team tab */}
           {activeTab === 'team' && workspacePath && !needsActivation && !isActivating && (
             <div className="px-6 pt-4 flex justify-end gap-2">
@@ -267,7 +267,7 @@ export default function WorkspaceSettingsPage({
 
           {activeTab === 'ideas' &&
             (activeGrill ? (
-              <GrillSessionView
+              <GrillPage
                 ideaId={activeGrill.ideaId}
                 conversationId={activeGrill.conversationId}
                 ideaTitle={activeGrill.ideaTitle}
@@ -275,6 +275,10 @@ export default function WorkspaceSettingsPage({
                 isNewSession={activeGrill.isNewSession}
                 onBack={() => setActiveGrill(null)}
                 onComplete={() => {
+                  setActiveGrill(null)
+                  onBack()
+                }}
+                onExitToChat={() => {
                   setActiveGrill(null)
                   onBack()
                 }}

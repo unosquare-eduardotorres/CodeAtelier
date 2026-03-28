@@ -70,6 +70,7 @@ export class OrchestratorService extends AgentBaseService {
     this.buffer = ''
     this.hasEmittedContent = false
     this.messageStartedAt = Date.now()
+    this.processedToolIds.clear()
     this.currentConversationId = conversationId ?? null
     this.emit('statusUpdate', this.getStatus())
 

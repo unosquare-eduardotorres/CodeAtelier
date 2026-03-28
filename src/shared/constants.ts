@@ -22,6 +22,7 @@ export const IPC_CHANNELS = {
   CHAT_HANDOFF: 'chat:handoff',
   CHAT_GRILL_COMPLETE: 'chat:grillComplete',
   CHAT_GRILL_QUESTION: 'chat:grillQuestion',
+  CHAT_GRILL_EVALUATION: 'chat:grillEvaluation',
   CHAT_TASK_PLAN: 'chat:taskPlan',
   CHAT_EXECUTE_PLAN: 'chat:executePlan',
   CHAT_TASK_PROGRESS: 'chat:taskProgress',
@@ -128,6 +129,7 @@ export const IPC_CHANNELS = {
   MEMORY_FEED_PROGRESS: 'memory:feedProgress',
   MEMORY_FEED_CANCEL: 'memory:feedCancel',
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
+  MEMORY_GET_FEED_TIMESTAMPS: 'memory:getFeedTimestamps',
 
   // Dream (auto consolidation)
   DREAM_TRIGGER: 'dream:trigger',
@@ -152,6 +154,7 @@ export const IPC_CHANNELS = {
   IDEA_START_GRILL: 'idea:startGrill',
   IDEA_CONVERT_DIRECT: 'idea:convertDirect',
   IDEA_COMPLETE_FROM_GRILL: 'idea:completeFromGrill',
+  IDEA_SAVE_GRILL_DECISIONS: 'idea:saveGrillDecisions',
 
   // Documents
   DOCS_LIST: 'docs:list',
@@ -222,14 +225,14 @@ export const CONVERSATION_MODES = {
 export const ACTIVATION_MODEL_ID = 'claude-sonnet-4-20250514' as const
 
 /** Fast model used for memory feed summarization tasks (structured extraction) */
-export const MEMORY_FEED_MODEL_ID = 'claude-haiku-4-20250414' as const
+export const MEMORY_FEED_MODEL_ID = 'claude-sonnet-4-20250514' as const
 
 /** Model used for dream consolidation cycles */
-export const DREAM_MODEL_ID = 'claude-haiku-4-20250414' as const
+export const DREAM_MODEL_ID = 'claude-sonnet-4-20250514' as const
 
 /** Model IDs per complexity tier — used for specialist routing */
 export const MODEL_TIER_IDS = {
-  haiku: 'claude-haiku-4-20250414',
+  haiku: 'claude-sonnet-4-20250514',
   sonnet: 'claude-sonnet-4-20250514',
   opus: 'claude-opus-4-20250514'
 } as const
@@ -256,12 +259,6 @@ export const DEFAULT_COST_PREFERENCE = 'balanced' as const
 /** Available Claude models for configuration UI */
 export const AVAILABLE_MODELS = [
   {
-    id: 'claude-haiku-4-20250414',
-    label: 'Haiku',
-    tier: 'haiku' as const,
-    description: 'Fast & lightweight'
-  },
-  {
     id: 'claude-sonnet-4-20250514',
     label: 'Sonnet',
     tier: 'sonnet' as const,
@@ -282,11 +279,11 @@ export const DEFAULT_MODEL_CONFIG: Record<
 > = {
   generalist: 'claude-sonnet-4-20250514',
   orchestrator: 'claude-sonnet-4-20250514',
-  'specialist:simple': 'claude-haiku-4-20250414',
+  'specialist:simple': 'claude-sonnet-4-20250514',
   'specialist:moderate': 'claude-sonnet-4-20250514',
   'specialist:complex': 'claude-opus-4-20250514',
-  dream: 'claude-haiku-4-20250414',
-  memoryFeed: 'claude-haiku-4-20250414',
+  dream: 'claude-sonnet-4-20250514',
+  memoryFeed: 'claude-sonnet-4-20250514',
   activation: 'claude-sonnet-4-20250514'
 } as const
 

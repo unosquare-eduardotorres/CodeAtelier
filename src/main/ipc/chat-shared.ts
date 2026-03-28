@@ -60,17 +60,21 @@ export function forwardChunkToRenderer(
         toolInputSummary = chunk.content.slice(0, 120)
       }
     }
+    const toolActivity: Record<string, unknown> = {
+      id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      toolName: chunk.toolName ?? 'Unknown',
+      status: 'completed',
+      completedAt: Date.now()
+    }
+    // Only include input if we have a real summary — don't overwrite existing input with undefined
+    if (toolInputSummary) {
+      toolActivity.input = toolInputSummary
+    }
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId,
       chunk: '',
       role,
-      toolActivity: {
-        id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        toolName: chunk.toolName ?? 'Unknown',
-        status: 'completed',
-        input: toolInputSummary,
-        completedAt: Date.now()
-      }
+      toolActivity
     })
   } else if (chunk.type === 'error') {
     contentAccumulator.value += `\n\n**Error:** ${chunk.error}`

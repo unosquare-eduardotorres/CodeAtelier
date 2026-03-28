@@ -9,6 +9,7 @@ interface IdeaRow {
   status: 'draft' | 'grilling' | 'completed'
   grill_conversation_id: string | null
   grill_summary: string | null
+  grill_decisions: string | null
   converted_conversation_id: string | null
   created_at: string
   updated_at: string
@@ -23,6 +24,7 @@ function mapRow(row: IdeaRow): Idea {
     status: row.status,
     grillConversationId: row.grill_conversation_id ?? undefined,
     grillSummary: row.grill_summary ?? undefined,
+    grillDecisions: row.grill_decisions ?? undefined,
     convertedConversationId: row.converted_conversation_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -131,6 +133,17 @@ export class IdeaRepository {
       RETURNING *
     `)
     const row = stmt.get(conversationId, id) as IdeaRow | undefined
+    return row ? mapRow(row) : undefined
+  }
+
+  saveGrillDecisions(id: string, decisions: string): Idea | undefined {
+    const db = getDatabase()
+    const stmt = db.prepare(`
+      UPDATE ideas SET grill_decisions = ?, updated_at = datetime('now')
+      WHERE id = ?
+      RETURNING *
+    `)
+    const row = stmt.get(decisions, id) as IdeaRow | undefined
     return row ? mapRow(row) : undefined
   }
 

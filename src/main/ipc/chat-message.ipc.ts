@@ -14,7 +14,7 @@ import {
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { ConversationMode, GrillQuestion, HandoffBrief } from '../../shared/types'
+import type { ConversationMode, GrillEvaluation, GrillQuestion, HandoffBrief } from '../../shared/types'
 import { memoryService } from '../services/memory.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -44,6 +44,14 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_QUESTION, {
       conversationId: generalistService.getCurrentConversationId() || '',
       questions: data.questions
+    })
+  })
+
+  // Persistent listener: forward grill evaluation events (new structured format) to the renderer
+  generalistService.on('grillEvaluation', (data: GrillEvaluation) => {
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_EVALUATION, {
+      conversationId: generalistService.getCurrentConversationId() || '',
+      ...data
     })
   })
 

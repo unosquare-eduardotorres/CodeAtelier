@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore, useDreamStore } from '@renderer/store'
 import { SettingsCard } from '@renderer/components/common'
-import type { Memory, MemoryType } from '../../../../shared/types'
+import type { Memory, MemoryType, WorkspaceFeedTimestamps } from '../../../../shared/types'
 
 const TYPE_BADGES: Record<MemoryType, { label: string; color: string }> = {
   user: { label: 'User', color: 'bg-blue-500/20 text-blue-300' },

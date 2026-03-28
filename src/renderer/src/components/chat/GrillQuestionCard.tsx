@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Flame, SkipForward, Send, Star } from 'lucide-react'
+import { HelpCircle, SkipForward, Send, Star } from 'lucide-react'
 import type { GrillQuestion, GrillAnswerPayload } from '../../../../shared/types'
 
 interface GrillQuestionCardProps {
@@ -8,14 +8,14 @@ interface GrillQuestionCardProps {
   onSkipAll: () => void
 }
 
-interface QuestionState {
+export interface QuestionState {
   selectedOptions: string[]
   otherText: string
   skipped: boolean
 }
 
 // ── Individual question item ──
-function QuestionItem({
+export function QuestionItem({
   question,
   questionIndex,
   totalQuestions,
@@ -70,16 +70,16 @@ function QuestionItem({
       className={`rounded-lg border overflow-hidden transition-all duration-200 ${
         state.skipped
           ? 'border-border-subtle bg-surface-base/50 opacity-60'
-          : 'border-orange-500/20 bg-orange-950/10'
+          : 'border-border-subtle bg-surface-base/30'
       }`}
     >
       {/* Question header with progress + skip button */}
-      <div className="px-4 py-3 border-b border-orange-500/10">
+      <div className="px-4 py-3 border-b border-border-subtle">
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
             {question.header && (
               <span
-                className="text-xs font-semibold text-orange-400 uppercase tracking-wider"
+                className="text-xs font-semibold text-text-secondary uppercase tracking-wider"
                 id={`question-header-${question.id}`}
               >
                 {question.header}
@@ -93,8 +93,8 @@ function QuestionItem({
             onClick={handleSkip}
             className={`text-xs px-2.5 py-1 rounded border transition-colors ${
               state.skipped
-                ? 'border-orange-500/30 text-orange-400 bg-orange-500/10'
-                : 'border-border-subtle text-text-muted hover:text-orange-400 hover:border-orange-500/30'
+                ? 'border-primary/30 text-primary bg-primary/10'
+                : 'border-border-subtle text-text-muted hover:text-text-secondary hover:border-border-default'
             }`}
           >
             {state.skipped ? 'Unskip' : 'Skip'}
@@ -108,7 +108,7 @@ function QuestionItem({
         <div
           role={question.multiSelect ? 'group' : 'radiogroup'}
           aria-labelledby={question.header ? `question-header-${question.id}` : undefined}
-          className="divide-y divide-orange-500/10"
+          className="divide-y divide-border-subtle"
         >
           {question.options.map((option, optIdx) => {
             const isSelected = state.selectedOptions.includes(option.label)
@@ -123,12 +123,12 @@ function QuestionItem({
                 tabIndex={optIdx === 0 ? 0 : -1}
                 onClick={() => handleOptionToggle(option.label)}
                 onKeyDown={(e) => handleKeyDown(e, optIdx)}
-                className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors duration-150 min-h-[44px] outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-inset ${
+                className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors duration-150 min-h-[44px] outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-inset ${
                   isSelected
-                    ? 'bg-orange-500/15'
+                    ? 'bg-primary/10'
                     : isRecommended
-                      ? 'bg-yellow-500/5 hover:bg-orange-500/10'
-                      : 'hover:bg-orange-900/10'
+                      ? 'bg-yellow-500/5 hover:bg-surface-hover'
+                      : 'hover:bg-surface-hover'
                 }`}
               >
                 {question.multiSelect ? (
@@ -173,7 +173,7 @@ function QuestionItem({
                   value={state.otherText}
                   onChange={(e) => onChange({ ...state, otherText: e.target.value })}
                   placeholder="Type your answer..."
-                  className="mt-1 w-full bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-orange-500 transition-colors"
+                  className="mt-1 w-full bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-primary transition-colors"
                 />
               </div>
             </div>
@@ -185,11 +185,11 @@ function QuestionItem({
 }
 
 // ── Icons ──
-function RadioIcon({ selected }: { selected: boolean }): React.JSX.Element {
+export function RadioIcon({ selected }: { selected: boolean }): React.JSX.Element {
   return (
     <div
       className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors ${
-        selected ? 'border-orange-400 bg-orange-400' : 'border-text-muted'
+        selected ? 'border-primary bg-primary' : 'border-text-muted'
       }`}
     >
       {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
@@ -197,11 +197,11 @@ function RadioIcon({ selected }: { selected: boolean }): React.JSX.Element {
   )
 }
 
-function CheckboxIcon({ selected }: { selected: boolean }): React.JSX.Element {
+export function CheckboxIcon({ selected }: { selected: boolean }): React.JSX.Element {
   return (
     <div
       className={`mt-0.5 w-4 h-4 rounded shrink-0 border-2 flex items-center justify-center transition-colors ${
-        selected ? 'border-orange-400 bg-orange-400' : 'border-text-muted'
+        selected ? 'border-primary bg-primary' : 'border-text-muted'
       }`}
     >
       {selected && (
@@ -275,17 +275,17 @@ export default function GrillQuestionCard({
   return (
     <div
       ref={cardRef}
-      className="rounded-xl border border-orange-500/30 bg-surface-overlay overflow-hidden shadow-sm"
+      className="rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden shadow-sm"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-orange-900/30 border-b border-orange-500/20">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-surface-base/60 border-b border-border-subtle">
         <div className="flex items-center gap-2">
-          <Flame size={16} className="text-orange-400" />
-          <span className="text-sm font-semibold text-orange-300">
-            Grill Questions — {questions.length} decision{questions.length !== 1 ? 's' : ''} to make
+          <HelpCircle size={16} className="text-text-secondary" />
+          <span className="text-sm font-semibold text-text-primary">
+            Questions — {questions.length} decision{questions.length !== 1 ? 's' : ''} to make
           </span>
         </div>
-        <span className="text-xs text-orange-300/60">
+        <span className="text-xs text-text-muted">
           {answeredCount}/{questions.length} answered
         </span>
       </div>
@@ -311,10 +311,10 @@ export default function GrillQuestionCard({
       </div>
 
       {/* Footer actions */}
-      <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-orange-500/20 bg-surface-base/50">
+      <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-border-subtle bg-surface-base/50">
         <button
           onClick={onSkipAll}
-          className="flex items-center gap-1.5 px-4 py-2 text-text-muted hover:text-orange-400 rounded-lg text-sm font-medium transition-colors border border-transparent hover:border-border-subtle focus-visible:ring-2 focus-visible:ring-orange-500/50"
+          className="flex items-center gap-1.5 px-4 py-2 text-text-muted hover:text-text-secondary rounded-lg text-sm font-medium transition-colors border border-transparent hover:border-border-subtle focus-visible:ring-2 focus-visible:ring-primary/50"
         >
           <SkipForward size={14} />
           Skip All
@@ -322,7 +322,7 @@ export default function GrillQuestionCard({
         <button
           onClick={handleSubmit}
           disabled={!canSubmit}
-          className="flex items-center gap-1.5 px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-orange-500/50 press-scale"
+          className="flex items-center gap-1.5 px-5 py-2 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 press-scale"
         >
           <Send size={14} />
           Submit Answers

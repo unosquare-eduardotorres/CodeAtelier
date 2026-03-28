@@ -410,6 +410,13 @@ export interface GrillAnswerPayload {
   skipped: boolean
 }
 
+export interface GrillEvaluation {
+  score: number
+  scoreLabel: string
+  feedback: string
+  questions: GrillQuestion[]
+}
+
 // ── Structured Plan Types ──
 export interface PlanStep {
   number: number
@@ -506,6 +513,12 @@ export interface MemoryFeedProgress {
   timestamp: number
 }
 
+export interface WorkspaceFeedTimestamps {
+  'claude-md'?: string
+  'codebase'?: string
+  'document'?: string
+}
+
 export interface MemoryFeedResult {
   success: boolean
   source: 'claude-md' | 'codebase' | 'document'
@@ -541,6 +554,7 @@ export interface Idea {
   grillConversationId?: string
   grillSummary?: string
   convertedConversationId?: string
+  grillDecisions?: string
   createdAt: string
   updatedAt: string
 }
@@ -774,6 +788,10 @@ export interface IpcChannels {
   }
   'memory:feedCancel': { args: void; return: void }
   'memory:selectDocument': { args: void; return: string | null }
+  'memory:getFeedTimestamps': {
+    args: { workspaceId: string }
+    return: WorkspaceFeedTimestamps
+  }
 
   // Dream (auto consolidation)
   'dream:trigger': { args: { workspaceId: string }; return: DreamRun }

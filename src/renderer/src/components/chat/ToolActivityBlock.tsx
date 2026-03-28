@@ -2,6 +2,27 @@ import { useState } from 'react'
 import { ChevronDown, ChevronRight, Wrench } from 'lucide-react'
 import type { ToolActivity } from '../../../../shared/types'
 
+/**
+ * Shortens long absolute paths to show `…/parentFolder/file.ext`.
+ * Non-path strings (grep patterns, globs, etc.) are returned as-is.
+ */
+function shortenInput(input: string): string {
+  // Match absolute paths (unix or windows-style) that are "long"
+  const pathMatch = input.match(/^(\/[^\s]+)(.*)$/)
+  if (!pathMatch) return input
+
+  const fullPath = pathMatch[1]
+  const rest = pathMatch[2] // anything after the path (e.g. " in /Users/...")
+
+  const segments = fullPath.split('/')
+  // If path is short enough (≤3 segments like /foo/bar), keep as-is
+  if (segments.length <= 3) return input
+
+  // Take the last 2 meaningful segments (parent folder + filename)
+  const shortPath = '…/' + segments.slice(-2).join('/')
+  return shortPath + rest
+}
+
 interface ToolActivityBlockProps {
   activities: ToolActivity[]
 }
@@ -40,7 +61,9 @@ export default function ToolActivityBlock({
               <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
               <span className="font-mono text-text-body">{activity.toolName}</span>
               {activity.input && (
-                <span className="text-text-muted truncate max-w-[300px]">{activity.input}</span>
+                <span className="text-text-muted truncate max-w-[300px]" title={activity.input}>
+                  {shortenInput(activity.input)}
+                </span>
               )}
             </div>
           ))}
@@ -63,7 +86,9 @@ export default function ToolActivityBlock({
               />
               <span className="font-mono text-text-body">{activity.toolName}</span>
               {activity.input && (
-                <span className="text-text-muted truncate max-w-[300px]">{activity.input}</span>
+                <span className="text-text-muted truncate max-w-[300px]" title={activity.input}>
+                  {shortenInput(activity.input)}
+                </span>
               )}
             </div>
           ))}

@@ -84,6 +84,7 @@ ${content.substring(0, 50000)}`
       const result = await this.spawnSummarizer(prompt, workspacePath)
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-claude-md')
 
+      this.saveFeedTimestamp(workspacePath, 'claude-md')
       emit(`Created ${memories} memories from CLAUDE.md`, 'complete')
       return { success: true, source: 'claude-md', memoriesCreated: memories }
     } catch (error) {
@@ -155,6 +156,7 @@ ${keyFiles}`
       const result = await this.spawnSummarizer(prompt, workspacePath)
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-codebase')
 
+      this.saveFeedTimestamp(workspacePath, 'codebase')
       emit(`Created ${memories} memories from codebase analysis`, 'complete')
       return { success: true, source: 'codebase', memoriesCreated: memories }
     } catch (error) {
@@ -231,6 +233,7 @@ ${content.substring(0, 50000)}`
       const result = await this.spawnSummarizer(prompt, workspacePath)
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-document')
 
+      this.saveFeedTimestamp(workspacePath, 'document')
       emit(`Created ${memories} memories from document`, 'complete')
       return { success: true, source: 'document', memoriesCreated: memories }
     } catch (error) {
@@ -438,6 +441,27 @@ ${content.substring(0, 50000)}`
         reject(new Error(`Failed to spawn memory feed summarizer: ${err.message}`))
       })
     })
+  }
+
+  /**
+   * Save a feed timestamp to workspace settings_json.
+   */
+  private saveFeedTimestamp(workspacePath: string, feedKey: string): void {
+    try {
+      const workspaceId = this.getWorkspaceId(workspacePath)
+      if (!workspaceId) return
+      const currentSettings = workspaceRepository.getSettings(workspaceId)
+      const lastFed = (currentSettings as Record<string, unknown>).lastFed as Record<string, unknown> ?? {}
+      workspaceRepository.updateSettings(workspaceId, {
+        ...currentSettings,
+        lastFed: {
+          ...lastFed,
+          [feedKey]: new Date().toISOString()
+        }
+      })
+    } catch (err) {
+      log.warn('Failed to save feed timestamp:', err)
+    }
   }
 
   /**

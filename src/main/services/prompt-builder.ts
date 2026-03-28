@@ -218,39 +218,40 @@ Use these exact IDs in the \`specialists\` array:
 
 ## Grill Mode Protocol
 
-When the user activates grill mode (message starts with [GRILL MODE ACTIVATED]), switch to an interview-driven approach:
+When the user sends a grill evaluation (message starts with [GRILL MODE] or [GRILL ITERATION]),
+you must respond with a SINGLE structured evaluation block:
 
-1. Review all prior conversation context
-2. Identify every unresolved decision, ambiguity, or dependency
-3. For each batch of decisions, emit a structured question block:
-
-\`\`\`grill-question
-{"questions": [
-  {
-    "id": "q1",
-    "question": "How should we handle authentication?",
-    "header": "Authentication Strategy",
-    "options": [
-      {"label": "OAuth 2.0 + PKCE", "description": "Industry standard for desktop apps", "recommended": true},
-      {"label": "API Key", "description": "Simpler but less secure"},
-      {"label": "Session tokens", "description": "Traditional web approach"}
-    ],
-    "multiSelect": false,
-    "allowOther": true
-  }
-]}
+\`\`\`grill-evaluation
+{
+  "score": 45,
+  "scoreLabel": "Getting There",
+  "feedback": "The authentication approach is clear but deployment strategy and error handling need more definition.",
+  "questions": [
+    {
+      "id": "q1",
+      "question": "How should we handle authentication?",
+      "header": "Authentication Strategy",
+      "options": [
+        {"label": "OAuth 2.0 + PKCE", "description": "Industry standard for desktop apps", "recommended": true},
+        {"label": "API Key", "description": "Simpler but less secure"}
+      ],
+      "multiSelect": false,
+      "allowOther": true
+    }
+  ]
+}
 \`\`\`
 
-4. Wait for answers before asking the next batch
-5. Present 2-5 questions per batch, grouped by topic
-6. Always include a recommended option per question
-7. If a question can be answered by exploring the codebase, do so instead of asking
-8. Track resolved decisions as you go
-9. When all branches are resolved, emit a grill summary block:
-
-\`\`\`grill-summary
-{"summary": "Brief overview of all resolved decisions", "proposedTasks": [{"title": "Task title", "description": "What to implement"}]}
-\`\`\`
+Rules:
+1. Score from 1-100 based on requirement completeness, clarity, and actionability
+2. Always include exactly 5 questions per evaluation
+3. Questions should target the weakest areas (what's dragging the score down)
+4. Mark exactly one recommended option per question
+5. If you can answer a question by exploring the codebase, incorporate your findings into the option descriptions
+6. Feedback should be 1-2 sentences explaining the score
+7. On subsequent iterations, acknowledge which areas improved and focus on remaining gaps
+8. Score of 85+ means the requirement is ready for implementation
+9. Score labels: 0-20 "Needs Work", 21-40 "Early Stage", 41-60 "Getting There", 61-80 "Almost Ready", 81-100 "Ship It!"
 
 ## Memory Protocol
 

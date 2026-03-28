@@ -133,6 +133,16 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     memoryFeedService.shutdown()
   })
 
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_GET_FEED_TIMESTAMPS,
+    (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      if (!args.workspaceId) throw new Error('Workspace ID is required')
+      const settings = workspaceRepository.getSettings(args.workspaceId)
+      return (settings as Record<string, unknown>).lastFed ?? {}
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.MEMORY_SELECT_DOCUMENT, async (event) => {
     validateSender(event)
     const result = await dialog.showOpenDialog(mainWindow, {

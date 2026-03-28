@@ -270,7 +270,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const activities = [...state.toolActivities]
       for (let i = activities.length - 1; i >= 0; i--) {
         if (activities[i].toolName === activity.toolName && activities[i].status === 'running') {
-          activities[i] = { ...activities[i], ...activity, status: activity.status ?? 'completed' }
+          activities[i] = {
+            ...activities[i],
+            ...activity,
+            // Preserve existing input if update doesn't provide one
+            input: activity.input ?? activities[i].input,
+            status: activity.status ?? 'completed'
+          }
           break
         }
       }

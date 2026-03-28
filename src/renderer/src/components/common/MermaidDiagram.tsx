@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Loader2, AlertTriangle, Copy, Check } from 'lucide-react'
+import { Loader2, AlertTriangle, Copy, Check, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 
 interface MermaidDiagramProps {
   definition: string
@@ -38,6 +38,12 @@ function getMermaid(): Promise<typeof import('mermaid').default> {
 
 let renderCounter = 0
 
+const MIN_SCALE = 0.25
+const MAX_SCALE = 4
+const ZOOM_STEP_CLICK = 0.1
+const ZOOM_STEP_WHEEL = 0.05
+const FIT_PADDING = 16
+
 export default function MermaidDiagram({
   definition,
   id,
@@ -47,8 +53,37 @@ export default function MermaidDiagram({
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
 
+  // Pan + Zoom state
+  const [scale, setScale] = useState(1)
+  const [translate, setTranslate] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStart = useRef({ x: 0, y: 0 })
+  const viewportRef = useRef<HTMLDivElement>(null)
+
+  const clampScale = (s: number): number => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s))
+
+  const fitToView = useCallback(() => {
+    const viewport = viewportRef.current
+    const svgEl = viewport?.querySelector('svg')
+    if (!viewport || !svgEl) return
+
+    const vw = viewport.clientWidth - FIT_PADDING * 2
+    const vh = viewport.clientHeight - FIT_PADDING * 2
+    const sw = svgEl.scrollWidth || svgEl.clientWidth
+    const sh = svgEl.scrollHeight || svgEl.clientHeight
+
+    if (sw === 0 || sh === 0) return
+
+    const fitScale = Math.min(1, vw / sw, vh / sh)
+    setScale(fitScale)
+    setTranslate({
+      x: (vw + FIT_PADDING * 2 - sw * fitScale) / 2,
+      y: (vh + FIT_PADDING * 2 - sh * fitScale) / 2
+    })
+  }, [])
+
+  // Render mermaid diagram
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -62,6 +97,12 @@ export default function MermaidDiagram({
         if (!cancelled) {
           setSvg(renderedSvg)
           setLoading(false)
+          // Fit-to-view after DOM paints the SVG
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              fitToView()
+            })
+          })
         }
       })
       .catch((err) => {
@@ -74,7 +115,100 @@ export default function MermaidDiagram({
     return (): void => {
       cancelled = true
     }
-  }, [definition, id])
+  }, [definition, id, fitToView])
+
+  // Wheel handler — zoom toward cursor position
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+
+    const handleWheel = (e: WheelEvent): void => {
+      e.preventDefault()
+      const delta = e.deltaY > 0 ? -ZOOM_STEP_WHEEL : ZOOM_STEP_WHEEL
+
+      setScale((prev) => {
+        const next = clampScale(prev + delta)
+        const rect = viewport.getBoundingClientRect()
+        const cx = e.clientX - rect.left
+        const cy = e.clientY - rect.top
+        const factor = next / prev
+
+        setTranslate((t) => ({
+          x: cx - factor * (cx - t.x),
+          y: cy - factor * (cy - t.y)
+        }))
+
+        return next
+      })
+    }
+
+    viewport.addEventListener('wheel', handleWheel, { passive: false })
+    return (): void => {
+      viewport.removeEventListener('wheel', handleWheel)
+    }
+  }, [])
+
+  // Mouse drag handlers
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 0) return
+      setIsDragging(true)
+      dragStart.current = { x: e.clientX - translate.x, y: e.clientY - translate.y }
+    },
+    [translate]
+  )
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging) return
+      setTranslate({
+        x: e.clientX - dragStart.current.x,
+        y: e.clientY - dragStart.current.y
+      })
+    },
+    [isDragging]
+  )
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false)
+  }, [])
+
+  // Toolbar zoom controls
+  const handleZoomIn = useCallback(() => {
+    setScale((prev) => {
+      const next = clampScale(prev + ZOOM_STEP_CLICK)
+      const viewport = viewportRef.current
+      if (viewport) {
+        const rect = viewport.getBoundingClientRect()
+        const cx = rect.width / 2
+        const cy = rect.height / 2
+        const factor = next / prev
+        setTranslate((t) => ({
+          x: cx - factor * (cx - t.x),
+          y: cy - factor * (cy - t.y)
+        }))
+      }
+      return next
+    })
+  }, [])
+
+  const handleZoomOut = useCallback(() => {
+    setScale((prev) => {
+      const next = clampScale(prev - ZOOM_STEP_CLICK)
+      const viewport = viewportRef.current
+      if (viewport) {
+        const rect = viewport.getBoundingClientRect()
+        const cx = rect.width / 2
+        const cy = rect.height / 2
+        const factor = next / prev
+        setTranslate((t) => ({
+          x: cx - factor * (cx - t.x),
+          y: cy - factor * (cy - t.y)
+        }))
+      }
+      return next
+    })
+  }, [])
 
   const handleCopy = useCallback(async (): Promise<void> => {
     try {
@@ -107,32 +241,68 @@ export default function MermaidDiagram({
     )
   }
 
+  const toolbarBtnClass =
+    'px-1.5 py-1 rounded bg-gray-800/80 text-gray-400 hover:text-gray-200 transition-colors'
+
   return (
     <div className={`relative group ${className ?? ''}`}>
-      {/* Copy source button */}
-      <button
-        onClick={handleCopy}
-        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10
-                   flex items-center gap-1 px-2 py-1 rounded-md bg-gray-800/80 text-xs text-gray-400 hover:text-gray-200"
-      >
-        {copied ? (
-          <>
-            <Check size={12} className="text-green-400" />
-            <span className="text-green-400">Copied</span>
-          </>
-        ) : (
-          <>
-            <Copy size={12} />
-            <span>Copy source</span>
-          </>
-        )}
-      </button>
-      {/* Rendered SVG */}
+      {/* Toolbar — zoom controls + copy */}
+      <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+        <button onClick={handleZoomOut} className={toolbarBtnClass} title="Zoom out">
+          <ZoomOut size={12} />
+        </button>
+        <span className="text-[10px] font-mono text-gray-400 min-w-[36px] text-center select-none">
+          {Math.round(scale * 100)}%
+        </span>
+        <button onClick={handleZoomIn} className={toolbarBtnClass} title="Zoom in">
+          <ZoomIn size={12} />
+        </button>
+        <button onClick={fitToView} className={toolbarBtnClass} title="Fit to view">
+          <Maximize2 size={12} />
+        </button>
+        <div className="w-px h-4 bg-gray-700 mx-0.5" />
+        <button
+          onClick={handleCopy}
+          className={`${toolbarBtnClass} flex items-center gap-1`}
+          title="Copy source"
+        >
+          {copied ? (
+            <>
+              <Check size={12} className="text-green-400" />
+              <span className="text-[10px] text-green-400">Copied</span>
+            </>
+          ) : (
+            <>
+              <Copy size={12} />
+              <span className="text-[10px]">Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Interactive viewport — pan & zoom */}
       <div
-        ref={containerRef}
-        className="overflow-auto bg-gray-950 rounded-lg p-4 [&_svg]:max-w-full [&_svg]:h-auto"
-        dangerouslySetInnerHTML={{ __html: svg ?? '' }}
-      />
+        ref={viewportRef}
+        className="overflow-hidden bg-gray-950 rounded-lg"
+        style={{
+          cursor: isDragging ? 'grabbing' : 'grab',
+          minHeight: '200px'
+        }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+      >
+        <div
+          style={{
+            transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
+            transformOrigin: '0 0',
+            transition: isDragging ? 'none' : 'transform 0.15s ease-out'
+          }}
+          className="[&_svg]:max-w-none [&_svg]:h-auto"
+          dangerouslySetInnerHTML={{ __html: svg ?? '' }}
+        />
+      </div>
     </div>
   )
 }

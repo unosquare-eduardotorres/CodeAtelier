@@ -227,7 +227,7 @@ export default function MessageInput({
       if (cmd === '/grillme') {
         setText('')
         startGrillSession()
-        const grillPrompt = `[GRILL MODE ACTIVATED]\n\nInterview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. If a question can be answered by exploring the codebase, explore the codebase instead.\n\nReview the conversation above and start grilling me about the items, pending decisions, and unclear requirements.`
+        const grillPrompt = `[GRILL MODE ACTIVATED]\n\nInterview me relentlessly about every aspect of this plan until we reach a shared understanding. Present 2-5 related questions per batch, grouped by topic. Mark your recommended option using the "recommended" field in the JSON. If a question can be answered by exploring the codebase, explore it instead of asking.\n\nReview the conversation above and start grilling me about the items, pending decisions, and unclear requirements.`
         await sendMessage(grillPrompt, attachments.length > 0 ? attachments : undefined)
         onClearAttachments()
         return
