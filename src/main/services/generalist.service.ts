@@ -14,7 +14,6 @@ import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
-import { hookRunnerService } from './hook-runner.service'
 import { eventLoggerService } from './event-logger.service'
 
 /** Regex to detect handoff blocks emitted by the generalist. */
@@ -175,11 +174,8 @@ export class GeneralistService extends AgentBaseService {
       fullSystemPrompt
     ]
 
-    // Add hook scripts for safety and quality gate interception
-    const hookArgs = hookRunnerService.getHookArgs(this.currentMode)
-    if (hookArgs.length > 0) {
-      args.push(...hookArgs)
-    }
+    // Hooks are configured declaratively via .claude/hooks/hooks.json
+    // (CLI flags --pre-tool-use-hook / --post-tool-use-hook are not supported)
 
     // Resume existing session if available (preserves conversation context)
     if (resumeSessionId) {

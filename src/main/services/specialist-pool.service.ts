@@ -23,7 +23,6 @@ import { gitWorktreeService } from './git-worktree.service'
 import type { MergeResult } from './git-worktree.service'
 import { buildEnvWithPath } from './env-utils'
 import { modelConfigService } from './model-config.service'
-import { hookRunnerService } from './hook-runner.service'
 import { checkpointService } from './checkpoint.service'
 import { eventLoggerService } from './event-logger.service'
 import { detectAbandonment, detectQualityGates } from './abandonment-detector.service'
@@ -886,11 +885,8 @@ export class SpecialistPoolService extends EventEmitter {
       args.push('--permission-mode', 'plan')
     }
 
-    // Add hook scripts for safety and quality gate interception
-    const hookArgs = hookRunnerService.getHookArgs(mode)
-    if (hookArgs.length > 0) {
-      args.push(...hookArgs)
-    }
+    // Hooks are configured declaratively via .claude/hooks/hooks.json
+    // (CLI flags --pre-tool-use-hook / --post-tool-use-hook are not supported)
 
     // Set thinking budget based on model tier — Opus gets full thinking, Haiku skips it
     const thinkingBudget =

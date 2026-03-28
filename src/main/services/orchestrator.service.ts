@@ -14,7 +14,6 @@ import { enrichTasksWithComplexity } from './complexity-scorer.service'
 import { promptBuilder } from './prompt-builder'
 import { AgentBaseService } from './agent-base.service'
 import { modelConfigService } from './model-config.service'
-import { hookRunnerService } from './hook-runner.service'
 import { eventLoggerService } from './event-logger.service'
 import type { StreamChunk } from './agent-base.service'
 
@@ -98,11 +97,8 @@ export class OrchestratorService extends AgentBaseService {
       args.push('--permission-mode', 'plan')
     }
 
-    // Add hook scripts for safety and quality gate interception
-    const hookArgs = hookRunnerService.getHookArgs(mode)
-    if (hookArgs.length > 0) {
-      args.push(...hookArgs)
-    }
+    // Hooks are configured declaratively via .claude/hooks/hooks.json
+    // (CLI flags --pre-tool-use-hook / --post-tool-use-hook are not supported)
 
     const existingSession = conversationId ? this.sessionMap.get(conversationId) : null
     if (existingSession) {
