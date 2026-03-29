@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Agentic Architect: Clockmaker / Automata Builder -->
+  <circle cx="12" cy="12" r="12" fill="#1A1208"/>
+  <circle cx="12" cy="10" r="6" fill="rgba(212,168,67,0.06)"/>
+  <path d="M3 24 Q3 17 12 15 Q21 17 21 24Z" fill="#3A2A08"/>
+  <!-- Monocle -->
+  <circle cx="14" cy="10.5" r="1.5" fill="none" stroke="#D4A843" stroke-width="0.4" opacity="0.7"/>
+  <circle cx="14" cy="10.5" r="0.6" fill="rgba(212,168,67,0.15)"/>
+  <path d="M15.5 10.5 Q16.5 10 17 10.5" fill="none" stroke="#D4A843" stroke-width="0.3" opacity="0.5"/>
+  <!-- Collar/hood -->
+  <path d="M7 9.5 Q6 7.5 7 6 Q9 4 12 4 Q15 4 17 6 Q18 7.5 17 9.5" fill="#0A0604"/>
+  <ellipse cx="12" cy="11" rx="4.2" ry="4.8" fill="#B8906A"/>
+  <path d="M7.5 9 Q7 7.2 7.5 6 Q9.5 5 12 5 Q14.5 5 16.5 6 Q17 7.2 16.5 9" fill="#0A0604"/>
+  <ellipse cx="10" cy="10.8" rx="0.9" ry="0.7" fill="#080602"/>
+  <ellipse cx="14" cy="10.5" rx="0.7" ry="0.6" fill="#080602"/>
+  <circle cx="10.3" cy="10.5" r="0.28" fill="rgba(255,255,255,0.65)"/>
+  <path d="M10.5 13.5 Q12 14.1 13.5 13.5" fill="none" stroke="#6A3A1A" stroke-width="0.5"/>
+  <!-- Gear props -->
+  <circle cx="18" cy="19" r="2.5" fill="none" stroke="#D4A843" stroke-width="0.6" opacity="0.5"/>
+  <circle cx="18" cy="19" r="1" fill="none" stroke="#D4A843" stroke-width="0.4" opacity="0.4"/>
+  <line x1="18" y1="16.5" x2="18" y2="21.5" stroke="#D4A843" stroke-width="0.4" opacity="0.4"/>
+  <line x1="15.5" y1="19" x2="20.5" y2="19" stroke="#D4A843" stroke-width="0.4" opacity="0.4"/>
+</svg>

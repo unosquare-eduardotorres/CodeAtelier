@@ -23,9 +23,9 @@ interface PlanCardProps {
 
 /** Complexity badge colors */
 const COMPLEXITY_COLORS: Record<string, { bg: string; text: string; label: string }> = {
-  low: { bg: 'bg-green-500/20', text: 'text-green-400', label: 'Low' },
-  medium: { bg: 'bg-amber-500/20', text: 'text-amber-400', label: 'Medium' },
-  high: { bg: 'bg-red-500/20', text: 'text-red-400', label: 'High' }
+  low: { bg: 'bg-success-muted', text: 'text-success', label: 'Low' },
+  medium: { bg: 'bg-mode-build-muted', text: 'text-mode-build-text', label: 'Medium' },
+  high: { bg: 'bg-danger-muted', text: 'text-danger', label: 'High' }
 }
 
 function ComplexityBadge({ complexity }: { complexity: string }): React.JSX.Element {
@@ -47,18 +47,18 @@ function CollapsibleSection({
   const [isOpen, setIsOpen] = useState(defaultOpen)
 
   return (
-    <div className="rounded-lg border border-purple-500/20 bg-purple-950/10 overflow-hidden">
+    <div className="rounded-lg border border-mode-plan-border bg-mode-plan-muted overflow-hidden">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center gap-2 px-4 py-3 hover:bg-purple-900/20 transition-colors text-left"
+        className="w-full flex items-center gap-2 px-4 py-3 hover:bg-mode-plan/10 transition-colors text-left"
       >
         {isOpen ? (
-          <ChevronDown size={14} className="text-purple-400 shrink-0" />
+          <ChevronDown size={14} className="text-mode-plan-text shrink-0" />
         ) : (
-          <ChevronRight size={14} className="text-purple-400 shrink-0" />
+          <ChevronRight size={14} className="text-mode-plan-text shrink-0" />
         )}
         {section.icon && <span className="text-base shrink-0">{section.icon}</span>}
-        <span className="text-sm font-semibold text-purple-200">{section.heading}</span>
+        <span className="text-sm font-semibold text-mode-plan-text">{section.heading}</span>
       </button>
 
       {isOpen && (
@@ -79,31 +79,31 @@ function CollapsibleSection({
 
 function StepsTable({ steps }: { steps: PlanStep[] }): React.JSX.Element {
   return (
-    <div className="overflow-x-auto rounded-lg border border-purple-500/20">
+    <div className="overflow-x-auto rounded-lg border border-mode-plan-border">
       <table className="min-w-full text-sm">
         <thead>
-          <tr className="bg-purple-900/20 border-b border-purple-500/20">
-            <th className="px-3 py-2 text-left text-xs font-medium text-purple-300 uppercase tracking-wider w-10">
+          <tr className="bg-mode-plan-muted border-b border-mode-plan-border">
+            <th className="px-3 py-2 text-left text-xs font-medium text-mode-plan-text uppercase tracking-wider w-10">
               #
             </th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-purple-300 uppercase tracking-wider">
+            <th className="px-3 py-2 text-left text-xs font-medium text-mode-plan-text uppercase tracking-wider">
               Step
             </th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-purple-300 uppercase tracking-wider">
+            <th className="px-3 py-2 text-left text-xs font-medium text-mode-plan-text uppercase tracking-wider">
               Description
             </th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-purple-300 uppercase tracking-wider">
+            <th className="px-3 py-2 text-left text-xs font-medium text-mode-plan-text uppercase tracking-wider">
               File
             </th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-purple-300 uppercase tracking-wider w-20">
+            <th className="px-3 py-2 text-left text-xs font-medium text-mode-plan-text uppercase tracking-wider w-20">
               Complexity
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-purple-500/10">
+        <tbody className="divide-y divide-mode-plan-border/30">
           {steps.map((step) => (
-            <tr key={step.number} className="hover:bg-purple-900/10 transition-colors">
-              <td className="px-3 py-2 text-purple-400 font-mono text-xs">{step.number}</td>
+            <tr key={step.number} className="hover:bg-mode-plan-muted transition-colors">
+              <td className="px-3 py-2 text-mode-plan-text font-mono text-xs">{step.number}</td>
               <td className="px-3 py-2 text-text-primary font-medium">{step.title}</td>
               <td className="px-3 py-2 text-text-body">{step.description}</td>
               <td className="px-3 py-2">
@@ -138,13 +138,13 @@ function FileList({ files }: { files: string[] }): React.JSX.Element {
       {files.map((file, index) => (
         <div
           key={file}
-          className="flex items-center gap-2 group cursor-pointer hover:bg-purple-900/10 rounded px-2 py-1 transition-colors"
+          className="flex items-center gap-2 group cursor-pointer hover:bg-mode-plan-muted rounded px-2 py-1 transition-colors"
           onClick={() => handleCopy(file, index)}
         >
-          <FileCode size={12} className="text-purple-400 shrink-0" />
+          <FileCode size={12} className="text-mode-plan-text shrink-0" />
           <code className="text-xs text-text-body font-mono flex-1">{file}</code>
           {copiedIndex === index ? (
-            <Check size={12} className="text-green-400 shrink-0" />
+            <Check size={12} className="text-success shrink-0" />
           ) : (
             <Copy size={12} className="text-text-muted opacity-0 group-hover:opacity-100 shrink-0 transition-opacity" />
           )}
@@ -164,25 +164,25 @@ function StructuredPlanView({
   onRefine: () => void
 }): React.JSX.Element {
   return (
-    <div className="rounded-xl border border-green-500/30 bg-surface-overlay overflow-hidden shadow-sm">
+    <div className="rounded-xl border border-success/30 bg-surface-overlay overflow-hidden shadow-sm">
       {/* Green header */}
-      <div className="flex items-center gap-2 px-4 py-2.5 bg-green-900/30 border-b border-green-500/20">
-        <Check size={16} className="text-green-400" />
-        <span className="text-sm font-semibold text-green-300">Implementation Plan Ready</span>
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-success-muted border-b border-success/20">
+        <Check size={16} className="text-success" />
+        <span className="text-sm font-semibold text-success">Implementation Plan Ready</span>
       </div>
 
       <div className="px-5 py-4 space-y-5">
         {/* Title */}
         <div>
           <h3 className="text-base font-bold text-text-primary flex items-center gap-2">
-            <ClipboardList size={16} className="text-purple-400" />
+            <ClipboardList size={16} className="text-mode-plan-text" />
             {plan.title}
           </h3>
         </div>
 
         {/* Executive Summary */}
         {plan.summary && (
-          <div className="text-sm text-text-body bg-purple-950/20 rounded-lg px-4 py-3 border border-purple-500/10">
+          <div className="text-sm text-text-body bg-mode-plan-muted rounded-lg px-4 py-3 border border-mode-plan-border">
             {plan.summary}
           </div>
         )}
@@ -204,7 +204,7 @@ function StructuredPlanView({
         {plan.steps && plan.steps.length > 0 && (
           <div className="space-y-2">
             <h4 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-              <span className="text-purple-400">📋</span>
+              <span className="text-mode-plan-text">📋</span>
               Implementation Steps
             </h4>
             <StepsTable steps={plan.steps} />
@@ -215,7 +215,7 @@ function StructuredPlanView({
         {plan.files && plan.files.length > 0 && (
           <div className="space-y-2">
             <h4 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-              <FileCode size={14} className="text-purple-400" />
+              <FileCode size={14} className="text-mode-plan-text" />
               Files Affected ({plan.files.length})
             </h4>
             <FileList files={plan.files} />
@@ -225,14 +225,14 @@ function StructuredPlanView({
         {/* Risks */}
         {plan.risks && plan.risks.length > 0 && (
           <div className="space-y-2">
-            <h4 className="text-sm font-semibold text-amber-300 flex items-center gap-2">
+            <h4 className="text-sm font-semibold text-warning flex items-center gap-2">
               <AlertTriangle size={14} />
               Risks
             </h4>
             <ul className="space-y-1">
               {plan.risks.map((risk, index) => (
                 <li key={index} className="flex items-start gap-2 text-sm text-text-body">
-                  <span className="text-amber-400 mt-0.5 shrink-0">•</span>
+                  <span className="text-warning mt-0.5 shrink-0">•</span>
                   {risk}
                 </li>
               ))}
@@ -242,10 +242,10 @@ function StructuredPlanView({
       </div>
 
       {/* Action buttons */}
-      <div className="flex items-center gap-2 px-4 py-3 border-t border-green-500/20 bg-surface-base/50">
+      <div className="flex items-center gap-2 px-4 py-3 border-t border-success/20 bg-surface-base/50">
         <button
           onClick={onBuild}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/50 press-scale"
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-mode-build/50 press-scale"
         >
           <Hammer size={14} />
           Accept & Build
@@ -287,11 +287,11 @@ export default function PlanCard({
 
   // Fallback: plain markdown rendering (backward compatible)
   return (
-    <div className="rounded-xl border border-purple-500/30 bg-purple-950/20 overflow-hidden shadow-sm">
+    <div className="rounded-xl border border-mode-plan-border bg-mode-plan-muted overflow-hidden shadow-sm">
       {/* Plan header */}
-      <div className="flex items-center gap-2 px-4 py-2 bg-purple-900/30 border-b border-purple-500/20">
-        <ClipboardList size={14} className="text-purple-400" />
-        <span className="text-sm font-medium text-purple-300">Implementation Plan</span>
+      <div className="flex items-center gap-2 px-4 py-2 bg-mode-plan/15 border-b border-mode-plan-border">
+        <ClipboardList size={14} className="text-mode-plan-text" />
+        <span className="text-sm font-medium text-mode-plan-text">Implementation Plan</span>
       </div>
 
       {/* Plan content — rendered as markdown */}
@@ -300,10 +300,10 @@ export default function PlanCard({
       </div>
 
       {/* Action buttons */}
-      <div className="flex items-center gap-2 px-4 py-3 border-t border-purple-500/20 bg-purple-900/10">
+      <div className="flex items-center gap-2 px-4 py-3 border-t border-mode-plan-border bg-mode-plan-muted">
         <button
           onClick={onBuild}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/50 press-scale"
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-mode-build/50 press-scale"
         >
           <Hammer size={14} />
           Build This

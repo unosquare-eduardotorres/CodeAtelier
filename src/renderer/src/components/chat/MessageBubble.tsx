@@ -166,8 +166,8 @@ function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Eleme
         >
           {copied ? (
             <>
-              <Check size={12} className="text-green-400" />
-              <span className="text-green-400">Copied</span>
+              <Check size={12} className="text-success" />
+              <span className="text-success">Copied</span>
             </>
           ) : (
             <>
@@ -298,7 +298,8 @@ function useMessageIdentity(message: Message): {
       return {
         displayName: profileDisplayName,
         subtitle: null,
-        avatarKey: profileAvatarKey,
+
+        avatarKey: profile?.avatarKey ?? 'renaissance-scholar',
         accentColor: 'var(--color-primary, #6366F1)'
       }
     }
@@ -318,7 +319,7 @@ function useMessageIdentity(message: Message): {
       return {
         displayName: alias ?? roleName,
         subtitle: alias ? roleName : null,
-        avatarKey: coreAlias?.avatarKey ?? defaults?.avatarKey ?? 'robot',
+        avatarKey: coreAlias?.avatarKey ?? defaults?.avatarKey ?? 'renaissance-alchemist',
         accentColor: defaults?.color ?? '#6366F1'
       }
     }
@@ -539,7 +540,7 @@ function MessageBubbleInner({
             {identity.displayName}
           </span>
           {identity.subtitle && (
-            <span className="text-xs text-text-muted leading-tight">{identity.subtitle}</span>
+            <span className="text-xs text-text-secondary leading-tight">{identity.subtitle}</span>
           )}
         </div>
 
@@ -698,25 +699,25 @@ function MessageBubbleInner({
         ) : (
           <div
             className={`rounded-2xl shadow-sm ${
-              isUser ? `px-5 py-4 bg-[oklch(0.24_0.04_277)] text-text-body border-l-2 ${isGrillActivation ? 'border-orange-500' : 'border-primary'}` : aiBubbleClass
+              isUser ? `px-5 py-4 bg-user-bubble text-text-body border-l-2 ${isGrillActivation ? 'border-grill' : 'border-primary'}` : aiBubbleClass
             }`}
           >
             {/* 🔥 Grill Mode activation banner */}
             {isGrillActivation && (
-              <div className="flex items-center gap-2 mb-3 pb-3 border-b border-orange-500/30">
-                <Flame size={16} className="text-orange-400 shrink-0" />
-                <span className="text-sm font-semibold text-orange-300">
+              <div className="flex items-center gap-2 mb-3 pb-3 border-b border-grill/30">
+                <Flame size={16} className="text-accent shrink-0" />
+                <span className="text-sm font-semibold text-accent">
                   Grill Mode Activated
                 </span>
-                <Flame size={16} className="text-orange-400 shrink-0" />
+                <Flame size={16} className="text-accent shrink-0" />
               </div>
             )}
 
             {/* 💡 Idea to Refine subtitle */}
             {ideaToRefineMatch && (
-              <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
-                <Lightbulb size={14} className="text-yellow-400 shrink-0" />
-                <span className="text-sm font-medium text-yellow-300">
+              <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-warning-muted rounded-lg border border-warning/20">
+                <Lightbulb size={14} className="text-warning shrink-0" />
+                <span className="text-sm font-medium text-warning">
                   Idea to Refine:{' '}
                   <span className="text-text-body">{ideaToRefineMatch[1]}</span>
                 </span>
@@ -777,7 +778,7 @@ function MessageBubbleInner({
           <ToolActivityBlock activities={toolActivities} />
         )}
 
-        <span className="text-xs text-text-muted mt-1 px-1">
+        <span className="text-xs text-text-secondary mt-1 px-1">
           {formatTime(message.createdAt)}
           {isStreaming && ' · Streaming...'}
         </span>

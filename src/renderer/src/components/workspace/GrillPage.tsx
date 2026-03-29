@@ -378,8 +378,8 @@ export default function GrillPage({
           </button>
           <div className="w-px h-5 bg-border-subtle" />
           <div className="flex items-center gap-2 min-w-0">
-            <Flame size={14} className="text-orange-400 flex-shrink-0" />
-            <span className="text-sm font-medium text-orange-300 truncate">
+            <Flame size={14} className="text-accent flex-shrink-0" />
+            <span className="text-sm font-medium text-accent truncate">
               Grill: {ideaTitle}
             </span>
           </div>
@@ -398,7 +398,7 @@ export default function GrillPage({
                   Iteration {iterationCount} of ∞
                 </span>
                 {phase === 'evaluating' && (
-                  <span className="text-xs text-orange-400 animate-pulse">
+                  <span className="text-xs text-accent animate-pulse">
                     Da Vinci is analyzing your requirement...
                   </span>
                 )}
@@ -415,7 +415,7 @@ export default function GrillPage({
               {phase === 'evaluating' ? (
                 <div className="flex flex-col items-center gap-2" style={{ width: 120 }}>
                   <div className="w-[120px] h-[120px] flex items-center justify-center">
-                    <Loader2 size={32} className="text-orange-400 animate-spin" />
+                    <Loader2 size={32} className="text-accent animate-spin" />
                   </div>
                   <span className="text-xs font-semibold text-text-muted">Analyzing...</span>
                 </div>
@@ -429,7 +429,7 @@ export default function GrillPage({
           </div>
 
           {/* Description section */}
-          <div className="rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden">
+          <div className="rounded border border-border-subtle bg-surface-overlay overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2.5 bg-surface-base/60 border-b border-border-subtle">
               <span className="text-sm font-semibold text-text-primary">
                 Requirement Description
@@ -471,7 +471,7 @@ export default function GrillPage({
 
           {/* Questions section */}
           {phase === 'answering' && currentIteration && (
-            <div className="rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden">
+            <div className="rounded border border-border-subtle bg-surface-overlay overflow-hidden">
               <div className="flex items-center justify-between px-4 py-2.5 bg-surface-base/60 border-b border-border-subtle">
                 <span className="text-sm font-semibold text-text-primary">
                   Questions ({totalQuestions})
@@ -506,13 +506,13 @@ export default function GrillPage({
 
           {/* Completion suggestion — non-blocking, user decides */}
           {shouldSuggestCompletion && phase === 'answering' && currentIteration && (
-            <div className="rounded-xl border border-green-500/30 bg-green-500/5 overflow-hidden">
+            <div className="rounded border border-success/30 bg-success-muted overflow-hidden">
               <div className="px-4 py-4 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
-                  <Check size={16} className="text-green-400" />
+                <div className="w-8 h-8 rounded-full bg-success-muted flex items-center justify-center flex-shrink-0">
+                  <Check size={16} className="text-success" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-green-300">
+                  <p className="text-sm font-medium text-success">
                     {isAtCharLimit
                       ? 'Character limit reached — your requirement is detailed enough for implementation.'
                       : `Score: ${currentIteration.score}/100 — your requirement looks ${currentIteration.score >= 85 ? 'ready' : 'solid'}. You can keep refining or convert now.`}
@@ -527,9 +527,9 @@ export default function GrillPage({
 
           {/* Evaluating skeleton */}
           {phase === 'evaluating' && (
-            <div className="rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden">
+            <div className="rounded border border-border-subtle bg-surface-overlay overflow-hidden">
               <div className="px-4 py-8 flex flex-col items-center gap-3">
-                <Loader2 size={24} className="text-orange-400 animate-spin" />
+                <Loader2 size={24} className="text-accent animate-spin" />
                 <span className="text-sm text-text-muted">
                   Evaluating your requirement...
                 </span>
@@ -567,8 +567,8 @@ export default function GrillPage({
                 aria-label="Convert idea directly to conversation"
                 className={`flex items-center gap-1.5 rounded-lg text-sm transition-colors press-scale ${
                   shouldSuggestCompletion
-                    ? 'px-5 py-2.5 bg-green-600 hover:bg-green-500 text-white font-semibold'
-                    : 'px-3 py-2.5 border border-green-600 text-green-400 hover:bg-green-600/10 font-medium'
+                    ? 'px-5 py-2.5 bg-success hover:bg-success/90 text-white font-semibold'
+                    : 'px-3 py-2.5 border border-success text-success hover:bg-success-muted font-medium'
                 }`}
               >
                 {shouldSuggestCompletion && <Check size={14} />}

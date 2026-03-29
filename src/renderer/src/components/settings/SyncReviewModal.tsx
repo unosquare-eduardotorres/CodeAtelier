@@ -53,15 +53,15 @@ export default function SyncReviewModal({
   // Show result summary
   if (result) {
     return (
-      <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
-        <div className="flex items-center justify-between px-6 py-3 border-b border-gray-700 bg-gray-900">
+      <div className="flex-1 flex flex-col bg-surface-base min-w-0">
+        <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-base">
           <div className="flex items-center gap-3">
-            <Check size={16} className="text-green-400" />
-            <span className="text-sm font-semibold text-gray-200">Sync Complete</span>
+            <Check size={16} className="text-success" />
+            <span className="text-sm font-semibold text-text-primary">Sync Complete</span>
           </div>
           <button
             onClick={onDismiss}
-            className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+            className="p-1.5 rounded-md hover:bg-surface-raised text-text-muted hover:text-text-primary transition-colors"
           >
             <X size={16} />
           </button>
@@ -69,32 +69,32 @@ export default function SyncReviewModal({
 
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-4 max-w-md">
-            <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mx-auto">
-              <Check size={24} className="text-green-400" />
+            <div className="w-12 h-12 rounded-full bg-success-muted flex items-center justify-center mx-auto">
+              <Check size={24} className="text-success" />
             </div>
             <div>
-              <h3 className="text-lg font-medium text-gray-200">Sync Applied Successfully</h3>
+              <h3 className="text-lg font-medium text-text-primary">Sync Applied Successfully</h3>
               <div className="flex flex-wrap justify-center gap-4 mt-3">
                 {result.imported > 0 && (
-                  <span className="text-xs text-green-400">{result.imported} imported</span>
+                  <span className="text-xs text-success">{result.imported} imported</span>
                 )}
                 {result.updated > 0 && (
-                  <span className="text-xs text-amber-400">{result.updated} updated</span>
+                  <span className="text-xs text-mode-build-text">{result.updated} updated</span>
                 )}
                 {result.deactivated > 0 && (
-                  <span className="text-xs text-red-400">{result.deactivated} deactivated</span>
+                  <span className="text-xs text-danger">{result.deactivated} deactivated</span>
                 )}
                 {result.skillsImported > 0 && (
-                  <span className="text-xs text-indigo-400">
+                  <span className="text-xs text-primary-text">
                     {result.skillsImported} skills imported
                   </span>
                 )}
               </div>
               {result.errors.length > 0 && (
-                <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-left">
-                  <p className="text-xs font-medium text-red-400 mb-1">Errors:</p>
+                <div className="mt-3 p-3 bg-danger-muted border border-danger/20 rounded-lg text-left">
+                  <p className="text-xs font-medium text-danger mb-1">Errors:</p>
                   {result.errors.map((err, i) => (
-                    <p key={i} className="text-xs text-red-300">
+                    <p key={i} className="text-xs text-danger">
                       {err}
                     </p>
                   ))}
@@ -103,7 +103,7 @@ export default function SyncReviewModal({
             </div>
             <button
               onClick={onDismiss}
-              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors"
+              className="px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors"
             >
               Done
             </button>
@@ -114,16 +114,16 @@ export default function SyncReviewModal({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
+    <div className="flex-1 flex flex-col bg-surface-base min-w-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-700 bg-gray-900">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-base">
         <div className="flex items-center gap-3">
-          <ArrowLeftRight size={16} className="text-indigo-400" />
-          <span className="text-sm font-semibold text-gray-200">Review YAML Sync</span>
+          <ArrowLeftRight size={16} className="text-primary-text" />
+          <span className="text-sm font-semibold text-text-primary">Review YAML Sync</span>
         </div>
         <button
           onClick={onDismiss}
-          className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+          className="p-1.5 rounded-md hover:bg-surface-raised text-text-muted hover:text-text-primary transition-colors"
         >
           <X size={16} />
         </button>
@@ -137,7 +137,7 @@ export default function SyncReviewModal({
             <SyncSection
               title="New Agents"
               count={syncDiff.newSpecialists.length}
-              icon={<Plus size={14} className="text-green-400" />}
+              icon={<Plus size={14} className="text-success" />}
               color="green"
               isExpanded={expandedSections.has('new')}
               onToggle={() => toggleSection('new')}
@@ -145,12 +145,12 @@ export default function SyncReviewModal({
               {syncDiff.newSpecialists.map((agent) => (
                 <div
                   key={agent.parsed.name}
-                  className="flex items-center gap-3 p-3 bg-green-500/5 border border-green-500/10 rounded-lg"
+                  className="flex items-center gap-3 p-3 bg-success-muted border border-success/10 rounded-lg"
                 >
                   <span className="text-lg">🔧</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-200">{agent.parsed.name}</p>
-                    <p className="text-xs text-gray-500 truncate">
+                    <p className="text-sm font-medium text-text-primary">{agent.parsed.name}</p>
+                    <p className="text-xs text-text-muted truncate">
                       {agent.parsed.description || agent.filename}
                     </p>
                     {agent.parsed.skills.length > 0 && (
@@ -158,7 +158,7 @@ export default function SyncReviewModal({
                         {agent.parsed.skills.map((skill) => (
                           <span
                             key={skill}
-                            className="px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500/10 text-indigo-400 font-medium"
+                            className="px-1.5 py-0.5 text-[10px] rounded-full bg-primary-muted text-primary-text font-medium"
                           >
                             {skill}
                           </span>
@@ -166,7 +166,7 @@ export default function SyncReviewModal({
                       </div>
                     )}
                   </div>
-                  <span className="text-xs text-green-400 font-medium">NEW</span>
+                  <span className="text-xs text-success font-medium">NEW</span>
                 </div>
               ))}
             </SyncSection>
@@ -177,7 +177,7 @@ export default function SyncReviewModal({
             <SyncSection
               title="New Skills"
               count={syncDiff.newSkills.length}
-              icon={<Plus size={14} className="text-green-400" />}
+              icon={<Plus size={14} className="text-success" />}
               color="green"
               isExpanded={expandedSections.has('newSkills')}
               onToggle={() => toggleSection('newSkills')}
@@ -185,16 +185,16 @@ export default function SyncReviewModal({
               {syncDiff.newSkills.map((skill) => (
                 <div
                   key={skill.name}
-                  className="flex items-center gap-3 p-3 bg-green-500/5 border border-green-500/10 rounded-lg"
+                  className="flex items-center gap-3 p-3 bg-success-muted border border-success/10 rounded-lg"
                 >
                   <span className="text-lg">✨</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-200">{skill.name}</p>
-                    <p className="text-xs text-gray-500 truncate">
+                    <p className="text-sm font-medium text-text-primary">{skill.name}</p>
+                    <p className="text-xs text-text-muted truncate">
                       {skill.frontmatter?.description || 'No description'}
                     </p>
                   </div>
-                  <span className="text-xs text-green-400 font-medium">NEW</span>
+                  <span className="text-xs text-success font-medium">NEW</span>
                 </div>
               ))}
             </SyncSection>
@@ -205,7 +205,7 @@ export default function SyncReviewModal({
             <SyncSection
               title="Updated Agents"
               count={syncDiff.updatedSpecialists.length}
-              icon={<Pencil size={14} className="text-amber-400" />}
+              icon={<Pencil size={14} className="text-mode-build-text" />}
               color="amber"
               isExpanded={expandedSections.has('updated')}
               onToggle={() => toggleSection('updated')}
@@ -213,23 +213,23 @@ export default function SyncReviewModal({
               {syncDiff.updatedSpecialists.map(({ agent, dbRecord, changes }) => (
                 <div
                   key={agent.parsed.name}
-                  className="flex items-center gap-3 p-3 bg-amber-500/5 border border-amber-500/10 rounded-lg"
+                  className="flex items-center gap-3 p-3 bg-mode-build-muted border border-mode-build/10 rounded-lg"
                 >
                   <span className="text-lg">{dbRecord.icon}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-200">{dbRecord.displayName}</p>
+                    <p className="text-sm font-medium text-text-primary">{dbRecord.displayName}</p>
                     <div className="flex gap-1 mt-1">
                       {changes.map((change) => (
                         <span
                           key={change}
-                          className="px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/10 text-amber-400 font-medium"
+                          className="px-1.5 py-0.5 text-[10px] rounded-full bg-mode-build-muted text-mode-build-text font-medium"
                         >
                           {change}
                         </span>
                       ))}
                     </div>
                   </div>
-                  <span className="text-xs text-amber-400 font-medium">CHANGED</span>
+                  <span className="text-xs text-mode-build-text font-medium">CHANGED</span>
                 </div>
               ))}
             </SyncSection>
@@ -240,7 +240,7 @@ export default function SyncReviewModal({
             <SyncSection
               title="Removed from Workspace"
               count={syncDiff.removedSpecialists.length}
-              icon={<Trash2 size={14} className="text-red-400" />}
+              icon={<Trash2 size={14} className="text-danger" />}
               color="red"
               isExpanded={expandedSections.has('removed')}
               onToggle={() => toggleSection('removed')}
@@ -248,14 +248,14 @@ export default function SyncReviewModal({
               {syncDiff.removedSpecialists.map((specialist) => (
                 <div
                   key={specialist.id}
-                  className="flex items-center gap-3 p-3 bg-red-500/5 border border-red-500/10 rounded-lg"
+                  className="flex items-center gap-3 p-3 bg-danger-muted border border-danger/10 rounded-lg"
                 >
                   <span className="text-lg">{specialist.icon}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-200">{specialist.displayName}</p>
-                    <p className="text-xs text-gray-500">YAML file removed from workspace</p>
+                    <p className="text-sm font-medium text-text-primary">{specialist.displayName}</p>
+                    <p className="text-xs text-text-muted">YAML file removed from workspace</p>
                   </div>
-                  <span className="text-xs text-red-400 font-medium">REMOVED</span>
+                  <span className="text-xs text-danger font-medium">REMOVED</span>
                 </div>
               ))}
 
@@ -264,9 +264,9 @@ export default function SyncReviewModal({
                   type="checkbox"
                   checked={skipRemoved}
                   onChange={(e) => setSkipRemoved(e.target.checked)}
-                  className="rounded border-gray-600 bg-gray-800 text-indigo-500 focus:ring-indigo-500"
+                  className="rounded border-border-subtle bg-surface-raised text-primary focus:ring-primary"
                 />
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-text-muted">
                   Keep these specialists active (don&apos;t deactivate)
                 </span>
               </label>
@@ -276,8 +276,8 @@ export default function SyncReviewModal({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between px-6 py-3 border-t border-gray-700 bg-gray-900">
-        <p className="text-xs text-gray-500">
+      <div className="flex items-center justify-between px-6 py-3 border-t border-border-subtle bg-surface-base">
+        <p className="text-xs text-text-muted">
           {syncDiff.unchangedSpecialists.length} specialist
           {syncDiff.unchangedSpecialists.length !== 1 ? 's' : ''} already in sync
         </p>
@@ -285,14 +285,14 @@ export default function SyncReviewModal({
           <button
             onClick={onDismiss}
             disabled={isSyncing}
-            className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-gray-100 transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={handleApply}
             disabled={isSyncing}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50"
           >
             {isSyncing ? (
               <>
@@ -333,19 +333,19 @@ function SyncSection({
   children
 }: SyncSectionProps): React.JSX.Element {
   return (
-    <div className="border border-gray-700/50 rounded-xl overflow-hidden">
+    <div className="border border-border-subtle/50 rounded overflow-hidden">
       <button
         onClick={onToggle}
-        className="flex items-center gap-2 w-full px-4 py-3 text-left hover:bg-gray-800/50 transition-colors"
+        className="flex items-center gap-2 w-full px-4 py-3 text-left hover:bg-surface-raised/50 transition-colors"
       >
         {isExpanded ? (
-          <ChevronDown size={14} className="text-gray-500" />
+          <ChevronDown size={14} className="text-text-muted" />
         ) : (
-          <ChevronRight size={14} className="text-gray-500" />
+          <ChevronRight size={14} className="text-text-muted" />
         )}
         {icon}
-        <span className="text-sm font-medium text-gray-200">{title}</span>
-        <span className="text-xs text-gray-500">({count})</span>
+        <span className="text-sm font-medium text-text-primary">{title}</span>
+        <span className="text-xs text-text-muted">({count})</span>
       </button>
       {isExpanded && <div className="px-4 pb-3 space-y-2">{children}</div>}
     </div>

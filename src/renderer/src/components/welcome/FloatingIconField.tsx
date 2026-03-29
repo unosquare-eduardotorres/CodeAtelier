@@ -35,10 +35,10 @@ const FLOATING_ITEMS: FloatingItem[] = [
   { id: 'rocket',   type: 'icon', Icon: Rocket,     colorClass: 'text-danger',        top: '45%', left: '3%',  size: 28, opacity: 0.33, duration: '6.8s', delay: '-3.5s', floatDistance: '-19px', rotateStart: '10deg',  rotateEnd: '-5deg', driftX: '-9px', animation: 'float-bounce' },
 
   // Mini avatars — colorful characters floating in the background
-  { id: 'av-robot',     type: 'avatar', avatarKey: 'robot',     top: '20%', left: '45%', size: 32, opacity: 0.40, duration: '8.5s', delay: '-1s',   floatDistance: '-20px', rotateStart: '-4deg', rotateEnd: '4deg',   driftX: '10px', animation: 'float-drift' },
-  { id: 'av-ninja',     type: 'avatar', avatarKey: 'ninja',     top: '60%', left: '55%', size: 28, opacity: 0.35, duration: '7s',   delay: '-3s',   floatDistance: '-16px', rotateStart: '5deg',  rotateEnd: '-5deg',  driftX: '-10px',animation: 'float-bounce' },
-  { id: 'av-scientist', type: 'avatar', avatarKey: 'scientist', top: '42%', left: '22%', size: 30, opacity: 0.38, duration: '6.2s', delay: '-2s',   floatDistance: '-18px', rotateStart: '-6deg', rotateEnd: '8deg',   driftX: '12px', animation: 'float-drift' },
-  { id: 'av-superhero', type: 'avatar', avatarKey: 'superhero', top: '75%', left: '40%', size: 28, opacity: 0.30, duration: '7.8s', delay: '-4.5s', floatDistance: '-17px', rotateStart: '3deg',  rotateEnd: '-7deg',  driftX: '-8px', animation: 'float-bounce' }
+  { id: 'av-alchemist',  type: 'avatar', avatarKey: 'renaissance-alchemist',  top: '20%', left: '45%', size: 32, opacity: 0.40, duration: '8.5s', delay: '-1s',   floatDistance: '-20px', rotateStart: '-4deg', rotateEnd: '4deg',   driftX: '10px', animation: 'float-drift' },
+  { id: 'av-knight',    type: 'avatar', avatarKey: 'renaissance-knight',    top: '60%', left: '55%', size: 28, opacity: 0.35, duration: '7s',   delay: '-3s',   floatDistance: '-16px', rotateStart: '5deg',  rotateEnd: '-5deg',  driftX: '-10px',animation: 'float-bounce' },
+  { id: 'av-astronomer',type: 'avatar', avatarKey: 'renaissance-astronomer',top: '42%', left: '22%', size: 30, opacity: 0.38, duration: '6.2s', delay: '-2s',   floatDistance: '-18px', rotateStart: '-6deg', rotateEnd: '8deg',   driftX: '12px', animation: 'float-drift' },
+  { id: 'av-navigator', type: 'avatar', avatarKey: 'renaissance-navigator', top: '75%', left: '40%', size: 28, opacity: 0.30, duration: '7.8s', delay: '-4.5s', floatDistance: '-17px', rotateStart: '3deg',  rotateEnd: '-7deg',  driftX: '-8px', animation: 'float-bounce' }
 ]
 
 /**

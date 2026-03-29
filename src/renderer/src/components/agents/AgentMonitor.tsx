@@ -158,7 +158,7 @@ export default function AgentMonitor({
             <button
               onClick={stopAllAgents}
               disabled={isStopping}
-              className="p-1.5 rounded-md hover:bg-danger-muted text-text-secondary hover:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-1.5 rounded-md hover:bg-danger-muted text-text-secondary hover:text-danger transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="Stop all agents"
               title="Stop all agents"
             >

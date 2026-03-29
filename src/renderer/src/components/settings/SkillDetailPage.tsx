@@ -58,7 +58,7 @@ export default function SkillDetailPage({
         <span className="text-sm font-semibold text-text-primary">{skill.name}</span>
         <span
           className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${
-            skill.isActive ? 'bg-green-500/10 text-green-400' : 'bg-surface-overlay text-text-muted'
+            skill.isActive ? 'bg-success-muted text-success' : 'bg-surface-overlay text-text-muted'
           }`}
         >
           {skill.isActive ? 'Active' : 'Inactive'}

@@ -33,8 +33,8 @@ export default function WorkspaceItem({
     <div
       className={`group flex items-center gap-3 px-3 py-2.5 cursor-pointer rounded-lg transition-colors ${
         isActive
-          ? 'bg-indigo-600/20 border border-indigo-500/30'
-          : 'hover:bg-gray-800/60 border border-transparent'
+          ? 'bg-primary-muted border border-primary/30'
+          : 'hover:bg-surface-raised/60 border border-transparent'
       }`}
       onClick={() => onSelect(workspace.id)}
       role="button"
@@ -49,26 +49,26 @@ export default function WorkspaceItem({
     >
       <div
         className={`flex items-center justify-center w-9 h-9 rounded-lg text-sm font-semibold ${
-          isActive ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400'
+          isActive ? 'bg-primary text-primary-text' : 'bg-surface-raised text-text-muted'
         }`}
       >
         {workspace.name.charAt(0).toUpperCase()}
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-200 truncate">{workspace.name}</div>
-        <div className="text-xs text-gray-500 truncate">{workspace.repoPath}</div>
+        <div className="text-sm font-medium text-text-primary truncate">{workspace.name}</div>
+        <div className="text-xs text-text-muted truncate">{workspace.repoPath}</div>
       </div>
 
       <div className="flex items-center gap-1">
-        <span className="text-[10px] text-gray-600 group-hover:hidden">
+        <span className="text-[10px] text-text-secondary group-hover:hidden">
           {formatRelativeTime(workspace.lastOpenedAt)}
         </span>
 
         {/* #14 - Settings placeholder (Phase 2) */}
         {isActive && (
           <button
-            className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-gray-700/50 text-gray-500 hover:text-gray-300 transition-colors"
+            className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-surface-overlay/50 text-text-muted hover:text-text-secondary transition-colors"
             onClick={(e) => {
               e.stopPropagation()
               // Settings coming in Phase 2
@@ -81,7 +81,7 @@ export default function WorkspaceItem({
         )}
 
         <button
-          className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors"
+          className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors"
           onClick={(e) => {
             e.stopPropagation()
             onDelete(workspace.id)

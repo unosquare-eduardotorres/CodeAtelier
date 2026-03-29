@@ -56,12 +56,12 @@ export default function AgentDetailPage({
   const allSkillNames = skills.map((s: DiscoveredSkill) => s.name)
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
+    <div className="flex-1 flex flex-col bg-surface-base min-w-0">
       {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-700 bg-gray-900">
+      <div className="flex items-center gap-3 px-6 py-3 border-b border-border-subtle bg-surface-base">
         <button
           onClick={onBack}
-          className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+          className="p-1.5 rounded-md hover:bg-surface-raised text-text-muted hover:text-text-primary transition-colors"
           aria-label="Back to Agents"
         >
           <ArrowLeft size={16} />
@@ -72,10 +72,10 @@ export default function AgentDetailPage({
         >
           {icon}
         </div>
-        <span className="text-sm font-semibold text-gray-200">{displayName}</span>
+        <span className="text-sm font-semibold text-text-primary">{displayName}</span>
         <span
           className={`px-1.5 py-0.5 text-[10px] rounded-full font-medium ${
-            agent.isDeployed ? 'bg-green-500/10 text-green-400' : 'bg-gray-600/30 text-gray-500'
+            agent.isDeployed ? 'bg-success-muted text-success' : 'bg-surface-overlay/30 text-text-muted'
           }`}
         >
           {agent.isDeployed ? 'Deployed' : 'Not deployed'}
@@ -85,45 +85,45 @@ export default function AgentDetailPage({
       {/* Content: two columns */}
       <div className="flex-1 flex min-h-0">
         {/* Left sidebar: Skills */}
-        <div className="w-56 flex-shrink-0 border-r border-gray-800 overflow-y-auto p-4">
-          <h4 className="text-xs font-medium text-gray-400 mb-3">Skills assigned</h4>
+        <div className="w-56 flex-shrink-0 border-r border-border-default overflow-y-auto p-4">
+          <h4 className="text-xs font-medium text-text-muted mb-3">Skills assigned</h4>
 
           {allSkillNames.length === 0 ? (
-            <p className="text-[11px] text-gray-600">No skills available</p>
+            <p className="text-[11px] text-text-secondary">No skills available</p>
           ) : (
             <div className="space-y-1.5">
               {allSkillNames.map((skillName) => (
                 <label
                   key={skillName}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-gray-800 transition-colors"
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-surface-raised transition-colors"
                 >
                   <input
                     type="checkbox"
                     checked={localSkills.includes(skillName)}
                     onChange={() => handleSkillToggle(skillName)}
-                    className="rounded border-gray-600 text-indigo-500 focus:ring-indigo-500 bg-gray-800 w-3.5 h-3.5"
+                    className="rounded border-border-subtle text-primary focus:ring-primary bg-surface-raised w-3.5 h-3.5"
                   />
-                  <span className="text-xs text-gray-300">{skillName}</span>
+                  <span className="text-xs text-text-secondary">{skillName}</span>
                 </label>
               ))}
             </div>
           )}
 
           {/* Agent properties */}
-          <div className="mt-6 pt-4 border-t border-gray-800">
-            <h4 className="text-xs font-medium text-gray-400 mb-3">Properties</h4>
+          <div className="mt-6 pt-4 border-t border-border-default">
+            <h4 className="text-xs font-medium text-text-muted mb-3">Properties</h4>
             <div className="space-y-3">
               <div>
-                <label className="block text-[10px] text-gray-500 mb-1">Model</label>
-                <span className="text-xs text-gray-300">{agent.parsed.model}</span>
+                <label className="block text-[10px] text-text-muted mb-1">Model</label>
+                <span className="text-xs text-text-secondary">{agent.parsed.model}</span>
               </div>
               <div>
-                <label className="block text-[10px] text-gray-500 mb-1">Tools</label>
+                <label className="block text-[10px] text-text-muted mb-1">Tools</label>
                 <div className="flex flex-wrap gap-1">
                   {agent.parsed.tools.map((tool) => (
                     <span
                       key={tool}
-                      className="px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500/10 text-indigo-400 font-medium"
+                      className="px-1.5 py-0.5 text-[10px] rounded-full bg-primary-muted text-primary-text font-medium"
                     >
                       {tool}
                     </span>
@@ -131,8 +131,8 @@ export default function AgentDetailPage({
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] text-gray-500 mb-1">Filename</label>
-                <span className="text-[11px] text-gray-400 font-mono">{agent.filename}</span>
+                <label className="block text-[10px] text-text-muted mb-1">Filename</label>
+                <span className="text-[11px] text-text-muted font-mono">{agent.filename}</span>
               </div>
             </div>
           </div>
@@ -142,7 +142,7 @@ export default function AgentDetailPage({
         <div className="flex-1 overflow-y-auto p-4">
           {isFileLoading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 size={18} className="animate-spin text-gray-500" />
+              <Loader2 size={18} className="animate-spin text-text-muted" />
             </div>
           ) : activeFileContent !== null ? (
             <AgentYamlEditor
@@ -153,7 +153,7 @@ export default function AgentDetailPage({
             />
           ) : (
             <div className="flex items-center justify-center py-12">
-              <p className="text-sm text-gray-500">Could not load agent file</p>
+              <p className="text-sm text-text-muted">Could not load agent file</p>
             </div>
           )}
         </div>

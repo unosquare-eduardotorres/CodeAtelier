@@ -183,7 +183,7 @@ export default function ModelConfigTab(): React.JSX.Element {
           disabled={!hasOverrides || isSaving}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
             hasOverrides
-              ? 'text-amber-400 border border-amber-500/30 hover:bg-amber-500/10'
+              ? 'text-mode-build-text border border-mode-build/30 hover:bg-mode-build-muted'
               : 'text-text-muted border border-border-subtle cursor-not-allowed opacity-50'
           }`}
           title="Reset all models to defaults"
@@ -206,10 +206,10 @@ export default function ModelConfigTab(): React.JSX.Element {
               <div className="flex items-center justify-between">
                 <div className="flex-1 mr-4">
                   <div className="flex items-center gap-2">
-                    <Zap size={14} className={fastMode ? 'text-amber-400' : 'text-text-muted'} />
+                    <Zap size={14} className={fastMode ? 'text-mode-build-text' : 'text-text-muted'} />
                     <h4 className="text-sm font-medium text-text-primary">Fast Mode</h4>
                     {fastMode && (
-                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 font-medium">
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-mode-build-muted text-mode-build-text font-medium">
                         ON
                       </span>
                     )}
@@ -223,7 +223,7 @@ export default function ModelConfigTab(): React.JSX.Element {
                 <button
                   onClick={handleFastModeToggle}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-                    fastMode ? 'bg-amber-500' : 'bg-border-default'
+                    fastMode ? 'bg-mode-build' : 'bg-border-default'
                   }`}
                   role="switch"
                   aria-checked={fastMode}

@@ -13,7 +13,7 @@ export default function SettingsCard({
 }: SettingsCardProps): React.JSX.Element {
   return (
     <div
-      className={`bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm ${className}`}
+      className={`bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm ${className}`}
     >
       {children}
     </div>

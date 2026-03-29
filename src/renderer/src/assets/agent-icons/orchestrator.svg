@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Orchestrator: Court Maestro — baton + regal collar -->
+  <circle cx="12" cy="12" r="12" fill="#0A0F14"/>
+  <!-- Robe -->
+  <path d="M3 24 Q3 17 12 15 Q21 17 21 24Z" fill="#1A2228"/>
+  <!-- Ornate brooch -->
+  <path d="M10 16 L12 14.5 L14 16 L13 17.5 L11 17.5Z" fill="#B8976A" opacity="0.7"/>
+  <!-- Tall collar -->
+  <path d="M8 15.5 L10 14 L12 14.8 L14 14 L16 15.5 Q15 17.5 12 18 Q9 17.5 8 15.5Z" fill="#1A2228" stroke="#B8976A" stroke-width="0.4" opacity="0.6"/>
+  <!-- Head -->
+  <ellipse cx="12" cy="11" rx="4.5" ry="5" fill="#BF9070"/>
+  <!-- Neat hair -->
+  <ellipse cx="12" cy="6.5" rx="4.5" ry="2" fill="#1A1810"/>
+  <path d="M7.5 9 Q7 7 7.5 6 Q9.5 5 12 5 Q14.5 5 16.5 6 Q17 7 16.5 9" fill="#1A1810"/>
+  <!-- Eyes -->
+  <ellipse cx="10.5" cy="11" rx="0.85" ry="0.65" fill="#080604"/>
+  <ellipse cx="13.5" cy="11" rx="0.85" ry="0.65" fill="#080604"/>
+  <circle cx="10.8" cy="10.7" r="0.28" fill="rgba(255,255,255,0.65)"/>
+  <circle cx="13.8" cy="10.7" r="0.28" fill="rgba(255,255,255,0.65)"/>
+  <!-- Moustache -->
+  <path d="M10.5 12.8 Q11.5 13.3 12 13 Q12.5 13.3 13.5 12.8" fill="#1A1810" opacity="0.65"/>
+  <!-- Baton (prop) -->
+  <line x1="17" y1="15" x2="21" y2="10" stroke="#B8976A" stroke-width="0.8" opacity="0.5"/>
+  <circle cx="21" cy="10" r="0.8" fill="#B8976A" opacity="0.5"/>
+</svg>

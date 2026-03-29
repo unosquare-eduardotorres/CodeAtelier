@@ -11,7 +11,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 26
+const CURRENT_SCHEMA_VERSION = 27
 
 interface Migration {
   version: number
@@ -282,7 +282,7 @@ const migrations: Migration[] = [
         CREATE TABLE IF NOT EXISTS user_profile (
           id TEXT PRIMARY KEY DEFAULT 'default',
           display_name TEXT NOT NULL DEFAULT 'Developer',
-          avatar_key TEXT NOT NULL DEFAULT 'business-man',
+          avatar_key TEXT NOT NULL DEFAULT 'renaissance-scholar',
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
@@ -436,6 +436,37 @@ const migrations: Migration[] = [
       // Note: New agents (platform-architect, planner, platform-engineer, dx-specialist)
       // will be inserted by AgentRegistry.loadFromDisk() on next startup when it discovers the new YAMLs.
       // No manual INSERT needed — the registry handles sync.
+    }
+  },
+  {
+    version: 27,
+    name: 'migrate-avatar-keys-to-renaissance',
+    up: (db) => {
+      // Remap old cartoon avatar keys to new Renaissance portrait keys
+      const avatarMap: Record<string, string> = {
+        'business-man': 'renaissance-merchant',
+        'business-woman': 'renaissance-diplomat',
+        'hoodie-dev': 'renaissance-scribe',
+        'glasses-guy': 'renaissance-scholar',
+        'woman-curly': 'renaissance-herbalist',
+        'bearded-man': 'renaissance-blacksmith',
+        'ponytail-girl': 'renaissance-noblewoman',
+        'cap-guy': 'renaissance-explorer',
+        'da-vinci': 'renaissance-painter',
+        'stravinsky': 'renaissance-astronomer',
+        'robot': 'renaissance-alchemist',
+        'ninja': 'renaissance-knight',
+        'superhero': 'renaissance-knight',
+        'pirate': 'renaissance-navigator',
+        'scientist': 'renaissance-alchemist',
+        'chef': 'renaissance-jester'
+      }
+      const updateProfile = db.prepare(
+        `UPDATE user_profile SET avatar_key = ? WHERE avatar_key = ?`
+      )
+      for (const [oldKey, newKey] of Object.entries(avatarMap)) {
+        updateProfile.run(newKey, oldKey)
+      }
     }
   }
 ]

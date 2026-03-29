@@ -23,9 +23,9 @@ export default function ModeToggle({
       <button
         onClick={() => onChange('plan')}
         disabled={disabled}
-        className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-purple-500/50 ${
+        className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-mode-plan/50 ${
           mode === 'plan'
-            ? 'bg-purple-600/30 text-purple-300 border border-purple-500/30'
+            ? 'bg-mode-plan-muted text-mode-plan-text border border-mode-plan-border'
             : 'text-text-secondary hover:text-text-primary'
         }`}
       >
@@ -35,9 +35,9 @@ export default function ModeToggle({
       <button
         onClick={() => onChange('build')}
         disabled={disabled}
-        className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/50 ${
+        className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-mode-build/50 ${
           mode === 'build'
-            ? 'bg-amber-600/30 text-amber-300 border border-amber-500/30'
+            ? 'bg-mode-build-muted text-mode-build-text border border-mode-build-border'
             : 'text-text-secondary hover:text-text-primary'
         }`}
       >

@@ -21,7 +21,7 @@ When an agent needs context beyond what's in the code itself, it can reference t
 
 ## Supported File Types
 
-Agent Studio can read several file formats:
+Code Atelier can read several file formats:
 
 | Format | Extensions | Best For |
 |--------|-----------|----------|
@@ -101,7 +101,7 @@ From the Documents tab, you can:
 Individual documents should be reasonable in size. Very large files (over 10 MB) may take longer to process. If you have a large document, consider splitting it into focused sections.
 
 **Q: Are documents stored in my project folder?**
-Documents are stored in Agent Studio's local database, not in your project folder. They won't appear in your git repository or affect your project's file structure.
+Documents are stored in Code Atelier's local database, not in your project folder. They won't appear in your git repository or affect your project's file structure.
 
 **Q: Can agents modify my documents?**
 No. Documents are read-only references. Agents can read them but cannot edit or delete them. Only you can manage documents through the Documents tab.

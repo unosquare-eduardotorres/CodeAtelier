@@ -10,7 +10,7 @@ function UpdateButton(): React.JSX.Element {
     return (
       <button
         onClick={installUpdate}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/10 transition-colors"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-success border border-success/30 hover:bg-success-muted transition-colors"
       >
         <CheckCircle2 size={12} />
         Install Update (v{availableVersion})
@@ -181,7 +181,7 @@ function CoreAgentsSection(): React.JSX.Element {
   const orchestratorAlias = getCoreAgentAlias('coordinator')
 
   return (
-    <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+    <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
       <h4 className="text-sm font-medium text-text-primary">Core Agents</h4>
       <p className="text-xs text-text-secondary mt-0.5 mb-4">
         Customize how the Generalist and Orchestrator appear in your conversations
@@ -214,7 +214,7 @@ function ProfileSection(): React.JSX.Element {
   const { profile, saveProfile } = useProfileStore()
   const [isEditing, setIsEditing] = useState(false)
   const [name, setName] = useState(profile?.displayName ?? '')
-  const [avatarKey, setAvatarKey] = useState(profile?.avatarKey ?? 'business-man')
+  const [avatarKey, setAvatarKey] = useState(profile?.avatarKey ?? 'renaissance-scholar')
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
@@ -241,13 +241,13 @@ function ProfileSection(): React.JSX.Element {
 
   const handleCancel = useCallback(() => {
     setName(profile?.displayName ?? '')
-    setAvatarKey(profile?.avatarKey ?? 'business-man')
+    setAvatarKey(profile?.avatarKey ?? 'renaissance-scholar')
     setIsEditing(false)
     setShowAvatarPicker(false)
   }, [profile])
 
   return (
-    <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+    <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
       <h4 className="text-sm font-medium text-text-primary">Your Profile</h4>
       <p className="text-xs text-text-secondary mt-0.5 mb-4">
         Your name and avatar appear in all conversations
@@ -363,7 +363,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
             <CoreAgentsSection />
 
             {/* Update section */}
-            <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+            <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-sm font-medium text-text-primary">Updates</h4>

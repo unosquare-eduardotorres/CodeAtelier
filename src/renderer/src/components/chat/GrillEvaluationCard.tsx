@@ -15,20 +15,20 @@ export default function GrillEvaluationCard({
   questions
 }: GrillEvaluationCardProps): React.JSX.Element {
   const scoreColor =
-    score >= 70 ? 'text-green-400' : score >= 40 ? 'text-orange-400' : 'text-red-400'
+    score >= 70 ? 'text-success' : score >= 40 ? 'text-accent' : 'text-danger'
   const scoreBg =
     score >= 70
-      ? 'bg-green-500/10 border-green-500/30'
+      ? 'bg-success-muted border-success/30'
       : score >= 40
-        ? 'bg-orange-500/10 border-orange-500/30'
-        : 'bg-red-500/10 border-red-500/30'
+        ? 'bg-accent-muted border-accent/30'
+        : 'bg-danger-muted border-danger/30'
 
   return (
-    <div className="rounded-xl border border-orange-500/30 bg-orange-950/20 overflow-hidden">
+    <div className="rounded-xl border border-grill/30 bg-grill-muted overflow-hidden">
       {/* Header with score */}
-      <div className="flex items-center gap-2 px-4 py-2.5 bg-orange-900/30 border-b border-orange-500/20">
-        <Flame size={14} className="text-orange-400" />
-        <span className="text-sm font-medium text-orange-300">Grill Evaluation</span>
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-grill/15 border-b border-grill/20">
+        <Flame size={14} className="text-accent" />
+        <span className="text-sm font-medium text-accent">Grill Evaluation</span>
         <div className="ml-auto flex items-center gap-2">
           <span
             className={`text-lg font-bold ${scoreColor} px-2 py-0.5 rounded-md border ${scoreBg}`}
@@ -36,14 +36,14 @@ export default function GrillEvaluationCard({
             {score}/100
           </span>
           {scoreLabel && (
-            <span className="text-xs text-orange-300/70 font-medium">{scoreLabel}</span>
+            <span className="text-xs text-accent/70 font-medium">{scoreLabel}</span>
           )}
         </div>
       </div>
 
       {/* Feedback */}
       {feedback && (
-        <div className="px-5 py-3 border-b border-orange-500/10">
+        <div className="px-5 py-3 border-b border-grill/10">
           <p className="text-sm text-text-body leading-relaxed">{feedback}</p>
         </div>
       )}
@@ -51,7 +51,7 @@ export default function GrillEvaluationCard({
       {/* Questions */}
       {questions.length > 0 && (
         <div className="px-5 py-3 space-y-3">
-          <span className="text-xs font-medium text-orange-400 uppercase tracking-wide">
+          <span className="text-xs font-medium text-accent uppercase tracking-wide">
             Questions ({questions.length})
           </span>
           {questions.map((q, i) => (
@@ -66,7 +66,7 @@ export default function GrillEvaluationCard({
                       key={o.label}
                       className={`px-2 py-0.5 text-xs rounded-full border ${
                         o.recommended
-                          ? 'border-green-500/30 bg-green-500/10 text-green-300'
+                          ? 'border-success/30 bg-success-muted text-success'
                           : 'border-border-subtle bg-surface-base text-text-muted'
                       }`}
                     >

@@ -50,15 +50,15 @@ export default function MarkdownViewer({
     <div className="flex flex-col gap-2">
       {/* Toolbar */}
       <div className="flex items-center justify-between">
-        <span className="text-[11px] text-gray-500 font-mono truncate">{filePath}</span>
+        <span className="text-[11px] text-text-muted font-mono truncate">{filePath}</span>
         <div className="flex items-center gap-2">
           {!readOnly && (
             <button
               onClick={() => setIsEditing(!isEditing)}
               className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors ${
                 isEditing
-                  ? 'bg-indigo-600/20 text-indigo-400'
-                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                  ? 'bg-primary-muted text-primary-text'
+                  : 'text-text-muted hover:text-text-primary hover:bg-surface-raised'
               }`}
             >
               {isEditing ? (
@@ -78,7 +78,7 @@ export default function MarkdownViewer({
             <button
               onClick={handleSave}
               disabled={isSaving}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-colors"
             >
               {isSaving ? (
                 <>
@@ -98,7 +98,7 @@ export default function MarkdownViewer({
 
       {/* Error */}
       {error && (
-        <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+        <div className="px-3 py-2 rounded-lg bg-danger-muted border border-danger/20 text-xs text-danger">
           {error}
         </div>
       )}
@@ -112,8 +112,8 @@ export default function MarkdownViewer({
           className="flex-1 min-h-[400px] max-h-[600px]"
         />
       ) : (
-        <div className="rounded-lg border border-gray-700 bg-gray-900 p-4 overflow-auto max-h-[600px]">
-          <pre className="text-sm text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
+        <div className="rounded-lg border border-border-subtle bg-surface-base p-4 overflow-auto max-h-[600px]">
+          <pre className="text-sm text-text-secondary whitespace-pre-wrap font-mono leading-relaxed">
             {content}
           </pre>
         </div>

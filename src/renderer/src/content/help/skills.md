@@ -48,7 +48,7 @@ flowchart LR
 
 ## Available Skills
 
-Agent Studio comes with a comprehensive set of built-in skills:
+Code Atelier comes with a comprehensive set of built-in skills:
 
 | Skill | What it covers | Used by |
 |-------|---------------|---------|
@@ -135,7 +135,7 @@ You can customize skills to match your project's specific patterns:
 Yes. Create a new directory under `.claude/skills/` with a `SKILL.md` file, then assign it to the appropriate specialist in the agent YAML configuration.
 
 **Q: Do skills update automatically?**
-Built-in skills may be updated when Agent Studio releases new versions. Your customizations are preserved during updates.
+Built-in skills may be updated when Code Atelier releases new versions. Your customizations are preserved during updates.
 
 **Q: How do skills differ from Memory?**
 **Skills** are static knowledge — pre-written guides that don't change during conversations. **Memory** is dynamic — it evolves as agents learn about your project. Skills tell agents *how* to do things; Memory tells agents *what* your project is.

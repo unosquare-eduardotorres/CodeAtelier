@@ -15,7 +15,7 @@ interface WelcomeModalProps {
  *   2. Avatar selection grid
  *
  * UI/UX Pro Max compliance:
- * - Backdrop: bg-black/70 backdrop-blur-md
+ * - Backdrop: bg-[rgba(15,21,23,0.85)] backdrop-blur-md
  * - Container: max-w-md, centered with scale+fade entrance (300ms)
  * - Input: h-12 (48px touch target), auto-focus, visible label
  * - Avatar grid: 4×4, 48px each, 12px gap (meets 44×44 minimum)
@@ -29,7 +29,7 @@ interface WelcomeModalProps {
 export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.JSX.Element {
   const [step, setStep] = useState<1 | 2>(1)
   const [name, setName] = useState('')
-  const [avatarKey, setAvatarKey] = useState('business-man')
+  const [avatarKey, setAvatarKey] = useState('renaissance-scholar')
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -75,13 +75,13 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.J
   )
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-md">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[rgba(15,21,23,0.85)] backdrop-blur-md">
       <div
         ref={modalRef}
         className="relative w-full max-w-md mx-4 bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-300 motion-reduce:animate-none"
         role="dialog"
         aria-modal="true"
-        aria-label="Welcome to Agent Studio"
+        aria-label="Welcome to Code Atelier"
         onKeyDown={handleKeyDown}
       >
         {/* Header */}
@@ -103,7 +103,7 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.J
               <path d="M2 12l10 5 10-5" />
             </svg>
           </div>
-          <h1 className="text-xl font-bold text-text-primary">Welcome to Agent Studio</h1>
+          <h1 className="text-xl font-bold text-text-primary">Welcome to Code Atelier</h1>
           <p className="text-sm text-text-secondary mt-1.5">
             {step === 1
               ? "Let's personalize your experience"
@@ -128,7 +128,7 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.J
         {/* Content area */}
         <div className="px-8 pb-4">
           {error && (
-            <div className="px-3 py-2 mb-4 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">
+            <div className="px-3 py-2 mb-4 rounded-lg bg-danger-muted border border-danger/20 text-sm text-danger">
               {error}
             </div>
           )}

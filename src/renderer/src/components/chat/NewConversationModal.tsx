@@ -145,7 +145,7 @@ export default function NewConversationModal({
               htmlFor="conv-title"
               className="block text-sm font-medium text-text-primary mb-1.5"
             >
-              Title <span className="text-red-400">*</span>
+              Title <span className="text-danger">*</span>
             </label>
             <input
               ref={titleInputRef}

@@ -364,7 +364,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
         <section>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Bot size={16} className="text-blue-400" />
+              <Bot size={16} className="text-info" />
               <h3 className="text-sm font-semibold text-text-primary">
                 Agents ({sortedAgents.length})
               </h3>
@@ -443,7 +443,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
             const icon = meta?.icon ?? '🤖'
 
             return (
-              <div className="mt-4 bg-surface-overlay border border-border-subtle rounded-xl p-5 space-y-4 animate-in fade-in duration-200">
+              <div className="mt-4 bg-surface-overlay border border-border-subtle rounded p-5 space-y-4 animate-in fade-in duration-200">
                 {/* Header */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -464,8 +464,8 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
                         disabled={togglingId === agent.filename}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
                           agent.isActive
-                            ? 'bg-warning-muted text-amber-400 border border-amber-500/30 hover:bg-amber-500/20'
-                            : 'bg-success-muted text-green-400 border border-green-500/30 hover:bg-green-500/20'
+                            ? 'bg-warning-muted text-mode-build-text border border-mode-build/30 hover:bg-mode-build-muted'
+                            : 'bg-success-muted text-success border border-success/30 hover:bg-success-muted'
                         }`}
                         aria-label={agent.isActive ? 'Deactivate agent' : 'Activate agent'}
                       >
@@ -504,12 +504,12 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
                     <div className="flex items-center gap-2 mt-1">
                       <span
                         className={`w-2 h-2 rounded-full ${
-                          agent.isActive ? 'bg-green-400' : 'bg-gray-600'
+                          agent.isActive ? 'bg-success' : 'bg-surface-overlay'
                         }`}
                       />
                       <span
                         className={`text-sm ${
-                          agent.isActive ? 'text-green-400' : 'text-text-secondary'
+                          agent.isActive ? 'text-success' : 'text-text-secondary'
                         }`}
                       >
                         {agent.isActive ? 'Active' : 'Inactive'}
@@ -634,7 +634,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
                   <button
                     onClick={() => setDeleteAgentTarget(agent)}
                     disabled={deletingAgentId === agent.filename}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/30 hover:bg-danger-muted transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-danger border border-danger/30 hover:bg-danger-muted transition-colors disabled:opacity-50"
                     aria-label="Delete agent from workspace"
                   >
                     {deletingAgentId === agent.filename ? (
@@ -656,7 +656,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
         <section ref={skillsStripRef}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Sparkles size={16} className="text-amber-400" />
+              <Sparkles size={16} className="text-mode-build-text" />
               <h3 className="text-sm font-semibold text-text-primary">
                 Skills ({sortedSkills.length})
               </h3>
@@ -721,9 +721,9 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
                           ({agentCount})
                         </span>
                       )}
-                      {stale && <AlertTriangle size={10} className="text-amber-400" />}
+                      {stale && <AlertTriangle size={10} className="text-mode-build-text" />}
                       {!skill.isActive && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-gray-500" title="Not deployed" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-surface-overlay" title="Not deployed" />
                       )}
                     </button>
                   )
@@ -740,7 +740,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
                 const isDeleting = deletingSkillId === skill.name
 
                 return (
-                  <div className="bg-surface-overlay border border-border-subtle rounded-xl p-5 space-y-3 animate-in fade-in duration-200">
+                  <div className="bg-surface-overlay border border-border-subtle rounded p-5 space-y-3 animate-in fade-in duration-200">
                     <div className="flex items-start justify-between">
                       <div className="flex items-start gap-3">
                         <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary-muted text-primary-text flex-shrink-0 mt-0.5">
@@ -754,7 +754,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
                             <span
                               className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${
                                 skill.isActive
-                                  ? 'bg-green-500/10 text-green-400'
+                                  ? 'bg-success-muted text-success'
                                   : 'bg-surface-float text-text-muted'
                               }`}
                             >
@@ -806,7 +806,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
                         <button
                           onClick={() => setDeleteSkillTarget(skill)}
                           disabled={isDeleting}
-                          className="p-1.5 rounded-md hover:bg-danger-muted text-text-muted hover:text-red-400 transition-colors disabled:opacity-50"
+                          className="p-1.5 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors disabled:opacity-50"
                           aria-label={`Delete ${skill.name}`}
                           title="Delete skill from workspace"
                         >
@@ -828,9 +828,9 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
 
                     {/* Staleness warning */}
                     {stale && (
-                      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-warning-muted border border-amber-500/20">
-                        <AlertTriangle size={12} className="text-amber-400 flex-shrink-0" />
-                        <span className="text-xs text-amber-400">
+                      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-warning-muted border border-mode-build/20">
+                        <AlertTriangle size={12} className="text-mode-build-text flex-shrink-0" />
+                        <span className="text-xs text-mode-build-text">
                           This skill might require an update.
                         </span>
                       </div>
@@ -935,7 +935,7 @@ const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
     <div
       ref={ref}
       onClick={onExpand}
-      className={`group relative bg-surface-overlay border rounded-xl p-3.5 cursor-pointer transition-all duration-200 min-h-[88px] ${
+      className={`group relative bg-surface-overlay border rounded p-3.5 cursor-pointer transition-all duration-200 min-h-[88px] ${
         isExpanded
           ? 'border-primary/30 shadow-md ring-1 ring-primary/10'
           : 'border-border-subtle hover:border-border-default hover:shadow-md'
@@ -960,14 +960,14 @@ const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
             <span className="text-sm font-medium text-text-primary truncate">{displayName}</span>
             <span
               className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                agent.isActive ? 'bg-green-400' : 'bg-gray-600'
+                agent.isActive ? 'bg-success' : 'bg-surface-overlay'
               }`}
               title={agent.isActive ? 'Active' : 'Inactive'}
             />
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span
-              className={`text-xs ${agent.isDeployed ? 'text-green-500' : 'text-text-muted'}`}
+              className={`text-xs ${agent.isDeployed ? 'text-success' : 'text-text-muted'}`}
             >
               {agent.isDeployed ? 'Deployed' : 'Not deployed'}
             </span>
@@ -1012,8 +1012,8 @@ const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
             disabled={isToggling}
             className={`p-1 rounded transition-colors disabled:opacity-50 ${
               agent.isActive
-                ? 'hover:bg-warning-muted text-green-400 hover:text-amber-400'
-                : 'hover:bg-success-muted text-text-muted hover:text-green-400'
+                ? 'hover:bg-warning-muted text-success hover:text-mode-build-text'
+                : 'hover:bg-success-muted text-text-muted hover:text-success'
             }`}
             title={agent.isActive ? 'Deactivate' : 'Activate'}
             aria-label={agent.isActive ? 'Deactivate agent' : 'Activate agent'}
@@ -1049,7 +1049,7 @@ const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
             onDelete()
           }}
           disabled={isDeleting}
-          className="p-1 rounded hover:bg-danger-muted text-text-muted hover:text-red-400 transition-colors disabled:opacity-50"
+          className="p-1 rounded hover:bg-danger-muted text-text-muted hover:text-danger transition-colors disabled:opacity-50"
           title="Delete agent"
           aria-label="Delete agent from workspace"
         >

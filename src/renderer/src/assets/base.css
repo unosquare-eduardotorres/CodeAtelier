@@ -1,23 +1,14 @@
-/* Typography foundation for long-reading chat UI */
+/* Typography foundation — Code Atelier serif-first brand */
 body {
   font-family:
-    'Inter Variable',
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    Roboto,
-    Oxygen,
-    Ubuntu,
-    Cantarell,
-    'Fira Sans',
-    'Droid Sans',
-    'Helvetica Neue',
-    sans-serif;
-  font-size: 16px;
-  line-height: 1.6;
+    'EB Garamond',
+    'Cormorant Garamond',
+    Georgia,
+    'Times New Roman',
+    serif;
+  font-size: 17px;
+  line-height: 1.72;
   letter-spacing: 0;
-  font-feature-settings: 'cv01', 'cv02', 'cv03', 'cv04';
   font-optical-sizing: auto;
   text-rendering: optimizeLegibility;
 }
