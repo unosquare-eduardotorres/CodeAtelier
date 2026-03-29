@@ -33,17 +33,17 @@ function StatusBadge({ status }: { status: Idea['status'] }): React.JSX.Element 
     draft: {
       icon: Lightbulb,
       label: 'Draft',
-      className: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20'
+      className: 'text-warning bg-warning-muted border-warning/20'
     },
     grilling: {
       icon: Flame,
       label: 'Grilling',
-      className: 'text-orange-400 bg-orange-500/10 border-orange-500/20'
+      className: 'text-accent bg-accent-muted border-accent/20'
     },
     completed: {
       icon: CheckCircle,
       label: 'Completed',
-      className: 'text-green-400 bg-green-500/10 border-green-500/20'
+      className: 'text-success bg-success-muted border-success/20'
     }
   }
 
@@ -62,9 +62,9 @@ function StatusBadge({ status }: { status: Idea['status'] }): React.JSX.Element 
 function GrillSummaryPreview({ summary }: { summary: string }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   return (
-    <div className="mt-2 ml-[22px] p-2 bg-surface-base rounded-md border border-border-subtle">
+    <div className="mt-2 ml-[22px] p-2 bg-surface-raised rounded-md border border-border-default">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-text-muted font-medium">Grill Summary:</span>
+        <span className="text-xs text-text-secondary font-medium">Grill Summary:</span>
         <button
           onClick={() => setExpanded(!expanded)}
           className="text-xs text-primary-text hover:text-primary-hover transition-colors"
@@ -73,7 +73,7 @@ function GrillSummaryPreview({ summary }: { summary: string }): React.JSX.Elemen
         </button>
       </div>
       <div
-        className={`text-xs text-text-secondary mt-0.5 whitespace-pre-wrap ${expanded ? '' : 'line-clamp-3'}`}
+        className={`text-xs text-text-body mt-0.5 whitespace-pre-wrap ${expanded ? '' : 'line-clamp-3'}`}
       >
         {summary}
       </div>
@@ -256,7 +256,7 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="bg-surface-overlay border border-border-subtle rounded-xl p-4 flex items-start gap-3"
+            className="bg-surface-overlay border border-border-subtle rounded p-4 flex items-start gap-3"
           >
             <Skeleton className="h-8 w-8 rounded-lg flex-shrink-0" />
             <div className="flex-1">
@@ -273,10 +273,10 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
   if (ideas.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-8 text-center">
-        <Lightbulb size={32} className="text-yellow-400/30 mb-3" />
+        <Lightbulb size={32} className="text-warning/30 mb-3" />
         <p className="text-sm text-text-secondary mb-1">No ideas yet</p>
         <p className="text-xs text-text-muted">
-          Use the <Lightbulb size={10} className="inline text-yellow-400" /> button in the chat
+          Use the <Lightbulb size={10} className="inline text-warning" /> button in the chat
           input to capture ideas.
         </p>
       </div>
@@ -320,7 +320,7 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
       {/* Filtered empty state */}
       {filteredIdeas.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-8 text-center">
-          <Lightbulb size={32} className="text-yellow-400/30 mb-3" />
+          <Lightbulb size={32} className="text-warning/30 mb-3" />
           <p className="text-sm text-text-secondary">
             {searchQuery
               ? 'No ideas match your search'
@@ -343,9 +343,9 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   {idea.status === 'grilling' ? (
-                    <Flame size={14} className="text-orange-400 flex-shrink-0" />
+                    <Flame size={14} className="text-accent flex-shrink-0" />
                   ) : (
-                    <Lightbulb size={14} className="text-yellow-400 flex-shrink-0" />
+                    <Lightbulb size={14} className="text-warning flex-shrink-0" />
                   )}
                   <input
                     type="text"
@@ -374,7 +374,7 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
                   <button
                     onClick={saveEditing}
                     disabled={!editTitle.trim()}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-green-300 bg-green-500/10 border border-green-500/20 rounded-lg hover:bg-green-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-success bg-success-muted border border-success/20 rounded-lg hover:bg-success/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Check size={12} />
                     Save
@@ -394,13 +394,13 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
                 <div className="flex items-start justify-between gap-3 mb-1">
                   <div className="flex items-center gap-2 min-w-0">
                     {idea.status === 'grilling' ? (
-                      <Flame size={14} className="text-orange-400 flex-shrink-0" />
+                      <Flame size={14} className="text-accent flex-shrink-0" />
                     ) : idea.status === 'completed' ? (
-                      <CheckCircle size={14} className="text-green-400 flex-shrink-0" />
+                      <CheckCircle size={14} className="text-success flex-shrink-0" />
                     ) : (
-                      <Lightbulb size={14} className="text-yellow-400 flex-shrink-0" />
+                      <Lightbulb size={14} className="text-warning flex-shrink-0" />
                     )}
-                    <span className="text-sm font-medium text-text-primary truncate">{idea.title}</span>
+                    <span className="text-base font-normal text-text-primary truncate" style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}>{idea.title}</span>
                     {idea.status !== 'completed' && (
                       <button
                         onClick={() => startEditing(idea)}
@@ -431,7 +431,7 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
                 <>
                   <button
                     onClick={() => handleStartGrill(idea)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-orange-300 bg-orange-500/10 border border-orange-500/20 rounded-lg hover:bg-orange-500/20 transition-colors"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
                   >
                     <Flame size={12} />
                     Grill Me
@@ -450,7 +450,7 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
                 <>
                   <button
                     onClick={() => handleContinueGrill(idea)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-orange-300 bg-orange-500/10 border border-orange-500/20 rounded-lg hover:bg-orange-500/20 transition-colors"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
                   >
                     <Flame size={12} />
                     Continue Grill
@@ -468,7 +468,7 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
               {idea.status === 'completed' && idea.convertedConversationId && (
                 <button
                   onClick={() => handleGoToConversation(idea.convertedConversationId!)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-green-300 bg-green-500/10 border border-green-500/20 rounded-lg hover:bg-green-500/20 transition-colors"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-success bg-success-muted border border-success/20 rounded-lg hover:bg-success/20 transition-colors"
                 >
                   <ExternalLink size={12} />
                   Go to Conversation
@@ -480,7 +480,7 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
                 !idea.convertedConversationId && (
                   <button
                     onClick={() => handleGoToConversation(idea.grillConversationId!)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-green-300 bg-green-500/10 border border-green-500/20 rounded-lg hover:bg-green-500/20 transition-colors"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-success bg-success-muted border border-success/20 rounded-lg hover:bg-success/20 transition-colors"
                   >
                     <ExternalLink size={12} />
                     Go to Grill Conversation
@@ -500,7 +500,7 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
               {/* Delete button — always available */}
               <button
                 onClick={() => setDeleteTarget(idea.id)}
-                className="inline-flex items-center p-1 text-text-muted hover:text-red-400 hover:bg-danger-muted rounded-md transition-colors ml-auto"
+                className="inline-flex items-center p-1 text-text-muted hover:text-danger hover:bg-danger-muted rounded-md transition-colors ml-auto"
                 aria-label="Delete idea"
                 title="Delete idea"
               >

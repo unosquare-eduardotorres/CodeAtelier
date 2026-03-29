@@ -54,14 +54,14 @@ export default function ConfirmDialog({
       aria-describedby="confirm-dialog-message"
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute inset-0 bg-[rgba(15,21,23,0.85)] backdrop-blur-sm" onClick={onCancel} />
 
       {/* Dialog */}
-      <div className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 animate-in fade-in zoom-in-95">
+      <div className="relative bg-surface-float border border-border-default rounded shadow-2xl p-6 max-w-sm w-full mx-4 animate-in fade-in zoom-in-95">
         <div className="flex items-start gap-3 mb-4">
           {variant === 'danger' && (
             <div className="flex-shrink-0 w-10 h-10 rounded-full bg-danger-muted flex items-center justify-center">
-              <AlertTriangle size={20} className="text-red-400" />
+              <AlertTriangle size={20} className="text-danger" />
             </div>
           )}
           <div>
@@ -87,7 +87,7 @@ export default function ConfirmDialog({
             onClick={onConfirm}
             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 press-scale ${
               variant === 'danger'
-                ? 'bg-red-600 hover:bg-red-500 text-white focus-visible:ring-red-500'
+                ? 'bg-danger hover:bg-danger text-white focus-visible:ring-danger'
                 : 'bg-primary hover:bg-primary-hover text-white focus-visible:ring-primary'
             }`}
             aria-label={confirmLabel}

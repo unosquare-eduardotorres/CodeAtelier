@@ -14,7 +14,7 @@ The **Tokens** tab helps you understand and monitor how your AI agents consume t
 - A full page of text is about 500-750 tokens
 - A large code file might be 2,000-5,000 tokens
 
-Every interaction with Agent Studio uses tokens in two ways:
+Every interaction with Code Atelier uses tokens in two ways:
 
 1. **Input tokens** — The text you send (your message + the context the AI needs to understand your request)
 2. **Output tokens** — The text the AI generates in its response
@@ -91,21 +91,21 @@ For complex tasks, start in **Plan mode**. The planning phase uses fewer tokens 
 
 ## Token Limits
 
-Your Claude Max subscription includes a generous token allowance. Agent Studio itself doesn't impose additional limits — your usage is governed by your Claude subscription terms.
+Your Claude Max subscription includes a generous token allowance. Code Atelier itself doesn't impose additional limits — your usage is governed by your Claude subscription terms.
 
 If you approach your subscription's usage limits, you may notice:
 - Slower response times
 - Rate limiting messages
 - Temporary pauses between messages
 
-These are normal and managed by the Claude platform, not by Agent Studio.
+These are normal and managed by the Claude platform, not by Code Atelier.
 
 ---
 
 ## Frequently Asked Questions
 
 **Q: Do tokens cost me extra money?**
-No. Tokens are included in your Claude Max subscription. Agent Studio doesn't charge separately for token usage.
+No. Tokens are included in your Claude Max subscription. Code Atelier doesn't charge separately for token usage.
 
 **Q: Why does the same question use different amounts of tokens each time?**
 Token usage depends on context. The same question in a fresh conversation uses fewer tokens than in a long conversation, because there's less history to process. The AI's response length can also vary.

@@ -35,43 +35,43 @@ const SLASH_COMMANDS: Array<{
     command: '/complete',
     description: 'Commit changes, push, and close conversation',
     icon: GitPullRequestArrow,
-    iconColor: 'text-green-400'
+    iconColor: 'text-success'
   },
   {
     command: '/close',
     description: 'Close and delete this conversation',
     icon: X,
-    iconColor: 'text-orange-400'
+    iconColor: 'text-accent'
   },
   {
     command: '/compact',
     description: 'Compress conversation context to save tokens',
     icon: Minimize2,
-    iconColor: 'text-amber-400'
+    iconColor: 'text-warning'
   },
   {
     command: '/clear',
     description: 'Clear chat display (keeps AI context)',
     icon: Trash2,
-    iconColor: 'text-red-400'
+    iconColor: 'text-danger'
   },
   {
     command: '/grillme',
     description: 'Deep-dive interview to clarify your plan',
     icon: Flame,
-    iconColor: 'text-orange-500'
+    iconColor: 'text-grill'
   },
   {
     command: '/voice',
     description: 'Toggle push-to-talk voice input',
     icon: Mic,
-    iconColor: 'text-purple-400'
+    iconColor: 'text-mode-plan-text'
   },
   {
     command: '/help',
     description: 'Show available commands',
     icon: HelpCircle,
-    iconColor: 'text-blue-400'
+    iconColor: 'text-info'
   }
 ]
 
@@ -376,7 +376,7 @@ export default function MessageInput({
         {isStreaming && (
           <button
             onClick={() => setShowStopConfirm(true)}
-            className="flex-shrink-0 p-2 rounded-lg bg-red-600 text-white hover:bg-red-500 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
+            className="flex-shrink-0 p-2 rounded-lg bg-danger text-white hover:brightness-110 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
             aria-label="Stop generation"
             title="Stop generation"
           >
@@ -388,7 +388,7 @@ export default function MessageInput({
         <button
           onClick={() => setShowIdeaPopover(!showIdeaPopover)}
           disabled={!activeConversation}
-          className="flex-shrink-0 p-2 rounded-lg text-yellow-400 hover:bg-yellow-500/10 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+          className="flex-shrink-0 p-2 rounded-lg text-warning hover:bg-warning-muted disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
           aria-label="Capture an idea"
           title="Capture an idea"
         >
@@ -412,8 +412,8 @@ export default function MessageInput({
             disabled={isDisabled}
             className={`flex-shrink-0 p-2 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base ${
               isListening
-                ? 'bg-red-500/20 text-red-400 ring-2 ring-red-500/40 animate-pulse focus-visible:ring-red-500'
-                : 'text-purple-400 hover:bg-purple-500/10 disabled:opacity-30 focus-visible:ring-purple-500'
+                ? 'bg-danger-muted text-danger ring-2 ring-danger/40 animate-pulse focus-visible:ring-danger'
+                : 'text-mode-plan-text hover:bg-mode-plan-muted disabled:opacity-30 focus-visible:ring-mode-plan'
             }`}
             aria-label={isListening ? 'Release to stop recording' : 'Hold to speak'}
             title={isListening ? 'Release to stop recording' : 'Hold to speak (or hold V key)'}

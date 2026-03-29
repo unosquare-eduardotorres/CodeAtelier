@@ -53,10 +53,10 @@ function formatDate(dateStr: string): string {
 }
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
-  completed: { bg: 'bg-green-500/20', text: 'text-green-400', label: 'Completed' },
-  failed: { bg: 'bg-red-500/20', text: 'text-red-400', label: 'Failed' },
-  terminated: { bg: 'bg-yellow-500/20', text: 'text-yellow-400', label: 'Terminated' },
-  running: { bg: 'bg-blue-500/20', text: 'text-blue-400', label: 'Running' }
+  completed: { bg: 'bg-success-muted', text: 'text-success', label: 'Completed' },
+  failed: { bg: 'bg-danger-muted', text: 'text-danger', label: 'Failed' },
+  terminated: { bg: 'bg-warning-muted', text: 'text-warning', label: 'Terminated' },
+  running: { bg: 'bg-info-muted', text: 'text-info', label: 'Running' }
 }
 
 export default function TokenUsagePage(): React.JSX.Element {
@@ -112,7 +112,7 @@ export default function TokenUsagePage(): React.JSX.Element {
         {/* Skeleton stat cards */}
         <div className="grid grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-surface-overlay border border-border-subtle rounded-xl p-4">
+            <div key={i} className="bg-surface-overlay border border-border-subtle rounded p-4">
               <Skeleton className="h-3 w-20 mb-3" />
               <Skeleton className="h-6 w-24 mb-2" />
               <Skeleton className="h-3 w-16" />
@@ -120,7 +120,7 @@ export default function TokenUsagePage(): React.JSX.Element {
           ))}
         </div>
         {/* Skeleton table rows */}
-        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 space-y-3">
+        <div className="bg-surface-overlay border border-border-subtle rounded p-4 space-y-3">
           <Skeleton className="h-4 w-32 mb-4" />
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="flex items-center gap-3">
@@ -140,13 +140,13 @@ export default function TokenUsagePage(): React.JSX.Element {
   // Color palette for per-agent bars
   const barColors = [
     'bg-primary',
-    'bg-emerald-500',
-    'bg-amber-500',
-    'bg-purple-500',
-    'bg-cyan-500',
-    'bg-rose-500',
-    'bg-blue-500',
-    'bg-orange-500'
+    'bg-success',
+    'bg-mode-build',
+    'bg-mode-plan',
+    'bg-info',
+    'bg-danger',
+    'bg-info',
+    'bg-accent'
   ]
 
   // Build a cost lookup by agent type
@@ -156,16 +156,16 @@ export default function TokenUsagePage(): React.JSX.Element {
   const budgetHasDailyLimit = (budgetStatus?.dailyBudgetCents ?? 0) > 0
   const budgetPct = budgetStatus?.dailyPercentUsed ?? 0
   const budgetBadge = budgetStatus?.dailyExceeded
-    ? { bg: 'bg-red-500/15', text: 'text-red-400', label: 'Exceeded' }
+    ? { bg: 'bg-danger-muted', text: 'text-danger', label: 'Exceeded' }
     : budgetStatus?.dailyWarning
-      ? { bg: 'bg-yellow-500/15', text: 'text-yellow-400', label: `${Math.round(budgetPct)}% used` }
-      : { bg: 'bg-green-500/15', text: 'text-green-400', label: 'On track' }
+      ? { bg: 'bg-warning-muted', text: 'text-warning', label: `${Math.round(budgetPct)}% used` }
+      : { bg: 'bg-success-muted', text: 'text-success', label: 'On track' }
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-8">
       {/* Cost Summary Row */}
       <div className="grid grid-cols-2 gap-4 mb-4">
-        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <DollarSign size={12} />
             Estimated Cost
@@ -176,7 +176,7 @@ export default function TokenUsagePage(): React.JSX.Element {
           <div className="text-xs text-text-secondary mt-1">Based on model pricing</div>
         </div>
 
-        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <ShieldCheck size={12} />
             Budget Status
@@ -200,10 +200,10 @@ export default function TokenUsagePage(): React.JSX.Element {
                 <div
                   className={`h-1.5 rounded-full transition-all ${
                     budgetStatus?.dailyExceeded
-                      ? 'bg-red-500'
+                      ? 'bg-danger'
                       : budgetStatus?.dailyWarning
-                        ? 'bg-yellow-500'
-                        : 'bg-green-500'
+                        ? 'bg-warning'
+                        : 'bg-success'
                   }`}
                   style={{ width: `${Math.min(budgetPct, 100)}%` }}
                 />
@@ -222,7 +222,7 @@ export default function TokenUsagePage(): React.JSX.Element {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Zap size={12} />
             Total Tokens
@@ -233,7 +233,7 @@ export default function TokenUsagePage(): React.JSX.Element {
           <div className="text-xs text-text-secondary mt-1">All-time for this workspace</div>
         </div>
 
-        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Activity size={12} />
             Sessions
@@ -242,7 +242,7 @@ export default function TokenUsagePage(): React.JSX.Element {
           <div className="text-xs text-text-secondary mt-1">Agent sessions recorded</div>
         </div>
 
-        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Users size={12} />
             Most Active
@@ -258,7 +258,7 @@ export default function TokenUsagePage(): React.JSX.Element {
           <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-3 font-medium">
             Per-Agent Breakdown
           </h3>
-          <div className="bg-surface-overlay border border-border-subtle rounded-xl overflow-hidden shadow-sm">
+          <div className="bg-surface-overlay border border-border-subtle rounded overflow-hidden shadow-sm">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border-subtle text-xs text-text-secondary uppercase tracking-wider">
@@ -328,7 +328,7 @@ export default function TokenUsagePage(): React.JSX.Element {
           Recent Sessions
         </h3>
         {sessions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center bg-surface-overlay/30 rounded-xl border border-border-subtle">
+          <div className="flex flex-col items-center justify-center py-12 text-center bg-surface-overlay/30 rounded border border-border-subtle">
             <Clock size={24} className="text-border-default mb-2" />
             <p className="text-sm text-text-secondary">No sessions recorded yet</p>
             <p className="text-xs text-text-muted mt-1">
@@ -336,7 +336,7 @@ export default function TokenUsagePage(): React.JSX.Element {
             </p>
           </div>
         ) : (
-          <div className="bg-surface-overlay border border-border-subtle rounded-xl overflow-hidden shadow-sm">
+          <div className="bg-surface-overlay border border-border-subtle rounded overflow-hidden shadow-sm">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border-subtle text-xs text-text-secondary uppercase tracking-wider">

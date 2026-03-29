@@ -27,7 +27,23 @@ function getMermaid(): Promise<typeof import('mermaid').default> {
       startOnLoad: false,
       theme: 'dark',
       securityLevel: 'strict',
-      fontFamily: 'ui-monospace, monospace'
+      fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace",
+      themeVariables: {
+        primaryColor: '#1E2E33',
+        primaryTextColor: '#C8B89A',
+        primaryBorderColor: 'rgba(184, 151, 106, 0.3)',
+        lineColor: '#B8976A',
+        secondaryColor: '#283337',
+        tertiaryColor: '#1C272D',
+        noteBkgColor: '#283337',
+        noteTextColor: '#8A9A9E',
+        actorBkg: '#1E2E33',
+        actorBorder: 'rgba(184, 151, 106, 0.3)',
+        actorTextColor: '#C8B89A',
+        signalColor: '#B8976A',
+        labelBoxBkgColor: '#1C272D',
+        labelTextColor: '#C8B89A'
+      }
     })
     mermaidInstance = m
     return m
@@ -223,26 +239,26 @@ export default function MermaidDiagram({
   if (loading) {
     return (
       <div className={`flex items-center justify-center py-8 ${className ?? ''}`}>
-        <Loader2 size={20} className="animate-spin text-indigo-400" />
-        <span className="ml-2 text-sm text-gray-400">Rendering diagram...</span>
+        <Loader2 size={20} className="animate-spin text-info" />
+        <span className="ml-2 text-sm text-text-secondary">Rendering diagram...</span>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className={`rounded-lg border border-red-500/30 bg-red-500/5 p-4 ${className ?? ''}`}>
-        <div className="flex items-center gap-2 text-red-400 text-sm mb-2">
+      <div className={`rounded-lg border border-danger/30 bg-danger-muted p-4 ${className ?? ''}`}>
+        <div className="flex items-center gap-2 text-danger text-sm mb-2">
           <AlertTriangle size={14} />
           <span>Failed to render diagram</span>
         </div>
-        <pre className="text-xs text-gray-500 whitespace-pre-wrap">{error}</pre>
+        <pre className="text-xs text-text-muted whitespace-pre-wrap">{error}</pre>
       </div>
     )
   }
 
   const toolbarBtnClass =
-    'px-1.5 py-1 rounded bg-gray-800/80 text-gray-400 hover:text-gray-200 transition-colors'
+    'px-1.5 py-1 rounded bg-surface-overlay/80 text-text-secondary hover:text-text-primary transition-colors'
 
   return (
     <div className={`relative group ${className ?? ''}`}>
@@ -251,7 +267,7 @@ export default function MermaidDiagram({
         <button onClick={handleZoomOut} className={toolbarBtnClass} title="Zoom out">
           <ZoomOut size={12} />
         </button>
-        <span className="text-[10px] font-mono text-gray-400 min-w-[36px] text-center select-none">
+        <span className="text-[10px] font-mono text-text-secondary min-w-[36px] text-center select-none">
           {Math.round(scale * 100)}%
         </span>
         <button onClick={handleZoomIn} className={toolbarBtnClass} title="Zoom in">
@@ -260,7 +276,7 @@ export default function MermaidDiagram({
         <button onClick={fitToView} className={toolbarBtnClass} title="Fit to view">
           <Maximize2 size={12} />
         </button>
-        <div className="w-px h-4 bg-gray-700 mx-0.5" />
+        <div className="w-px h-4 bg-border-subtle mx-0.5" />
         <button
           onClick={handleCopy}
           className={`${toolbarBtnClass} flex items-center gap-1`}
@@ -268,8 +284,8 @@ export default function MermaidDiagram({
         >
           {copied ? (
             <>
-              <Check size={12} className="text-green-400" />
-              <span className="text-[10px] text-green-400">Copied</span>
+              <Check size={12} className="text-success" />
+              <span className="text-[10px] text-success">Copied</span>
             </>
           ) : (
             <>
@@ -283,7 +299,7 @@ export default function MermaidDiagram({
       {/* Interactive viewport — pan & zoom */}
       <div
         ref={viewportRef}
-        className="overflow-hidden bg-gray-950 rounded-lg"
+        className="overflow-hidden bg-surface-base rounded-lg"
         style={{
           cursor: isDragging ? 'grabbing' : 'grab',
           minHeight: '200px'

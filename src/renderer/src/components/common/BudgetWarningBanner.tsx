@@ -69,13 +69,13 @@ export default function BudgetWarningBanner(): React.JSX.Element | null {
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-2.5 border-b text-sm ${isExceeded ? 'bg-danger-muted border-red-800/50' : 'bg-yellow-500/10 border-yellow-800/50'}`}
+      className={`flex items-center gap-3 px-4 py-2.5 border-b text-sm ${isExceeded ? 'bg-danger-muted border-danger/50' : 'bg-warning-muted border-warning/50'}`}
     >
       <AlertTriangle
         size={14}
-        className={`shrink-0 ${isExceeded ? 'text-red-400' : 'text-yellow-400'}`}
+        className={`shrink-0 ${isExceeded ? 'text-danger' : 'text-warning'}`}
       />
-      <span className={`flex-1 ${isExceeded ? 'text-red-300' : 'text-yellow-300'}`}>
+      <span className={`flex-1 ${isExceeded ? 'text-danger' : 'text-warning'}`}>
         {isExceeded ? (
           <>
             Budget exceeded — spent <span className="font-semibold">${currentDollars}</span> of $
@@ -93,8 +93,8 @@ export default function BudgetWarningBanner(): React.JSX.Element | null {
         onClick={dismiss}
         className={`p-1 rounded transition-colors ${
           isExceeded
-            ? 'hover:bg-red-800/40 text-red-400 hover:text-red-300'
-            : 'hover:bg-yellow-800/40 text-yellow-400 hover:text-yellow-300'
+            ? 'hover:bg-danger-muted text-danger hover:text-danger'
+            : 'hover:bg-warning-muted text-warning hover:text-warning'
         }`}
         aria-label="Dismiss budget alert"
       >

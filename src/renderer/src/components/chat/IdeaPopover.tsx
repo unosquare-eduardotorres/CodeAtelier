@@ -38,18 +38,18 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
 
   return (
     <div
-      className="absolute bottom-full mb-2 left-0 w-80 bg-gray-800 rounded-xl border border-yellow-500/30 shadow-xl z-50 overflow-hidden"
+      className="absolute bottom-full mb-2 left-0 w-80 bg-surface-float rounded-xl border border-warning/30 shadow-xl z-50 overflow-hidden"
       onKeyDown={handleKeyDown}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-yellow-900/20 border-b border-yellow-500/20">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-warning-muted border-b border-warning/20">
         <div className="flex items-center gap-2">
-          <Lightbulb size={16} className="text-yellow-400" />
-          <span className="text-sm font-medium text-yellow-300">Capture an Idea</span>
+          <Lightbulb size={16} className="text-warning" />
+          <span className="text-sm font-medium text-warning">Capture an Idea</span>
         </div>
         <button
           onClick={onClose}
-          className="p-1 rounded-md hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+          className="p-1 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
           aria-label="Close"
         >
           <X size={14} />
@@ -59,16 +59,16 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
       {saved ? (
         /* Success feedback */
         <div className="flex flex-col items-center justify-center py-8 gap-2 animate-in fade-in duration-200">
-          <CheckCircle2 size={28} className="text-green-400" />
-          <span className="text-sm font-medium text-green-300">Idea saved!</span>
+          <CheckCircle2 size={28} className="text-success" />
+          <span className="text-sm font-medium text-success">Idea saved!</span>
         </div>
       ) : (
         <>
           {/* Body */}
           <div className="p-4 space-y-3">
-            <p className="text-xs text-gray-400 leading-relaxed">
+            <p className="text-xs text-text-secondary leading-relaxed">
               Save this idea for later. You can find it in{' '}
-              <span className="text-gray-300 font-medium">Workspace Settings → Ideas</span>, then
+              <span className="text-text-primary font-medium">Workspace Settings → Ideas</span>, then
               refine it with &quot;Grill Me&quot; or convert it directly into a work item.
             </p>
             <input
@@ -76,7 +76,7 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
               placeholder="Idea title..."
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/20 transition-colors"
+              className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-warning/50 focus:ring-1 focus:ring-warning/20 transition-colors"
               autoFocus
             />
             <textarea
@@ -84,24 +84,24 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/20 transition-colors resize-none"
+              className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-warning/50 focus:ring-1 focus:ring-warning/20 transition-colors resize-none"
             />
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-700/50">
-            <span className="text-xs text-gray-500">⌘+Enter to save</span>
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border-subtle">
+            <span className="text-xs text-text-muted">⌘+Enter to save</span>
             <div className="flex gap-2">
               <button
                 onClick={onClose}
-                className="px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-gray-200 rounded-lg hover:bg-gray-700 transition-colors"
+                className="px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSave}
                 disabled={!title.trim() || isSaving}
-                className="px-3 py-1.5 text-xs font-medium text-yellow-900 bg-yellow-400 rounded-lg hover:bg-yellow-300 disabled:opacity-30 disabled:hover:bg-yellow-400 transition-colors"
+                className="px-3 py-1.5 text-xs font-medium text-surface-base bg-warning rounded-lg hover:brightness-110 disabled:opacity-30 transition-colors"
               >
                 {isSaving ? 'Saving...' : 'Save Idea'}
               </button>

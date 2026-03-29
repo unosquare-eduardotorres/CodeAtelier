@@ -237,7 +237,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
                         {/* Active indicator dot */}
                         <span
                           className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                            agent.isActive ? 'bg-green-400' : 'bg-gray-600'
+                            agent.isActive ? 'bg-success' : 'bg-surface-overlay'
                           }`}
                           title={agent.isActive ? 'Active' : 'Inactive'}
                         />
@@ -245,7 +245,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span
                           className={`text-xs ${
-                            agent.isDeployed ? 'text-green-500' : 'text-text-muted'
+                            agent.isDeployed ? 'text-success' : 'text-text-muted'
                           }`}
                         >
                           {agent.isDeployed ? 'Deployed' : 'Not deployed'}
@@ -282,8 +282,8 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
                           disabled={isToggling}
                           className={`p-1 rounded transition-colors disabled:opacity-50 ${
                             agent.isActive
-                              ? 'hover:bg-warning-muted text-green-400 hover:text-amber-400'
-                              : 'hover:bg-success-muted text-text-muted hover:text-green-400'
+                              ? 'hover:bg-warning-muted text-success hover:text-mode-build-text'
+                              : 'hover:bg-success-muted text-text-muted hover:text-success'
                           }`}
                           title={agent.isActive ? 'Deactivate' : 'Activate'}
                         >
@@ -304,7 +304,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
                           setDeleteTarget(agent)
                         }}
                         disabled={isDeleting}
-                        className="p-1 rounded hover:bg-danger-muted text-text-muted hover:text-red-400 transition-colors disabled:opacity-50"
+                        className="p-1 rounded hover:bg-danger-muted text-text-muted hover:text-danger transition-colors disabled:opacity-50"
                         title="Delete agent from workspace"
                       >
                         {isDeleting ? (
@@ -351,8 +351,8 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
                     disabled={togglingId === selectedAgent.filename}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
                       selectedAgent.isActive
-                        ? 'bg-warning-muted text-amber-400 border border-amber-500/30 hover:bg-amber-500/20'
-                        : 'bg-success-muted text-green-400 border border-green-500/30 hover:bg-green-500/20'
+                        ? 'bg-warning-muted text-mode-build-text border border-mode-build/30 hover:bg-mode-build-muted'
+                        : 'bg-success-muted text-success border border-success/30 hover:bg-success-muted'
                     }`}
                   >
                     {togglingId === selectedAgent.filename ? (
@@ -385,12 +385,12 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
                   <div className="flex items-center gap-2 mt-1">
                     <span
                       className={`w-2 h-2 rounded-full ${
-                        selectedAgent.isActive ? 'bg-green-400' : 'bg-gray-600'
+                        selectedAgent.isActive ? 'bg-success' : 'bg-surface-overlay'
                       }`}
                     />
                     <span
                       className={`text-sm ${
-                        selectedAgent.isActive ? 'text-green-400' : 'text-text-secondary'
+                        selectedAgent.isActive ? 'text-success' : 'text-text-secondary'
                       }`}
                     >
                       {selectedAgent.isActive ? 'Active' : 'Inactive'}

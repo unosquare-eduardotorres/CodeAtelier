@@ -24,7 +24,9 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "@fontsource-variable/inter": "^5.2.8",
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@fontsource/cormorant-garamond": "^5.2.11",
+    "@fontsource/eb-garamond": "^5.2.7",
     "@octokit/rest": "^22.0.1",
     "@tanstack/react-virtual": "^3.13.23",
     "@types/jsdom": "^28.0.1",

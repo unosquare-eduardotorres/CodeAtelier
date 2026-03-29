@@ -57,41 +57,41 @@ export default function SkillImportDropzone(): React.JSX.Element {
     <div className="space-y-2">
       <div
         {...getRootProps()}
-        className={`relative flex flex-col items-center justify-center p-6 rounded-xl border-2 border-dashed transition-colors cursor-pointer ${
+        className={`relative flex flex-col items-center justify-center p-6 rounded border-2 border-dashed transition-colors cursor-pointer ${
           isDragActive
-            ? 'border-indigo-500 bg-indigo-500/5'
+            ? 'border-primary bg-primary-muted'
             : importingSkill
-              ? 'border-gray-700 bg-gray-800/30 cursor-wait'
-              : 'border-gray-700 bg-gray-800/30 hover:border-gray-600 hover:bg-gray-800/50'
+              ? 'border-border-subtle bg-surface-raised/30 cursor-wait'
+              : 'border-border-subtle bg-surface-raised/30 hover:border-border-default hover:bg-surface-raised/50'
         }`}
       >
         <input {...getInputProps()} />
 
         {importingSkill ? (
           <>
-            <Loader2 size={24} className="text-indigo-400 animate-spin mb-2" />
-            <p className="text-sm text-gray-400">Importing skill and updating CLAUDE.md...</p>
-            <p className="text-[11px] text-gray-600 mt-1">This may take up to 60 seconds</p>
+            <Loader2 size={24} className="text-primary-text animate-spin mb-2" />
+            <p className="text-sm text-text-muted">Importing skill and updating CLAUDE.md...</p>
+            <p className="text-[11px] text-text-secondary mt-1">This may take up to 60 seconds</p>
           </>
         ) : isDragActive ? (
           <>
-            <Upload size={24} className="text-indigo-400 mb-2" />
-            <p className="text-sm text-indigo-400 font-medium">Drop .md file here</p>
+            <Upload size={24} className="text-primary-text mb-2" />
+            <p className="text-sm text-primary-text font-medium">Drop .md file here</p>
           </>
         ) : (
           <>
-            <FileText size={24} className="text-gray-600 mb-2" />
-            <p className="text-sm text-gray-400">
-              Drag and drop a <span className="text-gray-300 font-medium">.md</span> skill file here
+            <FileText size={24} className="text-text-secondary mb-2" />
+            <p className="text-sm text-text-muted">
+              Drag and drop a <span className="text-text-secondary font-medium">.md</span> skill file here
             </p>
-            <p className="text-[11px] text-gray-600 mt-1">
+            <p className="text-[11px] text-text-secondary mt-1">
               or{' '}
               <button
                 onClick={(e) => {
                   e.stopPropagation()
                   handleBrowse()
                 }}
-                className="text-indigo-400 hover:text-indigo-300 underline"
+                className="text-primary-text hover:text-primary-hover underline"
               >
                 browse to select
               </button>
@@ -102,12 +102,12 @@ export default function SkillImportDropzone(): React.JSX.Element {
 
       {/* Error with retry */}
       {error && !importingSkill && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
-          <span className="text-xs text-red-400 flex-1">{error}</span>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-danger-muted border border-danger/20">
+          <span className="text-xs text-danger flex-1">{error}</span>
           {lastFailedPath && (
             <button
               onClick={handleRetry}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors flex-shrink-0"
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-danger-muted text-danger hover:bg-danger/30 transition-colors flex-shrink-0"
             >
               <RotateCcw size={12} />
               Retry

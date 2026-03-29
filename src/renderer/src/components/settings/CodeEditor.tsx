@@ -31,7 +31,7 @@ export default function CodeEditor({
           <>
             {tokens.map((line, i) => (
               <div key={i} {...getLineProps({ line })}>
-                <span className="inline-block w-8 text-right mr-4 text-gray-600 select-none text-[11px]">
+                <span className="inline-block w-8 text-right mr-4 text-text-secondary select-none text-[11px]">
                   {i + 1}
                 </span>
                 {line.map((token, key) => (
@@ -47,14 +47,14 @@ export default function CodeEditor({
   )
 
   return (
-    <div className={`rounded-lg border border-gray-700 bg-gray-900 overflow-auto ${className}`}>
+    <div className={`rounded-lg border border-border-subtle bg-surface-base overflow-auto ${className}`}>
       <Editor
         value={value}
         onValueChange={readOnly ? () => {} : onChange}
         highlight={highlight}
         padding={16}
         textareaClassName="outline-none font-mono text-sm"
-        className="font-mono text-sm text-gray-200 min-h-[200px]"
+        className="font-mono text-sm text-text-primary min-h-[200px]"
         style={{
           fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
           fontSize: '13px',

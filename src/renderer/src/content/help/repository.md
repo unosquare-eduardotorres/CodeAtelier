@@ -8,7 +8,7 @@ The **Repository** tab connects your workspace to **GitHub**, enabling your AI a
 
 A **repository** (often called a "repo") is where your code lives online. Think of it as a cloud backup of your project that also tracks every change ever made. **GitHub** is the most popular platform for hosting repositories.
 
-When you connect Agent Studio to your GitHub repository, your AI agents can:
+When you connect Code Atelier to your GitHub repository, your AI agents can:
 
 - Create **branches** (separate copies of your code to make changes safely)
 - Open **pull requests** (formal proposals to merge changes into the main codebase)
@@ -35,7 +35,7 @@ A **pull request** is a formal way of saying "I made some changes on my branch a
 
 ### What is a Personal Access Token (PAT)?
 
-A **PAT** is like a password that gives Agent Studio permission to interact with your GitHub account. It's more secure than using your actual password because:
+A **PAT** is like a password that gives Code Atelier permission to interact with your GitHub account. It's more secure than using your actual password because:
 
 - You can limit what it's allowed to do (e.g., read code but not delete repositories)
 - You can revoke it at any time without changing your password
@@ -62,7 +62,7 @@ gitgraph
 
 1. Go to [github.com/settings/tokens](https://github.com/settings/tokens)
 2. Click **"Generate new token"** (choose "Fine-grained" for better security)
-3. Give it a name like "Agent Studio"
+3. Give it a name like "Code Atelier"
 4. Set an expiration date (90 days recommended)
 5. Under **Repository permissions**, grant:
    - **Contents**: Read and write (so agents can read and create code)
@@ -71,7 +71,7 @@ gitgraph
 6. Click **Generate token**
 7. **Copy the token immediately** — GitHub will only show it once
 
-### Step 2: Add the Token to Agent Studio
+### Step 2: Add the Token to Code Atelier
 
 1. Open **Workspace Settings** (gear icon in the header bar)
 2. Click the **Repository** tab
@@ -121,11 +121,11 @@ sequenceDiagram
 
 ## Frequently Asked Questions
 
-**Q: Do I need GitHub to use Agent Studio?**
+**Q: Do I need GitHub to use Code Atelier?**
 No. GitHub integration is optional. Without it, agents can still read and modify code in your local project folder — they just can't create branches or pull requests on GitHub.
 
 **Q: Can I use GitLab or Bitbucket instead?**
-Currently, Agent Studio supports GitHub. Support for other platforms may be added in future updates.
+Currently, Code Atelier supports GitHub. Support for other platforms may be added in future updates.
 
 **Q: What happens if my token expires?**
 Agents will still work locally, but GitHub operations (creating branches, opening PRs) will fail. You'll see an error message prompting you to update your token. Just generate a new one and paste it in.

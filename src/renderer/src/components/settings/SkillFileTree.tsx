@@ -17,7 +17,7 @@ export default function SkillFileTree({
 
   return (
     <div className="space-y-1">
-      <h4 className="text-xs font-medium text-gray-400 mb-2 flex items-center gap-1.5">
+      <h4 className="text-xs font-medium text-text-muted mb-2 flex items-center gap-1.5">
         <FolderOpen size={12} />
         {skill.name}
       </h4>
@@ -28,8 +28,8 @@ export default function SkillFileTree({
           onClick={() => onSelectFile(skillMdPath)}
           className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-left transition-colors ${
             selectedFile === skillMdPath
-              ? 'bg-indigo-600/20 text-indigo-400'
-              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+              ? 'bg-primary-muted text-primary-text'
+              : 'text-text-muted hover:text-text-primary hover:bg-surface-raised'
           }`}
         >
           <FileText size={12} className="flex-shrink-0" />
@@ -40,7 +40,7 @@ export default function SkillFileTree({
       {/* References */}
       {hasReferences && (
         <div className="ml-2">
-          <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-gray-500">
+          <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-text-muted">
             <FolderOpen size={10} />
             references/
           </div>
@@ -52,8 +52,8 @@ export default function SkillFileTree({
                 onClick={() => onSelectFile(refPath)}
                 className={`w-full flex items-center gap-2 px-2 py-1.5 ml-3 rounded-md text-xs text-left transition-colors ${
                   selectedFile === refPath
-                    ? 'bg-indigo-600/20 text-indigo-400'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                    ? 'bg-primary-muted text-primary-text'
+                    : 'text-text-muted hover:text-text-primary hover:bg-surface-raised'
                 }`}
               >
                 <FileText size={11} className="flex-shrink-0" />

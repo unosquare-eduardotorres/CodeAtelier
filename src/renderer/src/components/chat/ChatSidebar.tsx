@@ -136,7 +136,7 @@ export default function ChatSidebar({
           <div className="flex items-center gap-2 min-w-0">
             <FolderOpen size={16} className="text-primary-text flex-shrink-0" />
             <span className="text-sm font-semibold text-text-primary truncate">
-              {activeWorkspace?.name ?? 'Agent Studio'}
+              {activeWorkspace?.name ?? 'Code Atelier'}
             </span>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">

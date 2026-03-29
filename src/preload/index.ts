@@ -957,6 +957,6 @@ if (process.contextIsolated) {
   }
 } else {
   throw new Error(
-    'Context isolation must be enabled. Agent Studio requires contextIsolation: true for security.'
+    'Context isolation must be enabled. Code Atelier requires contextIsolation: true for security.'
   )
 }

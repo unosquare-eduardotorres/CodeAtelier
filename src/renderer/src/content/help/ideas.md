@@ -84,4 +84,4 @@ Yes. During planning or grilling sessions, agents may propose tasks and ideas th
 There's no hard limit. However, for best results, keep your active ideas focused on what you're currently working on. You can always archive completed ideas.
 
 **Q: Do ideas sync with GitHub Issues?**
-Not currently. Ideas live within Agent Studio. You can ask your AI team to create GitHub Issues based on your ideas when you're ready to implement them.
+Not currently. Ideas live within Code Atelier. You can ask your AI team to create GitHub Issues based on your ideas when you're ready to implement them.

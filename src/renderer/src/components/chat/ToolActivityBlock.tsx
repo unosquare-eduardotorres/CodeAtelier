@@ -84,7 +84,7 @@ export default function ToolActivityBlock({
         <div className="mt-1.5 ml-4 space-y-1 border-l-2 border-border-subtle pl-3">
           {runningActivities.map((activity) => (
             <div key={activity.id} className="flex items-center gap-2 text-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
               <span className="font-mono text-text-body">{activity.toolName}</span>
               {activity.input && (
                 <span className="text-text-muted truncate max-w-[300px]" title={activity.input}>
@@ -104,10 +104,10 @@ export default function ToolActivityBlock({
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   activity.status === 'running'
-                    ? 'bg-yellow-400 animate-pulse'
+                    ? 'bg-warning animate-pulse'
                     : activity.status === 'completed'
-                      ? 'bg-green-400'
-                      : 'bg-red-400'
+                      ? 'bg-success'
+                      : 'bg-danger'
                 }`}
               />
               <span className="font-mono text-text-body">{activity.toolName}</span>

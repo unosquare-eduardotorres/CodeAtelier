@@ -1,5 +1,5 @@
 appId: com.agent-studio.app
-productName: Agent Studio
+productName: Code Atelier
 directories:
   buildResources: build
 files:

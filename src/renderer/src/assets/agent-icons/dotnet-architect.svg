@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- .NET Architect: Illuminated Manuscript Scribe -->
+  <circle cx="12" cy="12" r="12" fill="#140A0A"/>
+  <path d="M3 24 Q3 17 12 15 Q21 17 21 24Z" fill="#3A1A10"/>
+  <path d="M8 16 Q12 18 16 16 Q15 17.5 12 18 Q9 17.5 8 16Z" fill="#9B7FD4" opacity="0.4"/>
+  <ellipse cx="12" cy="11" rx="4.5" ry="5" fill="#C9A07A"/>
+  <ellipse cx="12" cy="6.5" rx="4.5" ry="2.5" fill="#2A1A0E"/>
+  <path d="M7.5 9 Q7 7 7.5 6 Q9.5 5 12 5 Q14.5 5 16.5 6 Q17 7 16.5 9" fill="#2A1A0E"/>
+  <!-- Stray lock -->
+  <path d="M12 5.5 Q13 7 13.5 8.5" fill="none" stroke="#2A1A0E" stroke-width="0.8"/>
+  <ellipse cx="10.5" cy="11" rx="0.9" ry="0.75" fill="#080604"/>
+  <ellipse cx="13.5" cy="11" rx="0.9" ry="0.75" fill="#080604"/>
+  <circle cx="10.8" cy="10.7" r="0.32" fill="rgba(255,255,255,0.75)"/>
+  <circle cx="13.8" cy="10.7" r="0.32" fill="rgba(255,255,255,0.75)"/>
+  <path d="M10.5 13 Q12 13.8 13.5 13" fill="none" stroke="#7A4A2A" stroke-width="0.6"/>
+  <!-- Quill + codex prop -->
+  <line x1="17" y1="18" x2="20" y2="14" stroke="#B8976A" stroke-width="0.7" opacity="0.5"/>
+  <path d="M20 14 Q21 12.5 20.3 13.5 Q21.5 13 20.8 14.5" fill="#B8976A" opacity="0.4"/>
+  <rect x="14" y="19" width="4" height="3" rx="0.3" fill="#B8976A" opacity="0.3"/>
+</svg>

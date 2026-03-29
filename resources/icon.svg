@@ -1,37 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <defs>
-    <!-- Background gradient: deep indigo to dark navy -->
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#312e81"/>
-      <stop offset="100%" stop-color="#1e1b4b"/>
-    </linearGradient>
-    <!-- Bot stroke color -->
-    <linearGradient id="botStroke" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#a5b4fc"/>
-      <stop offset="100%" stop-color="#818cf8"/>
-    </linearGradient>
-  </defs>
-
-  <!-- Rounded square background (inset 100px for macOS dock padding) -->
-  <rect x="100" y="100" width="824" height="824" rx="183" ry="183" fill="url(#bg)"/>
-
-  <!-- Antenna nub (small rectangle on top) -->
-  <rect x="487" y="300" width="52" height="42" rx="11" ry="11"
-        fill="none" stroke="url(#botStroke)" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- Antenna stem -->
-  <line x1="512" y1="342" x2="512" y2="380"
-        stroke="url(#botStroke)" stroke-width="28" stroke-linecap="round"/>
-
-  <!-- Robot head (rounded rectangle) -->
-  <rect x="326" y="380" width="373" height="290" rx="64" ry="64"
-        fill="none" stroke="url(#botStroke)" stroke-width="33" stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- Left eye (small rounded square) -->
-  <rect x="414" y="477" width="58" height="58" rx="13" ry="13"
-        fill="#a5b4fc"/>
-
-  <!-- Right eye (small rounded square) -->
-  <rect x="553" y="477" width="58" height="58" rx="13" ry="13"
-        fill="#a5b4fc"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <rect width="1024" height="1024" rx="224" fill="#1C272D"/>
+  <rect x="24" y="24" width="976" height="976" rx="200" fill="none" stroke="#B8976A" stroke-width="2" opacity="0.08"/>
+  
+  <!-- Triple diamond -->
+  <g transform="translate(512,440)">
+    <rect x="-280" y="-280" width="560" height="560" rx="24" transform="rotate(45)" stroke="#B8976A" stroke-width="14" fill="none"/>
+    <rect x="-244" y="-244" width="488" height="488" rx="16" transform="rotate(45)" stroke="#B8976A" stroke-width="4" fill="none" opacity="0.2"/>
+    <rect x="-210" y="-210" width="420" height="420" rx="12" transform="rotate(45)" stroke="#B8976A" stroke-width="2" fill="none" opacity="0.1"/>
+  </g>
+  
+  <!-- Cardinal jewels (copper) -->
+  <circle cx="512" cy="44" r="26" fill="#C4714A"/>
+  <circle cx="512" cy="44" r="16" fill="#D4885A" opacity="0.5"/>
+  <circle cx="512" cy="44" r="8" fill="#E8A070" opacity="0.35"/>
+  <circle cx="512" cy="836" r="20" fill="#C4714A" opacity="0.3"/>
+  <circle cx="116" cy="440" r="20" fill="#C4714A" opacity="0.22"/>
+  <circle cx="908" cy="440" r="20" fill="#C4714A" opacity="0.22"/>
+  
+  <!-- Diagonal jewels (gold) -->
+  <circle cx="216" cy="196" r="12" fill="#B8976A" opacity="0.15"/>
+  <circle cx="808" cy="196" r="12" fill="#B8976A" opacity="0.15"/>
+  <circle cx="216" cy="684" r="12" fill="#B8976A" opacity="0.12"/>
+  <circle cx="808" cy="684" r="12" fill="#B8976A" opacity="0.12"/>
+  
+  <!-- Tick marks at cardinal points -->
+  <line x1="512" y1="76" x2="512" y2="128" stroke="#B8976A" stroke-width="2.5" opacity="0.2"/>
+  <line x1="512" y1="752" x2="512" y2="804" stroke="#B8976A" stroke-width="2.5" opacity="0.15"/>
+  <line x1="148" y1="440" x2="200" y2="440" stroke="#B8976A" stroke-width="2.5" opacity="0.15"/>
+  <line x1="824" y1="440" x2="876" y2="440" stroke="#B8976A" stroke-width="2.5" opacity="0.15"/>
+  
+  <!-- Code brackets -->
+  <text x="512" y="470" fill="#C8B89A" font-size="176" font-family="JetBrains Mono,Menlo,monospace" font-weight="400" text-anchor="middle" letter-spacing="-4">&lt;/&gt;</text>
+  
+  <!-- ATELIER text -->
+  <line x1="280" y1="920" x2="744" y2="920" stroke="#B8976A" stroke-width="2" opacity="0.15"/>
+  <text x="512" y="936" fill="#B8976A" font-size="56" font-family="Georgia,Times New Roman,serif" font-weight="400" text-anchor="middle" letter-spacing="28">ATELIER</text>
+  <line x1="280" y1="956" x2="744" y2="956" stroke="#B8976A" stroke-width="2" opacity="0.15"/>
+  <circle cx="268" cy="938" r="8" fill="#C4714A" opacity="0.25"/>
+  <circle cx="756" cy="938" r="8" fill="#C4714A" opacity="0.25"/>
 </svg>

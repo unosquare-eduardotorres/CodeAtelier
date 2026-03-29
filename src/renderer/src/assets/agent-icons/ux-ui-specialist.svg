@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- UX/UI Specialist: Portrait Painter -->
+  <circle cx="12" cy="12" r="12" fill="#0A1A14"/>
+  <path d="M3 24 Q3 17 12 15 Q21 17 21 24Z" fill="#1A3A28"/>
+  <!-- Cravat -->
+  <path d="M9.5 16 Q12 17.5 14.5 16 Q13.5 17.5 12 18 Q10.5 17.5 9.5 16Z" fill="#B8976A" opacity="0.5"/>
+  <ellipse cx="12" cy="11" rx="4.5" ry="5" fill="#C4A07A"/>
+  <!-- Curly hair -->
+  <ellipse cx="12" cy="6.5" rx="5" ry="2.8" fill="#3A2010"/>
+  <circle cx="7.5" cy="8" r="1.5" fill="#3A2010"/>
+  <circle cx="16.5" cy="8" r="1.5" fill="#3A2010"/>
+  <circle cx="8.5" cy="6.5" r="1.2" fill="#3A2010"/>
+  <circle cx="15.5" cy="6.5" r="1.2" fill="#3A2010"/>
+  <ellipse cx="10.5" cy="11" rx="0.9" ry="0.75" fill="#0A0A08"/>
+  <ellipse cx="13.5" cy="11" rx="0.9" ry="0.75" fill="#0A0A08"/>
+  <circle cx="10.8" cy="10.7" r="0.32" fill="rgba(255,255,255,0.75)"/>
+  <circle cx="13.8" cy="10.7" r="0.32" fill="rgba(255,255,255,0.75)"/>
+  <!-- Paint smudge on cheek -->
+  <ellipse cx="14" cy="12.5" rx="1" ry="0.4" fill="#C4714A" opacity="0.25"/>
+  <path d="M10.5 13 Q12 13.8 13.5 13" fill="none" stroke="#8A5A3A" stroke-width="0.6"/>
+  <!-- Palette prop -->
+  <ellipse cx="19" cy="20" rx="2.5" ry="1.8" fill="#C87A9B" opacity="0.25" stroke="#C87A9B" stroke-width="0.4" opacity="0.5"/>
+  <circle cx="18" cy="19.5" r="0.5" fill="#C4714A" opacity="0.6"/>
+  <circle cx="19.5" cy="19" r="0.4" fill="#B8976A" opacity="0.6"/>
+  <circle cx="20.5" cy="20" r="0.4" fill="#7ABFDB" opacity="0.5"/>
+</svg>

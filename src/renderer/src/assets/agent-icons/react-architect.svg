@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- React Architect: Stained-glass Artisan -->
+  <circle cx="12" cy="12" r="12" fill="#0E1518"/>
+  <path d="M3 24 Q3 17 12 15 Q21 17 21 24Z" fill="#1A2A38"/>
+  <path d="M8 16 Q12 18 16 16 Q15 17.5 12 18 Q9 17.5 8 16Z" fill="#7ABFDB" opacity="0.4"/>
+  <ellipse cx="12" cy="11" rx="4.5" ry="5" fill="#B8906A"/>
+  <ellipse cx="12" cy="6.5" rx="4.5" ry="2.5" fill="#1A1408"/>
+  <path d="M7.5 9 Q7 7 7.5 6 Q9.5 5 12 5 Q14.5 5 16.5 6 Q17 7 16.5 9" fill="#1A1408"/>
+  <ellipse cx="10.5" cy="11" rx="0.85" ry="0.65" fill="#080604"/>
+  <ellipse cx="13.5" cy="11" rx="0.85" ry="0.65" fill="#080604"/>
+  <circle cx="10.8" cy="10.7" r="0.28" fill="rgba(255,255,255,0.65)"/>
+  <circle cx="13.8" cy="10.7" r="0.28" fill="rgba(255,255,255,0.65)"/>
+  <path d="M10.5 13 Q12 13.8 13.5 13" fill="none" stroke="#7A4A28" stroke-width="0.6"/>
+  <!-- Diamond/glass pane prop -->
+  <rect x="16" y="17" width="5" height="5" transform="rotate(45,18.5,19.5)" fill="none" stroke="#7ABFDB" stroke-width="0.7" opacity="0.6"/>
+  <line x1="18.5" y1="17.5" x2="18.5" y2="21.5" stroke="#7ABFDB" stroke-width="0.4" opacity="0.4"/>
+  <line x1="16.5" y1="19.5" x2="20.5" y2="19.5" stroke="#7ABFDB" stroke-width="0.4" opacity="0.4"/>
+</svg>

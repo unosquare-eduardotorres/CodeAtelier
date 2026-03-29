@@ -24,10 +24,10 @@ function DocFileItem({
           : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
       }`}
     >
-      <FileText size={14} className={doc.supported ? 'text-emerald-400' : 'text-text-muted'} />
+      <FileText size={14} className={doc.supported ? 'text-success' : 'text-text-muted'} />
       <div className="flex-1 min-w-0">
         <span className="block truncate">{doc.name}</span>
-        {!doc.supported && <span className="text-xs text-amber-500/70">Not supported yet</span>}
+        {!doc.supported && <span className="text-xs text-mode-build-text/70">Not supported yet</span>}
       </div>
     </button>
   )
@@ -83,11 +83,11 @@ function EmptyState(): React.JSX.Element {
         </p>
         <div className="rounded-lg border border-border-subtle bg-surface-overlay p-4 text-left space-y-3">
           <p className="text-xs text-text-secondary font-medium flex items-center gap-1.5">
-            <MessageCircle size={12} className="text-emerald-400" />
+            <MessageCircle size={12} className="text-success" />
             Try asking the Docs &amp; Diagrams specialist:
           </p>
           <div className="rounded-md bg-surface-base px-3 py-2">
-            <code className="text-xs text-emerald-400 whitespace-pre-wrap">
+            <code className="text-xs text-success whitespace-pre-wrap">
               &quot;Generate a sequence diagram showing the auto-update flow and save it to
               docs/&quot;
             </code>
@@ -108,10 +108,10 @@ function UnsupportedFormat({ doc }: { doc: DocFile }): React.JSX.Element {
   return (
     <div className="flex-1 flex items-center justify-center p-8">
       <div className="text-center space-y-3">
-        <FileWarning size={32} className="mx-auto text-amber-500/60" />
+        <FileWarning size={32} className="mx-auto text-mode-build-text/60" />
         <h3 className="text-sm font-semibold text-text-primary">{doc.name}</h3>
         <p className="text-xs text-text-secondary">
-          <code className="px-1 py-0.5 rounded bg-surface-overlay text-amber-400">
+          <code className="px-1 py-0.5 rounded bg-surface-overlay text-mode-build-text">
             .{doc.extension}
           </code>{' '}
           files are not supported yet. Markdown (<code className="text-text-secondary">.md</code>)

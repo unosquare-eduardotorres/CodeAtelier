@@ -55,24 +55,24 @@ export default function WorkspaceSidebar({
 
   if (isCollapsed) {
     return (
-      <div className="flex flex-col items-center w-12 bg-gray-900 border-r border-gray-700 py-3 gap-2">
+      <div className="flex flex-col items-center w-12 bg-surface-base border-r border-border-subtle py-3 gap-2">
         <button
           onClick={toggleCollapse}
-          className="p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+          className="p-2 rounded-lg hover:bg-surface-raised text-text-muted hover:text-text-primary transition-colors"
           aria-label="Expand sidebar"
           title="Expand sidebar"
         >
           <ChevronRight size={16} />
         </button>
-        <div className="w-8 h-px bg-gray-700 my-1" />
+        <div className="w-8 h-px bg-border-subtle my-1" />
         {sortedWorkspaces.map((ws) => (
           <button
             key={ws.id}
             onClick={() => openWorkspace(ws.id)}
             className={`flex items-center justify-center w-8 h-8 rounded-lg text-xs font-semibold transition-colors ${
               activeWorkspace?.id === ws.id
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                ? 'bg-primary text-primary-text'
+                : 'bg-surface-raised text-text-muted hover:bg-surface-overlay'
             }`}
             title={ws.name}
             aria-label={`Open workspace: ${ws.name}`}
@@ -82,7 +82,7 @@ export default function WorkspaceSidebar({
         ))}
         <button
           onClick={handleAddWorkspace}
-          className="flex items-center justify-center w-8 h-8 rounded-lg bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors mt-1"
+          className="flex items-center justify-center w-8 h-8 rounded-lg bg-surface-raised text-text-muted hover:bg-surface-overlay hover:text-text-primary transition-colors mt-1"
           aria-label="Add workspace"
           title="Add workspace"
           disabled={isAdding}
@@ -94,18 +94,18 @@ export default function WorkspaceSidebar({
   }
 
   return (
-    <div className="flex flex-col w-60 bg-gray-900 border-r border-gray-700">
+    <div className="flex flex-col w-60 bg-surface-base border-r border-border-subtle">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
         <div className="flex items-center gap-2">
-          <FolderOpen size={16} className="text-indigo-400" />
-          <span className="text-sm font-semibold text-gray-200">Workspaces</span>
+          <FolderOpen size={16} className="text-primary-text" />
+          <span className="text-sm font-semibold text-text-primary">Workspaces</span>
         </div>
         <div className="flex items-center gap-1">
           <button
             onClick={handleAddWorkspace}
             disabled={isAdding}
-            className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-indigo-400 transition-colors disabled:opacity-50"
+            className="p-1.5 rounded-md hover:bg-surface-raised text-text-muted hover:text-primary-text transition-colors disabled:opacity-50"
             aria-label="Add workspace"
             title="Add workspace"
           >
@@ -113,7 +113,7 @@ export default function WorkspaceSidebar({
           </button>
           <button
             onClick={toggleCollapse}
-            className="p-1.5 rounded-md hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+            className="p-1.5 rounded-md hover:bg-surface-raised text-text-muted hover:text-text-primary transition-colors"
             aria-label="Collapse sidebar"
             title="Collapse sidebar"
           >
@@ -126,9 +126,9 @@ export default function WorkspaceSidebar({
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {sortedWorkspaces.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-            <FolderOpen size={32} className="text-gray-700 mb-3" />
-            <p className="text-sm text-gray-500 mb-1">No workspaces yet</p>
-            <p className="text-xs text-gray-600">Click + to add a project</p>
+            <FolderOpen size={32} className="text-border-default mb-3" />
+            <p className="text-sm text-text-muted mb-1">No workspaces yet</p>
+            <p className="text-xs text-text-secondary">Click + to add a project</p>
           </div>
         ) : (
           sortedWorkspaces.map((ws) => (

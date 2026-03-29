@@ -58,7 +58,7 @@ export default function WorkspaceConfigModal({
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
         {/* Modal */}
-        <div className="relative bg-surface-float border border-border-default rounded-xl w-[480px] max-h-[600px] shadow-2xl flex flex-col">
+        <div className="relative bg-surface-float border border-border-default rounded w-[480px] max-h-[600px] shadow-2xl flex flex-col">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
             <div className="flex items-center gap-2">
@@ -128,7 +128,7 @@ export default function WorkspaceConfigModal({
                       <Check size={14} className="text-primary-text mr-1" />
                     )}
                     <button
-                      className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-danger-muted text-text-muted hover:text-red-400 transition-colors"
+                      className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors"
                       onClick={(e) => {
                         e.stopPropagation()
                         setDeleteTarget(ws.id)

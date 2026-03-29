@@ -26,7 +26,7 @@ async function snap(page, name, waitMs = 800) {
 
 async function main() {
   console.log('\n========================================')
-  console.log('  Agent Studio — Screenshot Audit')
+  console.log('  Code Atelier — Screenshot Audit')
   console.log('========================================\n')
 
   // Launch Electron — pass the project root (which has package.json with main: ./out/main/index.js)
@@ -47,7 +47,7 @@ async function main() {
   await snap(win, '01-initial-load', 1000)
 
   // Check if we see the Welcome Modal
-  const welcomeVisible = await win.locator('text=Welcome to Agent Studio').count().catch(() => 0)
+  const welcomeVisible = await win.locator('text=Welcome to Code Atelier').count().catch(() => 0)
 
   if (welcomeVisible > 0) {
     console.log('--- Page 2: Welcome Modal (Step 1) ---')

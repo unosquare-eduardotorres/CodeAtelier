@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Git Specialist: Cartographer / Navigator -->
+  <circle cx="12" cy="12" r="12" fill="#0A0E1A"/>
+  <path d="M3 24 Q3 17 12 15 Q21 17 21 24Z" fill="#1A2A4A"/>
+  <!-- Epaulette -->
+  <path d="M3 18 Q5 17 7 18 Q6 19 3 19Z" fill="#B8976A" opacity="0.6"/>
+  <!-- Gold buttons -->
+  <circle cx="11" cy="17" r="0.6" fill="#B8976A" opacity="0.6"/>
+  <circle cx="12" cy="18.5" r="0.6" fill="#B8976A" opacity="0.6"/>
+  <ellipse cx="12" cy="11" rx="4.5" ry="5" fill="#A07850"/>
+  <ellipse cx="12" cy="6.5" rx="4.5" ry="2.2" fill="#1A1008"/>
+  <path d="M7.5 9 Q7 7 7.5 6 Q9.5 5 12 5 Q14.5 5 16.5 6 Q17 7 16.5 9" fill="#1A1008"/>
+  <!-- Strong brows -->
+  <path d="M8.5 9.5 Q10 8.8 11 9.5" fill="none" stroke="#1A1008" stroke-width="0.7"/>
+  <path d="M13 9.5 Q14 8.8 15.5 9.5" fill="none" stroke="#1A1008" stroke-width="0.7"/>
+  <ellipse cx="10.5" cy="11" rx="0.85" ry="0.65" fill="#0A0804"/>
+  <ellipse cx="13.5" cy="11" rx="0.85" ry="0.65" fill="#0A0804"/>
+  <circle cx="10.8" cy="10.7" r="0.28" fill="rgba(255,255,255,0.6)"/>
+  <circle cx="13.8" cy="10.7" r="0.28" fill="rgba(255,255,255,0.6)"/>
+  <path d="M10.5 13 Q12 13.8 13.5 13" fill="none" stroke="#7A5030" stroke-width="0.6"/>
+  <!-- Compass prop -->
+  <circle cx="18.5" cy="19.5" r="2.5" fill="none" stroke="#B8976A" stroke-width="0.5" opacity="0.6"/>
+  <line x1="18.5" y1="17" x2="18.5" y2="22" stroke="#B8976A" stroke-width="0.4" opacity="0.5"/>
+  <line x1="16" y1="19.5" x2="21" y2="19.5" stroke="#B8976A" stroke-width="0.4" opacity="0.5"/>
+  <circle cx="18.5" cy="19.5" r="0.6" fill="#B8976A" opacity="0.5"/>
+</svg>

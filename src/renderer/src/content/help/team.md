@@ -6,7 +6,7 @@ The **Team** tab shows you the AI specialists available in your workspace. Think
 
 ## How the Team Works
 
-Agent Studio uses a **team-based** approach to AI assistance:
+Code Atelier uses a **team-based** approach to AI assistance:
 
 1. **The Generalist** — Your primary point of contact. You chat directly with this agent. It understands your project and can answer questions, explain code, and handle straightforward tasks on its own.
 
@@ -71,7 +71,7 @@ You can also see live agent activity in the **Agent Panel** on the right side of
 
 ## Customizing Your Team
 
-Agent Studio comes with a default set of 14 specialists covering the most common development tasks. You can customize your team in the **Specialists** section of the settings:
+Code Atelier comes with a default set of 14 specialists covering the most common development tasks. You can customize your team in the **Specialists** section of the settings:
 
 - **Enable/disable** specific specialists based on your project's needs
 - **Adjust priorities** to tell the Orchestrator which agents to prefer
