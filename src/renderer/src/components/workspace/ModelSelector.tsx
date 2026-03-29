@@ -1,6 +1,7 @@
 import { RotateCcw } from 'lucide-react'
 import { AVAILABLE_MODELS, DEFAULT_MODEL_CONFIG } from '../../../../shared/constants'
 import type { ModelAction } from '../../../../shared/types'
+import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
 
 interface ModelSelectorProps {
   action: ModelAction
@@ -27,18 +28,22 @@ export default function ModelSelector({
 
   return (
     <div
-      className={`relative bg-surface-overlay border rounded-xl p-4 shadow-sm transition-colors ${
-        isOverridden ? 'border-amber-500/40 bg-amber-500/[0.03]' : 'border-border-subtle'
+      className={`relative bg-surface-overlay border rounded p-4 shadow-sm transition-colors ${
+        isOverridden ? 'border-mode-build/40 bg-mode-build/[0.03]' : 'border-border-subtle'
       }`}
     >
       {/* Left accent bar for overridden items */}
       {isOverridden && (
-        <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-amber-400" />
+        <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-mode-build" />
       )}
 
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5 min-w-0">
-          <span className="text-base flex-shrink-0">{icon}</span>
+          {AGENT_ICON_MAP[action] ? (
+            <AgentIcon agentType={action} size={22} />
+          ) : (
+            <span className="text-base flex-shrink-0">{icon}</span>
+          )}
           <div className="min-w-0">
             <h4 className="text-sm font-medium text-text-primary">{label}</h4>
             <p className="text-xs text-text-muted mt-0.5">{description}</p>
@@ -82,7 +87,7 @@ export default function ModelSelector({
         {isOverridden && (
           <button
             onClick={() => onReset(action)}
-            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-amber-400 hover:bg-amber-500/10 transition-colors flex-shrink-0"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-mode-build-text hover:bg-mode-build-muted transition-colors flex-shrink-0"
             title={`Reset to default (${defaultModelLabel})`}
           >
             <RotateCcw size={12} />
@@ -93,7 +98,7 @@ export default function ModelSelector({
 
       {/* Override warning label */}
       {isOverridden && (
-        <p className="text-xs text-amber-400/80 mt-2">
+        <p className="text-xs text-mode-build-text/80 mt-2">
           ⚠️ Modified — default is {defaultModelLabel}
         </p>
       )}

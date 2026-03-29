@@ -225,9 +225,14 @@ function App(): React.JSX.Element {
   if (isProfileLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-surface-base">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-text-muted">Loading...</span>
+        <div className="flex flex-col items-center gap-4">
+          <div
+            className="w-10 h-10 border border-primary/30 rounded animate-pulse"
+            style={{ transform: 'rotate(45deg)' }}
+          >
+            <div className="w-full h-full border border-primary/10 rounded m-0.5" />
+          </div>
+          <span className="text-sm text-text-muted tracking-widest">Loading...</span>
         </div>
       </div>
     )

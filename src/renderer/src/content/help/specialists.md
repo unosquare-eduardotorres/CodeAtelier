@@ -116,7 +116,7 @@ The specialist system is based on YAML configuration files. You can customize ex
 The Orchestrator analyzes your request and matches it to the specialist whose expertise best fits the task. If you think the wrong specialist was chosen, provide more context in your request to help the Orchestrator make a better decision.
 
 **Q: Can multiple specialists work at the same time?**
-Yes. This is one of Agent Studio's key strengths. When a task can be parallelized, the Orchestrator assigns different parts to different specialists who work simultaneously.
+Yes. This is one of Code Atelier's key strengths. When a task can be parallelized, the Orchestrator assigns different parts to different specialists who work simultaneously.
 
 **Q: Do specialists have access to my whole codebase?**
 Specialists can read files in your project directory based on their configured permissions. They see the relevant parts of your codebase needed for their task, not arbitrary files on your computer.

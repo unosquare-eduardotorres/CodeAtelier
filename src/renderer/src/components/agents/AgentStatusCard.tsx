@@ -12,19 +12,20 @@ import {
 import type { AgentStatus, ModelTier, ComplexityTier } from '../../../../shared/types'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
 import { useSpecialistStore, useAgentStore } from '@renderer/store'
+import { AgentIcon } from '@renderer/assets/agent-icons'
 
 // Model tier badge config
 const MODEL_BADGE: Record<ModelTier, { label: string; bg: string; text: string }> = {
-  haiku: { label: 'H', bg: 'bg-emerald-500/15', text: 'text-emerald-400' },
-  sonnet: { label: 'S', bg: 'bg-blue-500/15', text: 'text-blue-400' },
-  opus: { label: 'O', bg: 'bg-purple-500/15', text: 'text-purple-400' }
+  haiku: { label: 'H', bg: 'bg-success-muted', text: 'text-success' },
+  sonnet: { label: 'S', bg: 'bg-info-muted', text: 'text-info' },
+  opus: { label: 'O', bg: 'bg-mode-plan-muted', text: 'text-mode-plan-text' }
 }
 
 // Complexity tier dot colors
 const TIER_DOT: Record<ComplexityTier, string> = {
-  simple: 'bg-emerald-400',
-  moderate: 'bg-yellow-400',
-  complex: 'bg-red-400'
+  simple: 'bg-success',
+  moderate: 'bg-warning',
+  complex: 'bg-danger'
 }
 
 interface AgentStatusCardProps {
@@ -38,42 +39,42 @@ const STATUS_CONFIG: Record<
   idle: {
     bg: 'bg-surface-overlay',
     text: 'text-text-secondary',
-    dot: 'bg-gray-500',
+    dot: 'bg-text-muted',
     icon: <Pause size={12} />,
     label: 'Idle'
   },
   thinking: {
-    bg: 'bg-yellow-500/10',
-    text: 'text-yellow-400',
-    dot: 'bg-yellow-400',
+    bg: 'bg-warning-muted',
+    text: 'text-warning',
+    dot: 'bg-warning',
     icon: <Brain size={12} />,
     label: 'Thinking'
   },
   writing: {
-    bg: 'bg-blue-500/10',
-    text: 'text-blue-400',
-    dot: 'bg-blue-400',
+    bg: 'bg-info-muted',
+    text: 'text-info',
+    dot: 'bg-info',
     icon: <Pencil size={12} />,
     label: 'Writing'
   },
   reviewing: {
-    bg: 'bg-purple-500/10',
-    text: 'text-purple-400',
-    dot: 'bg-purple-400',
+    bg: 'bg-mode-plan-muted',
+    text: 'text-mode-plan-text',
+    dot: 'bg-mode-plan',
     icon: <Eye size={12} />,
     label: 'Reviewing'
   },
   completed: {
-    bg: 'bg-green-500/10',
-    text: 'text-green-400',
-    dot: 'bg-green-400',
+    bg: 'bg-success-muted',
+    text: 'text-success',
+    dot: 'bg-success',
     icon: <CheckCircle size={12} />,
     label: 'Completed'
   },
   failed: {
-    bg: 'bg-red-500/10',
-    text: 'text-red-400',
-    dot: 'bg-red-400',
+    bg: 'bg-danger-muted',
+    text: 'text-danger',
+    dot: 'bg-danger',
     icon: <XCircle size={12} />,
     label: 'Failed'
   }
@@ -149,9 +150,11 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
         }}
       >
         <div className="flex items-center gap-2">
-          <span className="text-base" role="img" aria-label={meta?.displayName ?? status.agentType}>
-            {meta?.icon ?? '🔧'}
-          </span>
+          <AgentIcon
+            agentType={status.agentType}
+            size={20}
+            className="text-text-secondary"
+          />
           <span className="text-sm font-medium text-text-primary">
             {meta?.displayName ??
               status.agentType
@@ -212,7 +215,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
             <span
               key={i}
               className={`text-[10px] px-1.5 py-0.5 rounded ${
-                g.passed ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'
+                g.passed ? 'bg-success-muted text-success' : 'bg-danger-muted text-danger'
               }`}
               title={g.summary}
             >
@@ -226,7 +229,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
       {abandonment && (
         <div className="mt-1">
           <span
-            className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-400"
+            className="text-[10px] px-1.5 py-0.5 rounded bg-warning-muted text-warning"
             title={`Pattern: ${abandonment.pattern}`}
           >
             ⚠ Possible abandonment

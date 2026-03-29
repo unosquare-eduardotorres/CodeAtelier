@@ -7,8 +7,8 @@ export const CORE_AGENT_DEFAULTS: Record<
   string,
   { displayName: string; avatarKey: string; color: string }
 > = {
-  generalist: { displayName: 'Da Vinci', avatarKey: 'da-vinci', color: '#D97706' },
-  coordinator: { displayName: 'Stravinsky', avatarKey: 'stravinsky', color: '#8B5CF6' }
+  generalist: { displayName: 'Da Vinci', avatarKey: 'renaissance-painter', color: '#D97706' },
+  coordinator: { displayName: 'Stravinsky', avatarKey: 'renaissance-astronomer', color: '#8B5CF6' }
 }
 
 /**
@@ -16,19 +16,19 @@ export const CORE_AGENT_DEFAULTS: Record<
  * Used when no custom avatar_url is set on the specialist.
  */
 export const SPECIALIST_DEFAULT_AVATARS: Record<string, string> = {
-  'react-architect': 'hoodie-dev',
-  'dotnet-architect': 'business-man',
-  'electron-architect': 'glasses-guy',
-  'agentic-architect': 'robot',
-  'db-architect': 'scientist',
-  'ux-ui-specialist': 'ponytail-girl',
-  'git-github-specialist': 'ninja',
-  'requirements-specialist': 'business-woman',
-  'code-planner': 'glasses-guy',
-  'execution-planner': 'superhero',
-  'cicd-devops': 'cap-guy',
-  'cloud-infrastructure': 'bearded-man',
-  'docs-diagrams-specialist': 'woman-curly'
+  'react-architect': 'renaissance-architect',
+  'dotnet-architect': 'renaissance-scribe',
+  'electron-architect': 'renaissance-scholar',
+  'agentic-architect': 'renaissance-alchemist',
+  'db-architect': 'renaissance-alchemist',
+  'ux-ui-specialist': 'renaissance-painter',
+  'git-github-specialist': 'renaissance-navigator',
+  'requirements-specialist': 'renaissance-diplomat',
+  'code-planner': 'renaissance-architect',
+  'execution-planner': 'renaissance-knight',
+  'cicd-devops': 'renaissance-explorer',
+  'cloud-infrastructure': 'renaissance-astronomer',
+  'docs-diagrams-specialist': 'renaissance-scribe'
 }
 
 /**
@@ -38,5 +38,5 @@ export function getDefaultAvatarForRole(role: string): string {
   if (role in CORE_AGENT_DEFAULTS) {
     return CORE_AGENT_DEFAULTS[role].avatarKey
   }
-  return SPECIALIST_DEFAULT_AVATARS[role] ?? 'robot'
+  return SPECIALIST_DEFAULT_AVATARS[role] ?? 'renaissance-scholar'
 }

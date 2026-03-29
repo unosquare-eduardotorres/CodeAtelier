@@ -26,7 +26,7 @@ export const HELP_SECTIONS: HelpSectionMeta[] = [
     id: 'getting-started',
     title: 'Getting Started',
     icon: 'Rocket',
-    description: 'Your first steps with Agent Studio',
+    description: 'Your first steps with Code Atelier',
     order: 0
   },
   {

@@ -99,7 +99,7 @@ export default function WorkspaceSettingsContent({
         ) : (
           <div className="p-6">
             <div className="flex items-center gap-2 mb-4">
-              <Lightbulb size={16} className="text-yellow-400" />
+              <Lightbulb size={16} className="text-warning" />
               <h3 className="text-sm font-semibold text-text-primary">Ideas</h3>
             </div>
             <p className="text-xs text-text-secondary mb-4">

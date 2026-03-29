@@ -15,17 +15,17 @@ function CompactSuggestionBanner({
   onDismiss: () => void
 }): React.JSX.Element {
   return (
-    <div className="mx-4 mb-2 px-4 py-2.5 rounded-lg bg-warning-muted border border-amber-600/30 flex items-center gap-3">
+    <div className="mx-4 mb-2 px-4 py-2.5 rounded-lg bg-warning-muted border border-warning/30 flex items-center gap-3">
       <span className="text-warning text-sm font-medium">!</span>
       <div className="flex-1">
-        <p className="text-sm text-amber-200">
+        <p className="text-sm text-warning">
           Context is getting large ({Math.round(inputTokens / 1000)}K tokens). Consider compacting
           to preserve performance.
         </p>
       </div>
       <button
         onClick={onCompact}
-        className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors"
+        className="px-3 py-1 rounded bg-mode-build hover:brightness-110 text-white text-xs font-medium transition-colors"
       >
         /compact
       </button>
@@ -188,7 +188,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                     .slice(-5)
                     .map((activity) => (
                       <div key={activity.id} className="flex items-center gap-2 text-xs">
-                        <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
                         <span className="font-mono text-text-body">{activity.toolName}</span>
                         {activity.input && (
                           <span className="text-text-muted truncate max-w-[300px]">

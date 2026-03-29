@@ -1,5 +1,16 @@
 import log, { dbLogger } from './logger'
-import { app, shell, BrowserWindow, Menu, session, dialog, crashReporter } from 'electron'
+import {
+  app,
+  shell,
+  BrowserWindow,
+  Menu,
+  Tray,
+  nativeImage,
+  nativeTheme,
+  session,
+  dialog,
+  crashReporter
+} from 'electron'
 import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -16,6 +27,38 @@ import { eventLoggerService } from './services/event-logger.service'
 log.initialize()
 
 let mainWindow: BrowserWindow | null = null
+let splashWindow: BrowserWindow | null = null
+
+function createSplashWindow(): void {
+  splashWindow = new BrowserWindow({
+    width: 400,
+    height: 320,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    transparent: false,
+    backgroundColor: '#0F1517',
+    center: true,
+    skipTaskbar: true,
+    icon,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  // Load splash HTML — in dev from renderer URL base, in prod from file
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    splashWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/splash.html`)
+  } else {
+    splashWindow.loadFile(join(__dirname, '../renderer/splash.html'))
+  }
+
+  splashWindow.once('ready-to-show', () => {
+    splashWindow?.show()
+  })
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -26,7 +69,7 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',
-    backgroundColor: '#111827',
+    backgroundColor: '#0F1517',
     icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -37,9 +80,32 @@ function createWindow(): void {
     }
   })
 
+  const splashStartTime = Date.now()
+  const MINIMUM_SPLASH_DURATION = 3000 // 3s minimum for brand feel
+
   mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+    const elapsed = Date.now() - splashStartTime
+    const remaining = Math.max(0, MINIMUM_SPLASH_DURATION - elapsed)
+
+    setTimeout(() => {
+      mainWindow?.show()
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.destroy()
+        splashWindow = null
+      }
+    }, remaining)
   })
+
+  // Safety timeout: if main window fails to load within 15s, show it anyway
+  setTimeout(() => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.destroy()
+      splashWindow = null
+    }
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show()
+    }
+  }, 15000)
 
   // ── Security: Validate URLs before opening externally (#2) ──
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -79,7 +145,7 @@ function createWindow(): void {
     dbLogger.error('Failed to initialize database:', error)
     dialog.showErrorBox(
       'Database Error',
-      `Agent Studio failed to initialize its database. The application may not work correctly.\n\n${(error as Error).message}`
+      `Code Atelier failed to initialize its database. The application may not work correctly.\n\n${(error as Error).message}`
     )
   }
 
@@ -182,16 +248,30 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.agent-studio')
+  electronApp.setAppUserModelId('com.code-atelier')
+
+  // ── Code Atelier: Force dark mode always ──
+  nativeTheme.themeSource = 'dark'
 
   // Set dock icon on macOS (BrowserWindow icon option is ignored on macOS)
   if (process.platform === 'darwin' && app.dock) {
     app.dock.setIcon(icon)
   }
 
+  // ── macOS Tray Icon (Code Atelier diamond sigil) ──
+  if (process.platform === 'darwin') {
+    const trayIconPath = join(__dirname, '../../resources/trayTemplate@2x.png')
+    const trayIcon = nativeImage.createFromPath(trayIconPath)
+    trayIcon.setTemplateImage(true)
+    const tray = new Tray(trayIcon)
+    tray.setToolTip('Code Atelier')
+    // Keep reference to prevent GC
+    ;(app as Record<string, unknown>)._tray = tray
+  }
+
   // ── Crash reporter: captures GPU/renderer native crashes locally ──
   crashReporter.start({
-    productName: 'Agent Studio',
+    productName: 'Code Atelier',
     submitURL: '',
     uploadToServer: false
   })
@@ -221,6 +301,7 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  createSplashWindow()
   createWindow()
 
   app.on('activate', () => {

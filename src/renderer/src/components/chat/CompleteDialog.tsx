@@ -113,11 +113,11 @@ export default function CompleteDialog({
   const changeTypeColor = (type: string): string => {
     switch (type) {
       case 'created':
-        return 'text-green-400'
+        return 'text-success'
       case 'modified':
-        return 'text-amber-400'
+        return 'text-warning'
       case 'deleted':
-        return 'text-red-400'
+        return 'text-danger'
       default:
         return 'text-text-secondary'
     }
@@ -221,7 +221,7 @@ export default function CompleteDialog({
               placeholder="Describe the changes in this PR..."
             />
           )}
-          {generationError && <p className="text-xs text-amber-400 mt-1">{generationError}</p>}
+          {generationError && <p className="text-xs text-warning mt-1">{generationError}</p>}
         </div>
 
         {/* File changes list */}
@@ -245,8 +245,8 @@ export default function CompleteDialog({
         )}
 
         {fileChanges.length === 0 && !isGenerating && (
-          <div className="mb-4 p-3 bg-warning-muted border border-amber-500/20 rounded-lg">
-            <div className="flex items-center gap-2 text-amber-400 text-sm">
+          <div className="mb-4 p-3 bg-warning-muted border border-warning/20 rounded-lg">
+            <div className="flex items-center gap-2 text-warning text-sm">
               <AlertTriangle size={14} />
               <span>No file changes tracked for this conversation yet.</span>
             </div>
@@ -255,8 +255,8 @@ export default function CompleteDialog({
 
         {/* Error display */}
         {error && (
-          <div className="mb-4 p-3 bg-danger-muted border border-red-500/20 rounded-lg">
-            <div className="flex items-start gap-2 text-red-400 text-sm">
+          <div className="mb-4 p-3 bg-danger-muted border border-danger/20 rounded-lg">
+            <div className="flex items-start gap-2 text-danger text-sm">
               <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
               <span>{error}</span>
             </div>

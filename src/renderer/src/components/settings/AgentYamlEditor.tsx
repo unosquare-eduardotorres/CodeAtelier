@@ -49,15 +49,15 @@ export default function AgentYamlEditor({
     <div className="flex flex-col gap-2">
       {/* Toolbar */}
       <div className="flex items-center justify-between">
-        <span className="text-[11px] text-gray-500 font-mono truncate">{filePath}</span>
+        <span className="text-[11px] text-text-muted font-mono truncate">{filePath}</span>
         {!readOnly && (
           <button
             onClick={handleSave}
             disabled={!hasChanges || isSaving}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               hasChanges
-                ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                ? 'bg-primary hover:bg-primary-hover text-white'
+                : 'bg-surface-raised text-text-muted cursor-not-allowed'
             }`}
           >
             {isSaving ? (
@@ -77,7 +77,7 @@ export default function AgentYamlEditor({
 
       {/* Error */}
       {error && (
-        <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+        <div className="px-3 py-2 rounded-lg bg-danger-muted border border-danger/20 text-xs text-danger">
           {error}
         </div>
       )}

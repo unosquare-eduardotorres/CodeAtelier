@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Code Planner: City Planner / Surveyor -->
+  <circle cx="12" cy="12" r="12" fill="#0E1518"/>
+  <path d="M3 24 Q3 17 12 15 Q21 17 21 24Z" fill="#1A2A38"/>
+  <path d="M8 16 Q12 18 16 16 Q15 17.5 12 18 Q9 17.5 8 16Z" fill="#7ABFDB" opacity="0.3"/>
+  <ellipse cx="12" cy="11" rx="4.5" ry="5" fill="#B8906A"/>
+  <ellipse cx="12" cy="6.5" rx="4.5" ry="2.2" fill="#1A1408"/>
+  <path d="M7.5 9 Q7 7 7.5 6 Q9.5 5 12 5 Q14.5 5 16.5 6 Q17 7 16.5 9" fill="#1A1408"/>
+  <!-- Side part -->
+  <line x1="12" y1="5" x2="11" y2="7.5" stroke="#B8906A" stroke-width="0.3" opacity="0.4"/>
+  <ellipse cx="10.5" cy="11" rx="0.85" ry="0.65" fill="#0A0806"/>
+  <ellipse cx="13.5" cy="11" rx="0.85" ry="0.65" fill="#0A0806"/>
+  <circle cx="10.8" cy="10.7" r="0.28" fill="rgba(255,255,255,0.65)"/>
+  <circle cx="13.8" cy="10.7" r="0.28" fill="rgba(255,255,255,0.65)"/>
+  <path d="M10.5 13 Q12 13.5 13.5 13" fill="none" stroke="#7A4A28" stroke-width="0.5"/>
+  <!-- T-square prop -->
+  <line x1="17" y1="17" x2="17" y2="23" stroke="#B8976A" stroke-width="0.7" opacity="0.45"/>
+  <line x1="15" y1="17" x2="19" y2="17" stroke="#B8976A" stroke-width="0.7" opacity="0.45"/>
+</svg>

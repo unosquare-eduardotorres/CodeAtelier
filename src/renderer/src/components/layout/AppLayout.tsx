@@ -45,15 +45,15 @@ function OrchestratorDot({ status }: { status: string }): React.JSX.Element {
   const dotBase = 'w-2 h-2 rounded-full inline-block'
   switch (status) {
     case 'running':
-      return <span className={`${dotBase} bg-green-400`} title="Orchestrator running" />
+      return <span className={`${dotBase} bg-success`} title="Orchestrator running" />
     case 'starting':
       return (
-        <span className={`${dotBase} bg-yellow-400 animate-pulse`} title="Orchestrator starting" />
+        <span className={`${dotBase} bg-warning animate-pulse`} title="Orchestrator starting" />
       )
     case 'error':
-      return <span className={`${dotBase} bg-red-400`} title="Orchestrator error" />
+      return <span className={`${dotBase} bg-danger`} title="Orchestrator error" />
     default:
-      return <span className={`${dotBase} bg-gray-500`} title="Orchestrator stopped" />
+      return <span className={`${dotBase} bg-text-muted`} title="Orchestrator stopped" />
   }
 }
 
@@ -289,7 +289,7 @@ export default function AppLayout(): React.JSX.Element {
       >
         {/* Centered title */}
         <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-text-secondary pointer-events-none">
-          Agent Studio
+          Code Atelier
         </span>
 
         {/* Right-aligned buttons */}
@@ -400,8 +400,8 @@ export default function AppLayout(): React.JSX.Element {
               <span
                 className={`text-xs px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
                   activeConversation.mode === 'plan'
-                    ? 'bg-purple-600/20 text-purple-400'
-                    : 'bg-amber-600/20 text-amber-400'
+                    ? 'bg-mode-plan-muted text-mode-plan-text'
+                    : 'bg-mode-build-muted text-mode-build-text'
                 }`}
               >
                 {activeConversation.mode === 'plan' ? (

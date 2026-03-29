@@ -7,63 +7,102 @@
    4-layer surface system + semantic text/border/accent colors
    ═══════════════════════════════════════════════════════════════════════════ */
 @theme {
+  /* ═══════════════════════════════════════════════════════════════════════
+     Code Atelier Design Tokens — Renaissance-inspired gold/teal palette
+     See docs/CodeAtelier/Code-Atelier-Brand-System.md for full spec
+     ═══════════════════════════════════════════════════════════════════════ */
+
   /* ── Surface layers (dark → light) ── */
-  --color-surface-base: oklch(0.145 0.01 260); /* Deepest: app shell, titlebar, status bar */
-  --color-surface-raised: oklch(0.175 0.012 260); /* Sidebars, panels */
-  --color-surface-overlay: oklch(0.21 0.014 260); /* Cards, chat bubbles, dropdowns */
-  --color-surface-float: oklch(0.25 0.015 260); /* Modals, popovers, tooltips */
+  --color-surface-base: #090D0F; /* Near-black obsidian: app shell, titlebar, status bar */
+  --color-surface-raised: #111C21; /* Deep teal-black: sidebars, panels */
+  --color-surface-overlay: #162228; /* Dark muted teal: cards, chat bubbles, dropdowns */
+  --color-surface-float: #1E2C30; /* Elevated dark: modals, popovers, tooltips */
 
-  /* ── Border layers ── */
-  --color-border-subtle: oklch(0.28 0.01 260); /* Between same-level surfaces */
-  --color-border-default: oklch(0.33 0.012 260); /* Between different-level surfaces */
-  --color-border-strong: oklch(0.4 0.014 260); /* Emphasis borders */
+  /* ── Border layers (gold-based) ── */
+  --color-border-subtle: rgba(184, 151, 106, 0.15); /* Between same-level surfaces */
+  --color-border-default: rgba(184, 151, 106, 0.28); /* Between different-level surfaces */
+  --color-border-strong: rgba(184, 151, 106, 0.45); /* Emphasis borders */
 
-  /* ── Text hierarchy ── */
-  --color-text-primary: oklch(0.92 0.01 260); /* Headings, important text */
-  --color-text-body: oklch(0.82 0.01 260); /* Body text, chat messages */
-  --color-text-secondary: oklch(0.65 0.01 260); /* Labels, secondary info */
-  --color-text-muted: oklch(0.60 0.01 260); /* Timestamps, meta — safer 5.2:1 contrast margin on surface-base */
+  /* ── Text hierarchy (gold tones on dark) ── */
+  --color-text-primary: #C8B89A; /* Bright Gold: headings, important text */
+  --color-text-body: #8A9A9E; /* Mist: body text, chat messages */
+  --color-text-secondary: #6A7A7E; /* Fog: labels, secondary info */
+  --color-text-muted: #5A6A6E; /* Dim (bumped for WCAG AA): timestamps, meta */
 
-  /* ── Primary accent (Indigo) ── */
-  --color-primary: oklch(0.585 0.233 277);
-  --color-primary-hover: oklch(0.63 0.24 277);
-  --color-primary-muted: oklch(0.585 0.233 277 / 0.15);
-  --color-primary-text: oklch(0.72 0.18 277);
+  /* ── Primary accent (Atelier Gold) ── */
+  --color-primary: #B8976A;
+  --color-primary-hover: #C8B89A;
+  --color-primary-muted: rgba(184, 151, 106, 0.15);
+  --color-primary-text: #C8B89A;
 
-  /* ── Accent (Cyan/Teal — active indicators, links) ── */
-  --color-accent: oklch(0.72 0.15 200);
-  --color-accent-muted: oklch(0.72 0.15 200 / 0.15);
+  /* ── Accent (Jewel Copper — ornamental highlights, links) ── */
+  --color-accent: #C4714A;
+  --color-accent-muted: rgba(196, 113, 74, 0.15);
+
+  /* ── Deep Teal / Forest Green accent (for mode badges, active states) ── */
+  --color-teal: #1F6B5E;
+  --color-teal-light: #2A8A78;
+  --color-teal-muted: rgba(31, 107, 94, 0.18);
+  --color-teal-text: #6DC4B2;
+  --color-forest: #1A4A38;
+  --color-forest-light: #5DB88A;
 
   /* ── Semantic status ── */
-  --color-success: oklch(0.65 0.2 155);
-  --color-success-muted: oklch(0.65 0.2 155 / 0.15);
-  --color-warning: oklch(0.75 0.18 85);
-  --color-warning-muted: oklch(0.75 0.18 85 / 0.15);
-  --color-danger: oklch(0.6 0.22 25);
-  --color-danger-muted: oklch(0.6 0.22 25 / 0.15);
-  --color-info: oklch(0.65 0.18 250);
-  --color-info-muted: oklch(0.65 0.18 250 / 0.15);
+  --color-success: #5DB88A;
+  --color-success-muted: rgba(93, 184, 138, 0.15);
+  --color-warning: #D49353;
+  --color-warning-muted: rgba(212, 147, 83, 0.15);
+  --color-danger: #C46B6B;
+  --color-danger-muted: rgba(196, 107, 107, 0.15);
+  --color-info: #6B9EC4;
+  --color-info-muted: rgba(107, 158, 196, 0.15);
 
   /* ── Mode tokens (Plan / Build) ── */
-  --color-mode-plan: oklch(0.55 0.2 295);
-  --color-mode-plan-muted: oklch(0.55 0.2 295 / 0.3);
-  --color-mode-plan-text: oklch(0.78 0.14 295);
-  --color-mode-plan-border: oklch(0.55 0.2 295 / 0.3);
+  --color-mode-plan: #3C4B46; /* Forest Teal — Precision pillar */
+  --color-mode-plan-muted: rgba(60, 75, 70, 0.3);
+  --color-mode-plan-text: #8A9A9E;
+  --color-mode-plan-border: rgba(60, 75, 70, 0.3);
 
-  --color-mode-build: oklch(0.65 0.18 85);
-  --color-mode-build-muted: oklch(0.65 0.18 85 / 0.3);
-  --color-mode-build-text: oklch(0.82 0.13 85);
-  --color-mode-build-border: oklch(0.65 0.18 85 / 0.3);
+  --color-mode-build: #6A4638; /* Terracotta — Artistry pillar */
+  --color-mode-build-muted: rgba(106, 70, 56, 0.3);
+  --color-mode-build-text: #D49353;
+  --color-mode-build-border: rgba(106, 70, 56, 0.3);
+
+  /* ── Panel / Pillar colors (Four Pillars of Craftsmanship) ── */
+  --color-panel-olive: #3A3531; /* Architecture */
+  --color-panel-terracotta: #6A4638; /* Artistry */
+  --color-panel-teal: #3C4B46; /* Precision */
+  --color-panel-navy: #283337; /* Vision */
+
+  /* ── Agent-specific colors ── */
+  --color-agent-react: #7ABFDB;
+  --color-agent-dotnet: #9B7FD4;
+  --color-agent-agentic: #D4A843;
+  --color-agent-postgres: #6B9EC4;
+  --color-agent-ux: #C87A9B;
+  --color-agent-git: #8A9A9E;
+  --color-agent-requirements: #5DB88A;
+  --color-agent-codeplanner: #8A9A8E;
+  --color-agent-execution: #D49353;
+  --color-agent-cicd: #C46B6B;
+  --color-agent-cloud: #5BB8A8;
+
+  /* ── Special-purpose tokens ── */
+  --color-user-bubble: rgba(184, 151, 106, 0.06); /* User message background */
+  --color-grill: #C4714A; /* Grill mode accent (Jewel Copper) */
+  --color-grill-muted: rgba(196, 113, 74, 0.15);
+  --color-gold-glow: rgba(184, 151, 106, 0.15); /* Radial glow behind focal elements */
+  --color-gold-muted: #8B6F4A; /* Muted Gold for gradient endpoints */
 
   /* ── Component tokens (3rd layer) ── */
   --color-button-primary-bg: var(--color-primary);
   --color-button-primary-hover: var(--color-primary-hover);
   --color-button-danger-bg: var(--color-danger);
 
-  --color-card-bg: var(--color-surface-overlay);
+  --color-card-bg: rgba(184, 151, 106, 0.02); /* Near-transparent gold overlay */
   --color-card-border: var(--color-border-subtle);
 
-  --color-input-bg: var(--color-surface-base);
+  --color-input-bg: #0D1618; /* Slightly lighter than surface-base */
   --color-input-border: var(--color-border-default);
   --color-input-focus: var(--color-primary);
 
@@ -78,12 +117,17 @@
    Motion Token System — durations + easing curves
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --duration-fast: 100ms;
-  --duration-normal: 200ms;
-  --duration-slow: 300ms;
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* enter */
+  --duration-fast: 200ms;
+  --duration-normal: 500ms;
+  --duration-slow: 1200ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* enter — graceful deceleration */
   --ease-in: cubic-bezier(0.55, 0, 1, 0.45); /* exit */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* playful */
+
+  /* ── Code Atelier typography ── */
+  --ca-font-display: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+  --ca-font-body: 'EB Garamond', 'Cormorant Garamond', Georgia, serif;
+  --ca-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 /* ── Reduced-motion: accessibility-first ── */
@@ -106,6 +150,63 @@
   transform: scale(0.97);
 }
 
+/* ── Hover lift — Code Atelier card/button hover pattern ── */
+.hover-lift {
+  transition: transform var(--duration-normal) var(--ease-out),
+              box-shadow var(--duration-normal) var(--ease-out);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(184, 151, 106, 0.12);
+}
+
+/* ── Code Atelier button utilities ── */
+.btn-primary {
+  background: linear-gradient(135deg, #B8976A, #8B6F4A);
+  color: #090D0F;
+  font-family: var(--ca-font-display);
+  font-weight: 500;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  padding: 14px 40px;
+  border-radius: 2px;
+  border: none;
+  transition: transform var(--duration-normal) var(--ease-out),
+              box-shadow var(--duration-normal) var(--ease-out);
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(184, 151, 106, 0.2);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: #B8976A;
+  font-family: var(--ca-font-display);
+  font-weight: 500;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  padding: 14px 40px;
+  border-radius: 2px;
+  border: 1px solid rgba(184, 151, 106, 0.3);
+  transition: transform var(--duration-normal) var(--ease-out),
+              box-shadow var(--duration-normal) var(--ease-out);
+}
+.btn-secondary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(184, 151, 106, 0.2);
+}
+
+/* ── UI label utility — uppercase Cormorant for buttons/nav/labels ── */
+.label-ui {
+  font-family: var(--ca-font-display);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
 @layer base {
   body {
     @apply bg-surface-base text-text-body antialiased;
@@ -113,6 +214,24 @@
 
   #root {
     @apply h-screen w-screen overflow-hidden;
+  }
+
+  /* ── Code Atelier heading typography ── */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--ca-font-display);
+    font-weight: 400;
+    color: var(--color-text-primary);
+  }
+
+  /* ── Code/monospace override ── */
+  code, pre, .font-mono, kbd, samp {
+    font-family: var(--ca-font-mono);
+  }
+
+  /* ── Text selection ── */
+  ::selection {
+    background: rgba(184, 151, 106, 0.3);
+    color: #C8B89A;
   }
 
   /* ── Standardized transitions for all interactive elements ── */
@@ -157,8 +276,8 @@
     --tw-prose-code: var(--color-primary-text);
     --tw-prose-bullets: var(--color-text-secondary);
     --tw-prose-counters: var(--color-text-secondary);
-    font-size: 16px;
-    line-height: 1.6;
+    font-size: 17px;
+    line-height: 1.72;
     max-width: 72ch; /* 60-75ch for optimal readability */
   }
 
@@ -167,32 +286,39 @@
     margin-bottom: 0.5em;
   }
 
-  /* Headings — clear hierarchy, generous spacing */
+  /* Headings — Cormorant Garamond, weight 400 (elegance from the typeface) */
   .prose h1,
   .prose h2,
   .prose h3,
   .prose h4 {
     color: var(--color-text-primary);
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    font-family: var(--ca-font-display);
+    font-weight: 400;
+    letter-spacing: 0.02em;
   }
 
   .prose h1 {
-    font-size: 1.5em; /* ~21px — clear step from h2 */
+    font-size: 2em; /* ~34px — clear dominant heading */
     margin-top: 1.2em;
     margin-bottom: 0.6em;
   }
 
   .prose h2 {
-    font-size: 1.25em; /* ~17.5px — clear step from h3 */
+    font-size: 1.6em; /* ~27px — clear step from h3 */
     margin-top: 1.1em;
     margin-bottom: 0.5em;
   }
 
   .prose h3 {
-    font-size: 1.125em; /* ~15.75px — clear step from body */
+    font-size: 1.3em; /* ~22px — clear step from body */
     margin-top: 0.9em;
     margin-bottom: 0.4em;
+  }
+
+  .prose h4 {
+    font-size: 1.1em; /* ~19px */
+    margin-top: 0.8em;
+    margin-bottom: 0.35em;
   }
 
   /* Bold — brighter than body text */
@@ -230,13 +356,13 @@
     border: 1px solid var(--color-border-subtle);
   }
 
-  /* Code blocks — 14px for extended code reading comfort */
+  /* Code blocks — 15px for extended code reading comfort */
   .prose pre {
-    font-size: 14px;
+    font-size: 15px;
   }
 
   .prose code {
-    font-size: 14px;
+    font-size: 15px;
   }
 
   /* ── Tables — the big fix ── */
@@ -288,7 +414,7 @@
 
   /* Zebra striping for better scanability on tables with 4+ rows */
   .prose tbody tr:nth-child(even) {
-    background: oklch(0.16 0.01 260 / 0.5);
+    background: rgba(184, 151, 106, 0.02);
   }
 
   .prose tbody tr:nth-child(even):hover {
@@ -349,23 +475,37 @@
   }
 }
 
-/* Custom scrollbar styling for dark theme */
+/* Custom scrollbar styling — gold-tinted for Code Atelier */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--color-surface-raised);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border-default);
+  background: rgba(184, 151, 106, 0.20);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-strong);
+  background: rgba(184, 151, 106, 0.35);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Grain overlay — subtle texture for Code Atelier atmosphere (3% opacity)
+   ═══════════════════════════════════════════════════════════════════════════ */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23g)'/%3E%3C/svg%3E");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

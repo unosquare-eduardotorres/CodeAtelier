@@ -113,7 +113,7 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
               return (
                 <div
                   key={skill.name}
-                  className="bg-surface-overlay border border-border-subtle rounded-xl p-4 hover:border-border-default transition-colors shadow-sm"
+                  className="bg-surface-overlay border border-border-subtle rounded p-4 hover:border-border-default transition-colors shadow-sm"
                 >
                   <div className="flex items-start gap-3">
                     {/* Icon */}
@@ -128,7 +128,7 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
                         <span
                           className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${
                             skill.isActive
-                              ? 'bg-green-500/10 text-green-400'
+                              ? 'bg-success-muted text-success'
                               : 'bg-surface-float text-text-muted'
                           }`}
                         >
@@ -157,9 +157,9 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
 
                       {/* Staleness warning */}
                       {stale && (
-                        <div className="flex items-center gap-1.5 mt-2 px-2 py-1 rounded-md bg-warning-muted border border-amber-500/20">
-                          <AlertTriangle size={12} className="text-amber-400 flex-shrink-0" />
-                          <span className="text-xs text-amber-400">
+                        <div className="flex items-center gap-1.5 mt-2 px-2 py-1 rounded-md bg-warning-muted border border-mode-build/20">
+                          <AlertTriangle size={12} className="text-mode-build-text flex-shrink-0" />
+                          <span className="text-xs text-mode-build-text">
                             This skill might require an update.
                           </span>
                         </div>
@@ -196,7 +196,7 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
                       <button
                         onClick={() => setDeleteTarget(skill)}
                         disabled={isDeleting}
-                        className="p-1.5 rounded-md hover:bg-danger-muted text-text-muted hover:text-red-400 transition-colors disabled:opacity-50"
+                        className="p-1.5 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors disabled:opacity-50"
                         aria-label={`Delete ${skill.name}`}
                         title="Delete skill from workspace & CLAUDE.md"
                       >

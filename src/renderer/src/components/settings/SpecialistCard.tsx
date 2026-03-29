@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Loader2, Settings, Zap, Brain, Sparkles } from 'lucide-react'
 import type { MarketplaceSpecialist } from '../../../../shared/types'
+import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
 
 interface SpecialistCardProps {
   specialist: MarketplaceSpecialist
@@ -14,17 +15,17 @@ const MODEL_BADGES: Record<string, { label: string; icon: React.ReactNode; class
   opus: {
     label: 'Opus',
     icon: <Brain size={10} />,
-    className: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+    className: 'bg-mode-plan-muted text-mode-plan-text border-mode-plan/30'
   },
   sonnet: {
     label: 'Sonnet',
     icon: <Sparkles size={10} />,
-    className: 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+    className: 'bg-info-muted text-info border-info/30'
   },
   haiku: {
     label: 'Haiku',
     icon: <Zap size={10} />,
-    className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+    className: 'bg-success-muted text-success border-success/30'
   }
 }
 
@@ -44,9 +45,9 @@ export default function SpecialistCard({
   return (
     <div
       className={`
-        relative bg-surface-overlay border rounded-xl p-4 shadow-sm
+        relative bg-surface-overlay border rounded p-4 shadow-sm
         transition-all duration-200 min-h-[140px] flex flex-col
-        ${isActive ? 'border-emerald-500/40 hover:border-emerald-500/60' : 'border-border-subtle hover:border-border-default'}
+        ${isActive ? 'border-success/40 hover:border-success/60' : 'border-border-subtle hover:border-border-default'}
         ${isHovered ? 'shadow-md' : ''}
       `}
       onMouseEnter={() => setIsHovered(true)}
@@ -76,7 +77,7 @@ export default function SpecialistCard({
           <Settings size={14} />
         </button>
         <div
-          className={`w-2.5 h-2.5 rounded-full ${isActive ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]' : 'bg-neutral-500'}`}
+          className={`w-2.5 h-2.5 rounded-full ${isActive ? 'bg-success shadow-[0_0_6px_rgba(52,211,153,0.5)]' : 'bg-neutral-500'}`}
           title={isActive ? 'Active & Deployed' : 'Available'}
         />
       </div>
@@ -84,10 +85,14 @@ export default function SpecialistCard({
       {/* Icon + Name */}
       <div className="flex items-start gap-3 mb-3">
         <div
-          className="flex items-center justify-center w-10 h-10 rounded-lg text-lg flex-shrink-0"
-          style={{ backgroundColor: `${specialist.color}20`, borderColor: `${specialist.color}40` }}
+          className="flex items-center justify-center w-10 h-10 rounded-sm flex-shrink-0"
+          style={{ backgroundColor: `${specialist.color}18`, border: `1px solid ${specialist.color}35` }}
         >
-          {specialist.icon}
+          {AGENT_ICON_MAP[specialist.agentId] ? (
+            <AgentIcon agentType={specialist.agentId} size={28} />
+          ) : (
+            <span className="text-lg leading-none">{specialist.icon}</span>
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-text-primary truncate pr-12">
@@ -128,7 +133,7 @@ export default function SpecialistCard({
             onClick={onUndeploy}
             disabled={isDeploying}
             className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
-              text-red-400 border border-red-500/30 hover:bg-red-500/10
+              text-danger border border-danger/30 hover:bg-danger-muted
               disabled:opacity-50 disabled:cursor-not-allowed transition-colors min-h-[36px]"
           >
             {isDeploying ? <Loader2 size={12} className="animate-spin" /> : 'Undeploy'}
@@ -138,7 +143,7 @@ export default function SpecialistCard({
             onClick={onDeploy}
             disabled={isDeploying}
             className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
-              text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/10
+              text-success border border-success/30 hover:bg-success-muted
               disabled:opacity-50 disabled:cursor-not-allowed transition-colors min-h-[36px]"
           >
             {isDeploying ? <Loader2 size={12} className="animate-spin" /> : 'Deploy'}

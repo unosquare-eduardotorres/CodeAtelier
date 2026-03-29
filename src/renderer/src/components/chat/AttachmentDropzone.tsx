@@ -139,7 +139,7 @@ export default function AttachmentDropzone({
                     e.stopPropagation()
                     removeAttachment(idx)
                   }}
-                  className="ml-0.5 hover:text-red-400 transition-colors"
+                  className="ml-0.5 hover:text-danger transition-colors"
                   aria-label={`Remove ${getFileName(path)}`}
                 >
                   <X size={12} />

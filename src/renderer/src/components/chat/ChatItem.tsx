@@ -137,7 +137,7 @@ export default function ChatItem({
             <Pencil size={12} />
           </button>
           <button
-            className="flex items-center justify-center w-6 h-6 rounded-md hover:bg-danger-muted text-text-muted hover:text-red-400 transition-colors"
+            className="flex items-center justify-center w-6 h-6 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors"
             onClick={(e) => {
               e.stopPropagation()
               onDelete(conversation.id)

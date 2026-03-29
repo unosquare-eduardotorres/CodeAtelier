@@ -30,7 +30,7 @@ export default function HandoffIndicator({
       </div>
       <span
         className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-          mode === 'build' ? 'bg-amber-500/20 text-amber-300' : 'bg-purple-500/20 text-purple-300'
+          mode === 'build' ? 'bg-mode-build-muted text-mode-build-text' : 'bg-mode-plan-muted text-mode-plan-text'
         }`}
       >
         {mode}

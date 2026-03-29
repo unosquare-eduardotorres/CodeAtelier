@@ -52,7 +52,7 @@ export default function WelcomeScreen(): React.JSX.Element {
             <Bot size={28} className="text-primary-text" />
           </div>
           <div className="text-left">
-            <h1 className="text-2xl font-bold text-text-primary">Agent Studio</h1>
+            <h1 className="text-2xl font-bold text-text-primary">Code Atelier</h1>
             <p className="text-sm text-text-secondary">AI-Powered Development Team</p>
           </div>
         </div>

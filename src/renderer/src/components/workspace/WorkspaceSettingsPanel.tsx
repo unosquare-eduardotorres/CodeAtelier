@@ -26,14 +26,14 @@ export type SettingsTab =
   | 'events'
 
 export const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
-  { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
-  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
-  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
-  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
-  { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-cyan-400' },
-  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
+  { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning' },
+  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-info' },
+  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-accent' },
+  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-success' },
+  { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-info' },
+  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-mode-plan-text' },
   { id: 'tokens', label: 'Tokens', icon: Zap },
-  { id: 'events', label: 'Events', icon: ScrollText, iconColor: 'text-rose-400' }
+  { id: 'events', label: 'Events', icon: ScrollText, iconColor: 'text-danger' }
 ]
 
 interface WorkspaceSettingsPanelProps {

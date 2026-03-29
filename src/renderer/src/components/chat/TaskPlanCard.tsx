@@ -19,10 +19,10 @@ interface TaskPlanCardProps {
 }
 
 const STATUS_ICONS: Record<TaskExecutionProgress['status'], React.ReactNode> = {
-  pending: <Clock size={14} className="text-gray-500" />,
-  running: <Loader2 size={14} className="text-blue-400 animate-spin" />,
-  completed: <CheckCircle2 size={14} className="text-green-400" />,
-  failed: <XCircle size={14} className="text-red-400" />
+  pending: <Clock size={14} className="text-text-muted" />,
+  running: <Loader2 size={14} className="text-info animate-spin" />,
+  completed: <CheckCircle2 size={14} className="text-success" />,
+  failed: <XCircle size={14} className="text-danger" />
 }
 
 export default function TaskPlanCard({
@@ -54,19 +54,19 @@ export default function TaskPlanCard({
   const dependentTasks = tasks.filter((t) => t.dependsOn.length > 0)
 
   return (
-    <div className="my-3 rounded-xl border border-gray-700/50 bg-gray-800/60 overflow-hidden">
+    <div className="my-3 rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-700/50 bg-gray-800/80">
-        <div className="w-8 h-8 rounded-lg bg-indigo-600/20 flex items-center justify-center">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle bg-surface-raised">
+        <div className="w-8 h-8 rounded-lg bg-primary-muted flex items-center justify-center">
           <span className="text-sm">📋</span>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-200">Task Plan</p>
-          <p className="text-xs text-gray-400 truncate">{summary}</p>
+          <p className="text-sm font-medium text-text-primary">Task Plan</p>
+          <p className="text-xs text-text-secondary truncate">{summary}</p>
         </div>
         <span
           className={`text-[10px] px-2 py-0.5 rounded-full ${
-            mode === 'build' ? 'bg-amber-500/20 text-amber-300' : 'bg-purple-500/20 text-purple-300'
+            mode === 'build' ? 'bg-mode-build-muted text-mode-build-text' : 'bg-mode-plan-muted text-mode-plan-text'
           }`}
         >
           {mode}
@@ -74,7 +74,7 @@ export default function TaskPlanCard({
         {!hasUserChosen && onDismiss && (
           <button
             onClick={onDismiss}
-            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-gray-700/50 transition-colors"
+            className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
             title="Dismiss plan"
           >
             <X size={14} />
@@ -87,7 +87,7 @@ export default function TaskPlanCard({
         {/* Independent tasks (can run in parallel) */}
         {independentTasks.length > 0 && (
           <div className="space-y-1.5">
-            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+            <p className="text-[10px] uppercase tracking-wider text-text-muted font-medium">
               Independent tasks {independentTasks.length > 1 ? '(parallelizable)' : ''}
             </p>
             {independentTasks.map((task) => (
@@ -104,7 +104,7 @@ export default function TaskPlanCard({
         {/* Dependent tasks */}
         {dependentTasks.length > 0 && (
           <div className="space-y-1.5 mt-2">
-            <p className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+            <p className="text-[10px] uppercase tracking-wider text-text-muted font-medium">
               Depends on previous
             </p>
             {dependentTasks.map((task) => (
@@ -121,35 +121,35 @@ export default function TaskPlanCard({
 
       {/* Action buttons — only shown before execution starts */}
       {!hasUserChosen && (
-        <div className="flex items-stretch border-t border-gray-700/50">
+        <div className="flex items-stretch border-t border-border-subtle">
           <button
             onClick={() => onExecute('sequential')}
             onMouseEnter={() => setHoveredStrategy('sequential')}
             onMouseLeave={() => setHoveredStrategy(null)}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-gray-300 hover:bg-gray-700/50 hover:text-gray-100 transition-colors border-r border-gray-700/50"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors border-r border-border-subtle"
           >
             <UserRound
               size={16}
-              className={hoveredStrategy === 'sequential' ? 'text-blue-400' : 'text-gray-500'}
+              className={hoveredStrategy === 'sequential' ? 'text-info' : 'text-text-muted'}
             />
             <div className="text-left">
               <span className="block text-sm">Sequential</span>
-              <span className="block text-[10px] text-gray-500">One at a time, more control</span>
+              <span className="block text-[10px] text-text-muted">One at a time, more control</span>
             </div>
           </button>
           <button
             onClick={() => onExecute('parallel')}
             onMouseEnter={() => setHoveredStrategy('parallel')}
             onMouseLeave={() => setHoveredStrategy(null)}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-gray-300 hover:bg-gray-700/50 hover:text-gray-100 transition-colors"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors"
           >
             <Users
               size={16}
-              className={hoveredStrategy === 'parallel' ? 'text-green-400' : 'text-gray-500'}
+              className={hoveredStrategy === 'parallel' ? 'text-success' : 'text-text-muted'}
             />
             <div className="text-left">
               <span className="block text-sm">Parallel (Team)</span>
-              <span className="block text-[10px] text-gray-500">Faster, agents work together</span>
+              <span className="block text-[10px] text-text-muted">Faster, agents work together</span>
             </div>
           </button>
         </div>
@@ -157,9 +157,9 @@ export default function TaskPlanCard({
 
       {/* Execution status footer */}
       {hasUserChosen && !allDone && (
-        <div className="flex items-center gap-2 px-4 py-2 border-t border-gray-700/50 bg-blue-900/10">
-          <Loader2 size={14} className="text-blue-400 animate-spin" />
-          <span className="text-xs text-blue-300">
+        <div className="flex items-center gap-2 px-4 py-2 border-t border-border-subtle bg-info-muted">
+          <Loader2 size={14} className="text-info animate-spin" />
+          <span className="text-xs text-info">
             Executing tasks... (
             {tasks.filter((t) => taskProgress.get(t.id)?.status === 'completed').length}/
             {tasks.length} done)
@@ -167,9 +167,9 @@ export default function TaskPlanCard({
         </div>
       )}
       {allDone && taskProgress.size > 0 && (
-        <div className="flex items-center gap-2 px-4 py-2 border-t border-gray-700/50 bg-green-900/10">
-          <CheckCircle2 size={14} className="text-green-400" />
-          <span className="text-xs text-green-300">All tasks completed</span>
+        <div className="flex items-center gap-2 px-4 py-2 border-t border-border-subtle bg-success-muted">
+          <CheckCircle2 size={14} className="text-success" />
+          <span className="text-xs text-success">All tasks completed</span>
         </div>
       )}
     </div>
@@ -188,7 +188,7 @@ function TaskRow({
   const statusIcon = progress ? STATUS_ICONS[progress.status] : STATUS_ICONS.pending
 
   return (
-    <div className="flex items-start gap-2.5 py-1.5 px-2 rounded-lg bg-gray-800/40">
+    <div className="flex items-start gap-2.5 py-1.5 px-2 rounded-lg bg-surface-raised/40">
       <span className="text-sm flex-shrink-0 mt-0.5" role="img" aria-label={meta.displayName}>
         {meta.icon}
       </span>
@@ -197,16 +197,16 @@ function TaskRow({
           <span className="text-xs font-medium" style={{ color: meta.color }}>
             {meta.displayName}
           </span>
-          <span className="text-[10px] text-gray-600">{task.id}</span>
+          <span className="text-[10px] text-text-muted">{task.id}</span>
           {task.dependsOn.length > 0 && (
-            <span className="flex items-center gap-0.5 text-[10px] text-gray-600">
+            <span className="flex items-center gap-0.5 text-[10px] text-text-muted">
               <ArrowRight size={10} />
               {task.dependsOn.join(', ')}
             </span>
           )}
         </div>
-        <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{task.description}</p>
-        {progress?.error && <p className="text-xs text-red-400 mt-0.5">{progress.error}</p>}
+        <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">{task.description}</p>
+        {progress?.error && <p className="text-xs text-danger mt-0.5">{progress.error}</p>}
       </div>
       <div className="flex-shrink-0 mt-0.5">{statusIcon}</div>
     </div>

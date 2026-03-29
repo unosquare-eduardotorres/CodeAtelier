@@ -42,13 +42,13 @@ export default function ClaudeMdDiffModal({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
+    <div className="flex-1 flex flex-col bg-surface-base min-w-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-700 bg-gray-900">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-base">
         <div className="flex items-center gap-3">
-          <ArrowLeftRight size={16} className="text-indigo-400" />
-          <span className="text-sm font-semibold text-gray-200">Review CLAUDE.md Changes</span>
-          <span className="text-xs text-gray-500 font-mono truncate max-w-[300px]">
+          <ArrowLeftRight size={16} className="text-primary-text" />
+          <span className="text-sm font-semibold text-text-primary">Review CLAUDE.md Changes</span>
+          <span className="text-xs text-text-muted font-mono truncate max-w-[300px]">
             {workspacePath}/CLAUDE.md
           </span>
         </div>
@@ -57,7 +57,7 @@ export default function ClaudeMdDiffModal({
           <button
             onClick={onDismiss}
             disabled={isConfirming}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors disabled:opacity-50"
           >
             <X size={14} />
             Cancel
@@ -65,7 +65,7 @@ export default function ClaudeMdDiffModal({
           <button
             onClick={() => onConfirm(editedContent)}
             disabled={isConfirming}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-success hover:bg-success/90 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isConfirming ? (
               <>
@@ -83,16 +83,16 @@ export default function ClaudeMdDiffModal({
       </div>
 
       {/* Info bar */}
-      <div className="flex items-center gap-4 px-6 py-2 border-b border-gray-800 bg-gray-900/50 text-xs text-gray-500">
+      <div className="flex items-center gap-4 px-6 py-2 border-b border-border-default bg-surface-base/50 text-xs text-text-muted">
         <span>
           Lines: {stats.existingLines} {'\u2192'} {stats.proposedLines}{' '}
           <span
             className={
               stats.lineDelta > 0
-                ? 'text-emerald-400'
+                ? 'text-success'
                 : stats.lineDelta < 0
-                  ? 'text-red-400'
-                  : 'text-gray-500'
+                  ? 'text-danger'
+                  : 'text-text-muted'
             }
           >
             ({formatDelta(stats.lineDelta)})
@@ -104,16 +104,16 @@ export default function ClaudeMdDiffModal({
           <span
             className={
               stats.charDelta > 0
-                ? 'text-emerald-400'
+                ? 'text-success'
                 : stats.charDelta < 0
-                  ? 'text-red-400'
-                  : 'text-gray-500'
+                  ? 'text-danger'
+                  : 'text-text-muted'
             }
           >
             ({formatDelta(stats.charDelta)})
           </span>
         </span>
-        <span className="ml-auto text-gray-600">
+        <span className="ml-auto text-text-secondary">
           You can edit the proposed content before approving
         </span>
       </div>
@@ -121,12 +121,12 @@ export default function ClaudeMdDiffModal({
       {/* Side-by-side panels */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Left panel — Current */}
-        <div className="flex-1 flex flex-col min-w-0 border-r border-gray-800">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-800 bg-gray-900/30">
-            <FileText size={13} className="text-gray-500" />
-            <span className="text-xs font-medium text-gray-400">Current</span>
+        <div className="flex-1 flex flex-col min-w-0 border-r border-border-default">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-border-default bg-surface-base/30">
+            <FileText size={13} className="text-text-muted" />
+            <span className="text-xs font-medium text-text-muted">Current</span>
             {!existing && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised text-text-muted">
                 No file
               </span>
             )}
@@ -138,14 +138,14 @@ export default function ClaudeMdDiffModal({
                 onChange={() => {}}
                 language="markdown"
                 readOnly
-                className="h-full min-h-full !border-gray-800"
+                className="h-full min-h-full !border-border-default"
               />
             ) : (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
-                  <FilePlus size={28} className="text-gray-700 mx-auto mb-2" />
-                  <p className="text-sm text-gray-600">No CLAUDE.md exists</p>
-                  <p className="text-xs text-gray-700 mt-1">A new file will be created</p>
+                  <FilePlus size={28} className="text-border-default mx-auto mb-2" />
+                  <p className="text-sm text-text-secondary">No CLAUDE.md exists</p>
+                  <p className="text-xs text-border-default mt-1">A new file will be created</p>
                 </div>
               </div>
             )}
@@ -154,10 +154,10 @@ export default function ClaudeMdDiffModal({
 
         {/* Right panel — Proposed (editable) */}
         <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-800 bg-gray-900/30">
-            <FilePlus size={13} className="text-emerald-500" />
-            <span className="text-xs font-medium text-emerald-400">Proposed</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-border-default bg-surface-base/30">
+            <FilePlus size={13} className="text-success" />
+            <span className="text-xs font-medium text-success">Proposed</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-success-muted text-success border border-success/20">
               Editable
             </span>
           </div>
@@ -166,7 +166,7 @@ export default function ClaudeMdDiffModal({
               value={editedContent}
               onChange={setEditedContent}
               language="markdown"
-              className="h-full min-h-full !border-gray-800"
+              className="h-full min-h-full !border-border-default"
             />
           </div>
         </div>

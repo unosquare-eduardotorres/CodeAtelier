@@ -138,7 +138,7 @@ export function QuestionItem({
                   isSelected
                     ? 'bg-primary/10'
                     : isRecommended
-                      ? 'bg-yellow-500/5 hover:bg-surface-hover'
+                      ? 'bg-warning-muted/30 hover:bg-surface-hover'
                       : 'hover:bg-surface-hover'
                 }`}
               >
@@ -151,8 +151,8 @@ export function QuestionItem({
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm text-text-primary font-medium">{option.label}</span>
                     {isRecommended && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-500/20 text-yellow-300 border border-yellow-500/20">
-                        <Star size={10} className="fill-yellow-300" />
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-warning-muted text-warning border border-warning/20">
+                        <Star size={10} className="fill-warning" />
                         Recommended
                       </span>
                     )}

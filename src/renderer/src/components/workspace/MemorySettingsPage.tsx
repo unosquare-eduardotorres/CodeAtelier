@@ -16,10 +16,10 @@ import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import type { Memory, MemoryType, WorkspaceFeedTimestamps } from '../../../../shared/types'
 
 const TYPE_BADGES: Record<MemoryType, { label: string; color: string }> = {
-  user: { label: 'User', color: 'bg-blue-500/20 text-blue-300' },
-  feedback: { label: 'Feedback', color: 'bg-amber-500/20 text-amber-300' },
-  project: { label: 'Project', color: 'bg-emerald-500/20 text-emerald-300' },
-  reference: { label: 'Reference', color: 'bg-purple-500/20 text-purple-300' }
+  user: { label: 'User', color: 'bg-info-muted text-info' },
+  feedback: { label: 'Feedback', color: 'bg-mode-build-muted text-mode-build-text' },
+  project: { label: 'Project', color: 'bg-success-muted text-success' },
+  reference: { label: 'Reference', color: 'bg-mode-plan-muted text-mode-plan-text' }
 }
 
 export default function MemorySettingsPage(): React.JSX.Element {
@@ -166,7 +166,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
       {/* Header */}
       <div className="mb-6">
         <h2 className="text-base font-semibold text-text-primary flex items-center gap-2">
-          <Database size={20} className="text-purple-400" />
+          <Database size={20} className="text-mode-plan-text" />
           Auto Memory
         </h2>
         <p className="text-xs text-text-secondary mt-1">
@@ -186,12 +186,12 @@ export default function MemorySettingsPage(): React.JSX.Element {
             disabled={feedStatus === 'running' || isRegenerating}
             title="AI-generates a CLAUDE.md from project sources, lets you review it, then writes to disk and feeds into memories"
             aria-label="Regenerate & Feed CLAUDE.md — AI-generate from project sources, review, then feed"
-            className="flex flex-col gap-1.5 p-3 rounded-xl bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="flex items-center gap-2">
               <RefreshCw
                 size={14}
-                className={`text-purple-400 ${isRegenerating ? 'animate-spin' : ''}`}
+                className={`text-mode-plan-text ${isRegenerating ? 'animate-spin' : ''}`}
               />
               <span className="text-sm font-medium text-text-primary">
                 {isRegenerating ? 'Generating...' : 'Regenerate & Feed CLAUDE.md'}
@@ -208,10 +208,10 @@ export default function MemorySettingsPage(): React.JSX.Element {
             disabled={feedStatus === 'running'}
             title="Scans key project files (package.json, tsconfig, directory tree) and creates structural memories about your codebase"
             aria-label="Feed Codebase — Analyze project structure, dependencies, and key files for architectural context"
-            className="flex flex-col gap-1.5 p-3 rounded-xl bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="flex items-center gap-2">
-              <Code2 size={14} className="text-blue-400" />
+              <Code2 size={14} className="text-info" />
               <span className="text-sm font-medium text-text-primary">Feed Codebase</span>
             </div>
             <p className="text-xs text-text-muted leading-relaxed">
@@ -225,10 +225,10 @@ export default function MemorySettingsPage(): React.JSX.Element {
             disabled={feedStatus === 'running'}
             title="Opens a file picker to select a document (.md, .txt, .json, .yaml) and extracts memories from it"
             aria-label="Feed Document — Import any .md, .txt, .json, or .yaml file and extract knowledge from it"
-            className="flex flex-col gap-1.5 p-3 rounded-xl bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="flex items-center gap-2">
-              <Upload size={14} className="text-emerald-400" />
+              <Upload size={14} className="text-success" />
               <span className="text-sm font-medium text-text-primary">Feed Document</span>
             </div>
             <p className="text-xs text-text-muted leading-relaxed">
@@ -242,10 +242,10 @@ export default function MemorySettingsPage(): React.JSX.Element {
             disabled={feedStatus === 'running'}
             title="Reads existing CLAUDE.md from disk and extracts memories without regenerating (skip if you just want to re-extract)"
             aria-label="Feed Existing CLAUDE.md — Extract memories from existing CLAUDE.md without regenerating"
-            className="flex flex-col gap-1.5 p-3 rounded-xl bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="flex items-center gap-2">
-              <FileText size={14} className="text-gray-400" />
+              <FileText size={14} className="text-text-muted" />
               <span className="text-sm font-medium text-text-primary">Feed Existing CLAUDE.md</span>
             </div>
             <p className="text-xs text-text-muted leading-relaxed">
@@ -258,10 +258,10 @@ export default function MemorySettingsPage(): React.JSX.Element {
             disabled={!!currentRun}
             title="Consolidates and deduplicates existing memories using AI, merging overlapping entries and updating importance scores"
             aria-label="Dream — Deduplicate, merge, and score existing memories using AI consolidation"
-            className="flex flex-col gap-1.5 p-3 rounded-xl bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="flex items-center gap-2">
-              <Moon size={14} className="text-indigo-400" />
+              <Moon size={14} className="text-primary-text" />
               <span className="text-sm font-medium text-text-primary">Dream (Consolidate)</span>
             </div>
             <p className="text-xs text-text-muted leading-relaxed">
@@ -289,21 +289,21 @@ export default function MemorySettingsPage(): React.JSX.Element {
               value={searchQuery}
               onChange={(e) => handleSearch(e.target.value)}
               placeholder="Search memories..."
-              className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface-overlay border border-border-subtle text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50"
+              className="w-full pl-9 pr-3 py-2 text-sm rounded bg-surface-overlay border border-border-subtle text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50"
             />
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {(
               [
                 { value: 'all', label: 'All', color: 'bg-white/10 text-text-primary' },
-                { value: 'project', label: 'Project', color: 'bg-emerald-500/20 text-emerald-300' },
+                { value: 'project', label: 'Project', color: 'bg-success-muted text-success' },
                 {
                   value: 'reference',
                   label: 'Reference',
-                  color: 'bg-purple-500/20 text-purple-300'
+                  color: 'bg-mode-plan-muted text-mode-plan-text'
                 },
-                { value: 'user', label: 'User', color: 'bg-blue-500/20 text-blue-300' },
-                { value: 'feedback', label: 'Feedback', color: 'bg-amber-500/20 text-amber-300' }
+                { value: 'user', label: 'User', color: 'bg-info-muted text-info' },
+                { value: 'feedback', label: 'Feedback', color: 'bg-mode-build-muted text-mode-build-text' }
               ] as const
             ).map(({ value, label, color }) => (
               <button
@@ -334,7 +334,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
           {filteredMemories.length === 0 ? (
             <SettingsCard>
               <div className="flex items-center gap-2 mb-4">
-                <Sparkles size={18} className="text-purple-400" />
+                <Sparkles size={18} className="text-mode-plan-text" />
                 <h3 className="text-sm font-semibold text-text-primary">
                   Getting Started with Auto Memory
                 </h3>
@@ -345,7 +345,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
               </p>
               <div className="space-y-2.5">
                 <div className="flex items-start gap-3">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-purple-500/20 text-purple-300 text-xs font-bold flex-shrink-0 mt-0.5">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-mode-plan-muted text-mode-plan-text text-xs font-bold flex-shrink-0 mt-0.5">
                     1
                   </span>
                   <div>
@@ -358,7 +358,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
                   </div>
                 </div>
                 <div className="flex items-start gap-3">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-500/20 text-blue-300 text-xs font-bold flex-shrink-0 mt-0.5">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-info-muted text-info text-xs font-bold flex-shrink-0 mt-0.5">
                     2
                   </span>
                   <div>
@@ -369,7 +369,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
                   </div>
                 </div>
                 <div className="flex items-start gap-3">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold flex-shrink-0 mt-0.5">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-success-muted text-success text-xs font-bold flex-shrink-0 mt-0.5">
                     3
                   </span>
                   <div>
@@ -380,7 +380,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
                   </div>
                 </div>
                 <div className="flex items-start gap-3">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold flex-shrink-0 mt-0.5">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary-muted text-primary-text text-xs font-bold flex-shrink-0 mt-0.5">
                     4
                   </span>
                   <div>
@@ -434,7 +434,7 @@ function FeedTimestamp({ timestamp }: { timestamp?: string }): React.JSX.Element
   if (!timestamp) return null
   return (
     <p className="text-[10px] text-text-muted mt-1 flex items-center gap-1">
-      <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-success" />
       Last synced{' '}
       {new Date(timestamp).toLocaleDateString(undefined, {
         month: 'short',
@@ -456,13 +456,13 @@ function MemoryCard({
   const badge = TYPE_BADGES[memory.type]
 
   return (
-    <div className="p-3 rounded-xl bg-surface-overlay border border-border-subtle hover:border-border-default transition-colors group">
+    <div className="p-3 rounded bg-surface-overlay border border-border-subtle hover:border-border-default transition-colors group">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <span className={`px-2 py-0.5 text-xs rounded-full ${badge.color}`}>{badge.label}</span>
             {memory.importance >= 7 && (
-              <span className="text-xs text-amber-400">★ High importance</span>
+              <span className="text-xs text-mode-build-text">★ High importance</span>
             )}
           </div>
           <h3 className="text-sm font-medium text-text-primary truncate">{memory.title}</h3>
@@ -482,7 +482,7 @@ function MemoryCard({
         </div>
         <button
           onClick={onDelete}
-          className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-800/40 text-red-400 transition-all"
+          className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-danger-muted text-danger transition-all"
           aria-label="Delete memory"
         >
           <Trash2 size={14} />

@@ -1,6 +1,6 @@
 # Memory (Auto Memory / Brain)
 
-The **Memory** tab shows how Agent Studio remembers important information about your project. This is one of Agent Studio's most powerful features — it means your AI team gets smarter about your specific codebase over time, without you having to re-explain things.
+The **Memory** tab shows how Code Atelier remembers important information about your project. This is one of Code Atelier's most powerful features — it means your AI team gets smarter about your specific codebase over time, without you having to re-explain things.
 
 ---
 

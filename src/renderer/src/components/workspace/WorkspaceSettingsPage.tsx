@@ -41,12 +41,12 @@ type SettingsTab =
   | 'tokens'
 
 const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
-  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
-  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
-  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
-  { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
-  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
-  { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-cyan-400' },
+  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-success' },
+  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-accent' },
+  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-info' },
+  { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning' },
+  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-mode-plan-text' },
+  { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-info' },
   { id: 'tokens', label: 'Tokens', icon: Zap }
 ]
 
@@ -201,7 +201,7 @@ export default function WorkspaceSettingsPage({
                     deleteAllAgents(workspacePath)
                   }
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/30 hover:bg-danger-muted transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-danger border border-danger/30 hover:bg-danger-muted transition-colors"
               >
                 <Trash2 size={12} />
                 Delete All Agents
@@ -216,7 +216,7 @@ export default function WorkspaceSettingsPage({
                     deleteAllSkills(workspacePath)
                   }
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/30 hover:bg-danger-muted transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-danger border border-danger/30 hover:bg-danger-muted transition-colors"
               >
                 <Trash2 size={12} />
                 Delete All Skills
@@ -282,7 +282,7 @@ export default function WorkspaceSettingsPage({
             ) : (
               <div className="p-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <Lightbulb size={16} className="text-yellow-400" />
+                  <Lightbulb size={16} className="text-warning" />
                   <h3 className="text-sm font-semibold text-text-primary">Ideas</h3>
                 </div>
                 <p className="text-xs text-text-secondary mb-4">

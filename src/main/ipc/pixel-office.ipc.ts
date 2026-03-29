@@ -21,7 +21,7 @@ export function registerPixelOfficeHandlers(): void {
       height: 600,
       minWidth: 600,
       minHeight: 400,
-      title: 'Pixel Office — Agent Studio',
+      title: 'Pixel Office — Code Atelier',
       backgroundColor: '#0a0a1a',
       autoHideMenuBar: true,
       show: false,

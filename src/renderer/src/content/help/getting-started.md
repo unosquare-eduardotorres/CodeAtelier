@@ -1,14 +1,14 @@
-# Getting Started with Agent Studio
+# Getting Started with Code Atelier
 
-Welcome to **Agent Studio** — your AI-powered development team that runs right on your computer. Think of it as having a team of expert programmers available 24/7, each specializing in different areas like databases, user interfaces, testing, and more.
+Welcome to **Code Atelier** — your AI-powered development team that runs right on your computer. Think of it as having a team of expert programmers available 24/7, each specializing in different areas like databases, user interfaces, testing, and more.
 
 This guide walks you through everything you need to get up and running in about 10 minutes.
 
 ---
 
-## What is Agent Studio?
+## What is Code Atelier?
 
-Agent Studio is a desktop application that gives you access to a team of AI specialist agents. Instead of working with a single AI assistant, you work with a **coordinator** (called the Generalist) who understands your project and can delegate tasks to **specialist agents** — each one an expert in a specific area.
+Code Atelier is a desktop application that gives you access to a team of AI specialist agents. Instead of working with a single AI assistant, you work with a **coordinator** (called the Generalist) who understands your project and can delegate tasks to **specialist agents** — each one an expert in a specific area.
 
 Here's how it works at a high level:
 
@@ -43,17 +43,17 @@ flowchart LR
 
 Before you begin, make sure you have:
 
-- **Claude Max subscription** — Agent Studio uses your Claude subscription to power the AI agents. No separate API keys or payments are needed.
-- **Claude CLI installed** — The command-line tool that Agent Studio uses behind the scenes to communicate with Claude. You can install it from [claude.ai](https://claude.ai).
+- **Claude Max subscription** — Code Atelier uses your Claude subscription to power the AI agents. No separate API keys or payments are needed.
+- **Claude CLI installed** — The command-line tool that Code Atelier uses behind the scenes to communicate with Claude. You can install it from [claude.ai](https://claude.ai).
 - **A code project** — Any folder on your computer that contains code you want to work on.
 
 ---
 
 ## Step 1: Create Your First Workspace
 
-A **workspace** is how Agent Studio connects to one of your code projects. Each workspace links to a folder on your computer and remembers all its settings, conversations, and agent configurations.
+A **workspace** is how Code Atelier connects to one of your code projects. Each workspace links to a folder on your computer and remembers all its settings, conversations, and agent configurations.
 
-1. Open Agent Studio — you'll see the **Welcome Screen**
+1. Open Code Atelier — you'll see the **Welcome Screen**
 2. Click the **"New Workspace"** button
 3. Browse to the folder that contains your code project
 4. Give your workspace a name (or keep the suggested one)

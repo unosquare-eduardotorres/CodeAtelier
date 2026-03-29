@@ -29,15 +29,15 @@ const CATEGORIES = [
 ] as const
 
 const CATEGORY_STYLES: Record<string, { bg: string; text: string }> = {
-  session: { bg: 'bg-blue-500/15', text: 'text-blue-400' },
-  agent: { bg: 'bg-indigo-500/15', text: 'text-indigo-400' },
-  escalation: { bg: 'bg-orange-500/15', text: 'text-orange-400' },
-  gate: { bg: 'bg-green-500/15', text: 'text-green-400' },
-  abandonment: { bg: 'bg-yellow-500/15', text: 'text-yellow-400' },
-  checkpoint: { bg: 'bg-purple-500/15', text: 'text-purple-400' },
-  hook: { bg: 'bg-cyan-500/15', text: 'text-cyan-400' },
-  budget: { bg: 'bg-amber-500/15', text: 'text-amber-400' },
-  error: { bg: 'bg-red-500/15', text: 'text-red-400' }
+  session: { bg: 'bg-info-muted', text: 'text-info' },
+  agent: { bg: 'bg-primary-muted', text: 'text-primary-text' },
+  escalation: { bg: 'bg-accent-muted', text: 'text-accent' },
+  gate: { bg: 'bg-success-muted', text: 'text-success' },
+  abandonment: { bg: 'bg-warning-muted', text: 'text-warning' },
+  checkpoint: { bg: 'bg-mode-plan-muted', text: 'text-mode-plan-text' },
+  hook: { bg: 'bg-info-muted', text: 'text-info' },
+  budget: { bg: 'bg-mode-build-muted', text: 'text-mode-build-text' },
+  error: { bg: 'bg-danger-muted', text: 'text-danger' }
 }
 
 function formatEventTime(dateStr: string): string {
@@ -100,7 +100,7 @@ export default function EventLogPage(): React.JSX.Element {
     <div className="max-w-5xl mx-auto px-6 py-8">
       {/* Header */}
       <div className="flex items-center gap-2 mb-6">
-        <ScrollText size={18} className="text-rose-400" />
+        <ScrollText size={18} className="text-danger" />
         <h2 className="text-base font-semibold text-text-primary">Event Log</h2>
         <span className="text-xs text-text-muted ml-auto">
           {filtered.length} event{filtered.length !== 1 ? 's' : ''}
@@ -130,7 +130,7 @@ export default function EventLogPage(): React.JSX.Element {
           <div className="text-sm text-text-secondary">Loading events...</div>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center bg-surface-overlay/30 rounded-xl border border-border-subtle">
+        <div className="flex flex-col items-center justify-center py-16 text-center bg-surface-overlay/30 rounded border border-border-subtle">
           <Inbox size={28} className="text-border-default mb-2" />
           <p className="text-sm text-text-secondary">No events found</p>
           <p className="text-xs text-text-muted mt-1">
@@ -140,7 +140,7 @@ export default function EventLogPage(): React.JSX.Element {
           </p>
         </div>
       ) : (
-        <div className="bg-surface-overlay border border-border-subtle rounded-xl overflow-hidden shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded overflow-hidden shadow-sm">
           <table className="w-full">
             <thead>
               <tr className="border-b border-border-subtle text-xs text-text-secondary uppercase tracking-wider">
@@ -154,8 +154,8 @@ export default function EventLogPage(): React.JSX.Element {
             <tbody>
               {filtered.map((event) => {
                 const catStyle = CATEGORY_STYLES[event.category] ?? {
-                  bg: 'bg-gray-500/15',
-                  text: 'text-gray-400'
+                  bg: 'bg-surface-raised',
+                  text: 'text-text-muted'
                 }
                 const isExpanded = expandedId === event.id
                 return (

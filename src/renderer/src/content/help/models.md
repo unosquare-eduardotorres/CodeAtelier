@@ -99,7 +99,7 @@ You don't need to configure this — it's handled automatically based on your mo
 ## Frequently Asked Questions
 
 **Q: Will I be charged extra for using Opus?**
-No. Agent Studio uses your Claude Max subscription. All models are included — you won't see a separate charge per model. However, more powerful models use more of your subscription's token allowance.
+No. Code Atelier uses your Claude Max subscription. All models are included — you won't see a separate charge per model. However, more powerful models use more of your subscription's token allowance.
 
 **Q: Can different agents use different models?**
 The model setting applies to the overall workspace. All agents in that workspace will use the selected model. Specialists may have their own optimized thinking budgets, but they use the same base model.

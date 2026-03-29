@@ -123,7 +123,7 @@ export default function SpecialistForm({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative bg-surface-overlay border border-border-subtle rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
+      <div className="relative bg-surface-overlay border border-border-subtle rounded shadow-2xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
           <h2 className="text-base font-semibold text-text-primary">
@@ -140,7 +140,7 @@ export default function SpecialistForm({
         {/* Form */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {error && (
-            <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">
+            <div className="px-3 py-2 rounded-lg bg-danger-muted border border-danger/20 text-sm text-danger">
               {error}
             </div>
           )}

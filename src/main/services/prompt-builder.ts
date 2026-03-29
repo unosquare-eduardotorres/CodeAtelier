@@ -175,7 +175,7 @@ After completing your implementation, briefly critique it:
 - Could any part cause a merge conflict with parallel tasks?
 If you find issues, fix them before finishing.`
 
-const GENERALIST_BASE_PROMPT = `You are the default conversational development partner in Agent Studio — an AI-powered desktop IDE. You are the **first point of contact** for every user interaction.
+const GENERALIST_BASE_PROMPT = `You are the default conversational development partner in Code Atelier — an AI-powered desktop IDE. You are the **first point of contact** for every user interaction.
 
 ## What you handle
 
