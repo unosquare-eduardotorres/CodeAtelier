@@ -1,8 +1,8 @@
 import { ipcMain, type BrowserWindow } from 'electron'
+import { extname } from 'node:path'
 import {
   conversationRepository,
   messageRepository,
-  fileChangeRepository,
   workspaceRepository
 } from '../db/repositories'
 import {
@@ -12,7 +12,6 @@ import {
   fileService
 } from '../services'
 import type { StreamChunk } from '../services'
-import { summarizeToolInput } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
@@ -33,6 +32,8 @@ const log = chatIpcLogger
 const MAX_MESSAGE_LENGTH = 1_000_000
 /** Maximum number of attachments per message */
 const MAX_ATTACHMENTS = 20
+/** Maximum number of image attachments per message */
+const MAX_IMAGE_ATTACHMENTS = 5
 
 /** Module-level flag to prevent duplicate message saves when stop is called mid-stream */
 let isStopped = false
@@ -51,6 +52,14 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
   // Persistent listener: forward grill question events to the renderer
   generalistService.on('grillQuestion', (data: { questions: GrillQuestion[] }) => {
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_QUESTION, {
+      conversationId: generalistService.getCurrentConversationId() || '',
+      questions: data.questions
+    })
+  })
+
+  // Persistent listener: forward ask-question events (general chat questions) to the renderer
+  generalistService.on('askQuestion', (data: { questions: GrillQuestion[] }) => {
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
       conversationId: generalistService.getCurrentConversationId() || '',
       questions: data.questions
     })
@@ -115,6 +124,17 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
             throw new Error('Each attachment must be a file path string')
           }
         }
+
+        // Count images specifically
+        const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
+        const imageCount = attachments.filter((p) =>
+          imageExtensions.has(extname(p).toLowerCase())
+        ).length
+        if (imageCount > MAX_IMAGE_ATTACHMENTS) {
+          throw new Error(
+            `Too many image attachments: ${imageCount} (max ${MAX_IMAGE_ATTACHMENTS})`
+          )
+        }
       }
 
       log.info('SEND received:', {
@@ -165,8 +185,12 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
       const streamedContent = { value: '' }
 
       const onChunk = (chunk: StreamChunk): void => {
-        log.debug('Chunk received:', { type: chunk.type, len: chunk.content?.length ?? 0 })
-        forwardChunkToRenderer(mainWindow, conversationId, 'generalist', chunk, streamedContent)
+        try {
+          log.debug('Chunk received:', { type: chunk.type, len: chunk.content?.length ?? 0 })
+          forwardChunkToRenderer(mainWindow, conversationId, 'generalist', chunk, streamedContent)
+        } catch (error) {
+          log.error('Failed to forward chunk to renderer:', error)
+        }
       }
 
       const onComplete = (): void => {
@@ -181,12 +205,21 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
             contentLen: streamedContent.value.length
           })
           // Strip handoff block before saving — it's structural, not user-facing content
-          const cleanedContent = streamedContent.value.replace(/```handoff\n[\s\S]*?```/, '').trim()
+          const cleanedContent = streamedContent.value
+            .replace(/```handoff\n[\s\S]*?```/, '')
+            .replace(/```(?:json)?\n\{[\s\S]*?"action"\s*:\s*"handoff"[\s\S]*?\}\n```/, '')
+            .trim()
+
+          // If the generalist used tools but produced no final text, indicate this to the user
+          if (!cleanedContent) {
+            log.warn('Generalist completed with no content — possible silent failure')
+          }
 
           const savedMessage = messageRepository.create(
             conversationId,
             'generalist',
-            cleanedContent || '_No response received._'
+            cleanedContent ||
+              '_No response received. The agent may have encountered an issue while processing. Try sending your message again._'
           )
           log.info('Generalist message saved, id:', savedMessage.id)
 
@@ -290,26 +323,30 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
           })
 
           // Fallback: run orchestrator in legacy single-process mode
-          await runLegacyOrchestrator(mainWindow, conversationId, brief)
+          try {
+            await runLegacyOrchestrator(mainWindow, conversationId, brief)
+          } catch (fallbackError) {
+            log.error('Legacy orchestrator fallback also failed:', fallbackError)
+            // Surface error to user — both SDK decompose and legacy orchestrator failed
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+              conversationId,
+              chunk: `\n\n**Error:** Task delegation failed. ${(fallbackError as Error).message}`,
+              role: 'coordinator'
+            })
+            const savedMsg = messageRepository.create(
+              conversationId,
+              'coordinator',
+              `**Error:** Both task decomposition and orchestrator fallback failed.\n\n${(error as Error).message}\n${(fallbackError as Error).message}`
+            )
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+              conversationId,
+              messageId: savedMsg.id
+            })
+          }
         }
 
         // Clean up handoff listener (one-shot)
         generalistService.removeListener('handoff', onHandoff)
-      }
-
-      // Safety: if generalist process exits without emitting 'complete', force-send completion
-      const onProcessExit = (): void => {
-        // Give 2 seconds for normal 'complete' event, then force it
-        setTimeout(() => {
-          if (!isStopped) {
-            log.warn('Generalist process exited without complete event — forcing completion')
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-              conversationId,
-              messageId: `force-${Date.now()}`
-            })
-            cleanupListeners()
-          }
-        }, 2000)
       }
 
       // Cleanup helper — removes all listeners for this message cycle.
@@ -318,7 +355,6 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
         generalistService.removeListener('chunk', onChunk)
         generalistService.removeListener('complete', onComplete)
         generalistService.removeListener('handoff', onHandoff)
-        generalistService.removeListener('processExit', onProcessExit)
       }
 
       try {
@@ -334,7 +370,6 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
         generalistService.on('chunk', onChunk)
         generalistService.on('complete', onComplete)
         generalistService.on('handoff', onHandoff)
-        generalistService.once('processExit', onProcessExit)
         await generalistService.send(fullContent, conversationId)
       } catch (error) {
         // Clean up listeners to prevent leaks on error
@@ -408,7 +443,7 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
       }
     }
 
-    // Don't kill the generalist process — it persists across messages
-    // Just signal that streaming should stop from the UI perspective
+    // Cancel any in-flight generalist SDK query
+    generalistService.cancelCurrentQuery()
   })
 }

@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import type {
   AgentStatus,
   ConversationMode,
@@ -15,10 +14,8 @@ import { promptBuilder } from './prompt-builder'
 import { AgentBaseService } from './agent-base.service'
 import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
-import { authProvider } from './auth-provider'
 import { SDKExecutor } from './sdk-executor'
 import type { SDKExecuteResult } from './sdk-executor'
-import type { StreamChunk } from './agent-base.service'
 
 /** Maximum number of session entries before evicting oldest */
 const MAX_SESSION_MAP_SIZE = 100
@@ -28,6 +25,8 @@ export class OrchestratorService extends AgentBaseService {
   private workspacePath: string | null = null
   private sessionMap: Map<string, string> = new Map()
   private currentConversationId: string | null = null
+  /** AbortController for cancelling in-flight SDK queries */
+  private sdkAbortController: AbortController | null = null
 
   /**
    * Initializes the orchestrator for the given workspace.
@@ -52,7 +51,7 @@ export class OrchestratorService extends AgentBaseService {
   }
 
   /**
-   * Sends a message — routes to SDK or CLI based on auth provider configuration.
+   * Sends a message via the Agent SDK.
    * Uses `--resume` with session ID for multi-turn conversation continuity.
    */
   async send(
@@ -60,10 +59,7 @@ export class OrchestratorService extends AgentBaseService {
     conversationId?: string,
     mode: ConversationMode = 'build'
   ): Promise<void> {
-    if (authProvider.supportsSDK()) {
-      return this.sendViaSDK(message, conversationId, mode)
-    }
-    return this.sendViaCLI(message, conversationId, mode)
+    return this.sendViaSDK(message, conversationId, mode)
   }
 
   /**
@@ -96,162 +92,63 @@ export class OrchestratorService extends AgentBaseService {
           workspacePath: this.workspacePath
         })
 
+    const abortController = new AbortController()
+    this.sdkAbortController = abortController
+
     const executor = new SDKExecutor()
-    for await (const chunk of executor.execute({
-      prompt: message,
-      systemPrompt: systemPrompt ?? '',
-      model: modelConfigService.getModel(this.workspacePath, 'orchestrator'),
-      cwd: this.workspacePath,
-      permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
-      allowedTools: ['WebSearch', 'WebFetch'],
-      resume: existingSession ?? undefined
-    })) {
-      if ('_meta' in chunk && chunk._meta) {
-        const meta = chunk._meta as SDKExecuteResult
-        if (meta.sessionId && conversationId) {
-          this.sessionMap.set(conversationId, meta.sessionId)
-          this.evictOldSessions()
+    try {
+      for await (const chunk of executor.execute({
+        prompt: message,
+        systemPrompt: systemPrompt ?? '',
+        model: modelConfigService.getModel(this.workspacePath, 'orchestrator'),
+        cwd: this.workspacePath,
+        permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
+        allowedTools: ['WebSearch', 'WebFetch'],
+        resume: existingSession ?? undefined,
+        abortController
+      })) {
+        if ('_meta' in chunk && chunk._meta) {
+          const meta = chunk._meta as SDKExecuteResult
+          if (meta.sessionId && conversationId) {
+            this.sessionMap.set(conversationId, meta.sessionId)
+            this.evictOldSessions()
+          }
+          this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
+        } else {
+          this.emit('chunk', chunk) // Same StreamChunk interface — IPC unchanged
         }
-        this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
-      } else {
-        this.emit('chunk', chunk) // Same StreamChunk interface — IPC unchanged
       }
-    }
 
-    this.currentStatus = 'idle'
-    this.emit('statusUpdate', this.getStatus())
-    this.emit('complete')
-  }
-
-  /**
-   * CLI path — spawns `claude -p` process with `--output-format stream-json`.
-   * Original implementation, used when auth mode is Claude Max.
-   */
-  private async sendViaCLI(
-    message: string,
-    conversationId?: string,
-    mode: ConversationMode = 'build'
-  ): Promise<void> {
-    if (!this.workspacePath) {
-      throw new Error('Orchestrator not started — no workspace path set')
-    }
-
-    // Kill any still-running process from previous message
-    if (this.process && !this.process.killed) {
-      this.process.kill('SIGTERM')
-    }
-
-    this.currentStatus = 'thinking'
-    this.buffer = ''
-    this.hasEmittedContent = false
-    this.messageStartedAt = Date.now()
-    this.processedToolIds.clear()
-    this.currentConversationId = conversationId ?? null
-    this.emit('statusUpdate', this.getStatus())
-
-    // No LLM skill matching — skills are resolved deterministically via AgentRegistry
-    // when the orchestrator decomposes tasks and assigns them to specialists.
-
-    const orchestratorModel = modelConfigService.getModel(this.workspacePath, 'orchestrator')
-    const args = [
-      '-p',
-      message,
-      '--output-format',
-      'stream-json',
-      '--verbose',
-      '--model',
-      orchestratorModel,
-      '--allowedTools',
-      'WebSearch,WebFetch'
-    ]
-
-    if (mode === 'build') {
-      args.push('--permission-mode', 'bypassPermissions')
-    } else {
-      args.push('--permission-mode', 'plan')
-    }
-
-    // Hooks are configured declaratively via .claude/hooks/hooks.json
-    // (CLI flags --pre-tool-use-hook / --post-tool-use-hook are not supported)
-
-    const existingSession = conversationId ? this.sessionMap.get(conversationId) : null
-    if (existingSession) {
-      args.push('--resume', existingSession)
-    }
-
-    if (!existingSession) {
-      const fullSystemPrompt = promptBuilder.build({
-        role: 'orchestrator',
-        mode,
-        workspacePath: this.workspacePath!
-      })
-      args.push('--system-prompt', fullSystemPrompt)
-    }
-
-    const env = this.buildEnvWithPath()
-
-    this.log.info(
-      'Spawning claude with args:',
-      args.filter((a) => a !== message && !a.includes('You are a')).join(' ')
-    )
-
-    const currentProcess = spawn('claude', args, {
-      cwd: this.workspacePath,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env
-    })
-    this.process = currentProcess
-
-    currentProcess.stdout?.on('data', (data: Buffer) => {
-      if (this.process !== currentProcess) return
-      this.log.debug('stdout:', data.toString().substring(0, 200))
-      this.handleOutput(data)
-    })
-
-    currentProcess.stderr?.on('data', (data: Buffer) => {
-      if (this.process !== currentProcess) return
-      this.handleError(data)
-    })
-
-    currentProcess.on('exit', (code: number | null) => {
-      if (this.process !== currentProcess) {
-        this.log.debug('Stale process exit ignored (code:', code, ')')
-        return
-      }
-      this.handleExit(code)
-    })
-
-    currentProcess.on('error', (err: Error) => {
-      if (this.process !== currentProcess) return
-      this.log.error('Process error:', err.message)
-      this.currentStatus = 'failed'
+      this.sdkAbortController = null
+      this.currentStatus = 'idle'
       this.emit('statusUpdate', this.getStatus())
+      this.emit('complete')
+    } catch (error) {
+      this.sdkAbortController = null
+      this.log.error('SDK send failed:', error)
       this.emit('chunk', {
         type: 'error',
-        error: `Failed to spawn Claude CLI: ${err.message}`
-      } as StreamChunk)
+        error: `Orchestrator SDK error: ${(error as Error).message}`
+      })
+      this.currentStatus = 'failed'
+      this.emit('statusUpdate', this.getStatus())
       this.emit('complete')
-    })
+    }
   }
 
   /**
-   * Decomposes a handoff brief into structured sub-tasks.
-   * Routes to SDK or CLI based on auth provider configuration.
+   * Decomposes a handoff brief into structured sub-tasks via the Agent SDK.
    */
   async decompose(
     brief: HandoffBrief,
     conversationId: string,
     mode: ConversationMode
   ): Promise<TaskPlan> {
-    if (authProvider.supportsSDK()) {
-      return this.decomposeViaSDK(brief, conversationId, mode)
-    }
-    return this.decomposeViaCLI(brief, conversationId, mode)
+    return this.decomposeViaSDK(brief, conversationId, mode)
   }
 
   /**
    * Builds the decomposition prompt and specialist list from a handoff brief.
-   * Shared by both CLI and SDK decomposition paths.
    */
   private buildDecompositionInputs(brief: HandoffBrief): { prompt: string; specialistList: string } {
     const activeSpecialists = specialistRepository.findActive()
@@ -311,7 +208,6 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
 
   /**
    * Parses the raw decomposition result into a validated TaskPlan.
-   * Shared by both CLI and SDK decomposition paths.
    */
   private parseDecompositionResult(
     result: string,
@@ -415,6 +311,10 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
       specialists: brief.specialists
     })
 
+    this.currentStatus = 'thinking'
+    this.messageStartedAt = Date.now()
+    this.emit('statusUpdate', this.getStatus())
+
     try {
       const executor = new SDKExecutor()
       const { result } = await executor.executeAndCollect({
@@ -426,6 +326,9 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
         allowedTools: []
       })
 
+      this.currentStatus = 'idle'
+      this.emit('statusUpdate', this.getStatus())
+
       return this.parseDecompositionResult(result, conversationId, brief, mode)
     } catch (error) {
       eventLoggerService.logDecompositionFailed({
@@ -433,132 +336,19 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
         error: (error as Error).message,
         fallback: 'legacy'
       })
+      this.currentStatus = 'idle'
+      this.emit('statusUpdate', this.getStatus())
       throw error
-    }
-  }
-
-  /**
-   * CLI path — spawns `claude -p` for decomposition.
-   * Original implementation, used when auth mode is Claude Max.
-   */
-  private async decomposeViaCLI(
-    brief: HandoffBrief,
-    conversationId: string,
-    mode: ConversationMode
-  ): Promise<TaskPlan> {
-    if (!this.workspacePath) {
-      throw new Error('Orchestrator not started — no workspace path set')
-    }
-
-    const { prompt } = this.buildDecompositionInputs(brief)
-
-    this.log.info('Decomposing task via CLI for specialists:', brief.specialists.join(', '))
-
-    // ── Event: decomposition started ──
-    eventLoggerService.logDecompositionStarted({
-      conversationId,
-      summary: brief.summary,
-      specialists: brief.specialists
-    })
-
-    const env = this.buildEnvWithPath()
-
-    let result: string
-    try {
-      result = await new Promise<string>((resolve, reject) => {
-      const child = spawn(
-        'claude',
-        ['-p', prompt, '--system-prompt', promptBuilder.getDecompositionPrompt(), '--output-format', 'text'],
-        {
-          cwd: this.workspacePath!,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env
-        }
-      )
-
-      let stdout = ''
-      let stderr = ''
-      child.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString()
-      })
-      child.stderr?.on('data', (data: Buffer) => {
-        stderr += data.toString()
-      })
-      child.on('exit', (code) => {
-        if (code === 0) resolve(stdout.trim())
-        else reject(new Error(`Decomposition failed (code ${code}): ${stderr.substring(0, 500)}`))
-      })
-      child.on('error', reject)
-
-      // 30s timeout for decomposition
-      setTimeout(() => {
-        try {
-          child.kill('SIGTERM')
-        } catch {
-          /* ignore */
-        }
-        reject(new Error('Task decomposition timed out'))
-      }, 30000)
-    })
-    } catch (error) {
-      // ── Event: decomposition failed (CLI spawn, timeout, or exit code) ──
-      eventLoggerService.logDecompositionFailed({
-        conversationId,
-        error: (error as Error).message,
-        fallback: 'legacy'
-      })
-      throw error
-    }
-
-    return this.parseDecompositionResult(result, conversationId, brief, mode)
-  }
-
-  /**
-   * Override to capture session IDs from result events.
-   */
-  protected onResultEvent(event: Record<string, unknown>): void {
-    const sessionId = event.session_id as string | undefined
-    if (sessionId && this.currentConversationId) {
-      this.sessionMap.set(this.currentConversationId, sessionId)
-      this.evictOldSessions()
-      this.log.info('Session ID captured for conversation:', this.currentConversationId, sessionId)
-    }
-
-    // Call base implementation for text emission and status
-    super.onResultEvent(event)
-  }
-
-  protected onSystemEvent(event: Record<string, unknown>): void {
-    const sessionId = event.session_id as string | undefined
-    if (sessionId && this.currentConversationId) {
-      this.sessionMap.set(this.currentConversationId, sessionId)
-      this.evictOldSessions()
-      this.log.info(
-        'System init, session:',
-        sessionId,
-        'for conversation:',
-        this.currentConversationId
-      )
-    }
-  }
-
-  /**
-   * Override to capture orchestrator stderr to the event log for debugging.
-   * Filters out trivial noise (progress bars, blank lines) and logs substantial errors.
-   */
-  protected handleError(data: Buffer): void {
-    super.handleError(data)
-    const text = data.toString().trim()
-    // Only log non-trivial stderr (skip blank lines, progress indicators, etc.)
-    if (text && text.length > 10 && !text.startsWith('�') && !text.startsWith('Progress:')) {
-      eventLoggerService.logOrchestratorStderr({
-        conversationId: this.currentConversationId ?? undefined,
-        stderr: text
-      })
     }
   }
 
   async stop(): Promise<void> {
+    // Abort in-flight SDK query if running
+    if (this.sdkAbortController) {
+      this.log.info('Aborting in-flight SDK query')
+      this.sdkAbortController.abort()
+      this.sdkAbortController = null
+    }
     await super.stop()
     this.sessionMap.clear()
     this.currentConversationId = null

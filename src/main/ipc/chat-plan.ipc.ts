@@ -19,6 +19,7 @@ import type {
   DecomposedTask,
   ExecutionStrategy,
   HandoffBrief,
+  InvestigationReport,
   TaskExecutionProgress
 } from '../../shared/types'
 import { memoryService } from '../services/memory.service'
@@ -40,9 +41,7 @@ async function runPostSpecialistReview(
   tasks: DecomposedTask[],
   workspacePath: string
 ): Promise<void> {
-  const taskSummary = tasks
-    .map((t) => `- ${t.specialist} (${t.id}): ${t.description}`)
-    .join('\n')
+  const taskSummary = tasks.map((t) => `- ${t.specialist} (${t.id}): ${t.description}`).join('\n')
 
   const reviewPrompt = `Review the changes made by the following specialist tasks for integration issues, bugs, or convention violations:
 
@@ -135,7 +134,30 @@ export async function runLegacyOrchestrator(
 
   orchestratorService.on('chunk', onOrchestratorChunk)
   orchestratorService.on('complete', onOrchestratorComplete)
-  await orchestratorService.send(handoff.summary, conversationId, handoff.mode)
+
+  try {
+    await orchestratorService.send(handoff.summary, conversationId, handoff.mode)
+  } catch (error) {
+    log.error('Legacy orchestrator send failed:', error)
+    // Clean up listeners to prevent leaks
+    orchestratorService.removeListener('chunk', onOrchestratorChunk)
+    orchestratorService.removeListener('complete', onOrchestratorComplete)
+    // Surface error to user
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: `\n\n**Orchestrator Error:** ${(error as Error).message}`,
+      role: 'coordinator'
+    })
+    const savedMsg = messageRepository.create(
+      conversationId,
+      'coordinator',
+      `**Orchestrator Error:** ${(error as Error).message}`
+    )
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+      conversationId,
+      messageId: savedMsg.id
+    })
+  }
 }
 
 export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
@@ -252,25 +274,60 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       }
 
       // Forward streaming chunks from each specialist to the chat AND agent monitor
-      const onTaskChunk = (data: { taskId: string; specialist: string; chunk: string }): void => {
-        // Accumulate per-task content for message segmentation
+      const onTaskChunk = (data: {
+        taskId: string
+        specialist: string
+        chunk: string
+        toolActivity?: { type: string; toolName: string; input?: string }
+      }): void => {
         const existing = taskContents.get(data.taskId) ?? ''
         taskContents.set(data.taskId, existing + data.chunk)
 
-        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-          conversationId,
-          chunk: data.chunk,
-          role: 'coordinator',
-          taskId: data.taskId,
-          specialist: data.specialist
-        })
+        if (data.toolActivity) {
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: '',
+            role: 'coordinator',
+            taskId: data.taskId,
+            specialist: data.specialist,
+            toolActivity: {
+              id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              toolName: data.toolActivity.toolName,
+              status: data.toolActivity.type === 'tool_use' ? 'running' : 'completed',
+              input: data.toolActivity.input,
+              startedAt: Date.now(),
+              ...(data.toolActivity.type === 'tool_result'
+                ? { completedAt: Date.now() }
+                : {})
+            }
+          })
+        } else if (data.chunk) {
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: data.chunk,
+            role: 'coordinator',
+            taskId: data.taskId,
+            specialist: data.specialist
+          })
+        }
 
-        // Also send to agent monitor for live output display
-        // Use composite key matching AGENT_STATUS_UPDATE's agentId format
         mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_CHUNK, {
           agentId: `${data.specialist}-${data.taskId}`,
           taskId: data.taskId,
-          text: data.chunk
+          text: data.toolActivity
+            ? `\n🔧 **${data.toolActivity.toolName}** ${data.toolActivity.input ?? ''}\n`
+            : data.chunk
+        })
+      }
+
+      const onInvestigationReport = (data: {
+        taskId: string
+        specialist: string
+        report: InvestigationReport
+      }): void => {
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_INVESTIGATION_REPORT, {
+          conversationId,
+          ...data
         })
       }
 
@@ -362,6 +419,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         specialistPoolService.removeListener('taskChunk', onTaskChunk)
         specialistPoolService.removeListener('taskRetry', onTaskRetry)
         specialistPoolService.removeListener('allComplete', onAllComplete)
+        specialistPoolService.removeListener('investigationReport', onInvestigationReport)
       }
 
       // Forward retry events to renderer
@@ -384,6 +442,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       specialistPoolService.on('taskChunk', onTaskChunk)
       specialistPoolService.on('taskRetry', onTaskRetry)
       specialistPoolService.on('allComplete', onAllComplete)
+      specialistPoolService.on('investigationReport', onInvestigationReport)
 
       try {
         if (strategy === 'parallel') {
@@ -413,6 +472,57 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           conversationId,
           messageId: savedMsg.id
         })
+
+        specialistPoolService.removeListener('taskProgress', onTaskProgress)
+        specialistPoolService.removeListener('taskChunk', onTaskChunk)
+        specialistPoolService.removeListener('taskRetry', onTaskRetry)
+        specialistPoolService.removeListener('allComplete', onAllComplete)
+        specialistPoolService.removeListener('investigationReport', onInvestigationReport)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_EXECUTE_INVESTIGATION_FIX,
+    async (
+      event,
+      args: { conversationId: string; strategy: ExecutionStrategy; report: InvestigationReport }
+    ) => {
+      validateSender(event)
+      const { conversationId, strategy, report } = args
+
+      // Auto-switch to build mode
+      const conversation = conversationRepository.findById(conversationId)
+      if (conversation?.mode === 'plan') {
+        conversationRepository.updateMode(conversationId, 'build')
+        generalistService.switchMode('build')
+        log.info('Auto-switched to build mode for investigation fix')
+      }
+
+      // Build fix-oriented HandoffBrief
+      const fixBrief: HandoffBrief = {
+        summary: `Fix: ${report.proposedFix}`,
+        decisions: [],
+        constraints: [],
+        filesDiscussed: report.filesAffected.map((f) => f.path),
+        recentMessages: [],
+        specialists: [],
+        mode: 'build'
+      }
+
+      // Decompose into fix tasks
+      const taskPlan = await orchestratorService.decompose(fixBrief, conversationId, 'build')
+      mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
+
+      // Auto-execute
+      specialistPoolService.setWorkspacePath(generalistService.getWorkspacePath()!)
+      specialistPoolService.setConversationId(conversationId)
+      specialistPoolService.setConversationBrief(fixBrief)
+
+      if (strategy === 'parallel') {
+        await specialistPoolService.executeParallel(taskPlan.tasks, 'build')
+      } else {
+        await specialistPoolService.executeSequential(taskPlan.tasks, 'build')
       }
     }
   )

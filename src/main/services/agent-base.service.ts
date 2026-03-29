@@ -101,6 +101,19 @@ export abstract class AgentBaseService extends EventEmitter {
   }
 
   /**
+   * Flushes current token usage to the DB session without completing it.
+   * Use for long-lived agents (e.g. generalist) so the dashboard shows live data.
+   */
+  protected flushTokenUsage(): void {
+    if (!this.dbSessionId) return
+    try {
+      agentSessionRepository.updateTokenUsage(this.dbSessionId, this.tokenUsage)
+    } catch (err) {
+      this.log.error('Failed to flush token usage:', err)
+    }
+  }
+
+  /**
    * Completes the DB session record with final status and token usage.
    */
   protected completeDbSession(status: 'completed' | 'failed' | 'terminated'): void {
@@ -131,13 +144,18 @@ export abstract class AgentBaseService extends EventEmitter {
 
       try {
         const event = JSON.parse(trimmed)
-        this.processStreamEvent(event)
+        try {
+          this.processStreamEvent(event)
+        } catch (processError) {
+          this.log.error('Error processing stream event:', processError, trimmed.substring(0, 200))
+        }
       } catch {
         if (trimmed) {
-          this.emit('chunk', {
-            type: 'text',
-            content: trimmed
-          } as StreamChunk)
+          try {
+            this.emit('chunk', { type: 'text', content: trimmed } as StreamChunk)
+          } catch (emitError) {
+            this.log.error('Failed to emit raw chunk:', emitError)
+          }
         }
       }
     }
@@ -378,6 +396,9 @@ export abstract class AgentBaseService extends EventEmitter {
           type: 'error',
           error: (event.error as Record<string, string>)?.message ?? 'Unknown error'
         } as StreamChunk)
+        // Emit complete so the UI isn't stuck — if the CLI recovers and sends
+        // a result event later, handleOutput will start a new interaction cycle
+        this.emit('complete')
         break
       }
 

@@ -628,6 +628,13 @@ export class OfficeState {
     }
   }
 
+  setAgentThought(id: number, thought: string | null): void {
+    const ch = this.characters.get(id)
+    if (ch) {
+      ch.currentThought = thought
+    }
+  }
+
   showPermissionBubble(id: number): void {
     const ch = this.characters.get(id)
     if (ch) {

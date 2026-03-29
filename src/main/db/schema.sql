@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS specialists (
   priority INTEGER NOT NULL DEFAULT 100,
   is_active INTEGER NOT NULL DEFAULT 1,
   source_yaml TEXT DEFAULT NULL,
+  alias TEXT DEFAULT NULL,
+  avatar_url TEXT DEFAULT NULL,
+  pixel_sprite_id TEXT DEFAULT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

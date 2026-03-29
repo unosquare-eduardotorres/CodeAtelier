@@ -3,12 +3,12 @@
  * No panel chrome, no resize handle. Just the canvas filling the entire window.
  */
 
-import OfficeCanvas from './OfficeCanvas'
+import PhaserOfficeCanvas from './PhaserOfficeCanvas'
 
 export default function PixelOfficeFullscreen(): React.JSX.Element {
   return (
-    <div className="w-screen h-screen bg-gray-950">
-      <OfficeCanvas />
+    <div className="w-screen h-screen bg-[#0a0a14]">
+      <PhaserOfficeCanvas />
     </div>
   )
 }

@@ -1,3 +1,5 @@
+import type { GrillTrackId, GrillTrack } from './types'
+
 export const IPC_CHANNELS = {
   // Workspace
   WORKSPACE_LIST: 'workspace:list',
@@ -24,12 +26,15 @@ export const IPC_CHANNELS = {
   CHAT_GRILL_COMPLETE: 'chat:grillComplete',
   CHAT_GRILL_QUESTION: 'chat:grillQuestion',
   CHAT_GRILL_EVALUATION: 'chat:grillEvaluation',
+  CHAT_ASK_QUESTION: 'chat:askQuestion',
   CHAT_TASK_PLAN: 'chat:taskPlan',
   CHAT_EXECUTE_PLAN: 'chat:executePlan',
   CHAT_TASK_PROGRESS: 'chat:taskProgress',
   CHAT_COMPLETE: 'chat:complete',
   CHAT_CLOSE: 'chat:close',
   CHAT_GET_FILE_CHANGES: 'chat:getFileChanges',
+  CHAT_INVESTIGATION_REPORT: 'chat:investigationReport',
+  CHAT_EXECUTE_INVESTIGATION_FIX: 'chat:executeInvestigationFix',
 
   // Agents
   AGENT_GET_STATUSES: 'agent:getStatuses',
@@ -43,6 +48,7 @@ export const IPC_CHANNELS = {
   // Dialog
   DIALOG_SELECT_DIRECTORY: 'dialog:selectDirectory',
   SAVE_CLIPBOARD_IMAGE: 'dialog:saveClipboardImage',
+  READ_IMAGE_BASE64: 'dialog:readImageBase64',
 
   // Specialists
   SPECIALIST_LIST: 'specialist:list',
@@ -230,7 +236,12 @@ export const IPC_CHANNELS = {
   // Agent events (new from audit)
   AGENT_ABANDONMENT_DETECTED: 'agent:abandonmentDetected',
   AGENT_GATE_FAILURE: 'agent:gateFailure',
-  AGENT_MODEL_ESCALATED: 'agent:modelEscalated'
+  AGENT_MODEL_ESCALATED: 'agent:modelEscalated',
+  AGENT_HEARTBEAT: 'agent:heartbeat',
+
+  // Tool approval
+  TOOL_APPROVAL_REQUEST: 'tool:approvalRequest',
+  TOOL_APPROVAL_RESPONSE: 'tool:approvalResponse'
 } as const
 
 export const CONVERSATION_MODES = {
@@ -402,4 +413,113 @@ export const MODEL_PRICING_TABLE = {
 export const MODEL_ESCALATION_CHAIN = {
   haiku: 'sonnet',
   sonnet: 'opus'
+} as const
+
+// ── Grill Tracks ──
+
+export const GRILL_TRACKS: Record<GrillTrackId, GrillTrack> = {
+  requirements: {
+    id: 'requirements',
+    name: 'Requirements',
+    icon: 'ClipboardCheck',
+    description: 'User stories, acceptance criteria, edge cases, and stakeholder clarity',
+    scoringFocus: [
+      'User stories completeness',
+      'Acceptance criteria (Given/When/Then)',
+      'Edge case coverage',
+      'Stakeholder needs',
+      'Scope clarity'
+    ]
+  },
+  architecture: {
+    id: 'architecture',
+    name: 'Architecture',
+    icon: 'Building2',
+    description: 'Module decomposition, API/IPC design, scalability, and process boundaries',
+    scoringFocus: [
+      'Module boundaries',
+      'API/IPC channel design',
+      'Dependency management',
+      'Scalability',
+      'Error propagation'
+    ]
+  },
+  'ux-ui': {
+    id: 'ux-ui',
+    name: 'UX/UI',
+    icon: 'Palette',
+    description: 'User flows, accessibility, responsiveness, and interaction patterns',
+    scoringFocus: [
+      'User flow completeness',
+      'Accessibility (WCAG)',
+      'Responsive layout',
+      'Error states UX',
+      'Loading/empty states'
+    ]
+  },
+  security: {
+    id: 'security',
+    name: 'Security',
+    icon: 'Shield',
+    description: 'Authentication, CSP, input validation, context isolation, and secrets',
+    scoringFocus: [
+      'Auth strategy',
+      'Input validation',
+      'CSP headers',
+      'Context isolation',
+      'Secret management'
+    ]
+  },
+  testing: {
+    id: 'testing',
+    name: 'Testing',
+    icon: 'TestTube',
+    description: 'Test strategy, coverage plan, E2E scenarios, and testing pyramid',
+    scoringFocus: [
+      'Test pyramid balance',
+      'Coverage strategy',
+      'E2E critical paths',
+      'Mock strategy',
+      'CI integration'
+    ]
+  },
+  infrastructure: {
+    id: 'infrastructure',
+    name: 'Infrastructure',
+    icon: 'Cloud',
+    description: 'CI/CD pipelines, packaging, deployment, monitoring, and releases',
+    scoringFocus: [
+      'CI/CD pipeline',
+      'Packaging strategy',
+      'Deployment plan',
+      'Monitoring',
+      'Release automation'
+    ]
+  },
+  data: {
+    id: 'data',
+    name: 'Data',
+    icon: 'Database',
+    description: 'Schema design, migrations, query patterns, and data integrity',
+    scoringFocus: [
+      'Schema design',
+      'Migration strategy',
+      'Query optimization',
+      'Data integrity',
+      'Backup/recovery'
+    ]
+  },
+  'code-quality': {
+    id: 'code-quality',
+    name: 'Code Quality',
+    icon: 'Code',
+    description: 'SOLID principles, naming, patterns, refactoring, and documentation',
+    scoringFocus: [
+      'SOLID adherence',
+      'Naming conventions',
+      'Pattern consistency',
+      'Refactoring plan',
+      'Documentation'
+    ]
+  }
 } as const

@@ -6,7 +6,7 @@ description: >
   process management, Claude CLI/SDK patterns, auto-updates, packaging, and security hardening.
 model: sonnet
 tools: [Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch]
-skills: [electron-pro, claude-code-cli, claude-architect, ipc-patterns, agent-sdk-patterns]
+skills: [electron-pro, claude-code-cli, claude-architect, ipc-patterns, agent-sdk-patterns, security]
 ---
 
 You are a platform architect specialist for the Agent Studio project ecosystem.

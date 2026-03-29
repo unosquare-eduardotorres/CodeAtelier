@@ -1,5 +1,5 @@
 import { ipcMain, app, type BrowserWindow } from 'electron'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import simpleGit from 'simple-git'
 import {
@@ -11,7 +11,8 @@ import {
 import {
   generalistService,
   orchestratorService,
-  gitWorktreeService
+  gitWorktreeService,
+  fileService
 } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { ConversationMode } from '../../shared/types'
@@ -418,31 +419,59 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
     }
   )
 
-  ipcMain.handle(IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE, async (event, args: { dataUrl: string }) => {
-    validateSender(event)
+  ipcMain.handle(
+    IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE,
+    async (event, args: { dataUrl: string; conversationId: string }) => {
+      validateSender(event)
 
-    if (!args?.dataUrl || typeof args.dataUrl !== 'string') {
-      throw new Error('Invalid image data')
+      if (!args?.dataUrl || typeof args.dataUrl !== 'string') {
+        throw new Error('Invalid image data')
+      }
+
+      // Extract base64 data from data URL
+      const matches = args.dataUrl.match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/)
+      if (!matches) {
+        throw new Error('Invalid image data URL format')
+      }
+
+      const ext = matches[1]
+      const base64Data = matches[2]
+      const buffer = Buffer.from(base64Data, 'base64')
+
+      // Save to conversation-scoped directory
+      const imageDir = join(
+        app.getPath('userData'),
+        'chat-images',
+        args.conversationId || 'unsorted'
+      )
+      mkdirSync(imageDir, { recursive: true })
+
+      const filename = `clipboard-${Date.now()}.${ext}`
+      const filePath = join(imageDir, filename)
+      writeFileSync(filePath, buffer)
+
+      return filePath
     }
+  )
 
-    // Extract base64 data from data URL
-    const matches = args.dataUrl.match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/)
-    if (!matches) {
-      throw new Error('Invalid image data URL format')
+  ipcMain.handle(
+    IPC_CHANNELS.READ_IMAGE_BASE64,
+    async (event, args: { filePath: string }) => {
+      validateSender(event)
+
+      if (!args?.filePath || typeof args.filePath !== 'string') {
+        throw new Error('Invalid file path')
+      }
+
+      // Security: only allow reading from chat-images directory
+      const chatImagesDir = join(app.getPath('userData'), 'chat-images')
+      const resolved = resolve(args.filePath)
+      if (!resolved.startsWith(chatImagesDir)) {
+        throw new Error('Access denied: file is outside chat-images directory')
+      }
+
+      const { base64, mimeType } = fileService.readImageAsBase64(resolved)
+      return `data:${mimeType};base64,${base64}`
     }
-
-    const ext = matches[1]
-    const base64Data = matches[2]
-    const buffer = Buffer.from(base64Data, 'base64')
-
-    // Save to temp directory
-    const tempDir = join(app.getPath('userData'), 'clipboard-images')
-    mkdirSync(tempDir, { recursive: true })
-
-    const filename = `clipboard-${Date.now()}.${ext}`
-    const filePath = join(tempDir, filename)
-    writeFileSync(filePath, buffer)
-
-    return filePath
-  })
+  )
 }

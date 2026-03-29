@@ -1,7 +1,7 @@
 import { useEffect, useCallback } from 'react'
 import { AppLayout } from '@renderer/components/layout'
 import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
-import { WelcomeModal } from '@renderer/components/common'
+import { WelcomeModal, ToolApprovalModal } from '@renderer/components/common'
 import {
   useWorkspaceStore,
   useChatActions,
@@ -30,10 +30,13 @@ function App(): React.JSX.Element {
     addToolActivity,
     updateToolActivity,
     setTaskPlan,
+    executePlan,
     updateTaskProgress,
     setCompactSuggestion,
     endGrillSession,
-    setGrillQuestions
+    setGrillQuestions,
+    setPendingQuestions,
+    setInvestigationReport
   } = useChatActions()
 
   // Agent actions
@@ -117,12 +120,30 @@ function App(): React.JSX.Element {
       setGrillQuestions(data.questions)
     })
 
+    const unsubAskQuestion = window.api.onAskQuestion((data) => {
+      setPendingQuestions(data.questions)
+    })
+
     const unsubTaskPlan = window.api.onTaskPlan((data) => {
-      setTaskPlan(data as TaskPlan)
+      const plan = data as TaskPlan
+      setTaskPlan(plan)
+
+      const isSingleInvestigation =
+        plan.mode !== 'plan' &&
+        plan.tasks.length === 1 &&
+        plan.tasks[0].description.includes('investigation report')
+
+      if (isSingleInvestigation) {
+        setTimeout(() => executePlan('sequential'), 500)
+      }
     })
 
     const unsubTaskProgress = window.api.onTaskProgress((data) => {
       updateTaskProgress(data)
+    })
+
+    const unsubInvestigationReport = window.api.onInvestigationReport((data) => {
+      setInvestigationReport(data)
     })
 
     const unsubReady = window.api.onOrchestratorReady(() => {
@@ -180,8 +201,10 @@ function App(): React.JSX.Element {
       unsubHandoff()
       unsubGrillComplete()
       unsubGrillQuestion()
+      unsubAskQuestion()
       unsubTaskPlan()
       unsubTaskProgress()
+      unsubInvestigationReport()
       unsubReady()
       unsubAgent()
       unsubUpdateAvailable()
@@ -199,6 +222,7 @@ function App(): React.JSX.Element {
     finalizeStream,
     setHandoff,
     setTaskPlan,
+    executePlan,
     updateTaskProgress,
     addToolActivity,
     updateToolActivity,
@@ -207,6 +231,8 @@ function App(): React.JSX.Element {
     setCompactSuggestion,
     endGrillSession,
     setGrillQuestions,
+    setPendingQuestions,
+    setInvestigationReport,
     setAvailable,
     setNotAvailable,
     setDownloaded,
@@ -243,7 +269,12 @@ function App(): React.JSX.Element {
     return <WelcomeModal onComplete={handleWelcomeComplete} />
   }
 
-  return <AppLayout />
+  return (
+    <>
+      <AppLayout />
+      <ToolApprovalModal />
+    </>
+  )
 }
 
 export default App

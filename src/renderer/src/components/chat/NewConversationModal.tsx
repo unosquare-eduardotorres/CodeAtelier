@@ -231,7 +231,7 @@ export default function NewConversationModal({
             <label className="block text-sm font-medium text-text-primary mb-1.5">
               Attachments <span className="text-text-muted font-normal">(optional)</span>
             </label>
-            <AttachmentDropzone attachments={attachments} onAttachmentsChange={setAttachments}>
+            <AttachmentDropzone attachments={attachments} onAttachmentsChange={setAttachments} conversationId="unsorted">
               <span className="text-sm text-text-muted">
                 Drop files here or click the clip icon to attach
               </span>

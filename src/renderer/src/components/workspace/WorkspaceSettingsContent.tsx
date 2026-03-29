@@ -17,11 +17,21 @@ import type { SettingsTab } from './WorkspaceSettingsPanel'
 interface WorkspaceSettingsContentProps {
   tab: SettingsTab
   onNavigateToChat: () => void
+  pendingGrill?: {
+    ideaId: string
+    conversationId: string
+    ideaTitle: string
+    ideaDescription?: string
+    isNewSession?: boolean
+  } | null
+  onPendingGrillConsumed?: () => void
 }
 
 export default function WorkspaceSettingsContent({
   tab,
-  onNavigateToChat
+  onNavigateToChat,
+  pendingGrill,
+  onPendingGrillConsumed
 }: WorkspaceSettingsContentProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
 
@@ -51,6 +61,20 @@ export default function WorkspaceSettingsContent({
       reset()
     }
   }, [workspacePath, reset])
+
+  // Auto-activate grill page when navigated from /grillme command
+  useEffect(() => {
+    if (pendingGrill) {
+      setActiveGrill({
+        ideaId: pendingGrill.ideaId,
+        conversationId: pendingGrill.conversationId,
+        ideaTitle: pendingGrill.ideaTitle,
+        ideaDescription: pendingGrill.ideaDescription,
+        isNewSession: pendingGrill.isNewSession
+      })
+      onPendingGrillConsumed?.()
+    }
+  }, [pendingGrill, onPendingGrillConsumed])
 
   // CLAUDE.md diff review (full page overlay)
   if (pendingClaudeMd && workspacePath) {

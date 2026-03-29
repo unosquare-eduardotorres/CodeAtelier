@@ -1,7 +1,7 @@
 import { useCallback, useRef, useEffect } from 'react'
 import { Minus, Maximize2, ExternalLink } from 'lucide-react'
 import { usePixelOfficeStore } from '@renderer/store/pixelOffice.store'
-import OfficeCanvas from './OfficeCanvas'
+import PhaserOfficeCanvas from './PhaserOfficeCanvas'
 
 export default function PixelOfficePanel(): React.JSX.Element {
   const { panelHeight, setPanelHeight, hidePanel } = usePixelOfficeStore()
@@ -49,30 +49,27 @@ export default function PixelOfficePanel(): React.JSX.Element {
   return (
     <div
       ref={panelRef}
-      className="flex-shrink-0 bg-gray-900 border-t border-gray-700 flex flex-col overflow-hidden transition-[height] duration-200"
+      className="flex-shrink-0 bg-[#0f0e17] border-t border-[#3d3555] flex flex-col overflow-hidden transition-[height] duration-200"
       style={{ height: panelHeight }}
     >
       {/* Resize handle */}
       <div
-        className="h-1 cursor-row-resize bg-gray-700/50 hover:bg-indigo-500/50 transition-colors flex-shrink-0"
+        className="h-1 cursor-row-resize bg-[#3d3555]/50 hover:bg-indigo-500/50 transition-colors flex-shrink-0"
         onMouseDown={handleMouseDown}
       />
 
       {/* Panel header */}
-      <div className="flex items-center justify-between px-3 py-1 bg-gray-800/50 border-b border-gray-700/50 flex-shrink-0">
+      <div className="flex items-center justify-between px-3 py-1 bg-[#1a1828]/80 border-b border-[#3d3555]/50 flex-shrink-0">
         <span className="text-xs font-medium text-gray-400 flex items-center gap-2">
-          <span className="text-base">🏢</span>
+          <span className="text-base">🏰</span>
           Pixel Office
         </span>
         <div className="flex items-center gap-1">
           <button
             onClick={async () => {
               await window.api.popoutPixelOffice()
-              // Don't hide the panel — keep it visible so the user
-              // can see the office in both places, or let them close
-              // the panel manually with the minimize button
             }}
-            className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors"
+            className="p-0.5 rounded hover:bg-[#2a2844] text-gray-500 hover:text-gray-300 transition-colors"
             title="Open in separate window"
             aria-label="Pop out to separate window"
           >
@@ -80,7 +77,7 @@ export default function PixelOfficePanel(): React.JSX.Element {
           </button>
           <button
             onClick={() => setPanelHeight(panelHeight < 400 ? 500 : 300)}
-            className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors"
+            className="p-0.5 rounded hover:bg-[#2a2844] text-gray-500 hover:text-gray-300 transition-colors"
             title={panelHeight < 400 ? 'Expand' : 'Shrink'}
             aria-label="Resize panel"
           >
@@ -88,7 +85,7 @@ export default function PixelOfficePanel(): React.JSX.Element {
           </button>
           <button
             onClick={hidePanel}
-            className="p-0.5 rounded hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors"
+            className="p-0.5 rounded hover:bg-[#2a2844] text-gray-500 hover:text-gray-300 transition-colors"
             title="Minimize"
             aria-label="Minimize panel"
           >
@@ -98,8 +95,8 @@ export default function PixelOfficePanel(): React.JSX.Element {
       </div>
 
       {/* Canvas container */}
-      <div className="flex-1 min-h-0 relative bg-gray-950">
-        <OfficeCanvas />
+      <div className="flex-1 min-h-0 relative bg-[#0a0a14]">
+        <PhaserOfficeCanvas />
       </div>
     </div>
   )

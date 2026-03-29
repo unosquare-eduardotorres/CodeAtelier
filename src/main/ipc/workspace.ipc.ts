@@ -94,6 +94,14 @@ export function registerWorkspaceIpc(): void {
       dbLogger.warn('Auto-sync on workspace open failed:', e)
     }
 
+    // Load auth settings for this workspace (determines CLI vs SDK execution path)
+    try {
+      const { authProvider } = await import('../services/auth-provider')
+      authProvider.loadFromWorkspace(workspace.repoPath)
+    } catch (e) {
+      dbLogger.warn('Failed to load auth settings:', e)
+    }
+
     // Auto memory is DB-backed — no directory initialization needed
 
     return workspace

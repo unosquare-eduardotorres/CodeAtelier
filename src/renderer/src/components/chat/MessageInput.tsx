@@ -23,6 +23,7 @@ import VoiceIndicator from './VoiceIndicator'
 interface MessageInputProps {
   attachments: string[]
   onClearAttachments: () => void
+  onStartGrillMe?: () => Promise<void>
 }
 
 const SLASH_COMMANDS: Array<{
@@ -77,7 +78,8 @@ const SLASH_COMMANDS: Array<{
 
 export default function MessageInput({
   attachments,
-  onClearAttachments
+  onClearAttachments,
+  onStartGrillMe
 }: MessageInputProps): React.JSX.Element {
   const [text, setText] = useState('')
   const [showStopConfirm, setShowStopConfirm] = useState(false)
@@ -92,14 +94,10 @@ export default function MessageInput({
     clearDisplay,
     appendLocalMessage,
     completeConversation,
-    closeConversation,
-    startGrillSession
+    closeConversation
   } = useChatActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
   const activeConversation = useChatStore((s) => s.activeConversation)
-  const hasPendingGrillQuestions = useChatStore(
-    (s) => (s.grillSession?.pendingQuestions?.length ?? 0) > 0
-  )
   const orchestratorStatus = useWorkspaceStore((s) => s.orchestratorStatus)
   const isInitializing = orchestratorStatus === 'starting'
 
@@ -226,10 +224,9 @@ export default function MessageInput({
 
       if (cmd === '/grillme') {
         setText('')
-        startGrillSession()
-        const grillPrompt = `[GRILL MODE ACTIVATED]\n\nInterview me relentlessly about every aspect of this plan until we reach a shared understanding. Present 2-5 related questions per batch, grouped by topic. Mark your recommended option using the "recommended" field in the JSON. If a question can be answered by exploring the codebase, explore it instead of asking.\n\nReview the conversation above and start grilling me about the items, pending decisions, and unclear requirements.`
-        await sendMessage(grillPrompt, attachments.length > 0 ? attachments : undefined)
-        onClearAttachments()
+        if (onStartGrillMe) {
+          await onStartGrillMe()
+        }
         return
       }
 
@@ -306,7 +303,7 @@ export default function MessageInput({
     }
   }
 
-  const isDisabled = isStreaming || !activeConversation || isInitializing || hasPendingGrillQuestions
+  const isDisabled = isStreaming || !activeConversation || isInitializing
 
   return (
     <>
@@ -356,15 +353,13 @@ export default function MessageInput({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            hasPendingGrillQuestions
-              ? 'Answer the grill questions above to continue...'
-              : isInitializing
-                ? 'Waiting for AI agent to initialize...'
-                : !activeConversation
-                  ? 'Select or create a conversation...'
-                  : activeConversation.mode === 'plan'
-                    ? `Ask anything — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
-                    : `Describe what to build — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
+            isInitializing
+              ? 'Waiting for AI agent to initialize...'
+              : !activeConversation
+                ? 'Select or create a conversation...'
+                : activeConversation.mode === 'plan'
+                  ? `Ask anything — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
+                  : `Describe what to build — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
           }
           disabled={isDisabled}
           rows={1}

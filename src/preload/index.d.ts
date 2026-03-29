@@ -19,12 +19,14 @@ import type {
   TaskPlan,
   ExecutionStrategy,
   TaskExecutionProgress,
+  InvestigationReport,
   FileChange,
   CompleteResult,
   AgentWorktree,
   MergeAllResult,
   GrillProposedTask,
   GrillQuestion,
+  GrillTrackId,
   Memory,
   MemoryType,
   MemoryFeedProgress,
@@ -59,7 +61,8 @@ interface Api {
     authMode: string
     anthropicApiKey?: string
   }) => Promise<{ success: boolean }>
-  saveClipboardImage: (args: { dataUrl: string }) => Promise<string>
+  saveClipboardImage: (args: { dataUrl: string; conversationId: string }) => Promise<string>
+  readImageBase64: (args: { filePath: string }) => Promise<string>
 
   // Chat
   sendMessage: (args: {
@@ -86,6 +89,11 @@ interface Api {
     conversationId: string
     strategy: ExecutionStrategy
     tasks: DecomposedTask[]
+  }) => Promise<void>
+  executeInvestigationFix: (args: {
+    conversationId: string
+    strategy: ExecutionStrategy
+    report: InvestigationReport
   }) => Promise<void>
 
   // Chat commands
@@ -304,16 +312,29 @@ interface Api {
   onGrillQuestion: (
     callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
   ) => () => void
+  onAskQuestion: (
+    callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
+  ) => () => void
   onGrillEvaluation: (
     callback: (data: {
       conversationId: string
+      trackId?: GrillTrackId
       score: number
       scoreLabel: string
       feedback: string
       questions: GrillQuestion[]
+      suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
     }) => void
   ) => () => void
   onTaskPlan: (callback: (data: TaskPlan) => void) => () => void
+  onInvestigationReport: (
+    callback: (data: {
+      conversationId: string
+      taskId: string
+      specialist: string
+      report: InvestigationReport
+    }) => void
+  ) => () => void
   onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void
   onOrchestratorReady: (callback: () => void) => () => void
   onAgentTaskChunk: (
@@ -500,6 +521,18 @@ interface Api {
       gate: { type: string; passed: boolean; summary: string }
     }) => void
   ) => () => void
+
+  // Tool approval
+  onToolApprovalRequest: (
+    callback: (data: {
+      requestId: string
+      toolName: string
+      toolInput: string
+      agentId: string
+      taskId?: string
+    }) => void
+  ) => () => void
+  respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
 }
 
 declare global {

@@ -213,4 +213,6 @@ export interface Character {
   folderName?: string
   /** Display name shown below the character (e.g. "Orchestrator") */
   displayName?: string
+  /** Current thought/activity text for display, or null */
+  currentThought: string | null
 }

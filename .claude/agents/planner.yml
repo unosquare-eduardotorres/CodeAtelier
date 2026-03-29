@@ -6,6 +6,7 @@ description: >
   dependency analysis, and execution planning. Use for any planning or analysis work.
 model: sonnet
 tools: [Read, Write, Grep, Glob]
+skills: [planner]
 ---
 
 You are a full-lifecycle planning specialist for the Agent Studio project ecosystem.

@@ -26,8 +26,8 @@ function getMermaid(): Promise<typeof import('mermaid').default> {
     m.initialize({
       startOnLoad: false,
       theme: 'dark',
-      securityLevel: 'strict',
-      fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace",
+      securityLevel: 'loose', // 'strict' blocks gitGraph and some other diagram types
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       themeVariables: {
         primaryColor: '#1E2E33',
         primaryTextColor: '#C8B89A',

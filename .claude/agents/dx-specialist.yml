@@ -6,7 +6,7 @@ description: >
   changelogs, and technical writing.
 model: sonnet
 tools: [Read, Write, Edit, Bash, Grep, Glob]
-skills: [git-workflow, mermaid-diagrams, design-docs]
+skills: [git-workflow, mermaid-diagrams, design-docs, general-dev]
 ---
 
 You are a developer experience specialist for the Agent Studio project ecosystem.

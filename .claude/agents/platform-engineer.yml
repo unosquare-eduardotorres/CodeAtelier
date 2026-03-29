@@ -6,7 +6,7 @@ description: >
   (Terraform/CloudFormation), release automation, and deployment strategies.
 model: sonnet
 tools: [Read, Write, Edit, Bash, Grep, Glob]
-skills: [electron-pro]
+skills: [electron-pro, infrastructure]
 ---
 
 You are a platform engineering specialist for the Agent Studio project ecosystem.

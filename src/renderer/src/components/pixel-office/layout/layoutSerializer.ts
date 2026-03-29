@@ -253,8 +253,8 @@ export function getSeatTiles(seats: Map<string, Seat>): Set<string> {
 }
 
 /** Default floor colors for the two rooms */
-const DEFAULT_LEFT_ROOM_COLOR: FloorColor = { h: 35, s: 30, b: 15, c: 0 } // warm beige
-const DEFAULT_RIGHT_ROOM_COLOR: FloorColor = { h: 25, s: 45, b: 5, c: 10 } // warm brown
+const DEFAULT_LEFT_ROOM_COLOR: FloorColor = { h: 20, s: 30, b: -20, c: 8 } // dark walnut
+const DEFAULT_RIGHT_ROOM_COLOR: FloorColor = { h: 15, s: 35, b: -15, c: 12 } // aged oak
 
 /** Create a minimal fallback layout (used only when no default-layout.json exists) */
 export function createDefaultLayout(): OfficeLayout {
@@ -376,11 +376,26 @@ function migrateLayout(layout: OfficeLayout): OfficeLayout {
       case 2: // was WOOD_FLOOR → FLOOR_2 brown
         tileColors.push(DEFAULT_RIGHT_ROOM_COLOR)
         break
-      case 3: // was CARPET → FLOOR_3 purple
-        tileColors.push({ h: 280, s: 40, b: -5, c: 0 })
+      case 3: // was CARPET → FLOOR_3 deep gothic purple
+        tileColors.push({ h: 280, s: 30, b: -25, c: 0 })
         break
-      case 4: // was DOORWAY → FLOOR_4 tan
-        tileColors.push({ h: 35, s: 25, b: 10, c: 0 })
+      case 4: // was DOORWAY → FLOOR_4 dark timber
+        tileColors.push({ h: 25, s: 25, b: -10, c: 5 })
+        break
+      case 5: // deep charcoal wood
+        tileColors.push({ h: 15, s: 20, b: -30, c: 3 })
+        break
+      case 6: // dark mahogany
+        tileColors.push({ h: 20, s: 25, b: -25, c: 5 })
+        break
+      case 7: // aged walnut
+        tileColors.push({ h: 10, s: 30, b: -20, c: 8 })
+        break
+      case 8: // blackened oak
+        tileColors.push({ h: 25, s: 20, b: -28, c: 4 })
+        break
+      case 9: // warm ebony
+        tileColors.push({ h: 8, s: 35, b: -15, c: 10 })
         break
       default:
         // Floor tile types without colors — use neutral gray

@@ -10,6 +10,8 @@ interface PixelOfficeState {
   isVisible: boolean
   panelHeight: number
   seatAssignments: Record<string, number>
+  /** When true, office takes center stage with chat+agents on the right */
+  isOfficeCentered: boolean
 
   togglePanel: () => void
   showPanel: () => void
@@ -17,6 +19,7 @@ interface PixelOfficeState {
   setPanelHeight: (height: number) => void
   assignSeat: (agentId: string, seatIndex: number) => void
   clearSeatAssignment: (agentId: string) => void
+  setOfficeCentered: (v: boolean) => void
 }
 
 function loadHeight(): number {
@@ -50,6 +53,7 @@ export const usePixelOfficeStore = create<PixelOfficeState>((set, get) => ({
   isVisible: false,
   panelHeight: loadHeight(),
   seatAssignments: loadSeatAssignments(),
+  isOfficeCentered: false,
 
   togglePanel: () => set((state) => ({ isVisible: !state.isVisible })),
   showPanel: () => set({ isVisible: true }),
@@ -83,5 +87,7 @@ export const usePixelOfficeStore = create<PixelOfficeState>((set, get) => ({
     } catch {
       // localStorage unavailable
     }
-  }
+  },
+
+  setOfficeCentered: (v: boolean) => set({ isOfficeCentered: v })
 }))

@@ -123,9 +123,8 @@ export function getWallInstances(
       if (tileMap[r][c] !== TileType.WALL) continue
       const colorIdx = r * layoutCols + c
       const wallColor = tileColors?.[colorIdx]
-      const wallInfo = wallColor
-        ? getColorizedWallSprite(c, r, tileMap, wallColor)
-        : getWallSprite(c, r, tileMap)
+      const defaultWallColor: FloorColor = { h: 240, s: 15, b: -20, c: 0 }
+      const wallInfo = getColorizedWallSprite(c, r, tileMap, wallColor ?? defaultWallColor)
       if (!wallInfo) continue
       instances.push({
         sprite: wallInfo.sprite,

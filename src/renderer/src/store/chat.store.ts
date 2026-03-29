@@ -9,14 +9,35 @@ import type {
   GrillAnswerPayload,
   GrillProposedTask,
   GrillQuestion,
+  InvestigationReport,
   Message,
   TaskExecutionProgress,
   TaskPlan,
   ToolActivity
 } from '../../../shared/types'
 
-/** Safety timer — force-resets isStreaming if stuck for 5 minutes (e.g., process dies without emitting complete) */
+/** Safety timer — force-resets isStreaming if stuck for 2 minutes (e.g., process dies without emitting complete) */
 let streamingSafetyTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Lazy-bound references — set once inside the Zustand create() closure */
+let _storeGet: (() => ChatState) | null = null
+let _storeSet: ((partial: Partial<ChatState>) => void) | null = null
+
+/**
+ * Resets the streaming safety timer — call on any sign of backend activity
+ * (text chunks, tool starts, tool completions). This prevents the timer from
+ * killing active-but-slow streams (e.g., agent running multiple Bash tools).
+ */
+function resetStreamingSafetyTimer(): void {
+  if (streamingSafetyTimer) clearTimeout(streamingSafetyTimer)
+  streamingSafetyTimer = setTimeout(() => {
+    if (_storeGet?.().isStreaming) {
+      rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
+      _storeSet?.({ isStreaming: false, streamingContent: '', toolActivities: [] })
+    }
+    streamingSafetyTimer = null
+  }, 2 * 60 * 1000)
+}
 
 interface HandoffState {
   summary: string
@@ -53,6 +74,16 @@ interface ChatState {
 
   // Grill session state
   grillSession: GrillSessionState | null
+
+  // General chat pending questions (ask-question blocks)
+  pendingQuestions: GrillQuestion[] | null
+
+  // Investigation report state
+  investigationReport: {
+    specialist: string
+    taskId: string
+    report: InvestigationReport
+  } | null
 
   loadConversations: (workspaceId: string) => Promise<void>
   createConversation: (
@@ -97,6 +128,19 @@ interface ChatState {
     tasks: Array<{ title: string; context: string; description: string }>
   ) => Promise<void>
 
+  // General chat question actions
+  setPendingQuestions: (questions: GrillQuestion[]) => void
+  submitQuestionAnswers: (answers: GrillAnswerPayload[]) => void
+  skipAllQuestions: () => void
+
+  setInvestigationReport: (data: {
+    specialist: string
+    taskId: string
+    report: InvestigationReport
+  }) => void
+  executeInvestigationFix: (strategy: ExecutionStrategy) => Promise<void>
+  clearInvestigationReport: () => void
+
   // /complete and /close actions
   completeConversation: (
     branchName: string,
@@ -126,6 +170,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isExecutingPlan: previousChatState?.isExecutingPlan ?? false,
   compactSuggestion: previousChatState?.compactSuggestion ?? null,
   grillSession: previousChatState?.grillSession ?? null,
+  pendingQuestions: previousChatState?.pendingQuestions ?? null,
+  investigationReport: null,
+
+  // Bind lazy refs for the safety timer helper (runs once on store creation)
+  ...(() => { _storeGet = get; _storeSet = set; return {} })(),
 
   loadConversations: async (workspaceId: string) => {
     try {
@@ -281,14 +330,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
 
     // Safety: force-reset if streaming state gets stuck (e.g., process dies without emitting complete)
-    if (streamingSafetyTimer) clearTimeout(streamingSafetyTimer)
-    streamingSafetyTimer = setTimeout(() => {
-      if (get().isStreaming) {
-        rendererLog.warn('Safety timeout: isStreaming stuck for 5 minutes — force-resetting')
-        set({ isStreaming: false, streamingContent: '', toolActivities: [] })
-      }
-      streamingSafetyTimer = null
-    }, 5 * 60 * 1000)
+    resetStreamingSafetyTimer()
 
     try {
       await window.api.sendMessage({
@@ -307,6 +349,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator', taskId?: string) => {
+    // Reset safety timer — backend is still alive
+    resetStreamingSafetyTimer()
     if (!chunk) return // Skip empty chunks (tool-only messages)
     set((state) => {
       // If taskId changed, a new specialist is streaming — start fresh content
@@ -320,12 +364,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addToolActivity: (activity: ToolActivity) => {
+    // Reset safety timer — tool started, backend is active
+    resetStreamingSafetyTimer()
     set((state) => ({
       toolActivities: [...state.toolActivities, activity]
     }))
   },
 
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => {
+    // Reset safety timer — tool completed, backend is active
+    resetStreamingSafetyTimer()
     set((state) => {
       // Find the last running activity with the matching tool name and mark it completed
       const activities = [...state.toolActivities]
@@ -448,6 +496,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearTaskPlan: () => {
     set({ activeTaskPlan: null, taskProgress: new Map(), isExecutingPlan: false })
+  },
+
+  setInvestigationReport: (data) => set({ investigationReport: data }),
+
+  clearInvestigationReport: () => set({ investigationReport: null }),
+
+  executeInvestigationFix: async (strategy) => {
+    const { investigationReport, activeConversation } = get()
+    if (!investigationReport || !activeConversation) return
+    try {
+      await window.api.executeInvestigationFix({
+        conversationId: activeConversation.id,
+        strategy,
+        report: investigationReport.report
+      })
+      set({ investigationReport: null })
+    } catch (error) {
+      console.error('Failed to execute investigation fix:', error)
+    }
   },
 
   completeConversation: async (branchName: string, commitMessage: string, description: string) => {
@@ -623,6 +690,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ grillSession: null })
   },
 
+  // General chat question actions (ask-question blocks)
+  setPendingQuestions: (questions) => {
+    set({ pendingQuestions: questions })
+  },
+
+  submitQuestionAnswers: (answers) => {
+    const lines: string[] = ['Here are my answers:\n']
+    for (const answer of answers) {
+      const question = get().pendingQuestions?.find((q) => q.id === answer.questionId)
+      const header = question?.header || question?.question || answer.questionId
+      if (answer.skipped) {
+        lines.push(`**${header}**: [SKIPPED]`)
+      } else {
+        const selected = answer.selectedOptions.join(', ')
+        const other = answer.otherText ? ` (Other: ${answer.otherText})` : ''
+        lines.push(`**${header}**: ${selected}${other}`)
+      }
+    }
+    set({ pendingQuestions: null })
+    get().sendMessage(lines.join('\n'))
+  },
+
+  skipAllQuestions: () => {
+    set({ pendingQuestions: null })
+    get().sendMessage("I'll skip these questions for now — let's continue.")
+  },
+
   setCompactSuggestion: (data) => set({ compactSuggestion: data }),
 
   clearDisplay: () => {
@@ -661,7 +755,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       taskProgress: new Map(),
       isExecutingPlan: false,
       compactSuggestion: null,
-      grillSession: null
+      grillSession: null,
+      investigationReport: null
     })
   }
 }))
@@ -702,6 +797,12 @@ export const useChatActions = (): Pick<
   | 'updateToolActivity'
   | 'setHandoff'
   | 'clearHandoff'
+  | 'setPendingQuestions'
+  | 'submitQuestionAnswers'
+  | 'skipAllQuestions'
+  | 'setInvestigationReport'
+  | 'executeInvestigationFix'
+  | 'clearInvestigationReport'
 > =>
   useChatStore(
     useShallow((s) => ({
@@ -734,7 +835,13 @@ export const useChatActions = (): Pick<
       addToolActivity: s.addToolActivity,
       updateToolActivity: s.updateToolActivity,
       setHandoff: s.setHandoff,
-      clearHandoff: s.clearHandoff
+      clearHandoff: s.clearHandoff,
+      setPendingQuestions: s.setPendingQuestions,
+      submitQuestionAnswers: s.submitQuestionAnswers,
+      skipAllQuestions: s.skipAllQuestions,
+      setInvestigationReport: s.setInvestigationReport,
+      executeInvestigationFix: s.executeInvestigationFix,
+      clearInvestigationReport: s.clearInvestigationReport
     }))
   )
 

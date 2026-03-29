@@ -89,7 +89,7 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editDescription, setEditDescription] = useState('')
-  const [filter, setFilter] = useState<IdeaFilter>('all')
+  const [filter, setFilter] = useState<IdeaFilter>('active')
   const [searchQuery, setSearchQuery] = useState('')
 
   const filteredIdeas = useMemo(() => {

@@ -13,9 +13,10 @@ import type { ConversationMode } from '../../../../shared/types'
 
 interface ChatPanelProps {
   onCreateIdea?: (data: { title: string; description?: string }) => void
+  onStartGrillMe?: () => Promise<void>
 }
 
-export default function ChatPanel({ onCreateIdea }: ChatPanelProps): React.JSX.Element {
+export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, orchestratorStatus } = useWorkspaceStore()
   const { createConversation, updateMode, sendMessage } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
@@ -94,7 +95,7 @@ export default function ChatPanel({ onCreateIdea }: ChatPanelProps): React.JSX.E
     : []
 
   return (
-    <div className="flex-1 flex flex-col bg-surface-raised min-w-0">
+    <div className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0">
       {/* Simplified Header */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-raised">
         <span className="text-sm font-medium text-text-primary">
@@ -181,8 +182,8 @@ export default function ChatPanel({ onCreateIdea }: ChatPanelProps): React.JSX.E
 
       {/* Input - pinned to bottom */}
       <div className="flex-shrink-0 px-6 pb-4 pt-2">
-        <AttachmentDropzone attachments={attachments} onAttachmentsChange={setAttachments}>
-          <MessageInput attachments={attachments} onClearAttachments={() => setAttachments([])} />
+        <AttachmentDropzone attachments={attachments} onAttachmentsChange={setAttachments} conversationId={activeConversation.id}>
+          <MessageInput attachments={attachments} onClearAttachments={() => setAttachments([])} onStartGrillMe={onStartGrillMe} />
         </AttachmentDropzone>
       </div>
     </div>

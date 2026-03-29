@@ -143,8 +143,8 @@ export function getCharacterSprites(paletteIndex: number, hueShift = 0): Charact
       }
     }
   } else {
-    // Fallback: return transparent placeholder sprites (16x32)
-    const e = emptySprite(16, 32)
+    // Fallback: return transparent placeholder sprites (32x32)
+    const e = emptySprite(32, 32)
     const walkSet: [SpriteData, SpriteData, SpriteData, SpriteData] = [e, e, e, e]
     const pairSet: [SpriteData, SpriteData] = [e, e]
     sprites = {

@@ -131,7 +131,7 @@ export default function AgentMonitor({
         <div className="flex flex-col items-center gap-2 py-3">
           <Monitor size={16} className="text-primary-text" />
           {activeCount > 0 && (
-            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-white">
+            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-surface-base">
               {activeCount}
             </span>
           )}
@@ -150,7 +150,7 @@ export default function AgentMonitor({
         </div>
         <div className="flex items-center gap-2">
           {activeCount > 0 && (
-            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-white">
+            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-surface-base">
               {activeCount}
             </span>
           )}

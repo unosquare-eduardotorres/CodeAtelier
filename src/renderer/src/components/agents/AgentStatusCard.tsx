@@ -138,7 +138,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
   return (
     <div
       className="bg-surface-overlay rounded-lg p-4 border border-border-subtle border-l-2 shadow-sm hover:border-border-default transition-colors"
-      style={{ borderLeftColor: meta?.color ?? '#6366F1' }}
+      style={{ borderLeftColor: meta?.color ?? '#B8976A' }}
     >
       <div
         className="flex items-center justify-between mb-2 cursor-pointer press-scale"
@@ -242,7 +242,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
         <div className="mt-3 pt-3 border-t border-border-subtle">
           {isActive && !agentOutput && (
             <div className="flex items-center gap-2 text-xs text-text-muted animate-pulse">
-              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-ping" />
+              <span className="w-1.5 h-1.5 bg-info rounded-full animate-ping" />
               Starting up...
             </div>
           )}

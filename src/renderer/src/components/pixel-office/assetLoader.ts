@@ -16,7 +16,7 @@ import { buildDynamicCatalog } from './layout/furnitureCatalog'
 import { FURNITURE_PNG_MAP, FURNITURE_CATALOG } from './furnitureRegistry'
 
 // ── Constants ──
-const CHAR_FRAME_W = 16
+const CHAR_FRAME_W = 32
 const CHAR_FRAME_H = 32
 const CHAR_FRAMES_PER_ROW = 7
 const WALL_PIECE_W = 16

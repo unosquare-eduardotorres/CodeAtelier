@@ -11,7 +11,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 27
+const CURRENT_SCHEMA_VERSION = 29
 
 interface Migration {
   version: number
@@ -468,6 +468,41 @@ const migrations: Migration[] = [
         updateProfile.run(newKey, oldKey)
       }
     }
+  },
+  {
+    version: 28,
+    name: 'add-specialist-pixel-sprite-id',
+    up: (db) => {
+      db.exec('ALTER TABLE specialists ADD COLUMN pixel_sprite_id TEXT DEFAULT NULL')
+    }
+  },
+  {
+    version: 29,
+    name: 'seed-specialist-pixel-sprite-ids',
+    up: (db) => {
+      const assignments: Record<string, string> = {
+        generalist: 'male-07-1',
+        orchestrator: 'male-06-1',
+        'electron-architect': 'other-pipo-charachip-soldier01',
+        'react-architect': 'enemy-02-1',
+        'dotnet-architect': 'male-09-1',
+        'ux-ui-specialist': 'male-02-2',
+        'cloud-infrastructure': 'male-16-2',
+        'agentic-architect': 'female-03-1',
+        'db-architect': 'male-04-1',
+        'git-github-specialist': 'male-14-1',
+        'requirements-specialist': 'female-12-1',
+        'code-planner': 'male-11-1',
+        'execution-planner': 'male-13-1',
+        'cicd-devops': 'soldier-03-1'
+      }
+      const update = db.prepare(
+        'UPDATE specialists SET pixel_sprite_id = ? WHERE agent_id = ? AND pixel_sprite_id IS NULL'
+      )
+      for (const [agentId, spriteId] of Object.entries(assignments)) {
+        update.run(spriteId, agentId)
+      }
+    }
   }
 ]
 
@@ -561,108 +596,128 @@ function seedDefaultSpecialists(database: Database.Database): void {
   if (count.cnt > 0) return
 
   const insert = database.prepare(`
-    INSERT INTO specialists (agent_id, display_name, icon, color, priority)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO specialists (agent_id, display_name, icon, color, priority, pixel_sprite_id)
+    VALUES (?, ?, ?, ?, ?, ?)
   `)
 
   const defaults = [
-    { agentId: 'generalist', displayName: 'Da Vinci', icon: '🎨', color: '#D97706', priority: 0 },
+    {
+      agentId: 'generalist',
+      displayName: 'Da Vinci',
+      icon: '🎨',
+      color: '#D97706',
+      priority: 0,
+      pixelSpriteId: 'male-07-1'
+    },
     {
       agentId: 'orchestrator',
       displayName: 'Stravinsky',
       icon: '🎼',
       color: '#8B5CF6',
-      priority: 1
+      priority: 1,
+      pixelSpriteId: 'male-06-1'
     },
     {
       agentId: 'react-architect',
       displayName: 'React Architect',
       icon: '⚛️',
       color: '#61DAFB',
-      priority: 2
+      priority: 2,
+      pixelSpriteId: 'enemy-02-1'
     },
     {
       agentId: 'dotnet-architect',
       displayName: '.NET Architect',
       icon: '🟣',
       color: '#512BD4',
-      priority: 3
+      priority: 3,
+      pixelSpriteId: 'male-09-1'
     },
     {
       agentId: 'electron-architect',
       displayName: 'Electron Architect',
       icon: '⚡',
       color: '#47848F',
-      priority: 4
+      priority: 4,
+      pixelSpriteId: 'other-pipo-charachip-soldier01'
     },
     {
       agentId: 'agentic-architect',
       displayName: 'Agentic Architect',
       icon: '🤖',
       color: '#D97706',
-      priority: 5
+      priority: 5,
+      pixelSpriteId: 'female-03-1'
     },
     {
       agentId: 'db-architect',
       displayName: 'DB Architect',
       icon: '🗄️',
       color: '#336791',
-      priority: 6
+      priority: 6,
+      pixelSpriteId: 'male-04-1'
     },
     {
       agentId: 'ux-ui-specialist',
       displayName: 'UX/UI Specialist',
       icon: '🎨',
       color: '#DB2777',
-      priority: 7
+      priority: 7,
+      pixelSpriteId: 'male-02-2'
     },
     {
       agentId: 'git-github-specialist',
       displayName: 'Git/GitHub Specialist',
       icon: '🔀',
       color: '#64748B',
-      priority: 8
+      priority: 8,
+      pixelSpriteId: 'male-14-1'
     },
     {
       agentId: 'requirements-specialist',
       displayName: 'Requirements Specialist',
       icon: '📋',
       color: '#059669',
-      priority: 9
+      priority: 9,
+      pixelSpriteId: 'female-12-1'
     },
     {
       agentId: 'code-planner',
       displayName: 'Code Planner',
       icon: '📝',
       color: '#475569',
-      priority: 10
+      priority: 10,
+      pixelSpriteId: 'male-11-1'
     },
     {
       agentId: 'execution-planner',
       displayName: 'Execution Planner',
       icon: '📅',
       color: '#DC6843',
-      priority: 11
+      priority: 11,
+      pixelSpriteId: 'male-13-1'
     },
     {
       agentId: 'cicd-devops',
       displayName: 'CI/CD DevOps',
       icon: '🚀',
       color: '#DC2626',
-      priority: 12
+      priority: 12,
+      pixelSpriteId: 'soldier-03-1'
     },
     {
       agentId: 'cloud-infrastructure',
       displayName: 'Cloud Infrastructure',
       icon: '☁️',
       color: '#0D9488',
-      priority: 13
+      priority: 13,
+      pixelSpriteId: 'male-16-2'
     }
   ]
 
   const tx = database.transaction(() => {
     for (const s of defaults) {
-      insert.run(s.agentId, s.displayName, s.icon, s.color, s.priority)
+      insert.run(s.agentId, s.displayName, s.icon, s.color, s.priority, s.pixelSpriteId)
     }
   })
   tx()

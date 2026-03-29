@@ -101,6 +101,12 @@ export class AgentSessionRepository {
     ).run(status, tokenUsage, id)
   }
 
+  /** Update token usage on a running session (periodic flush without completing) */
+  updateTokenUsage(id: string, tokenUsage: number): void {
+    const db = getDatabase()
+    db.prepare(`UPDATE agent_sessions SET token_usage = ? WHERE id = ?`).run(tokenUsage, id)
+  }
+
   /** Get all sessions for a workspace */
   findByWorkspace(workspaceId: string): AgentSession[] {
     const db = getDatabase()

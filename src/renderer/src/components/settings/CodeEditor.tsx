@@ -56,7 +56,7 @@ export default function CodeEditor({
         textareaClassName="outline-none font-mono text-sm"
         className="font-mono text-sm text-text-primary min-h-[200px]"
         style={{
-          fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
+          fontFamily: 'var(--ca-font-mono)',
           fontSize: '13px',
           lineHeight: '1.6'
         }}

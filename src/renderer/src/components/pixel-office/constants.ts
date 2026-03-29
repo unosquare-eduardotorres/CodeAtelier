@@ -36,7 +36,7 @@ export const MATRIX_TRAIL_MID_THRESHOLD = 0.33
 export const MATRIX_TRAIL_DIM_THRESHOLD = 0.66
 
 // -- Rendering ------------------------------------------------------------
-export const CHARACTER_SITTING_OFFSET_PX = 6
+export const CHARACTER_SITTING_OFFSET_PX = 4
 export const CHARACTER_Z_SORT_OFFSET = 0.5
 export const OUTLINE_Z_SORT_OFFSET = 0.001
 export const SELECTED_OUTLINE_ALPHA = 1.0
@@ -51,14 +51,14 @@ export const BUTTON_LINE_WIDTH_MIN = 1.5
 export const BUTTON_LINE_WIDTH_ZOOM_FACTOR = 0.5
 export const BUBBLE_FADE_DURATION_SEC = 0.5
 export const BUBBLE_SITTING_OFFSET_PX = 10
-export const BUBBLE_VERTICAL_OFFSET_PX = 24
-export const FALLBACK_FLOOR_COLOR = '#808080'
+export const BUBBLE_VERTICAL_OFFSET_PX = 20
+export const FALLBACK_FLOOR_COLOR = '#2e2420'
 
-// -- Rendering - Overlay Colors (canvas, not CSS) -------------------------
-export const SEAT_OWN_COLOR = 'rgba(0, 127, 212, 0.35)'
-export const SEAT_AVAILABLE_COLOR = 'rgba(0, 200, 80, 0.35)'
-export const SEAT_BUSY_COLOR = 'rgba(220, 50, 50, 0.35)'
-export const GRID_LINE_COLOR = 'rgba(255,255,255,0.12)'
+// -- Rendering - Overlay Colors (canvas, not CSS) — dark renaissance tones --
+export const SEAT_OWN_COLOR = 'rgba(100, 80, 180, 0.35)' // purple
+export const SEAT_AVAILABLE_COLOR = 'rgba(80, 160, 60, 0.30)' // muted green
+export const SEAT_BUSY_COLOR = 'rgba(180, 40, 40, 0.35)' // deep crimson
+export const GRID_LINE_COLOR = 'rgba(200,180,140,0.08)' // warm parchment grid
 export const VOID_TILE_OUTLINE_COLOR = 'rgba(255,255,255,0.08)'
 export const VOID_TILE_DASH_PATTERN: [number, number] = [2, 2]
 export const GHOST_BORDER_HOVER_FILL = 'rgba(60, 130, 220, 0.25)'
@@ -87,8 +87,8 @@ export const PAN_MARGIN_FRACTION = 0.25
 // -- Editor ---------------------------------------------------------------
 export const UNDO_STACK_MAX_SIZE = 50
 export const LAYOUT_SAVE_DEBOUNCE_MS = 500
-export const DEFAULT_FLOOR_COLOR: FloorColor = { h: 35, s: 30, b: 15, c: 0 }
-export const DEFAULT_WALL_COLOR: FloorColor = { h: 240, s: 25, b: 0, c: 0 }
+export const DEFAULT_FLOOR_COLOR: FloorColor = { h: 20, s: 35, b: -15, c: 10 }
+export const DEFAULT_WALL_COLOR: FloorColor = { h: 250, s: 20, b: -25, c: 0 }
 export const DEFAULT_NEUTRAL_COLOR: FloorColor = { h: 0, s: 0, b: 0, c: 0 }
 
 // -- Notification Sound ---------------------------------------------------
@@ -113,7 +113,7 @@ export const HUE_SHIFT_MIN_DEG = 45
 export const HUE_SHIFT_RANGE_DEG = 271
 export const AUTO_ON_FACING_DEPTH = 3
 export const AUTO_ON_SIDE_DEPTH = 2
-export const CHARACTER_HIT_HALF_WIDTH = 8
-export const CHARACTER_HIT_HEIGHT = 24
+export const CHARACTER_HIT_HALF_WIDTH = 16
+export const CHARACTER_HIT_HEIGHT = 28
 export const TOOL_OVERLAY_VERTICAL_OFFSET = 32
 export const PULSE_ANIMATION_DURATION_SEC = 1.5

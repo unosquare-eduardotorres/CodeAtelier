@@ -10,12 +10,14 @@ import {
   Hammer,
   ZoomIn,
   ZoomOut,
-  CircleHelp
+  CircleHelp,
+  ExternalLink,
+  ArrowLeft
 } from 'lucide-react'
 import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
 import { AgentMonitor } from '@renderer/components/agents'
-import { PixelOfficePanel } from '@renderer/components/pixel-office'
+import { PixelOfficePanel, PhaserOfficeCanvas } from '@renderer/components/pixel-office'
 import { WorkspaceSettingsContent } from '@renderer/components/workspace'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import { SettingsPage } from '@renderer/components/settings'
@@ -73,9 +75,20 @@ export default function AppLayout(): React.JSX.Element {
   const activeConversation = useChatStore((s) => s.activeConversation)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const [showNewChatModal, setShowNewChatModal] = useState(false)
-  const { isVisible: showPixelOffice, togglePanel: togglePixelOffice } = usePixelOfficeStore()
-  const { createIdea } = useIdeaStore()
+  const {
+    isVisible: showPixelOffice,
+    isOfficeCentered,
+    setOfficeCentered
+  } = usePixelOfficeStore()
+  const { createIdea, startGrill } = useIdeaStore()
   const [zoomFactor, setZoomFactor] = useState(1.0)
+  const [pendingGrill, setPendingGrill] = useState<{
+    ideaId: string
+    conversationId: string
+    ideaTitle: string
+    ideaDescription?: string
+    isNewSession?: boolean
+  } | null>(null)
 
   // Load initial zoom and subscribe to changes
   useEffect(() => {
@@ -178,7 +191,11 @@ export default function AppLayout(): React.JSX.Element {
 
       if (isMeta && e.shiftKey && e.key === 'o') {
         e.preventDefault()
-        togglePixelOffice()
+        if (isOfficeCentered) {
+          setOfficeCentered(false)
+        } else {
+          setOfficeCentered(true)
+        }
       }
 
       // Zoom shortcuts — ⌘+/⌘= to zoom in, ⌘- to zoom out, ⌘0 to reset
@@ -195,7 +212,7 @@ export default function AppLayout(): React.JSX.Element {
         window.api.zoomReset()
       }
     },
-    [activeWorkspace, togglePixelOffice, activeConversation, updateMode, isStreaming, navigateBack]
+    [activeWorkspace, isOfficeCentered, setOfficeCentered, activeConversation, updateMode, isStreaming, navigateBack]
   )
 
   useEffect(() => {
@@ -226,6 +243,34 @@ export default function AppLayout(): React.JSX.Element {
     if (!activeWorkspace) return
     await createIdea(activeWorkspace.id, data.title, data.description ?? '')
     handleOpenIdeas()
+  }
+
+  const handleStartGrillMe = async (): Promise<void> => {
+    if (!activeWorkspace || !activeConversation) return
+
+    try {
+      // 1. Create an idea from the conversation title
+      const idea = await createIdea(activeWorkspace.id, activeConversation.title, '')
+
+      // 2. Start a grill session on the new idea
+      const { idea: updatedIdea, conversation: grillConversation } = await startGrill(
+        idea.id,
+        activeWorkspace.id
+      )
+
+      // 3. Navigate to Ideas tab with the grill page open
+      setWorkspaceSettingsTab('ideas')
+      setSidebarView('settings')
+      setPendingGrill({
+        ideaId: updatedIdea.id,
+        conversationId: grillConversation.id,
+        ideaTitle: updatedIdea.title,
+        ideaDescription: updatedIdea.description,
+        isNewSession: true
+      })
+    } catch (error) {
+      console.error('[AppLayout] Failed to start grill from /grillme command:', error)
+    }
   }
 
   const handleCreateChat = async (data: {
@@ -269,12 +314,14 @@ export default function AppLayout(): React.JSX.Element {
         <WorkspaceSettingsContent
           tab={workspaceSettingsTab}
           onNavigateToChat={handleNavigateToChat}
+          pendingGrill={pendingGrill}
+          onPendingGrillConsumed={() => setPendingGrill(null)}
         />
       )
     }
 
     // Default: chat
-    return <ChatPanel onCreateIdea={handleCreateIdea} />
+    return <ChatPanel onCreateIdea={handleCreateIdea} onStartGrillMe={handleStartGrillMe} />
   }
 
   // Determine if sidebar should show (chat view or workspace settings view)
@@ -349,28 +396,106 @@ export default function AppLayout(): React.JSX.Element {
           </Sidebar>
         )}
 
-        {/* Main content area */}
-        <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
-
-        {/* Agent monitor panel — only in chat view */}
-        {showAgentPanel && view === 'chat' && (
-          <ErrorBoundary
-            fallback={
-              <div className="w-64 flex items-center justify-center p-4 text-sm text-danger bg-surface-raised border-l border-border-subtle">
-                Agent panel error — click to retry
+        {/* Office-centered layout: office in center, chat+agents stacked on right */}
+        {isOfficeCentered && view === 'chat' && activeWorkspace ? (
+          <>
+            {/* CENTER: Pixel Office (takes the main content area) */}
+            <div className="flex-1 min-h-0 relative flex flex-col">
+              {/* Office header bar */}
+              <div className="flex items-center justify-between px-3 py-1.5 bg-[#1a1828]/80 border-b border-[#3d3555]/50 flex-shrink-0">
+                <span className="text-xs font-medium text-gray-400 flex items-center gap-2">
+                  <span className="text-base">🏰</span>
+                  Pixel Office
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={async () => {
+                      await window.api.popoutPixelOffice()
+                    }}
+                    className="p-1 rounded hover:bg-[#2a2844] text-gray-500 hover:text-gray-300 transition-colors"
+                    title="Open in separate window"
+                    aria-label="Pop out to separate window"
+                  >
+                    <ExternalLink size={12} />
+                  </button>
+                  <button
+                    onClick={() => setOfficeCentered(false)}
+                    className="p-1 rounded hover:bg-[#2a2844] text-gray-500 hover:text-gray-300 transition-colors"
+                    title="Back to normal layout"
+                    aria-label="Close office view"
+                  >
+                    <ArrowLeft size={12} />
+                  </button>
+                </div>
               </div>
-            }
-          >
-            <AgentMonitor
-              isCollapsed={agentPanelCollapsed}
-              onToggleCollapse={() => setAgentPanelCollapsed((prev) => !prev)}
-            />
-          </ErrorBoundary>
+              {/* Phaser canvas */}
+              <div className="flex-1 min-h-0 bg-[#0a0a14]">
+                <ErrorBoundary
+                  fallback={
+                    <div className="p-4 text-sm text-danger bg-surface-raised">
+                      Pixel Office error — click to retry
+                    </div>
+                  }
+                >
+                  <PhaserOfficeCanvas />
+                </ErrorBoundary>
+              </div>
+            </div>
+
+            {/* RIGHT: Chat + Agents (collapsible bottom) */}
+            <div className="w-[420px] h-full min-h-0 flex flex-col border-l border-border-subtle flex-shrink-0">
+              {/* Chat — fills remaining space */}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <ErrorBoundary>
+                  <ChatPanel onCreateIdea={handleCreateIdea} onStartGrillMe={handleStartGrillMe} />
+                </ErrorBoundary>
+              </div>
+
+              {/* Agents — collapsible bottom */}
+              {showAgentPanel && (
+                <div className="max-h-[35%] min-h-0 border-t border-border-subtle flex-shrink-0">
+                  <ErrorBoundary
+                    fallback={
+                      <div className="flex items-center justify-center p-4 text-sm text-danger bg-surface-raised">
+                        Agent panel error — click to retry
+                      </div>
+                    }
+                  >
+                    <AgentMonitor
+                      isCollapsed={agentPanelCollapsed}
+                      onToggleCollapse={() => setAgentPanelCollapsed((prev) => !prev)}
+                    />
+                  </ErrorBoundary>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Normal layout: main content + agent panel */}
+            <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
+
+            {/* Agent monitor panel — only in chat view */}
+            {showAgentPanel && view === 'chat' && (
+              <ErrorBoundary
+                fallback={
+                  <div className="w-64 flex items-center justify-center p-4 text-sm text-danger bg-surface-raised border-l border-border-subtle">
+                    Agent panel error — click to retry
+                  </div>
+                }
+              >
+                <AgentMonitor
+                  isCollapsed={agentPanelCollapsed}
+                  onToggleCollapse={() => setAgentPanelCollapsed((prev) => !prev)}
+                />
+              </ErrorBoundary>
+            )}
+          </>
         )}
       </div>
 
-      {/* Pixel Office panel — only in chat view */}
-      {showPixelOffice && view === 'chat' && (
+      {/* Pixel Office bottom panel — only in non-centered mode */}
+      {showPixelOffice && !isOfficeCentered && view === 'chat' && (
         <ErrorBoundary
           fallback={
             <div className="p-4 text-sm text-danger bg-surface-raised border-t border-border-subtle">
@@ -452,14 +577,20 @@ export default function AppLayout(): React.JSX.Element {
           </div>
 
           <button
-            onClick={togglePixelOffice}
+            onClick={() => {
+              if (isOfficeCentered) {
+                setOfficeCentered(false)
+              } else {
+                setOfficeCentered(true)
+              }
+            }}
             className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-              showPixelOffice
+              isOfficeCentered
                 ? 'text-primary-text bg-primary-muted'
                 : 'text-text-muted hover:text-text-secondary'
             }`}
-            aria-label={showPixelOffice ? 'Hide pixel office' : 'Show pixel office'}
-            aria-pressed={showPixelOffice}
+            aria-label={isOfficeCentered ? 'Close pixel office' : 'Open pixel office'}
+            aria-pressed={isOfficeCentered}
             title={`Pixel Office (${isMac ? '⌘' : 'Ctrl+'}⇧O)`}
           >
             <Building2 size={12} />

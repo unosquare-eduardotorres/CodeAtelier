@@ -27,6 +27,7 @@ import { registerCheckpointIpc } from './checkpoint.ipc'
 import { registerCostIpc } from './cost.ipc'
 import { registerEventsIpc } from './events.ipc'
 import { registerGateIpc } from './gate.ipc'
+import { registerToolApprovalIpc } from './tool-approval.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -57,4 +58,5 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerCostIpc()
   registerEventsIpc()
   registerGateIpc()
+  registerToolApprovalIpc()
 }

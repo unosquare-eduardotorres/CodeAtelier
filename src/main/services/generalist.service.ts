@@ -1,4 +1,3 @@
-import { spawn, spawnSync } from 'node:child_process'
 import type {
   AgentStatus,
   ConversationMode,
@@ -10,6 +9,9 @@ import { AGENT_IDS } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
+import { SDKExecutor } from './sdk-executor'
+import type { SDKExecuteResult } from './sdk-executor'
+import { authProvider } from './auth-provider'
 import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
@@ -24,6 +26,9 @@ const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
 
 /** Regex to detect grill-question blocks emitted by the generalist. */
 const GRILL_QUESTION_REGEX = /```grill-question\n([\s\S]*?)```/g
+
+/** Regex to detect ask-question blocks emitted by the generalist (general chat questions). */
+const ASK_QUESTION_REGEX = /```ask-question\n([\s\S]*?)```/g
 
 /** Regex to detect grill-evaluation blocks (new structured format with score + questions). */
 const GRILL_EVAL_REGEX = /```grill-evaluation\n([\s\S]*?)```/g
@@ -47,29 +52,27 @@ export interface GrillQuestionEvent {
   questions: GrillQuestion[]
 }
 
+export interface AskQuestionEvent {
+  questions: GrillQuestion[]
+}
+
 /**
- * Manages a long-lived interactive Claude CLI session for the generalist agent.
+ * Manages the generalist agent via the Agent SDK.
  *
- * Unlike the orchestrator (which spawns `claude -p` per message), the generalist
- * keeps a persistent stdin/stdout pipe open. Messages are sent by writing to stdin.
+ * Unlike the previous CLI-based implementation that spawned a long-lived
+ * `claude` process with stdin/stdout pipes, the SDK-based generalist makes
+ * on-demand `query()` calls with session resume for conversation continuity.
  *
  * Runs in plan mode (read-only) or build mode (can execute commands).
  */
-/** Timeout for receiving the first response chunk (in ms) */
-const RESPONSE_TIMEOUT_MS = 60_000 // 1 minute
-/** Absolute cap per interaction — never resets on stdout activity (inspired by DevTeam's total_timeout_minutes) */
-const MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
-
 export class GeneralistService extends AgentBaseService {
   protected readonly log = generalistLogger
   private workspacePath: string | null = null
+  private workspaceId: string | null = null
   private currentConversationId: string | null = null
   private accumulatedText: string = ''
-  private responseTimeoutTimer: ReturnType<typeof setTimeout> | null = null
-  private interactionTimeoutTimer: ReturnType<typeof setTimeout> | null = null
-  private processReady: boolean = false
   private currentMode: ConversationMode = 'plan'
-  /** Maps conversationId → Claude CLI session_id for --resume support */
+  /** Maps conversationId → SDK session_id for resume support */
   private sessionMap: Map<string, string> = new Map()
 
   /**
@@ -89,54 +92,65 @@ export class GeneralistService extends AgentBaseService {
   /** Cost preference from workspace settings — affects compaction aggressiveness */
   private costPreference: CostPreference = 'balanced'
 
-  /** When true, the next response from the CLI is consumed silently (context injection) */
-  private suppressNextResponse = false
+  /** Tool call limits — plan mode is tighter since it should mostly chat */
+  private static readonly MAX_PLAN_TOOL_CALLS = 25
+  private static readonly MAX_BUILD_TOOL_CALLS = 60
 
-  /** Tighter tool call limit for conversational generalist (vs 75 in base) */
-  private static readonly MAX_GENERALIST_TOOL_CALLS = 40
+  /** Absolute cap per interaction — aborts SDK query if exceeded (replaces old CLI MAX_INTERACTION_TIMEOUT_MS) */
+  private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
 
-  /** Tracks whether stop() was called intentionally (vs crash) */
-  private intentionallyStopped: boolean = false
-  /** Number of auto-restart attempts since last successful start */
-  private restartAttempts: number = 0
+  /** AbortController for cancelling the current SDK query */
+  private sdkAbortController: AbortController | null = null
+  /** Reusable SDK executor instance */
+  private sdkExecutor: SDKExecutor = new SDKExecutor()
+
+  /** Full system prompt — rebuilt on start() and switchMode() */
+  private fullSystemPrompt: string = ''
+  /** Memory context string, cached for switchMode() rebuilds */
+  private memoryContext: string | undefined
+  /** Pending mode switch — when set, the next send() prefixes the message with mode-change context */
+  private pendingModeSwitch: { from: ConversationMode; to: ConversationMode } | null = null
 
   /**
-   * Spawns the long-lived interactive claude process for the given workspace.
+   * Initializes the generalist for the given workspace.
+   * Unlike the CLI-based version, this does NOT spawn a process — the SDK
+   * makes on-demand query() calls. The generalist is "ready" immediately.
    */
   async start(
     workspacePath: string,
     mode?: ConversationMode,
     resumeSessionId?: string
   ): Promise<void> {
-    if (this.process) {
-      await this.stop()
+    // Cancel any in-flight SDK query
+    if (this.sdkAbortController) {
+      this.sdkAbortController.abort()
+      this.sdkAbortController = null
     }
 
     this.workspacePath = workspacePath
+    this.workspaceId = null
     this.currentMode = mode ?? 'plan'
     this.startedAt = Date.now()
     this.currentStatus = 'idle'
-    this.buffer = ''
     this.tokenUsage = 0
-    this.processReady = false
-    this.intentionallyStopped = false
-    this.restartAttempts = 0
-    this.compactCount = 0
     this.currentConversationId = null
     this.accumulatedText = ''
+    this.compactCount = 0
+    this.compactSuggested = false
 
     // Build system prompt via centralized PromptBuilder
-    let memoryContext: string | undefined
+    this.memoryContext = undefined
     try {
       const allWorkspaces = workspaceRepository.findAll()
       const workspace = allWorkspaces.find((w) => w.repoPath === workspacePath)
+      if (workspace) this.workspaceId = workspace.id
       const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
 
       if (settings.memoryEnabled !== false && workspace) {
         // Strategy 7: Economy mode uses shorter memory context to save tokens
         const memoryBudget = settings.costPreference === 'economy' ? 5000 : 10000
         const ctx = memoryService.getContextForPrompt(workspace.id, memoryBudget)
-        if (ctx) memoryContext = ctx
+        if (ctx) this.memoryContext = ctx
       }
 
       // Strategy 7: Load cost preference to adjust compaction thresholds
@@ -145,205 +159,49 @@ export class GeneralistService extends AgentBaseService {
       // Memory context unavailable — not critical
     }
 
-    const fullSystemPrompt = promptBuilder.build({
+    this.fullSystemPrompt = promptBuilder.build({
       role: 'generalist',
       mode: this.currentMode,
       workspacePath,
-      memoryContext
+      memoryContext: this.memoryContext
     })
 
-    const isBuildMode = this.currentMode === 'build'
-
-    const generalistModel = modelConfigService.getModel(workspacePath, 'generalist')
-    const args = [
-      '--output-format',
-      'stream-json',
-      '--input-format',
-      'stream-json',
-      '--verbose',
-      '--model',
-      generalistModel,
-      ...(isBuildMode
-        ? ['--permission-mode', 'bypassPermissions']
-        : [
-            '--permission-mode',
-            'plan',
-            '--allowedTools',
-            'WebSearch,WebFetch',
-            // Note: --disallowedTools may not block plan mode's built-in tools (ExitPlanMode,
-            // Write to .claude/plans/). The real fix is the safety net in agent-base.service.ts
-            // that intercepts Write to .claude/plans/ and emits the content as a ```plan block.
-            '--disallowedTools',
-            'ExitPlanMode'
-          ]),
-      '--system-prompt',
-      fullSystemPrompt
-    ]
-
-    // Hooks are configured declaratively via .claude/hooks/hooks.json
-    // (CLI flags --pre-tool-use-hook / --post-tool-use-hook are not supported)
-
-    // Resume existing session if available (preserves conversation context)
-    if (resumeSessionId) {
-      args.push('--resume', resumeSessionId)
-      this.log.info('Resuming session:', resumeSessionId)
+    // If a resume session ID was passed, pre-populate the session map
+    if (resumeSessionId && this.currentConversationId) {
+      this.sessionMap.set(this.currentConversationId, resumeSessionId)
     }
 
-    const env = this.buildEnvWithPath()
+    // Load auth settings for SDK
+    authProvider.loadFromWorkspace(workspacePath)
 
-    // Log which CLI binary was resolved and its version for diagnostics
-    const whichResult = spawnSync('which', ['claude'], { env })
-    const resolvedPath = whichResult.stdout?.toString().trim() || '(not found)'
-    this.log.info(`Using CLI: ${resolvedPath}`)
-
-    const versionResult = spawnSync('claude', ['--version'], { env })
-    const resolvedVersion = versionResult.stdout?.toString().trim() || '(unknown)'
-    this.log.info(`CLI version: ${resolvedVersion}`)
-
-    this.log.info('Starting interactive session for workspace:', workspacePath)
-
-    const currentProcess = spawn('claude', args, {
-      cwd: workspacePath,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env
-    })
-    this.process = currentProcess
-
-    // Create DB session for token tracking
+    // Create DB session for token tracking (with workspaceId so dashboard queries find it)
     this.createDbSession('generalist', {
-      pid: currentProcess.pid
+      workspaceId: this.workspaceId ?? undefined
     })
 
     // Log session started event
     eventLoggerService.logSessionStarted({
       agentId: AGENT_IDS.GENERALIST,
-      model: generalistModel
+      model: modelConfigService.getModel(workspacePath, 'generalist')
     })
 
-    // Handle stdin errors (EPIPE when process dies unexpectedly)
-    currentProcess.stdin?.on('error', (err: Error) => {
-      this.log.error('stdin error:', err.message)
-      if (this.process === currentProcess && this.currentStatus !== 'idle') {
-        this.clearResponseTimeout()
-        this.clearInteractionTimeout()
-        this.currentStatus = 'failed'
-        this.emit('statusUpdate', this.getStatus())
-        this.emit('chunk', {
-          type: 'error',
-          error: `Connection to Claude CLI lost: ${err.message}. Try sending the message again.`
-        } as StreamChunk)
-        this.emit('complete')
-      }
-    })
-
-    currentProcess.stdout?.on('data', (data: Buffer) => {
-      if (this.process !== currentProcess) return
-      this.clearResponseTimeout()
-      this.log.debug('stdout:', data.toString().substring(0, 200))
-      this.handleOutput(data)
-    })
-
-    currentProcess.stderr?.on('data', (data: Buffer) => {
-      if (this.process !== currentProcess) return
-      this.handleError(data)
-    })
-
-    currentProcess.on('exit', (code: number | null) => {
-      if (this.process !== currentProcess) {
-        this.log.debug(`Stale process exit ignored (code: ${code})`)
-        return
-      }
-      this.handleExit(code)
-    })
-
-    currentProcess.on('error', (err: Error) => {
-      if (this.process !== currentProcess) return
-      this.log.error('Process error:', err.message)
-      this.currentStatus = 'failed'
-      this.emit('statusUpdate', this.getStatus())
-      this.emit('chunk', {
-        type: 'error',
-        error: `Failed to spawn Claude CLI: ${err.message}`
-      })
-      this.emit('complete')
-    })
-
-    // Process spawned — return immediately (non-blocking).
-    // Readiness is gated in send() via waitForReady() which awaits the '_processReady' event.
+    this.log.info('Generalist SDK session initialized for workspace:', workspacePath)
     this.emit('statusUpdate', this.getStatus())
   }
 
   /**
-   * Sends a message to the long-lived process by writing to stdin.
-   * Each message is a newline-terminated line written to the process stdin.
+   * Sends a message via the Agent SDK's query() async generator.
+   * Each call resumes the existing session (if available) for conversation continuity.
    */
   async send(message: string, conversationId: string): Promise<void> {
-    // If process is dead, attempt auto-restart with session resume
-    if (!this.process || !this.process.stdin || this.process.killed) {
-      if (this.workspacePath) {
-        this.log.warn('Process not available, auto-restarting...')
-        // Try in-memory session first, then fall back to DB
-        let sessionId = this.sessionMap.get(conversationId)
-        if (!sessionId) {
-          try {
-            sessionId = conversationRepository.getSessionId(conversationId)
-            if (sessionId) {
-              this.sessionMap.set(conversationId, sessionId)
-              this.log.info('Session loaded from DB:', sessionId)
-            }
-          } catch (err) {
-            this.log.error('Failed to load session from DB:', err)
-          }
-        }
-        await this.start(this.workspacePath, this.currentMode, sessionId)
-      }
-      // Re-check after restart attempt
-      if (!this.process || !this.process.stdin || this.process.killed) {
-        throw new Error('Generalist not started — no active process')
-      }
+    if (!this.workspacePath) {
+      throw new Error('Generalist not started — call start() first')
     }
 
-    // If conversation changed while the process is still alive, restart the CLI
-    // with the correct session so the agent has the right context.
-    if (
-      this.currentConversationId &&
-      this.currentConversationId !== conversationId &&
-      this.workspacePath
-    ) {
-      this.log.info(
-        `Conversation switch detected: ${this.currentConversationId} → ${conversationId}`
-      )
-      // Look up session ID for the target conversation
-      let sessionId = this.sessionMap.get(conversationId)
-      if (!sessionId) {
-        try {
-          sessionId = conversationRepository.getSessionId(conversationId)
-          if (sessionId) {
-            this.sessionMap.set(conversationId, sessionId)
-            this.log.info('Session loaded from DB for conversation switch:', sessionId)
-          }
-        } catch (err) {
-          this.log.error('Failed to load session for conversation switch:', err)
-        }
-      }
-      // Restart CLI with the new conversation's session (or fresh if no session)
-      await this.start(this.workspacePath, this.currentMode, sessionId)
+    // Conversation switch: log it (SDK handles session resume seamlessly)
+    if (this.currentConversationId && this.currentConversationId !== conversationId) {
+      this.log.info(`Conversation switch: ${this.currentConversationId} → ${conversationId}`)
     }
-
-    // Wait for CLI to be ready before writing to stdin — the process needs to
-    // emit a 'system' event before it can accept user messages via stream-json.
-    // Without this gate, messages sent immediately after start() or switchMode()
-    // get written to stdin before the CLI is initialized, causing "No response received."
-    if (!this.processReady) {
-      this.log.info('Waiting for CLI process to become ready...')
-      await this.waitForReady()
-    }
-
-    this.log.info('send() called', {
-      conversationId,
-      msgLen: message.length,
-      processAlive: !!this.process && !this.process.killed
-    })
 
     this.currentStatus = 'thinking'
     this.hasEmittedContent = false
@@ -351,25 +209,205 @@ export class GeneralistService extends AgentBaseService {
     this.processedToolIds.clear()
     this.currentConversationId = conversationId
     this.accumulatedText = ''
-    this.emit('statusUpdate', this.getStatus())
-
-    // Start response timeout — if no stdout data arrives within the limit, auto-fail
-    this.startResponseTimeout()
-    // Start absolute interaction timeout — never resets, catches slow tool loops
-    this.startInteractionTimeout()
-    // Reset tool call counter and circuit breaker for new interaction
     this.toolCallCount = 0
     this.circuitBroken = false
+    this.emit('statusUpdate', this.getStatus())
 
-    // Format as stream-json message (required for --input-format stream-json)
-    const jsonMessage = JSON.stringify({
-      type: 'user',
-      message: { role: 'user', content: message }
-    })
-    const writeOk = this.process.stdin.write(jsonMessage + '\n')
-    this.log.debug('Message written to stdin (stream-json)')
-    if (!writeOk) {
-      this.log.warn('stdin write buffer full, waiting for drain...')
+    // If a mode switch is pending, prefix the user's message with context so the agent
+    // knows its permissions changed — without clearing the session (preserves history).
+    let effectiveMessage = message
+    if (this.pendingModeSwitch) {
+      const { from, to } = this.pendingModeSwitch
+      const modeLabel = to === 'build' ? 'Build (read + execute)' : 'Plan (read-only)'
+      const permissions = to === 'build'
+        ? 'You now have full permissions to execute commands, run apps, install dependencies, and perform all operational tasks. You can also hand off code changes to specialists.'
+        : 'You are now in read-only mode. You can read files, search the codebase, and provide guidance, but you cannot run commands or write files.'
+      effectiveMessage = `[Mode switched from ${from} to ${to}. Mode: ${modeLabel}. ${permissions} The conversation history above is still valid — continue from where we left off.]\n\n${message}`
+      this.log.info(`Mode switch context injected: ${from} → ${to}`)
+      this.pendingModeSwitch = null
+    }
+
+    // Look up session for resume (in-memory first, then DB)
+    let sessionId = this.sessionMap.get(conversationId)
+    if (!sessionId) {
+      try {
+        sessionId = conversationRepository.getSessionId(conversationId)
+        if (sessionId) {
+          this.sessionMap.set(conversationId, sessionId)
+          this.log.info('Session loaded from DB:', sessionId)
+        }
+      } catch (err) {
+        this.log.error('Failed to load session:', err)
+      }
+    }
+
+    // For resumed sessions, inject critical rules as a message prefix because
+    // the SDK ignores systemPrompt updates when --resume is set (the CLI uses
+    // the original session's baked-in system prompt instead).
+    if (sessionId) {
+      const RULES_REMINDER = `[RULES REMINDER — These override all prior instructions]
+Current mode: ${this.currentMode === 'build' ? 'BUILD' : 'PLAN'}
+
+${this.currentMode === 'plan'
+  ? 'PLAN MODE: Answer questions, generate plans, hand off investigations. NEVER modify files. If user asks for code changes, say "Switch to Build mode."'
+  : 'BUILD MODE: Execute operational commands directly. Hand off ALL code changes to specialists via handoff block. NEVER write source code yourself.'}
+
+RESPONSE STYLE (MANDATORY):
+- Be CONCISE. Match response length to question complexity.
+- Simple yes/no questions → 1-3 sentences max.
+- NEVER repeat the same information twice in a response. If you catch yourself repeating, stop.
+- NEVER use emoji bullets (✅, 🟢, 🚀, 🎉, 📊) as section markers — plain markdown only.
+- NEVER produce status-report dashboards or decorated summary blocks.
+- Lead with the answer. No preamble.
+
+When I ask you to involve a specialist:
+1. Emit a \`\`\`handoff block IMMEDIATELY — do NOT explore code first
+2. Pick the specialist by technology
+3. Use "mode": "${this.currentMode}" in the handoff block
+4. The handoff block format:
+\`\`\`handoff
+{"action":"handoff","summary":"...","decisions":[],"constraints":[],"filesDiscussed":[],"specialists":["specialist-id"],"mode":"${this.currentMode}"}
+\`\`\`
+Do NOT use any tools before emitting the handoff block when I request a specialist.`
+
+      effectiveMessage = `${RULES_REMINDER}\n\n${effectiveMessage}`
+      this.log.info('Rules reminder injected for resumed session:', sessionId)
+    }
+
+    const isBuildMode = this.currentMode === 'build'
+    const abortController = new AbortController()
+    this.sdkAbortController = abortController
+
+    // Start absolute interaction timeout — aborts SDK query after 10 minutes
+    let timedOut = false
+    const interactionTimer = setTimeout(() => {
+      timedOut = true
+      this.log.error(
+        `Interaction timeout after ${GeneralistService.MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes — ${this.toolCallCount} tool calls made`
+      )
+      eventLoggerService.logAgentTimeout({
+        agentId: 'generalist',
+        conversationId,
+        elapsedMs: GeneralistService.MAX_INTERACTION_TIMEOUT_MS,
+        toolCallCount: this.toolCallCount
+      })
+      abortController.abort()
+    }, GeneralistService.MAX_INTERACTION_TIMEOUT_MS)
+
+    try {
+      for await (const chunk of this.sdkExecutor.execute({
+        prompt: effectiveMessage,
+        // Always send system prompt — ensures prompt updates propagate to resumed sessions
+        systemPrompt: this.fullSystemPrompt,
+        model: modelConfigService.getModel(this.workspacePath, 'generalist'),
+        cwd: this.workspacePath,
+        permissionMode: isBuildMode ? 'bypassPermissions' : 'plan',
+        allowedTools: isBuildMode ? undefined : ['WebSearch', 'WebFetch'],
+        maxTurns: isBuildMode ? 50 : 25,
+        resume: sessionId,
+        abortController,
+        agentId: AGENT_IDS.GENERALIST
+      })) {
+        // Circuit breaker check
+        if (this.circuitBroken) break
+
+        if ('_meta' in chunk && chunk._meta) {
+          const meta = chunk._meta as SDKExecuteResult
+          // Capture session ID for resume
+          if (meta.sessionId && conversationId) {
+            this.sessionMap.set(conversationId, meta.sessionId)
+            this.log.info('Session captured for conversation:', conversationId)
+            try {
+              conversationRepository.updateSessionId(conversationId, meta.sessionId)
+            } catch (err) {
+              this.log.error('Failed to persist session ID:', err)
+            }
+          }
+          // Track token usage + compaction logic
+          this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
+          this.checkCompaction(meta.tokenUsage.input)
+        } else {
+          // Accumulate text for handoff/grill detection
+          if (chunk.type === 'text' && chunk.content) {
+            this.accumulatedText += chunk.content
+          }
+          // Tool call counting + circuit breaker
+          if (chunk.type === 'tool_use') {
+            this.toolCallCount++
+            const toolCallLimit = isBuildMode
+              ? GeneralistService.MAX_BUILD_TOOL_CALLS
+              : GeneralistService.MAX_PLAN_TOOL_CALLS
+            if (this.toolCallCount >= toolCallLimit) {
+              this.circuitBroken = true
+              this.log.error(
+                `Generalist circuit breaker: ${this.toolCallCount} tool calls exceeded ${isBuildMode ? 'build' : 'plan'} limit of ${toolCallLimit}`
+              )
+              this.currentStatus = 'failed'
+              this.emit('statusUpdate', this.getStatus())
+              const errorMessage = isBuildMode
+                ? `I made ${this.toolCallCount} tool calls, which suggests I got stuck. Try breaking your request into smaller steps (e.g., "run npm install" then "run npm start").`
+                : `I made ${this.toolCallCount} tool calls trying to help, which is more than expected for plan mode. If you need me to run commands, switch to **Build mode** using the toggle in the chat header.`
+              this.emit('chunk', {
+                type: 'error',
+                error: errorMessage
+              } as StreamChunk)
+              this.emit('complete')
+              return
+            }
+            // Log tool call to event log
+            eventLoggerService.logAgentToolCall({
+              agentId: 'generalist',
+              conversationId,
+              toolName: chunk.toolName ?? 'unknown',
+              toolCallNumber: this.toolCallCount
+            })
+          }
+          // Update status based on chunk type
+          if (chunk.type === 'text') this.currentStatus = 'writing'
+          if (chunk.type === 'tool_use') this.currentStatus = 'reviewing'
+          this.emit('statusUpdate', this.getStatus())
+          this.emit('chunk', chunk)
+        }
+      }
+
+      clearTimeout(interactionTimer)
+      this.sdkAbortController = null
+
+      // Detect handoff/grill patterns in accumulated text
+      this.detectHandoff()
+      this.detectGrillSummary()
+      this.detectGrillEvaluation()
+      this.detectGrillQuestion()
+      this.detectAskQuestion()
+
+      this.currentStatus = 'idle'
+      this.flushTokenUsage()
+      this.emit('statusUpdate', this.getStatus())
+      this.emit('complete')
+    } catch (error) {
+      clearTimeout(interactionTimer)
+      this.sdkAbortController = null
+      if ((error as Error).name === 'AbortError') {
+        if (timedOut) {
+          this.log.error('SDK query timed out')
+          this.emit('chunk', {
+            type: 'error',
+            error: `Response exceeded maximum time (${GeneralistService.MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes) after ${this.toolCallCount} tool calls. The agent may be stuck. Try simplifying your request.`
+          } as StreamChunk)
+        } else {
+          this.log.info('SDK query cancelled by user')
+        }
+      } else {
+        this.log.error('SDK send failed:', error)
+        this.emit('chunk', {
+          type: 'error',
+          error: `Generalist SDK error: ${(error as Error).message}`
+        } as StreamChunk)
+      }
+      this.currentStatus = 'failed'
+      this.flushTokenUsage()
+      this.emit('statusUpdate', this.getStatus())
+      this.emit('complete')
     }
   }
 
@@ -380,365 +418,94 @@ export class GeneralistService extends AgentBaseService {
    * The generalist's response is silently consumed (not forwarded to renderer).
    */
   async injectContext(context: string, conversationId: string): Promise<void> {
-    if (!this.process || !this.process.stdin || this.process.killed) {
-      this.log.warn('Cannot inject context — generalist process not running')
+    if (!this.workspacePath) {
+      this.log.warn('Cannot inject context — generalist not started')
       return
     }
-
-    if (!this.processReady) {
-      this.log.warn('Cannot inject context — generalist process not ready')
-      return
-    }
-
-    // Don't inject if the generalist is currently busy responding
     if (this.currentStatus !== 'idle') {
       this.log.warn('Cannot inject context — generalist is busy:', this.currentStatus)
       return
     }
 
-    this.log.info('Injecting orchestrator/specialist results into generalist context')
-    this.suppressNextResponse = true
-    this.currentConversationId = conversationId
-    this.currentStatus = 'thinking'
-    this.hasEmittedContent = false
-    this.accumulatedText = ''
-    this.toolCallCount = 0
-    this.circuitBroken = false
+    this.log.info('Injecting context via SDK (silent query)')
 
-    const jsonMessage = JSON.stringify({
-      type: 'user',
-      message: {
-        role: 'user',
-        content: context
-      }
-    })
-
-    this.process.stdin.write(jsonMessage + '\n')
-
-    // Safety: auto-clear suppress flag after 60s in case something goes wrong
-    setTimeout(() => {
-      if (this.suppressNextResponse) {
-        this.log.warn('Suppress flag auto-cleared after timeout')
-        this.suppressNextResponse = false
-        this.currentStatus = 'idle'
-        this.emit('statusUpdate', this.getStatus())
-      }
-    }, 60_000)
-  }
-
-  /**
-   * Waits for the CLI process to emit its 'system' init event, indicating it's
-   * ready to accept user messages. Times out after 30 seconds.
-   */
-  private waitForReady(): Promise<void> {
-    if (this.processReady) return Promise.resolve()
-
-    return new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.removeListener('_processReady', onReady)
-        reject(new Error('CLI process did not become ready within 30 seconds'))
-      }, 30_000)
-
-      const onReady = (): void => {
-        clearTimeout(timeout)
-        this.log.info('CLI process is ready')
-        resolve()
-      }
-
-      this.once('_processReady', onReady)
-    })
-  }
-
-  private startResponseTimeout(): void {
-    this.clearResponseTimeout()
-    this.responseTimeoutTimer = setTimeout(() => {
-      if (
-        this.currentStatus === 'thinking' ||
-        this.currentStatus === 'writing' ||
-        this.currentStatus === 'reviewing'
-      ) {
-        this.log.error(`Response timeout after ${RESPONSE_TIMEOUT_MS / 1000}s`)
-        this.currentStatus = 'failed'
-        this.emit('statusUpdate', this.getStatus())
-        this.emit('chunk', {
-          type: 'error',
-          error: `Claude CLI did not respond within ${RESPONSE_TIMEOUT_MS / 1000} seconds. The process may be unresponsive. Try stopping all agents and sending the message again.`
-        } as StreamChunk)
-        this.emit('complete')
-      }
-    }, RESPONSE_TIMEOUT_MS)
-  }
-
-  private clearResponseTimeout(): void {
-    if (this.responseTimeoutTimer) {
-      clearTimeout(this.responseTimeoutTimer)
-      this.responseTimeoutTimer = null
-    }
-  }
-
-  /**
-   * Absolute interaction timeout — unlike responseTimeoutTimer, this does NOT
-   * reset on stdout activity. Inspired by DevTeam's total_timeout_minutes.
-   */
-  private startInteractionTimeout(): void {
-    this.clearInteractionTimeout()
-    const startedAt = Date.now()
-    this.interactionTimeoutTimer = setTimeout(() => {
-      if (this.currentStatus !== 'idle') {
-        const elapsedSec = Math.round((Date.now() - startedAt) / 1000)
-        this.log.error(
-          `Interaction timeout after ${elapsedSec}s — ${this.toolCallCount} tool calls made`
-        )
-
-        // Log timeout event for Event Log UI
-        eventLoggerService.logAgentTimeout({
-          agentId: 'generalist',
-          conversationId: this.currentConversationId ?? undefined,
-          elapsedMs: Date.now() - startedAt,
-          toolCallCount: this.toolCallCount
-        })
-
-        this.currentStatus = 'failed'
-        this.emit('statusUpdate', this.getStatus())
-        this.emit('chunk', {
-          type: 'error',
-          error: `Response exceeded maximum time (${MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes) after ${this.toolCallCount} tool calls. The agent may be stuck in a tool loop. Try simplifying your request or sending it again.`
-        } as StreamChunk)
-        this.emit('complete')
-      }
-    }, MAX_INTERACTION_TIMEOUT_MS)
-  }
-
-  private clearInteractionTimeout(): void {
-    if (this.interactionTimeoutTimer) {
-      clearTimeout(this.interactionTimeoutTimer)
-      this.interactionTimeoutTimer = null
-    }
-  }
-
-  /**
-   * Override processStreamEvent to:
-   * 1. Short-circuit during context injection suppression
-   * 2. Apply tighter tool call limit for conversational generalist
-   */
-  protected processStreamEvent(event: Record<string, unknown>): void {
-    if (this.suppressNextResponse) {
-      const type = event.type as string
-      if (type === 'result') {
-        this.onResultEvent(event)
-      } else if (type === 'system') {
-        this.onSystemEvent(event)
-      } else if (type === 'content_block_start') {
-        // If the generalist tries to use tools during suppressed response, log a warning
-        const cb = event.content_block as Record<string, unknown> | undefined
-        if (cb?.type === 'tool_use') {
-          this.log.warn('Generalist attempted tool use during context injection — suppressing')
-        }
-      }
-      // Silently ignore assistant, content_block_delta, content_block_stop, message_* events
+    // Look up session for the conversation
+    const sessionId = this.sessionMap.get(conversationId)
+    if (!sessionId) {
+      this.log.warn('Cannot inject context — no session for conversation:', conversationId)
       return
     }
 
-    // Apply tighter tool call limit for generalist (40 vs base 75).
-    // The generalist is conversational — 40 tool calls is already very generous.
-    const type = event.type as string
-    if (type === 'content_block_start') {
-      const contentBlock = event.content_block as Record<string, unknown> | undefined
-      if (contentBlock?.type === 'tool_use' && this.toolCallCount >= GeneralistService.MAX_GENERALIST_TOOL_CALLS) {
-        this.log.error(
-          `Generalist circuit breaker: ${this.toolCallCount} tool calls exceeded generalist limit of ${GeneralistService.MAX_GENERALIST_TOOL_CALLS}`
-        )
-        this.currentStatus = 'failed'
-        this.emit('statusUpdate', this.getStatus())
-        this.emit('chunk', {
-          type: 'error',
-          error: `The generalist made ${this.toolCallCount} tool calls, which suggests it got stuck in a loop. The response has been stopped. Try rephrasing your request.`
-        })
-        this.emit('complete')
-        this.circuitBroken = true
-        return
-      }
-    }
-
-    super.processStreamEvent(event)
-  }
-
-  /**
-   * Override to detect handoff signals in the accumulated text on result/complete.
-   */
-  protected onResultEvent(event: Record<string, unknown>): void {
-    // If this response was triggered by context injection, consume silently
-    if (this.suppressNextResponse) {
-      this.suppressNextResponse = false
-      this.log.info('Context injection response consumed silently')
-
-      // Still capture session ID for resume support
-      const sessionId = event.session_id as string | undefined
-      if (sessionId && this.currentConversationId) {
-        this.sessionMap.set(this.currentConversationId, sessionId)
-        try {
-          conversationRepository.updateSessionId(this.currentConversationId, sessionId)
-        } catch (err) {
-          this.log.error('Failed to persist session ID:', err)
-        }
-      }
-
-      // Still track token usage
-      const usage = event.usage as Record<string, number> | undefined
-      if (usage) {
-        this.tokenUsage += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
-      }
-
-      this.currentStatus = 'idle'
-      this.emit('statusUpdate', this.getStatus())
-      // Don't emit 'complete' or 'chunk' — suppress all renderer output
-      return
-    }
-
-    this.clearResponseTimeout()
-    this.clearInteractionTimeout()
-
-    // Capture session info and persist for --resume support
-    const sessionId = event.session_id as string | undefined
-    if (sessionId) {
-      this.log.info('Session ID:', sessionId)
-      if (this.currentConversationId) {
-        this.sessionMap.set(this.currentConversationId, sessionId)
-        this.log.info('Session captured for conversation:', this.currentConversationId)
-        // Persist to database for cross-restart recovery
-        try {
-          conversationRepository.updateSessionId(this.currentConversationId, sessionId)
-        } catch (err) {
-          this.log.error('Failed to persist session ID to DB:', err)
-        }
-      }
-    }
-
-    // Emit result text if assistant events didn't already provide it
-    const result = event.result as string | undefined
-    if (result && !this.hasEmittedContent) {
-      this.emit('chunk', { type: 'text', content: result })
-      this.accumulatedText += result
-    }
-
-    const usage = event.usage as Record<string, number> | undefined
-    this.log.info(
-      `Result event usage: ${usage ? JSON.stringify(usage) : 'MISSING'}, tokenUsage total: ${this.tokenUsage}`
-    )
-    if (usage) {
-      this.tokenUsage += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
-
-      // Emit context size warning when approaching limits
-      // Strategy 7: Economy mode uses tighter thresholds
-      const inputTokens = usage.input_tokens ?? 0
-      const autoThreshold =
-        this.costPreference === 'economy'
-          ? GeneralistService.COMPACT_AUTO_THRESHOLD_ECONOMY
-          : GeneralistService.COMPACT_AUTO_THRESHOLD
-      const suggestThreshold =
-        this.costPreference === 'economy'
-          ? GeneralistService.COMPACT_SUGGEST_THRESHOLD_ECONOMY
-          : GeneralistService.COMPACT_SUGGEST_THRESHOLD
-
-      if (inputTokens >= autoThreshold) {
-        this.log.warn(`Context very large (${inputTokens} input tokens) — auto-compacting`)
-        this.emit('compactNeeded', { level: 'critical', inputTokens })
-        // Auto-trigger compaction at critical threshold to prevent lossy auto-compaction
-        // at 83.5% (Claude CLI's built-in threshold). Max 5 compactions per session.
-        if (this.compactCount < 5) {
-          setTimeout(() => this.compact(), 1000)
-        }
-      } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
-        this.compactSuggested = true
-        this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
-        this.emit('compactNeeded', { level: 'suggest', inputTokens })
-      }
-    }
-
-    // Check for handoff, grill summary, grill evaluation, or grill questions in accumulated text
-    this.detectHandoff()
-    this.detectGrillSummary()
-    this.detectGrillEvaluation()
-    this.detectGrillQuestion()
-
-    this.currentStatus = 'idle'
-    this.emit('statusUpdate', this.getStatus())
-    this.emit('complete')
-  }
-
-  protected onSystemEvent(event: Record<string, unknown>): void {
-    this.processReady = true
-    const sessionId = event.session_id as string | undefined
-    if (sessionId) {
-      this.log.info('System init, session:', sessionId)
-      if (this.currentConversationId) {
-        this.sessionMap.set(this.currentConversationId, sessionId)
-      }
-    }
-    this.emit('_processReady')
-    this.emit('ready')
-  }
-
-  /**
-   * Override handleOutput to also accumulate text for handoff detection.
-   */
-  protected handleOutput(data: Buffer): void {
-    // Circuit breaker tripped — ignore all further output
-    if (this.circuitBroken) return
-
-    this.buffer += data.toString()
-
-    const lines = this.buffer.split('\n')
-    this.buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-
-      try {
-        const event = JSON.parse(trimmed)
-        // Track text content for handoff detection
-        if (event.type === 'assistant') {
-          const message = event.message as Record<string, unknown> | undefined
-          if (message) {
-            const content = message.content as Array<Record<string, unknown>> | undefined
-            if (content) {
-              for (const block of content) {
-                if (block.type === 'text') {
-                  this.accumulatedText += block.text as string
-                }
-              }
+    // Fire a silent SDK query that doesn't emit chunks to the renderer
+    const executor = new SDKExecutor()
+    try {
+      for await (const chunk of executor.execute({
+        prompt: context,
+        systemPrompt: '',
+        model: modelConfigService.getModel(this.workspacePath, 'generalist'),
+        cwd: this.workspacePath,
+        permissionMode: this.currentMode === 'build' ? 'bypassPermissions' : 'plan',
+        resume: sessionId,
+        // Disable tool use during context injection
+        allowedTools: [],
+        agentId: AGENT_IDS.GENERALIST
+      })) {
+        // Only capture session ID and token usage — suppress all other output
+        if ('_meta' in chunk && chunk._meta) {
+          const meta = chunk._meta as SDKExecuteResult
+          if (meta.sessionId) {
+            this.sessionMap.set(conversationId, meta.sessionId)
+            try {
+              conversationRepository.updateSessionId(conversationId, meta.sessionId)
+            } catch (err) {
+              this.log.error('Failed to persist session ID:', err)
             }
           }
-        } else if (event.type === 'content_block_delta') {
-          const delta = event.delta as Record<string, unknown> | undefined
-          if (delta?.type === 'text_delta' && delta.text) {
-            this.accumulatedText += delta.text as string
-          }
-        } else if (event.type === 'content_block_start') {
-          const contentBlock = event.content_block as Record<string, unknown> | undefined
-          if (contentBlock?.type === 'text' && contentBlock.text) {
-            this.accumulatedText += contentBlock.text as string
-          } else if (contentBlock?.type === 'tool_use') {
-            // Log tool call to Event Log for UI visibility
-            eventLoggerService.logAgentToolCall({
-              agentId: 'generalist',
-              conversationId: this.currentConversationId ?? undefined,
-              toolName: contentBlock.name as string,
-              toolCallNumber: this.toolCallCount
-            })
-          }
-        }
-        this.processStreamEvent(event)
-      } catch {
-        if (trimmed) {
-          this.accumulatedText += trimmed
-          this.emit('chunk', {
-            type: 'text',
-            content: trimmed
-          })
+          this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
         }
       }
+      this.log.info('Context injection complete')
+    } catch (error) {
+      this.log.error('Context injection failed:', error)
+    }
+  }
+
+  /**
+   * Cancels the current in-flight SDK query (if any).
+   * Called from CHAT_STOP handler to abort streaming.
+   */
+  cancelCurrentQuery(): void {
+    if (this.sdkAbortController) {
+      this.sdkAbortController.abort()
+      this.sdkAbortController = null
+    }
+  }
+
+  /**
+   * Checks input token count against compaction thresholds and emits
+   * compactNeeded events or auto-triggers compaction.
+   */
+  private checkCompaction(inputTokens: number): void {
+    const autoThreshold =
+      this.costPreference === 'economy'
+        ? GeneralistService.COMPACT_AUTO_THRESHOLD_ECONOMY
+        : GeneralistService.COMPACT_AUTO_THRESHOLD
+    const suggestThreshold =
+      this.costPreference === 'economy'
+        ? GeneralistService.COMPACT_SUGGEST_THRESHOLD_ECONOMY
+        : GeneralistService.COMPACT_SUGGEST_THRESHOLD
+
+    if (inputTokens >= autoThreshold) {
+      this.log.warn(`Context very large (${inputTokens} input tokens) — auto-compacting`)
+      this.emit('compactNeeded', { level: 'critical', inputTokens })
+      // Auto-trigger compaction at critical threshold. Max 5 compactions per session.
+      if (this.compactCount < 5) {
+        setTimeout(() => this.compact(), 1000)
+      }
+    } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
+      this.compactSuggested = true
+      this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
+      this.emit('compactNeeded', { level: 'suggest', inputTokens })
     }
   }
 
@@ -837,6 +604,32 @@ export class GeneralistService extends AgentBaseService {
   }
 
   /**
+   * Checks the accumulated response text for ask-question blocks and emits an `askQuestion` event if found.
+   * Used for general chat clarifying questions (outside of Grill sessions).
+   */
+  private detectAskQuestion(): void {
+    const matches = [...this.accumulatedText.matchAll(ASK_QUESTION_REGEX)]
+    if (matches.length === 0) return
+
+    const allQuestions: GrillQuestion[] = []
+    for (const match of matches) {
+      try {
+        const data = JSON.parse(match[1].trim())
+        if (data.questions && Array.isArray(data.questions)) {
+          allQuestions.push(...data.questions)
+        }
+      } catch (error) {
+        this.log.error('Failed to parse ask-question block:', error)
+      }
+    }
+
+    if (allQuestions.length > 0) {
+      this.log.info(`Ask-question detected: ${allQuestions.length} questions`)
+      this.emit('askQuestion', { questions: allQuestions } as AskQuestionEvent)
+    }
+  }
+
+  /**
    * Checks the accumulated response text for grill-evaluation blocks (new structured format)
    * and emits a `grillEvaluation` event if found. Contains score + feedback + questions.
    */
@@ -852,10 +645,12 @@ export class GeneralistService extends AgentBaseService {
             `Grill evaluation detected: score=${data.score}, questions=${data.questions.length}`
           )
           this.emit('grillEvaluation', {
+            trackId: data.trackId ?? undefined,
             score: data.score,
             scoreLabel: data.scoreLabel ?? '',
             feedback: data.feedback ?? '',
-            questions: data.questions
+            questions: data.questions,
+            suggestedNextTrack: data.suggestedNextTrack ?? undefined
           })
         }
       } catch (error) {
@@ -865,91 +660,20 @@ export class GeneralistService extends AgentBaseService {
   }
 
   /**
-   * Override to detect fast mode rate limit fallback from Claude CLI stderr.
-   * When fast mode hits a rate limit, the CLI falls back to standard speed — we
-   * surface this to the user as a status notification instead of a scary error.
+   * Stops the generalist — cancels any in-flight SDK query and resets state.
+   * Unlike the CLI version, there is no process to kill.
    */
-  protected handleError(data: Buffer): void {
-    const text = data.toString().trim()
-    if (!text) return
-
-    // Detect fast mode rate limit fallback
-    if (
-      (text.includes('fast mode') || text.includes('fast_mode') || text.includes('Fast mode')) &&
-      (text.includes('fallback') || text.includes('rate limit') || text.includes('rate_limit'))
-    ) {
-      this.log.warn('Fast mode rate limit detected — falling back to standard speed')
-      this.emit('chunk', {
-        type: 'status',
-        content: 'Fast mode rate limit reached — temporarily using standard speed'
-      } as StreamChunk)
-      return
-    }
-
-    // Delegate all other stderr to base handler
-    super.handleError(data)
-  }
-
-  /**
-   * Override to add auto-restart on unexpected crashes.
-   */
-  protected handleExit(code: number | null): void {
-    this.clearResponseTimeout()
-    this.clearInteractionTimeout()
-    super.handleExit(code)
-
-    // Auto-restart if crashed unexpectedly (not intentional stop)
-    if (code !== 0 && code !== null && this.workspacePath && !this.intentionallyStopped) {
-      this.restartAttempts++
-
-      if (this.restartAttempts <= 3) {
-        const delay = 3000 * this.restartAttempts
-        this.log.warn(
-          `Generalist crashed (code ${code}) — auto-restarting in ${delay}ms (attempt ${this.restartAttempts}/3)...`
-        )
-
-        // Notify the UI about the reconnection attempt
-        this.emit('chunk', {
-          type: 'status',
-          content: `Reconnecting to Claude CLI (attempt ${this.restartAttempts}/3)…`
-        } as StreamChunk)
-
-        const wp = this.workspacePath
-        const mode = this.currentMode
-        const sessionId = this.currentConversationId
-          ? this.sessionMap.get(this.currentConversationId)
-          : undefined
-
-        setTimeout(() => {
-          this.intentionallyStopped = false
-          this.start(wp, mode, sessionId).catch((err) => {
-            this.log.error('Auto-restart failed:', err)
-            this.emit('chunk', {
-              type: 'error',
-              error: `Auto-restart failed: ${err instanceof Error ? err.message : String(err)}`
-            } as StreamChunk)
-          })
-        }, delay)
-      } else {
-        this.log.error('Generalist restart attempts exhausted — giving up')
-        this.emit('chunk', {
-          type: 'error',
-          error:
-            'Claude CLI crashed repeatedly. Please restart the app or check your Claude CLI installation.'
-        } as StreamChunk)
-      }
-    }
-  }
-
   async stop(): Promise<void> {
-    this.intentionallyStopped = true
-    this.clearResponseTimeout()
-    this.clearInteractionTimeout()
-    await super.stop()
+    if (this.sdkAbortController) {
+      this.sdkAbortController.abort()
+      this.sdkAbortController = null
+    }
+    this.completeDbSession('terminated')
+    this.currentStatus = 'idle'
     this.currentConversationId = null
     this.accumulatedText = ''
-    // NOTE: Do NOT clear sessionMap — sessions persist across process restarts
-    // so we can resume them with --resume
+    // NOTE: Do NOT clear sessionMap — sessions persist so we can resume them
+    this.emit('statusUpdate', this.getStatus())
   }
 
   getStatus(): AgentStatus {
@@ -967,8 +691,9 @@ export class GeneralistService extends AgentBaseService {
     }
   }
 
+  /** SDK-based generalist is running when a workspace path is set. */
   isRunning(): boolean {
-    return this.process !== null && !this.process.killed
+    return this.workspacePath !== null
   }
 
   getWorkspacePath(): string | null {
@@ -984,8 +709,9 @@ export class GeneralistService extends AgentBaseService {
     return this.accumulatedText
   }
 
+  /** SDK-based generalist is always ready when started (no process to wait for). */
   isReady(): boolean {
-    return this.processReady && this.isRunning()
+    return this.workspacePath !== null
   }
 
   getMode(): ConversationMode {
@@ -993,35 +719,30 @@ export class GeneralistService extends AgentBaseService {
   }
 
   /**
-   * Restart the generalist with a different permission mode.
-   * Stops the current session and spawns a new one.
-   */
-  /**
-   * Sends a compact command to the Claude CLI process, asking it to
-   * summarize and compress the conversation context to save tokens.
+   * Sends a compact command via the SDK, asking the agent to summarize
+   * and compress the conversation context to save tokens.
    */
   async compact(): Promise<void> {
-    if (!this.process || !this.process.stdin || this.process.killed) {
+    if (!this.workspacePath || !this.currentConversationId) {
       throw new Error('Generalist not running — nothing to compact')
     }
 
-    this.log.info(`Compacting conversation context... (compact #${this.compactCount + 1})`)
-    this.compactCount++
-    this.compactSuggested = false // Reset so we can re-suggest after compacting if needed
-    this.currentStatus = 'thinking'
-    this.emit('statusUpdate', this.getStatus())
+    const sessionId = this.sessionMap.get(this.currentConversationId)
+    if (!sessionId) {
+      throw new Error('No session to compact')
+    }
 
-    const compactMessage = JSON.stringify({
-      type: 'user',
-      message: {
-        role: 'user',
-        content:
-          '/compact — Summarize our entire conversation so far into a concise context summary. ' +
-          'Include: key decisions made, current task state, any pending items, and important code/file references. ' +
-          'Then continue using this summary as your working context.'
-      }
-    })
-    this.process.stdin.write(compactMessage + '\n')
+    this.log.info(`Compacting context... (compact #${this.compactCount + 1})`)
+    this.compactCount++
+    this.compactSuggested = false
+
+    // Send compaction prompt via SDK using the existing session
+    await this.send(
+      '/compact — Summarize our entire conversation so far into a concise context summary. ' +
+        'Include: key decisions made, current task state, any pending items, and important code/file references. ' +
+        'Then continue using this summary as your working context.',
+      this.currentConversationId
+    )
   }
 
   /** Returns the session ID for a given conversation, if captured. */
@@ -1039,17 +760,31 @@ export class GeneralistService extends AgentBaseService {
     this.sessionMap.delete(conversationId)
   }
 
+  /**
+   * Switches the generalist mode (plan ↔ build).
+   * With SDK, this is lightweight — just rebuild the system prompt and change permissionMode.
+   * No process restart needed; the next send() call uses the new settings.
+   */
   async switchMode(mode: ConversationMode): Promise<void> {
     if (mode === this.currentMode) return
     if (!this.workspacePath) return
 
-    this.log.info(`Switching mode: ${this.currentMode} → ${mode}`)
-    const wp = this.workspacePath
-    const sessionId = this.currentConversationId
-      ? this.sessionMap.get(this.currentConversationId)
-      : undefined
-    await this.stop()
-    await this.start(wp, mode, sessionId)
+    const previousMode = this.currentMode
+    this.log.info(`Switching mode: ${previousMode} → ${mode}`)
+    this.currentMode = mode
+
+    // Flag the mode switch — the next send() will prefix the user's message with
+    // mode-change context so the agent knows its permissions changed, while
+    // preserving the full conversation history (session is NOT cleared).
+    this.pendingModeSwitch = { from: previousMode, to: mode }
+
+    // Rebuild system prompt for the new mode (used for new sessions only)
+    this.fullSystemPrompt = promptBuilder.build({
+      role: 'generalist',
+      mode: this.currentMode,
+      workspacePath: this.workspacePath,
+      memoryContext: this.memoryContext
+    })
   }
 }
 

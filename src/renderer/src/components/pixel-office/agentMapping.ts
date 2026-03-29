@@ -32,10 +32,12 @@ export const STATUS_BUBBLES: Record<string, { text: string; durationMs: number }
 // ── Agent → Sprite mapping ──
 
 export interface SpriteAssignment {
-  /** Index of the base character sprite (0-5) */
+  /** Index of the base character sprite (0-5) — legacy fallback */
   spriteIndex: number
-  /** Hue shift in degrees (-180 to 180) for visual differentiation */
+  /** Hue shift in degrees (-180 to 180) for visual differentiation — legacy fallback */
   hueShift: number
+  /** Pixel sprite ID from the RPG sprite catalog (preferred over spriteIndex+hueShift) */
+  pixelSpriteId?: string
 }
 
 /**
@@ -43,20 +45,24 @@ export interface SpriteAssignment {
  * Each agent gets a unique combination of base sprite + hue shift.
  */
 export const SPRITE_ASSIGNMENTS: Record<string, SpriteAssignment> = {
-  orchestrator: { spriteIndex: 0, hueShift: 0 },
-  generalist: { spriteIndex: 1, hueShift: 60 },
-  'react-architect': { spriteIndex: 2, hueShift: 180 },
-  'dotnet-architect': { spriteIndex: 3, hueShift: 270 },
-  'electron-architect': { spriteIndex: 4, hueShift: 160 },
-  'agentic-architect': { spriteIndex: 5, hueShift: 30 },
-  'db-architect': { spriteIndex: 0, hueShift: 220 },
-  'ux-ui-specialist': { spriteIndex: 1, hueShift: 300 },
-  'git-github-specialist': { spriteIndex: 2, hueShift: 90 },
-  'requirements-specialist': { spriteIndex: 3, hueShift: 140 },
-  'code-planner': { spriteIndex: 4, hueShift: 240 },
-  'execution-planner': { spriteIndex: 5, hueShift: 120 },
-  'cicd-devops': { spriteIndex: 0, hueShift: 330 },
-  'cloud-infrastructure': { spriteIndex: 1, hueShift: 200 }
+  generalist: { spriteIndex: 1, hueShift: 60, pixelSpriteId: 'male-07-1' },
+  orchestrator: { spriteIndex: 0, hueShift: 0, pixelSpriteId: 'male-06-1' },
+  'electron-architect': {
+    spriteIndex: 4,
+    hueShift: 160,
+    pixelSpriteId: 'other-pipo-charachip-soldier01'
+  },
+  'react-architect': { spriteIndex: 2, hueShift: 180, pixelSpriteId: 'enemy-02-1' },
+  'dotnet-architect': { spriteIndex: 3, hueShift: 270, pixelSpriteId: 'male-09-1' },
+  'ux-ui-specialist': { spriteIndex: 1, hueShift: 300, pixelSpriteId: 'male-02-2' },
+  'cloud-infrastructure': { spriteIndex: 1, hueShift: 200, pixelSpriteId: 'male-16-2' },
+  'agentic-architect': { spriteIndex: 5, hueShift: 30, pixelSpriteId: 'female-03-1' },
+  'db-architect': { spriteIndex: 0, hueShift: 220, pixelSpriteId: 'male-04-1' },
+  'git-github-specialist': { spriteIndex: 2, hueShift: 90, pixelSpriteId: 'male-14-1' },
+  'requirements-specialist': { spriteIndex: 3, hueShift: 140, pixelSpriteId: 'female-12-1' },
+  'code-planner': { spriteIndex: 4, hueShift: 240, pixelSpriteId: 'male-11-1' },
+  'execution-planner': { spriteIndex: 5, hueShift: 120, pixelSpriteId: 'male-13-1' },
+  'cicd-devops': { spriteIndex: 0, hueShift: 330, pixelSpriteId: 'soldier-03-1' }
 }
 
 /**

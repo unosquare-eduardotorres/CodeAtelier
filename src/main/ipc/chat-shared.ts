@@ -103,6 +103,18 @@ export function forwardChunkToRenderer(
       chunk: `\n\n**Error:** ${chunk.error}`,
       role
     })
+  } else if (chunk.type === 'status' && chunk.content) {
+    // Skip internal heartbeat signals — they're for stall detection, not user-facing
+    if (chunk.content === 'heartbeat') return
+
+    // Forward meaningful status messages (reconnection, rate limit fallback, etc.) as italic text
+    const statusText = `\n\n_${chunk.content}_\n\n`
+    contentAccumulator.value += statusText
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: statusText,
+      role
+    })
   }
 }
 

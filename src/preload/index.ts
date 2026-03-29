@@ -17,6 +17,7 @@ import type {
   ExecutionStrategy,
   TaskPlan,
   TaskExecutionProgress,
+  InvestigationReport,
   FileChange,
   CompleteResult,
   AgentWorktree,
@@ -71,8 +72,11 @@ const api = {
     anthropicApiKey?: string
   }): Promise<{ success: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_UPDATE_AUTH, args),
 
-  saveClipboardImage: (args: { dataUrl: string }): Promise<string> =>
+  saveClipboardImage: (args: { dataUrl: string; conversationId: string }): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE, args),
+
+  readImageBase64: (args: { filePath: string }): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.READ_IMAGE_BASE64, args),
 
   // ── Chat ──
   sendMessage: (args: {
@@ -113,6 +117,12 @@ const api = {
     strategy: ExecutionStrategy
     tasks: DecomposedTask[]
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_EXECUTE_PLAN, args),
+
+  executeInvestigationFix: (args: {
+    conversationId: string
+    strategy: ExecutionStrategy
+    report: InvestigationReport
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_EXECUTE_INVESTIGATION_FIX, args),
 
   // Chat commands
   completeConversation: (args: {
@@ -568,23 +578,40 @@ const api = {
     }
   },
 
+  onAskQuestion: (
+    callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; questions: GrillQuestion[] }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_ASK_QUESTION, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_ASK_QUESTION, handler)
+    }
+  },
+
   onGrillEvaluation: (
     callback: (data: {
       conversationId: string
+      trackId?: string
       score: number
       scoreLabel: string
       feedback: string
       questions: GrillQuestion[]
+      suggestedNextTrack?: { trackId: string; reason: string }
     }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
       data: {
         conversationId: string
+        trackId?: string
         score: number
         scoreLabel: string
         feedback: string
         questions: GrillQuestion[]
+        suggestedNextTrack?: { trackId: string; reason: string }
       }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_GRILL_EVALUATION, handler)
@@ -598,6 +625,24 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.CHAT_TASK_PLAN, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.CHAT_TASK_PLAN, handler)
+    }
+  },
+
+  onInvestigationReport: (callback: (data: {
+    conversationId: string
+    taskId: string
+    specialist: string
+    report: InvestigationReport
+  }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: {
+      conversationId: string
+      taskId: string
+      specialist: string
+      report: InvestigationReport
+    }): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_INVESTIGATION_REPORT, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_INVESTIGATION_REPORT, handler)
     }
   },
 
@@ -952,7 +997,35 @@ const api = {
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.AGENT_GATE_FAILURE, handler)
     }
-  }
+  },
+
+  // ── Tool Approval ──
+  onToolApprovalRequest: (
+    callback: (data: {
+      requestId: string
+      toolName: string
+      toolInput: string
+      agentId: string
+      taskId?: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        requestId: string
+        toolName: string
+        toolInput: string
+        agentId: string
+        taskId?: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.TOOL_APPROVAL_REQUEST, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.TOOL_APPROVAL_REQUEST, handler)
+    }
+  },
+  respondToolApproval: (requestId: string, approved: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_RESPONSE, requestId, approved)
 } as const
 
 if (process.contextIsolated) {

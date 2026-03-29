@@ -1,6 +1,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type { StreamChunk } from './agent-base.service'
 import { summarizeToolInput } from './agent-base.service'
+import { authProvider } from './auth-provider'
+import { createScopeGuard } from './sdk-hooks'
 import log from 'electron-log/main'
 
 const sdkLog = log.scope('SDKExecutor')
@@ -15,6 +17,18 @@ export interface SDKExecuteOptions {
   resume?: string
   hooks?: Record<string, unknown>
   maxThinkingTokens?: number
+  /** AbortController for cancelling the SDK query. Passed to query() options. */
+  abortController?: AbortController
+  /** Heartbeat interval in ms (default: 15000). Set to 0 to disable. */
+  heartbeatIntervalMs?: number
+  /** Agent ID for tool approval attribution */
+  agentId?: string
+  /** Task ID for tool approval attribution */
+  taskId?: string
+  /** Enable per-tool approval flow (default: false — uses permissionMode) */
+  enableToolApproval?: boolean
+  /** Max agentic turns (tool-use rounds). SDK stops the loop after this many turns. */
+  maxTurns?: number
 }
 
 export interface SDKExecuteResult {
@@ -36,7 +50,52 @@ export class SDKExecutor {
     let sessionId: string | undefined
     let resultText: string | undefined
 
+    // Heartbeat / stall detection
+    const heartbeatInterval = options.heartbeatIntervalMs ?? 15000
+    let lastActivityAt = Date.now()
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+    let pendingHeartbeat = false
+    const STALL_THRESHOLD_MS = 60000
+
+    // Deduplication tracking — prevents double emission from stream_event + assistant replay.
+    // The SDK yields stream_event deltas in real-time, then an `assistant` message with the
+    // complete content as a replay. Without dedup, every text/tool block gets yielded twice.
+    let hasStreamedText = false
+    const processedToolIds = new Set<string>()
+
+    // Start heartbeat timer — sets a flag that the generator checks on each iteration
+    if (heartbeatInterval > 0) {
+      heartbeatTimer = setInterval(() => {
+        const stalledMs = Date.now() - lastActivityAt
+        if (stalledMs > STALL_THRESHOLD_MS) {
+          sdkLog.warn(`SDK query appears stalled — no activity for ${Math.round(stalledMs / 1000)}s`)
+        }
+        pendingHeartbeat = true
+      }, heartbeatInterval)
+    }
+
     try {
+      // Ensure API key from workspace settings is available to the SDK.
+      // The SDK reads ANTHROPIC_API_KEY from process.env automatically.
+      // If the user configured an API key via workspace settings (not env var),
+      // we must inject it into the environment before calling query().
+      const apiKey = authProvider.getApiKey()
+      if (apiKey && !process.env.ANTHROPIC_API_KEY) {
+        process.env.ANTHROPIC_API_KEY = apiKey
+      }
+
+      // Build PreToolUse scope guard hooks — defense-in-depth even with bypassPermissions
+      const scopeGuard = createScopeGuard(options.cwd)
+      const preToolUseHooks = [scopeGuard]
+
+      // Add per-tool approval hook if enabled
+      if (options.enableToolApproval) {
+        const { createToolApprovalHook } = await import('./sdk-hooks')
+        preToolUseHooks.push(
+          createToolApprovalHook(options.agentId ?? 'unknown', options.taskId)
+        )
+      }
+
       const q = query({
         prompt: options.prompt,
         options: {
@@ -46,11 +105,28 @@ export class SDKExecutor {
           permissionMode: options.permissionMode,
           allowedTools: options.allowedTools,
           resume: options.resume,
-          maxThinkingTokens: options.maxThinkingTokens
+          maxThinkingTokens: options.maxThinkingTokens,
+          // Required safety flag when using bypassPermissions
+          allowDangerouslySkipPermissions: options.permissionMode === 'bypassPermissions',
+          // Wire scope guard hooks for file-scope and dangerous-command protection
+          hooks: {
+            PreToolUse: [{ hooks: preToolUseHooks }]
+          },
+          // Cap agentic turns at the SDK level (defense-in-depth alongside circuit breaker)
+          ...(options.maxTurns ? { maxTurns: options.maxTurns } : {}),
+          // Pass AbortController for cancellation support
+          ...(options.abortController ? { abortController: options.abortController } : {})
         }
       })
 
       for await (const message of q) {
+        lastActivityAt = Date.now()
+
+        // Emit pending heartbeat if timer fired between iterations
+        if (pendingHeartbeat) {
+          pendingHeartbeat = false
+          yield { type: 'status', content: 'heartbeat' }
+        }
         const msg = message as Record<string, unknown>
 
         // Capture session ID from system.init messages
@@ -58,14 +134,18 @@ export class SDKExecutor {
           sessionId = msg.session_id as string | undefined
         }
 
-        // Map assistant messages to StreamChunks
+        // Map assistant messages to StreamChunks.
+        // The assistant message is a full replay of the response — only yield blocks
+        // that weren't already emitted via stream_event deltas (dedup).
         if (msg.type === 'assistant') {
           const assistantMsg = msg.message as Record<string, unknown> | undefined
           if (assistantMsg?.content && Array.isArray(assistantMsg.content)) {
             for (const block of assistantMsg.content as Record<string, unknown>[]) {
-              if (block.type === 'text' && block.text) {
+              if (block.type === 'text' && block.text && !hasStreamedText) {
                 yield { type: 'text', content: block.text as string }
               } else if (block.type === 'tool_use') {
+                const toolId = block.id as string | undefined
+                if (toolId && processedToolIds.has(toolId)) continue
                 const toolName = block.name as string
                 const toolInput = block.input as Record<string, unknown> | undefined
                 yield {
@@ -78,24 +158,50 @@ export class SDKExecutor {
           }
         }
 
-        // Map content_block_delta for real-time streaming
-        if (msg.type === 'content_block_delta') {
-          const delta = msg.delta as Record<string, unknown> | undefined
-          if (delta?.type === 'text_delta' && delta.text) {
-            yield { type: 'text', content: delta.text as string }
-          }
-        }
+        // Map stream_event (SDK wraps Anthropic API events in a stream_event wrapper)
+        if (msg.type === 'stream_event') {
+          const streamEvent = (msg as Record<string, unknown>).event as Record<string, unknown>
+          if (!streamEvent) continue
 
-        // Map content_block_start for tool activities
-        if (msg.type === 'content_block_start') {
-          const cb = msg.content_block as Record<string, unknown> | undefined
-          if (cb?.type === 'tool_use') {
-            const toolName = cb.name as string
-            const toolInput = cb.input as Record<string, unknown> | undefined
-            yield {
-              type: 'tool_use',
-              toolName,
-              toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
+          // Real-time text streaming
+          if (streamEvent.type === 'content_block_delta') {
+            const delta = streamEvent.delta as Record<string, unknown> | undefined
+            if (delta?.type === 'text_delta' && delta.text) {
+              hasStreamedText = true
+              yield { type: 'text', content: delta.text as string }
+            }
+          }
+
+          // Tool use start — track ID for dedup against assistant replay
+          if (streamEvent.type === 'content_block_start') {
+            const cb = streamEvent.content_block as Record<string, unknown> | undefined
+            if (cb?.type === 'tool_use') {
+              const toolId = cb.id as string | undefined
+              if (toolId) processedToolIds.add(toolId)
+              const toolName = cb.name as string
+              const toolInput = cb.input as Record<string, unknown> | undefined
+              yield {
+                type: 'tool_use',
+                toolName,
+                toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
+              }
+            }
+          }
+
+          // Token usage from message_start
+          if (streamEvent.type === 'message_start') {
+            const startMsg = streamEvent.message as Record<string, unknown> | undefined
+            const startUsage = startMsg?.usage as Record<string, number> | undefined
+            if (startUsage) {
+              totalUsage.input += startUsage.input_tokens ?? 0
+            }
+          }
+
+          // Token usage from message_delta
+          if (streamEvent.type === 'message_delta') {
+            const deltaUsage = streamEvent.usage as Record<string, number> | undefined
+            if (deltaUsage) {
+              totalUsage.output += deltaUsage.output_tokens ?? 0
             }
           }
         }
@@ -115,31 +221,24 @@ export class SDKExecutor {
         // Capture result text
         if (msg.type === 'result') {
           resultText = msg.result as string | undefined
-          if (resultText) {
+          if (resultText && !hasStreamedText) {
             yield { type: 'text', content: resultText }
+          }
+          // SDK result has rich usage — prefer it over accumulated stream usage
+          const resultUsage = msg.usage as Record<string, number> | undefined
+          if (resultUsage) {
+            totalUsage.input =
+              resultUsage.input_tokens ?? resultUsage.inputTokens ?? totalUsage.input
+            totalUsage.output =
+              resultUsage.output_tokens ?? resultUsage.outputTokens ?? totalUsage.output
           }
         }
 
         // Accumulate token usage from all event types
         const usage = msg.usage as Record<string, number> | undefined
-        if (usage) {
+        if (usage && msg.type !== 'result') {
           totalUsage.input += usage.input_tokens ?? 0
           totalUsage.output += usage.output_tokens ?? 0
-        }
-        // message_start carries usage in msg.message.usage
-        if (msg.type === 'message_start') {
-          const startMsg = msg.message as Record<string, unknown> | undefined
-          const startUsage = startMsg?.usage as Record<string, number> | undefined
-          if (startUsage) {
-            totalUsage.input += startUsage.input_tokens ?? 0
-          }
-        }
-        // message_delta carries output_tokens
-        if (msg.type === 'message_delta') {
-          const deltaUsage = msg.usage as Record<string, number> | undefined
-          if (deltaUsage) {
-            totalUsage.output += deltaUsage.output_tokens ?? 0
-          }
         }
       }
     } catch (error) {
@@ -148,6 +247,8 @@ export class SDKExecutor {
         type: 'error',
         error: `SDK execution failed: ${(error as Error).message}`
       }
+    } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
     }
 
     // Yield final metadata chunk (callers can check for _meta)

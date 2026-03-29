@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { Loader2, Search, Rocket, Store } from 'lucide-react'
 import { useMarketplaceStore } from '@renderer/store'
 import SpecialistCard from './SpecialistCard'
-import SpecialistConfigPanel from './SpecialistConfigPanel'
+import SpecialistEditPage from './SpecialistEditPage'
 import SkillsLibrary from './SkillsLibrary'
 import type { MarketplaceSpecialist, Skill } from '../../../../shared/types'
 import { useSettingsStore } from '@renderer/store/settings.store'
@@ -33,7 +33,6 @@ export default function SpecialistMarketplace({
     loadMarketplace,
     deploySpecialist,
     undeploySpecialist,
-    updateConfig,
     deployAll,
     setFilter,
     setSearchQuery
@@ -113,6 +112,21 @@ export default function SpecialistMarketplace({
           <span className="text-sm">Loading marketplace...</span>
         </div>
       </div>
+    )
+  }
+
+  // ── Full-page specialist editor ──
+  if (configuringSpecialist) {
+    return (
+      <SpecialistEditPage
+        specialist={configuringSpecialist}
+        skills={skills}
+        onBack={() => {
+          setConfiguringSpecialist(null)
+          // Reload marketplace to pick up any changes
+          loadMarketplace(workspacePath)
+        }}
+      />
     )
   }
 
@@ -211,16 +225,6 @@ export default function SpecialistMarketplace({
       {/* Skills Library */}
       <SkillsLibrary skills={skills} specialists={specialists} onSkillClick={handleSkillClick} />
 
-      {/* Config Panel (modal) */}
-      {configuringSpecialist && (
-        <SpecialistConfigPanel
-          specialist={configuringSpecialist}
-          onSave={async (data) => {
-            await updateConfig(configuringSpecialist.id, data)
-          }}
-          onClose={() => setConfiguringSpecialist(null)}
-        />
-      )}
     </div>
   )
 }

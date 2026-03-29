@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @plugin "@tailwindcss/typography";
+@import './fonts.css';
 @import './base.css';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -25,7 +26,7 @@
 
   /* ── Text hierarchy (gold tones on dark) ── */
   --color-text-primary: #C8B89A; /* Bright Gold: headings, important text */
-  --color-text-body: #8A9A9E; /* Mist: body text, chat messages */
+  --color-text-body: #9AAAAE; /* Mist: body text, chat messages (bumped for 8hr readability) */
   --color-text-secondary: #6A7A7E; /* Fog: labels, secondary info */
   --color-text-muted: #5A6A6E; /* Dim (bumped for WCAG AA): timestamps, meta */
 
@@ -88,7 +89,7 @@
   --color-agent-cloud: #5BB8A8;
 
   /* ── Special-purpose tokens ── */
-  --color-user-bubble: rgba(184, 151, 106, 0.06); /* User message background */
+  --color-user-bubble: rgba(184, 151, 106, 0.10); /* User message background (bumped for clearer separation) */
   --color-grill: #C4714A; /* Grill mode accent (Jewel Copper) */
   --color-grill-muted: rgba(196, 113, 74, 0.15);
   --color-gold-glow: rgba(184, 151, 106, 0.15); /* Radial glow behind focal elements */
@@ -126,8 +127,8 @@
 
   /* ── Code Atelier typography ── */
   --ca-font-display: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
-  --ca-font-body: 'EB Garamond', 'Cormorant Garamond', Georgia, serif;
-  --ca-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace;
+  --ca-font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --ca-font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 /* ── Reduced-motion: accessibility-first ── */
@@ -266,213 +267,231 @@
   a {
     cursor: pointer;
   }
+}
 
-  /* ── Prose: readability for chat messages ── */
-  .prose {
-    --tw-prose-body: var(--color-text-body);
-    --tw-prose-headings: var(--color-text-primary);
-    --tw-prose-bold: var(--color-text-primary);
-    --tw-prose-links: var(--color-accent);
-    --tw-prose-code: var(--color-primary-text);
-    --tw-prose-bullets: var(--color-text-secondary);
-    --tw-prose-counters: var(--color-text-secondary);
-    font-size: 17px;
-    line-height: 1.72;
-    max-width: 72ch; /* 60-75ch for optimal readability */
-  }
+/* ═══════════════════════════════════════════════════════════════════════════
+   Prose overrides — UN-LAYERED so they beat @tailwindcss/typography plugin.
+   The typography plugin injects into a layer, so these un-layered rules
+   win the cascade without needing !important.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
-  .prose p {
-    margin-top: 0.5em;
-    margin-bottom: 0.5em;
-  }
+/* ── Prose: readability for chat messages ── */
+.prose {
+  --tw-prose-body: var(--color-text-body);
+  --tw-prose-headings: var(--color-text-primary);
+  --tw-prose-bold: var(--color-text-primary);
+  --tw-prose-links: var(--color-accent);
+  --tw-prose-code: var(--color-primary-text);
+  --tw-prose-bullets: var(--color-text-secondary);
+  --tw-prose-counters: var(--color-text-secondary);
+  color: var(--color-text-body); /* explicit — don't rely on Tailwind prose-invert for dark mode */
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 72ch; /* 60-75ch for optimal readability */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 
-  /* Headings — Cormorant Garamond, weight 400 (elegance from the typeface) */
-  .prose h1,
-  .prose h2,
-  .prose h3,
-  .prose h4 {
-    color: var(--color-text-primary);
-    font-family: var(--ca-font-display);
-    font-weight: 400;
-    letter-spacing: 0.02em;
-  }
+/* Body text color on all prose children — overrides Tailwind typography defaults */
+.prose p,
+.prose li,
+.prose dd,
+.prose figcaption,
+.prose > *:not(h1):not(h2):not(h3):not(h4):not(pre):not(blockquote):not(table):not(hr) {
+  color: var(--color-text-body);
+}
 
-  .prose h1 {
-    font-size: 2em; /* ~34px — clear dominant heading */
-    margin-top: 1.2em;
-    margin-bottom: 0.6em;
-  }
+.prose p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
 
-  .prose h2 {
-    font-size: 1.6em; /* ~27px — clear step from h3 */
-    margin-top: 1.1em;
-    margin-bottom: 0.5em;
-  }
+/* Headings — Cormorant Garamond, weight 400 (elegance from the typeface) */
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  color: var(--color-text-primary);
+  font-family: var(--ca-font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
 
-  .prose h3 {
-    font-size: 1.3em; /* ~22px — clear step from body */
-    margin-top: 0.9em;
-    margin-bottom: 0.4em;
-  }
+.prose h1 {
+  font-size: 1.35em; /* ~23px — clear heading, not overwhelming in chat */
+  margin-top: 0.8em;
+  margin-bottom: 0.4em;
+}
 
-  .prose h4 {
-    font-size: 1.1em; /* ~19px */
-    margin-top: 0.8em;
-    margin-bottom: 0.35em;
-  }
+.prose h2 {
+  font-size: 1.2em; /* ~20px — distinct from body but restrained */
+  margin-top: 0.7em;
+  margin-bottom: 0.35em;
+}
 
-  /* Bold — brighter than body text */
-  .prose strong {
-    color: var(--color-text-primary);
-    font-weight: 600;
-  }
+.prose h3 {
+  font-size: 1.1em; /* ~19px — subtle step from body */
+  margin-top: 0.6em;
+  margin-bottom: 0.3em;
+}
 
-  /* Bullet & numbered lists — better spacing and marker color */
-  .prose ul,
-  .prose ol {
-    padding-left: 1.25em;
-    margin-top: 0.4em;
-    margin-bottom: 0.4em;
-  }
+.prose h4 {
+  font-size: 1.05em; /* ~18px — barely above body */
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+}
 
-  .prose li {
-    margin-top: 0.2em;
-    margin-bottom: 0.2em;
-    padding-left: 0.25em;
-  }
+/* Bold — brighter than body text */
+.prose strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
 
-  .prose li::marker {
-    color: var(--color-text-secondary);
-  }
+/* Bullet & numbered lists — better spacing and marker color */
+.prose ul,
+.prose ol {
+  padding-left: 1.25em;
+  margin-top: 0.4em;
+  margin-bottom: 0.4em;
+}
 
-  /* Inline code — distinct from body, pill-shaped */
-  .prose :not(pre) > code {
-    font-size: 0.88em;
-    padding: 0.15em 0.4em;
-    border-radius: 0.3em;
-    background: var(--color-surface-float);
-    color: var(--color-primary-text);
-    font-weight: 500;
-    border: 1px solid var(--color-border-subtle);
-  }
+.prose li {
+  margin-top: 0.2em;
+  margin-bottom: 0.2em;
+  padding-left: 0.25em;
+}
 
-  /* Code blocks — 15px for extended code reading comfort */
-  .prose pre {
-    font-size: 15px;
-  }
+.prose li::marker {
+  color: var(--color-text-secondary);
+}
 
-  .prose code {
-    font-size: 15px;
-  }
+/* Inline code — distinct from body, pill-shaped */
+.prose :not(pre) > code {
+  font-size: 0.88em;
+  padding: 0.15em 0.4em;
+  border-radius: 0.3em;
+  background: var(--color-surface-float);
+  color: var(--color-primary-text);
+  font-weight: 500;
+  border: 1px solid var(--color-border-subtle);
+}
 
-  /* ── Tables — the big fix ── */
-  .prose table {
-    border-collapse: separate;
-    border-spacing: 0;
-    width: 100%;
-    font-size: 14px;
-    margin-top: 0.75em;
-    margin-bottom: 0.75em;
-    border: 1px solid var(--color-border-default);
-    border-radius: 0.5em;
-    overflow: hidden;
-  }
+/* Code blocks — 15px for extended code reading comfort */
+.prose pre {
+  font-size: 15px;
+}
 
-  .prose thead {
-    background: var(--color-surface-base);
-  }
+.prose code {
+  font-size: 15px;
+}
 
-  .prose thead tr {
-    border-bottom: 2px solid var(--color-border-default);
-  }
+/* ── Tables — the big fix ── */
+.prose table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 14px;
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+  border: 1px solid var(--color-border-default);
+  border-radius: 0.5em;
+  overflow: hidden;
+}
 
-  .prose th {
-    padding: 0.6em 0.85em;
-    text-align: left;
-    font-weight: 600;
-    color: var(--color-text-primary);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    border-bottom: 2px solid var(--color-border-default);
-  }
+.prose thead {
+  background: var(--color-surface-base);
+}
 
-  .prose td {
-    padding: 0.5em 0.85em;
-    border-bottom: 1px solid var(--color-border-subtle);
-    color: var(--color-text-body);
-    vertical-align: top;
-  }
+.prose thead tr {
+  border-bottom: 2px solid var(--color-border-default);
+}
 
-  .prose tbody tr:last-child td {
-    border-bottom: none;
-  }
+.prose th {
+  padding: 0.6em 0.85em;
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 2px solid var(--color-border-default);
+}
 
-  .prose tbody tr:hover {
-    background: var(--color-surface-raised);
-  }
+.prose td {
+  padding: 0.5em 0.85em;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-body);
+  vertical-align: top;
+}
 
-  /* Zebra striping for better scanability on tables with 4+ rows */
-  .prose tbody tr:nth-child(even) {
-    background: rgba(184, 151, 106, 0.02);
-  }
+.prose tbody tr:last-child td {
+  border-bottom: none;
+}
 
-  .prose tbody tr:nth-child(even):hover {
-    background: var(--color-surface-raised);
-  }
+.prose tbody tr:hover {
+  background: var(--color-surface-raised);
+}
 
-  /* Links inside prose */
-  .prose a {
-    color: var(--color-accent);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
+/* Zebra striping for better scanability on tables with 4+ rows */
+.prose tbody tr:nth-child(even) {
+  background: rgba(184, 151, 106, 0.02);
+}
 
-  .prose a:hover {
-    color: var(--color-primary-text);
-  }
+.prose tbody tr:nth-child(even):hover {
+  background: var(--color-surface-raised);
+}
 
-  /* Blockquotes */
-  .prose blockquote {
-    border-left: 3px solid var(--color-primary);
-    padding-left: 1em;
-    color: var(--color-text-secondary);
-    font-style: italic;
-    margin-top: 0.75em;
-    margin-bottom: 0.75em;
-  }
+/* Links inside prose */
+.prose a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 
-  /* Horizontal rule styling */
-  .prose hr {
-    border: none;
-    height: 1px;
-    background: linear-gradient(to right, transparent, var(--color-border-default), transparent);
-    margin-top: 1.25em;
-    margin-bottom: 1.25em;
-  }
+.prose a:hover {
+  color: var(--color-primary-text);
+}
 
-  /* ── Emoji in headings — consistent size, prevent baseline shift ── */
-  .prose h1 .emoji,
-  .prose h2 .emoji,
-  .prose h3 .emoji {
-    display: inline-block;
-    width: 1.1em;
-    height: 1.1em;
-    vertical-align: -0.15em;
-    margin-right: 0.3em;
-  }
+/* Blockquotes */
+.prose blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding-left: 1em;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+}
 
-  /* ── Table column optimization ── */
-  .prose td code {
-    word-break: break-all;
-    max-width: 280px;
-    display: inline-block;
-  }
+/* Horizontal rule styling */
+.prose hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--color-border-default), transparent);
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
+}
 
-  .prose td:first-child {
-    white-space: nowrap;
-    font-weight: 500;
-  }
+/* ── Emoji in headings — consistent size, prevent baseline shift ── */
+.prose h1 .emoji,
+.prose h2 .emoji,
+.prose h3 .emoji {
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.15em;
+  margin-right: 0.3em;
+}
+
+/* ── Table column optimization ── */
+.prose td code {
+  word-break: break-all;
+  max-width: 280px;
+  display: inline-block;
+}
+
+.prose td:first-child {
+  white-space: nowrap;
+  font-weight: 500;
 }
 
 /* Custom scrollbar styling — gold-tinted for Code Atelier */

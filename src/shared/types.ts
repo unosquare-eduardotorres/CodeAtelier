@@ -101,6 +101,7 @@ export interface Specialist {
   sourceYaml: string | null
   alias: string | null
   avatarUrl: string | null
+  pixelSpriteId: string | null
   skills?: Skill[]
   createdAt: string
   updatedAt: string
@@ -137,6 +138,7 @@ export interface UpdateSpecialistInput {
   isActive?: boolean
   alias?: string | null
   avatarUrl?: string | null
+  pixelSpriteId?: string | null
 }
 
 // ── Marketplace Models ──
@@ -155,6 +157,7 @@ export interface MarketplaceSpecialist {
   isDeployed: boolean
   alias: string | null
   avatarUrl: string | null
+  pixelSpriteId?: string | null
   priority: number
 }
 
@@ -410,11 +413,39 @@ export interface GrillAnswerPayload {
   skipped: boolean
 }
 
+export type GrillTrackId =
+  | 'requirements'
+  | 'architecture'
+  | 'ux-ui'
+  | 'security'
+  | 'testing'
+  | 'infrastructure'
+  | 'data'
+  | 'code-quality'
+
+export interface GrillTrack {
+  id: GrillTrackId
+  name: string
+  icon: string
+  description: string
+  scoringFocus: string[]
+}
+
+export interface GrillTrackScore {
+  trackId: GrillTrackId
+  score: number
+  scoreLabel: string
+  iterationCount: number
+  lastFeedback: string
+}
+
 export interface GrillEvaluation {
+  trackId?: GrillTrackId
   score: number
   scoreLabel: string
   feedback: string
   questions: GrillQuestion[]
+  suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
 }
 
 // ── Structured Plan Types ──
@@ -544,6 +575,16 @@ export interface HandoffBrief {
   mode: ConversationMode
 }
 
+/** Structured investigation report produced by specialist in plan mode */
+export interface InvestigationReport {
+  problem: string
+  rootCause: string
+  proposedFix: string
+  filesAffected: Array<{ path: string; reason: string }>
+  impact: 'very-low' | 'low' | 'medium' | 'high' | 'critical'
+  impactReason: string
+}
+
 // ── Ideas ──
 export interface Idea {
   id: string
@@ -658,7 +699,8 @@ export interface IpcChannels {
   'skill:activate': { args: { id: string }; return: Skill }
   'skill:deactivate': { args: { id: string }; return: Skill }
   'skill:selectFile': { args: void; return: string | null }
-  'dialog:saveClipboardImage': { args: { dataUrl: string }; return: string }
+  'dialog:saveClipboardImage': { args: { dataUrl: string; conversationId: string }; return: string }
+  'dialog:readImageBase64': { args: { filePath: string }; return: string }
 
   // Workspace Deploy
   'workspace:scanClaude': { args: { workspacePath: string }; return: WorkspaceClaudeStatus }
@@ -708,6 +750,10 @@ export interface IpcChannels {
   // Task Execution
   'chat:executePlan': {
     args: { conversationId: string; strategy: ExecutionStrategy; tasks: DecomposedTask[] }
+    return: void
+  }
+  'chat:executeInvestigationFix': {
+    args: { conversationId: string; strategy: ExecutionStrategy; report: InvestigationReport }
     return: void
   }
 
@@ -864,6 +910,12 @@ export interface IpcEvents {
     conversationId: string
     summary: string
     proposedTasks: GrillProposedTask[]
+  }
+  'chat:investigationReport': {
+    conversationId: string
+    taskId: string
+    specialist: string
+    report: InvestigationReport
   }
   'chat:taskPlan': TaskPlan
   'chat:taskProgress': TaskExecutionProgress

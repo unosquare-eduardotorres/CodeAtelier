@@ -22,7 +22,8 @@ class AuthProviderService implements AuthProvider {
   }
 
   supportsSDK(): boolean {
-    return this._mode === 'api-key' && !!this._apiKey
+    // SDK is now the only execution path — works with both claude-max (CLI auth) and api-key
+    return true
   }
 
   /** Load auth settings from workspace settings or environment */

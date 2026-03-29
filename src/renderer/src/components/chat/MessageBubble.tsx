@@ -1,7 +1,8 @@
-import React, { useState, useCallback, useMemo } from 'react'
+import React, { useState, useCallback, useMemo, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
+import rehypeRaw from 'rehype-raw'
 import type { Plugin } from 'unified'
 import type { Root, Text, PhrasingContent } from 'mdast'
 import { visit } from 'unist-util-visit'
@@ -13,7 +14,7 @@ import GrillResultCard from './GrillResultCard'
 import GrillQuestionCard from './GrillQuestionCard'
 import ToolActivityBlock from './ToolActivityBlock'
 import { useProfileStore, useSpecialistStore } from '@renderer/store'
-import { MermaidDiagram, Avatar } from '@renderer/components/common'
+import { MermaidDiagram, Avatar, ImageLightbox, Skeleton } from '@renderer/components/common'
 import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 
 /**
@@ -113,8 +114,9 @@ function shortenFilePath(filePath: string): string {
   return filePath
 }
 
-// Module-level constant — stable reference, never recreated on render
+// Module-level constants — stable references, never recreated on render
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkEmojiSpan]
+const REHYPE_PLUGINS = [rehypeRaw]
 
 function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
@@ -299,7 +301,7 @@ function useMessageIdentity(message: Message): {
         displayName: profileDisplayName,
         subtitle: null,
 
-        avatarKey: profile?.avatarKey ?? 'renaissance-scholar',
+        avatarKey: profileAvatarKey,
         accentColor: 'var(--color-primary, #6366F1)'
       }
     }
@@ -344,6 +346,43 @@ function useMessageIdentity(message: Message): {
       accentColor: '#6366F1'
     }
   }, [message.role, message.agentId, profileDisplayName, profileAvatarKey, specialist, getCoreAgentAlias])
+}
+
+/** Renders a single image attachment inside a message bubble using data URIs */
+function BubbleImage({ filePath }: { filePath: string }): React.JSX.Element {
+  const [dataUri, setDataUri] = useState<string | null>(null)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    window.api
+      .readImageBase64({ filePath })
+      .then((uri) => {
+        if (!cancelled) setDataUri(uri)
+      })
+      .catch(console.error)
+    return () => {
+      cancelled = true
+    }
+  }, [filePath])
+
+  return (
+    <>
+      {dataUri ? (
+        <img
+          src={dataUri}
+          alt={filePath.split('/').pop() || 'attachment'}
+          className="max-w-[240px] max-h-[180px] rounded-lg border border-border-subtle object-contain cursor-pointer hover:border-primary/50 transition-colors"
+          onClick={() => setLightboxOpen(true)}
+        />
+      ) : (
+        <Skeleton className="w-[240px] h-[180px] rounded-lg" />
+      )}
+      {lightboxOpen && dataUri && (
+        <ImageLightbox src={dataUri} onClose={() => setLightboxOpen(false)} />
+      )}
+    </>
+  )
 }
 
 function MessageBubbleInner({
@@ -447,7 +486,10 @@ function MessageBubbleInner({
     const aGrillEval = geMatch ? message.contentMd.substring(geMatch.index! + geMatch[0].length) : null
 
     // Detect handoff blocks — strip from display (HandoffIndicator renders separately in MessageList)
-    const hMatch = !isUser ? message.contentMd.match(/```handoff\n([\s\S]*?)```/) : null
+    const hMatch = !isUser
+      ? (message.contentMd.match(/```handoff\n([\s\S]*?)```/) ??
+         message.contentMd.match(/```(?:json)?\n(\{[\s\S]*?"action"\s*:\s*"handoff"[\s\S]*?\})\n```/))
+      : null
     const bHandoff = hMatch ? message.contentMd.substring(0, hMatch.index!) : null
     const aHandoff = hMatch ? message.contentMd.substring(hMatch.index! + hMatch[0].length) : null
 
@@ -517,7 +559,7 @@ function MessageBubbleInner({
 
   /** Shared AI bubble styles */
   const aiBubbleClass =
-    'rounded-2xl px-5 py-4 bg-surface-overlay text-text-body border-l-2 border-primary/40 shadow-sm'
+    'rounded px-5 py-4 bg-surface-overlay text-text-body border-l-2 border-primary/40 shadow-sm overflow-hidden min-w-0'
 
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -533,7 +575,7 @@ function MessageBubbleInner({
 
       {/* Content */}
       <div
-        className={`flex flex-col ${isUser ? 'max-w-[75%] items-end' : 'max-w-[85%] items-start'}`}
+        className={`flex flex-col min-w-0 ${isUser ? 'max-w-[75%] items-end' : 'max-w-[85%] items-start'}`}
       >
         <div className={`flex flex-col mb-1 px-1 ${isUser ? 'items-end' : 'items-start'}`}>
           <span className="text-sm font-semibold text-text-primary leading-tight">
@@ -549,9 +591,10 @@ function MessageBubbleInner({
           <div className="space-y-3 max-w-full">
             {beforeGrillQuestion?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose prose-sm max-w-none prose-invert">
+                <div className="prose max-w-none">
                   <ReactMarkdown
                     remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
                     components={markdownComponents}
                   >
                     {beforeGrillQuestion}
@@ -566,9 +609,10 @@ function MessageBubbleInner({
             />
             {afterGrillQuestion?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose prose-sm max-w-none prose-invert">
+                <div className="prose max-w-none">
                   <ReactMarkdown
                     remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
                     components={markdownComponents}
                   >
                     {afterGrillQuestion}
@@ -580,9 +624,10 @@ function MessageBubbleInner({
         ) : grillQuestionMatch && suppressInlineGrillCard ? (
           /* Grill-question block detected but suppressed (store-driven card active) — render surrounding text only, hide JSON */
           <div className={aiBubbleClass}>
-            <div className="prose prose-sm max-w-none prose-invert">
+            <div className="prose max-w-none">
               <ReactMarkdown
                 remarkPlugins={REMARK_PLUGINS}
+                rehypePlugins={REHYPE_PLUGINS}
                 components={markdownComponents}
               >
                 {[beforeGrillQuestion?.trim(), afterGrillQuestion?.trim()].filter(Boolean).join('\n\n')}
@@ -594,9 +639,10 @@ function MessageBubbleInner({
           <div className="space-y-3 max-w-full">
             {beforeGrill?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose prose-sm max-w-none prose-invert">
+                <div className="prose max-w-none">
                   <ReactMarkdown
                     remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
                     components={markdownComponents}
                   >
                     {beforeGrill}
@@ -613,9 +659,10 @@ function MessageBubbleInner({
             />
             {afterGrill?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose prose-sm max-w-none prose-invert">
+                <div className="prose max-w-none">
                   <ReactMarkdown
                     remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
                     components={markdownComponents}
                   >
                     {afterGrill}
@@ -629,9 +676,10 @@ function MessageBubbleInner({
           <div className="space-y-3 max-w-full">
             {beforeGrillEval?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose prose-sm max-w-none prose-invert">
+                <div className="prose max-w-none">
                   <ReactMarkdown
                     remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
                     components={markdownComponents}
                   >
                     {beforeGrillEval}
@@ -647,9 +695,10 @@ function MessageBubbleInner({
             />
             {afterGrillEval?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose prose-sm max-w-none prose-invert">
+                <div className="prose max-w-none">
                   <ReactMarkdown
                     remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
                     components={markdownComponents}
                   >
                     {afterGrillEval}
@@ -661,8 +710,8 @@ function MessageBubbleInner({
         ) : handoffMatch ? (
           /* Message with a handoff block — strip the JSON, show only surrounding text */
           <div className={aiBubbleClass}>
-            <div className="prose prose-sm max-w-none prose-invert">
-              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={markdownComponents}>
+            <div className="prose max-w-none">
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={markdownComponents}>
                 {[beforeHandoff?.trim(), afterHandoff?.trim()].filter(Boolean).join('\n\n')}
               </ReactMarkdown>
             </div>
@@ -672,9 +721,10 @@ function MessageBubbleInner({
           <div className="space-y-3 max-w-full">
             {beforePlan?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose prose-sm max-w-none prose-invert">
+                <div className="prose max-w-none">
                   <ReactMarkdown
                     remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
                     components={markdownComponents}
                   >
                     {beforePlan}
@@ -685,9 +735,10 @@ function MessageBubbleInner({
             <PlanCard planContent={planContent} onBuild={handleBuild} onRefine={handleRefine} />
             {afterPlan?.trim() && (
               <div className={aiBubbleClass}>
-                <div className="prose prose-sm max-w-none prose-invert">
+                <div className="prose max-w-none">
                   <ReactMarkdown
                     remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
                     components={markdownComponents}
                   >
                     {afterPlan}
@@ -698,8 +749,8 @@ function MessageBubbleInner({
           </div>
         ) : (
           <div
-            className={`rounded-2xl shadow-sm ${
-              isUser ? `px-5 py-4 bg-user-bubble text-text-body border-l-2 ${isGrillActivation ? 'border-grill' : 'border-primary'}` : aiBubbleClass
+            className={`rounded shadow-sm ${
+              isUser ? `px-5 py-4 bg-user-bubble text-text-body border-l-2 overflow-hidden min-w-0 ${isGrillActivation ? 'border-grill' : 'border-primary'}` : aiBubbleClass
             }`}
           >
             {/* 🔥 Grill Mode activation banner */}
@@ -728,13 +779,7 @@ function MessageBubbleInner({
             {imageAttachments.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
                 {imageAttachments.map((path, idx) => (
-                  <img
-                    key={idx}
-                    src={`file://${path}`}
-                    alt={path.split('/').pop() || 'attachment'}
-                    className="max-w-[240px] max-h-[180px] rounded-lg border border-border-subtle object-contain cursor-pointer hover:border-primary/50 transition-colors"
-                    onClick={() => window.open(`file://${path}`, '_blank')}
-                  />
+                  <BubbleImage key={idx} filePath={path} />
                 ))}
               </div>
             )}
@@ -755,9 +800,10 @@ function MessageBubbleInner({
             )}
 
             {(isUser ? displayContent : message.contentMd) ? (
-              <div className={`prose prose-sm max-w-none ${isUser ? 'prose-invert' : 'prose-invert'}`}>
+              <div className="prose max-w-none overflow-hidden">
                 <ReactMarkdown
                   remarkPlugins={REMARK_PLUGINS}
+                  rehypePlugins={REHYPE_PLUGINS}
                   components={markdownComponents}
                 >
                   {isUser ? displayContent : message.contentMd}

@@ -8,25 +8,43 @@ description: >
 
 # Agent Studio — Agentic Runtime Architect
 
-> **Scope**: Multi-agent orchestration via **Claude CLI subprocesses** (not the Agent SDK) for Agent Studio.
+> **Scope**: Multi-agent orchestration via a **dual CLI + SDK backend** for Agent Studio.
 
 ---
 
 ## 1. Architecture Overview
 
-Agent Studio is an **Electron desktop app** that orchestrates multiple Claude CLI processes as a team of AI agents. It does **NOT** use `@anthropic-ai/claude-agent-sdk`. Instead, it spawns the `claude` binary directly as child processes with `--output-format stream-json`.
+Agent Studio is an **Electron desktop app** that orchestrates multiple Claude agents as a team. It supports **two execution backends**:
+
+1. **CLI backend** (default, Claude Max) — spawns the `claude` binary directly as child processes with `--output-format stream-json`
+2. **SDK backend** (API key mode) — uses `@anthropic-ai/claude-agent-sdk` `query()` for streaming, with the same `StreamChunk` interface
+
+The backend is selected at runtime by `AuthProvider.supportsSDK()`:
+- `claude-max` auth mode → CLI path
+- `api-key` auth mode with valid key → SDK path
 
 ```
 User ↔ Renderer (React/Zustand)
          ↕ IPC (contextBridge)
       Main Process (Node.js)
-         ├── GeneralistService    → long-lived interactive stdin/stdout pipe
-         ├── OrchestratorService  → per-message `claude -p` spawns
-         └── SpecialistPoolService → parallel/sequential task execution in worktrees
+         ├── GeneralistService    → CLI only — long-lived interactive stdin/stdout pipe
+         ├── OrchestratorService  → CLI or SDK — per-handoff (routed by AuthProvider)
+         ├── SpecialistPoolService → CLI or SDK — per-task (routed by AuthProvider)
+         └── SDKExecutor          → Agent SDK query() wrapper, yields StreamChunks
                 └── 14 DB-backed specialists
 ```
 
-**Key principle**: Generalist always runs → detects handoff → Orchestrator decomposes → Specialist pool executes.
+**Key principle**: Generalist always runs (CLI) → detects handoff → Orchestrator decomposes (CLI or SDK) → Specialist pool executes (CLI or SDK).
+
+### 1.1 SDK Executor (`src/main/services/sdk-executor.ts`)
+
+The `SDKExecutor` class wraps `@anthropic-ai/claude-agent-sdk`'s `query()` into an async generator of `StreamChunk` — the same interface as CLI-based agents. This means all downstream code (IPC, renderer) works identically regardless of backend.
+
+Key features:
+- **Deduplication**: Tracks `hasStreamedText` / `processedToolIds` to prevent double emission from `stream_event` deltas + `assistant` message replay
+- **Scope guard hooks**: Wires `PreToolUse` hooks via `createScopeGuard()` for file-scope and dangerous-command protection
+- **AbortController**: Supports cancellation via `AbortController` passed through to `query()`
+- **API key passthrough**: Injects workspace-configured API key into `process.env.ANTHROPIC_API_KEY`
 
 ---
 
@@ -52,8 +70,11 @@ User ↔ Renderer (React/Zustand)
 | `src/main/services/agent-base.service.ts`      | Base class: stream-json parsing, NDJSON buffer, token tracking, env building |
 | `src/main/services/generalist.service.ts`      | Long-lived interactive Claude CLI, handoff detection, session resume         |
 | `src/main/services/generalist-prompts.ts`      | Generalist system prompt construction                                        |
-| `src/main/services/orchestrator.service.ts`    | Per-message `claude -p`, task decomposition, skill matching                  |
+| `src/main/services/orchestrator.service.ts`    | Per-message CLI or SDK, task decomposition, skill matching                   |
 | `src/main/services/specialist-pool.service.ts` | Parallel/sequential execution, worktree isolation, retry logic               |
+| `src/main/services/sdk-executor.ts`            | Agent SDK query() wrapper — yields StreamChunks like CLI path               |
+| `src/main/services/sdk-hooks.ts`               | PreToolUse scope guard + dangerous command guard for SDK path                |
+| `src/main/services/auth-provider.ts`           | Auth mode detection, API key management, supportsSDK() gate                  |
 | `src/main/services/system-prompts.ts`          | PLAN_MODE / BUILD_MODE / DECOMPOSITION system prompts                        |
 | `src/main/services/brain.service.ts`           | Persistent project memory (brain context injection)                          |
 | `src/main/services/git-worktree.service.ts`    | Create/merge isolated branches for specialist execution                      |

@@ -4,11 +4,17 @@ import { useIdeaStore, useWorkspaceStore } from '@renderer/store'
 
 interface IdeaPopoverProps {
   onClose: () => void
+  initialTitle?: string
+  initialDescription?: string
 }
 
-export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.Element {
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
+export default function IdeaPopover({
+  onClose,
+  initialTitle,
+  initialDescription
+}: IdeaPopoverProps): React.JSX.Element {
+  const [title, setTitle] = useState(initialTitle ?? '')
+  const [description, setDescription] = useState(initialDescription ?? '')
   const [isSaving, setIsSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const { createIdea } = useIdeaStore()

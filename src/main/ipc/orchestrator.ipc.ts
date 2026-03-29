@@ -32,14 +32,13 @@ export function registerOrchestratorIpc(mainWindow: BrowserWindow): void {
 
     startingWorkspace = workspacePath
     try {
-      // Start generalist (long-lived interactive session) — returns immediately (non-blocking)
+      // Start generalist (SDK session) — initializes workspace context, no process spawned
       await generalistService.start(workspacePath)
-      log.info('Generalist spawned for:', workspacePath)
+      log.info('Generalist initialized for:', workspacePath)
 
-      // With --input-format stream-json, the CLI is ready to receive messages immediately
-      // after spawn — no need to wait for the system init event (which only arrives after
-      // the first stdin message). Notify the renderer right away so the chat UI is shown.
-      log.info('Generalist ready (stream-json mode) for:', workspacePath)
+      // SDK-based generalist is ready immediately after start() — no process spawn needed.
+      // Notify the renderer right away so the chat UI is shown.
+      log.info('Generalist ready (SDK mode) for:', workspacePath)
       mainWindow.webContents.send(IPC_CHANNELS.ORCHESTRATOR_READY)
 
       // Pre-initialize orchestrator workspace path (no process spawned yet)
