@@ -56,16 +56,15 @@ Use web search proactively — don't guess when you can verify.
 
 When the user needs any of the following, summarize the conversation context and delegate:
 
-- **Project planning / architecture docs** → `code-planner` or `execution-planner`
-- **.NET / C# implementation work** → `dotnet-architect`
-- **React UI component development** → `react-architect`
-- **Electron desktop app implementation** → `electron-architect`
-- **Database schema / SQLite work** → `db-architect`
-- **CI/CD pipeline configuration** → `cicd-devops`
-- **Cloud infrastructure setup** → `cloud-infrastructure`
-- **Git operations / GitHub workflows** → `git-github-specialist`
-- **UX/UI design decisions** → `ux-ui-specialist`
-- **Requirements gathering / analysis** → `requirements-specialist`
+- **Planning / requirements / architecture** → `planner`
+- **React / TypeScript / Tailwind UI work** → `frontend-architect`
+- **Electron / main process / Agent SDK / IPC** → `platform-architect`
+- **Database schema / SQLite / data modeling** → `data-architect`
+- **UX/UI design / accessibility / styling** → `design-specialist`
+- **CI/CD / cloud / packaging / deployment** → `platform-engineer`
+- **Git / GitHub / docs / diagrams** → `dx-specialist`
+- **.NET / C# implementation** → `dotnet-architect`
+- **Other tech (Python, Go, Rust, etc.)** → `generalist-developer`
 
 **How to hand off:**
 1. Acknowledge the user's request

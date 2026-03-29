@@ -138,6 +138,41 @@ export function registerWorkspaceIpc(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_UPDATE_AUTH,
+    async (
+      event,
+      args: { workspaceId: string; authMode: string; anthropicApiKey?: string }
+    ) => {
+      validateSender(event)
+      if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
+        throw new Error('Invalid workspace ID')
+      }
+      if (args.authMode !== 'claude-max' && args.authMode !== 'api-key') {
+        throw new Error('Invalid auth mode — must be "claude-max" or "api-key"')
+      }
+
+      // Merge auth settings with existing workspace settings
+      const existing = workspaceRepository.getSettings(args.workspaceId)
+      const merged = {
+        ...existing,
+        authMode: args.authMode,
+        // Only store API key if auth mode is api-key, otherwise clear it
+        anthropicApiKey: args.authMode === 'api-key' ? args.anthropicApiKey : undefined
+      }
+      workspaceRepository.updateSettings(args.workspaceId, merged)
+
+      // Reload auth provider for the active workspace
+      const workspace = workspaceRepository.findAll().find((w) => w.id === args.workspaceId)
+      if (workspace) {
+        const { authProvider } = await import('../services/auth-provider')
+        authProvider.loadFromWorkspace(workspace.repoPath)
+      }
+
+      return { success: true }
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_DIRECTORY, async (event) => {
     validateSender(event)
 

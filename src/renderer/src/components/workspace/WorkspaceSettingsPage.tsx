@@ -10,7 +10,8 @@ import {
   Loader2,
   Trash2,
   FileText,
-  GitBranch
+  GitBranch,
+  Key
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
@@ -22,6 +23,7 @@ import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
+import AuthSettingsTab from './AuthSettingsTab'
 import {
   SkillDetailPage,
   ActivationBanner
@@ -34,6 +36,7 @@ import SyncReviewModal from '@renderer/components/settings/SyncReviewModal'
 type SettingsTab =
   | 'models'
   | 'repository'
+  | 'auth'
   | 'team'
   | 'ideas'
   | 'memory'
@@ -43,6 +46,7 @@ type SettingsTab =
 const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
   { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-emerald-400' },
   { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-orange-400' },
+  { id: 'auth', label: 'Auth', icon: Key, iconColor: 'text-amber-400' },
   { id: 'team', label: 'Team', icon: Users, iconColor: 'text-blue-400' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-yellow-400' },
   { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-purple-400' },
@@ -226,6 +230,7 @@ export default function WorkspaceSettingsPage({
 
           {activeTab === 'models' && <ModelConfigTab />}
           {activeTab === 'repository' && <RepositorySettingsTab />}
+          {activeTab === 'auth' && <AuthSettingsTab />}
 
           {activeTab === 'team' && workspacePath && (
             <div className="flex-1 flex flex-col min-h-0">

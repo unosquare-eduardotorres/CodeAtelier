@@ -37,21 +37,22 @@ export interface AgentDefinition {
 const AGENT_META: Record<string, { icon: string; color: string; displayName: string; priority: number }> = {
   generalist: { icon: '🎨', color: '#D97706', displayName: 'Da Vinci', priority: 0 },
   'generalist-agent': { icon: '🎨', color: '#D97706', displayName: 'Da Vinci', priority: 0 },
-  'generalist-developer': { icon: '🎨', color: '#D97706', displayName: 'Da Vinci', priority: 0 },
   orchestrator: { icon: '🎼', color: '#8B5CF6', displayName: 'Stravinsky', priority: 1 },
-  'react-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'React Architect', priority: 2 },
-  'dotnet-architect': { icon: '🟣', color: '#512BD4', displayName: '.NET Architect', priority: 3 },
-  'electron-architect': { icon: '⚡', color: '#47848F', displayName: 'Electron Architect', priority: 4 },
-  'agentic-architect': { icon: '🤖', color: '#D97706', displayName: 'Agentic Architect', priority: 5 },
-  'db-architect': { icon: '🗄️', color: '#336791', displayName: 'DB Architect', priority: 6 },
-  'ux-ui-specialist': { icon: '🎨', color: '#DB2777', displayName: 'UX/UI Specialist', priority: 7 },
-  'git-github-specialist': { icon: '🔀', color: '#64748B', displayName: 'Git/GitHub Specialist', priority: 8 },
-  'requirements-specialist': { icon: '📋', color: '#059669', displayName: 'Requirements Specialist', priority: 9 },
-  'code-planner': { icon: '📝', color: '#475569', displayName: 'Code Planner', priority: 10 },
-  'execution-planner': { icon: '📅', color: '#DC6843', displayName: 'Execution Planner', priority: 11 },
-  'cicd-devops': { icon: '🚀', color: '#DC2626', displayName: 'CI/CD DevOps', priority: 12 },
-  'cloud-infrastructure': { icon: '☁️', color: '#0D9488', displayName: 'Cloud Infrastructure', priority: 13 },
-  'docs-diagrams-specialist': { icon: '📄', color: '#7C3AED', displayName: 'Docs & Diagrams', priority: 14 }
+  'frontend-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'Frontend Architect', priority: 2 },
+  'platform-architect': { icon: '⚡', color: '#47848F', displayName: 'Platform Architect', priority: 3 },
+  'data-architect': { icon: '🗄️', color: '#336791', displayName: 'Data Architect', priority: 4 },
+  'design-specialist': { icon: '🎨', color: '#DB2777', displayName: 'Design Specialist', priority: 5 },
+  planner: { icon: '📋', color: '#059669', displayName: 'Planner', priority: 6 },
+  'platform-engineer': { icon: '🚀', color: '#DC2626', displayName: 'Platform Engineer', priority: 7 },
+  'dx-specialist': { icon: '📄', color: '#7C3AED', displayName: 'DX Specialist', priority: 8 },
+  'dotnet-architect': { icon: '🟣', color: '#512BD4', displayName: '.NET Architect', priority: 9 },
+  'generalist-developer': { icon: '🔧', color: '#6366F1', displayName: 'Generalist Dev', priority: 10 },
+  // Legacy aliases — keep for existing DB records referencing old agent IDs
+  'react-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'Frontend Architect', priority: 2 },
+  'db-architect': { icon: '🗄️', color: '#336791', displayName: 'Data Architect', priority: 4 },
+  'ux-ui-specialist': { icon: '🎨', color: '#DB2777', displayName: 'Design Specialist', priority: 5 },
+  'electron-architect': { icon: '⚡', color: '#47848F', displayName: 'Platform Architect', priority: 3 },
+  'agentic-architect': { icon: '⚡', color: '#47848F', displayName: 'Platform Architect', priority: 3 }
 }
 
 // ── Simple YAML Parser (reused from workspace-deploy.service.ts) ──

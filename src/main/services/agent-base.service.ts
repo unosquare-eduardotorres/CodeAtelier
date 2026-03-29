@@ -435,6 +435,7 @@ export abstract class AgentBaseService extends EventEmitter {
    * Handles process exit — flushes buffer and updates status.
    */
   protected handleExit(code: number | null): void {
+    this.emit('processExit', code)
     this.log.info(`Process exited with code ${code}`)
 
     if (this.buffer.trim()) {

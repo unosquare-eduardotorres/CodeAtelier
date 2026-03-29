@@ -11,7 +11,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 25
+const CURRENT_SCHEMA_VERSION = 26
 
 interface Migration {
   version: number
@@ -408,6 +408,34 @@ const migrations: Migration[] = [
       db.exec(
         `CREATE INDEX IF NOT EXISTS idx_gate_results_task ON gate_results(task_id)`
       )
+    }
+  },
+  {
+    version: 26,
+    name: 'reconceive-agent-roster-16-to-8',
+    up: (db) => {
+      // Deactivate archived agent IDs
+      const archivedIds = [
+        'electron-architect', 'agentic-architect',
+        'code-planner', 'execution-planner', 'requirements-specialist',
+        'cicd-devops', 'cloud-infrastructure',
+        'git-github-specialist', 'docs-diagrams-specialist'
+      ]
+      const deactivateStmt = db.prepare(
+        `UPDATE specialists SET active = 0 WHERE agent_id = ?`
+      )
+      for (const id of archivedIds) {
+        deactivateStmt.run(id)
+      }
+
+      // Rename existing agents
+      db.prepare(`UPDATE specialists SET agent_id = 'frontend-architect', display_name = 'Frontend Architect' WHERE agent_id = 'react-architect'`).run()
+      db.prepare(`UPDATE specialists SET agent_id = 'data-architect', display_name = 'Data Architect' WHERE agent_id = 'db-architect'`).run()
+      db.prepare(`UPDATE specialists SET agent_id = 'design-specialist', display_name = 'Design Specialist' WHERE agent_id = 'ux-ui-specialist'`).run()
+
+      // Note: New agents (platform-architect, planner, platform-engineer, dx-specialist)
+      // will be inserted by AgentRegistry.loadFromDisk() on next startup when it discovers the new YAMLs.
+      // No manual INSERT needed — the registry handles sync.
     }
   }
 ]

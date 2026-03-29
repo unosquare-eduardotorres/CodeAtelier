@@ -54,6 +54,11 @@ interface Api {
     workspaceId: string
     settings: Record<string, unknown>
   }) => Promise<void>
+  updateAuthSettings: (args: {
+    workspaceId: string
+    authMode: string
+    anthropicApiKey?: string
+  }) => Promise<{ success: boolean }>
   saveClipboardImage: (args: { dataUrl: string }) => Promise<string>
 
   // Chat

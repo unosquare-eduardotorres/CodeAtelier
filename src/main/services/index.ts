@@ -50,3 +50,9 @@ export { checkpointService } from './checkpoint.service'
 export type { CheckpointState } from './checkpoint.service'
 export { detectAbandonment, detectQualityGates } from './abandonment-detector.service'
 export type { AbandonmentResult, QualityGateResult } from './abandonment-detector.service'
+
+// Auth & SDK abstractions
+export { authProvider } from './auth-provider'
+export type { AuthMode, AuthProvider } from './auth-provider'
+export { sdkExecutor, SDKExecutor } from './sdk-executor'
+export type { SDKExecuteOptions, SDKExecuteResult } from './sdk-executor'

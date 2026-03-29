@@ -15,6 +15,9 @@ import { promptBuilder } from './prompt-builder'
 import { AgentBaseService } from './agent-base.service'
 import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
+import { authProvider } from './auth-provider'
+import { SDKExecutor } from './sdk-executor'
+import type { SDKExecuteResult } from './sdk-executor'
 import type { StreamChunk } from './agent-base.service'
 
 /** Maximum number of session entries before evicting oldest */
@@ -49,11 +52,82 @@ export class OrchestratorService extends AgentBaseService {
   }
 
   /**
-   * Sends a message by spawning a new `claude -p` process with `--output-format stream-json`.
+   * Sends a message — routes to SDK or CLI based on auth provider configuration.
    * Uses `--resume` with session ID for multi-turn conversation continuity.
-   * Performs semantic skill matching to augment the prompt with relevant skill context.
    */
   async send(
+    message: string,
+    conversationId?: string,
+    mode: ConversationMode = 'build'
+  ): Promise<void> {
+    if (authProvider.supportsSDK()) {
+      return this.sendViaSDK(message, conversationId, mode)
+    }
+    return this.sendViaCLI(message, conversationId, mode)
+  }
+
+  /**
+   * SDK path — uses Agent SDK query() for streaming.
+   * Produces the same StreamChunk events as CLI path, so downstream is unchanged.
+   */
+  private async sendViaSDK(
+    message: string,
+    conversationId?: string,
+    mode: ConversationMode = 'build'
+  ): Promise<void> {
+    if (!this.workspacePath) {
+      throw new Error('Orchestrator not started — no workspace path set')
+    }
+
+    this.currentStatus = 'thinking'
+    this.buffer = ''
+    this.hasEmittedContent = false
+    this.messageStartedAt = Date.now()
+    this.processedToolIds.clear()
+    this.currentConversationId = conversationId ?? null
+    this.emit('statusUpdate', this.getStatus())
+
+    const existingSession = conversationId ? this.sessionMap.get(conversationId) : null
+    const systemPrompt = existingSession
+      ? undefined
+      : promptBuilder.build({
+          role: 'orchestrator',
+          mode,
+          workspacePath: this.workspacePath
+        })
+
+    const executor = new SDKExecutor()
+    for await (const chunk of executor.execute({
+      prompt: message,
+      systemPrompt: systemPrompt ?? '',
+      model: modelConfigService.getModel(this.workspacePath, 'orchestrator'),
+      cwd: this.workspacePath,
+      permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
+      allowedTools: ['WebSearch', 'WebFetch'],
+      resume: existingSession ?? undefined
+    })) {
+      if ('_meta' in chunk && chunk._meta) {
+        const meta = chunk._meta as SDKExecuteResult
+        if (meta.sessionId && conversationId) {
+          this.sessionMap.set(conversationId, meta.sessionId)
+          this.evictOldSessions()
+        }
+        this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
+      } else {
+        this.emit('chunk', chunk) // Same StreamChunk interface — IPC unchanged
+      }
+    }
+
+    this.currentStatus = 'idle'
+    this.emit('statusUpdate', this.getStatus())
+    this.emit('complete')
+  }
+
+  /**
+   * CLI path — spawns `claude -p` process with `--output-format stream-json`.
+   * Original implementation, used when auth mode is Claude Max.
+   */
+  private async sendViaCLI(
     message: string,
     conversationId?: string,
     mode: ConversationMode = 'build'
@@ -161,20 +235,25 @@ export class OrchestratorService extends AgentBaseService {
   }
 
   /**
-   * Decomposes a handoff brief into structured sub-tasks via a short `claude -p` call.
-   * Accepts a full HandoffBrief with decisions, constraints, files discussed, and recent messages.
-   * Returns a TaskPlan with decomposed tasks assigned to specialists.
+   * Decomposes a handoff brief into structured sub-tasks.
+   * Routes to SDK or CLI based on auth provider configuration.
    */
   async decompose(
     brief: HandoffBrief,
     conversationId: string,
     mode: ConversationMode
   ): Promise<TaskPlan> {
-    if (!this.workspacePath) {
-      throw new Error('Orchestrator not started — no workspace path set')
+    if (authProvider.supportsSDK()) {
+      return this.decomposeViaSDK(brief, conversationId, mode)
     }
+    return this.decomposeViaCLI(brief, conversationId, mode)
+  }
 
-    // Build specialist list for the prompt
+  /**
+   * Builds the decomposition prompt and specialist list from a handoff brief.
+   * Shared by both CLI and SDK decomposition paths.
+   */
+  private buildDecompositionInputs(brief: HandoffBrief): { prompt: string; specialistList: string } {
     const activeSpecialists = specialistRepository.findActive()
     const relevantSpecialists =
       brief.specialists.length > 0
@@ -205,7 +284,6 @@ export class OrchestratorService extends AgentBaseService {
         : ''
 
     // Strategy 5: Truncate recentMessages to prevent unbounded context in decomposition.
-    // Long conversations can dump enormous history into the decomposition prompt.
     const MAX_CONVERSATION_CHARS = 3000
     const rawConversation =
       brief.recentMessages.length > 0
@@ -228,64 +306,19 @@ ${specialistList}
 
 Decompose this task into sub-tasks and respond with ONLY valid JSON.`
 
-    this.log.info('Decomposing task for specialists:', brief.specialists.join(', '))
+    return { prompt, specialistList }
+  }
 
-    // ── Event: decomposition started ──
-    eventLoggerService.logDecompositionStarted({
-      conversationId,
-      summary: brief.summary,
-      specialists: brief.specialists
-    })
-
-    const env = this.buildEnvWithPath()
-
-    let result: string
-    try {
-      result = await new Promise<string>((resolve, reject) => {
-      const child = spawn(
-        'claude',
-        ['-p', prompt, '--system-prompt', promptBuilder.getDecompositionPrompt(), '--output-format', 'text'],
-        {
-          cwd: this.workspacePath!,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env
-        }
-      )
-
-      let stdout = ''
-      let stderr = ''
-      child.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString()
-      })
-      child.stderr?.on('data', (data: Buffer) => {
-        stderr += data.toString()
-      })
-      child.on('exit', (code) => {
-        if (code === 0) resolve(stdout.trim())
-        else reject(new Error(`Decomposition failed (code ${code}): ${stderr.substring(0, 500)}`))
-      })
-      child.on('error', reject)
-
-      // 30s timeout for decomposition
-      setTimeout(() => {
-        try {
-          child.kill('SIGTERM')
-        } catch {
-          /* ignore */
-        }
-        reject(new Error('Task decomposition timed out'))
-      }, 30000)
-    })
-    } catch (error) {
-      // ── Event: decomposition failed (CLI spawn, timeout, or exit code) ──
-      eventLoggerService.logDecompositionFailed({
-        conversationId,
-        error: (error as Error).message,
-        fallback: 'legacy'
-      })
-      throw error
-    }
-
+  /**
+   * Parses the raw decomposition result into a validated TaskPlan.
+   * Shared by both CLI and SDK decomposition paths.
+   */
+  private parseDecompositionResult(
+    result: string,
+    conversationId: string,
+    brief: HandoffBrief,
+    mode: ConversationMode
+  ): TaskPlan {
     // Parse the JSON response — strip markdown fences if present
     let jsonStr = result
     const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -358,6 +391,126 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
       tasks: enrichedTasks,
       brief
     }
+  }
+
+  /**
+   * SDK path — uses Agent SDK for decomposition (no NDJSON, no child process).
+   */
+  private async decomposeViaSDK(
+    brief: HandoffBrief,
+    conversationId: string,
+    mode: ConversationMode
+  ): Promise<TaskPlan> {
+    if (!this.workspacePath) {
+      throw new Error('Orchestrator not started — no workspace path set')
+    }
+
+    const { prompt } = this.buildDecompositionInputs(brief)
+
+    this.log.info('Decomposing task via SDK for specialists:', brief.specialists.join(', '))
+
+    eventLoggerService.logDecompositionStarted({
+      conversationId,
+      summary: brief.summary,
+      specialists: brief.specialists
+    })
+
+    try {
+      const executor = new SDKExecutor()
+      const { result } = await executor.executeAndCollect({
+        prompt,
+        systemPrompt: promptBuilder.getDecompositionPrompt(),
+        model: modelConfigService.getModel(this.workspacePath, 'orchestrator'),
+        cwd: this.workspacePath,
+        permissionMode: 'plan',
+        allowedTools: []
+      })
+
+      return this.parseDecompositionResult(result, conversationId, brief, mode)
+    } catch (error) {
+      eventLoggerService.logDecompositionFailed({
+        conversationId,
+        error: (error as Error).message,
+        fallback: 'legacy'
+      })
+      throw error
+    }
+  }
+
+  /**
+   * CLI path — spawns `claude -p` for decomposition.
+   * Original implementation, used when auth mode is Claude Max.
+   */
+  private async decomposeViaCLI(
+    brief: HandoffBrief,
+    conversationId: string,
+    mode: ConversationMode
+  ): Promise<TaskPlan> {
+    if (!this.workspacePath) {
+      throw new Error('Orchestrator not started — no workspace path set')
+    }
+
+    const { prompt } = this.buildDecompositionInputs(brief)
+
+    this.log.info('Decomposing task via CLI for specialists:', brief.specialists.join(', '))
+
+    // ── Event: decomposition started ──
+    eventLoggerService.logDecompositionStarted({
+      conversationId,
+      summary: brief.summary,
+      specialists: brief.specialists
+    })
+
+    const env = this.buildEnvWithPath()
+
+    let result: string
+    try {
+      result = await new Promise<string>((resolve, reject) => {
+      const child = spawn(
+        'claude',
+        ['-p', prompt, '--system-prompt', promptBuilder.getDecompositionPrompt(), '--output-format', 'text'],
+        {
+          cwd: this.workspacePath!,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env
+        }
+      )
+
+      let stdout = ''
+      let stderr = ''
+      child.stdout?.on('data', (data: Buffer) => {
+        stdout += data.toString()
+      })
+      child.stderr?.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+      child.on('exit', (code) => {
+        if (code === 0) resolve(stdout.trim())
+        else reject(new Error(`Decomposition failed (code ${code}): ${stderr.substring(0, 500)}`))
+      })
+      child.on('error', reject)
+
+      // 30s timeout for decomposition
+      setTimeout(() => {
+        try {
+          child.kill('SIGTERM')
+        } catch {
+          /* ignore */
+        }
+        reject(new Error('Task decomposition timed out'))
+      }, 30000)
+    })
+    } catch (error) {
+      // ── Event: decomposition failed (CLI spawn, timeout, or exit code) ──
+      eventLoggerService.logDecompositionFailed({
+        conversationId,
+        error: (error as Error).message,
+        fallback: 'legacy'
+      })
+      throw error
+    }
+
+    return this.parseDecompositionResult(result, conversationId, brief, mode)
   }
 
   /**

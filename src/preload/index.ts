@@ -65,6 +65,12 @@ const api = {
     settings: Record<string, unknown>
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS, args),
 
+  updateAuthSettings: (args: {
+    workspaceId: string
+    authMode: string
+    anthropicApiKey?: string
+  }): Promise<{ success: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_UPDATE_AUTH, args),
+
   saveClipboardImage: (args: { dataUrl: string }): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE, args),
 

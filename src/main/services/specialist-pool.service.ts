@@ -32,6 +32,9 @@ import { costTrackerService } from './cost-tracker.service'
 import { taskLoopService } from './task-loop.service'
 import { taskArtifactService } from './task-artifact.service'
 import { PromptBuilder } from './prompt-builder'
+import { authProvider } from './auth-provider'
+import { SDKExecutor } from './sdk-executor'
+import type { SDKExecuteResult } from './sdk-executor'
 
 /** Retry configuration for specialist tasks */
 const RETRY_CONFIG = {
@@ -80,7 +83,7 @@ function tierToModelAction(tier: string): import('../../shared/types').ModelActi
 
 interface SpecialistProcessInfo {
   task: DecomposedTask
-  process: ChildProcess
+  process?: ChildProcess
   output: string
   status: TaskExecutionProgress['status']
   worktreeId?: string
@@ -339,6 +342,171 @@ export class SpecialistPoolService extends EventEmitter {
       }
     }
 
+    // ── SDK path — no ChildProcess needed ──
+    if (authProvider.supportsSDK()) {
+      // Create DB session for token tracking (SDK path)
+      let dbSessionId: string | undefined
+      try {
+        const sessionAction = task.model ? tierToModelAction(task.model) : 'specialist:moderate'
+        const sessionModelId = modelConfigService.getModel(
+          this.workspacePath ?? undefined,
+          sessionAction
+        )
+        const session = agentSessionRepository.create(task.specialist, {
+          taskId: task.id,
+          pid: undefined,
+          conversationId: this.conversationId ?? undefined,
+          workspaceId: undefined,
+          complexityScore: task.complexity?.total,
+          modelUsed: sessionModelId,
+          complexityTier: task.complexity?.tier
+        })
+        dbSessionId = session.id
+      } catch (err) {
+        this.log.error('Failed to create DB session for specialist (SDK):', err)
+      }
+
+      const info: SpecialistProcessInfo = {
+        task,
+        output: '',
+        status: 'running',
+        worktreeId,
+        dbSessionId,
+        attempt,
+        tokenUsage: 0,
+        escalations: []
+      }
+
+      // Log agent started event
+      eventLoggerService.logAgentStarted({
+        conversationId: this.conversationId ?? undefined,
+        agentId: task.specialist,
+        taskId: task.id,
+        model: task.model,
+        complexityTier: task.complexity?.tier
+      })
+      this.activeProcesses.set(task.id, info)
+
+      try {
+        await this.runSpecialistViaSDK(task, mode, info, worktreeId)
+
+        // Success path — reuse existing completion logic
+        this.activeProcesses.delete(task.id)
+        this.completedTasks.add(task.id)
+        this.taskResults.set(task.id, info.output)
+        this.consecutiveSpawnFailures = 0
+
+        // Complete DB session
+        if (info.dbSessionId) {
+          try {
+            agentSessionRepository.complete(info.dbSessionId, 'completed', info.tokenUsage)
+          } catch (err) {
+            this.log.error('Failed to complete DB session:', err)
+          }
+        }
+
+        // Post-completion analysis
+        this.runPostCompletionAnalysis(task, info)
+
+        // Write output artifact
+        if (this.workspacePath && this.conversationId) {
+          taskArtifactService
+            .writeTaskOutput(this.workspacePath, this.conversationId, task.id, info.output, 'completed')
+            .catch((err) => this.log.warn('Failed to write task output artifact:', err))
+        }
+
+        // Run quality gates
+        const gateCwd = info.worktreeId
+          ? (worktreeRepository.findById(info.worktreeId)?.worktreePath ?? this.workspacePath!)
+          : this.workspacePath!
+
+        this.runTaskLoopGates(task, info, mode, gateCwd, onDone).catch((err) => {
+          this.log.error(`Task loop gate evaluation failed for ${task.id}:`, err)
+          this.finalizeTaskCompletion(task, info)
+          onDone()
+        })
+        return
+      } catch (error) {
+        // Error path — handle retry/circuit-breaker
+        this.activeProcesses.delete(task.id)
+        info.status = 'failed'
+        this.taskStatuses.set(task.id, 'failed')
+
+        // Complete DB session with error
+        if (info.dbSessionId) {
+          try {
+            agentSessionRepository.complete(info.dbSessionId, 'failed', info.tokenUsage)
+          } catch (dbErr) {
+            this.log.error('Failed to complete DB session on error:', dbErr)
+          }
+        }
+
+        // Check if retryable
+        const isRetryable = info.attempt < RETRY_CONFIG.maxRetries
+        if (isRetryable) {
+          const delay = Math.min(
+            RETRY_CONFIG.baseDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, info.attempt),
+            RETRY_CONFIG.maxDelayMs
+          )
+
+          this.log.warn(`Task ${task.id} failed via SDK (attempt ${info.attempt + 1}), retrying in ${delay}ms...`)
+          eventLoggerService.logAgentFailed({
+            conversationId: this.conversationId ?? undefined,
+            agentId: task.specialist,
+            taskId: task.id,
+            error: (error as Error).message,
+            attempt: info.attempt
+          })
+
+          // Clean up worktree before retry
+          if (info.worktreeId) {
+            gitWorktreeService.remove(info.worktreeId, true).catch((err) => {
+              this.log.warn(`Failed to remove worktree before retry: ${err}`)
+            })
+          }
+
+          this.completedTasks.delete(task.id)
+          this.taskResults.delete(task.id)
+
+          setTimeout(() => {
+            this.createWorktreeAndSpawn(task, mode, onDone, info.attempt + 1)
+          }, delay)
+          return
+        }
+
+        // Retries exhausted
+        this.consecutiveSpawnFailures++
+        this.emitProgress(task, 'failed', undefined, (error as Error).message)
+
+        eventLoggerService.logAgentFailed({
+          conversationId: this.conversationId ?? undefined,
+          agentId: task.specialist,
+          taskId: task.id,
+          error: `SDK error after ${info.attempt + 1} attempt(s): ${(error as Error).message}`,
+          attempt: info.attempt
+        })
+
+        if (this.consecutiveSpawnFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+          this.log.error(`Circuit breaker tripped: ${this.consecutiveSpawnFailures} consecutive failures`)
+          eventLoggerService.logCircuitBreakerTripped({
+            conversationId: this.conversationId ?? undefined,
+            failures: this.consecutiveSpawnFailures
+          })
+          this.emit('circuitBreakerTripped', { failures: this.consecutiveSpawnFailures })
+          this.stopAll()
+          return
+        }
+
+        if (info.worktreeId) {
+          worktreeRepository.updateStatus(info.worktreeId, 'abandoned')
+        }
+
+        onDone()
+        return
+      }
+    }
+
+    // ── CLI path (existing implementation) ──
     const childProcess = await this.spawnSpecialist(task, mode, worktreeId)
 
     // Create DB session for token tracking
@@ -777,7 +945,183 @@ export class SpecialistPoolService extends EventEmitter {
   }
 
   /**
-   * Spawns a `claude -p` process for a single specialist task.
+   * Builds the specialist context (system prompt, full prompt, cwd, model).
+   * Shared by both CLI and SDK execution paths to avoid duplication.
+   */
+  private async buildSpecialistContext(
+    task: DecomposedTask,
+    mode: ConversationMode,
+    worktreeId?: string
+  ): Promise<{ systemPrompt: string; fullPrompt: string; cwd: string; modelId: string; thinkingBudget: string }> {
+    // Resolve specialist prompt from DB
+    const specialist = specialistRepository.findByAgentId(task.specialist)
+
+    // Resolve skills deterministically via AgentRegistry
+    const assignedSkills = agentRegistry.getSkillsForAgent(task.specialist)
+
+    // Resolve feedback memories
+    let feedbackContext: string | undefined
+    try {
+      if (this.workspacePath) {
+        const allWs = workspaceRepository.findAll()
+        const ws = allWs.find((w) => w.repoPath === this.workspacePath)
+        if (ws) {
+          const ctx = memoryService.getFeedbackForSpecialist(ws.id, task.specialist, 2000)
+          if (ctx) feedbackContext = ctx
+        }
+      }
+    } catch {
+      // Feedback memories unavailable — not critical
+    }
+
+    // Model-aware prompt budgeting
+    const model = task.model ?? 'sonnet'
+    const budgetTier: BudgetTier =
+      model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
+
+    // Build system prompt via centralized PromptBuilder
+    const systemPrompt = promptBuilder.build({
+      role: 'specialist',
+      mode,
+      specialistId: task.specialist,
+      specialistPrompt: specialist?.prompt || undefined,
+      assignedSkills,
+      workspacePath: this.workspacePath!,
+      brief: this.conversationBrief || undefined,
+      feedbackContext,
+      budgetTier
+    })
+
+    // Build context from completed dependency outputs
+    let dependencyContext = ''
+    for (const depId of task.dependsOn) {
+      let depOutput: string | null = null
+      if (this.workspacePath && this.conversationId) {
+        try {
+          depOutput = await taskArtifactService.readTaskOutput(
+            this.workspacePath,
+            this.conversationId,
+            depId
+          )
+        } catch {
+          // Artifact unavailable — fall back to in-memory
+        }
+      }
+      if (!depOutput) {
+        depOutput = this.taskResults.get(depId) ?? null
+      }
+      if (depOutput) {
+        const maxLen = budgetTier === 'minimal' ? 1000 : budgetTier === 'full' ? 8000 : 4000
+        dependencyContext += `\n\n[Previous task ${depId} output]:\n${depOutput.substring(0, maxLen)}`
+        if (depOutput.length > maxLen) {
+          dependencyContext += `\n[Output truncated — ${depOutput.length - maxLen} chars omitted]`
+        }
+      }
+    }
+
+    // Write task input artifact for auditability
+    if (this.workspacePath && this.conversationId) {
+      const depOutputs = new Map<string, string>()
+      for (const depId of task.dependsOn) {
+        const out = this.taskResults.get(depId)
+        if (out) depOutputs.set(depId, out)
+      }
+      taskArtifactService
+        .writeTaskInput(this.workspacePath, this.conversationId, task, depOutputs)
+        .catch((err) => this.log.warn('Failed to write task input artifact:', err))
+    }
+
+    // Append verification command
+    const verificationSuffix = task.verificationCommand
+      ? `\n\nVerification command (run before finishing): \`${task.verificationCommand}\``
+      : ''
+
+    const fullPrompt = dependencyContext
+      ? `${task.description}${verificationSuffix}${dependencyContext}`
+      : `${task.description}${verificationSuffix}`
+
+    // Prompt size estimation
+    const promptCheck = PromptBuilder.checkPromptSize(systemPrompt, fullPrompt, model)
+    if (promptCheck.warning) {
+      this.log.warn(`[${task.specialist}/${task.id}] ${promptCheck.warning}`)
+    }
+
+    // Resolve model
+    const modelAction = task.model ? tierToModelAction(task.model) : 'specialist:moderate'
+    const modelId = modelConfigService.getModel(this.workspacePath ?? undefined, modelAction)
+
+    // Thinking budget
+    const thinkingBudget =
+      THINKING_BUDGETS[model as keyof typeof THINKING_BUDGETS] ?? THINKING_BUDGETS.sonnet
+
+    // Resolve cwd
+    let cwd = this.workspacePath!
+    if (worktreeId) {
+      const worktreeRecord = worktreeRepository.findById(worktreeId)
+      if (worktreeRecord) {
+        cwd = worktreeRecord.worktreePath
+      }
+    }
+
+    return { systemPrompt, fullPrompt, cwd, modelId, thinkingBudget }
+  }
+
+  /**
+   * Runs a specialist task via the Agent SDK (no child process).
+   * Produces the same events as CLI-based execution.
+   */
+  private async runSpecialistViaSDK(
+    task: DecomposedTask,
+    mode: ConversationMode,
+    info: SpecialistProcessInfo,
+    worktreeId?: string
+  ): Promise<void> {
+    const { systemPrompt, fullPrompt, cwd, modelId, thinkingBudget } =
+      await this.buildSpecialistContext(task, mode, worktreeId)
+
+    this.log.info(
+      `Running specialist via SDK [${task.specialist}] model=${task.model ?? 'sonnet'} for task ${task.id} in ${cwd}`
+    )
+
+    const executor = new SDKExecutor()
+    for await (const chunk of executor.execute({
+      prompt: fullPrompt,
+      systemPrompt,
+      model: modelId,
+      cwd,
+      permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
+      maxThinkingTokens: parseInt(thinkingBudget) || undefined
+    })) {
+      if ('_meta' in chunk && chunk._meta) {
+        const meta = chunk._meta as SDKExecuteResult
+        info.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
+      } else if (chunk.type === 'text' && chunk.content) {
+        info.output += chunk.content
+        this.emit('taskChunk', {
+          taskId: task.id,
+          specialist: task.specialist,
+          chunk: chunk.content
+        })
+      } else if (chunk.type === 'tool_use') {
+        const summary = chunk.toolInput ?? ''
+        this.emit('taskChunk', {
+          taskId: task.id,
+          specialist: task.specialist,
+          chunk: `\n🔧 **${chunk.toolName}** ${summary}\n`
+        })
+      } else if (chunk.type === 'error') {
+        this.emit('taskChunk', {
+          taskId: task.id,
+          specialist: task.specialist,
+          chunk: `\n⚠️ ${chunk.error}\n`
+        })
+        throw new Error(chunk.error)
+      }
+    }
+  }
+
+  /**
+   * Spawns a `claude -p` process for a single specialist task (CLI path).
    * If a worktreeId is provided, the process runs in the isolated worktree directory.
    */
   private async spawnSpecialist(
@@ -1006,24 +1350,30 @@ export class SpecialistPoolService extends EventEmitter {
       this.log.info(`Stopping specialist process: ${id}`)
       if (info.timeoutTimer) clearTimeout(info.timeoutTimer)
 
+      // SDK processes have no ChildProcess — just mark as aborted
+      if (!info.process) {
+        continue
+      }
+
+      const childProcess = info.process
       exitPromises.push(
         new Promise<void>((resolve) => {
           const timeout = setTimeout(() => {
             try {
-              info.process.kill('SIGKILL')
+              childProcess.kill('SIGKILL')
             } catch {
               /* ignore */
             }
             resolve()
           }, 5000)
 
-          info.process.on('exit', () => {
+          childProcess.on('exit', () => {
             clearTimeout(timeout)
             resolve()
           })
 
           try {
-            info.process.kill('SIGTERM')
+            childProcess.kill('SIGTERM')
           } catch {
             clearTimeout(timeout)
             resolve()

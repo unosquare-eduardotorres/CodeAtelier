@@ -6,6 +6,7 @@ export const IPC_CHANNELS = {
   WORKSPACE_DELETE: 'workspace:delete',
   WORKSPACE_GET_SETTINGS: 'workspace:get-settings',
   WORKSPACE_UPDATE_SETTINGS: 'workspace:update-settings',
+  WORKSPACE_UPDATE_AUTH: 'workspace:update-auth',
 
   // Chat
   CHAT_SEND: 'chat:sendMessage',

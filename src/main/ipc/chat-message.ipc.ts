@@ -297,12 +297,28 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
         generalistService.removeListener('handoff', onHandoff)
       }
 
+      // Safety: if generalist process exits without emitting 'complete', force-send completion
+      const onProcessExit = (): void => {
+        // Give 2 seconds for normal 'complete' event, then force it
+        setTimeout(() => {
+          if (!isStopped) {
+            log.warn('Generalist process exited without complete event — forcing completion')
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+              conversationId,
+              messageId: `force-${Date.now()}`
+            })
+            cleanupListeners()
+          }
+        }, 2000)
+      }
+
       // Cleanup helper — removes all listeners for this message cycle.
       // Called from onComplete AND from the catch block to prevent leaks.
       const cleanupListeners = (): void => {
         generalistService.removeListener('chunk', onChunk)
         generalistService.removeListener('complete', onComplete)
         generalistService.removeListener('handoff', onHandoff)
+        generalistService.removeListener('processExit', onProcessExit)
       }
 
       try {
@@ -318,6 +334,7 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
         generalistService.on('chunk', onChunk)
         generalistService.on('complete', onComplete)
         generalistService.on('handoff', onHandoff)
+        generalistService.once('processExit', onProcessExit)
         await generalistService.send(fullContent, conversationId)
       } catch (error) {
         // Clean up listeners to prevent leaks on error

@@ -15,6 +15,9 @@ import type {
   ToolActivity
 } from '../../../shared/types'
 
+/** Safety timer — force-resets isStreaming if stuck for 5 minutes (e.g., process dies without emitting complete) */
+let streamingSafetyTimer: ReturnType<typeof setTimeout> | null = null
+
 interface HandoffState {
   summary: string
   specialists: string[]
@@ -277,6 +280,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: ''
     }))
 
+    // Safety: force-reset if streaming state gets stuck (e.g., process dies without emitting complete)
+    if (streamingSafetyTimer) clearTimeout(streamingSafetyTimer)
+    streamingSafetyTimer = setTimeout(() => {
+      if (get().isStreaming) {
+        rendererLog.warn('Safety timeout: isStreaming stuck for 5 minutes — force-resetting')
+        set({ isStreaming: false, streamingContent: '', toolActivities: [] })
+      }
+      streamingSafetyTimer = null
+    }, 5 * 60 * 1000)
+
     try {
       await window.api.sendMessage({
         conversationId: activeConversation.id,
@@ -285,6 +298,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
     } catch (error) {
       rendererLog.error('Failed to send message:', error)
+      if (streamingSafetyTimer) {
+        clearTimeout(streamingSafetyTimer)
+        streamingSafetyTimer = null
+      }
       set({ isStreaming: false })
     }
   },
@@ -329,6 +346,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   finalizeStream: (messageId: string, taskId?: string) => {
+    // Clear safety timer on normal stream completion (only on final complete, not per-task)
+    if (!taskId && streamingSafetyTimer) {
+      clearTimeout(streamingSafetyTimer)
+      streamingSafetyTimer = null
+    }
+
     const { streamingContent, streamingRole, activeConversation } = get()
 
     if (streamingContent && activeConversation) {
