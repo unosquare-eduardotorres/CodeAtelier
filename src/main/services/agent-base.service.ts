@@ -65,6 +65,8 @@ export abstract class AgentBaseService extends EventEmitter {
   protected processedToolIds: Set<string> = new Set()
   /** Counts tool calls in the current interaction for circuit-breaker protection */
   protected toolCallCount: number = 0
+  /** When true, all further stdout output is ignored (circuit breaker tripped) */
+  protected circuitBroken = false
 
   /** Database session ID for token tracking */
   protected dbSessionId: string | null = null
@@ -115,6 +117,9 @@ export abstract class AgentBaseService extends EventEmitter {
    * Processes raw stdout data into newline-delimited JSON events.
    */
   protected handleOutput(data: Buffer): void {
+    // Circuit breaker tripped — ignore all further output
+    if (this.circuitBroken) return
+
     this.buffer += data.toString()
 
     const lines = this.buffer.split('\n')
@@ -279,7 +284,11 @@ export abstract class AgentBaseService extends EventEmitter {
               error: `The agent made ${this.toolCallCount} tool calls, which suggests it got stuck in a loop. The response has been stopped. Try rephrasing your request.`
             } as StreamChunk)
             this.emit('complete')
-            return // Stop processing further events
+
+            // Actually stop processing — the `return` alone just skips this event,
+            // but handleOutput will fire again on the next stdout data chunk.
+            this.circuitBroken = true
+            return
           }
 
           this.currentStatus = 'reviewing'

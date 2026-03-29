@@ -6,13 +6,13 @@ import type { Plugin } from 'unified'
 import type { Root, Text, PhrasingContent } from 'mdast'
 import { visit } from 'unist-util-visit'
 import { Copy, Check, Paperclip, Flame, Lightbulb, FileText } from 'lucide-react'
-import type { Message, ToolActivity, GrillProposedTask, GrillQuestion } from '../../../../shared/types'
+import type { Message, ToolActivity, GrillProposedTask, GrillQuestion, GrillAnswerPayload, ConversationMode } from '../../../../shared/types'
 import PlanCard from './PlanCard'
 import GrillEvaluationCard from './GrillEvaluationCard'
 import GrillResultCard from './GrillResultCard'
 import GrillQuestionCard from './GrillQuestionCard'
 import ToolActivityBlock from './ToolActivityBlock'
-import { useChatActions, useProfileStore, useSpecialistStore } from '@renderer/store'
+import { useProfileStore, useSpecialistStore } from '@renderer/store'
 import { MermaidDiagram, Avatar } from '@renderer/components/common'
 import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 
@@ -63,6 +63,17 @@ const remarkEmojiSpan: Plugin<[], Root> = () => {
   }
 }
 
+/** Chat actions needed by MessageBubble — passed as props to avoid N×useShallow subscriptions */
+export interface MessageBubbleActions {
+  updateMode: (mode: ConversationMode) => Promise<void>
+  sendMessage: (text: string, attachments?: string[]) => Promise<void>
+  appendLocalMessage: (content: string) => void
+  clearGrillSession: () => void
+  createItemsFromGrill: (tasks: { title: string; context: string; description: string }[]) => Promise<void>
+  submitGrillAnswers: (answers: GrillAnswerPayload[]) => void
+  skipAllGrillQuestions: () => void
+}
+
 interface MessageBubbleProps {
   message: Message
   isStreaming?: boolean
@@ -70,6 +81,8 @@ interface MessageBubbleProps {
   toolActivities?: ToolActivity[]
   /** When true, skip rendering inline GrillQuestionCard (store-driven card in MessageList takes precedence) */
   suppressInlineGrillCard?: boolean
+  /** Chat actions passed from parent to avoid per-bubble store subscriptions */
+  actions?: MessageBubbleActions
 }
 
 function formatTime(dateStr: string): string {
@@ -99,6 +112,9 @@ function shortenFilePath(filePath: string): string {
 
   return filePath
 }
+
+// Module-level constant — stable reference, never recreated on render
+const REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkEmojiSpan]
 
 function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
@@ -168,6 +184,96 @@ function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Eleme
   )
 }
 
+/** Strip stray backtick text nodes from React children (left over after markdown inline-code parsing) */
+function stripStrayBackticks(children: React.ReactNode): React.ReactNode[] | null | undefined {
+  return React.Children.map(children, (child) => {
+    if (typeof child === 'string') {
+      const stripped = child.replace(/`/g, '')
+      return stripped || null
+    }
+    return child
+  })
+}
+
+// Module-level markdown components — stable reference, avoids ReactMarkdown full re-render
+const markdownComponents = {
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p>{stripStrayBackticks(children)}</p>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => (
+    <li>{stripStrayBackticks(children)}</li>
+  ),
+  pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
+  code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
+    const isBlock = className?.includes('language-')
+    if (isBlock) {
+      return <code className={`${className} text-sm`}>{children}</code>
+    }
+
+    const text = String(children).replace(/`/g, '').trim()
+    const isUrl = /^https?:\/\/\S+$/.test(text)
+    if (isUrl) {
+      return (
+        <a
+          href={text}
+          className="bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-primary-text hover:text-primary-hover underline cursor-pointer"
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => {
+            e.preventDefault()
+            if (text) window.open(text, '_blank')
+          }}
+        >
+          {text}
+        </a>
+      )
+    }
+
+    const isFilePath =
+      /^[\/~][\w.\-\/@ ]+\.\w{1,10}$/.test(text) || /^[A-Z]:\\/.test(text)
+    if (isFilePath) {
+      const shortenedPath = shortenFilePath(text)
+      return (
+        <code
+          role="button"
+          aria-label={`Reveal ${text} in file manager`}
+          className="flex items-center gap-1.5 w-fit bg-primary-muted px-2.5 py-1 rounded-md text-sm font-medium text-primary-text hover:bg-primary/25 cursor-pointer transition-colors my-1"
+          title={`Reveal in file manager: ${text}`}
+          onClick={() => window.api.showItemInFolder(text)}
+        >
+          <FileText size={13} className="shrink-0" />
+          {shortenedPath}
+        </code>
+      )
+    }
+
+    return (
+      <code className="bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-primary-text">
+        {text}
+      </code>
+    )
+  },
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="overflow-x-auto rounded-lg border border-border-default my-3 shadow-sm">
+      <table className="min-w-full">{children}</table>
+    </div>
+  ),
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a
+      href={href}
+      className="text-accent hover:text-accent/80 underline"
+      target="_blank"
+      rel="noreferrer"
+      onClick={(e) => {
+        e.preventDefault()
+        if (href) window.open(href, '_blank')
+      }}
+    >
+      {children}
+    </a>
+  )
+}
+
 /**
  * Resolves the display identity (name, subtitle, avatar, color) for a message.
  * Uses profile store for user messages, specialist store + core agent aliases for agent messages.
@@ -178,15 +284,21 @@ function useMessageIdentity(message: Message): {
   avatarKey: string
   accentColor: string
 } {
-  const profile = useProfileStore((s) => s.profile)
+  // Select only the specific fields we need — avoids re-renders when unrelated store fields change
+  const profileDisplayName = useProfileStore((s) => s.profile?.displayName ?? 'You')
+  const profileAvatarKey = useProfileStore((s) => s.profile?.avatarKey ?? 'business-man')
   const getCoreAgentAlias = useProfileStore((s) => s.getCoreAgentAlias)
-  const specialists = useSpecialistStore((s) => s.specialists)
+  // Select only the specialist matching this message's agentId — stable reference if specialist unchanged
+  const specialist = useSpecialistStore((s) =>
+    message.agentId ? s.specialists.find((sp) => sp.agentId === message.agentId) ?? null : null
+  )
 
   return useMemo(() => {
     if (message.role === 'user') {
       return {
-        displayName: profile?.displayName ?? 'You',
+        displayName: profileDisplayName,
         subtitle: null,
+
         avatarKey: profile?.avatarKey ?? 'renaissance-scholar',
         accentColor: 'var(--color-primary, #6366F1)'
       }
@@ -212,8 +324,7 @@ function useMessageIdentity(message: Message): {
       }
     }
 
-    // For specialist messages, find the specialist by agentId
-    const specialist = specialists.find((s) => s.agentId === message.agentId)
+    // For specialist messages, use pre-selected specialist
     if (specialist) {
       const alias = specialist.alias
       const roleName = specialist.displayName
@@ -232,118 +343,143 @@ function useMessageIdentity(message: Message): {
       avatarKey: getDefaultAvatarForRole(message.agentId ?? message.role),
       accentColor: '#6366F1'
     }
-  }, [message.role, message.agentId, profile, specialists, getCoreAgentAlias])
+  }, [message.role, message.agentId, profileDisplayName, profileAvatarKey, specialist, getCoreAgentAlias])
 }
 
 function MessageBubbleInner({
   message,
   isStreaming,
   toolActivities,
-  suppressInlineGrillCard
+  suppressInlineGrillCard,
+  actions
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
-  const { updateMode, sendMessage, appendLocalMessage, clearGrillSession, createItemsFromGrill, submitGrillAnswers, skipAllGrillQuestions } = useChatActions()
+  // Use actions from props (passed by MessageList) to avoid N×useShallow subscriptions
+  const { updateMode, sendMessage, appendLocalMessage, clearGrillSession, createItemsFromGrill, submitGrillAnswers, skipAllGrillQuestions } = actions!
   const identity = useMessageIdentity(message)
 
-  // Parse attachments from JSON
-  const attachments: string[] = (() => {
+  // Memoize all regex matching, JSON parsing, and content splitting to avoid redundant work on re-render
+  const {
+    attachments, imageAttachments, fileAttachments,
+    isGrillActivation, ideaToRefineMatch, displayContent,
+    planMatch, planContent, beforePlan, afterPlan,
+    grillMatch, grillSummary, grillProposedTasks, beforeGrill, afterGrill,
+    grillQuestionMatch, grillQuestions, beforeGrillQuestion, afterGrillQuestion,
+    grillEvalMatch, grillEvalData, beforeGrillEval, afterGrillEval,
+    handoffMatch, beforeHandoff, afterHandoff
+  } = useMemo(() => {
+    // Parse attachments
+    let parsedAttachments: string[] = []
     try {
       const parsed = JSON.parse(message.attachmentsJson || '[]')
-      return Array.isArray(parsed) ? parsed : []
-    } catch {
-      return []
-    }
-  })()
+      parsedAttachments = Array.isArray(parsed) ? parsed : []
+    } catch { /* noop */ }
+    const imageAtts = parsedAttachments.filter((p) => /\.(png|jpg|jpeg|gif|webp)$/i.test(p))
+    const fileAtts = parsedAttachments.filter((p) => !/\.(png|jpg|jpeg|gif|webp)$/i.test(p))
 
-  const imageAttachments = attachments.filter((p) => /\.(png|jpg|jpeg|gif|webp)$/i.test(p))
-  const fileAttachments = attachments.filter((p) => !/\.(png|jpg|jpeg|gif|webp)$/i.test(p))
+    // Grill activation detection
+    const grillActivation = isUser && message.contentMd.startsWith('[GRILL MODE ACTIVATED]')
+    const ideaMatch = grillActivation
+      ? message.contentMd.match(/## Idea to Refine\n\*\*(.+?)\*\*/)
+      : null
 
-  // Detect grill mode and idea-to-refine in user messages
-  const isGrillActivation = isUser && message.contentMd.startsWith('[GRILL MODE ACTIVATED]')
-  const ideaToRefineMatch = isGrillActivation
-    ? message.contentMd.match(/## Idea to Refine\n\*\*(.+?)\*\*/)
-    : null
-
-  // Clean up the displayed content for grill messages (remove the banner text)
-  const displayContent = useMemo(() => {
-    if (!isGrillActivation) return message.contentMd
-    let cleaned = message.contentMd.replace(/^\[GRILL MODE ACTIVATED\]\s*/, '')
-    if (ideaToRefineMatch) {
-      cleaned = cleaned.replace(/## Idea to Refine\n\*\*.+?\*\*\n*/, '')
-    }
-    return cleaned.trim()
-  }, [message.contentMd, isGrillActivation, ideaToRefineMatch])
-
-  // Detect plan blocks in coordinator/generalist messages
-  const planRegex = /````plan\n([\s\S]*?)````/
-  const planMatch = !isUser ? message.contentMd.match(planRegex) : null
-
-  // Detect grill-summary blocks
-  const grillRegex = /```grill-summary\n([\s\S]*?)```/
-  const grillMatch = !isUser ? message.contentMd.match(grillRegex) : null
-  let grillSummary: string | null = null
-  let grillProposedTasks: GrillProposedTask[] = []
-
-  if (grillMatch) {
-    try {
-      const parsed = JSON.parse(grillMatch[1].trim())
-      grillSummary = parsed.summary || null
-      grillProposedTasks = Array.isArray(parsed.proposedTasks) ? parsed.proposedTasks : []
-    } catch {
-      // Failed to parse grill summary — will render as normal markdown
-    }
-  }
-
-  // Detect grill-question blocks
-  // Always detect the block so we can strip the raw JSON from display
-  const grillQuestionRegex = /```grill-question\n([\s\S]*?)```/
-  const grillQuestionMatch = !isUser ? message.contentMd.match(grillQuestionRegex) : null
-  let grillQuestions: GrillQuestion[] = []
-
-  if (grillQuestionMatch && !suppressInlineGrillCard) {
-    try {
-      const parsed = JSON.parse(grillQuestionMatch[1].trim())
-      if (parsed.questions && Array.isArray(parsed.questions)) {
-        grillQuestions = parsed.questions
+    // Clean display content for grill messages
+    let dispContent = message.contentMd
+    if (grillActivation) {
+      dispContent = message.contentMd.replace(/^\[GRILL MODE ACTIVATED\]\s*/, '')
+      if (ideaMatch) {
+        dispContent = dispContent.replace(/## Idea to Refine\n\*\*.+?\*\*\n*/, '')
       }
-    } catch {
-      // Failed to parse grill questions — will render as normal markdown
+      dispContent = dispContent.trim()
     }
-  }
 
-  // Detect grill-evaluation blocks
-  const grillEvalRegex = /```grill-evaluation\n([\s\S]*?)```/
-  const grillEvalMatch = !isUser ? message.contentMd.match(grillEvalRegex) : null
-  let grillEvalData: {
-    score: number
-    scoreLabel: string
-    feedback: string
-    questions: GrillQuestion[]
-  } | null = null
+    // Detect plan blocks
+    const pMatch = !isUser ? message.contentMd.match(/````plan\n([\s\S]*?)````/) : null
+    const pContent = pMatch ? pMatch[1] : null
+    const bPlan = pMatch ? message.contentMd.substring(0, pMatch.index!) : null
+    const aPlan = pMatch ? message.contentMd.substring(pMatch.index! + pMatch[0].length) : null
 
-  if (grillEvalMatch) {
-    try {
-      const parsed = JSON.parse(grillEvalMatch[1].trim())
-      if (typeof parsed.score === 'number' && Array.isArray(parsed.questions)) {
-        grillEvalData = {
-          score: parsed.score,
-          scoreLabel: parsed.scoreLabel ?? '',
-          feedback: parsed.feedback ?? '',
-          questions: parsed.questions
+    // Detect grill-summary blocks
+    const gMatch = !isUser ? message.contentMd.match(/```grill-summary\n([\s\S]*?)```/) : null
+    let gSummary: string | null = null
+    let gProposedTasks: GrillProposedTask[] = []
+    if (gMatch) {
+      try {
+        const parsed = JSON.parse(gMatch[1].trim())
+        gSummary = parsed.summary || null
+        gProposedTasks = Array.isArray(parsed.proposedTasks) ? parsed.proposedTasks : []
+      } catch { /* noop */ }
+    }
+    const bGrill = gMatch ? message.contentMd.substring(0, gMatch.index!) : null
+    const aGrill = gMatch ? message.contentMd.substring(gMatch.index! + gMatch[0].length) : null
+
+    // Detect grill-question blocks
+    const gqMatch = !isUser ? message.contentMd.match(/```grill-question\n([\s\S]*?)```/) : null
+    let gQuestions: GrillQuestion[] = []
+    if (gqMatch && !suppressInlineGrillCard) {
+      try {
+        const parsed = JSON.parse(gqMatch[1].trim())
+        if (parsed.questions && Array.isArray(parsed.questions)) {
+          gQuestions = parsed.questions
         }
-      }
-    } catch {
-      // Failed to parse grill evaluation — will render as normal markdown
+      } catch { /* noop */ }
     }
-  }
+    const bGrillQ = gqMatch ? message.contentMd.substring(0, gqMatch.index!) : null
+    const aGrillQ = gqMatch ? message.contentMd.substring(gqMatch.index! + gqMatch[0].length) : null
 
-  // Split content around grill-evaluation block if found
-  const beforeGrillEval = grillEvalMatch
-    ? message.contentMd.substring(0, grillEvalMatch.index!)
-    : null
-  const afterGrillEval = grillEvalMatch
-    ? message.contentMd.substring(grillEvalMatch.index! + grillEvalMatch[0].length)
-    : null
+    // Detect grill-evaluation blocks
+    const geMatch = !isUser ? message.contentMd.match(/```grill-evaluation\n([\s\S]*?)```/) : null
+    let geData: { score: number; scoreLabel: string; feedback: string; questions: GrillQuestion[] } | null = null
+    if (geMatch) {
+      try {
+        const parsed = JSON.parse(geMatch[1].trim())
+        if (typeof parsed.score === 'number' && Array.isArray(parsed.questions)) {
+          geData = {
+            score: parsed.score,
+            scoreLabel: parsed.scoreLabel ?? '',
+            feedback: parsed.feedback ?? '',
+            questions: parsed.questions
+          }
+        }
+      } catch { /* noop */ }
+    }
+    const bGrillEval = geMatch ? message.contentMd.substring(0, geMatch.index!) : null
+    const aGrillEval = geMatch ? message.contentMd.substring(geMatch.index! + geMatch[0].length) : null
+
+    // Detect handoff blocks — strip from display (HandoffIndicator renders separately in MessageList)
+    const hMatch = !isUser ? message.contentMd.match(/```handoff\n([\s\S]*?)```/) : null
+    const bHandoff = hMatch ? message.contentMd.substring(0, hMatch.index!) : null
+    const aHandoff = hMatch ? message.contentMd.substring(hMatch.index! + hMatch[0].length) : null
+
+    return {
+      attachments: parsedAttachments,
+      imageAttachments: imageAtts,
+      fileAttachments: fileAtts,
+      isGrillActivation: grillActivation,
+      ideaToRefineMatch: ideaMatch,
+      displayContent: dispContent,
+      planMatch: pMatch,
+      planContent: pContent,
+      beforePlan: bPlan,
+      afterPlan: aPlan,
+      grillMatch: gMatch,
+      grillSummary: gSummary,
+      grillProposedTasks: gProposedTasks,
+      beforeGrill: bGrill,
+      afterGrill: aGrill,
+      grillQuestionMatch: gqMatch,
+      grillQuestions: gQuestions,
+      beforeGrillQuestion: bGrillQ,
+      afterGrillQuestion: aGrillQ,
+      grillEvalMatch: geMatch,
+      grillEvalData: geData,
+      beforeGrillEval: bGrillEval,
+      afterGrillEval: aGrillEval,
+      handoffMatch: hMatch,
+      beforeHandoff: bHandoff,
+      afterHandoff: aHandoff
+    }
+  }, [message.contentMd, message.attachmentsJson, isUser, suppressInlineGrillCard])
 
   const handleBuild = (): void => {
     updateMode('build')
@@ -377,112 +513,6 @@ function MessageBubbleInner({
       }))
       createItemsFromGrill(tasks)
     }
-  }
-
-  // Split content around plan block if found
-  const beforePlan = planMatch ? message.contentMd.substring(0, planMatch.index!) : null
-  const afterPlan = planMatch
-    ? message.contentMd.substring(planMatch.index! + planMatch[0].length)
-    : null
-  const planContent = planMatch ? planMatch[1] : null
-
-  // Split content around grill-summary block if found
-  const beforeGrill = grillMatch ? message.contentMd.substring(0, grillMatch.index!) : null
-  const afterGrill = grillMatch
-    ? message.contentMd.substring(grillMatch.index! + grillMatch[0].length)
-    : null
-
-  // Split content around grill-question block if found
-  const beforeGrillQuestion = grillQuestionMatch
-    ? message.contentMd.substring(0, grillQuestionMatch.index!)
-    : null
-  const afterGrillQuestion = grillQuestionMatch
-    ? message.contentMd.substring(grillQuestionMatch.index! + grillQuestionMatch[0].length)
-    : null
-
-  const markdownComponents = {
-    p: ({ children }: { children?: React.ReactNode }) => {
-      // Strip orphaned backtick characters that leak as text nodes around inline code elements
-      const cleaned = React.Children.map(children, (child) => {
-        if (typeof child === 'string') {
-          const stripped = child.replace(/`/g, '')
-          return stripped || null
-        }
-        return child
-      })
-      return <p>{cleaned}</p>
-    },
-    pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
-    code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
-      const isBlock = className?.includes('language-')
-      if (isBlock) {
-        return <code className={`${className} text-sm`}>{children}</code>
-      }
-
-      // Check if the code content is a URL — render as clickable link
-      const text = String(children).replace(/`/g, '').trim()
-      const isUrl = /^https?:\/\/\S+$/.test(text)
-      if (isUrl) {
-        return (
-          <a
-            href={text}
-            className="bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-primary-text hover:text-primary-hover underline cursor-pointer"
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => {
-              e.preventDefault()
-              if (text) window.open(text, '_blank')
-            }}
-          >
-            {text}
-          </a>
-        )
-      }
-
-      // Check if the code content is a file path — render as clickable to reveal in Finder/Explorer
-      const isFilePath =
-        /^[\/~][\w.\-\/@ ]+\.\w{1,10}$/.test(text) || /^[A-Z]:\\/.test(text)
-      if (isFilePath) {
-        const shortenedPath = shortenFilePath(text)
-        return (
-          <code
-            role="button"
-            aria-label={`Reveal ${text} in file manager`}
-            className="flex items-center gap-1.5 w-fit bg-primary-muted px-2.5 py-1 rounded-md text-sm font-medium text-primary-text hover:bg-primary/25 cursor-pointer transition-colors my-1"
-            title={`Reveal in file manager: ${text}`}
-            onClick={() => window.api.showItemInFolder(text)}
-          >
-            <FileText size={13} className="shrink-0" />
-            {shortenedPath}
-          </code>
-        )
-      }
-
-      return (
-        <code className="bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-primary-text">
-          {text}
-        </code>
-      )
-    },
-    table: ({ children }: { children?: React.ReactNode }) => (
-      <div className="overflow-x-auto rounded-lg border border-border-default my-3 shadow-sm">
-        <table className="min-w-full">{children}</table>
-      </div>
-    ),
-    a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-      <a
-        href={href}
-        className="text-accent hover:text-accent/80 underline"
-        target="_blank"
-        rel="noreferrer"
-        onClick={(e) => {
-          e.preventDefault()
-          if (href) window.open(href, '_blank')
-        }}
-      >
-        {children}
-      </a>
-    )
   }
 
   /** Shared AI bubble styles */
@@ -521,7 +551,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    remarkPlugins={REMARK_PLUGINS}
                     components={markdownComponents}
                   >
                     {beforeGrillQuestion}
@@ -538,7 +568,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    remarkPlugins={REMARK_PLUGINS}
                     components={markdownComponents}
                   >
                     {afterGrillQuestion}
@@ -552,7 +582,7 @@ function MessageBubbleInner({
           <div className={aiBubbleClass}>
             <div className="prose prose-sm max-w-none prose-invert">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                remarkPlugins={REMARK_PLUGINS}
                 components={markdownComponents}
               >
                 {[beforeGrillQuestion?.trim(), afterGrillQuestion?.trim()].filter(Boolean).join('\n\n')}
@@ -566,7 +596,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    remarkPlugins={REMARK_PLUGINS}
                     components={markdownComponents}
                   >
                     {beforeGrill}
@@ -585,7 +615,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    remarkPlugins={REMARK_PLUGINS}
                     components={markdownComponents}
                   >
                     {afterGrill}
@@ -601,7 +631,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    remarkPlugins={REMARK_PLUGINS}
                     components={markdownComponents}
                   >
                     {beforeGrillEval}
@@ -619,7 +649,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    remarkPlugins={REMARK_PLUGINS}
                     components={markdownComponents}
                   >
                     {afterGrillEval}
@@ -628,6 +658,15 @@ function MessageBubbleInner({
               </div>
             )}
           </div>
+        ) : handoffMatch ? (
+          /* Message with a handoff block — strip the JSON, show only surrounding text */
+          <div className={aiBubbleClass}>
+            <div className="prose prose-sm max-w-none prose-invert">
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={markdownComponents}>
+                {[beforeHandoff?.trim(), afterHandoff?.trim()].filter(Boolean).join('\n\n')}
+              </ReactMarkdown>
+            </div>
+          </div>
         ) : planContent ? (
           /* Message with a plan block — split into before/plan/after */
           <div className="space-y-3 max-w-full">
@@ -635,7 +674,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    remarkPlugins={REMARK_PLUGINS}
                     components={markdownComponents}
                   >
                     {beforePlan}
@@ -648,7 +687,7 @@ function MessageBubbleInner({
               <div className={aiBubbleClass}>
                 <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                    remarkPlugins={REMARK_PLUGINS}
                     components={markdownComponents}
                   >
                     {afterPlan}
@@ -718,7 +757,7 @@ function MessageBubbleInner({
             {(isUser ? displayContent : message.contentMd) ? (
               <div className={`prose prose-sm max-w-none ${isUser ? 'prose-invert' : 'prose-invert'}`}>
                 <ReactMarkdown
-                  remarkPlugins={[remarkGfm, remarkBreaks, remarkEmojiSpan]}
+                  remarkPlugins={REMARK_PLUGINS}
                   components={markdownComponents}
                 >
                   {isUser ? displayContent : message.contentMd}

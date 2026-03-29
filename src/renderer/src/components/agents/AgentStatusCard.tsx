@@ -130,10 +130,10 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
 
   // Auto-scroll output to bottom when new content arrives
   useEffect(() => {
-    if (isExpanded && outputRef.current) {
+    if ((isExpanded || (isActive && agentOutput)) && outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight
     }
-  }, [isExpanded, agentOutput])
+  }, [isExpanded, isActive, agentOutput])
 
   return (
     <div
@@ -237,14 +237,22 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
         </div>
       )}
 
-      {/* Expandable detail view */}
-      {isExpanded && (
+      {/* Expandable detail view — auto-expand for active agents */}
+      {(isExpanded || (isActive && agentOutput)) && (
         <div className="mt-3 pt-3 border-t border-border-subtle">
-          <div ref={outputRef} className="bg-surface-base rounded p-2 max-h-48 overflow-y-auto">
-            <pre className="text-xs text-text-body whitespace-pre-wrap font-mono">
-              {agentOutput || 'Waiting for output...'}
-            </pre>
-          </div>
+          {isActive && !agentOutput && (
+            <div className="flex items-center gap-2 text-xs text-text-muted animate-pulse">
+              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-ping" />
+              Starting up...
+            </div>
+          )}
+          {agentOutput && (
+            <div ref={outputRef} className="bg-surface-base rounded p-2 max-h-48 overflow-y-auto">
+              <pre className="text-xs text-text-body whitespace-pre-wrap font-mono">
+                {agentOutput}
+              </pre>
+            </div>
+          )}
         </div>
       )}
     </div>

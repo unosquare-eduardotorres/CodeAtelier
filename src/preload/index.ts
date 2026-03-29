@@ -449,6 +449,8 @@ const api = {
       conversationId: string
       chunk: string
       role: string
+      taskId?: string
+      specialist?: string
       toolActivity?: {
         id: string
         toolName: string
@@ -469,6 +471,8 @@ const api = {
         conversationId: string
         chunk: string
         role: string
+        taskId?: string
+        specialist?: string
         toolActivity?: {
           id: string
           toolName: string
@@ -489,11 +493,11 @@ const api = {
   },
 
   onMessageComplete: (
-    callback: (data: { conversationId: string; messageId: string }) => void
+    callback: (data: { conversationId: string; messageId: string; taskId?: string }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
-      data: { conversationId: string; messageId: string }
+      data: { conversationId: string; messageId: string; taskId?: string }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, handler)
     return () => {
