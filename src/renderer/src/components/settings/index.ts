@@ -1,4 +1,5 @@
 export { default as SettingsPage } from './SettingsPage'
+export { default as AISubscriptionsSection } from './AISubscriptionsSection'
 export { default as TeamPage } from './TeamPage'
 export { default as AgentsList } from './AgentsList'
 export { default as AgentDetailPage } from './AgentDetailPage'

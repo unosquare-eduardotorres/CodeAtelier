@@ -3,7 +3,7 @@ import { AVATAR_MAP } from './AvatarLibrary'
 
 interface AvatarProps {
   avatarKey: string
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'sm' | 'md' | 'lg' | 'xl'
   fallbackInitials?: string
   className?: string
   accentColor?: string
@@ -12,7 +12,8 @@ interface AvatarProps {
 const SIZE_MAP = {
   sm: 24,
   md: 36,
-  lg: 48
+  lg: 48,
+  xl: 72
 } as const
 
 /**

@@ -6,10 +6,10 @@ import { validateSender } from './validate-sender'
 
 const log = mainLogger
 
-export function registerOrchestratorIpc(mainWindow: BrowserWindow): void {
+export function registerAgentLifecycleIpc(mainWindow: BrowserWindow): void {
   let startingWorkspace: string | null = null // guard against double-start (React strict mode)
 
-  ipcMain.handle(IPC_CHANNELS.ORCHESTRATOR_START, async (event, workspacePath: string) => {
+  ipcMain.handle(IPC_CHANNELS.AGENT_START, async (event, workspacePath: string) => {
     validateSender(event)
 
     if (typeof workspacePath !== 'string' || workspacePath.trim().length === 0) {
@@ -18,7 +18,7 @@ export function registerOrchestratorIpc(mainWindow: BrowserWindow): void {
 
     // Skip if already starting for this workspace
     if (startingWorkspace === workspacePath) {
-      log.info('Orchestrator already starting for:', workspacePath, '— skipping')
+      log.info('Agent already starting for:', workspacePath, '— skipping')
       return
     }
 
@@ -26,7 +26,7 @@ export function registerOrchestratorIpc(mainWindow: BrowserWindow): void {
     // transitions out of 'starting' state (fixes Home → re-select same workspace)
     if (generalistService.isRunning() && generalistService.getWorkspacePath() === workspacePath) {
       log.info('Generalist already running for:', workspacePath, '— re-sending ready')
-      mainWindow.webContents.send(IPC_CHANNELS.ORCHESTRATOR_READY)
+      mainWindow.webContents.send(IPC_CHANNELS.AGENT_READY)
       return
     }
 
@@ -39,7 +39,7 @@ export function registerOrchestratorIpc(mainWindow: BrowserWindow): void {
       // SDK-based generalist is ready immediately after start() — no process spawn needed.
       // Notify the renderer right away so the chat UI is shown.
       log.info('Generalist ready (SDK mode) for:', workspacePath)
-      mainWindow.webContents.send(IPC_CHANNELS.ORCHESTRATOR_READY)
+      mainWindow.webContents.send(IPC_CHANNELS.AGENT_READY)
     } catch (error) {
       log.error('Failed to start services:', error)
       throw error

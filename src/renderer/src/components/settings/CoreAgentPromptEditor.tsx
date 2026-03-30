@@ -3,7 +3,7 @@ import { Save, RotateCcw, Loader2, AlertTriangle } from 'lucide-react'
 import { useProfileStore } from '@renderer/store'
 
 interface CoreAgentPromptEditorProps {
-  agentRole: 'generalist' | 'orchestrator'
+  agentRole: 'generalist'
 }
 
 type ModeTab = 'plan' | 'build'

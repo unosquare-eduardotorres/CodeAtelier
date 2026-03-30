@@ -67,16 +67,16 @@ export default function ChatSidebar({
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(activeWorkspace.id, data.mode, data.title)
-    if (data.description) {
-      await sendMessage(data.description, data.attachments)
-    }
+    setShowNewChatModal(false)
     if (data.useIsolatedBranch) {
       // TODO: integrate worktree IPC — creates a git worktree for this conversation
       console.info(
         '[NewConversationModal] Isolated branch requested — worktree integration pending'
       )
     }
-    setShowNewChatModal(false)
+    if (data.description) {
+      sendMessage(data.description, data.attachments)
+    }
   }
 
   const sortedConversations = [...conversations]

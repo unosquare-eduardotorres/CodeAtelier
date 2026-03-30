@@ -17,20 +17,31 @@ export interface StreamChunk {
   error?: string
 }
 
+/** Strip workspace prefix from an absolute path to produce a relative display path. */
+function toRelativePath(absolutePath: string, workspacePath?: string): string {
+  if (!workspacePath || !absolutePath.startsWith(workspacePath)) return absolutePath
+  const relative = absolutePath.slice(workspacePath.length)
+  return relative.startsWith('/') ? relative.slice(1) : relative
+}
+
 /**
  * Extracts a human-readable summary from raw tool input for display in the UI.
  */
-export function summarizeToolInput(toolName: string, input: Record<string, unknown>): string {
+export function summarizeToolInput(
+  toolName: string,
+  input: Record<string, unknown>,
+  workspacePath?: string
+): string {
   switch (toolName) {
     case 'Bash':
       return (input.description as string) || (input.command as string) || ''
     case 'Read':
-      return (input.file_path as string) || ''
+      return toRelativePath((input.file_path as string) || '', workspacePath)
     case 'Write':
     case 'Edit':
-      return (input.file_path as string) || ''
+      return toRelativePath((input.file_path as string) || '', workspacePath)
     case 'Grep':
-      return `/${input.pattern as string}/` + (input.path ? ` in ${input.path}` : '')
+      return `/${input.pattern as string}/` + (input.path ? ` in ${toRelativePath(input.path as string, workspacePath)}` : '')
     case 'Glob':
       return (input.pattern as string) || ''
     case 'WebSearch':
@@ -48,7 +59,7 @@ export function summarizeToolInput(toolName: string, input: Record<string, unkno
 }
 
 /**
- * Shared base class for agent services (Generalist, Orchestrator).
+ * Shared base class for agent services (Generalist and specialist workers).
  * Extracts common stream-json parsing, buffer management, env building, and error handling.
  */
 export abstract class AgentBaseService extends EventEmitter {
@@ -69,6 +80,8 @@ export abstract class AgentBaseService extends EventEmitter {
   protected toolCallCount: number = 0
   /** When true, all further stdout output is ignored (circuit breaker tripped) */
   protected circuitBroken = false
+  /** Workspace directory — used to relativize file paths in tool summaries */
+  protected cwd: string | undefined
 
   /** Database session ID for token tracking */
   protected dbSessionId: string | null = null
@@ -205,7 +218,7 @@ export abstract class AgentBaseService extends EventEmitter {
                   type: 'tool_use',
                   toolName,
                   toolId,
-                  toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
+                  toolInput: toolInput ? summarizeToolInput(toolName, toolInput, this.cwd) : undefined
                 } as StreamChunk)
 
                 // Plan file safety net (full-message path): When Claude CLI writes a plan to
@@ -335,7 +348,7 @@ export abstract class AgentBaseService extends EventEmitter {
             type: 'tool_use',
             toolName: contentBlock.name as string,
             toolId: contentBlock.id as string,
-            toolInput: toolInput ? summarizeToolInput(this.currentToolName, toolInput) : undefined
+            toolInput: toolInput ? summarizeToolInput(this.currentToolName, toolInput, this.cwd) : undefined
           } as StreamChunk)
         } else if (contentBlock?.type === 'text' && contentBlock.text) {
           this.emit('chunk', {

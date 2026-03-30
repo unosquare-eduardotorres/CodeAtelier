@@ -149,7 +149,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         if (chunk.type === 'text' && chunk.content) {
           accumulatedContent.value += chunk.content
         }
-        forwardChunkToRenderer(mainWindow, conversationId, 'coordinator', chunk, accumulatedContent)
+        forwardChunkToRenderer(mainWindow, conversationId, 'coordinator', chunk, accumulatedContent, workspacePath ?? undefined)
       }
 
       const onComplete = async (): Promise<void> => {

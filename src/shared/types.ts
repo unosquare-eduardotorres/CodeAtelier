@@ -310,7 +310,7 @@ export interface DecomposedTask {
   verificationCommand?: string
 }
 
-/** The full task plan returned by the orchestrator's decomposition step */
+/** The full task plan returned by the generalist decomposition step */
 export interface TaskPlan {
   conversationId: string
   summary: string
@@ -646,6 +646,19 @@ export interface RepoInfo {
   currentBranch: string
 }
 
+// ── AI Subscriptions ──
+export interface SubscriptionCheckResult {
+  claudeCli: { installed: boolean; version: string | null; error: string | null }
+  claudeAuth: { authenticated: boolean; accountEmail: string | null; error: string | null }
+  claudeMax: { active: boolean; plan: string | null; error: string | null }
+  codexCli: { installed: boolean; version: string | null; error: string | null }
+}
+
+export interface AutoConfigureResult {
+  success: boolean
+  error: string | null
+}
+
 // ── IPC Channel Map (type-safe) ──
 export interface IpcChannels {
   'workspace:list': { args: void; return: Workspace[] }
@@ -922,17 +935,25 @@ export interface IpcChannels {
   // Core Agent Prompts
   'coreAgentPrompt:list': { args: void; return: CoreAgentPrompt[] }
   'coreAgentPrompt:get': {
-    args: { agentRole: 'generalist' | 'orchestrator'; mode: 'plan' | 'build' }
+    args: { agentRole: 'generalist'; mode: 'plan' | 'build' }
     return: CoreAgentPrompt | undefined
   }
   'coreAgentPrompt:upsert': {
-    args: { agentRole: 'generalist' | 'orchestrator'; mode: 'plan' | 'build'; promptText: string }
+    args: { agentRole: 'generalist'; mode: 'plan' | 'build'; promptText: string }
     return: CoreAgentPrompt
   }
   'coreAgentPrompt:reset': {
-    args: { agentRole: 'generalist' | 'orchestrator'; mode: 'plan' | 'build' }
+    args: { agentRole: 'generalist'; mode: 'plan' | 'build' }
     return: CoreAgentPrompt
   }
+
+  // AI Subscriptions
+  'subscription:validateAll': { args: void; return: SubscriptionCheckResult }
+  'subscription:checkClaudeCli': {
+    args: void
+    return: { installed: boolean; version: string | null; error: string | null }
+  }
+  'subscription:autoConfigure': { args: void; return: AutoConfigureResult }
 }
 
 // ── IPC Event Channels (main → renderer streaming) ──

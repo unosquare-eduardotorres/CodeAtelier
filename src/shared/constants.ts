@@ -41,9 +41,9 @@ export const IPC_CHANNELS = {
   AGENT_STATUS_UPDATE: 'agent:statusUpdate',
   AGENT_STOP_ALL: 'agent:stopAll',
 
-  // Orchestrator
-  ORCHESTRATOR_START: 'orchestrator:start',
-  ORCHESTRATOR_READY: 'orchestrator:ready',
+  // Agent lifecycle
+  AGENT_START: 'agent:start',
+  AGENT_READY: 'agent:ready',
 
   // Dialog
   DIALOG_SELECT_DIRECTORY: 'dialog:selectDirectory',
@@ -252,7 +252,12 @@ export const IPC_CHANNELS = {
   CORE_AGENT_PROMPT_LIST: 'coreAgentPrompt:list',
   CORE_AGENT_PROMPT_GET: 'coreAgentPrompt:get',
   CORE_AGENT_PROMPT_UPSERT: 'coreAgentPrompt:upsert',
-  CORE_AGENT_PROMPT_RESET: 'coreAgentPrompt:reset'
+  CORE_AGENT_PROMPT_RESET: 'coreAgentPrompt:reset',
+
+  // AI Subscriptions
+  SUBSCRIPTION_VALIDATE_ALL: 'subscription:validateAll',
+  SUBSCRIPTION_CHECK_CLAUDE_CLI: 'subscription:checkClaudeCli',
+  SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure'
 } as const
 
 export const CONVERSATION_MODES = {
@@ -332,7 +337,6 @@ export const DEFAULT_MODEL_CONFIG: Record<
   string
 > = {
   generalist: 'claude-sonnet-4-6',
-  orchestrator: 'claude-haiku-4-5-20251001',
   'specialist:simple': 'claude-haiku-4-5-20251001',
   'specialist:moderate': 'claude-sonnet-4-6',
   'specialist:complex': 'claude-opus-4-6',
@@ -350,12 +354,6 @@ export const MODEL_ACTIONS_META: Record<
     label: 'Generalist',
     description: 'Main chat agent that handles conversations',
     icon: '💬',
-    section: 'agent'
-  },
-  orchestrator: {
-    label: 'Orchestrator',
-    description: 'Task decomposition & coordination',
-    icon: '🎯',
     section: 'agent'
   },
   'specialist:simple': {

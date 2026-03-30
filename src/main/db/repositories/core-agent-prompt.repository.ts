@@ -3,7 +3,7 @@ import type { CoreAgentPrompt } from '../../../shared/types'
 
 interface CoreAgentPromptRow {
   id: string
-  agent_role: 'generalist' | 'orchestrator'
+  agent_role: 'generalist'
   mode: 'plan' | 'build'
   prompt_text: string
   default_prompt_text: string
@@ -33,7 +33,7 @@ export class CoreAgentPromptRepository {
   }
 
   findByRoleAndMode(
-    agentRole: 'generalist' | 'orchestrator',
+    agentRole: 'generalist',
     mode: 'plan' | 'build'
   ): CoreAgentPrompt | undefined {
     const db = getDatabase()
@@ -44,7 +44,7 @@ export class CoreAgentPromptRepository {
   }
 
   upsert(
-    agentRole: 'generalist' | 'orchestrator',
+    agentRole: 'generalist',
     mode: 'plan' | 'build',
     promptText: string
   ): CoreAgentPrompt {
@@ -69,7 +69,7 @@ export class CoreAgentPromptRepository {
   }
 
   resetToDefault(
-    agentRole: 'generalist' | 'orchestrator',
+    agentRole: 'generalist',
     mode: 'plan' | 'build'
   ): CoreAgentPrompt {
     const db = getDatabase()

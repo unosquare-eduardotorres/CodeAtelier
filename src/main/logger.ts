@@ -18,7 +18,6 @@ log.errorHandler.startCatching({
 export const mainLogger = log.scope('Main')
 export const dbLogger = log.scope('DB')
 export const generalistLogger = log.scope('Generalist')
-export const orchestratorLogger = log.scope('Orchestrator')
 export const chatIpcLogger = log.scope('ChatIPC')
 export const agentIpcLogger = log.scope('AgentIPC')
 export const skillLogger = log.scope('Skill')

@@ -6,7 +6,7 @@ import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/ag
 import { MessageBubble, HandoffIndicator, TaskPlanCard, GrillQuestionCard } from '@renderer/components/chat'
 import InvestigationReportCard from './InvestigationReportCard'
 import IdeaPopover from './IdeaPopover'
-import { Avatar } from '@renderer/components/common'
+import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
 import type { MessageBubbleActions } from './MessageBubble'
 import FloatingRobots from './FloatingRobots'
 import ScrollToBottomButton from './ScrollToBottomButton'
@@ -119,20 +119,28 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     streamingSpecialist ? s.specialists.find((sp) => sp.agentId === streamingSpecialist) ?? null : null
   )
 
+  // Look up generalist specialist record for pixel sprite
+  const generalistSpecialist = useSpecialistStore((s) =>
+    s.specialists.find((sp) => sp.agentId === 'generalist') ?? null
+  )
+
   // Compute thinking indicator identity based on streamingRole
   const thinkingIdentity = useMemo(() => {
     if (streamingRole === 'coordinator') {
       return {
         name: coordinatorAlias,
         avatarKey: coordinatorAvatarKey,
-        accentColor: CORE_AGENT_DEFAULTS.coordinator.color
+        accentColor: CORE_AGENT_DEFAULTS.coordinator.color,
+        pixelSpriteId: null as string | null
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialistData) {
+      const usePixel = streamingSpecialistData.usePixelForChat && streamingSpecialistData.pixelSpriteId
       return {
         name: streamingSpecialistData.alias ?? streamingSpecialistData.displayName,
         avatarKey: streamingSpecialistData.avatarUrl ?? getDefaultAvatarForRole(streamingSpecialistData.agentId),
-        accentColor: streamingSpecialistData.color ?? '#F59E0B'
+        accentColor: streamingSpecialistData.color ?? '#F59E0B',
+        pixelSpriteId: usePixel ? streamingSpecialistData.pixelSpriteId : null
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialist) {
@@ -140,16 +148,19 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       return {
         name: streamingSpecialist,
         avatarKey: getDefaultAvatarForRole(streamingSpecialist),
-        accentColor: '#F59E0B'
+        accentColor: '#F59E0B',
+        pixelSpriteId: null as string | null
       }
     }
     // Default: generalist (Da Vinci)
+    const usePixel = generalistSpecialist?.usePixelForChat && generalistSpecialist?.pixelSpriteId
     return {
       name: generalistAlias,
       avatarKey: thinkingAvatarKey,
-      accentColor: thinkingAccentColor
+      accentColor: thinkingAccentColor,
+      pixelSpriteId: usePixel ? generalistSpecialist!.pixelSpriteId : null
     }
-  }, [streamingRole, streamingSpecialistData, streamingSpecialist, generalistAlias, thinkingAvatarKey, thinkingAccentColor, coordinatorAlias, coordinatorAvatarKey])
+  }, [streamingRole, streamingSpecialistData, streamingSpecialist, generalistAlias, thinkingAvatarKey, thinkingAccentColor, coordinatorAlias, coordinatorAvatarKey, generalistSpecialist])
 
   const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
 
@@ -358,7 +369,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           />
         )}
 
-        {/* Task plan card — shown after orchestrator decomposes the handoff */}
+        {/* Task plan card — shown after the generalist decomposes the handoff */}
         {activeTaskPlan && (
           <TaskPlanCard
             summary={activeTaskPlan.summary}

@@ -42,20 +42,18 @@ import type { ConversationMode } from '../../../../shared/types'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
-/** Extracted orchestrator status dot — avoids recreating on every AppLayout render */
-function OrchestratorDot({ status }: { status: string }): React.JSX.Element {
+/** Extracted agent status dot — avoids recreating on every AppLayout render */
+function AgentStatusDot({ status }: { status: string }): React.JSX.Element {
   const dotBase = 'w-2 h-2 rounded-full inline-block'
   switch (status) {
     case 'running':
-      return <span className={`${dotBase} bg-success`} title="Orchestrator running" />
+      return <span className={`${dotBase} bg-success`} title="Agent ready" />
     case 'starting':
-      return (
-        <span className={`${dotBase} bg-warning animate-pulse`} title="Orchestrator starting" />
-      )
+      return <span className={`${dotBase} bg-warning animate-pulse`} title="Agent starting" />
     case 'error':
-      return <span className={`${dotBase} bg-danger`} title="Orchestrator error" />
+      return <span className={`${dotBase} bg-danger`} title="Agent error" />
     default:
-      return <span className={`${dotBase} bg-text-muted`} title="Orchestrator stopped" />
+      return <span className={`${dotBase} bg-text-muted`} title="Agent stopped" />
   }
 }
 
@@ -67,7 +65,7 @@ export default function AppLayout(): React.JSX.Element {
   const [sidebarView, setSidebarView] = useState<'chat' | 'settings'>('chat')
   const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('ideas')
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
-  const orchestratorStatus = useWorkspaceStore((s) => s.orchestratorStatus)
+  const agentStatus = useWorkspaceStore((s) => s.agentStatus)
   const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
   const statuses = useAgentStore((s) => s.statuses)
   const sessionTokens = useAgentStore((s) => s.sessionTokens)
@@ -282,16 +280,16 @@ export default function AppLayout(): React.JSX.Element {
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(activeWorkspace.id, data.mode, data.title)
-    if (data.description) {
-      await sendMessage(data.description, data.attachments)
-    }
+    setShowNewChatModal(false)
     if (data.useIsolatedBranch) {
       // TODO: integrate worktree IPC — creates a git worktree for this conversation
       console.info(
         '[NewConversationModal] Isolated branch requested — worktree integration pending'
       )
     }
-    setShowNewChatModal(false)
+    if (data.description) {
+      sendMessage(data.description, data.attachments)
+    }
   }
 
   const renderMainContent = (): React.JSX.Element => {
@@ -513,7 +511,7 @@ export default function AppLayout(): React.JSX.Element {
         <div className="flex items-center gap-4">
           {activeWorkspace ? (
             <span className="flex items-center gap-1.5 text-text-secondary">
-              <OrchestratorDot status={orchestratorStatus} />
+              <AgentStatusDot status={agentStatus} />
               <Bot size={12} className="text-primary-text" />
               {activeWorkspace.name}
             </span>

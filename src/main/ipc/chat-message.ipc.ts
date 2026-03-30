@@ -186,11 +186,12 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
       // Define listeners at outer scope so they're accessible in both try and catch
       const streamedContent = { value: '' }
       let handoffPromise: Promise<void> | null = null
+      const workspacePath = generalistService.getWorkspacePath() ?? undefined
 
       const onChunk = (chunk: StreamChunk): void => {
         try {
           log.debug('Chunk received:', { type: chunk.type, len: chunk.content?.length ?? 0 })
-          forwardChunkToRenderer(mainWindow, conversationId, 'generalist', chunk, streamedContent)
+          forwardChunkToRenderer(mainWindow, conversationId, 'generalist', chunk, streamedContent, workspacePath)
         } catch (error) {
           log.error('Failed to forward chunk to renderer:', error)
         }
@@ -342,7 +343,7 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
             role: 'coordinator'
           })
 
-          // Emit orchestrator confirmation — "Delegating to .NET Architect for review."
+          // Emit generalist confirmation — "Delegating to .NET Architect for review."
           const specialistNames = brief.specialists
             .map((id) => {
               const spec = specialistRepository.findByAgentId(id)
@@ -365,7 +366,7 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
             }
           }
 
-          // Decompose the task into sub-tasks via orchestrator with full brief
+          // Decompose the task into sub-tasks via generalist with full brief
           try {
             log.info(
               `[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`
@@ -393,7 +394,7 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
               error: (error as Error).message,
               fallback: 'none'
             })
-            // Surface error directly to user — no orchestrator fallback
+            // Surface error directly to user — no generalist fallback
             mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
               conversationId,
               chunk: `\n\n**Error:** Task decomposition failed. ${(error as Error).message}`,

@@ -24,9 +24,12 @@ import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
 import { enrichTasksWithComplexity } from './complexity-scorer.service'
 import { agentRegistry } from './agent-registry'
-
-/** Regex to detect handoff blocks emitted by the generalist. */
-const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
+import {
+  HANDOFF_REGEX,
+  buildSubAgentDefinitions as buildSubAgentDefinitionsUtil,
+  parseDecompositionResult as parseDecompositionResultUtil,
+  parseHandoffBlock
+} from './generalist-utils'
 
 /** Regex to detect grill-summary blocks emitted by the generalist. */
 const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
@@ -136,6 +139,7 @@ export class GeneralistService extends AgentBaseService {
     }
 
     this.workspacePath = workspacePath
+    this.cwd = workspacePath
     this.workspaceId = null
     this.currentMode = mode ?? 'plan'
     this.startedAt = Date.now()
@@ -456,7 +460,7 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
 
   /**
    * Injects a context message into the generalist's conversation without
-   * triggering the full send/response cycle. Used to feed orchestrator/specialist
+   * triggering the full send/response cycle. Used to feed specialist/subagent
    * results back so the generalist has awareness for follow-up questions.
    * The generalist's response is silently consumed (not forwarded to renderer).
    */
@@ -561,64 +565,50 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
     const match = this.accumulatedText.match(HANDOFF_REGEX)
     if (!match) return
 
+    let handoffData: { mode?: unknown; summary?: unknown } | null = null
     try {
-      const handoffData = JSON.parse(match[1].trim())
-      if (handoffData.action === 'handoff' && handoffData.summary) {
-        // ── Always plan mode — Da Vinci never decides execution mode ──
-        const brief: HandoffBrief = {
-          summary: handoffData.summary,
-          decisions: Array.isArray(handoffData.decisions) ? handoffData.decisions : [],
-          constraints: Array.isArray(handoffData.constraints) ? handoffData.constraints : [],
-          filesDiscussed: Array.isArray(handoffData.filesDiscussed)
-            ? handoffData.filesDiscussed
-            : [],
-          recentMessages: [], // populated later in chat.ipc.ts from DB
-          specialists: Array.isArray(handoffData.specialists) ? handoffData.specialists : [],
-          mode: 'plan' // Always plan — hardcoded safety net
-        }
-
-        // Log if Da Vinci tried to use build mode (prompt violation)
-        if (handoffData.mode === 'build') {
-          this.log.warn('[PIPELINE:mode-override] Da Vinci sent mode=build — forcing plan')
-        }
-
-        // ── Summary rewrite safety net ──
-        // If the summary starts with action verbs (Fix, Implement, Rebuild, etc.),
-        // rewrite to "Investigate" to ensure the decomposition creates investigation tasks.
-        const ACTION_VERB_PREFIX = /^(Fix|Implement|Create|Build|Rebuild|Deploy|Migrate|Refactor|Add|Update|Remove|Delete)\b/i
-        if (ACTION_VERB_PREFIX.test(brief.summary)) {
-          const original = brief.summary
-          brief.summary = brief.summary.replace(ACTION_VERB_PREFIX, 'Investigate')
-          this.log.warn(`[PIPELINE:summary-rewrite] "${original}" → "${brief.summary}"`)
-        }
-
-        this.log.info('Handoff detected:', {
-          summary: brief.summary,
-          decisions: brief.decisions.length,
-          constraints: brief.constraints.length,
-          filesDiscussed: brief.filesDiscussed.length,
-          specialists: brief.specialists
-        })
-        this.log.info(
-          `[PIPELINE:handoff-detected] specialists=${brief.specialists.join(',')} mode=${brief.mode}`
-        )
-        this.emit('handoff', brief)
-        this.log.info(
-          `[PIPELINE:handoff-emitted] conversationId=${this.currentConversationId}`
-        )
-
-        // Strategy 2: Post-handoff auto-compact — delay until specialist results
-        // have been injected back. The specialist execution takes at minimum 30s,
-        // so 120s gives enough buffer for context injection before compaction.
-        if (this.tokenUsage > 30_000 && this.compactCount < 5) {
-          this.log.info(
-            `Post-handoff auto-compact scheduled (tokens: ${this.tokenUsage}, compacts: ${this.compactCount}) — delayed 120s for result injection`
-          )
-          setTimeout(() => this.compact(), 120_000)
-        }
-      }
+      handoffData = JSON.parse(match[1].trim()) as { mode?: unknown; summary?: unknown }
     } catch (error) {
       this.log.error('Failed to parse handoff block:', error)
+      return
+    }
+
+    const brief = parseHandoffBlock(this.accumulatedText)
+    if (!brief) return
+
+    // Log if Da Vinci tried to use build mode (prompt violation)
+    if (handoffData.mode === 'build') {
+      this.log.warn('[PIPELINE:mode-override] Da Vinci sent mode=build — forcing plan')
+    }
+
+    // Log summary rewrite safety net
+    if (typeof handoffData.summary === 'string' && handoffData.summary !== brief.summary) {
+      this.log.warn(`[PIPELINE:summary-rewrite] "${handoffData.summary}" → "${brief.summary}"`)
+    }
+
+    this.log.info('Handoff detected:', {
+      summary: brief.summary,
+      decisions: brief.decisions.length,
+      constraints: brief.constraints.length,
+      filesDiscussed: brief.filesDiscussed.length,
+      specialists: brief.specialists
+    })
+    this.log.info(
+      `[PIPELINE:handoff-detected] specialists=${brief.specialists.join(',')} mode=${brief.mode}`
+    )
+    this.emit('handoff', brief)
+    this.log.info(
+      `[PIPELINE:handoff-emitted] conversationId=${this.currentConversationId}`
+    )
+
+    // Strategy 2: Post-handoff auto-compact — delay until specialist results
+    // have been injected back. The specialist execution takes at minimum 30s,
+    // so 120s gives enough buffer for context injection before compaction.
+    if (this.tokenUsage > 30_000 && this.compactCount < 5) {
+      this.log.info(
+        `Post-handoff auto-compact scheduled (tokens: ${this.tokenUsage}, compacts: ${this.compactCount}) — delayed 120s for result injection`
+      )
+      setTimeout(() => this.compact(), 120_000)
     }
   }
 
@@ -833,77 +823,73 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
     brief: HandoffBrief,
     mode: ConversationMode
   ): TaskPlan {
-    // Parse the JSON response — strip markdown fences if present
-    let jsonStr = result
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (fenceMatch) {
-      jsonStr = fenceMatch[1].trim()
+    // Keep parsed JSON preview for parity with existing parse-error logging.
+    let jsonPreview = result
+    const previewFenceMatch = jsonPreview.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (previewFenceMatch) {
+      jsonPreview = previewFenceMatch[1].trim()
     }
 
-    let parsed: { tasks: DecomposedTask[] }
     try {
-      parsed = JSON.parse(jsonStr)
-    } catch {
-      this.log.error('Failed to parse decomposition JSON:', jsonStr.substring(0, 500))
-      const parseError = 'Failed to parse task decomposition — LLM returned invalid JSON'
+      const taskPlan = parseDecompositionResultUtil(
+        result,
+        conversationId,
+        brief,
+        mode,
+        (tasks: DecomposedTask[]) => {
+          // Preserve previous behavior: ignore any model field from raw LLM JSON.
+          const normalizedTasks = tasks.map((task) => ({
+            ...task,
+            model: undefined
+          }))
+
+          // Read workspace cost preference and enrich tasks with validated complexity scores
+          const settings = this.workspacePath
+            ? workspaceRepository.getSettingsByPath(this.workspacePath)
+            : {}
+          const costPreference = (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
+
+          const enrichedTasks = enrichTasksWithComplexity(normalizedTasks, costPreference)
+
+          this.log.info(`Decomposed into ${enrichedTasks.length} tasks (cost: ${costPreference})`)
+          for (const t of enrichedTasks) {
+            this.log.info(`  ${t.id}: ${t.complexity?.tier}/${t.model} (score: ${t.complexity?.total})`)
+          }
+
+          return enrichedTasks
+        }
+      )
+
+      // ── Event: decomposition completed ──
+      eventLoggerService.logDecompositionCompleted({
+        conversationId,
+        taskCount: taskPlan.tasks.length,
+        tasks: taskPlan.tasks.map((t) => ({
+          id: t.id,
+          specialist: t.specialist,
+          model: t.model
+        }))
+      })
+
+      return taskPlan
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error.message : 'Task decomposition returned no tasks'
+      const normalizedError =
+        originalError === 'Task decomposition response missing tasks array'
+          ? 'Task decomposition returned no tasks'
+          : originalError
+
+      if (normalizedError === 'Failed to parse task decomposition — LLM returned invalid JSON') {
+        this.log.error('Failed to parse decomposition JSON:', jsonPreview.substring(0, 500))
+      }
+
       eventLoggerService.logDecompositionFailed({
         conversationId,
-        error: parseError,
+        error: normalizedError,
         fallback: 'none'
       })
-      throw new Error(parseError)
-    }
-
-    if (!parsed.tasks || !Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
-      const emptyError = 'Task decomposition returned no tasks'
-      eventLoggerService.logDecompositionFailed({
-        conversationId,
-        error: emptyError,
-        fallback: 'none'
-      })
-      throw new Error(emptyError)
-    }
-
-    // Validate and normalize tasks — including raw complexity from LLM
-    const tasks: DecomposedTask[] = parsed.tasks.map((t, i) => ({
-      id: t.id || `t${i + 1}`,
-      specialist: t.specialist,
-      description: t.description,
-      dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn : [],
-      complexity: t.complexity, // raw from LLM — will be validated next
-      verificationCommand: typeof t.verificationCommand === 'string' ? t.verificationCommand : undefined
-    }))
-
-    // Read workspace cost preference and enrich tasks with validated complexity scores
-    const settings = this.workspacePath
-      ? workspaceRepository.getSettingsByPath(this.workspacePath)
-      : {}
-    const costPreference = (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
-
-    const enrichedTasks = enrichTasksWithComplexity(tasks, costPreference)
-
-    this.log.info(`Decomposed into ${enrichedTasks.length} tasks (cost: ${costPreference})`)
-    for (const t of enrichedTasks) {
-      this.log.info(`  ${t.id}: ${t.complexity?.tier}/${t.model} (score: ${t.complexity?.total})`)
-    }
-
-    // ── Event: decomposition completed ──
-    eventLoggerService.logDecompositionCompleted({
-      conversationId,
-      taskCount: enrichedTasks.length,
-      tasks: enrichedTasks.map((t) => ({
-        id: t.id,
-        specialist: t.specialist,
-        model: t.model
-      }))
-    })
-
-    return {
-      conversationId,
-      summary: brief.summary,
-      mode,
-      tasks: enrichedTasks,
-      brief
+      throw new Error(normalizedError)
     }
   }
 
@@ -1005,31 +991,21 @@ Rules:
     tasks: DecomposedTask[],
     mode: ConversationMode
   ): Record<string, SDKAgentDefinition> {
-    const agents: Record<string, SDKAgentDefinition> = {}
-    const specialistIds = [...new Set(tasks.map(t => t.specialist))]
-
-    for (const specialistId of specialistIds) {
+    return buildSubAgentDefinitionsUtil(tasks, mode, (specialistId, specialistTasks, specialistMode) => {
       const specialist = specialistRepository.findByAgentId(specialistId)
       const assignedSkills = agentRegistry.getSkillsForAgent(specialistId)
-
-      const specialistTasks = tasks
-        .filter(t => t.specialist === specialistId)
-        .map(t => `- [${t.id}] ${t.description}`)
-        .join('\n')
-
-      const taskModels = tasks
-        .filter(t => t.specialist === specialistId)
-        .map(t => t.model ?? 'sonnet')
+      const taskModels = specialistTasks.map((task) => task.model ?? 'sonnet')
       const model = taskModels.includes('opus')
         ? 'opus'
         : taskModels.includes('sonnet')
           ? 'sonnet'
           : 'haiku'
 
-      const budgetTier: BudgetTier = model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
+      const budgetTier: BudgetTier =
+        model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
       const systemPrompt = promptBuilder.build({
         role: 'specialist',
-        mode,
+        mode: specialistMode,
         specialistId,
         specialistPrompt: specialist?.prompt || undefined,
         assignedSkills,
@@ -1038,19 +1014,11 @@ Rules:
         budgetTier
       })
 
-      const tools = mode === 'build'
-        ? ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch']
-        : ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch']
-
-      agents[specialistId] = {
+      return {
+        systemPrompt,
         description: `${specialist?.displayName ?? specialistId}: ${specialist?.prompt?.substring(0, 200) ?? 'Specialist agent'}`,
-        prompt: `${systemPrompt}\n\n## Your Assigned Tasks\n${specialistTasks}`,
-        tools,
-        model: model as 'sonnet' | 'opus' | 'haiku'
       }
-    }
-
-    return agents
+    })
   }
 
   /**

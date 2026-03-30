@@ -46,7 +46,7 @@ export interface SpriteAssignment {
  */
 export const SPRITE_ASSIGNMENTS: Record<string, SpriteAssignment> = {
   generalist: { spriteIndex: 1, hueShift: 60, pixelSpriteId: 'male-07-1' },
-  orchestrator: { spriteIndex: 0, hueShift: 0, pixelSpriteId: 'male-06-1' },
+  coordinator: { spriteIndex: 0, hueShift: 0, pixelSpriteId: 'male-06-1' },
   'electron-architect': {
     spriteIndex: 4,
     hueShift: 160,
@@ -70,7 +70,7 @@ export const SPRITE_ASSIGNMENTS: Record<string, SpriteAssignment> = {
  * Index corresponds to the seat order in the office layout.
  */
 export const DEFAULT_SEAT_ASSIGNMENTS: Record<string, number> = {
-  orchestrator: 0,
+  coordinator: 0,
   generalist: 1,
   'react-architect': 2,
   'dotnet-architect': 3,

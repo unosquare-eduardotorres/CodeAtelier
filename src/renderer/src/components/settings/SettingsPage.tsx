@@ -16,6 +16,7 @@ import { useUpdateStore, useProfileStore, useSpecialistStore } from '@renderer/s
 import { Avatar, AvatarPicker, PixelSpriteAvatar } from '@renderer/components/common'
 import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 import type { Specialist } from '../../../../shared/types'
+import AISubscriptionsSection from './AISubscriptionsSection'
 
 function UpdateButton(): React.JSX.Element {
   const { status, availableVersion, checkForUpdates, installUpdate } = useUpdateStore()
@@ -181,7 +182,7 @@ function ProfileSection(): React.JSX.Element {
   )
 }
 
-function OrchestratorSpecialistOrder(): React.JSX.Element {
+function SpecialistOrder(): React.JSX.Element {
   const { specialists, reorderSpecialists } = useSpecialistStore()
   const [orderedList, setOrderedList] = useState<Specialist[]>([])
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
@@ -241,7 +242,7 @@ function OrchestratorSpecialistOrder(): React.JSX.Element {
     <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
       <h4 className="text-sm font-medium text-text-primary">Specialist Priority Order</h4>
       <p className="text-xs text-text-secondary mt-0.5 mb-4">
-        Drag to reorder. Specialists listed first are presented first to the orchestrator when
+        Drag to reorder. Specialists listed first are presented first to the generalist when
         decomposing tasks into sub-tasks.
       </p>
       <div className="space-y-1">
@@ -343,8 +344,11 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
             {/* Profile section */}
             <ProfileSection />
 
+            {/* AI Subscriptions section */}
+            <AISubscriptionsSection />
+
             {/* Specialist Priority Order */}
-            <OrchestratorSpecialistOrder />
+            <SpecialistOrder />
 
             {/* Update section */}
             <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">

@@ -21,7 +21,7 @@ import type {
  */
 export class AgentSyncService {
   /** Core agent IDs that are managed via DB prompts, not YAML sync */
-  private readonly CORE_AGENT_IDS = new Set(['generalist', 'generalist-agent', 'orchestrator'])
+  private readonly CORE_AGENT_IDS = new Set(['generalist', 'generalist-agent'])
 
   /**
    * Compare workspace YAMLs against DB state.
@@ -392,7 +392,7 @@ export class AgentSyncService {
     agentId: string
   ): { icon: string; color: string; displayName: string; priority: number } | null {
     // Import at runtime to avoid circular deps
-    // Core agents (generalist, orchestrator) are managed via DB — not included here
+    // Core agents (generalist aliases) are managed via DB — not included here
     const AGENT_META: Record<string, { icon: string; color: string; displayName: string }> = {
       'react-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'React Architect' },
       'dotnet-architect': { icon: '🟣', color: '#512BD4', displayName: '.NET Architect' },

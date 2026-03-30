@@ -16,7 +16,6 @@ import ExecutionPlannerSvg from './execution-planner.svg?raw'
 import CicdSpecialistSvg from './cicd-specialist.svg?raw'
 import CloudSpecialistSvg from './cloud-specialist.svg?raw'
 import GeneralistSvg from './generalist.svg?raw'
-import OrchestratorSvg from './orchestrator.svg?raw'
 import DocsSpecialistSvg from './docs-specialist.svg?raw'
 
 interface AgentIconProps {
@@ -56,7 +55,6 @@ export const AGENT_ICON_MAP: Record<string, string> = {
   'cloud-specialist': CloudSpecialistSvg,
   'generalist': GeneralistSvg,
   'generalist-developer': GeneralistSvg,
-  'orchestrator': OrchestratorSvg,
   'docs-diagrams-specialist': DocsSpecialistSvg,
   'docs-specialist': DocsSpecialistSvg
 }

@@ -67,7 +67,7 @@ More powerful models (like Opus) tend to generate longer, more detailed response
 As a conversation gets longer, each new message includes more history for context. This means later messages in a long conversation use more input tokens than early messages.
 
 ### Specialist Agents
-When the Orchestrator delegates work to multiple specialists, each specialist uses its own tokens. A complex task assigned to 3 specialists uses roughly 3x the tokens of a simple single-agent task.
+When the Generalist delegates work to multiple specialists, each specialist uses its own tokens. A complex task assigned to 3 specialists uses roughly 3x the tokens of a simple single-agent task.
 
 ---
 

@@ -98,8 +98,8 @@ export default function MessageInput({
   } = useChatActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
   const activeConversation = useChatStore((s) => s.activeConversation)
-  const orchestratorStatus = useWorkspaceStore((s) => s.orchestratorStatus)
-  const isInitializing = orchestratorStatus === 'starting'
+  const agentStatus = useWorkspaceStore((s) => s.agentStatus)
+  const isInitializing = agentStatus === 'starting'
 
   // Voice mode state
   const [voiceEnabled, setVoiceEnabled] = useState(false)

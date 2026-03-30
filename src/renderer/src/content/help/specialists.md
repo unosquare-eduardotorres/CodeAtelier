@@ -33,7 +33,6 @@ You don't need to manually select specialists. Here's how the process works:
 sequenceDiagram
   participant You
   participant Gen as Generalist
-  participant Orch as Orchestrator
   participant Spec as Best Specialist(s)
 
   You->>Gen: Send message
@@ -42,16 +41,14 @@ sequenceDiagram
   alt Simple task
     Gen-->>You: Direct response
   else Needs expertise
-    Gen->>Orch: Hand off task
-    Orch->>Orch: Analyze & select specialist(s)
-    Orch->>Spec: Assign subtask(s)
-    Spec-->>Orch: Results
-    Orch-->>Gen: Combined result
+    Gen->>Gen: Analyze & select specialist(s)
+    Gen->>Spec: Assign subtask(s)
+    Spec-->>Gen: Results
     Gen-->>You: Final response
   end
 ```
 
-> **Example:** You say *"Redesign the settings page with better accessibility."* The Orchestrator might assign the **UX/UI Specialist** for the design and the **React Architect** for the implementation.
+> **Example:** You say *"Redesign the settings page with better accessibility."* The Generalist might assign the **UX/UI Specialist** for the design and the **React Architect** for the implementation.
 
 ---
 
@@ -71,7 +68,7 @@ You can see specialists in action through:
 From the Workspace Settings, you can customize how specialists work:
 
 ### Enabling/Disabling Specialists
-If your project doesn't need certain specialists (e.g., you don't use .NET), you can disable them to streamline the Orchestrator's decision-making.
+If your project doesn't need certain specialists (e.g., you don't use .NET), you can disable them to streamline the Generalist's delegation decisions.
 
 ### Viewing Specialist Definitions
 Each specialist is defined by a YAML configuration file that specifies:
@@ -92,7 +89,7 @@ Understanding how specialists start and stop:
 ```mermaid
 stateDiagram-v2
   [*] --> Idle: Specialist registered
-  Idle --> Spawned: Task assigned by Orchestrator
+  Idle --> Spawned: Task assigned by Generalist
   Spawned --> Working: CLI process started
   Working --> Completed: Task finished
   Completed --> [*]: Process ends, results captured
@@ -112,11 +109,11 @@ Unlike the Generalist (which maintains a long-running session), specialists are 
 **Q: Can I create my own specialists?**
 The specialist system is based on YAML configuration files. You can customize existing specialists by modifying their YAML definitions in the `.claude/agents/` directory. Creating entirely new specialists requires following the agent YAML schema.
 
-**Q: Why did the Orchestrator choose that specialist?**
-The Orchestrator analyzes your request and matches it to the specialist whose expertise best fits the task. If you think the wrong specialist was chosen, provide more context in your request to help the Orchestrator make a better decision.
+**Q: Why did the Generalist choose that specialist?**
+The Generalist analyzes your request and matches it to the specialist whose expertise best fits the task. If you think the wrong specialist was chosen, provide more context in your request to help the Generalist make a better decision.
 
 **Q: Can multiple specialists work at the same time?**
-Yes. This is one of Code Atelier's key strengths. When a task can be parallelized, the Orchestrator assigns different parts to different specialists who work simultaneously.
+Yes. This is one of Code Atelier's key strengths. When a task can be parallelized, the Generalist assigns different parts to different specialists who work simultaneously.
 
 **Q: Do specialists have access to my whole codebase?**
 Specialists can read files in your project directory based on their configured permissions. They see the relevant parts of your codebase needed for their task, not arbitrary files on your computer.

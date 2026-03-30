@@ -22,16 +22,16 @@ interface ProfileState {
   // Core Agent Prompts
   loadCoreAgentPrompts: () => Promise<void>
   saveCoreAgentPrompt: (
-    agentRole: 'generalist' | 'orchestrator',
+    agentRole: 'generalist',
     mode: 'plan' | 'build',
     promptText: string
   ) => Promise<void>
   resetCoreAgentPrompt: (
-    agentRole: 'generalist' | 'orchestrator',
+    agentRole: 'generalist',
     mode: 'plan' | 'build'
   ) => Promise<void>
   getCoreAgentPrompt: (
-    agentRole: 'generalist' | 'orchestrator',
+    agentRole: 'generalist',
     mode: 'plan' | 'build'
   ) => CoreAgentPrompt | undefined
 }
@@ -114,7 +114,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   },
 
   saveCoreAgentPrompt: async (
-    agentRole: 'generalist' | 'orchestrator',
+    agentRole: 'generalist',
     mode: 'plan' | 'build',
     promptText: string
   ) => {
@@ -135,7 +135,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   },
 
   resetCoreAgentPrompt: async (
-    agentRole: 'generalist' | 'orchestrator',
+    agentRole: 'generalist',
     mode: 'plan' | 'build'
   ) => {
     try {
@@ -155,7 +155,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   },
 
   getCoreAgentPrompt: (
-    agentRole: 'generalist' | 'orchestrator',
+    agentRole: 'generalist',
     mode: 'plan' | 'build'
   ) => {
     return get().coreAgentPrompts.find(

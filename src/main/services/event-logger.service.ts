@@ -295,7 +295,7 @@ class EventLoggerService {
     )
   }
 
-  // ── Decomposition / Orchestrator Events ──
+  // ── Decomposition / Agent Events ──
 
   logDecompositionStarted(opts: {
     conversationId: string
@@ -309,7 +309,7 @@ class EventLoggerService {
       `Decomposing task for ${opts.specialists.length} specialist(s): ${opts.summary.substring(0, 120)}`,
       {
         ...opts,
-        agentId: 'orchestrator',
+        agentId: 'generalist',
         data: {
           summary: opts.summary,
           specialists: opts.specialists
@@ -330,7 +330,7 @@ class EventLoggerService {
       `Decomposition produced ${opts.taskCount} task(s)`,
       {
         ...opts,
-        agentId: 'orchestrator',
+        agentId: 'generalist',
         data: {
           taskCount: opts.taskCount,
           tasks: opts.tasks
@@ -351,7 +351,7 @@ class EventLoggerService {
       `Decomposition failed: ${opts.error} — fallback: ${opts.fallback}`,
       {
         ...opts,
-        agentId: 'orchestrator',
+        agentId: 'generalist',
         data: {
           error: opts.error,
           fallback: opts.fallback
@@ -395,7 +395,7 @@ class EventLoggerService {
       `Plan execution started: ${opts.strategy}, ${opts.taskCount} task(s)`,
       {
         ...opts,
-        agentId: 'orchestrator',
+        agentId: 'generalist',
         data: {
           strategy: opts.strategy,
           taskCount: opts.taskCount
@@ -416,7 +416,7 @@ class EventLoggerService {
       `Plan execution completed: ${opts.strategy}, ${opts.taskCount} task(s)`,
       {
         ...opts,
-        agentId: 'orchestrator',
+        agentId: 'generalist',
         data: {
           strategy: opts.strategy,
           taskCount: opts.taskCount
@@ -437,7 +437,7 @@ class EventLoggerService {
       `Plan execution failed (${opts.strategy}): ${opts.error}`,
       {
         ...opts,
-        agentId: 'orchestrator',
+        agentId: 'generalist',
         data: {
           strategy: opts.strategy,
           error: opts.error

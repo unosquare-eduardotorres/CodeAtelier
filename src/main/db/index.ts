@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 31
+const CURRENT_SCHEMA_VERSION = 32
 
 interface Migration {
   version: number
@@ -483,7 +483,6 @@ const migrations: Migration[] = [
     up: (db) => {
       const assignments: Record<string, string> = {
         generalist: 'male-07-1',
-        orchestrator: 'male-06-1',
         'electron-architect': 'other-pipo-charachip-soldier01',
         'react-architect': 'enemy-02-1',
         'dotnet-architect': 'male-09-1',
@@ -520,7 +519,7 @@ const migrations: Migration[] = [
       db.exec(`
         CREATE TABLE IF NOT EXISTS core_agent_prompts (
           id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-          agent_role TEXT NOT NULL CHECK (agent_role IN ('generalist', 'orchestrator')),
+          agent_role TEXT NOT NULL CHECK (agent_role IN ('generalist')),
           mode TEXT NOT NULL CHECK (mode IN ('plan', 'build')),
           prompt_text TEXT NOT NULL,
           default_prompt_text TEXT NOT NULL,
@@ -530,7 +529,7 @@ const migrations: Migration[] = [
         )
       `)
 
-      // 2. Seed 4 rows from DEFAULT_PROMPTS
+      // 2. Seed rows from DEFAULT_PROMPTS
       const insert = db.prepare(`
         INSERT OR IGNORE INTO core_agent_prompts (agent_role, mode, prompt_text, default_prompt_text, is_custom)
         VALUES (?, ?, ?, ?, 0)
@@ -547,8 +546,15 @@ const migrations: Migration[] = [
       // 4. Mark core agents
       db.exec(`
         UPDATE specialists SET is_core = 1
-        WHERE agent_id IN ('generalist', 'generalist-agent', 'orchestrator')
+        WHERE agent_id IN ('generalist', 'generalist-agent')
       `)
+    }
+  },
+  {
+    version: 32,
+    name: 'remove-orchestrator-core-prompts',
+    up: (db) => {
+      db.exec(`DELETE FROM core_agent_prompts WHERE agent_role = 'orchestrator'`)
     }
   }
 ]
@@ -655,14 +661,6 @@ function seedDefaultSpecialists(database: Database.Database): void {
       color: '#D97706',
       priority: 0,
       pixelSpriteId: 'male-07-1'
-    },
-    {
-      agentId: 'orchestrator',
-      displayName: 'Stravinsky',
-      icon: '🎼',
-      color: '#8B5CF6',
-      priority: 1,
-      pixelSpriteId: 'male-06-1'
     },
     {
       agentId: 'react-architect',

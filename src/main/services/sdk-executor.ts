@@ -166,7 +166,7 @@ export class SDKExecutor {
                 yield {
                   type: 'tool_use',
                   toolName,
-                  toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
+                  toolInput: toolInput ? summarizeToolInput(toolName, toolInput, options.cwd) : undefined
                 }
               }
             }

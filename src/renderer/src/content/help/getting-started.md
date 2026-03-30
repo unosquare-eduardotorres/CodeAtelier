@@ -16,19 +16,16 @@ Here's how it works at a high level:
 flowchart LR
   You["🧑 You"] -->|"chat"| G["🤖 Generalist"]
   G -->|"simple task"| R1["✅ Direct Response"]
-  G -->|"complex task"| O["🎯 Orchestrator"]
-  O -->|"assign"| S1["⚛️ React\nArchitect"]
-  O -->|"assign"| S2["🗄️ Database\nArchitect"]
-  O -->|"assign"| S3["🧪 Testing\nSpecialist"]
-  S1 -->|"result"| O
-  S2 -->|"result"| O
-  S3 -->|"result"| O
-  O -->|"combined result"| G
+  G -->|"complex task"| S1["⚛️ React\nArchitect"]
+  G -->|"complex task"| S2["🗄️ Database\nArchitect"]
+  G -->|"complex task"| S3["🧪 Testing\nSpecialist"]
+  S1 -->|"result"| G
+  S2 -->|"result"| G
+  S3 -->|"result"| G
   G -->|"response"| You
 
   style You fill:#7c3aed,color:#fff,stroke:#7c3aed
   style G fill:#2563eb,color:#fff,stroke:#2563eb
-  style O fill:#d97706,color:#fff,stroke:#d97706
   style S1 fill:#059669,color:#fff,stroke:#059669
   style S2 fill:#059669,color:#fff,stroke:#059669
   style S3 fill:#059669,color:#fff,stroke:#059669

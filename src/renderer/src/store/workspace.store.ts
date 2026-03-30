@@ -6,7 +6,7 @@ interface WorkspaceState {
   workspaces: Workspace[]
   activeWorkspace: Workspace | null
   isLoading: boolean
-  orchestratorStatus: 'stopped' | 'starting' | 'running' | 'error'
+  agentStatus: 'stopped' | 'starting' | 'running' | 'error'
   repoInfo: RepoInfo | null
   githubStatus: { configured: boolean; login?: string } | null
 
@@ -15,7 +15,7 @@ interface WorkspaceState {
   openWorkspace: (id: string) => Promise<void>
   deleteWorkspace: (id: string) => Promise<void>
   clearActiveWorkspace: () => void
-  setOrchestratorReady: () => void
+  setAgentReady: () => void
   loadRepoInfo: (workspaceId: string) => Promise<void>
   loadGitHubStatus: (workspaceId: string) => Promise<void>
 }
@@ -29,7 +29,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: previousWorkspaceState?.workspaces ?? [],
   activeWorkspace: previousWorkspaceState?.activeWorkspace ?? null,
   isLoading: previousWorkspaceState?.isLoading ?? false,
-  orchestratorStatus: previousWorkspaceState?.orchestratorStatus ?? 'stopped',
+  agentStatus: previousWorkspaceState?.agentStatus ?? 'stopped',
   repoInfo: previousWorkspaceState?.repoInfo ?? null,
   githubStatus: previousWorkspaceState?.githubStatus ?? null,
 
@@ -65,11 +65,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch {
       /* silently ignore refresh failure */
     }
-    // Fire-and-forget: start orchestrator (don't block on readiness)
-    set({ orchestratorStatus: 'starting' })
-    window.api.startOrchestrator(workspace.repoPath).catch((error) => {
-      rendererLog.error('Failed to start orchestrator:', error)
-      set({ orchestratorStatus: 'error' })
+    // Fire-and-forget: start agent runtime (don't block on readiness)
+    set({ agentStatus: 'starting' })
+    window.api.startAgent(workspace.repoPath).catch((error) => {
+      rendererLog.error('Failed to start agent runtime:', error)
+      set({ agentStatus: 'error' })
     })
     // Load repo info + GitHub status in parallel (fire-and-forget)
     get().loadRepoInfo(id)
@@ -87,11 +87,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   clearActiveWorkspace: () => {
     // Only clear UI state — backend processes are still running, so preserve
-    // orchestratorStatus to avoid the "Initializing AI Agent..." overlay on re-open
+    // agentStatus to avoid the "Initializing AI Agent..." overlay on re-open
     set({ activeWorkspace: null, repoInfo: null, githubStatus: null })
   },
 
-  setOrchestratorReady: () => set({ orchestratorStatus: 'running' }),
+  setAgentReady: () => set({ agentStatus: 'running' }),
 
   loadRepoInfo: async (workspaceId: string) => {
     try {

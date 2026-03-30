@@ -40,7 +40,9 @@ import type {
   UserProfile,
   CoreAgentAlias,
   CoreAgentPrompt,
-  MarketplaceSpecialist
+  MarketplaceSpecialist,
+  SubscriptionCheckResult,
+  AutoConfigureResult
 } from '../shared/types'
 
 const api = {
@@ -148,9 +150,9 @@ const api = {
 
   stopAllAgents: (): Promise<string[]> => ipcRenderer.invoke(IPC_CHANNELS.AGENT_STOP_ALL),
 
-  // ── Orchestrator ──
-  startOrchestrator: (workspacePath: string): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.ORCHESTRATOR_START, workspacePath),
+  // ── Agent Lifecycle ──
+  startAgent: (workspacePath: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AGENT_START, workspacePath),
 
   // ── Specialists ──
   listSpecialists: (): Promise<Specialist[]> => ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_LIST),
@@ -669,11 +671,11 @@ const api = {
     }
   },
 
-  onOrchestratorReady: (callback: () => void): (() => void) => {
+  onAgentReady: (callback: () => void): (() => void) => {
     const handler = (): void => callback()
-    ipcRenderer.on(IPC_CHANNELS.ORCHESTRATOR_READY, handler)
+    ipcRenderer.on(IPC_CHANNELS.AGENT_READY, handler)
     return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.ORCHESTRATOR_READY, handler)
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_READY, handler)
     }
   },
 
@@ -836,20 +838,20 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_LIST),
 
   getCoreAgentPrompt: (args: {
-    agentRole: 'generalist' | 'orchestrator'
+    agentRole: 'generalist'
     mode: 'plan' | 'build'
   }): Promise<CoreAgentPrompt | undefined> =>
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_GET, args),
 
   upsertCoreAgentPrompt: (args: {
-    agentRole: 'generalist' | 'orchestrator'
+    agentRole: 'generalist'
     mode: 'plan' | 'build'
     promptText: string
   }): Promise<CoreAgentPrompt> =>
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT, args),
 
   resetCoreAgentPrompt: (args: {
-    agentRole: 'generalist' | 'orchestrator'
+    agentRole: 'generalist'
     mode: 'plan' | 'build'
   }): Promise<CoreAgentPrompt> =>
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_RESET, args),
@@ -1062,7 +1064,15 @@ const api = {
     }
   },
   respondToolApproval: (requestId: string, approved: boolean): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_RESPONSE, requestId, approved)
+    ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_RESPONSE, requestId, approved),
+
+  // ── AI Subscriptions ──
+  validateSubscriptions: (): Promise<SubscriptionCheckResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_VALIDATE_ALL),
+  checkClaudeCli: (): Promise<{ installed: boolean; version: string | null; error: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_CHECK_CLAUDE_CLI),
+  autoConfigureClaude: (): Promise<AutoConfigureResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE)
 } as const
 
 if (process.contextIsolated) {

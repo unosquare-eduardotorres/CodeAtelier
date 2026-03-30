@@ -42,7 +42,9 @@ import type {
   UserProfile,
   CoreAgentAlias,
   CoreAgentPrompt,
-  MarketplaceSpecialist
+  MarketplaceSpecialist,
+  SubscriptionCheckResult,
+  AutoConfigureResult
 } from '../shared/types'
 
 interface Api {
@@ -112,8 +114,8 @@ interface Api {
   getAgentStatuses: () => Promise<AgentStatus[]>
   stopAllAgents: () => Promise<string[]>
 
-  // Orchestrator
-  startOrchestrator: (workspacePath: string) => Promise<void>
+  // Agent lifecycle
+  startAgent: (workspacePath: string) => Promise<void>
 
   // Specialists
   listSpecialists: () => Promise<Specialist[]>
@@ -342,7 +344,7 @@ interface Api {
     }) => void
   ) => () => void
   onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void
-  onOrchestratorReady: (callback: () => void) => () => void
+  onAgentReady: (callback: () => void) => () => void
   onAgentTaskChunk: (
     callback: (data: { agentId: string; taskId: string; text: string }) => void
   ) => () => void
@@ -412,16 +414,16 @@ interface Api {
   // Core Agent Prompts
   listCoreAgentPrompts: () => Promise<CoreAgentPrompt[]>
   getCoreAgentPrompt: (args: {
-    agentRole: 'generalist' | 'orchestrator'
+    agentRole: 'generalist'
     mode: 'plan' | 'build'
   }) => Promise<CoreAgentPrompt | undefined>
   upsertCoreAgentPrompt: (args: {
-    agentRole: 'generalist' | 'orchestrator'
+    agentRole: 'generalist'
     mode: 'plan' | 'build'
     promptText: string
   }) => Promise<CoreAgentPrompt>
   resetCoreAgentPrompt: (args: {
-    agentRole: 'generalist' | 'orchestrator'
+    agentRole: 'generalist'
     mode: 'plan' | 'build'
   }) => Promise<CoreAgentPrompt>
 
@@ -555,6 +557,15 @@ interface Api {
     }) => void
   ) => () => void
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
+
+  // AI Subscriptions
+  validateSubscriptions: () => Promise<SubscriptionCheckResult>
+  checkClaudeCli: () => Promise<{
+    installed: boolean
+    version: string | null
+    error: string | null
+  }>
+  autoConfigureClaude: () => Promise<AutoConfigureResult>
 }
 
 declare global {

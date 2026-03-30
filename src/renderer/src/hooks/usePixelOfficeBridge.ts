@@ -255,7 +255,7 @@ function resolveDisplayName(
     const alias = coreAgentAliases.find((a) => a.agentRole === 'generalist')?.alias
     if (alias) return alias
   }
-  if (agentType === 'orchestrator') {
+  if (agentType === 'coordinator') {
     const alias = coreAgentAliases.find((a) => a.agentRole === 'coordinator')?.alias
     if (alias) return alias
   }
@@ -276,7 +276,7 @@ function resolveDisplayName(
  * This is a best-effort match.
  */
 const KNOWN_AGENT_TYPES = [
-  'orchestrator',
+  'coordinator',
   'generalist',
   'react-architect',
   'dotnet-architect',

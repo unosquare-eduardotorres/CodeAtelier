@@ -361,7 +361,12 @@
   padding-left: 0.25em;
 }
 
-.prose li::marker {
+.prose ol > li::marker {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.prose ul > li::marker {
   color: var(--color-text-secondary);
 }
 

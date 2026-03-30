@@ -9,14 +9,15 @@ const log = chatIpcLogger
 
 /**
  * Shared helper to forward a StreamChunk to the renderer.
- * Eliminates duplicated chunk-handling logic between generalist and orchestrator paths.
+ * Eliminates duplicated chunk-handling logic between generalist and coordinator paths.
  */
 export function forwardChunkToRenderer(
   mainWindow: BrowserWindow,
   conversationId: string,
   role: 'generalist' | 'coordinator',
   chunk: StreamChunk,
-  contentAccumulator: { value: string }
+  contentAccumulator: { value: string },
+  workspacePath?: string
 ): void {
   if (chunk.type === 'text' && chunk.content) {
     contentAccumulator.value += chunk.content
@@ -55,7 +56,7 @@ export function forwardChunkToRenderer(
     if (chunk.content) {
       try {
         const parsed = JSON.parse(chunk.content) as Record<string, unknown>
-        toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed)
+        toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
 
         // Safety net: detect plan file writes and inject content as a plan block
         // so the UI renders a PlanCard even when Claude CLI writes plans to files.

@@ -296,6 +296,17 @@ function useMessageIdentity(message: Message): {
     message.agentId ? s.specialists.find((sp) => sp.agentId === message.agentId) ?? null : null
   )
 
+  // For core agents (generalist/coordinator), look up their specialist record
+  // to get pixel sprite data (usePixelForChat, pixelSpriteId)
+  const coreRole = message.role === 'generalist'
+    ? 'generalist'
+    : message.role === 'coordinator'
+      ? 'coordinator'
+      : null
+  const coreSpecialist = useSpecialistStore((s) =>
+    coreRole ? s.specialists.find((sp) => sp.agentId === coreRole) ?? null : null
+  )
+
   return useMemo(() => {
     if (message.role === 'user') {
       return {
@@ -307,24 +318,20 @@ function useMessageIdentity(message: Message): {
       }
     }
 
-    // Check if this is a core agent (generalist or coordinator/orchestrator)
-    const coreRole =
-      message.role === 'generalist'
-        ? 'generalist'
-        : message.role === 'coordinator'
-          ? 'coordinator'
-          : null
+    // Check if this is a core agent (generalist or coordinator)
     if (coreRole) {
       const coreAlias = getCoreAgentAlias(coreRole)
       const defaults = CORE_AGENT_DEFAULTS[coreRole]
       const alias = coreAlias?.alias ?? null
       const roleName = defaults?.displayName ?? coreRole
+      // Check specialist record for pixel sprite
+      const usePixel = coreSpecialist?.usePixelForChat && coreSpecialist?.pixelSpriteId
       return {
         displayName: alias ?? roleName,
         subtitle: alias ? roleName : null,
         avatarKey: coreAlias?.avatarKey ?? defaults?.avatarKey ?? 'renaissance-alchemist',
         accentColor: defaults?.color ?? '#6366F1',
-        pixelSpriteId: null
+        pixelSpriteId: usePixel ? coreSpecialist!.pixelSpriteId : null
       }
     }
 
@@ -350,7 +357,7 @@ function useMessageIdentity(message: Message): {
       accentColor: '#6366F1',
       pixelSpriteId: null
     }
-  }, [message.role, message.agentId, profileDisplayName, profileAvatarKey, specialist, getCoreAgentAlias])
+  }, [message.role, message.agentId, profileDisplayName, profileAvatarKey, specialist, getCoreAgentAlias, coreRole, coreSpecialist])
 }
 
 /** Renders a single image attachment inside a message bubble using data URIs */
@@ -571,11 +578,11 @@ function MessageBubbleInner({
       {/* Avatar */}
       <div className="flex-shrink-0 mt-0.5">
         {identity.pixelSpriteId ? (
-          <PixelSpriteAvatar spriteId={identity.pixelSpriteId} size={36} />
+          <PixelSpriteAvatar spriteId={identity.pixelSpriteId} size={72} />
         ) : (
           <Avatar
             avatarKey={identity.avatarKey}
-            size="md"
+            size="xl"
             accentColor={identity.accentColor}
             fallbackInitials={identity.displayName}
           />

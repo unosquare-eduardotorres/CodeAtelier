@@ -27,11 +27,7 @@ export default function SpecialistEditPage({
 
   // Detect core agent and map to agentRole
   const isCore = 'isCore' in specialist ? specialist.isCore : false
-  const coreAgentRole: 'generalist' | 'orchestrator' | null = isCore
-    ? specialist.agentId === 'orchestrator'
-      ? 'orchestrator'
-      : 'generalist' // generalist or generalist-agent
-    : null
+  const coreAgentRole: 'generalist' | null = isCore ? 'generalist' : null
 
   // ── Form state ──
   const [displayName, setDisplayName] = useState(specialist.displayName)

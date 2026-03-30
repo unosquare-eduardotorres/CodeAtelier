@@ -2,7 +2,7 @@ import type { BrowserWindow } from 'electron'
 import { registerWorkspaceIpc } from './workspace.ipc'
 import { registerChatIpc } from './chat.ipc'
 import { registerAgentIpc } from './agent.ipc'
-import { registerOrchestratorIpc } from './orchestrator.ipc'
+import { registerAgentLifecycleIpc } from './agent-lifecycle.ipc'
 import { registerSpecialistIpc } from './specialist.ipc'
 import { registerSkillIpc } from './skill.ipc'
 import { registerWorkspaceDeployIpc } from './workspace-deploy.ipc'
@@ -29,12 +29,13 @@ import { registerCostIpc } from './cost.ipc'
 import { registerEventsIpc } from './events.ipc'
 import { registerGateIpc } from './gate.ipc'
 import { registerToolApprovalIpc } from './tool-approval.ipc'
+import { registerSubscriptionIpc } from './subscription.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
   registerChatIpc(mainWindow)
   registerAgentIpc(mainWindow)
-  registerOrchestratorIpc(mainWindow)
+  registerAgentLifecycleIpc(mainWindow)
   registerSpecialistIpc()
   registerSkillIpc()
   registerWorkspaceDeployIpc()
@@ -61,4 +62,5 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerEventsIpc()
   registerGateIpc()
   registerToolApprovalIpc()
+  registerSubscriptionIpc()
 }

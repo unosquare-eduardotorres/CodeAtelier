@@ -211,7 +211,7 @@ export interface Character {
   matrixEffectSeeds: number[]
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string
-  /** Display name shown below the character (e.g. "Orchestrator") */
+  /** Display name shown below the character (e.g. "Coordinator") */
   displayName?: string
   /** Current thought/activity text for display, or null */
   currentThought: string | null

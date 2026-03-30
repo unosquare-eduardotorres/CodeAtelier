@@ -15,7 +15,7 @@ import type { MarketplaceSpecialist, Specialist, Skill } from '../../shared/type
  * - Manages DB is_active state
  */
 class SpecialistDeployService {
-  private readonly CORE_AGENT_IDS = new Set(['generalist', 'generalist-agent', 'orchestrator'])
+  private readonly CORE_AGENT_IDS = new Set(['generalist', 'generalist-agent'])
 
   /**
    * Deploy a specialist to the workspace:

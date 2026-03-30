@@ -37,7 +37,6 @@ export interface AgentDefinition {
 const AGENT_META: Record<string, { icon: string; color: string; displayName: string; priority: number }> = {
   generalist: { icon: '🎨', color: '#D97706', displayName: 'Da Vinci', priority: 0 },
   'generalist-agent': { icon: '🎨', color: '#D97706', displayName: 'Da Vinci', priority: 0 },
-  orchestrator: { icon: '🎼', color: '#8B5CF6', displayName: 'Stravinsky', priority: 1 },
   'frontend-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'Frontend Architect', priority: 2 },
   'platform-architect': { icon: '⚡', color: '#47848F', displayName: 'Platform Architect', priority: 3 },
   'data-architect': { icon: '🗄️', color: '#336791', displayName: 'Data Architect', priority: 4 },
@@ -207,13 +206,10 @@ export class AgentRegistry {
     return Array.from(this.agents.values())
   }
 
-  /** Get all specialist agents (excludes generalist and orchestrator) */
+  /** Get all specialist agents (excludes generalist aliases) */
   getSpecialists(): AgentDefinition[] {
     return this.getAllAgents().filter(
-      (a) =>
-        a.agentId !== 'generalist' &&
-        a.agentId !== 'generalist-agent' &&
-        a.agentId !== 'orchestrator'
+      (a) => a.agentId !== 'generalist' && a.agentId !== 'generalist-agent'
     )
   }
 

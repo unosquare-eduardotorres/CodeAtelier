@@ -1,5 +1,5 @@
 /**
- * Default identity map for core agents (generalist & orchestrator).
+ * Default identity map for core agents (generalist & coordinator).
  * These are NOT in the specialists table, so we define fallback defaults here.
  * Users can override these via core_agent_aliases table.
  */

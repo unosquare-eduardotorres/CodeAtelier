@@ -21,7 +21,7 @@ const isPixelOfficePopout =
 function App(): React.JSX.Element {
   // Workspace actions (stable refs — individual selectors prevent full-store re-renders)
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces)
-  const setOrchestratorReady = useWorkspaceStore((s) => s.setOrchestratorReady)
+  const setAgentReady = useWorkspaceStore((s) => s.setAgentReady)
 
   // Chat actions (already uses useShallow internally)
   const {
@@ -150,10 +150,8 @@ function App(): React.JSX.Element {
       const plan = data as TaskPlan
       setTaskPlan(plan)
 
-      // Auto-execute: plan-mode investigations OR plans with autoExecute flag (investigation fixes)
-      if (plan.mode === 'plan') {
-        setTimeout(() => executePlan('sequential'), 500)
-      } else if (plan.autoExecute) {
+      // Auto-execute only when backend explicitly requests it
+      if (plan.autoExecute) {
         setTimeout(() => executePlan(plan.autoExecute!), 500)
       }
     })
@@ -174,8 +172,8 @@ function App(): React.JSX.Element {
       setInvestigationReport(data)
     })
 
-    const unsubReady = window.api.onOrchestratorReady(() => {
-      setOrchestratorReady()
+    const unsubReady = window.api.onAgentReady(() => {
+      setAgentReady()
     })
 
     const unsubAgent = window.api.onAgentStatusUpdate((data) => {
@@ -256,7 +254,7 @@ function App(): React.JSX.Element {
     addToolActivity,
     updateToolActivity,
     updateStatus,
-    setOrchestratorReady,
+    setAgentReady,
     setCompactSuggestion,
     endGrillSession,
     setGrillQuestions,

@@ -17,7 +17,7 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelProps): React.JSX.Element {
-  const { activeWorkspace, orchestratorStatus } = useWorkspaceStore()
+  const { activeWorkspace, agentStatus } = useWorkspaceStore()
   const { createConversation, updateMode, sendMessage } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
   const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
@@ -45,16 +45,16 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(activeWorkspace.id, data.mode, data.title)
-    if (data.description) {
-      await sendMessage(data.description, data.attachments)
-    }
+    setShowNewChatModal(false)
     if (data.useIsolatedBranch) {
       // TODO: integrate worktree IPC — creates a git worktree for this conversation
       console.info(
         '[NewConversationModal] Isolated branch requested — worktree integration pending'
       )
     }
-    setShowNewChatModal(false)
+    if (data.description) {
+      sendMessage(data.description, data.attachments)
+    }
   }
 
   // Workspace selected but no active conversation — ready placeholder
@@ -154,7 +154,7 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
       <RepoWarningBanner />
 
       {/* Messages or initialization overlay */}
-      {orchestratorStatus === 'starting' ? (
+      {agentStatus === 'starting' ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
           <div className="relative mb-6">
             {/* Pulsing ring animation */}

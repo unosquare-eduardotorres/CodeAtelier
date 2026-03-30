@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS user_profile (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Core agent aliases: personality overrides for generalist & orchestrator
+-- Core agent aliases: personality overrides for generalist & coordinator
 CREATE TABLE IF NOT EXISTS core_agent_aliases (
   agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('generalist', 'coordinator')),
   alias TEXT DEFAULT NULL,
@@ -211,10 +211,10 @@ CREATE TABLE IF NOT EXISTS core_agent_aliases (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Core agent prompts: editable system prompts for generalist & orchestrator
+-- Core agent prompts: editable system prompts for generalist
 CREATE TABLE IF NOT EXISTS core_agent_prompts (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  agent_role TEXT NOT NULL CHECK (agent_role IN ('generalist', 'orchestrator')),
+  agent_role TEXT NOT NULL CHECK (agent_role IN ('generalist')),
   mode TEXT NOT NULL CHECK (mode IN ('plan', 'build')),
   prompt_text TEXT NOT NULL,
   default_prompt_text TEXT NOT NULL,

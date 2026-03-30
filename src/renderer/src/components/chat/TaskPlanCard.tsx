@@ -55,6 +55,8 @@ export default function TaskPlanCard({
   // Group tasks by dependency level for visual layout
   const independentTasks = tasks.filter((t) => t.dependsOn.length === 0)
   const dependentTasks = tasks.filter((t) => t.dependsOn.length > 0)
+  const sequentialActionLabel = mode === 'plan' ? 'Run Investigation' : 'Execute Sequential'
+  const parallelActionLabel = mode === 'plan' ? 'Run Investigation (Team)' : 'Execute Parallel'
 
   return (
     <div data-testid="task-plan-card" className="my-3 rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden">
@@ -138,8 +140,10 @@ export default function TaskPlanCard({
               className={hoveredStrategy === 'sequential' ? 'text-info' : 'text-text-muted'}
             />
             <div className="text-left">
-              <span className="block text-sm">Sequential</span>
-              <span className="block text-[10px] text-text-muted">One at a time, more control</span>
+              <span className="block text-sm">{sequentialActionLabel}</span>
+              <span className="block text-[10px] text-text-muted">
+                {mode === 'plan' ? 'One specialist investigates at a time' : 'One at a time, more control'}
+              </span>
             </div>
           </button>
           <button
@@ -153,8 +157,10 @@ export default function TaskPlanCard({
               className={hoveredStrategy === 'parallel' ? 'text-success' : 'text-text-muted'}
             />
             <div className="text-left">
-              <span className="block text-sm">Parallel (Team)</span>
-              <span className="block text-[10px] text-text-muted">Faster, agents work together</span>
+              <span className="block text-sm">{parallelActionLabel}</span>
+              <span className="block text-[10px] text-text-muted">
+                {mode === 'plan' ? 'Multiple specialists investigate together' : 'Faster, agents work together'}
+              </span>
             </div>
           </button>
         </div>

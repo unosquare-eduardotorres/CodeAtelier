@@ -89,17 +89,17 @@ export default function UnifiedSidebar({
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(activeWorkspace.id, data.mode, data.title)
-    if (data.description) {
-      await sendMessage(data.description, data.attachments)
-    }
+    setShowNewChatModal(false)
+    // Ensure we're on the chats tab when a chat is created
+    handleTabChange('chats')
     if (data.useIsolatedBranch) {
       console.info(
         '[NewConversationModal] Isolated branch requested — worktree integration pending'
       )
     }
-    setShowNewChatModal(false)
-    // Ensure we're on the chats tab when a chat is created
-    handleTabChange('chats')
+    if (data.description) {
+      sendMessage(data.description, data.attachments)
+    }
   }
 
   const sortedConversations = [...conversations]

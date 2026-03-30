@@ -75,7 +75,7 @@ const BASEBOARD_COLOR = 0x8b6f4a // --ca-gold-muted baseboard trim
 
 // ── Agent display names (used for idle placeholder agents) ──
 const AGENT_NAMES: Record<string, string> = {
-  orchestrator: 'Orchestrator',
+  coordinator: 'Coordinator',
   generalist: 'Generalist',
   'react-architect': 'React Architect',
   'dotnet-architect': '.NET Architect',
