@@ -58,7 +58,8 @@ interface ChatState {
   activeConversation: Conversation | null
   messages: Message[]
   streamingContent: string
-  streamingRole: 'generalist' | 'coordinator'
+  streamingRole: 'generalist' | 'coordinator' | 'specialist'
+  streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
   activeHandoff: HandoffState | null
@@ -97,7 +98,8 @@ interface ChatState {
   renameConversation: (id: string, title: string) => Promise<void>
   stopGeneration: () => Promise<void>
   sendMessage: (text: string, attachments?: string[]) => Promise<void>
-  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator', taskId?: string) => void
+  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator' | 'specialist', taskId?: string, specialist?: string) => void
+  updateStreamingIdentity: (role: 'generalist' | 'coordinator' | 'specialist', taskId?: string, specialist?: string) => void
   finalizeStream: (messageId: string, taskId?: string) => void
   addToolActivity: (activity: ToolActivity) => void
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => void
@@ -161,6 +163,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: previousChatState?.messages ?? [],
   streamingContent: previousChatState?.streamingContent ?? '',
   streamingRole: previousChatState?.streamingRole ?? ('generalist' as const),
+  streamingSpecialist: previousChatState?.streamingSpecialist ?? null,
   streamingTaskId: previousChatState?.streamingTaskId ?? null,
   isStreaming: previousChatState?.isStreaming ?? false,
   activeHandoff: previousChatState?.activeHandoff ?? null,
@@ -264,7 +267,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   stopGeneration: async () => {
-    const { streamingContent, streamingRole, activeConversation } = get()
+    const { streamingContent, streamingRole, streamingSpecialist, activeConversation } = get()
 
     try {
       await window.api.stopGeneration()
@@ -278,6 +281,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         id: `stopped-${Date.now()}`,
         conversationId: activeConversation.id,
         role: streamingRole,
+        ...(streamingRole === 'specialist' && streamingSpecialist
+          ? { agentId: streamingSpecialist }
+          : {}),
         contentMd: streamingContent + '\n\n---\n\n⏹ *Generation stopped by user.*',
         attachmentsJson: '[]',
         createdAt: new Date().toISOString()
@@ -326,7 +332,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       messages: [...state.messages, optimisticMessage],
       isStreaming: true,
-      streamingContent: ''
+      streamingContent: '',
+      toolActivities: []
     }))
 
     // Safety: force-reset if streaming state gets stuck (e.g., process dies without emitting complete)
@@ -348,7 +355,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator', taskId?: string) => {
+  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator' | 'specialist', taskId?: string, specialist?: string) => {
     // Reset safety timer — backend is still alive
     resetStreamingSafetyTimer()
     if (!chunk) return // Skip empty chunks (tool-only messages)
@@ -358,9 +365,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {
         streamingContent: isNewTask ? chunk : state.streamingContent + chunk,
         streamingRole: role ?? state.streamingRole,
+        streamingSpecialist: specialist ?? state.streamingSpecialist,
         streamingTaskId: taskId ?? state.streamingTaskId
       }
     })
+  },
+
+  updateStreamingIdentity: (role, taskId?, specialist?) => {
+    set((state) => ({
+      streamingRole: role,
+      streamingSpecialist: specialist ?? state.streamingSpecialist,
+      streamingTaskId: taskId ?? state.streamingTaskId
+    }))
   },
 
   addToolActivity: (activity: ToolActivity) => {
@@ -371,14 +387,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
   },
 
-  updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => {
+  updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string; id?: string }) => {
     // Reset safety timer — tool completed, backend is active
     resetStreamingSafetyTimer()
     set((state) => {
-      // Find the last running activity with the matching tool name and mark it completed
+      // Find matching activity — by ID first (reliable), then by toolName (legacy fallback)
       const activities = [...state.toolActivities]
       for (let i = activities.length - 1; i >= 0; i--) {
-        if (activities[i].toolName === activity.toolName && activities[i].status === 'running') {
+        const isMatch = activity.id
+          ? activities[i].id === activity.id
+          : activities[i].toolName === activity.toolName && activities[i].status === 'running'
+        if (isMatch) {
           activities[i] = {
             ...activities[i],
             ...activity,
@@ -400,13 +419,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSafetyTimer = null
     }
 
-    const { streamingContent, streamingRole, activeConversation } = get()
+    const { streamingContent, streamingRole, streamingSpecialist, activeConversation } = get()
 
     if (streamingContent && activeConversation) {
       const finalMessage: Message = {
         id: messageId,
         conversationId: activeConversation.id,
         role: streamingRole,
+        // Attach specialist agentId so MessageBubble can resolve the correct identity
+        ...(streamingRole === 'specialist' && streamingSpecialist
+          ? { agentId: streamingSpecialist }
+          : {}),
         contentMd: streamingContent,
         attachmentsJson: '[]',
         createdAt: new Date().toISOString()
@@ -418,7 +441,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Only stop streaming if this is the final complete (no taskId = final summary)
         isStreaming: !!taskId,
         toolActivities: taskId ? state.toolActivities : [],
-        streamingTaskId: null
+        streamingTaskId: null,
+        streamingSpecialist: taskId ? state.streamingSpecialist : null
       }))
     } else if (taskId) {
       // Per-task complete with no accumulated content — just reset task tracking
@@ -480,7 +504,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { activeTaskPlan } = get()
     if (!activeTaskPlan) return
 
-    set({ isExecutingPlan: true, isStreaming: true, streamingContent: '' })
+    // Determine the initial specialist from the first task
+    const firstTask = activeTaskPlan.tasks[0]
+    set({
+      isExecutingPlan: true,
+      isStreaming: true,
+      streamingContent: '',
+      streamingRole: 'specialist',
+      streamingSpecialist: firstTask?.specialist ?? null,
+      streamingTaskId: firstTask?.id ?? null,
+      toolActivities: []
+    })
 
     try {
       await window.api.executePlan({
@@ -748,6 +782,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       streamingContent: '',
       streamingRole: 'generalist' as const,
+      streamingSpecialist: null,
       isStreaming: false,
       activeHandoff: null,
       toolActivities: [],
@@ -792,6 +827,7 @@ export const useChatActions = (): Pick<
   | 'setGrillQuestions'
   | 'endGrillSession'
   | 'appendStreamChunk'
+  | 'updateStreamingIdentity'
   | 'finalizeStream'
   | 'addToolActivity'
   | 'updateToolActivity'
@@ -831,6 +867,7 @@ export const useChatActions = (): Pick<
       setGrillQuestions: s.setGrillQuestions,
       endGrillSession: s.endGrillSession,
       appendStreamChunk: s.appendStreamChunk,
+      updateStreamingIdentity: s.updateStreamingIdentity,
       finalizeStream: s.finalizeStream,
       addToolActivity: s.addToolActivity,
       updateToolActivity: s.updateToolActivity,

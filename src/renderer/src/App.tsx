@@ -12,6 +12,7 @@ import {
   useProfileStore
 } from '@renderer/store'
 import type { ConversationMode, TaskPlan } from '../../shared/types'
+import { rendererLog } from '@renderer/utils/logger'
 
 // Check if this window was opened as a Pixel Office pop-out
 const isPixelOfficePopout =
@@ -25,6 +26,7 @@ function App(): React.JSX.Element {
   // Chat actions (already uses useShallow internally)
   const {
     appendStreamChunk,
+    updateStreamingIdentity,
     finalizeStream,
     setHandoff,
     addToolActivity,
@@ -75,7 +77,21 @@ function App(): React.JSX.Element {
     // Set up IPC event listeners for streaming
     const unsubChunk = window.api.onMessageChunk((data) => {
       if (data.chunk) {
-        appendStreamChunk(data.chunk, data.role as 'generalist' | 'coordinator', data.taskId)
+        appendStreamChunk(
+          data.chunk,
+          data.role as 'generalist' | 'coordinator' | 'specialist',
+          data.taskId,
+          data.specialist
+        )
+      }
+      // Update streaming identity even on tool-only chunks (empty text)
+      // so the thinking indicator shows the correct agent name
+      if (!data.chunk && data.role) {
+        updateStreamingIdentity(
+          data.role as 'generalist' | 'coordinator' | 'specialist',
+          data.taskId,
+          data.specialist
+        )
       }
       if (data.toolActivity) {
         if (data.toolActivity.status === 'running') {
@@ -101,10 +117,16 @@ function App(): React.JSX.Element {
     })
 
     const unsubComplete = window.api.onMessageComplete((data) => {
+      rendererLog.info(
+        `[PIPELINE:renderer:message-complete] messageId=${data.messageId} taskId=${data.taskId ?? 'none'}`
+      )
       finalizeStream(data.messageId, data.taskId)
     })
 
     const unsubHandoff = window.api.onHandoff((data) => {
+      rendererLog.info(
+        `[PIPELINE:renderer:handoff-received] specialists=${data.specialists?.join(',')}`
+      )
       setHandoff({
         summary: data.summary,
         specialists: data.specialists,
@@ -128,21 +150,25 @@ function App(): React.JSX.Element {
       const plan = data as TaskPlan
       setTaskPlan(plan)
 
-      const isSingleInvestigation =
-        plan.mode !== 'plan' &&
-        plan.tasks.length === 1 &&
-        plan.tasks[0].description.includes('investigation report')
-
-      if (isSingleInvestigation) {
+      // Auto-execute in plan mode — investigations don't need user strategy choice
+      if (plan.mode === 'plan') {
         setTimeout(() => executePlan('sequential'), 500)
       }
     })
 
     const unsubTaskProgress = window.api.onTaskProgress((data) => {
+      if (data.status === 'completed' || data.status === 'failed') {
+        rendererLog.info(
+          `[PIPELINE:renderer:task-${data.status}] taskId=${data.taskId}`
+        )
+      }
       updateTaskProgress(data)
     })
 
     const unsubInvestigationReport = window.api.onInvestigationReport((data) => {
+      rendererLog.info(
+        `[PIPELINE:renderer:investigation-report-received] taskId=${data.taskId} specialist=${data.specialist}`
+      )
       setInvestigationReport(data)
     })
 
@@ -219,6 +245,7 @@ function App(): React.JSX.Element {
     loadProfile,
     loadWorkspaces,
     appendStreamChunk,
+    updateStreamingIdentity,
     finalizeStream,
     setHandoff,
     setTaskPlan,

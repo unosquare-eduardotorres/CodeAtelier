@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageSquarePlus } from 'lucide-react'
-import { useChatStore, useChatActions, useProfileStore } from '@renderer/store'
-import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
+import { useChatStore, useChatActions, useProfileStore, useSpecialistStore } from '@renderer/store'
+import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 import { MessageBubble, HandoffIndicator, TaskPlanCard, GrillQuestionCard } from '@renderer/components/chat'
 import InvestigationReportCard from './InvestigationReportCard'
 import IdeaPopover from './IdeaPopover'
@@ -50,6 +50,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const messages = useChatStore((s) => s.messages)
   const streamingContent = useChatStore((s) => s.streamingContent)
   const streamingRole = useChatStore((s) => s.streamingRole)
+  const streamingSpecialist = useChatStore((s) => s.streamingSpecialist)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const activeHandoff = useChatStore((s) => s.activeHandoff)
   const toolActivities = useChatStore((s) => s.toolActivities)
@@ -104,6 +105,52 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   })
   const thinkingAccentColor = CORE_AGENT_DEFAULTS.generalist.color
 
+  const coordinatorAlias = useProfileStore((s) => {
+    const alias = s.coreAgentAliases.find((a) => a.agentRole === 'coordinator')
+    return alias?.alias || CORE_AGENT_DEFAULTS.coordinator.displayName
+  })
+  const coordinatorAvatarKey = useProfileStore((s) => {
+    const alias = s.coreAgentAliases.find((a) => a.agentRole === 'coordinator')
+    return alias?.avatarKey ?? CORE_AGENT_DEFAULTS.coordinator.avatarKey
+  })
+
+  // Resolve specialist identity from the store
+  const streamingSpecialistData = useSpecialistStore((s) =>
+    streamingSpecialist ? s.specialists.find((sp) => sp.agentId === streamingSpecialist) ?? null : null
+  )
+
+  // Compute thinking indicator identity based on streamingRole
+  const thinkingIdentity = useMemo(() => {
+    if (streamingRole === 'coordinator') {
+      return {
+        name: coordinatorAlias,
+        avatarKey: coordinatorAvatarKey,
+        accentColor: CORE_AGENT_DEFAULTS.coordinator.color
+      }
+    }
+    if (streamingRole === 'specialist' && streamingSpecialistData) {
+      return {
+        name: streamingSpecialistData.alias ?? streamingSpecialistData.displayName,
+        avatarKey: streamingSpecialistData.avatarUrl ?? getDefaultAvatarForRole(streamingSpecialistData.agentId),
+        accentColor: streamingSpecialistData.color ?? '#F59E0B'
+      }
+    }
+    if (streamingRole === 'specialist' && streamingSpecialist) {
+      // Fallback for unknown specialist
+      return {
+        name: streamingSpecialist,
+        avatarKey: getDefaultAvatarForRole(streamingSpecialist),
+        accentColor: '#F59E0B'
+      }
+    }
+    // Default: generalist (Da Vinci)
+    return {
+      name: generalistAlias,
+      avatarKey: thinkingAvatarKey,
+      accentColor: thinkingAccentColor
+    }
+  }, [streamingRole, streamingSpecialistData, streamingSpecialist, generalistAlias, thinkingAvatarKey, thinkingAccentColor, coordinatorAlias, coordinatorAvatarKey])
+
   const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
 
   // Scroll container ref for virtualizer
@@ -142,6 +189,21 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     setShowIdeaPopover(true)
   }, [investigationReport])
 
+  // Track active conversation to reset scroll on switch
+  const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
+
+  // Force scroll to bottom when switching conversations
+  useEffect(() => {
+    if (!activeConversationId) return
+    shouldAutoScroll.current = true
+    setIsAtBottom(true)
+    requestAnimationFrame(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      }
+    })
+  }, [activeConversationId])
+
   // Handle scroll events to determine if user is at bottom
   useEffect(() => {
     const container = scrollRef.current
@@ -177,12 +239,12 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     overscan: 5
   })
 
-  // Auto-scroll to bottom when new messages arrive or streaming content updates
+  // Auto-scroll to bottom when new messages arrive, streaming content updates, or investigation report appears
   useEffect(() => {
     if (shouldAutoScroll.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [messages.length, streamingContent])
+  }, [messages.length, streamingContent, investigationReport])
 
   // Scroll-to-bottom handler for the floating button
   // Two-step approach: first tell virtualizer to render bottom items,
@@ -377,16 +439,16 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             {/* Avatar — matches MessageBubble layout */}
             <div className="flex-shrink-0 mt-0.5">
               <Avatar
-                avatarKey={thinkingAvatarKey}
+                avatarKey={thinkingIdentity.avatarKey}
                 size="md"
-                accentColor={thinkingAccentColor}
-                fallbackInitials={generalistAlias}
+                accentColor={thinkingIdentity.accentColor}
+                fallbackInitials={thinkingIdentity.name}
               />
             </div>
             <div className="flex flex-col max-w-[85%] items-start">
               <div className="flex flex-col mb-1 px-1 items-start">
                 <span className="text-sm font-semibold text-text-primary leading-tight">
-                  {generalistAlias}
+                  {thinkingIdentity.name}
                 </span>
               </div>
               <div className="flex flex-col gap-2 px-5 py-4 rounded-xl bg-surface-overlay border border-border-subtle shadow-sm">
@@ -445,6 +507,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
               id: 'streaming',
               conversationId: '',
               role: streamingRole,
+              ...(streamingRole === 'specialist' && streamingSpecialist
+                ? { agentId: streamingSpecialist }
+                : {}),
               contentMd: streamingContent,
               attachmentsJson: '[]',
               createdAt: new Date().toISOString()

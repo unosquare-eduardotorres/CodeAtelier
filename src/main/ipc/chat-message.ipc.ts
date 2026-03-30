@@ -17,7 +17,8 @@ import type {
   ConversationMode,
   GrillEvaluation,
   GrillQuestion,
-  HandoffBrief
+  HandoffBrief,
+  ImageAttachment
 } from '../../shared/types'
 import { memoryService } from '../services/memory.service'
 import { chatIpcLogger } from '../logger'
@@ -143,20 +144,22 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
         attachments: attachments?.length ?? 0
       })
 
-      // Build message content with attachments
+      // Build message content with attachments — images are separated for SDK vision blocks
       let fullContent = text
+      const imageAttachments: ImageAttachment[] = []
 
       if (attachments && attachments.length > 0) {
         const attachmentContents: string[] = []
         for (const filePath of attachments) {
           try {
             if (fileService.isImageFile(filePath)) {
-              // Images: encode as base64 data URI for the AI
+              // Images: collect as structured data for SDK vision content blocks
               const { base64, mimeType } = fileService.readImageAsBase64(filePath)
               const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'image'
+              imageAttachments.push({ base64, mimeType, fileName })
+              // Also add a text note so the agent knows an image was attached
               attachmentContents.push(
-                `\n---\n**Attached image: ${fileName}** (${mimeType})\n` +
-                  `![${fileName}](data:${mimeType};base64,${base64})\n`
+                `\n---\n**Attached image: ${fileName}** (${mimeType}) — visible in the conversation\n`
               )
             } else {
               // Text files: read as utf-8
@@ -183,6 +186,7 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
       // Route through generalist (default entry point)
       // Define listeners at outer scope so they're accessible in both try and catch
       const streamedContent = { value: '' }
+      let handoffPromise: Promise<void> | null = null
 
       const onChunk = (chunk: StreamChunk): void => {
         try {
@@ -200,153 +204,229 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
           return
         }
 
-        try {
-          log.info('Generalist complete — saving to DB:', {
-            contentLen: streamedContent.value.length
-          })
-          // Strip handoff block before saving — it's structural, not user-facing content
-          const cleanedContent = streamedContent.value
-            .replace(/```handoff\n[\s\S]*?```/, '')
-            .replace(/```(?:json)?\n\{[\s\S]*?"action"\s*:\s*"handoff"[\s\S]*?\}\n```/, '')
-            .trim()
-
-          // If the generalist used tools but produced no final text, indicate this to the user
-          if (!cleanedContent) {
-            log.warn('Generalist completed with no content — possible silent failure')
-          }
-
-          const savedMessage = messageRepository.create(
-            conversationId,
-            'generalist',
-            cleanedContent ||
-              '_No response received. The agent may have encountered an issue while processing. Try sending your message again._'
-          )
-          log.info('Generalist message saved, id:', savedMessage.id)
-
-          // Process memory blocks from accumulated text
-          try {
-            const wpPath = generalistService.getWorkspacePath()
-            const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
-            const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
-            if (workspace) {
-              const memoriesCreated = memoryService.processMemoryBlocks(
-                streamedContent.value,
-                conversationId,
-                'generalist',
-                workspace.id
-              )
-              if (memoriesCreated > 0) {
-                log.info(`Created ${memoriesCreated} memories from generalist response`)
-              }
+        const finalize = async (): Promise<void> => {
+          // If a handoff is in progress, wait for it to send the task plan
+          // before saving/sending the generalist message (preserves visual ordering)
+          if (handoffPromise) {
+            log.info('[PIPELINE:complete] Waiting for handoff to finish before saving message')
+            try {
+              await handoffPromise
+            } catch (err) {
+              log.warn('[PIPELINE:complete] Handoff promise failed, continuing:', err)
             }
-          } catch (memErr) {
-            log.warn('Memory block processing failed:', memErr)
           }
 
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-            conversationId,
-            messageId: savedMessage.id
-          })
-        } catch (error) {
-          log.error('Failed to save generalist message:', error)
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-            conversationId,
-            chunk: `\n\n**Error saving response:** ${(error as Error).message}`,
-            role: 'generalist'
-          })
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-            conversationId,
-            messageId: `error-${Date.now()}`
-          })
+          try {
+            log.info('Generalist complete — saving to DB:', {
+              contentLen: streamedContent.value.length
+            })
+            // Strip handoff block before saving — it's structural, not user-facing content
+            const cleanedContent = streamedContent.value
+              .replace(/```handoff\n[\s\S]*?```/, '')
+              .replace(/```(?:json)?\n\{[\s\S]*?"action"\s*:\s*"handoff"[\s\S]*?\}\n```/, '')
+              .trim()
+
+            // If the entire generalist response was the handoff block, there's no user-facing
+            // message to save. Skip saving to avoid a ghost Da Vinci bubble in the UI.
+            if (!cleanedContent && handoffPromise) {
+              log.info(
+                '[PIPELINE:generalist-message-skipped] Content was entirely handoff block — no user message to save'
+              )
+              // Still send message-complete so renderer resets streaming state (isStreaming → false)
+              mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+                conversationId,
+                messageId: `handoff-only-${Date.now()}`
+              })
+              cleanupListeners()
+              return
+            }
+
+            // If the generalist used tools but produced no final text, indicate this to the user
+            if (!cleanedContent) {
+              log.warn('Generalist completed with no content — possible silent failure')
+            }
+
+            const savedMessage = messageRepository.create(
+              conversationId,
+              'generalist',
+              cleanedContent ||
+                '_No response received. The agent may have encountered an issue while processing. Try sending your message again._'
+            )
+            log.info('Generalist message saved, id:', savedMessage.id)
+
+            // Process memory blocks from accumulated text
+            try {
+              const wpPath = generalistService.getWorkspacePath()
+              const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
+              const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
+              if (workspace) {
+                const memoriesCreated = memoryService.processMemoryBlocks(
+                  streamedContent.value,
+                  conversationId,
+                  'generalist',
+                  workspace.id
+                )
+                if (memoriesCreated > 0) {
+                  log.info(`Created ${memoriesCreated} memories from generalist response`)
+                }
+              }
+            } catch (memErr) {
+              log.warn('Memory block processing failed:', memErr)
+            }
+
+            log.info(
+              `[PIPELINE:generalist-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`
+            )
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+              conversationId,
+              messageId: savedMessage.id
+            })
+          } catch (error) {
+            log.error('Failed to save generalist message:', error)
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+              conversationId,
+              chunk: `\n\n**Error saving response:** ${(error as Error).message}`,
+              role: 'generalist'
+            })
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+              conversationId,
+              messageId: `error-${Date.now()}`
+            })
+          }
+
+          cleanupListeners()
         }
 
-        cleanupListeners()
+        finalize().catch((err) => {
+          log.error('[PIPELINE:complete] Finalize failed:', err)
+          cleanupListeners()
+        })
       }
 
       // Handle handoff events — generalist detected implementation work
       const onHandoff = async (brief: HandoffBrief): Promise<void> => {
-        log.info('Handoff received from generalist:', brief.summary)
+        const doHandoff = async (): Promise<void> => {
+          log.info('Handoff received from generalist:', brief.summary)
 
-        // ── Event: handoff detected ──
-        eventLoggerService.logHandoffDetected({
-          conversationId,
-          summary: brief.summary,
-          specialists: brief.specialists,
-          mode: brief.mode
-        })
-
-        // ── Enrich with recent conversation messages ──
-        try {
-          const allMessages = messageRepository.findByConversation(conversationId)
-          brief.recentMessages = allMessages
-            .slice(-10) // Last 10 messages (5 user + 5 assistant turns)
-            .map((m) => ({ role: m.role, content: m.contentMd.substring(0, 2000) }))
-          log.info(`Enriched handoff with ${brief.recentMessages.length} recent messages`)
-        } catch (error) {
-          log.warn('Failed to enrich handoff with recent messages:', error)
-        }
-
-        // Send visual handoff indicator to the renderer
-        mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
-          conversationId,
-          summary: brief.summary,
-          specialists: brief.specialists,
-          mode: brief.mode
-        })
-
-        // Update conversation mode if needed
-        if (brief.mode) {
-          try {
-            conversationRepository.updateMode(conversationId, brief.mode)
-          } catch (error) {
-            log.error('Failed to update conversation mode:', error)
-          }
-        }
-
-        // Decompose the task into sub-tasks via orchestrator with full brief
-        try {
-          log.info('Decomposing task for specialists:', brief.specialists)
-          const taskPlan = await orchestratorService.decompose(brief, conversationId, brief.mode)
-
-          log.info(`Task decomposed into ${taskPlan.tasks.length} sub-tasks`)
-
-          // Send the task plan to the renderer for user choice (sequential vs parallel)
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
-        } catch (error) {
-          log.error('Task decomposition failed, falling back to single orchestrator:', error)
-
-          // ── Event: decomposition fallback ──
-          eventLoggerService.logDecompositionFailed({
+          // ── Event: handoff detected ──
+          eventLoggerService.logHandoffDetected({
             conversationId,
-            error: (error as Error).message,
-            fallback: 'legacy'
+            summary: brief.summary,
+            specialists: brief.specialists,
+            mode: brief.mode
           })
 
-          // Fallback: run orchestrator in legacy single-process mode
+          // ── Enrich with recent conversation messages ──
           try {
-            await runLegacyOrchestrator(mainWindow, conversationId, brief)
-          } catch (fallbackError) {
-            log.error('Legacy orchestrator fallback also failed:', fallbackError)
-            // Surface error to user — both SDK decompose and legacy orchestrator failed
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-              conversationId,
-              chunk: `\n\n**Error:** Task delegation failed. ${(fallbackError as Error).message}`,
-              role: 'coordinator'
-            })
-            const savedMsg = messageRepository.create(
-              conversationId,
-              'coordinator',
-              `**Error:** Both task decomposition and orchestrator fallback failed.\n\n${(error as Error).message}\n${(fallbackError as Error).message}`
-            )
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-              conversationId,
-              messageId: savedMsg.id
-            })
+            const allMessages = messageRepository.findByConversation(conversationId)
+            brief.recentMessages = allMessages
+              .slice(-10) // Last 10 messages (5 user + 5 assistant turns)
+              .map((m) => ({ role: m.role, content: m.contentMd.substring(0, 2000) }))
+            log.info(`Enriched handoff with ${brief.recentMessages.length} recent messages`)
+          } catch (error) {
+            log.warn('Failed to enrich handoff with recent messages:', error)
           }
+
+          // Send visual handoff indicator to the renderer
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
+            conversationId,
+            summary: brief.summary,
+            specialists: brief.specialists,
+            mode: brief.mode
+          })
+          log.info(`[PIPELINE:handoff-sent-to-renderer] conversationId=${conversationId}`)
+
+          // Switch streaming identity to coordinator during decomposition
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: '',
+            role: 'coordinator'
+          })
+
+          // Update conversation mode if needed — but respect user's explicit mode choice.
+          // Never downgrade from 'plan' to 'build' based on the generalist's handoff;
+          // the user chose plan mode explicitly and specialists should honor it.
+          if (brief.mode) {
+            try {
+              const currentConversation = conversationRepository.findById(conversationId)
+              const currentMode = currentConversation?.mode as ConversationMode
+
+              if (currentMode !== 'plan' || brief.mode === 'plan') {
+                conversationRepository.updateMode(conversationId, brief.mode)
+              } else {
+                log.info(
+                  `[PIPELINE:mode-override-blocked] Conversation is in plan mode — ignoring handoff mode=${brief.mode}`
+                )
+                brief.mode = currentMode // Force the brief to use the conversation's mode
+              }
+            } catch (error) {
+              log.error('Failed to update conversation mode:', error)
+            }
+          }
+
+          // Decompose the task into sub-tasks via orchestrator with full brief
+          try {
+            log.info(
+              `[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`
+            )
+
+            const taskPlan = await orchestratorService.decompose(
+              brief,
+              conversationId,
+              brief.mode
+            )
+
+            log.info(
+              `[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`
+            )
+
+            // Send the task plan to the renderer for user choice (sequential vs parallel)
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
+            log.info(
+              `[PIPELINE:task-plan-sent-to-renderer] taskCount=${taskPlan.tasks.length}`
+            )
+          } catch (error) {
+            log.error(
+              'Task decomposition failed, falling back to single orchestrator:',
+              error
+            )
+
+            // ── Event: decomposition fallback ──
+            eventLoggerService.logDecompositionFailed({
+              conversationId,
+              error: (error as Error).message,
+              fallback: 'legacy'
+            })
+
+            // Fallback: run orchestrator in legacy single-process mode
+            try {
+              await runLegacyOrchestrator(mainWindow, conversationId, brief)
+            } catch (fallbackError) {
+              log.error('Legacy orchestrator fallback also failed:', fallbackError)
+              // Surface error to user — both SDK decompose and legacy orchestrator failed
+              mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+                conversationId,
+                chunk: `\n\n**Error:** Task delegation failed. ${(fallbackError as Error).message}`,
+                role: 'coordinator'
+              })
+              const savedMsg = messageRepository.create(
+                conversationId,
+                'coordinator',
+                `**Error:** Both task decomposition and orchestrator fallback failed.\n\n${(error as Error).message}\n${(fallbackError as Error).message}`
+              )
+              mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+                conversationId,
+                messageId: savedMsg.id
+              })
+            }
+          }
+
+          // Clean up handoff listener (one-shot)
+          generalistService.removeListener('handoff', onHandoff)
         }
 
-        // Clean up handoff listener (one-shot)
-        generalistService.removeListener('handoff', onHandoff)
+        handoffPromise = doHandoff()
+        await handoffPromise
       }
 
       // Cleanup helper — removes all listeners for this message cycle.
@@ -370,7 +450,11 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
         generalistService.on('chunk', onChunk)
         generalistService.on('complete', onComplete)
         generalistService.on('handoff', onHandoff)
-        await generalistService.send(fullContent, conversationId)
+        await generalistService.send(
+          fullContent,
+          conversationId,
+          imageAttachments.length > 0 ? imageAttachments : undefined
+        )
       } catch (error) {
         // Clean up listeners to prevent leaks on error
         cleanupListeners()
