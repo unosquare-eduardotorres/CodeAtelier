@@ -14,7 +14,7 @@ import GrillResultCard from './GrillResultCard'
 import GrillQuestionCard from './GrillQuestionCard'
 import ToolActivityBlock from './ToolActivityBlock'
 import { useProfileStore, useSpecialistStore } from '@renderer/store'
-import { MermaidDiagram, Avatar, ImageLightbox, Skeleton } from '@renderer/components/common'
+import { MermaidDiagram, Avatar, ImageLightbox, Skeleton, PixelSpriteAvatar } from '@renderer/components/common'
 import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 
 /**
@@ -285,6 +285,7 @@ function useMessageIdentity(message: Message): {
   subtitle: string | null
   avatarKey: string
   accentColor: string
+  pixelSpriteId: string | null
 } {
   // Select only the specific fields we need — avoids re-renders when unrelated store fields change
   const profileDisplayName = useProfileStore((s) => s.profile?.displayName ?? 'You')
@@ -300,9 +301,9 @@ function useMessageIdentity(message: Message): {
       return {
         displayName: profileDisplayName,
         subtitle: null,
-
         avatarKey: profileAvatarKey,
-        accentColor: 'var(--color-primary, #6366F1)'
+        accentColor: 'var(--color-primary, #6366F1)',
+        pixelSpriteId: null
       }
     }
 
@@ -322,7 +323,8 @@ function useMessageIdentity(message: Message): {
         displayName: alias ?? roleName,
         subtitle: alias ? roleName : null,
         avatarKey: coreAlias?.avatarKey ?? defaults?.avatarKey ?? 'renaissance-alchemist',
-        accentColor: defaults?.color ?? '#6366F1'
+        accentColor: defaults?.color ?? '#6366F1',
+        pixelSpriteId: null
       }
     }
 
@@ -330,11 +332,13 @@ function useMessageIdentity(message: Message): {
     if (specialist) {
       const alias = specialist.alias
       const roleName = specialist.displayName
+      const usePixel = specialist.usePixelForChat && specialist.pixelSpriteId
       return {
         displayName: alias ?? roleName,
         subtitle: alias ? roleName : null,
         avatarKey: specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId),
-        accentColor: specialist.color ?? '#F59E0B'
+        accentColor: specialist.color ?? '#F59E0B',
+        pixelSpriteId: usePixel ? specialist.pixelSpriteId : null
       }
     }
 
@@ -343,7 +347,8 @@ function useMessageIdentity(message: Message): {
       displayName: message.agentId ?? message.role,
       subtitle: null,
       avatarKey: getDefaultAvatarForRole(message.agentId ?? message.role),
-      accentColor: '#6366F1'
+      accentColor: '#6366F1',
+      pixelSpriteId: null
     }
   }, [message.role, message.agentId, profileDisplayName, profileAvatarKey, specialist, getCoreAgentAlias])
 }
@@ -562,15 +567,19 @@ function MessageBubbleInner({
     'rounded px-5 py-4 bg-surface-overlay text-text-body border-l-2 border-primary/40 shadow-sm overflow-hidden min-w-0'
 
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+    <div data-testid="message-bubble" className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
       {/* Avatar */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar
-          avatarKey={identity.avatarKey}
-          size="md"
-          accentColor={identity.accentColor}
-          fallbackInitials={identity.displayName}
-        />
+        {identity.pixelSpriteId ? (
+          <PixelSpriteAvatar spriteId={identity.pixelSpriteId} size={36} />
+        ) : (
+          <Avatar
+            avatarKey={identity.avatarKey}
+            size="md"
+            accentColor={identity.accentColor}
+            fallbackInitials={identity.displayName}
+          />
+        )}
       </div>
 
       {/* Content */}

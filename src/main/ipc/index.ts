@@ -19,6 +19,7 @@ import { registerGithubIpc } from './github.ipc'
 import { registerRepoIpc } from './repo.ipc'
 import { registerUserProfileIpc } from './user-profile.ipc'
 import { registerCoreAgentAliasIpc } from './core-agent-alias.ipc'
+import { registerCoreAgentPromptIpc } from './core-agent-prompt.ipc'
 import { registerLogIpc } from './log.ipc'
 import { registerZoomIpc } from './zoom.ipc'
 import { registerSpecialistDeployIpc } from './specialist-deploy.ipc'
@@ -50,6 +51,7 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerRepoIpc()
   registerUserProfileIpc()
   registerCoreAgentAliasIpc()
+  registerCoreAgentPromptIpc()
   registerLogIpc()
   registerZoomIpc(mainWindow)
   registerSpecialistDeployIpc()

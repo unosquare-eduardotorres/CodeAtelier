@@ -1,22 +1,29 @@
 import type {
   AgentStatus,
+  BudgetTier,
   ConversationMode,
   CostPreference,
+  DecomposedTask,
   GrillQuestion,
-  HandoffBrief
+  HandoffBrief,
+  ImageAttachment,
+  TaskPlan
 } from '../../shared/types'
-import { AGENT_IDS } from '../../shared/constants'
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { AGENT_IDS, DEFAULT_COST_PREFERENCE } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
 import { SDKExecutor } from './sdk-executor'
-import type { SDKExecuteResult } from './sdk-executor'
+import type { SDKAgentDefinition, SDKExecuteResult } from './sdk-executor'
 import { authProvider } from './auth-provider'
 import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
-import { conversationRepository, workspaceRepository } from '../db/repositories'
+import { conversationRepository, specialistRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
+import { enrichTasksWithComplexity } from './complexity-scorer.service'
+import { agentRegistry } from './agent-registry'
 
 /** Regex to detect handoff blocks emitted by the generalist. */
 const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
@@ -72,6 +79,7 @@ export class GeneralistService extends AgentBaseService {
   private currentConversationId: string | null = null
   private accumulatedText: string = ''
   private currentMode: ConversationMode = 'plan'
+  private currentBrief: HandoffBrief | null = null
   /** Maps conversationId → SDK session_id for resume support */
   private sessionMap: Map<string, string> = new Map()
 
@@ -92,9 +100,9 @@ export class GeneralistService extends AgentBaseService {
   /** Cost preference from workspace settings — affects compaction aggressiveness */
   private costPreference: CostPreference = 'balanced'
 
-  /** Tool call limits — plan mode is tighter since it should mostly chat */
-  private static readonly MAX_PLAN_TOOL_CALLS = 25
-  private static readonly MAX_BUILD_TOOL_CALLS = 60
+  /** Tool call limits — plan mode needs room for file reads + searches */
+  private static readonly MAX_PLAN_TOOL_CALLS = 50
+  private static readonly MAX_BUILD_TOOL_CALLS = 80
 
   /** Absolute cap per interaction — aborts SDK query if exceeded (replaces old CLI MAX_INTERACTION_TIMEOUT_MS) */
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
@@ -193,7 +201,7 @@ export class GeneralistService extends AgentBaseService {
    * Sends a message via the Agent SDK's query() async generator.
    * Each call resumes the existing session (if available) for conversation continuity.
    */
-  async send(message: string, conversationId: string): Promise<void> {
+  async send(message: string, conversationId: string, images?: ImageAttachment[]): Promise<void> {
     if (!this.workspacePath) {
       throw new Error('Generalist not started — call start() first')
     }
@@ -255,20 +263,21 @@ ${this.currentMode === 'plan'
 RESPONSE STYLE (MANDATORY):
 - Be CONCISE. Match response length to question complexity.
 - Simple yes/no questions → 1-3 sentences max.
-- NEVER repeat the same information twice in a response. If you catch yourself repeating, stop.
-- NEVER use emoji bullets (✅, 🟢, 🚀, 🎉, 📊) as section markers — plain markdown only.
-- NEVER produce status-report dashboards or decorated summary blocks.
+- NEVER repeat the same information twice in a response.
+- NEVER use emoji bullets (✅, 🟢, 🚀, 🎉, 📊) as section markers.
+- NEVER produce status-report dashboards.
 - Lead with the answer. No preamble.
 
-When I ask you to involve a specialist:
-1. Emit a \`\`\`handoff block IMMEDIATELY — do NOT explore code first
+HANDOFF RULES (MANDATORY):
+When I ask you to involve a specialist, investigate, debug, or diagnose:
+1. Emit a \`\`\`handoff block IMMEDIATELY — zero tool calls before it
 2. Pick the specialist by technology
-3. Use "mode": "${this.currentMode}" in the handoff block
-4. The handoff block format:
+3. ALWAYS use "mode": "plan" — you never set "build"
+4. Summary should describe what to INVESTIGATE or ANALYZE, never "fix" or "implement"
+5. The handoff block format:
 \`\`\`handoff
-{"action":"handoff","summary":"...","decisions":[],"constraints":[],"filesDiscussed":[],"specialists":["specialist-id"],"mode":"${this.currentMode}"}
-\`\`\`
-Do NOT use any tools before emitting the handoff block when I request a specialist.`
+{"action":"handoff","summary":"Investigate...","decisions":[],"constraints":[],"filesDiscussed":[],"specialists":["specialist-id"],"mode":"plan"}
+\`\`\``
 
       effectiveMessage = `${RULES_REMINDER}\n\n${effectiveMessage}`
       this.log.info('Rules reminder injected for resumed session:', sessionId)
@@ -295,8 +304,35 @@ Do NOT use any tools before emitting the handoff block when I request a speciali
     }, GeneralistService.MAX_INTERACTION_TIMEOUT_MS)
 
     try {
+      // Build SDK-native prompt with image content blocks when images are present
+      let sdkPrompt: string | AsyncIterable<SDKUserMessage> = effectiveMessage
+
+      if (images && images.length > 0) {
+        const contentBlocks = [
+          ...images.map((img) => ({
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+              data: img.base64
+            }
+          })),
+          { type: 'text' as const, text: effectiveMessage }
+        ]
+
+        async function* singleMessage(): AsyncIterable<SDKUserMessage> {
+          yield {
+            type: 'user' as const,
+            message: { role: 'user' as const, content: contentBlocks },
+            parent_tool_use_id: null
+          } as SDKUserMessage
+        }
+        sdkPrompt = singleMessage()
+        this.log.info(`Built SDK vision prompt with ${images.length} image(s)`)
+      }
+
       for await (const chunk of this.sdkExecutor.execute({
-        prompt: effectiveMessage,
+        prompt: sdkPrompt,
         // Always send system prompt — ensures prompt updates propagate to resumed sessions
         systemPrompt: this.fullSystemPrompt,
         model: modelConfigService.getModel(this.workspacePath, 'generalist'),
@@ -373,6 +409,10 @@ Do NOT use any tools before emitting the handoff block when I request a speciali
       clearTimeout(interactionTimer)
       this.sdkAbortController = null
 
+      this.log.info(
+        `[PIPELINE:generalist-response-complete] conversationId=${conversationId} textLen=${this.accumulatedText.length}`
+      )
+
       // Detect handoff/grill patterns in accumulated text
       this.detectHandoff()
       this.detectGrillSummary()
@@ -383,6 +423,9 @@ Do NOT use any tools before emitting the handoff block when I request a speciali
       this.currentStatus = 'idle'
       this.flushTokenUsage()
       this.emit('statusUpdate', this.getStatus())
+      this.log.info(
+        `[PIPELINE:generalist-complete-emitting] conversationId=${conversationId}`
+      )
       this.emit('complete')
     } catch (error) {
       clearTimeout(interactionTimer)
@@ -521,6 +564,7 @@ Do NOT use any tools before emitting the handoff block when I request a speciali
     try {
       const handoffData = JSON.parse(match[1].trim())
       if (handoffData.action === 'handoff' && handoffData.summary) {
+        // ── Always plan mode — Da Vinci never decides execution mode ──
         const brief: HandoffBrief = {
           summary: handoffData.summary,
           decisions: Array.isArray(handoffData.decisions) ? handoffData.decisions : [],
@@ -530,16 +574,38 @@ Do NOT use any tools before emitting the handoff block when I request a speciali
             : [],
           recentMessages: [], // populated later in chat.ipc.ts from DB
           specialists: Array.isArray(handoffData.specialists) ? handoffData.specialists : [],
-          mode: handoffData.mode === 'plan' ? 'plan' : 'build'
+          mode: 'plan' // Always plan — hardcoded safety net
         }
-        this.log.info('Handoff detected (enriched brief):', {
+
+        // Log if Da Vinci tried to use build mode (prompt violation)
+        if (handoffData.mode === 'build') {
+          this.log.warn('[PIPELINE:mode-override] Da Vinci sent mode=build — forcing plan')
+        }
+
+        // ── Summary rewrite safety net ──
+        // If the summary starts with action verbs (Fix, Implement, Rebuild, etc.),
+        // rewrite to "Investigate" to ensure the decomposition creates investigation tasks.
+        const ACTION_VERB_PREFIX = /^(Fix|Implement|Create|Build|Rebuild|Deploy|Migrate|Refactor|Add|Update|Remove|Delete)\b/i
+        if (ACTION_VERB_PREFIX.test(brief.summary)) {
+          const original = brief.summary
+          brief.summary = brief.summary.replace(ACTION_VERB_PREFIX, 'Investigate')
+          this.log.warn(`[PIPELINE:summary-rewrite] "${original}" → "${brief.summary}"`)
+        }
+
+        this.log.info('Handoff detected:', {
           summary: brief.summary,
           decisions: brief.decisions.length,
           constraints: brief.constraints.length,
           filesDiscussed: brief.filesDiscussed.length,
           specialists: brief.specialists
         })
+        this.log.info(
+          `[PIPELINE:handoff-detected] specialists=${brief.specialists.join(',')} mode=${brief.mode}`
+        )
         this.emit('handoff', brief)
+        this.log.info(
+          `[PIPELINE:handoff-emitted] conversationId=${this.currentConversationId}`
+        )
 
         // Strategy 2: Post-handoff auto-compact — delay until specialist results
         // have been injected back. The specialist execution takes at minimum 30s,
@@ -657,6 +723,334 @@ Do NOT use any tools before emitting the handoff block when I request a speciali
         this.log.error('Failed to parse grill-evaluation block:', error)
       }
     }
+  }
+
+  async decompose(
+    brief: HandoffBrief,
+    conversationId: string,
+    mode: ConversationMode
+  ): Promise<TaskPlan> {
+    if (!this.workspacePath) {
+      throw new Error('Generalist not started — no workspace path set')
+    }
+
+    const { prompt } = this.buildDecompositionInputs(brief, mode)
+
+    this.log.info('Decomposing task for specialists:', brief.specialists.join(', '))
+
+    eventLoggerService.logDecompositionStarted({
+      conversationId,
+      summary: brief.summary,
+      specialists: brief.specialists
+    })
+
+    const executor = new SDKExecutor()
+    try {
+      const { result } = await executor.executeAndCollect({
+        prompt,
+        systemPrompt: promptBuilder.getDecompositionPrompt(),
+        model: modelConfigService.getModel(this.workspacePath, 'generalist'),
+        cwd: this.workspacePath,
+        permissionMode: 'plan',
+        allowedTools: []
+      })
+
+      return this.parseDecompositionResult(result, conversationId, brief, mode)
+    } catch (error) {
+      eventLoggerService.logDecompositionFailed({
+        conversationId,
+        error: (error as Error).message,
+        fallback: 'none'
+      })
+      throw error
+    }
+  }
+
+  private buildDecompositionInputs(brief: HandoffBrief, mode?: ConversationMode): { prompt: string; specialistList: string } {
+    const activeSpecialists = specialistRepository.findActive()
+    const relevantSpecialists =
+      brief.specialists.length > 0
+        ? activeSpecialists.filter((s) => brief.specialists.includes(s.agentId))
+        : activeSpecialists
+
+    const specialistList = relevantSpecialists
+      .map(
+        (s) =>
+          `- "${s.agentId}" — ${s.displayName}: ${s.prompt?.substring(0, 150) || 'General specialist'}`
+      )
+      .join('\n')
+
+    // ── Build rich context for decomposition ──
+    const decisionsBlock =
+      brief.decisions.length > 0
+        ? `\nKey decisions already made:\n${brief.decisions.map((d) => `- ${d}`).join('\n')}`
+        : ''
+
+    const constraintsBlock =
+      brief.constraints.length > 0
+        ? `\nConstraints to respect:\n${brief.constraints.map((c) => `- ${c}`).join('\n')}`
+        : ''
+
+    const filesBlock =
+      brief.filesDiscussed.length > 0
+        ? `\nFiles discussed/planned:\n${brief.filesDiscussed.map((f) => `- ${f}`).join('\n')}`
+        : ''
+
+    // Strategy 5: Truncate recentMessages to prevent unbounded context in decomposition.
+    const MAX_CONVERSATION_CHARS = 3000
+    const rawConversation =
+      brief.recentMessages.length > 0
+        ? brief.recentMessages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n')
+        : ''
+    const conversationBlock = rawConversation
+      ? `\nRecent conversation context:\n${rawConversation.length > MAX_CONVERSATION_CHARS ? rawConversation.substring(rawConversation.length - MAX_CONVERSATION_CHARS) + '\n[... earlier messages truncated]' : rawConversation}`
+      : ''
+
+    const modeInstruction = mode === 'plan'
+      ? '\n\nIMPORTANT: This is a PLAN-MODE decomposition. Create ONLY investigation/analysis tasks. Every task MUST end with "Produce a structured investigation report." Do NOT create fix, implementation, rebuild, or test tasks.'
+      : ''
+
+    const prompt = `Think step by step about the dependencies and potential file conflicts before decomposing.
+
+Task to decompose: "${brief.summary}"
+${modeInstruction}
+${decisionsBlock}
+${constraintsBlock}
+${filesBlock}
+${conversationBlock}
+
+Available specialists:
+${specialistList}
+
+Decompose this task into sub-tasks and respond with ONLY valid JSON.`
+
+    return { prompt, specialistList }
+  }
+
+  private parseDecompositionResult(
+    result: string,
+    conversationId: string,
+    brief: HandoffBrief,
+    mode: ConversationMode
+  ): TaskPlan {
+    // Parse the JSON response — strip markdown fences if present
+    let jsonStr = result
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (fenceMatch) {
+      jsonStr = fenceMatch[1].trim()
+    }
+
+    let parsed: { tasks: DecomposedTask[] }
+    try {
+      parsed = JSON.parse(jsonStr)
+    } catch {
+      this.log.error('Failed to parse decomposition JSON:', jsonStr.substring(0, 500))
+      const parseError = 'Failed to parse task decomposition — LLM returned invalid JSON'
+      eventLoggerService.logDecompositionFailed({
+        conversationId,
+        error: parseError,
+        fallback: 'none'
+      })
+      throw new Error(parseError)
+    }
+
+    if (!parsed.tasks || !Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
+      const emptyError = 'Task decomposition returned no tasks'
+      eventLoggerService.logDecompositionFailed({
+        conversationId,
+        error: emptyError,
+        fallback: 'none'
+      })
+      throw new Error(emptyError)
+    }
+
+    // Validate and normalize tasks — including raw complexity from LLM
+    const tasks: DecomposedTask[] = parsed.tasks.map((t, i) => ({
+      id: t.id || `t${i + 1}`,
+      specialist: t.specialist,
+      description: t.description,
+      dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn : [],
+      complexity: t.complexity, // raw from LLM — will be validated next
+      verificationCommand: typeof t.verificationCommand === 'string' ? t.verificationCommand : undefined
+    }))
+
+    // Read workspace cost preference and enrich tasks with validated complexity scores
+    const settings = this.workspacePath
+      ? workspaceRepository.getSettingsByPath(this.workspacePath)
+      : {}
+    const costPreference = (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
+
+    const enrichedTasks = enrichTasksWithComplexity(tasks, costPreference)
+
+    this.log.info(`Decomposed into ${enrichedTasks.length} tasks (cost: ${costPreference})`)
+    for (const t of enrichedTasks) {
+      this.log.info(`  ${t.id}: ${t.complexity?.tier}/${t.model} (score: ${t.complexity?.total})`)
+    }
+
+    // ── Event: decomposition completed ──
+    eventLoggerService.logDecompositionCompleted({
+      conversationId,
+      taskCount: enrichedTasks.length,
+      tasks: enrichedTasks.map((t) => ({
+        id: t.id,
+        specialist: t.specialist,
+        model: t.model
+      }))
+    })
+
+    return {
+      conversationId,
+      summary: brief.summary,
+      mode,
+      tasks: enrichedTasks,
+      brief
+    }
+  }
+
+  async executeWithSubAgents(
+    taskPlan: TaskPlan,
+    mode: ConversationMode,
+    conversationId: string
+  ): Promise<void> {
+    if (!this.workspacePath) {
+      throw new Error('Generalist not started')
+    }
+
+    this.currentBrief = taskPlan.brief ?? null
+
+    const agents = this.buildSubAgentDefinitions(taskPlan.tasks, mode)
+
+    const taskList = taskPlan.tasks
+      .map(t => {
+        const deps = t.dependsOn.length ? ` (after: ${t.dependsOn.join(', ')})` : ''
+        return `- [${t.id}] → Use "${t.specialist}" agent: ${t.description}${deps}`
+      })
+      .join('\n')
+
+    const orchestrationPrompt = `Execute this task plan by delegating to the specialist SubAgents listed below.
+
+## Task Plan: ${taskPlan.summary}
+
+${taskList}
+
+Rules:
+- Invoke each specialist SubAgent by name using the Agent tool
+- Respect dependency ordering — tasks with dependsOn must wait for those tasks to complete
+- Tasks with NO dependencies should be delegated in parallel when possible
+- After all agents complete, provide a concise summary of outcomes
+- If a SubAgent fails, report the failure and continue with independent tasks
+- Do NOT do the work yourself — always delegate to the named SubAgent`
+
+    this.log.info(`Executing task plan with ${Object.keys(agents).length} SubAgent(s)`)
+
+    this.currentStatus = 'thinking'
+    this.messageStartedAt = Date.now()
+    this.accumulatedText = ''
+    this.emit('statusUpdate', this.getStatus())
+
+    const abortController = new AbortController()
+    this.sdkAbortController = abortController
+
+    const sessionId = this.sessionMap.get(conversationId)
+
+    try {
+      for await (const chunk of this.sdkExecutor.execute({
+        prompt: orchestrationPrompt,
+        systemPrompt: this.fullSystemPrompt,
+        model: modelConfigService.getModel(this.workspacePath, 'generalist'),
+        cwd: this.workspacePath,
+        permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
+        agents,
+        resume: sessionId,
+        abortController,
+        agentId: AGENT_IDS.GENERALIST
+      })) {
+        if ('_meta' in chunk && chunk._meta) {
+          const meta = chunk._meta as SDKExecuteResult
+          if (meta.sessionId && conversationId) {
+            this.sessionMap.set(conversationId, meta.sessionId)
+            try {
+              conversationRepository.updateSessionId(conversationId, meta.sessionId)
+            } catch (err) {
+              this.log.error('Failed to persist session ID:', err)
+            }
+          }
+          this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
+        } else {
+          if (chunk.type === 'text' && chunk.content) {
+            this.accumulatedText += chunk.content
+          }
+          this.emit('chunk', chunk)
+        }
+      }
+
+      this.sdkAbortController = null
+      this.currentStatus = 'idle'
+      this.emit('statusUpdate', this.getStatus())
+      this.emit('subAgentsComplete')
+    } catch (error) {
+      this.sdkAbortController = null
+      this.log.error('SubAgent execution failed:', error)
+      this.emit('chunk', {
+        type: 'error',
+        error: `SubAgent execution error: ${(error as Error).message}`
+      } as StreamChunk)
+      this.currentStatus = 'failed'
+      this.emit('statusUpdate', this.getStatus())
+      this.emit('subAgentsComplete')
+    }
+  }
+
+  private buildSubAgentDefinitions(
+    tasks: DecomposedTask[],
+    mode: ConversationMode
+  ): Record<string, SDKAgentDefinition> {
+    const agents: Record<string, SDKAgentDefinition> = {}
+    const specialistIds = [...new Set(tasks.map(t => t.specialist))]
+
+    for (const specialistId of specialistIds) {
+      const specialist = specialistRepository.findByAgentId(specialistId)
+      const assignedSkills = agentRegistry.getSkillsForAgent(specialistId)
+
+      const specialistTasks = tasks
+        .filter(t => t.specialist === specialistId)
+        .map(t => `- [${t.id}] ${t.description}`)
+        .join('\n')
+
+      const taskModels = tasks
+        .filter(t => t.specialist === specialistId)
+        .map(t => t.model ?? 'sonnet')
+      const model = taskModels.includes('opus')
+        ? 'opus'
+        : taskModels.includes('sonnet')
+          ? 'sonnet'
+          : 'haiku'
+
+      const budgetTier: BudgetTier = model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
+      const systemPrompt = promptBuilder.build({
+        role: 'specialist',
+        mode,
+        specialistId,
+        specialistPrompt: specialist?.prompt || undefined,
+        assignedSkills,
+        workspacePath: this.workspacePath!,
+        brief: this.currentBrief || undefined,
+        budgetTier
+      })
+
+      const tools = mode === 'build'
+        ? ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch']
+        : ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch']
+
+      agents[specialistId] = {
+        description: `${specialist?.displayName ?? specialistId}: ${specialist?.prompt?.substring(0, 200) ?? 'Specialist agent'}`,
+        prompt: `${systemPrompt}\n\n## Your Assigned Tasks\n${specialistTasks}`,
+        tools,
+        model: model as 'sonnet' | 'opus' | 'haiku'
+      }
+    }
+
+    return agents
   }
 
   /**

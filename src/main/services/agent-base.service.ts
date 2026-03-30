@@ -13,6 +13,7 @@ export interface StreamChunk {
   content?: string
   toolName?: string
   toolInput?: string
+  toolId?: string
   error?: string
 }
 
@@ -59,6 +60,7 @@ export abstract class AgentBaseService extends EventEmitter {
   protected messageStartedAt: number = 0
   protected hasEmittedContent: boolean = false
   protected currentToolName: string | null = null
+  protected currentToolId: string | null = null
   protected currentToolInput: string = ''
   protected toolIdToName: Map<string, string> = new Map()
   /** Track tool IDs already processed via streaming (content_block_start/stop) to skip duplicates from full messages */
@@ -202,6 +204,7 @@ export abstract class AgentBaseService extends EventEmitter {
                 this.emit('chunk', {
                   type: 'tool_use',
                   toolName,
+                  toolId,
                   toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
                 } as StreamChunk)
 
@@ -261,7 +264,8 @@ export abstract class AgentBaseService extends EventEmitter {
                 }
                 this.emit('chunk', {
                   type: 'tool_result',
-                  toolName
+                  toolName,
+                  toolId: toolUseId
                 } as StreamChunk)
               }
             }
@@ -311,6 +315,7 @@ export abstract class AgentBaseService extends EventEmitter {
 
           this.currentStatus = 'reviewing'
           this.currentToolName = contentBlock.name as string
+          this.currentToolId = contentBlock.id as string
           this.currentToolInput = ''
           const toolId = contentBlock.id as string
           if (toolId) {
@@ -329,6 +334,7 @@ export abstract class AgentBaseService extends EventEmitter {
           this.emit('chunk', {
             type: 'tool_use',
             toolName: contentBlock.name as string,
+            toolId: contentBlock.id as string,
             toolInput: toolInput ? summarizeToolInput(this.currentToolName, toolInput) : undefined
           } as StreamChunk)
         } else if (contentBlock?.type === 'text' && contentBlock.text) {
@@ -347,9 +353,11 @@ export abstract class AgentBaseService extends EventEmitter {
           this.emit('chunk', {
             type: 'tool_result',
             toolName: this.currentToolName,
+            toolId: this.currentToolId ?? undefined,
             content: this.currentToolInput || undefined
           } as StreamChunk)
           this.currentToolName = null
+          this.currentToolId = null
           this.currentToolInput = ''
         }
         break

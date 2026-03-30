@@ -20,13 +20,17 @@ import type {
  * Sync is workspace-scoped — triggered on workspace open or via Settings UI.
  */
 export class AgentSyncService {
+  /** Core agent IDs that are managed via DB prompts, not YAML sync */
+  private readonly CORE_AGENT_IDS = new Set(['generalist', 'generalist-agent', 'orchestrator'])
+
   /**
    * Compare workspace YAMLs against DB state.
    * Does NOT mutate anything — pure read + diff.
    */
   computeDiff(workspacePath: string): SyncDiff {
-    // 1. Scan workspace YAMLs (only deployed agents in the workspace)
+    // 1. Scan workspace YAMLs (only deployed agents in the workspace, excluding core agents)
     const yamlAgents = this.getDeployedWorkspaceAgents(workspacePath)
+      .filter((a) => !this.CORE_AGENT_IDS.has(a.parsed.name))
     const yamlSkills = this.getDeployedWorkspaceSkills(workspacePath)
 
     // 2. Load all specialists from DB
@@ -388,9 +392,8 @@ export class AgentSyncService {
     agentId: string
   ): { icon: string; color: string; displayName: string; priority: number } | null {
     // Import at runtime to avoid circular deps
+    // Core agents (generalist, orchestrator) are managed via DB — not included here
     const AGENT_META: Record<string, { icon: string; color: string; displayName: string }> = {
-      generalist: { icon: '🎨', color: '#D97706', displayName: 'Da Vinci' },
-      orchestrator: { icon: '🎼', color: '#8B5CF6', displayName: 'Stravinsky' },
       'react-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'React Architect' },
       'dotnet-architect': { icon: '🟣', color: '#512BD4', displayName: '.NET Architect' },
       'electron-architect': { icon: '⚡', color: '#47848F', displayName: 'Electron Architect' },
@@ -414,8 +417,6 @@ export class AgentSyncService {
     }
 
     const AGENT_PRIORITIES: Record<string, number> = {
-      generalist: 0,
-      orchestrator: 1,
       'react-architect': 2,
       'dotnet-architect': 3,
       'electron-architect': 4,

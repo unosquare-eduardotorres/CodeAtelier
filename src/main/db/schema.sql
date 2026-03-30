@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS specialists (
   alias TEXT DEFAULT NULL,
   avatar_url TEXT DEFAULT NULL,
   pixel_sprite_id TEXT DEFAULT NULL,
+  use_pixel_for_chat INTEGER NOT NULL DEFAULT 0,
+  is_core INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -207,6 +209,18 @@ CREATE TABLE IF NOT EXISTS core_agent_aliases (
   alias TEXT DEFAULT NULL,
   avatar_key TEXT DEFAULT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Core agent prompts: editable system prompts for generalist & orchestrator
+CREATE TABLE IF NOT EXISTS core_agent_prompts (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  agent_role TEXT NOT NULL CHECK (agent_role IN ('generalist', 'orchestrator')),
+  mode TEXT NOT NULL CHECK (mode IN ('plan', 'build')),
+  prompt_text TEXT NOT NULL,
+  default_prompt_text TEXT NOT NULL,
+  is_custom INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(agent_role, mode)
 );
 
 -- Events: structured audit log for agent lifecycle, gates, escalations

@@ -9,7 +9,6 @@ interface SpecialistConfigPanelProps {
     icon?: string
     color?: string
     alias?: string | null
-    priority?: number
   }) => Promise<void>
   onClose: () => void
 }
@@ -23,7 +22,6 @@ export default function SpecialistConfigPanel({
   const [alias, setAlias] = useState(specialist.alias ?? '')
   const [icon, setIcon] = useState(specialist.icon)
   const [color, setColor] = useState(specialist.color)
-  const [priority, setPriority] = useState(specialist.priority)
   const [isSaving, setIsSaving] = useState(false)
   const [showYaml, setShowYaml] = useState(false)
   const [yamlContent, setYamlContent] = useState<string | null>(null)
@@ -33,7 +31,6 @@ export default function SpecialistConfigPanel({
     setAlias(specialist.alias ?? '')
     setIcon(specialist.icon)
     setColor(specialist.color)
-    setPriority(specialist.priority)
   }, [specialist])
 
   const handleSave = async (): Promise<void> => {
@@ -43,8 +40,7 @@ export default function SpecialistConfigPanel({
         displayName: displayName !== specialist.displayName ? displayName : undefined,
         icon: icon !== specialist.icon ? icon : undefined,
         color: color !== specialist.color ? color : undefined,
-        alias: alias !== (specialist.alias ?? '') ? alias || null : undefined,
-        priority: priority !== specialist.priority ? priority : undefined
+        alias: alias !== (specialist.alias ?? '') ? alias || null : undefined
       })
       onClose()
     } finally {
@@ -154,23 +150,6 @@ export default function SpecialistConfigPanel({
                 />
               </div>
             </div>
-          </div>
-
-          {/* Priority */}
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              Priority{' '}
-              <span className="text-text-muted">(lower = higher priority for orchestrator)</span>
-            </label>
-            <input
-              type="number"
-              value={priority}
-              onChange={(e) => setPriority(parseInt(e.target.value) || 0)}
-              className="w-24 px-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-sm text-text-primary
-                focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-colors"
-              min={0}
-              max={100}
-            />
           </div>
 
           {/* Skills (read-only) */}

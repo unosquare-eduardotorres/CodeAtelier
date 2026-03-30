@@ -587,16 +587,22 @@ export class OfficeState {
       }
     }
 
-    if (autoOnTiles.size === 0) {
-      this.furniture = layoutToFurnitureInstances(this.layout.furniture)
-      return
-    }
-
     // Build modified furniture list with auto-state and animation applied
     const animFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC)
+
+    let anyChanged = false
     const modifiedFurniture: PlacedFurniture[] = this.layout.furniture.map((item) => {
       const entry = getCatalogEntry(item.type)
       if (!entry) return item
+
+      let nextType = item.type
+
+      // Always cycle ambient animation groups, even without nearby active agents.
+      const ambientFrames = getAnimationFrames(nextType)
+      if (ambientFrames && ambientFrames.length > 1) {
+        nextType = ambientFrames[animFrame % ambientFrames.length]
+      }
+
       // Check if any tile of this furniture overlaps an auto-on tile
       for (let dr = 0; dr < entry.footprintH; dr++) {
         for (let dc = 0; dc < entry.footprintW; dc++) {
@@ -609,16 +615,30 @@ export class OfficeState {
                 const frameIdx = animFrame % frames.length
                 onType = frames[frameIdx]
               }
-              return { ...item, type: onType }
+              nextType = onType
+            }
+            if (nextType !== item.type) {
+              anyChanged = true
+              return { ...item, type: nextType }
             }
             return item
           }
         }
       }
+      if (nextType !== item.type) {
+        anyChanged = true
+        return { ...item, type: nextType }
+      }
       return item
     })
 
-    this.furniture = layoutToFurnitureInstances(modifiedFurniture)
+    // Only rebuild instances if something actually changed
+    if (anyChanged) {
+      this.furniture = layoutToFurnitureInstances(modifiedFurniture)
+    } else if (this.furniture.length === 0) {
+      // Initial build (no previous furniture)
+      this.furniture = layoutToFurnitureInstances(this.layout.furniture)
+    }
   }
 
   setAgentTool(id: number, tool: string | null): void {

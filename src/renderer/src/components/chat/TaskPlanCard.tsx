@@ -3,10 +3,13 @@ import { Users, UserRound, ArrowRight, CheckCircle2, Clock, Loader2, XCircle, X 
 import type {
   DecomposedTask,
   ExecutionStrategy,
-  TaskExecutionProgress
+  TaskExecutionProgress,
+  Specialist
 } from '../../../../shared/types'
 import { useSpecialistStore } from '@renderer/store'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
+import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
+import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 
 interface TaskPlanCardProps {
   summary: string
@@ -54,7 +57,7 @@ export default function TaskPlanCard({
   const dependentTasks = tasks.filter((t) => t.dependsOn.length > 0)
 
   return (
-    <div className="my-3 rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden">
+    <div data-testid="task-plan-card" className="my-3 rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle bg-surface-raised">
         <div className="w-8 h-8 rounded-lg bg-primary-muted flex items-center justify-center">
@@ -95,6 +98,7 @@ export default function TaskPlanCard({
                 key={task.id}
                 task={task}
                 meta={getSpecialistMeta(task.specialist)}
+                specialist={specialists.find((s) => s.agentId === task.specialist)}
                 progress={taskProgress.get(task.id)}
               />
             ))}
@@ -112,6 +116,7 @@ export default function TaskPlanCard({
                 key={task.id}
                 task={task}
                 meta={getSpecialistMeta(task.specialist)}
+                specialist={specialists.find((s) => s.agentId === task.specialist)}
                 progress={taskProgress.get(task.id)}
               />
             ))}
@@ -179,19 +184,29 @@ export default function TaskPlanCard({
 function TaskRow({
   task,
   meta,
+  specialist,
   progress
 }: {
   task: DecomposedTask
   meta: { icon: string; color: string; displayName: string }
+  specialist?: Specialist
   progress?: TaskExecutionProgress
 }): React.JSX.Element {
   const statusIcon = progress ? STATUS_ICONS[progress.status] : STATUS_ICONS.pending
 
   return (
     <div className="flex items-start gap-2.5 py-1.5 px-2 rounded-lg bg-surface-raised/40">
-      <span className="text-sm flex-shrink-0 mt-0.5" role="img" aria-label={meta.displayName}>
-        {meta.icon}
-      </span>
+      <div className="flex-shrink-0 mt-0.5">
+        {specialist?.usePixelForChat && specialist?.pixelSpriteId ? (
+          <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={20} />
+        ) : (
+          <Avatar
+            avatarKey={specialist?.avatarUrl ?? getDefaultAvatarForRole(task.specialist)}
+            size="sm"
+            accentColor={meta.color}
+          />
+        )}
+      </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-medium" style={{ color: meta.color }}>

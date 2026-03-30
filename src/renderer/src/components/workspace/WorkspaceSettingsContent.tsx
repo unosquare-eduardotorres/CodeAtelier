@@ -12,6 +12,7 @@ import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
 import { SkillDetailPage, SpecialistMarketplace } from '@renderer/components/settings'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
+import OfficeEditorPage from '@renderer/components/pixel-office/editor/OfficeEditorPage'
 import type { SettingsTab } from './WorkspaceSettingsPanel'
 
 interface WorkspaceSettingsContentProps {
@@ -142,6 +143,7 @@ export default function WorkspaceSettingsContent({
       {tab === 'documents' && <DocumentsPage />}
       {tab === 'tokens' && <TokenUsagePage />}
       {tab === 'events' && <EventLogPage />}
+      {tab === 'office' && <OfficeEditorPage />}
     </div>
   )
 }

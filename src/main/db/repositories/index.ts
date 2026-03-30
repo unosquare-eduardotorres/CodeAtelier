@@ -16,6 +16,10 @@ export { MemoryRepository, memoryRepository } from './memory.repository'
 export { DreamRunRepository, dreamRunRepository } from './dream-run.repository'
 export { UserProfileRepository, userProfileRepository } from './user-profile.repository'
 export { CoreAgentAliasRepository, coreAgentAliasRepository } from './core-agent-alias.repository'
+export {
+  CoreAgentPromptRepository,
+  coreAgentPromptRepository
+} from './core-agent-prompt.repository'
 export { EventRepository, eventRepository } from './event.repository'
 export type { EventRecord, EventCategory } from './event.repository'
 export { CheckpointRepository, checkpointRepository } from './checkpoint.repository'

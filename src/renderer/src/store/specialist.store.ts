@@ -17,6 +17,7 @@ interface SpecialistState {
   deleteSpecialist: (id: string) => Promise<{ success: boolean; error?: string }>
   assignSkill: (specialistId: string, skillId: string) => Promise<void>
   removeSkill: (specialistId: string, skillId: string) => Promise<void>
+  reorderSpecialists: (orderedIds: string[]) => Promise<void>
 }
 
 export const useSpecialistStore = create<SpecialistState>((set, get) => ({
@@ -94,6 +95,29 @@ export const useSpecialistStore = create<SpecialistState>((set, get) => ({
       await get().loadSpecialists()
     } catch (error) {
       rendererLog.error('Failed to remove skill:', error)
+      set({ error: (error as Error).message })
+      throw error
+    }
+  },
+
+  reorderSpecialists: async (orderedIds: string[]) => {
+    try {
+      await window.api.reorderSpecialists({ orderedIds })
+      // Optimistically reorder in local state
+      set((state) => {
+        const map = new Map(state.specialists.map((s) => [s.id, s]))
+        const reordered = orderedIds
+          .map((id, i) => {
+            const s = map.get(id)
+            return s ? { ...s, priority: i + 1 } : null
+          })
+          .filter(Boolean) as Specialist[]
+        // Keep any specialists not in orderedIds at the end
+        const remaining = state.specialists.filter((s) => !orderedIds.includes(s.id))
+        return { specialists: [...reordered, ...remaining], error: null }
+      })
+    } catch (error) {
+      rendererLog.error('Failed to reorder specialists:', error)
       set({ error: (error as Error).message })
       throw error
     }

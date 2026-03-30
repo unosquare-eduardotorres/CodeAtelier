@@ -1,11 +1,12 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Search, UserRound, Users, RefreshCw, Lightbulb } from 'lucide-react'
+import { Search, UserRound, Users, RefreshCw, Lightbulb, Loader2 } from 'lucide-react'
 import type { InvestigationReport } from '../../../../shared/types'
 
 interface InvestigationReportCardProps {
   report: InvestigationReport
   specialist: string
+  isExecuting?: boolean
   onFixSequential: () => void
   onFixParallel: () => void
   onRevise: () => void
@@ -15,6 +16,7 @@ interface InvestigationReportCardProps {
 export default function InvestigationReportCard({
   report,
   specialist,
+  isExecuting = false,
   onFixSequential,
   onFixParallel,
   onRevise,
@@ -31,7 +33,7 @@ export default function InvestigationReportCard({
   const badgeClass = impactStyles[report.impact] ?? impactStyles.medium
 
   return (
-    <div className="rounded-xl border border-primary/30 bg-primary-muted overflow-hidden shadow-sm">
+    <div data-testid="investigation-report-card" className="rounded-xl border border-primary/30 bg-primary-muted overflow-hidden shadow-sm">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-primary/15 border-b border-primary/20">
         <div className="flex items-center gap-2">
@@ -95,33 +97,40 @@ export default function InvestigationReportCard({
         </div>
       )}
 
-      {/* Action buttons */}
-      <div className="flex items-center gap-2 px-4 py-3 border-t border-primary/20 bg-primary-muted">
-        <button
-          onClick={onFixSequential}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
-        >
-          <UserRound size={14} /> Sequential Fix
-        </button>
-        <button
-          onClick={onFixParallel}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
-        >
-          <Users size={14} /> Multi-Agent
-        </button>
-        <button
-          onClick={onRevise}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
-        >
-          <RefreshCw size={14} /> Revise Plan
-        </button>
-        <button
-          onClick={onSaveAsIdea}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
-        >
-          <Lightbulb size={14} /> Save as Idea
-        </button>
-      </div>
+      {/* Action buttons — hidden when executing */}
+      {!isExecuting ? (
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-primary/20 bg-primary-muted">
+          <button
+            onClick={onFixSequential}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
+          >
+            <UserRound size={14} /> Sequential Fix
+          </button>
+          <button
+            onClick={onFixParallel}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
+          >
+            <Users size={14} /> Multi-Agent
+          </button>
+          <button
+            onClick={onRevise}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
+          >
+            <RefreshCw size={14} /> Revise Plan
+          </button>
+          <button
+            onClick={onSaveAsIdea}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
+          >
+            <Lightbulb size={14} /> Save as Idea
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-primary/20 bg-primary-muted text-text-muted text-sm">
+          <Loader2 size={14} className="animate-spin" />
+          Preparing fix plan...
+        </div>
+      )}
     </div>
   )
 }

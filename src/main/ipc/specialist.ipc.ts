@@ -75,6 +75,17 @@ export function registerSpecialistIpc(): void {
   })
 
   ipcMain.handle(
+    IPC_CHANNELS.SPECIALIST_REORDER,
+    async (event, args: { orderedIds: string[] }) => {
+      validateSender(event)
+      if (!Array.isArray(args?.orderedIds) || args.orderedIds.length === 0) {
+        throw new Error('Invalid ordered IDs')
+      }
+      specialistRepository.reorderPriorities(args.orderedIds)
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.SPECIALIST_ASSIGN_SKILL,
     async (event, args: { specialistId: string; skillId: string }) => {
       validateSender(event)

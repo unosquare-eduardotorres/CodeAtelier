@@ -10,7 +10,6 @@ import {
 } from '../db/repositories'
 import {
   generalistService,
-  orchestratorService,
   gitWorktreeService,
   fileService
 } from '../services'
@@ -93,10 +92,6 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
       const { conversationId } = args
 
       // Same cleanup as /close — stop agents and clear all data
-      if (orchestratorService.isRunning()) {
-        await orchestratorService.stop()
-      }
-      orchestratorService.clearSession(conversationId)
       generalistService.clearSession(conversationId)
 
       conversationRepository.delete(conversationId)
@@ -170,10 +165,6 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
     const { conversationId } = args
 
     // Stop running agents for this conversation
-    if (orchestratorService.isRunning()) {
-      await orchestratorService.stop()
-    }
-    orchestratorService.clearSession(conversationId)
     generalistService.clearSession(conversationId)
 
     // Clean up worktrees for this conversation
@@ -397,10 +388,6 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
         }
 
         // 8. Cleanup: stop agents, clear DB data, delete conversation
-        if (orchestratorService.isRunning()) {
-          await orchestratorService.stop()
-        }
-        orchestratorService.clearSession(conversationId)
         generalistService.clearSession(conversationId)
         fileChangeRepository.clearByConversation(conversationId)
         conversationRepository.delete(conversationId)

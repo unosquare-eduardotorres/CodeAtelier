@@ -3,7 +3,7 @@
 ## Overview
 
 Agent Studio is an Electron desktop application that provides an AI-powered team of specialist agents,
-coordinated by an intelligent orchestrator, running locally on the developer's machine.
+coordinated by a generalist that spawns specialist SubAgents, running locally on the developer's machine.
 It leverages the Claude Max subscription through Claude CLI, requiring no API keys or proxy servers.
 
 See `Agent-Studio-Project-Plan.md` for full project architecture, milestones, and specs.
@@ -39,7 +39,7 @@ src/
 ├── main/           # Main process (Node.js) — app lifecycle, IPC handlers, services, DB
 │   ├── index.ts    # Entry point — window creation, app lifecycle
 │   ├── ipc/        # IPC handler registrations (agent, chat, workspace, etc.)
-│   ├── services/   # Business logic (generalist, orchestrator, specialist-pool, file, brain)
+│   ├── services/   # Business logic (generalist, specialist-pool, file, brain)
 │   └── db/         # SQLite via better-sqlite3 (schema.sql, repositories/)
 ├── preload/        # contextBridge only (index.ts + index.d.ts)
 ├── renderer/src/   # React frontend — no Node.js access
@@ -49,7 +49,7 @@ src/
 └── shared/         # Cross-process types (types.ts) + IPC channels (constants.ts)
 
 .claude/
-├── agents/         # 16 agent YAMLs (generalist + orchestrator + 14 specialists)
+├── agents/         # 15 agent YAMLs (generalist + 14 specialists)
 └── skills/         # 17 skill directories (SKILL.md + optional references/)
 ```
 
@@ -124,10 +124,9 @@ npm run format        # Prettier
 
 ## Architecture notes
 
-- **Generalist-first**: User ↔ Generalist (always) → Orchestrator (on demand) → Specialists
+- **Generalist-first**: User ↔ Generalist → Specialists (SDK SubAgents)
 - **Generalist**: Long-lived Claude CLI session, read-only (`--permission-mode plan`). Detects handoffs.
-- **Orchestrator**: Spawned on-demand via `claude -p` per handoff with mode-appropriate permissions.
-- **16 agents**: 1 generalist + 1 orchestrator + 14 specialists — YAMLs in `.claude/agents/`, data in DB
+- **15 agents**: 1 generalist + 14 specialists — SubAgents spawned via SDK agents parameter
 - **IPC**: `window.api.invoke()` → preload `ipcRenderer.invoke` → main `ipcMain.handle`
 - **Streaming**: `ipcRenderer.on` with cleanup functions from `window.api.on()`
 - **Database**: SQLite, schema in `schema.sql`, repository pattern in `repositories/`

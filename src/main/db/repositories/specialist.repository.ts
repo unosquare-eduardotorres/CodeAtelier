@@ -14,6 +14,8 @@ interface SpecialistRow {
   alias: string | null
   avatar_url: string | null
   pixel_sprite_id: string | null
+  use_pixel_for_chat: number
+  is_core: number
   created_at: string
   updated_at: string
 }
@@ -44,6 +46,8 @@ function mapRow(row: SpecialistRow): Specialist {
     alias: row.alias ?? null,
     avatarUrl: row.avatar_url ?? null,
     pixelSpriteId: row.pixel_sprite_id ?? null,
+    usePixelForChat: row.use_pixel_for_chat === 1,
+    isCore: row.is_core === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -85,6 +89,7 @@ export interface UpdateSpecialistInput {
   alias?: string | null
   avatarUrl?: string | null
   pixelSpriteId?: string | null
+  usePixelForChat?: boolean
 }
 
 export class SpecialistRepository {
@@ -187,6 +192,10 @@ export class SpecialistRepository {
     if (data.pixelSpriteId !== undefined) {
       sets.push('pixel_sprite_id = ?')
       values.push(data.pixelSpriteId)
+    }
+    if (data.usePixelForChat !== undefined) {
+      sets.push('use_pixel_for_chat = ?')
+      values.push(data.usePixelForChat ? 1 : 0)
     }
 
     if (sets.length === 0) {
@@ -311,6 +320,19 @@ export class SpecialistRepository {
       ...s,
       skills: this.getSkills(s.id)
     }))
+  }
+
+  reorderPriorities(orderedIds: string[]): void {
+    const db = getDatabase()
+    const stmt = db.prepare(
+      "UPDATE specialists SET priority = ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    const transaction = db.transaction(() => {
+      orderedIds.forEach((id, index) => {
+        stmt.run(index + 1, id)
+      })
+    })
+    transaction()
   }
 
   canDelete(id: string): { allowed: boolean; blockingSkills?: string[] } {

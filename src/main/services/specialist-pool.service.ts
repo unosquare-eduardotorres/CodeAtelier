@@ -98,6 +98,13 @@ interface SpecialistProcessInfo {
  * - `allComplete`: void — all tasks finished
  */
 export class SpecialistPoolService extends EventEmitter {
+  /** Max SDK agentic turns for plan-mode specialists */
+  private static readonly MAX_SPECIALIST_PLAN_TURNS = 30
+  /** Max SDK agentic turns for build-mode specialists */
+  private static readonly MAX_SPECIALIST_BUILD_TURNS = 50
+  /** Hard circuit breaker — abort specialist after this many tool calls */
+  private static readonly MAX_SPECIALIST_TOOL_CALLS = 75
+
   private readonly log = specialistPoolLogger
   private workspacePath: string | null = null
   private conversationId: string | null = null
@@ -439,8 +446,11 @@ export class SpecialistPoolService extends EventEmitter {
           }
         }
 
-        // Check if retryable
-        const isRetryable = info.attempt < RETRY_CONFIG.maxRetries
+        // Check if retryable — circuit breaker errors should NOT retry (retrying a loop just loops again)
+        const isCircuitBreakerError =
+          (error as Error).message.includes('exceeded') &&
+          (error as Error).message.includes('tool calls')
+        const isRetryable = !isCircuitBreakerError && info.attempt < RETRY_CONFIG.maxRetries
         if (isRetryable) {
           const delay = Math.min(
             RETRY_CONFIG.baseDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, info.attempt),
@@ -655,6 +665,8 @@ export class SpecialistPoolService extends EventEmitter {
     const abortController = new AbortController()
     info.abortController = abortController
 
+    let toolCallCount = 0
+
     const executor = new SDKExecutor()
     for await (const chunk of executor.execute({
       prompt: fullPrompt,
@@ -663,6 +675,9 @@ export class SpecialistPoolService extends EventEmitter {
       cwd,
       permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
       maxThinkingTokens: parseInt(thinkingBudget) || undefined,
+      maxTurns: mode === 'build'
+        ? SpecialistPoolService.MAX_SPECIALIST_BUILD_TURNS
+        : SpecialistPoolService.MAX_SPECIALIST_PLAN_TURNS,
       abortController
     })) {
       if ('_meta' in chunk && chunk._meta) {
@@ -683,6 +698,16 @@ export class SpecialistPoolService extends EventEmitter {
           chunk: chunk.content
         })
       } else if (chunk.type === 'tool_use') {
+        toolCallCount++
+        if (toolCallCount >= SpecialistPoolService.MAX_SPECIALIST_TOOL_CALLS) {
+          this.log.error(
+            `Specialist circuit breaker: ${task.specialist} hit ${toolCallCount} tool calls on task ${task.id}`
+          )
+          abortController.abort()
+          throw new Error(
+            `Specialist ${task.specialist} exceeded ${SpecialistPoolService.MAX_SPECIALIST_TOOL_CALLS} tool calls — likely stuck in a loop`
+          )
+        }
         this.emit('taskChunk', {
           taskId: task.id,
           specialist: task.specialist,
@@ -690,6 +715,7 @@ export class SpecialistPoolService extends EventEmitter {
           toolActivity: {
             type: 'tool_use',
             toolName: chunk.toolName ?? 'Unknown',
+            toolId: chunk.toolId,
             input: chunk.toolInput ?? ''
           }
         })
@@ -701,6 +727,7 @@ export class SpecialistPoolService extends EventEmitter {
           toolActivity: {
             type: 'tool_result',
             toolName: chunk.toolName ?? 'Unknown',
+            toolId: chunk.toolId,
             input: chunk.content ?? undefined
           }
         })
@@ -715,17 +742,85 @@ export class SpecialistPoolService extends EventEmitter {
     }
 
     // Detect investigation report in specialist output
-    const reportMatch = info.output.match(/```investigation-report\n([\s\S]*?)```/)
+    // Support both exact and slightly varied formats (extra whitespace, trailing content)
+    const reportMatch = info.output.match(/```investigation-report\s*\n([\s\S]*?)```/)
     if (reportMatch) {
       try {
-        const report = JSON.parse(reportMatch[1].trim())
+        const rawJson = reportMatch[1].trim()
+        const report = JSON.parse(rawJson)
+        this.log.info(
+          `[PIPELINE:investigation-report-detected] ${task.specialist}/${task.id}`,
+          {
+            problem: report.problem?.substring(0, 80),
+            impact: report.impact,
+            filesAffected: report.filesAffected?.length ?? 0
+          }
+        )
+        eventLoggerService.logInvestigationReportDetected({
+          conversationId: this.conversationId,
+          agentId: task.specialist,
+          taskId: task.id,
+          impact: report.impact,
+          filesAffected: report.filesAffected?.length ?? 0
+        })
         this.emit('investigationReport', {
           taskId: task.id,
           specialist: task.specialist,
           report
         })
-      } catch {
-        this.log.warn('Failed to parse investigation report JSON')
+      } catch (parseErr) {
+        this.log.error(
+          `[PIPELINE:investigation-report-parse-failed] ${task.specialist}/${task.id}:`,
+          parseErr,
+          '\nRaw JSON (first 500 chars):\n',
+          reportMatch[1].substring(0, 500)
+        )
+        // Emit a degraded report so the user sees SOMETHING
+        this.emit('investigationReport', {
+          taskId: task.id,
+          specialist: task.specialist,
+          report: {
+            problem: 'Investigation completed but the report could not be parsed.',
+            rootCause: 'The specialist produced a report in an unexpected format.',
+            proposedFix: 'Check the specialist output above for details.',
+            filesAffected: [],
+            impact: 'medium' as const,
+            impactReason: 'Report parsing failed — review specialist output manually.'
+          }
+        })
+      }
+    } else {
+      // Check if this was an investigation task that should have produced a report
+      const isInvestigationTask =
+        task.description.toLowerCase().includes('investigation report') ||
+        task.description.toLowerCase().includes('investigate')
+      if (isInvestigationTask) {
+        this.log.warn(
+          `[PIPELINE:investigation-report-missing] ${task.specialist}/${task.id} — no block found`,
+          `Output length: ${info.output.length} chars, last 200 chars: "${info.output.slice(-200)}"`
+        )
+        eventLoggerService.logInvestigationReportMissing({
+          conversationId: this.conversationId,
+          agentId: task.specialist,
+          taskId: task.id,
+          outputLength: info.output.length
+        })
+        // Emit fallback report so user knows the investigation ran
+        this.emit('investigationReport', {
+          taskId: task.id,
+          specialist: task.specialist,
+          report: {
+            problem: 'Investigation completed but no structured report was produced.',
+            rootCause:
+              'The specialist did not emit an investigation-report block. Review the output above for findings.',
+            proposedFix:
+              'Review the specialist output above and create a fix plan manually.',
+            filesAffected: [],
+            impact: 'medium' as const,
+            impactReason:
+              'No structured report — specialist output may contain useful findings.'
+          }
+        })
       }
     }
   }
@@ -932,6 +1027,13 @@ export class SpecialistPoolService extends EventEmitter {
    * Finalize task completion — mark as completed, merge worktree, clean up task loop.
    */
   private finalizeTaskCompletion(task: DecomposedTask, info: SpecialistProcessInfo): void {
+    // Guard against duplicate completion — can happen if both runTaskLoopGates
+    // and its catch handler call finalizeTaskCompletion for the same task.
+    if (this.taskStatuses.get(task.id) === 'completed') {
+      this.log.warn(`[PIPELINE:duplicate-completion-blocked] taskId=${task.id} — already finalized`)
+      return
+    }
+
     info.status = 'completed'
     this.taskStatuses.set(task.id, 'completed')
     this.emitProgress(task, 'completed', info.output)

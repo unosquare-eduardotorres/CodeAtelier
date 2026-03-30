@@ -12,7 +12,8 @@ import {
 import type { AgentStatus, ModelTier, ComplexityTier } from '../../../../shared/types'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
 import { useSpecialistStore, useAgentStore } from '@renderer/store'
-import { AgentIcon } from '@renderer/assets/agent-icons'
+import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
+import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 
 // Model tier badge config
 const MODEL_BADGE: Record<ModelTier, { label: string; bg: string; text: string }> = {
@@ -105,6 +106,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
 
   // Look up metadata from DB-backed specialists
   const meta = getAgentMeta(status.agentType, specialists)
+  const specialist = specialists.find((s) => s.agentId === status.agentType)
 
   const isActive =
     status.status === 'thinking' || status.status === 'writing' || status.status === 'reviewing'
@@ -150,11 +152,15 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
         }}
       >
         <div className="flex items-center gap-2">
-          <AgentIcon
-            agentType={status.agentType}
-            size={20}
-            className="text-text-secondary"
-          />
+          {specialist?.usePixelForChat && specialist?.pixelSpriteId ? (
+            <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={20} />
+          ) : (
+            <Avatar
+              avatarKey={specialist?.avatarUrl ?? getDefaultAvatarForRole(status.agentType)}
+              size="sm"
+              accentColor={meta?.color ?? '#B8976A'}
+            />
+          )}
           <span className="text-sm font-medium text-text-primary">
             {meta?.displayName ??
               status.agentType

@@ -2,7 +2,6 @@ export { AgentBaseService, summarizeToolInput } from './agent-base.service'
 export type { StreamChunk } from './agent-base.service'
 export { GeneralistService, generalistService } from './generalist.service'
 export type { GrillCompleteEvent } from './generalist.service'
-export { OrchestratorService, orchestratorService } from './orchestrator.service'
 export { FileService, fileService } from './file.service'
 export { SkillService, skillService } from './skill.service'
 

@@ -7,13 +7,22 @@ import log from 'electron-log/main'
 
 const sdkLog = log.scope('SDKExecutor')
 
-export interface SDKExecuteOptions {
+export interface SDKAgentDefinition {
+  description: string
   prompt: string
+  tools?: string[]
+  model?: 'sonnet' | 'opus' | 'haiku' | 'inherit'
+}
+
+export interface SDKExecuteOptions {
+  prompt: string | AsyncIterable<import('@anthropic-ai/claude-agent-sdk').SDKUserMessage>
   systemPrompt: string
   model: string
   cwd: string
   permissionMode: 'plan' | 'bypassPermissions' | 'acceptEdits'
   allowedTools?: string[]
+  /** SDK SubAgent definitions — specialists spawned as SubAgents */
+  agents?: Record<string, SDKAgentDefinition>
   resume?: string
   hooks?: Record<string, unknown>
   maxThinkingTokens?: number
@@ -103,7 +112,12 @@ export class SDKExecutor {
           systemPrompt: options.systemPrompt,
           cwd: options.cwd,
           permissionMode: options.permissionMode,
-          allowedTools: options.allowedTools,
+          // Wire SubAgent definitions
+          ...(options.agents ? { agents: options.agents } : {}),
+          // Auto-include Agent tool when agents are defined
+          allowedTools: options.agents
+            ? [...new Set([...(options.allowedTools ?? []), 'Agent'])]
+            : options.allowedTools,
           resume: options.resume,
           maxThinkingTokens: options.maxThinkingTokens,
           // Required safety flag when using bypassPermissions
@@ -142,6 +156,7 @@ export class SDKExecutor {
           if (assistantMsg?.content && Array.isArray(assistantMsg.content)) {
             for (const block of assistantMsg.content as Record<string, unknown>[]) {
               if (block.type === 'text' && block.text && !hasStreamedText) {
+                hasStreamedText = true // prevent result message from re-yielding
                 yield { type: 'text', content: block.text as string }
               } else if (block.type === 'tool_use') {
                 const toolId = block.id as string | undefined

@@ -58,6 +58,7 @@ export const IPC_CHANNELS = {
   SPECIALIST_DELETE: 'specialist:delete',
   SPECIALIST_ASSIGN_SKILL: 'specialist:assignSkill',
   SPECIALIST_REMOVE_SKILL: 'specialist:removeSkill',
+  SPECIALIST_REORDER: 'specialist:reorder',
 
   // Specialist Marketplace
   SPECIALIST_DEPLOY: 'specialist:deploy',
@@ -106,6 +107,10 @@ export const IPC_CHANNELS = {
 
   // Pixel Office
   PIXEL_OFFICE_POPOUT: 'pixelOffice:popout',
+  PIXEL_OFFICE_SAVE_LAYOUT: 'pixelOffice:saveLayout',
+  PIXEL_OFFICE_LOAD_LAYOUT: 'pixelOffice:loadLayout',
+  PIXEL_OFFICE_EXPORT_LAYOUT: 'pixelOffice:exportLayout',
+  PIXEL_OFFICE_IMPORT_LAYOUT: 'pixelOffice:importLayout',
 
   // Worktrees
   WORKTREE_LIST: 'worktree:list',
@@ -241,7 +246,13 @@ export const IPC_CHANNELS = {
 
   // Tool approval
   TOOL_APPROVAL_REQUEST: 'tool:approvalRequest',
-  TOOL_APPROVAL_RESPONSE: 'tool:approvalResponse'
+  TOOL_APPROVAL_RESPONSE: 'tool:approvalResponse',
+
+  // Core Agent Prompts
+  CORE_AGENT_PROMPT_LIST: 'coreAgentPrompt:list',
+  CORE_AGENT_PROMPT_GET: 'coreAgentPrompt:get',
+  CORE_AGENT_PROMPT_UPSERT: 'coreAgentPrompt:upsert',
+  CORE_AGENT_PROMPT_RESET: 'coreAgentPrompt:reset'
 } as const
 
 export const CONVERSATION_MODES = {
@@ -259,20 +270,20 @@ export const CONVERSATION_MODES = {
   }
 } as const
 
-/** Model used for activation CLAUDE.md generation */
-export const ACTIVATION_MODEL_ID = 'claude-sonnet-4-20250514' as const
+/** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
+export const ACTIVATION_MODEL_ID = 'claude-haiku-4-5-20251001' as const
 
-/** Fast model used for memory feed summarization tasks (structured extraction) */
-export const MEMORY_FEED_MODEL_ID = 'claude-sonnet-4-20250514' as const
+/** Fast model used for memory feed summarization tasks (structured extraction — Haiku-tier) */
+export const MEMORY_FEED_MODEL_ID = 'claude-haiku-4-5-20251001' as const
 
-/** Model used for dream consolidation cycles */
-export const DREAM_MODEL_ID = 'claude-sonnet-4-20250514' as const
+/** Model used for dream consolidation cycles (background summarization — Haiku-tier) */
+export const DREAM_MODEL_ID = 'claude-haiku-4-5-20251001' as const
 
 /** Model IDs per complexity tier — used for specialist routing */
 export const MODEL_TIER_IDS = {
-  haiku: 'claude-sonnet-4-20250514',
-  sonnet: 'claude-sonnet-4-20250514',
-  opus: 'claude-opus-4-20250514'
+  haiku: 'claude-haiku-4-5-20251001',
+  sonnet: 'claude-sonnet-4-6',
+  opus: 'claude-opus-4-6'
 } as const
 
 /** Complexity score thresholds for tier assignment */
@@ -284,11 +295,10 @@ export const COMPLEXITY_THRESHOLDS = {
 
 /**
  * @deprecated Use database-backed agent IDs instead.
- * Kept temporarily for backward compatibility in generalist/orchestrator services.
+ * Kept temporarily for backward compatibility in generalist services.
  */
 export const AGENT_IDS = {
-  GENERALIST: 'generalist',
-  ORCHESTRATOR: 'orchestrator'
+  GENERALIST: 'generalist'
 } as const
 
 /** Default cost preference for new workspaces */
@@ -297,14 +307,20 @@ export const DEFAULT_COST_PREFERENCE = 'balanced' as const
 /** Available Claude models for configuration UI */
 export const AVAILABLE_MODELS = [
   {
-    id: 'claude-sonnet-4-20250514',
-    label: 'Sonnet',
+    id: 'claude-haiku-4-5-20251001',
+    label: 'Haiku 4.5',
+    tier: 'haiku' as const,
+    description: 'Fast & economical'
+  },
+  {
+    id: 'claude-sonnet-4-6',
+    label: 'Sonnet 4.6',
     tier: 'sonnet' as const,
     description: 'Balanced performance'
   },
   {
-    id: 'claude-opus-4-20250514',
-    label: 'Opus',
+    id: 'claude-opus-4-6',
+    label: 'Opus 4.6',
     tier: 'opus' as const,
     description: 'Most capable'
   }
@@ -315,14 +331,14 @@ export const DEFAULT_MODEL_CONFIG: Record<
   import('./types').ModelAction,
   string
 > = {
-  generalist: 'claude-sonnet-4-20250514',
-  orchestrator: 'claude-sonnet-4-20250514',
-  'specialist:simple': 'claude-sonnet-4-20250514',
-  'specialist:moderate': 'claude-sonnet-4-20250514',
-  'specialist:complex': 'claude-opus-4-20250514',
-  dream: 'claude-sonnet-4-20250514',
-  memoryFeed: 'claude-sonnet-4-20250514',
-  activation: 'claude-sonnet-4-20250514'
+  generalist: 'claude-sonnet-4-6',
+  orchestrator: 'claude-haiku-4-5-20251001',
+  'specialist:simple': 'claude-haiku-4-5-20251001',
+  'specialist:moderate': 'claude-sonnet-4-6',
+  'specialist:complex': 'claude-opus-4-6',
+  dream: 'claude-haiku-4-5-20251001',
+  memoryFeed: 'claude-haiku-4-5-20251001',
+  activation: 'claude-haiku-4-5-20251001'
 } as const
 
 /** Human-readable metadata for each model action — used in the Models config UI */
@@ -382,11 +398,12 @@ export const MODEL_ACTIONS_META: Record<
 
 /**
  * MAX_THINKING_TOKENS budget per model tier.
- * Controls extended thinking depth: Opus gets full thinking, Sonnet moderate, Haiku none.
+ * Controls extended thinking depth: Opus gets full thinking, Sonnet moderate, Haiku light.
+ * Haiku 4.5 supports extended thinking — small budget keeps it focused.
  * Set as env var on specialist `claude -p` processes to improve output quality.
  */
 export const THINKING_BUDGETS = {
-  haiku: '0',
+  haiku: '5000',
   sonnet: '10000',
   opus: '31999'
 } as const
@@ -400,6 +417,11 @@ export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const // 500 * 1024
  * Based on Claude pricing as of March 2026.
  */
 export const MODEL_PRICING_TABLE = {
+  // Current models
+  'claude-haiku-4-5-20251001': { inputPer1M: 1.0, outputPer1M: 5.0 },
+  'claude-sonnet-4-6': { inputPer1M: 3.0, outputPer1M: 15.0 },
+  'claude-opus-4-6': { inputPer1M: 5.0, outputPer1M: 25.0 },
+  // Legacy (kept for historical cost calculation on older sessions)
   'claude-sonnet-4-20250514': { inputPer1M: 3.0, outputPer1M: 15.0 },
   'claude-opus-4-20250514': { inputPer1M: 15.0, outputPer1M: 75.0 },
   'claude-3-5-sonnet-20241022': { inputPer1M: 3.0, outputPer1M: 15.0 },

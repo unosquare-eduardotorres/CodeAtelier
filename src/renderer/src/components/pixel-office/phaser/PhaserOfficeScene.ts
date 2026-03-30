@@ -61,17 +61,17 @@ export interface SceneInitData {
   callbacks?: SceneCallbacks
 }
 
-// ── Dark Renaissance stone castle palette ──
+// ── Code Atelier Renaissance palette — deep obsidian/teal tones ──
 const PLANK_COLORS = [
-  0x2e2420, // dark walnut
-  0x3a2c24, // aged oak
-  0x342820, // charred plank
-  0x2a2018, // deep mahogany
-  0x38302a // weathered timber
+  0x1c272d, // deep teal-slate
+  0x2a2420, // warm dark walnut
+  0x1a2328, // dark slate
+  0x2d2520, // aged mahogany
+  0x1e1a16 // deep umber
 ]
-const WALL_BASE_COLOR = 0x1a1a2e // deep midnight stone
-const WALL_ACCENT_COLOR = 0x2a2844 // dark purple-gray mortar
-const BASEBOARD_COLOR = 0x6b5a3e // aged gold/bronze trim
+const WALL_BASE_COLOR = 0x0f1517 // --ca-bg-primary deep obsidian stone
+const WALL_ACCENT_COLOR = 0x283337 // --ca-panel-navy mortar lines
+const BASEBOARD_COLOR = 0x8b6f4a // --ca-gold-muted baseboard trim
 
 // ── Agent display names (used for idle placeholder agents) ──
 const AGENT_NAMES: Record<string, string> = {
@@ -425,6 +425,12 @@ export class PhaserOfficeScene extends Phaser.Scene {
     this.officeState.setAgentThought(numericId, thought)
   }
 
+  updateAgentDisplayName(numericId: number, name: string): void {
+    this.agentManager?.updateDisplayName(numericId, name)
+    const ch = this.officeState?.characters.get(numericId)
+    if (ch) ch.displayName = name
+  }
+
   // ─── Placeholder agent population ───
 
   private placeholderIdCounter = 50000
@@ -619,11 +625,11 @@ export class PhaserOfficeScene extends Phaser.Scene {
         if (hasFloorBelow || hasFloorAbove) {
           // Check if left or right neighbor is also floor (doorway edge)
           if (hasFloorLeft) {
-            g.fillStyle(0x0a0a14, 0.4)
+            g.fillStyle(0x0F1517, 0.4)
             g.fillRect(x, y, 2, TILE_SIZE)
           }
           if (hasFloorRight) {
-            g.fillStyle(0x0a0a14, 0.4)
+            g.fillStyle(0x0F1517, 0.4)
             g.fillRect(x + TILE_SIZE - 2, y, 2, TILE_SIZE)
           }
         }

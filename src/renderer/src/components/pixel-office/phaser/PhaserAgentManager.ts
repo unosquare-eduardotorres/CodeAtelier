@@ -587,6 +587,22 @@ export class PhaserAgentManager {
   }
 
   /**
+   * Update only the agent display name label.
+   */
+  updateDisplayName(numericId: number, name: string): void {
+    const visual = this.agents.get(numericId)
+    if (!visual?.nameLabel) return
+    visual.nameLabel.setText(name)
+
+    if (visual.labelBg && visual.statusLabel) {
+      const maxWidth = Math.max(visual.nameLabel.width, visual.statusLabel.width) + 6
+      visual.labelBg.clear()
+      visual.labelBg.fillStyle(0x111827, 0.75)
+      visual.labelBg.fillRoundedRect(-maxWidth / 2, 3, maxWidth, 20, 3)
+    }
+  }
+
+  /**
    * Sync all agent visuals from OfficeState characters.
    * Called each frame in the Phaser update loop.
    */

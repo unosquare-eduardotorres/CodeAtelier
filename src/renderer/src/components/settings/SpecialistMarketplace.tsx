@@ -76,8 +76,9 @@ export default function SpecialistMarketplace({
     return result
   }, [specialists, filter, searchQuery])
 
-  const activeCount = specialists.filter((s) => s.isActive && s.isDeployed).length
-  const totalCount = specialists.length
+  const deployableSpecialists = specialists.filter((s) => !s.isCore)
+  const activeCount = deployableSpecialists.filter((s) => s.isActive && s.isDeployed).length
+  const totalCount = deployableSpecialists.length
 
   const handleDeployAll = async (): Promise<void> => {
     setIsDeployingAll(true)
@@ -120,7 +121,6 @@ export default function SpecialistMarketplace({
     return (
       <SpecialistEditPage
         specialist={configuringSpecialist}
-        skills={skills}
         onBack={() => {
           setConfiguringSpecialist(null)
           // Reload marketplace to pick up any changes

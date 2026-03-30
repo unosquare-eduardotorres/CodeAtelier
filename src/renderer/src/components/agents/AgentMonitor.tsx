@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Monitor, ChevronLeft, ChevronRight, OctagonX, RotateCcw } from 'lucide-react'
+import { Monitor, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, OctagonX, RotateCcw } from 'lucide-react'
 import { useAgentStore, useSpecialistStore, useChatStore } from '@renderer/store'
 import { AgentStatusCard } from '@renderer/components/agents'
 
@@ -12,11 +12,13 @@ function formatTokens(count: number): string {
 interface AgentMonitorProps {
   isCollapsed?: boolean
   onToggleCollapse?: () => void
+  variant?: 'side' | 'bottom'
 }
 
 export default function AgentMonitor({
   isCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  variant = 'side'
 }: AgentMonitorProps): React.JSX.Element {
   const statuses = useAgentStore((s) => s.statuses)
   const stopAllAgents = useAgentStore((s) => s.stopAllAgents)
@@ -115,6 +117,28 @@ export default function AgentMonitor({
 
   // Collapsed state: slim bar
   if (isCollapsed) {
+    if (variant === 'bottom') {
+      return (
+        <div className="flex items-center gap-3 px-3 py-2 bg-surface-raised w-full">
+          <button
+            onClick={onToggleCollapse}
+            className="p-1.5 rounded-lg hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
+            aria-label="Expand agent panel"
+            title="Expand agent panel"
+          >
+            <ChevronUp size={14} />
+          </button>
+          <Monitor size={14} className="text-primary-text" />
+          <span className="text-xs text-text-secondary font-medium">Agent Monitor</span>
+          {activeCount > 0 && (
+            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-surface-base">
+              {activeCount}
+            </span>
+          )}
+        </div>
+      )
+    }
+
     return (
       <div className="flex flex-col items-center w-12 bg-surface-raised border-l border-border-subtle flex-shrink-0">
         {/* Header area — matches sidebar header height for continuous border line */}
@@ -140,8 +164,16 @@ export default function AgentMonitor({
     )
   }
 
+  const CollapseIcon = variant === 'bottom' ? ChevronDown : ChevronRight
+
   return (
-    <div className="flex flex-col h-full bg-surface-raised border-l border-border-subtle w-[350px] flex-shrink-0">
+    <div
+      className={
+        variant === 'bottom'
+          ? 'flex flex-col h-full bg-surface-raised w-full'
+          : 'flex flex-col h-full bg-surface-raised border-l border-border-subtle w-[350px] flex-shrink-0'
+      }
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
         <div className="flex items-center gap-2">
@@ -171,7 +203,7 @@ export default function AgentMonitor({
             aria-label="Collapse agent panel"
             title="Collapse agent panel"
           >
-            <ChevronRight size={16} />
+            <CollapseIcon size={16} />
           </button>
         </div>
       </div>

@@ -12,7 +12,7 @@ export default function HandoffIndicator({
   mode
 }: HandoffIndicatorProps): React.JSX.Element {
   return (
-    <div className="flex items-center gap-3 px-5 py-4 my-2 rounded-xl bg-primary-muted border border-primary/30 shadow-sm">
+    <div data-testid="handoff-indicator" className="flex items-center gap-3 px-5 py-4 my-2 rounded-xl bg-primary-muted border border-primary/30 shadow-sm">
       <ArrowRight size={16} className="text-primary-text flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-primary-text">Handing off to specialists</p>

@@ -46,6 +46,8 @@ export interface PixelOfficeEngine {
   restorePlaceholder(agentType: string): void
   /** Set the thought/activity text bubble for an agent */
   setAgentThought(numericId: number, thought: string | null): void
+  /** Update an agent display name label */
+  updateDisplayName(numericId: number, name: string): void
 }
 
 /**
@@ -176,6 +178,30 @@ export function usePixelOfficeBridge(engineRef: RefObject<PixelOfficeEngine | nu
         }
       }
     }
+
+    // Sync display names for all tracked agents (aliases may load after initial add)
+    for (const status of statuses) {
+      if (trackedAgents.current.has(status.agentId)) {
+        const numericId = agentIdToNumeric(status.agentId)
+        const specialist = specialists.find((s) => s.agentId === status.agentType)
+        const displayName = resolveDisplayName(
+          status.agentType,
+          coreAgentAliases,
+          specialist?.displayName
+        )
+        engine.updateDisplayName(numericId, displayName)
+      }
+    }
+
+    // Sync placeholder display names for known idle agent types
+    for (const agentType of KNOWN_AGENT_TYPES) {
+      const placeholderNumericId = engine.getPlaceholderNumericId(agentType)
+      if (placeholderNumericId === undefined) continue
+
+      const specialist = specialists.find((s) => s.agentId === agentType)
+      const displayName = resolveDisplayName(agentType, coreAgentAliases, specialist?.displayName)
+      engine.updateDisplayName(placeholderNumericId, displayName)
+    }
   }, [statuses, specialists, coreAgentAliases, engineRef])
 
   // ── Sync tool activities → thought bubbles + tool state ──
@@ -249,25 +275,26 @@ function resolveDisplayName(
  * Agent IDs may contain the type (e.g., 'generalist-session-abc' contains 'generalist').
  * This is a best-effort match.
  */
+const KNOWN_AGENT_TYPES = [
+  'orchestrator',
+  'generalist',
+  'react-architect',
+  'dotnet-architect',
+  'electron-architect',
+  'agentic-architect',
+  'db-architect',
+  'ux-ui-specialist',
+  'git-github-specialist',
+  'requirements-specialist',
+  'code-planner',
+  'execution-planner',
+  'cicd-devops',
+  'cloud-infrastructure'
+] as const
+
 function findAgentTypeForId(agentId: string): string | null {
-  const knownTypes = [
-    'orchestrator',
-    'generalist',
-    'react-architect',
-    'dotnet-architect',
-    'electron-architect',
-    'agentic-architect',
-    'db-architect',
-    'ux-ui-specialist',
-    'git-github-specialist',
-    'requirements-specialist',
-    'code-planner',
-    'execution-planner',
-    'cicd-devops',
-    'cloud-infrastructure'
-  ]
   // Check if the agentId starts with or contains a known type
-  for (const type of knownTypes) {
+  for (const type of KNOWN_AGENT_TYPES) {
     if (agentId === type || agentId.startsWith(type + '-') || agentId.startsWith(type + ':')) {
       return type
     }

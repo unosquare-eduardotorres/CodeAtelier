@@ -15,6 +15,8 @@ import type { MarketplaceSpecialist, Specialist, Skill } from '../../shared/type
  * - Manages DB is_active state
  */
 class SpecialistDeployService {
+  private readonly CORE_AGENT_IDS = new Set(['generalist', 'generalist-agent', 'orchestrator'])
+
   /**
    * Deploy a specialist to the workspace:
    * 1. Copy agent YAML from master to workspace
@@ -26,6 +28,9 @@ class SpecialistDeployService {
     const specialist = specialistRepository.findById(specialistId)
     if (!specialist) {
       throw new Error(`Specialist not found: ${specialistId}`)
+    }
+    if (this.CORE_AGENT_IDS.has(specialist.agentId)) {
+      throw new Error(`Cannot deploy/undeploy core agent: ${specialist.agentId}`)
     }
 
     const skills = specialistRepository.getSkills(specialistId)
@@ -72,6 +77,9 @@ class SpecialistDeployService {
     const specialist = specialistRepository.findById(specialistId)
     if (!specialist) {
       throw new Error(`Specialist not found: ${specialistId}`)
+    }
+    if (this.CORE_AGENT_IDS.has(specialist.agentId)) {
+      throw new Error(`Cannot undeploy core agent: ${specialist.agentId}`)
     }
 
     const skills = specialistRepository.getSkills(specialistId)
@@ -146,7 +154,10 @@ class SpecialistDeployService {
         isDeployed,
         alias: specialist.alias,
         avatarUrl: specialist.avatarUrl,
-        priority: specialist.priority
+        pixelSpriteId: specialist.pixelSpriteId,
+        usePixelForChat: specialist.usePixelForChat ?? false,
+        priority: specialist.priority,
+        isCore: specialist.isCore ?? false
       }
     })
   }

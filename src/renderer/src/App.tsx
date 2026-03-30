@@ -150,9 +150,11 @@ function App(): React.JSX.Element {
       const plan = data as TaskPlan
       setTaskPlan(plan)
 
-      // Auto-execute in plan mode — investigations don't need user strategy choice
+      // Auto-execute: plan-mode investigations OR plans with autoExecute flag (investigation fixes)
       if (plan.mode === 'plan') {
         setTimeout(() => executePlan('sequential'), 500)
+      } else if (plan.autoExecute) {
+        setTimeout(() => executePlan(plan.autoExecute!), 500)
       }
     })
 

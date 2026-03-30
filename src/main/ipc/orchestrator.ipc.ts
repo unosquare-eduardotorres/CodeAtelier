@@ -1,7 +1,7 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { mainLogger } from '../logger'
-import { generalistService, orchestratorService } from '../services'
+import { generalistService } from '../services'
 import { validateSender } from './validate-sender'
 
 const log = mainLogger
@@ -40,10 +40,6 @@ export function registerOrchestratorIpc(mainWindow: BrowserWindow): void {
       // Notify the renderer right away so the chat UI is shown.
       log.info('Generalist ready (SDK mode) for:', workspacePath)
       mainWindow.webContents.send(IPC_CHANNELS.ORCHESTRATOR_READY)
-
-      // Pre-initialize orchestrator workspace path (no process spawned yet)
-      await orchestratorService.start(workspacePath)
-      log.info('Orchestrator initialized for:', workspacePath)
     } catch (error) {
       log.error('Failed to start services:', error)
       throw error

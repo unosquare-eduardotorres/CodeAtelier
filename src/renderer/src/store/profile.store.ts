@@ -1,10 +1,11 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
-import type { UserProfile, CoreAgentAlias } from '../../../shared/types'
+import type { UserProfile, CoreAgentAlias, CoreAgentPrompt } from '../../../shared/types'
 
 interface ProfileState {
   profile: UserProfile | null
   coreAgentAliases: CoreAgentAlias[]
+  coreAgentPrompts: CoreAgentPrompt[]
   isLoading: boolean
   hasCompletedWelcome: boolean
 
@@ -17,11 +18,28 @@ interface ProfileState {
     avatarKey: string | null
   ) => Promise<void>
   getCoreAgentAlias: (role: 'generalist' | 'coordinator') => CoreAgentAlias | undefined
+
+  // Core Agent Prompts
+  loadCoreAgentPrompts: () => Promise<void>
+  saveCoreAgentPrompt: (
+    agentRole: 'generalist' | 'orchestrator',
+    mode: 'plan' | 'build',
+    promptText: string
+  ) => Promise<void>
+  resetCoreAgentPrompt: (
+    agentRole: 'generalist' | 'orchestrator',
+    mode: 'plan' | 'build'
+  ) => Promise<void>
+  getCoreAgentPrompt: (
+    agentRole: 'generalist' | 'orchestrator',
+    mode: 'plan' | 'build'
+  ) => CoreAgentPrompt | undefined
 }
 
 export const useProfileStore = create<ProfileState>((set, get) => ({
   profile: null,
   coreAgentAliases: [],
+  coreAgentPrompts: [],
   isLoading: true,
   hasCompletedWelcome: false,
 
@@ -82,5 +100,66 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
   getCoreAgentAlias: (role: 'generalist' | 'coordinator') => {
     return get().coreAgentAliases.find((a) => a.agentRole === role)
+  },
+
+  // ── Core Agent Prompts ──
+
+  loadCoreAgentPrompts: async () => {
+    try {
+      const prompts = await window.api.listCoreAgentPrompts()
+      set({ coreAgentPrompts: prompts })
+    } catch (error) {
+      rendererLog.error('Failed to load core agent prompts:', error)
+    }
+  },
+
+  saveCoreAgentPrompt: async (
+    agentRole: 'generalist' | 'orchestrator',
+    mode: 'plan' | 'build',
+    promptText: string
+  ) => {
+    try {
+      const updated = await window.api.upsertCoreAgentPrompt({ agentRole, mode, promptText })
+      set((state) => ({
+        coreAgentPrompts: [
+          ...state.coreAgentPrompts.filter(
+            (p) => !(p.agentRole === agentRole && p.mode === mode)
+          ),
+          updated
+        ]
+      }))
+    } catch (error) {
+      rendererLog.error('Failed to save core agent prompt:', error)
+      throw error
+    }
+  },
+
+  resetCoreAgentPrompt: async (
+    agentRole: 'generalist' | 'orchestrator',
+    mode: 'plan' | 'build'
+  ) => {
+    try {
+      const updated = await window.api.resetCoreAgentPrompt({ agentRole, mode })
+      set((state) => ({
+        coreAgentPrompts: [
+          ...state.coreAgentPrompts.filter(
+            (p) => !(p.agentRole === agentRole && p.mode === mode)
+          ),
+          updated
+        ]
+      }))
+    } catch (error) {
+      rendererLog.error('Failed to reset core agent prompt:', error)
+      throw error
+    }
+  },
+
+  getCoreAgentPrompt: (
+    agentRole: 'generalist' | 'orchestrator',
+    mode: 'plan' | 'build'
+  ) => {
+    return get().coreAgentPrompts.find(
+      (p) => p.agentRole === agentRole && p.mode === mode
+    )
   }
 }))

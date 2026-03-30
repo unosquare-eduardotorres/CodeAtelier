@@ -8,8 +8,6 @@ import {
 } from '../db/repositories'
 import {
   generalistService,
-  orchestratorService,
-  specialistPoolService,
   costTrackerService
 } from '../services'
 import type { StreamChunk } from '../services'
@@ -20,14 +18,14 @@ import type {
   ExecutionStrategy,
   HandoffBrief,
   InvestigationReport,
-  TaskExecutionProgress
+  TaskPlan
 } from '../../shared/types'
 import { memoryService } from '../services/memory.service'
 import { buildEnvWithPath } from '../services/env-utils'
 import { chatIpcLogger } from '../logger'
 import { eventLoggerService } from '../services/event-logger.service'
 import { validateSender } from './validate-sender'
-import { forwardChunkToRenderer, isMemoryEnabled, isPostReviewEnabled } from './chat-shared'
+import { forwardChunkToRenderer, isMemoryEnabled } from './chat-shared'
 
 const log = chatIpcLogger
 
@@ -101,75 +99,7 @@ Be concise. Only report actual issues found — do not speculate. If everything 
   })
 }
 
-/**
- * Fallback: runs the orchestrator in single-process mode (legacy behavior)
- * when task decomposition fails.
- */
-export async function runLegacyOrchestrator(
-  mainWindow: BrowserWindow,
-  conversationId: string,
-  handoff: HandoffBrief
-): Promise<void> {
-  const orchestratorContent = { value: '' }
-
-  const onOrchestratorChunk = (chunk: StreamChunk): void => {
-    forwardChunkToRenderer(mainWindow, conversationId, 'coordinator', chunk, orchestratorContent)
-  }
-
-  const onOrchestratorComplete = (): void => {
-    const savedMsg = messageRepository.create(
-      conversationId,
-      'coordinator',
-      orchestratorContent.value || '_No response received from orchestrator._'
-    )
-
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-      conversationId,
-      messageId: savedMsg.id
-    })
-
-    orchestratorService.removeListener('chunk', onOrchestratorChunk)
-    orchestratorService.removeListener('complete', onOrchestratorComplete)
-  }
-
-  orchestratorService.on('chunk', onOrchestratorChunk)
-  orchestratorService.on('complete', onOrchestratorComplete)
-
-  try {
-    await orchestratorService.send(handoff.summary, conversationId, handoff.mode)
-  } catch (error) {
-    log.error('Legacy orchestrator send failed:', error)
-    // Clean up listeners to prevent leaks
-    orchestratorService.removeListener('chunk', onOrchestratorChunk)
-    orchestratorService.removeListener('complete', onOrchestratorComplete)
-    // Surface error to user
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: `\n\n**Orchestrator Error:** ${(error as Error).message}`,
-      role: 'coordinator'
-    })
-    const savedMsg = messageRepository.create(
-      conversationId,
-      'coordinator',
-      `**Orchestrator Error:** ${(error as Error).message}`
-    )
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-      conversationId,
-      messageId: savedMsg.id
-    })
-  }
-}
-
 export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
-  // ── Forward specialist pool events to renderer ──
-  specialistPoolService.on('abandonmentDetected', (data) => {
-    mainWindow.webContents.send(IPC_CHANNELS.AGENT_ABANDONMENT_DETECTED, data)
-  })
-
-  specialistPoolService.on('gateFailure', (data) => {
-    mainWindow.webContents.send(IPC_CHANNELS.AGENT_GATE_FAILURE, data)
-  })
-
   // ── Forward cost tracker budget events to renderer ──
   costTrackerService.on('budgetWarning', (data) => {
     mainWindow.webContents.send(IPC_CHANNELS.COST_BUDGET_WARNING, data)
@@ -187,183 +117,70 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       args: { conversationId: string; strategy: ExecutionStrategy; tasks: DecomposedTask[] }
     ) => {
       validateSender(event)
+      const { conversationId, tasks } = args
 
-      const { conversationId, strategy, tasks } = args
-      log.info(
-        `Executing plan: strategy=${strategy}, tasks=${tasks.length}, conversation=${conversationId}`
-      )
+      log.info(`Executing plan via SubAgents: tasks=${tasks.length}, conversation=${conversationId}`)
 
-      // ── Event: plan execution started ──
       eventLoggerService.logPlanExecutionStarted({
         conversationId,
-        strategy,
+        strategy: 'subagent' as ExecutionStrategy,
         taskCount: tasks.length
       })
 
-      // Determine mode from conversation
       const conversation = conversationRepository.findById(conversationId)
       const mode: ConversationMode = (conversation?.mode as ConversationMode) ?? 'build'
-
-      // Set workspace path on the pool service
       const workspacePath = generalistService.getWorkspacePath()
       if (!workspacePath) {
         throw new Error('No workspace path — generalist not started')
       }
-      specialistPoolService.setWorkspacePath(workspacePath)
-      specialistPoolService.setConversationId(conversationId)
 
-      // Pass the enriched handoff brief to the specialist pool for context injection
       const taskPlanBrief = (args as { brief?: HandoffBrief }).brief ?? null
-      specialistPoolService.setConversationBrief(taskPlanBrief)
+      const taskPlan: TaskPlan = {
+        conversationId,
+        summary: tasks.map((t) => t.description).join('; '),
+        mode,
+        tasks,
+        brief: taskPlanBrief ?? undefined
+      }
 
-      // ── Per-task content tracking for message segmentation ──
-      const taskContents = new Map<string, string>()
-      /** Tracks final status of each task for context injection into generalist */
-      const taskStatuses = new Map<string, string>()
+      const accumulatedContent = { value: '' }
 
-      // Forward task progress events to the renderer
-      const onTaskProgress = (progress: TaskExecutionProgress): void => {
-        mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PROGRESS, progress)
-
-        // Track final status for context injection into generalist
-        taskStatuses.set(progress.taskId, progress.status)
-
-        // When a task completes or fails, save its accumulated content as a separate message
-        if (progress.status === 'completed' || progress.status === 'failed') {
-          const taskContent = taskContents.get(progress.taskId)
-          if (taskContent) {
-            const task = tasks.find((t) => t.id === progress.taskId)
-            const statusEmoji = progress.status === 'completed' ? '✅' : '❌'
-            const header = `### ${statusEmoji} ${progress.specialist} — ${task?.description ?? progress.taskId}\n\n`
-            const savedMsg = messageRepository.create(
-              conversationId,
-              'specialist',
-              header + taskContent,
-              progress.specialist
-            )
-
-            // Complete this task's message in the renderer
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-              conversationId,
-              messageId: savedMsg.id,
-              taskId: progress.taskId
-            })
-
-            taskContents.delete(progress.taskId)
-          }
+      const onChunk = (chunk: StreamChunk): void => {
+        if (chunk.type === 'text' && chunk.content) {
+          accumulatedContent.value += chunk.content
         }
-
-        // Emit agent status updates so the AgentMonitor panel tracks each specialist
-        mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, {
-          agentId: `${progress.specialist}-${progress.taskId}`,
-          agentType: progress.specialist,
-          status:
-            progress.status === 'running'
-              ? 'writing'
-              : progress.status === 'completed'
-                ? 'completed'
-                : progress.status === 'failed'
-                  ? 'failed'
-                  : 'idle',
-          currentTask: tasks.find((t) => t.id === progress.taskId)?.description,
-          elapsedMs: 0,
-          tokenUsage: 0,
-          model: progress.model,
-          complexityTier: progress.complexityTier
-        })
+        forwardChunkToRenderer(mainWindow, conversationId, 'coordinator', chunk, accumulatedContent)
       }
 
-      // Forward streaming chunks from each specialist to the chat AND agent monitor
-      const onTaskChunk = (data: {
-        taskId: string
-        specialist: string
-        chunk: string
-        toolActivity?: { type: string; toolName: string; input?: string }
-      }): void => {
-        const existing = taskContents.get(data.taskId) ?? ''
-        taskContents.set(data.taskId, existing + data.chunk)
+      const onComplete = async (): Promise<void> => {
+        log.info('SubAgent execution complete')
 
-        if (data.toolActivity) {
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-            conversationId,
-            chunk: '',
-            role: 'coordinator',
-            taskId: data.taskId,
-            specialist: data.specialist,
-            toolActivity: {
-              id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              toolName: data.toolActivity.toolName,
-              status: data.toolActivity.type === 'tool_use' ? 'running' : 'completed',
-              input: data.toolActivity.input,
-              startedAt: Date.now(),
-              ...(data.toolActivity.type === 'tool_result'
-                ? { completedAt: Date.now() }
-                : {})
-            }
-          })
-        } else if (data.chunk) {
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-            conversationId,
-            chunk: data.chunk,
-            role: 'coordinator',
-            taskId: data.taskId,
-            specialist: data.specialist
-          })
-        }
-
-        mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_CHUNK, {
-          agentId: `${data.specialist}-${data.taskId}`,
-          taskId: data.taskId,
-          text: data.toolActivity
-            ? `\n🔧 **${data.toolActivity.toolName}** ${data.toolActivity.input ?? ''}\n`
-            : data.chunk
-        })
-      }
-
-      const onInvestigationReport = (data: {
-        taskId: string
-        specialist: string
-        report: InvestigationReport
-      }): void => {
-        mainWindow.webContents.send(IPC_CHANNELS.CHAT_INVESTIGATION_REPORT, {
-          conversationId,
-          ...data
-        })
-      }
-
-      const onAllComplete = async (): Promise<void> => {
-        log.info('All specialist tasks completed')
-
-        // ── Event: plan execution completed ──
         eventLoggerService.logPlanExecutionCompleted({
           conversationId,
-          strategy,
+          strategy: 'subagent' as ExecutionStrategy,
           taskCount: tasks.length
         })
 
-        // Save a SHORT summary message — individual task content already saved per-task
-        const summaryLines = tasks
-          .map((t) => `- **${t.specialist}** (${t.id}): ${t.description}`)
-          .join('\n')
-        const summaryContent = `## ✅ All Tasks Complete (${strategy})\n\n${summaryLines}`
-        const savedMsg = messageRepository.create(conversationId, 'coordinator', summaryContent)
+        const savedMsg = messageRepository.create(
+          conversationId,
+          'coordinator',
+          accumulatedContent.value || '_No response from SubAgent execution._'
+        )
 
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
           conversationId,
           messageId: savedMsg.id
         })
 
-        // Log task execution as a project memory
         try {
-          const wpPath = generalistService.getWorkspacePath()
-          if (wpPath && isMemoryEnabled(wpPath)) {
+          if (workspacePath && isMemoryEnabled(workspacePath)) {
             const allWs = workspaceRepository.findAll()
-            const ws = allWs.find((w) => w.repoPath === wpPath)
+            const ws = allWs.find((w) => w.repoPath === workspacePath)
             if (ws) {
               memoryService.create({
                 workspaceId: ws.id,
                 type: 'project',
-                title: `Task execution: ${tasks.length} tasks (${strategy})`,
+                title: `Task execution: ${tasks.length} tasks (SubAgent)`,
                 content: tasks.map((t) => `- ${t.specialist}: ${t.description}`).join('\n'),
                 tags: ['task-execution'],
                 importance: 4
@@ -374,89 +191,21 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           log.warn('Memory update on task complete failed:', e)
         }
 
-        // Post-specialist code review (opt-in via workspace settings)
-        try {
-          const wpPath = generalistService.getWorkspacePath()
-          if (wpPath && isPostReviewEnabled(wpPath)) {
-            log.info('Post-specialist review enabled — spawning review agent')
-            runPostSpecialistReview(mainWindow, conversationId, tasks, wpPath).catch((e) => {
-              log.warn('Post-specialist review failed:', e)
-            })
-          }
-        } catch (e) {
-          log.warn('Post-review check failed:', e)
-        }
-
-        // ── Feed results back to generalist for follow-up context ──
-        try {
-          const taskResultLines = tasks
-            .map((t) => {
-              const rawStatus = taskStatuses.get(t.id) ?? 'unknown'
-              const status = rawStatus === 'completed' ? '✅ completed' : `❌ ${rawStatus}`
-              return `- ${t.specialist} (${t.id}): ${t.description} → ${status}`
-            })
-            .join('\n')
-
-          const contextMessage = [
-            `[SYSTEM CONTEXT UPDATE — Orchestrator/Specialist Execution Complete]`,
-            ``,
-            `The following task plan was executed (strategy: ${strategy}):`,
-            ``,
-            taskResultLines,
-            ``,
-            `Internalize these results. The user may ask follow-up questions about task outcomes.`,
-            `Do NOT use tools to investigate. Do NOT produce a visible response.`,
-            `Simply wait for the user's next message.`
-          ].join('\n')
-
-          await generalistService.injectContext(contextMessage, conversationId)
-        } catch (feedbackErr) {
-          log.warn('Failed to inject task results into generalist:', feedbackErr)
-        }
-
-        // Clean up
-        specialistPoolService.removeListener('taskProgress', onTaskProgress)
-        specialistPoolService.removeListener('taskChunk', onTaskChunk)
-        specialistPoolService.removeListener('taskRetry', onTaskRetry)
-        specialistPoolService.removeListener('allComplete', onAllComplete)
-        specialistPoolService.removeListener('investigationReport', onInvestigationReport)
+        generalistService.removeListener('chunk', onChunk)
+        generalistService.removeListener('subAgentsComplete', onComplete)
       }
 
-      // Forward retry events to renderer
-      const onTaskRetry = (data: {
-        taskId: string
-        specialist: string
-        attempt: number
-        maxRetries: number
-      }): void => {
-        mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_RETRY, data)
-        // Also send as a chat chunk so the user sees the retry notification
-        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-          conversationId,
-          chunk: `\n> **${data.specialist}** failed — retrying (attempt ${data.attempt + 1}/${data.maxRetries + 1})...\n\n`,
-          role: 'coordinator'
-        })
-      }
-
-      specialistPoolService.on('taskProgress', onTaskProgress)
-      specialistPoolService.on('taskChunk', onTaskChunk)
-      specialistPoolService.on('taskRetry', onTaskRetry)
-      specialistPoolService.on('allComplete', onAllComplete)
-      specialistPoolService.on('investigationReport', onInvestigationReport)
+      generalistService.on('chunk', onChunk)
+      generalistService.on('subAgentsComplete', onComplete)
 
       try {
-        if (strategy === 'parallel') {
-          await specialistPoolService.executeParallel(tasks, mode)
-        } else {
-          await specialistPoolService.executeSequential(tasks, mode)
-        }
+        await generalistService.executeWithSubAgents(taskPlan, mode, conversationId)
       } catch (error) {
-        log.error('Plan execution failed:', error)
+        log.error('SubAgent plan execution failed:', error)
 
-        // ── Event: plan execution failed ──
         eventLoggerService.logPlanExecutionFailed({
           conversationId,
-          strategy,
+          strategy: 'subagent' as ExecutionStrategy,
           error: (error as Error).message
         })
 
@@ -473,11 +222,8 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           messageId: savedMsg.id
         })
 
-        specialistPoolService.removeListener('taskProgress', onTaskProgress)
-        specialistPoolService.removeListener('taskChunk', onTaskChunk)
-        specialistPoolService.removeListener('taskRetry', onTaskRetry)
-        specialistPoolService.removeListener('allComplete', onAllComplete)
-        specialistPoolService.removeListener('investigationReport', onInvestigationReport)
+        generalistService.removeListener('chunk', onChunk)
+        generalistService.removeListener('subAgentsComplete', onComplete)
       }
     }
   )
@@ -510,20 +256,26 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         mode: 'build'
       }
 
+      // Notify renderer of mode change
+      mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+        conversationId,
+        chunk: '\n> **Mode switched to Build** — executing fix plan.\n\n',
+        role: 'coordinator'
+      })
+
       // Decompose into fix tasks
-      const taskPlan = await orchestratorService.decompose(fixBrief, conversationId, 'build')
-      mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
+      const taskPlan = await generalistService.decompose(fixBrief, conversationId, 'build')
 
-      // Auto-execute
-      specialistPoolService.setWorkspacePath(generalistService.getWorkspacePath()!)
-      specialistPoolService.setConversationId(conversationId)
-      specialistPoolService.setConversationBrief(fixBrief)
+      // Send plan WITH autoExecute flag — renderer will call CHAT_EXECUTE_PLAN with proper listeners
+      mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, {
+        ...taskPlan,
+        brief: fixBrief,
+        autoExecute: strategy
+      })
 
-      if (strategy === 'parallel') {
-        await specialistPoolService.executeParallel(taskPlan.tasks, 'build')
-      } else {
-        await specialistPoolService.executeSequential(taskPlan.tasks, 'build')
-      }
+      // DO NOT call specialistPoolService.execute*() here — that path has no listeners.
+      // The renderer's onTaskPlan handler will auto-execute via executePlan() which calls
+      // CHAT_EXECUTE_PLAN — the properly wired path with all event listeners.
     }
   )
 

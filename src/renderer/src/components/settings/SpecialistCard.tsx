@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Loader2, Settings, Zap, Brain, Sparkles } from 'lucide-react'
+import { Loader2, Settings, Zap, Brain, Sparkles, Shield } from 'lucide-react'
 import type { MarketplaceSpecialist } from '../../../../shared/types'
 import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
+import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
 
 interface SpecialistCardProps {
   specialist: MarketplaceSpecialist
@@ -85,10 +86,14 @@ export default function SpecialistCard({
       {/* Icon + Name */}
       <div className="flex items-start gap-3 mb-3">
         <div
-          className="flex items-center justify-center w-10 h-10 rounded-sm flex-shrink-0"
+          className="flex items-center justify-center w-10 h-10 rounded-sm flex-shrink-0 overflow-hidden"
           style={{ backgroundColor: `${specialist.color}18`, border: `1px solid ${specialist.color}35` }}
         >
-          {AGENT_ICON_MAP[specialist.agentId] ? (
+          {specialist.usePixelForChat && specialist.pixelSpriteId ? (
+            <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={32} />
+          ) : specialist.avatarUrl ? (
+            <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={specialist.color} />
+          ) : AGENT_ICON_MAP[specialist.agentId] ? (
             <AgentIcon agentType={specialist.agentId} size={28} />
           ) : (
             <span className="text-lg leading-none">{specialist.icon}</span>
@@ -104,8 +109,14 @@ export default function SpecialistCard({
         </div>
       </div>
 
-      {/* Model + Skills */}
+      {/* Model + Skills + Core badge */}
       <div className="flex items-center gap-1.5 flex-wrap mb-3">
+        {specialist.isCore && (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-mode-plan-muted text-mode-plan-text border border-mode-plan/30">
+            <Shield size={9} />
+            Core
+          </span>
+        )}
         <span
           className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border ${modelBadge.className}`}
         >
@@ -128,7 +139,13 @@ export default function SpecialistCard({
 
       {/* Deploy/Undeploy button */}
       <div className="mt-auto">
-        {isActive ? (
+        {specialist.isCore ? (
+          <div className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
+            text-text-muted border border-border-subtle/50 bg-surface-float/30 cursor-default min-h-[36px]">
+            <Shield size={12} />
+            Core Agent &middot; Always Active
+          </div>
+        ) : isActive ? (
           <button
             onClick={onUndeploy}
             disabled={isDeploying}

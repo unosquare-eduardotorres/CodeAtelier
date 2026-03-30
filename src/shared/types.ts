@@ -16,6 +16,16 @@ export interface CoreAgentAlias {
   updatedAt: string
 }
 
+export interface CoreAgentPrompt {
+  id: string
+  agentRole: 'generalist'
+  mode: 'plan' | 'build'
+  promptText: string
+  defaultPromptText: string
+  isCustom: boolean
+  updatedAt: string
+}
+
 export interface Workspace {
   id: string
   name: string
@@ -102,6 +112,8 @@ export interface Specialist {
   alias: string | null
   avatarUrl: string | null
   pixelSpriteId: string | null
+  usePixelForChat: boolean
+  isCore: boolean
   skills?: Skill[]
   createdAt: string
   updatedAt: string
@@ -139,6 +151,7 @@ export interface UpdateSpecialistInput {
   alias?: string | null
   avatarUrl?: string | null
   pixelSpriteId?: string | null
+  usePixelForChat?: boolean
 }
 
 // ── Marketplace Models ──
@@ -158,7 +171,9 @@ export interface MarketplaceSpecialist {
   alias: string | null
   avatarUrl: string | null
   pixelSpriteId?: string | null
+  usePixelForChat?: boolean
   priority: number
+  isCore: boolean
 }
 
 // ── Workspace Deploy Models ──
@@ -270,7 +285,6 @@ export type ModelTier = ComplexityScore['model']
 /** Actions that consume a Claude model — each can be independently configured */
 export type ModelAction =
   | 'generalist'
-  | 'orchestrator'
   | 'specialist:simple'
   | 'specialist:moderate'
   | 'specialist:complex'
@@ -304,6 +318,8 @@ export interface TaskPlan {
   tasks: DecomposedTask[]
   /** Preserved enriched handoff context for specialist injection */
   brief?: HandoffBrief
+  /** When set, the renderer auto-executes via CHAT_EXECUTE_PLAN with this strategy */
+  autoExecute?: ExecutionStrategy
 }
 
 /** Progress event for an individual specialist task */
@@ -585,6 +601,13 @@ export interface InvestigationReport {
   impactReason: string
 }
 
+// ── Image Attachments ──
+export interface ImageAttachment {
+  base64: string
+  mimeType: string
+  fileName: string
+}
+
 // ── Ideas ──
 export interface Idea {
   id: string
@@ -663,6 +686,7 @@ export interface IpcChannels {
   'specialist:delete': { args: { id: string }; return: void }
   'specialist:assignSkill': { args: { specialistId: string; skillId: string }; return: void }
   'specialist:removeSkill': { args: { specialistId: string; skillId: string }; return: void }
+  'specialist:reorder': { args: { orderedIds: string[] }; return: void }
 
   // Specialist Marketplace
   'specialist:deploy': {
@@ -893,6 +917,21 @@ export interface IpcChannels {
   'coreAgent:upsert': {
     args: { agentRole: 'generalist' | 'coordinator'; alias: string | null; avatarKey: string | null }
     return: CoreAgentAlias
+  }
+
+  // Core Agent Prompts
+  'coreAgentPrompt:list': { args: void; return: CoreAgentPrompt[] }
+  'coreAgentPrompt:get': {
+    args: { agentRole: 'generalist' | 'orchestrator'; mode: 'plan' | 'build' }
+    return: CoreAgentPrompt | undefined
+  }
+  'coreAgentPrompt:upsert': {
+    args: { agentRole: 'generalist' | 'orchestrator'; mode: 'plan' | 'build'; promptText: string }
+    return: CoreAgentPrompt
+  }
+  'coreAgentPrompt:reset': {
+    args: { agentRole: 'generalist' | 'orchestrator'; mode: 'plan' | 'build' }
+    return: CoreAgentPrompt
   }
 }
 

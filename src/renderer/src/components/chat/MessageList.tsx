@@ -375,6 +375,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           <InvestigationReportCard
             report={investigationReport.report}
             specialist={investigationReport.specialist}
+            isExecuting={isExecutingPlan}
             onFixSequential={() => executeInvestigationFix('sequential')}
             onFixParallel={() => executeInvestigationFix('parallel')}
             onRevise={handleReviseInvestigation}

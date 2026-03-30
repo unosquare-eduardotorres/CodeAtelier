@@ -41,6 +41,7 @@ import type {
   RepoInfo,
   UserProfile,
   CoreAgentAlias,
+  CoreAgentPrompt,
   MarketplaceSpecialist
 } from '../shared/types'
 
@@ -122,6 +123,7 @@ interface Api {
   deleteSpecialist: (args: { id: string }) => Promise<void>
   assignSkillToSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
   removeSkillFromSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
+  reorderSpecialists: (args: { orderedIds: string[] }) => Promise<void>
 
   // Specialist Marketplace
   deploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
@@ -186,6 +188,10 @@ interface Api {
 
   // Pixel Office
   popoutPixelOffice: () => Promise<void>
+  saveOfficeLayout: (args: { layout: string }) => Promise<{ success: boolean }>
+  loadOfficeLayout: () => Promise<{ layout: string | null }>
+  exportOfficeLayout: (args: { layout: string }) => Promise<{ success: boolean; path?: string }>
+  importOfficeLayout: () => Promise<{ layout: string | null }>
 
   // Memory (auto memory system)
   listMemories: (args: { workspaceId: string }) => Promise<Memory[]>
@@ -402,6 +408,22 @@ interface Api {
     alias: string | null
     avatarKey: string | null
   }) => Promise<CoreAgentAlias>
+
+  // Core Agent Prompts
+  listCoreAgentPrompts: () => Promise<CoreAgentPrompt[]>
+  getCoreAgentPrompt: (args: {
+    agentRole: 'generalist' | 'orchestrator'
+    mode: 'plan' | 'build'
+  }) => Promise<CoreAgentPrompt | undefined>
+  upsertCoreAgentPrompt: (args: {
+    agentRole: 'generalist' | 'orchestrator'
+    mode: 'plan' | 'build'
+    promptText: string
+  }) => Promise<CoreAgentPrompt>
+  resetCoreAgentPrompt: (args: {
+    agentRole: 'generalist' | 'orchestrator'
+    mode: 'plan' | 'build'
+  }) => Promise<CoreAgentPrompt>
 
   // Renderer logging bridge
   log: (args: {

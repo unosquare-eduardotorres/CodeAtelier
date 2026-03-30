@@ -39,6 +39,7 @@ import type {
   RepoInfo,
   UserProfile,
   CoreAgentAlias,
+  CoreAgentPrompt,
   MarketplaceSpecialist
 } from '../shared/types'
 
@@ -176,6 +177,8 @@ const api = {
     isActive?: boolean
     alias?: string | null
     avatarUrl?: string | null
+    pixelSpriteId?: string | null
+    usePixelForChat?: boolean
   }): Promise<Specialist> => ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_UPDATE, args),
 
   deleteSpecialist: (args: { id: string }): Promise<void> =>
@@ -186,6 +189,9 @@ const api = {
 
   removeSkillFromSpecialist: (args: { specialistId: string; skillId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_REMOVE_SKILL, args),
+
+  reorderSpecialists: (args: { orderedIds: string[] }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_REORDER, args),
 
   // ── Specialist Marketplace ──
   deploySpecialist: (args: { workspacePath: string; specialistId: string }): Promise<void> =>
@@ -305,6 +311,14 @@ const api = {
 
   // ── Pixel Office ──
   popoutPixelOffice: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PIXEL_OFFICE_POPOUT),
+  saveOfficeLayout: (args: { layout: string }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PIXEL_OFFICE_SAVE_LAYOUT, args),
+  loadOfficeLayout: (): Promise<{ layout: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PIXEL_OFFICE_LOAD_LAYOUT),
+  exportOfficeLayout: (args: { layout: string }): Promise<{ success: boolean; path?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PIXEL_OFFICE_EXPORT_LAYOUT, args),
+  importOfficeLayout: (): Promise<{ layout: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PIXEL_OFFICE_IMPORT_LAYOUT),
 
   // ── Agent Sync ──
   computeSyncDiff: (args: { workspacePath: string }): Promise<SyncDiff> =>
@@ -816,6 +830,29 @@ const api = {
     alias: string | null
     avatarKey: string | null
   }): Promise<CoreAgentAlias> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_UPSERT, args),
+
+  // ── Core Agent Prompts ──
+  listCoreAgentPrompts: (): Promise<CoreAgentPrompt[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_LIST),
+
+  getCoreAgentPrompt: (args: {
+    agentRole: 'generalist' | 'orchestrator'
+    mode: 'plan' | 'build'
+  }): Promise<CoreAgentPrompt | undefined> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_GET, args),
+
+  upsertCoreAgentPrompt: (args: {
+    agentRole: 'generalist' | 'orchestrator'
+    mode: 'plan' | 'build'
+    promptText: string
+  }): Promise<CoreAgentPrompt> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT, args),
+
+  resetCoreAgentPrompt: (args: {
+    agentRole: 'generalist' | 'orchestrator'
+    mode: 'plan' | 'build'
+  }): Promise<CoreAgentPrompt> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_RESET, args),
 
   // ── Renderer Logging Bridge ──
   log: (args: {

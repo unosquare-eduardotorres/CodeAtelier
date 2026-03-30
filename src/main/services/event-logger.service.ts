@@ -343,7 +343,7 @@ class EventLoggerService {
     conversationId: string
     workspaceId?: string
     error: string
-    fallback: 'legacy' | 'abort'
+    fallback: 'legacy' | 'abort' | 'none'
   }): void {
     this.log(
       'decomposition.failed',
@@ -446,18 +446,6 @@ class EventLoggerService {
     )
   }
 
-  logOrchestratorStderr(opts: {
-    conversationId?: string
-    workspaceId?: string
-    stderr: string
-  }): void {
-    this.log('orchestrator.stderr', 'error', `Orchestrator stderr: ${opts.stderr.substring(0, 200)}`, {
-      ...opts,
-      agentId: 'orchestrator',
-      data: { stderr: opts.stderr.substring(0, 1000) }
-    })
-  }
-
   // ── Tool Call Events ──
 
   logAgentToolCall(opts: {
@@ -514,6 +502,45 @@ class EventLoggerService {
       'error',
       `Circuit breaker tripped after ${opts.failures} consecutive failures`,
       { ...opts, data: { failures: opts.failures } }
+    )
+  }
+
+  // ── Investigation Pipeline ──
+
+  logInvestigationReportDetected(opts: {
+    conversationId?: string
+    agentId: string
+    taskId: string
+    impact?: string
+    filesAffected?: number
+  }): void {
+    this.log(
+      'investigation.report_detected',
+      'agent',
+      `Investigation report detected from ${opts.agentId}/${opts.taskId}`,
+      {
+        conversationId: opts.conversationId,
+        agentId: opts.agentId,
+        data: { taskId: opts.taskId, impact: opts.impact, filesAffected: opts.filesAffected }
+      }
+    )
+  }
+
+  logInvestigationReportMissing(opts: {
+    conversationId?: string
+    agentId: string
+    taskId: string
+    outputLength: number
+  }): void {
+    this.log(
+      'investigation.report_missing',
+      'agent',
+      `Investigation task ${opts.agentId}/${opts.taskId} completed without structured report`,
+      {
+        conversationId: opts.conversationId,
+        agentId: opts.agentId,
+        data: { taskId: opts.taskId, outputLength: opts.outputLength }
+      }
     )
   }
 

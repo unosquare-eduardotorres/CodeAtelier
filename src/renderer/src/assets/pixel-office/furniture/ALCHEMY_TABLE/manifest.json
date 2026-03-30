@@ -1,0 +1,33 @@
+{
+  "id": "ALCHEMY_TABLE",
+  "name": "Alchemy Table",
+  "category": "desks",
+  "type": "group",
+  "groupType": "rotation",
+  "rotationScheme": "2-way",
+  "canPlaceOnWalls": false,
+  "canPlaceOnSurfaces": false,
+  "backgroundTiles": 1,
+  "members": [
+    {
+      "type": "asset",
+      "id": "ALCHEMY_TABLE_FRONT",
+      "file": "ALCHEMY_TABLE_FRONT.png",
+      "width": 32,
+      "height": 32,
+      "footprintW": 2,
+      "footprintH": 2,
+      "orientation": "front"
+    },
+    {
+      "type": "asset",
+      "id": "ALCHEMY_TABLE_SIDE",
+      "file": "ALCHEMY_TABLE_SIDE.png",
+      "width": 16,
+      "height": 32,
+      "footprintW": 1,
+      "footprintH": 2,
+      "orientation": "side"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { X, Check } from 'lucide-react'
+import { X, Check, ChevronDown } from 'lucide-react'
 import type { Specialist } from '../../../../shared/types'
 import {
   PIXEL_SPRITE_CATALOG,
@@ -56,11 +56,13 @@ function SpriteThumbnail({
   entry,
   size = 48,
   selected = false,
+  disabled = false,
   onClick
 }: {
   entry: PixelSpriteEntry
   size?: number
   selected?: boolean
+  disabled?: boolean
   onClick?: () => void
 }): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -87,19 +89,22 @@ function SpriteThumbnail({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
       className={`
-        relative rounded-lg transition-all duration-150 cursor-pointer
+        relative rounded-lg transition-all duration-150
         border-2 p-0.5
         ${selected
-          ? 'border-primary ring-2 ring-primary/30 scale-105'
-          : 'border-transparent hover:border-border-default hover:scale-105'
+          ? 'border-primary ring-2 ring-primary/40 scale-110 bg-primary/10 cursor-pointer'
+          : disabled
+            ? 'border-transparent opacity-40 grayscale cursor-default'
+            : 'border-transparent hover:border-border-default hover:scale-105 cursor-pointer'
         }
         ${!loaded ? 'bg-surface-base' : ''}
         focus:outline-none focus-visible:ring-2 focus-visible:ring-primary
       `}
-      aria-label={`${entry.label}${entry.variant ? ` variant ${entry.variant}` : ''}`}
-      title={`${entry.label}${entry.variant ? ` (v${entry.variant})` : ''}`}
+      aria-label={`${entry.label}${entry.variant ? ` variant ${entry.variant}` : ''}${disabled ? ' (taken)' : ''}`}
+      title={`${entry.label}${entry.variant ? ` (v${entry.variant})` : ''}${disabled ? ' (taken)' : ''}`}
+      tabIndex={disabled ? -1 : 0}
     >
       <canvas
         ref={canvasRef}
@@ -127,6 +132,14 @@ export default function PixelSpritePicker({
 }: PixelSpritePickerProps): React.JSX.Element {
   const [filter, setFilter] = useState<CategoryFilter>('all')
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
+  const variantRowRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to expanded variant panel
+  useEffect(() => {
+    if (expandedGroup && variantRowRef.current) {
+      variantRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [expandedGroup])
 
   // Get unique design groups with their first entry (for thumbnail)
   const designGroups = useMemo(() => {
@@ -149,12 +162,15 @@ export default function PixelSpritePicker({
     return groups
   }, [filter])
 
-  // Check which sprite IDs are in use by other specialists
+  // Check which sprite IDs are in use by other specialists — includes alias info
   const usageMap = useMemo(() => {
-    const map = new Map<string, string>()
+    const map = new Map<string, { displayName: string; alias: string | null }>()
     for (const spec of specialists) {
       if (spec.pixelSpriteId && spec.id !== currentSpecialistId) {
-        map.set(spec.pixelSpriteId, spec.displayName)
+        map.set(spec.pixelSpriteId, {
+          displayName: spec.displayName,
+          alias: spec.alias
+        })
       }
     }
     return map
@@ -175,10 +191,18 @@ export default function PixelSpritePicker({
         setExpandedGroup(null)
       } else {
         // Multiple variants — toggle expansion
-        setExpandedGroup((prev) => (prev === designGroup ? null : designGroup))
+        const isAlreadyExpanded = expandedGroup === designGroup
+        setExpandedGroup(isAlreadyExpanded ? null : designGroup)
+        // Auto-select the first variant if expanding (not collapsing)
+        if (!isAlreadyExpanded) {
+          const variants = getVariants(designGroup)
+          if (variants.length > 0) {
+            onChange(variants[0].id)
+          }
+        }
       }
     },
-    [onChange]
+    [onChange, expandedGroup]
   )
 
   const handleVariantClick = useCallback(
@@ -213,93 +237,17 @@ export default function PixelSpritePicker({
         ))}
       </div>
 
-      {/* Sprite grid */}
-      <div className="border border-border-subtle rounded-lg bg-surface-base p-3 max-h-[320px] overflow-y-auto">
-        <div className="flex flex-wrap gap-2">
-          {designGroups.map(({ designGroup, firstEntry, totalVariants }) => {
-            // Check if any variant in this group is selected
-            const groupVariants = getVariants(designGroup)
-            const isGroupSelected = groupVariants.some((v) => v.id === value)
-
-            return (
-              <div key={designGroup} className="flex flex-col">
-                <SpriteThumbnail
-                  entry={firstEntry}
-                  size={48}
-                  selected={isGroupSelected}
-                  onClick={() => handleDesignClick(designGroup, totalVariants)}
-                />
-                {/* Variant count badge */}
-                {totalVariants > 1 && (
-                  <span className="text-center text-[9px] text-text-muted mt-0.5">
-                    {totalVariants}v
-                  </span>
-                )}
-              </div>
-            )
-          })}
-        </div>
-
-        {/* Expanded variant row */}
-        {expandedGroup && (
-          <div className="mt-3 pt-3 border-t border-border-subtle">
-            <p className="text-xs text-text-secondary mb-2">
-              Variants for{' '}
-              <span className="font-medium text-text-primary">
-                {PIXEL_SPRITE_CATALOG.find((e) => e.designGroup === expandedGroup)?.label}
-              </span>
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {getVariants(expandedGroup).map((variant) => {
-                const usedBy = usageMap.get(variant.id)
-                return (
-                  <div key={variant.id} className="flex flex-col items-center">
-                    <SpriteThumbnail
-                      entry={variant}
-                      size={48}
-                      selected={variant.id === value}
-                      onClick={() => handleVariantClick(variant.id)}
-                    />
-                    <span className="text-[9px] text-text-muted mt-0.5">
-                      v{variant.variant}
-                    </span>
-                    {usedBy && (
-                      <span className="text-[8px] text-warning mt-0.5 truncate max-w-[52px]">
-                        in use
-                      </span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+      {/* Currently selected — prominent display */}
+      {selectedEntry && (
+        <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20">
+          <SpriteThumbnail entry={selectedEntry} size={36} selected={false} />
+          <div className="flex-1 min-w-0">
+            <span className="text-xs font-medium text-text-primary">
+              {selectedEntry.label}
+              {selectedEntry.variant !== null ? ` (v${selectedEntry.variant})` : ''}
+            </span>
+            <span className="text-[11px] text-text-muted ml-1">&mdash; Selected</span>
           </div>
-        )}
-      </div>
-
-      {/* Selection info */}
-      <div className="flex items-center justify-between">
-        <div className="text-xs text-text-secondary">
-          {selectedEntry ? (
-            <>
-              <span className="font-medium text-text-primary">
-                {selectedEntry.label}
-                {selectedEntry.variant !== null ? ` (v${selectedEntry.variant})` : ''}
-              </span>
-              {' — '}
-              {usageMap.has(selectedEntry.id) ? (
-                <span className="text-warning">
-                  Used by {usageMap.get(selectedEntry.id)}
-                </span>
-              ) : (
-                <span className="text-success">Available</span>
-              )}
-            </>
-          ) : (
-            <span className="text-text-muted italic">No pixel sprite selected</span>
-          )}
-        </div>
-
-        {value && (
           <button
             type="button"
             onClick={() => onChange(null)}
@@ -308,8 +256,113 @@ export default function PixelSpritePicker({
             <X size={12} />
             Clear
           </button>
-        )}
+        </div>
+      )}
+
+      {/* Sprite grid */}
+      <div className="border border-border-subtle rounded-lg bg-surface-base p-3 max-h-[320px] overflow-y-auto">
+        <div className="flex flex-wrap gap-2">
+          {designGroups.map(({ designGroup, firstEntry, totalVariants }) => {
+            // Check if any variant in this group is selected
+            const groupVariants = getVariants(designGroup)
+            const isGroupSelected = groupVariants.some((v) => v.id === value)
+
+            // Check if the entire group is taken (any variant used by someone else)
+            const groupUsageEntry = groupVariants
+              .map((v) => usageMap.get(v.id))
+              .find(Boolean)
+            const isGroupTaken = !!groupUsageEntry && !isGroupSelected
+
+            return (
+              <div key={designGroup} className="flex flex-col items-center">
+                <div className="relative">
+                  <SpriteThumbnail
+                    entry={firstEntry}
+                    size={48}
+                    selected={isGroupSelected}
+                    disabled={isGroupTaken}
+                    onClick={() => handleDesignClick(designGroup, totalVariants)}
+                  />
+                  {/* Expand indicator for multi-variant sprites */}
+                  {totalVariants > 1 && !isGroupTaken && (
+                    <div className="absolute bottom-0 right-0 w-4 h-4 rounded-tl-md bg-surface-overlay/80 flex items-center justify-center">
+                      <ChevronDown size={10} className="text-text-muted" />
+                    </div>
+                  )}
+                </div>
+                {/* Name — show owner for taken sprites, character name otherwise */}
+                {isGroupTaken ? (
+                  <span className="text-[9px] text-warning mt-0.5 truncate max-w-[60px] text-center leading-tight">
+                    {groupUsageEntry!.alias || groupUsageEntry!.displayName}
+                  </span>
+                ) : (
+                  <span className="text-[9px] text-text-muted mt-0.5 truncate max-w-[52px] text-center leading-tight">
+                    {firstEntry.label}
+                  </span>
+                )}
+                {/* Variant count */}
+                {totalVariants > 1 && !isGroupTaken && (
+                  <span className="text-[8px] text-text-muted opacity-60">
+                    {totalVariants} variants
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
+
+      {/* Expanded variant row — separate section below grid */}
+      {expandedGroup && (
+        <div ref={variantRowRef} className="border border-border-subtle rounded-lg bg-surface-base p-3">
+          <p className="text-xs text-text-secondary mb-2">
+            Variants for{' '}
+            <span className="font-medium text-text-primary">
+              {PIXEL_SPRITE_CATALOG.find((e) => e.designGroup === expandedGroup)?.label}
+            </span>
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {getVariants(expandedGroup).map((variant) => {
+              const usage = usageMap.get(variant.id)
+              const isTaken = !!usage
+              return (
+                <div key={variant.id} className="flex flex-col items-center">
+                  <SpriteThumbnail
+                    entry={variant}
+                    size={48}
+                    selected={variant.id === value}
+                    disabled={isTaken}
+                    onClick={() => handleVariantClick(variant.id)}
+                  />
+                  <span className="text-[9px] text-text-muted mt-0.5">
+                    {variant.label} v{variant.variant}
+                  </span>
+                  {isTaken && (
+                    <span className="text-[8px] text-warning mt-0.5 truncate max-w-[60px] text-center">
+                      {usage!.alias || usage!.displayName}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Selection info (when nothing is selected) */}
+      {!selectedEntry && (
+        <div className="text-xs text-text-muted italic">
+          No pixel sprite selected
+        </div>
+      )}
+
+      {/* Prominent duplicate warning */}
+      {selectedEntry && usageMap.has(selectedEntry.id) && (
+        <div className="px-3 py-2 rounded-lg bg-warning/10 border border-warning/20 text-xs text-warning">
+          ⚠️ This avatar is already assigned to <strong>{usageMap.get(selectedEntry.id)!.alias || usageMap.get(selectedEntry.id)!.displayName}</strong>.
+          Consider choosing a unique avatar for each specialist.
+        </div>
+      )}
     </div>
   )
 }

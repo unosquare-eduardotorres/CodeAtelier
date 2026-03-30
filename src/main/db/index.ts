@@ -3,6 +3,7 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { dbLogger } from '../logger'
+import { DEFAULT_PROMPTS } from '../services/default-prompts'
 
 let db: Database.Database | null = null
 
@@ -11,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 29
+const CURRENT_SCHEMA_VERSION = 31
 
 interface Migration {
   version: number
@@ -502,6 +503,52 @@ const migrations: Migration[] = [
       for (const [agentId, spriteId] of Object.entries(assignments)) {
         update.run(spriteId, agentId)
       }
+    }
+  },
+  {
+    version: 30,
+    name: 'add-specialist-use-pixel-for-chat',
+    up: (db) => {
+      db.exec('ALTER TABLE specialists ADD COLUMN use_pixel_for_chat INTEGER NOT NULL DEFAULT 0')
+    }
+  },
+  {
+    version: 31,
+    name: 'add-core-agent-prompts-and-is-core',
+    up: (db) => {
+      // 1. Create core_agent_prompts table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS core_agent_prompts (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          agent_role TEXT NOT NULL CHECK (agent_role IN ('generalist', 'orchestrator')),
+          mode TEXT NOT NULL CHECK (mode IN ('plan', 'build')),
+          prompt_text TEXT NOT NULL,
+          default_prompt_text TEXT NOT NULL,
+          is_custom INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(agent_role, mode)
+        )
+      `)
+
+      // 2. Seed 4 rows from DEFAULT_PROMPTS
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO core_agent_prompts (agent_role, mode, prompt_text, default_prompt_text, is_custom)
+        VALUES (?, ?, ?, ?, 0)
+      `)
+      for (const [role, modes] of Object.entries(DEFAULT_PROMPTS)) {
+        for (const [mode, promptText] of Object.entries(modes)) {
+          insert.run(role, mode, promptText, promptText)
+        }
+      }
+
+      // 3. Add is_core column to specialists
+      db.exec('ALTER TABLE specialists ADD COLUMN is_core INTEGER NOT NULL DEFAULT 0')
+
+      // 4. Mark core agents
+      db.exec(`
+        UPDATE specialists SET is_core = 1
+        WHERE agent_id IN ('generalist', 'generalist-agent', 'orchestrator')
+      `)
     }
   }
 ]

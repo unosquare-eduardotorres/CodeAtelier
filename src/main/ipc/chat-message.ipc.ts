@@ -3,11 +3,11 @@ import { extname } from 'node:path'
 import {
   conversationRepository,
   messageRepository,
-  workspaceRepository
+  workspaceRepository,
+  specialistRepository
 } from '../db/repositories'
 import {
   generalistService,
-  orchestratorService,
   specialistPoolService,
   fileService
 } from '../services'
@@ -25,7 +25,6 @@ import { chatIpcLogger } from '../logger'
 import { eventLoggerService } from '../services/event-logger.service'
 import { validateSender } from './validate-sender'
 import { forwardChunkToRenderer } from './chat-shared'
-import { runLegacyOrchestrator } from './chat-plan.ipc'
 
 const log = chatIpcLogger
 
@@ -343,22 +342,24 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
             role: 'coordinator'
           })
 
-          // Update conversation mode if needed — but respect user's explicit mode choice.
-          // Never downgrade from 'plan' to 'build' based on the generalist's handoff;
-          // the user chose plan mode explicitly and specialists should honor it.
+          // Emit orchestrator confirmation — "Delegating to .NET Architect for review."
+          const specialistNames = brief.specialists
+            .map((id) => {
+              const spec = specialistRepository.findByAgentId(id)
+              return spec?.displayName ?? id
+            })
+            .join(', ')
+          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: `Delegating to **${specialistNames}** for ${brief.mode === 'plan' ? 'review' : 'implementation'}.\n\n`,
+            role: 'coordinator'
+          })
+
+          // Update conversation mode to match the handoff (always plan for investigations).
+          // The system auto-switches back to build when the user executes a fix.
           if (brief.mode) {
             try {
-              const currentConversation = conversationRepository.findById(conversationId)
-              const currentMode = currentConversation?.mode as ConversationMode
-
-              if (currentMode !== 'plan' || brief.mode === 'plan') {
-                conversationRepository.updateMode(conversationId, brief.mode)
-              } else {
-                log.info(
-                  `[PIPELINE:mode-override-blocked] Conversation is in plan mode — ignoring handoff mode=${brief.mode}`
-                )
-                brief.mode = currentMode // Force the brief to use the conversation's mode
-              }
+              conversationRepository.updateMode(conversationId, brief.mode)
             } catch (error) {
               log.error('Failed to update conversation mode:', error)
             }
@@ -370,7 +371,7 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
               `[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`
             )
 
-            const taskPlan = await orchestratorService.decompose(
+            const taskPlan = await generalistService.decompose(
               brief,
               conversationId,
               brief.mode
@@ -386,39 +387,27 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
               `[PIPELINE:task-plan-sent-to-renderer] taskCount=${taskPlan.tasks.length}`
             )
           } catch (error) {
-            log.error(
-              'Task decomposition failed, falling back to single orchestrator:',
-              error
-            )
-
-            // ── Event: decomposition fallback ──
+            log.error('Task decomposition failed:', error)
             eventLoggerService.logDecompositionFailed({
               conversationId,
               error: (error as Error).message,
-              fallback: 'legacy'
+              fallback: 'none'
             })
-
-            // Fallback: run orchestrator in legacy single-process mode
-            try {
-              await runLegacyOrchestrator(mainWindow, conversationId, brief)
-            } catch (fallbackError) {
-              log.error('Legacy orchestrator fallback also failed:', fallbackError)
-              // Surface error to user — both SDK decompose and legacy orchestrator failed
-              mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-                conversationId,
-                chunk: `\n\n**Error:** Task delegation failed. ${(fallbackError as Error).message}`,
-                role: 'coordinator'
-              })
-              const savedMsg = messageRepository.create(
-                conversationId,
-                'coordinator',
-                `**Error:** Both task decomposition and orchestrator fallback failed.\n\n${(error as Error).message}\n${(fallbackError as Error).message}`
-              )
-              mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-                conversationId,
-                messageId: savedMsg.id
-              })
-            }
+            // Surface error directly to user — no orchestrator fallback
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+              conversationId,
+              chunk: `\n\n**Error:** Task decomposition failed. ${(error as Error).message}`,
+              role: 'coordinator'
+            })
+            const savedMsg = messageRepository.create(
+              conversationId,
+              'coordinator',
+              `**Error:** Task decomposition failed.\n\n${(error as Error).message}`
+            )
+            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+              conversationId,
+              messageId: savedMsg.id
+            })
           }
 
           // Clean up handoff listener (one-shot)
@@ -500,10 +489,6 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
     // Capture context before stopping
     const conversationId = generalistService.getCurrentConversationId()
 
-    // Stop orchestrator if running (ephemeral per-handoff process)
-    if (orchestratorService.isRunning()) {
-      await orchestratorService.stop()
-    }
     // Stop any running specialist pool tasks
     await specialistPoolService.stopAll()
 

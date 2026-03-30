@@ -479,7 +479,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setTaskPlan: (plan: TaskPlan) => {
-    set({ activeTaskPlan: plan, taskProgress: new Map(), isExecutingPlan: false })
+    set({ activeTaskPlan: plan, taskProgress: new Map(), isExecutingPlan: false, investigationReport: null })
   },
 
   updateTaskProgress: (progress: TaskExecutionProgress) => {
@@ -539,15 +539,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   executeInvestigationFix: async (strategy) => {
     const { investigationReport, activeConversation } = get()
     if (!investigationReport || !activeConversation) return
+
+    // Set executing state — buttons will be hidden, loading indicator shown
+    set({ isExecutingPlan: true })
+
     try {
       await window.api.executeInvestigationFix({
         conversationId: activeConversation.id,
         strategy,
         report: investigationReport.report
       })
-      set({ investigationReport: null })
+      // Don't clear investigationReport here — it will be naturally replaced
+      // when the new task plan arrives (setTaskPlan clears isExecutingPlan)
     } catch (error) {
-      console.error('Failed to execute investigation fix:', error)
+      rendererLog.error('Failed to execute investigation fix:', error)
+      set({ isExecutingPlan: false })
     }
   },
 

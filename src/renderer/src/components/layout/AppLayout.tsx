@@ -445,7 +445,7 @@ export default function AppLayout(): React.JSX.Element {
             {/* RIGHT: Chat + Agents (collapsible bottom) */}
             <div className="w-[420px] h-full min-h-0 flex flex-col border-l border-border-subtle flex-shrink-0">
               {/* Chat — fills remaining space */}
-              <div className="flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                 <ErrorBoundary>
                   <ChatPanel onCreateIdea={handleCreateIdea} onStartGrillMe={handleStartGrillMe} />
                 </ErrorBoundary>
@@ -453,7 +453,7 @@ export default function AppLayout(): React.JSX.Element {
 
               {/* Agents — collapsible bottom */}
               {showAgentPanel && (
-                <div className="max-h-[35%] min-h-0 border-t border-border-subtle flex-shrink-0">
+                <div className="max-h-[35%] min-h-0 border-t border-border-subtle flex-shrink-0 overflow-hidden">
                   <ErrorBoundary
                     fallback={
                       <div className="flex items-center justify-center p-4 text-sm text-danger bg-surface-raised">
@@ -464,6 +464,7 @@ export default function AppLayout(): React.JSX.Element {
                     <AgentMonitor
                       isCollapsed={agentPanelCollapsed}
                       onToggleCollapse={() => setAgentPanelCollapsed((prev) => !prev)}
+                      variant="bottom"
                     />
                   </ErrorBoundary>
                 </div>

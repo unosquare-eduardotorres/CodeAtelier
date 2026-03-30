@@ -147,18 +147,7 @@ for (const dirName of dirs) {
     footprintH: manifest.footprintH
   }
 
-  if (manifest.type === 'asset') {
-    catalogEntries.push(...flattenManifest(manifest, inherited))
-  } else if (manifest.type === 'group') {
-    for (const member of manifest.members) {
-      catalogEntries.push(
-        ...flattenManifest(member, {
-          ...inherited,
-          rotationScheme: manifest.rotationScheme
-        })
-      )
-    }
-  }
+  catalogEntries.push(...flattenManifest(manifest, inherited))
 }
 
 // Generate TypeScript

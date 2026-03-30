@@ -16,7 +16,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
 import { registerAllIpcHandlers } from './ipc'
-import { generalistService, orchestratorService, skillService } from './services'
+import { generalistService, skillService } from './services'
 import { agentRegistry } from './services/agent-registry'
 import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
@@ -327,13 +327,6 @@ app.on('before-quit', async (event) => {
     await skillService.shutdown()
   } catch (e) {
     log.debug('Skill service shutdown error (expected during quit):', e)
-  }
-
-  // Cleanup orchestrator
-  try {
-    await orchestratorService.stop()
-  } catch (e) {
-    log.debug('Orchestrator shutdown error (expected during quit):', e)
   }
 
   // Cleanup generalist (long-lived interactive claude process)

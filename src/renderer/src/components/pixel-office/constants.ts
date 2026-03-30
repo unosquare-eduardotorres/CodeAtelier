@@ -52,7 +52,7 @@ export const BUTTON_LINE_WIDTH_ZOOM_FACTOR = 0.5
 export const BUBBLE_FADE_DURATION_SEC = 0.5
 export const BUBBLE_SITTING_OFFSET_PX = 10
 export const BUBBLE_VERTICAL_OFFSET_PX = 20
-export const FALLBACK_FLOOR_COLOR = '#2e2420'
+export const FALLBACK_FLOOR_COLOR = '#1c272d'
 
 // -- Rendering - Overlay Colors (canvas, not CSS) — dark renaissance tones --
 export const SEAT_OWN_COLOR = 'rgba(100, 80, 180, 0.35)' // purple
@@ -87,8 +87,8 @@ export const PAN_MARGIN_FRACTION = 0.25
 // -- Editor ---------------------------------------------------------------
 export const UNDO_STACK_MAX_SIZE = 50
 export const LAYOUT_SAVE_DEBOUNCE_MS = 500
-export const DEFAULT_FLOOR_COLOR: FloorColor = { h: 20, s: 35, b: -15, c: 10 }
-export const DEFAULT_WALL_COLOR: FloorColor = { h: 250, s: 20, b: -25, c: 0 }
+export const DEFAULT_FLOOR_COLOR: FloorColor = { h: 195, s: 18, b: -35, c: 3 } // deep teal slate
+export const DEFAULT_WALL_COLOR: FloorColor = { h: 200, s: 15, b: -40, c: 0 } // dark obsidian
 export const DEFAULT_NEUTRAL_COLOR: FloorColor = { h: 0, s: 0, b: 0, c: 0 }
 
 // -- Notification Sound ---------------------------------------------------

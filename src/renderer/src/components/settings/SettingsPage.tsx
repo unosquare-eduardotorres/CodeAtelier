@@ -1,7 +1,21 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ArrowLeft, Settings, RefreshCw, Download, CheckCircle2, Pencil, Check } from 'lucide-react'
-import { useUpdateStore, useProfileStore } from '@renderer/store'
-import { Avatar, AvatarPicker } from '@renderer/components/common'
+import {
+  ArrowLeft,
+  Settings,
+  RefreshCw,
+  Download,
+  CheckCircle2,
+  Pencil,
+  Check,
+  GripVertical,
+  ChevronUp,
+  ChevronDown,
+  Loader2
+} from 'lucide-react'
+import { useUpdateStore, useProfileStore, useSpecialistStore } from '@renderer/store'
+import { Avatar, AvatarPicker, PixelSpriteAvatar } from '@renderer/components/common'
+import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
+import type { Specialist } from '../../../../shared/types'
 
 function UpdateButton(): React.JSX.Element {
   const { status, availableVersion, checkForUpdates, installUpdate } = useUpdateStore()
@@ -48,166 +62,6 @@ function UpdateButton(): React.JSX.Element {
 
 interface SettingsPageProps {
   onBack: () => void
-}
-
-function AgentIdentityCard({
-  role,
-  defaultAvatarKey,
-  defaultDisplayName,
-  defaultColor,
-  alias,
-  avatarKey,
-  onSave
-}: {
-  role: string
-  defaultAvatarKey: string
-  defaultDisplayName: string
-  defaultColor: string
-  alias: string | null
-  avatarKey: string | null
-  onSave: (alias: string | null, avatarKey: string | null) => Promise<void>
-}): React.JSX.Element {
-  const [isEditing, setIsEditing] = useState(false)
-  const [editAlias, setEditAlias] = useState(alias ?? '')
-  const [editAvatarKey, setEditAvatarKey] = useState(avatarKey ?? defaultAvatarKey)
-  const [showAvatarPicker, setShowAvatarPicker] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
-
-  const handleSave = useCallback(async () => {
-    setIsSaving(true)
-    try {
-      await onSave(
-        editAlias.trim() || null,
-        editAvatarKey !== defaultAvatarKey ? editAvatarKey : null
-      )
-      setIsEditing(false)
-      setShowAvatarPicker(false)
-    } catch (err) {
-      console.error('Failed to save agent alias:', err)
-    } finally {
-      setIsSaving(false)
-    }
-  }, [editAlias, editAvatarKey, defaultAvatarKey, onSave])
-
-  const handleCancel = useCallback(() => {
-    setEditAlias(alias ?? '')
-    setEditAvatarKey(avatarKey ?? defaultAvatarKey)
-    setIsEditing(false)
-    setShowAvatarPicker(false)
-  }, [alias, avatarKey, defaultAvatarKey])
-
-  return (
-    <div className="bg-surface-base border border-border-subtle rounded-lg p-3">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => {
-            setIsEditing(true)
-            setShowAvatarPicker(true)
-          }}
-          className="relative group cursor-pointer"
-          aria-label={`Change ${role} avatar`}
-        >
-          <Avatar avatarKey={avatarKey ?? defaultAvatarKey} size="lg" accentColor={defaultColor} />
-          <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-            <Pencil size={12} className="text-white" />
-          </div>
-        </button>
-        <div className="flex-1 min-w-0">
-          {isEditing ? (
-            <input
-              type="text"
-              value={editAlias}
-              onChange={(e) => setEditAlias(e.target.value)}
-              placeholder={`Alias (e.g., "Da Vinci")`}
-              maxLength={50}
-              className="w-full h-9 px-3 rounded-lg bg-surface-overlay border border-border-subtle text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSave()
-                if (e.key === 'Escape') handleCancel()
-              }}
-            />
-          ) : (
-            <div>
-              <span className="text-sm font-medium text-text-primary">
-                {alias || defaultDisplayName}
-              </span>
-              {alias && (
-                <span className="text-xs text-text-muted ml-1.5">{defaultDisplayName}</span>
-              )}
-            </div>
-          )}
-          <span className="text-[11px] text-text-muted capitalize">{role}</span>
-        </div>
-        {isEditing ? (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={handleCancel}
-              className="px-2.5 py-1 text-xs text-text-body hover:text-text-primary bg-surface-float hover:bg-surface-overlay rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isSaving}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors disabled:opacity-50"
-            >
-              <Check size={10} />
-              Save
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setIsEditing(true)}
-            className="p-1.5 rounded-md hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
-            aria-label={`Edit ${role} alias`}
-          >
-            <Pencil size={12} />
-          </button>
-        )}
-      </div>
-      {showAvatarPicker && (
-        <div className="mt-3 pt-3 border-t border-border-subtle">
-          <AvatarPicker value={editAvatarKey} onChange={setEditAvatarKey} columns={8} size="md" />
-        </div>
-      )}
-    </div>
-  )
-}
-
-function CoreAgentsSection(): React.JSX.Element {
-  const { getCoreAgentAlias, saveCoreAgentAlias } = useProfileStore()
-  const generalistAlias = getCoreAgentAlias('generalist')
-  const orchestratorAlias = getCoreAgentAlias('coordinator')
-
-  return (
-    <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
-      <h4 className="text-sm font-medium text-text-primary">Core Agents</h4>
-      <p className="text-xs text-text-secondary mt-0.5 mb-4">
-        Customize how the Generalist and Orchestrator appear in your conversations
-      </p>
-      <div className="space-y-3">
-        <AgentIdentityCard
-          role="generalist"
-          defaultAvatarKey="scholar"
-          defaultDisplayName="Generalist"
-          defaultColor="#10B981"
-          alias={generalistAlias?.alias ?? null}
-          avatarKey={generalistAlias?.avatarKey ?? null}
-          onSave={(alias, avatarKey) => saveCoreAgentAlias('generalist', alias, avatarKey)}
-        />
-        <AgentIdentityCard
-          role="orchestrator"
-          defaultAvatarKey="architect"
-          defaultDisplayName="Orchestrator"
-          defaultColor="#6366F1"
-          alias={orchestratorAlias?.alias ?? null}
-          avatarKey={orchestratorAlias?.avatarKey ?? null}
-          onSave={(alias, avatarKey) => saveCoreAgentAlias('coordinator', alias, avatarKey)}
-        />
-      </div>
-    </div>
-  )
 }
 
 function ProfileSection(): React.JSX.Element {
@@ -327,6 +181,136 @@ function ProfileSection(): React.JSX.Element {
   )
 }
 
+function OrchestratorSpecialistOrder(): React.JSX.Element {
+  const { specialists, reorderSpecialists } = useSpecialistStore()
+  const [orderedList, setOrderedList] = useState<Specialist[]>([])
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Initialize from active specialists sorted by priority
+  useEffect(() => {
+    const active = [...specialists]
+      .filter((s) => s.isActive)
+      .sort((a, b) => a.priority - b.priority)
+    setOrderedList(active)
+  }, [specialists])
+
+  const handleDragStart = (index: number): void => {
+    setDraggedIndex(index)
+  }
+
+  const handleDragOver = (e: React.DragEvent, index: number): void => {
+    e.preventDefault()
+    if (draggedIndex === null || draggedIndex === index) return
+    const updated = [...orderedList]
+    const [moved] = updated.splice(draggedIndex, 1)
+    updated.splice(index, 0, moved)
+    setOrderedList(updated)
+    setDraggedIndex(index)
+  }
+
+  const handleDragEnd = async (): Promise<void> => {
+    setDraggedIndex(null)
+    setIsSaving(true)
+    try {
+      await reorderSpecialists(orderedList.map((s) => s.id))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const moveItem = useCallback(
+    async (from: number, to: number) => {
+      const updated = [...orderedList]
+      const [moved] = updated.splice(from, 1)
+      updated.splice(to, 0, moved)
+      setOrderedList(updated)
+      setIsSaving(true)
+      try {
+        await reorderSpecialists(updated.map((s) => s.id))
+      } finally {
+        setIsSaving(false)
+      }
+    },
+    [orderedList, reorderSpecialists]
+  )
+
+  if (orderedList.length === 0) return <></>
+
+  return (
+    <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+      <h4 className="text-sm font-medium text-text-primary">Specialist Priority Order</h4>
+      <p className="text-xs text-text-secondary mt-0.5 mb-4">
+        Drag to reorder. Specialists listed first are presented first to the orchestrator when
+        decomposing tasks into sub-tasks.
+      </p>
+      <div className="space-y-1">
+        {orderedList.map((specialist, index) => (
+          <div
+            key={specialist.id}
+            draggable
+            onDragStart={() => handleDragStart(index)}
+            onDragOver={(e) => handleDragOver(e, index)}
+            onDragEnd={handleDragEnd}
+            className={`
+              flex items-center gap-3 px-3 py-2 rounded-lg border transition-all cursor-grab active:cursor-grabbing
+              ${
+                draggedIndex === index
+                  ? 'border-primary/50 bg-primary/5 scale-[1.02] shadow-md'
+                  : 'border-border-subtle bg-surface-base hover:bg-surface-overlay'
+              }
+            `}
+          >
+            <GripVertical size={14} className="text-text-muted flex-shrink-0" />
+            <span className="text-xs text-text-muted w-5 font-mono">{index + 1}</span>
+            {specialist.usePixelForChat && specialist.pixelSpriteId ? (
+              <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={24} />
+            ) : (
+              <Avatar
+                avatarKey={
+                  specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId)
+                }
+                size="sm"
+                accentColor={specialist.color}
+              />
+            )}
+            <div className="flex-1 min-w-0">
+              <span className="text-sm font-medium text-text-primary">
+                {specialist.displayName}
+              </span>
+              {specialist.alias && (
+                <span className="text-xs text-text-muted ml-1.5">({specialist.alias})</span>
+              )}
+            </div>
+            {/* Up/Down buttons for accessibility */}
+            <div className="flex flex-col gap-0.5">
+              <button
+                disabled={index === 0}
+                onClick={() => moveItem(index, index - 1)}
+                className="p-0.5 rounded hover:bg-surface-float disabled:opacity-20"
+              >
+                <ChevronUp size={12} />
+              </button>
+              <button
+                disabled={index === orderedList.length - 1}
+                onClick={() => moveItem(index, index + 1)}
+                className="p-0.5 rounded hover:bg-surface-float disabled:opacity-20"
+              >
+                <ChevronDown size={12} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {isSaving && (
+        <p className="text-[11px] text-text-muted mt-2 flex items-center gap-1">
+          <Loader2 size={10} className="animate-spin" /> Saving order...
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.Element {
   return (
     <div className="flex-1 flex flex-col bg-surface-raised min-w-0">
@@ -359,8 +343,8 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
             {/* Profile section */}
             <ProfileSection />
 
-            {/* Core Agents section */}
-            <CoreAgentsSection />
+            {/* Specialist Priority Order */}
+            <OrchestratorSpecialistOrder />
 
             {/* Update section */}
             <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
