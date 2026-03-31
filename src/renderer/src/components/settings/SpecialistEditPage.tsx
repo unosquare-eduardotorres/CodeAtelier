@@ -27,7 +27,9 @@ export default function SpecialistEditPage({
 
   // Detect core agent and map to agentRole
   const isCore = 'isCore' in specialist ? specialist.isCore : false
-  const coreAgentRole: 'generalist' | null = isCore ? 'generalist' : null
+  const isUserSpecialist = specialist.agentId === 'user'
+  const coreAgentRole: 'generalist' | null =
+    isCore && !isUserSpecialist ? 'generalist' : null
 
   // ── Form state ──
   const [displayName, setDisplayName] = useState(specialist.displayName)
@@ -118,7 +120,12 @@ export default function SpecialistEditPage({
         <div className="flex-1">
           <h1 className="text-sm font-semibold text-text-primary flex items-center gap-2">
             {isCore && <Shield size={14} className="text-mode-plan-text" />}
-            {isCore ? 'Edit Core Agent' : 'Edit Specialist'}: {specialist.displayName}
+            {isUserSpecialist
+              ? 'Edit Your Profile'
+              : isCore
+                ? 'Edit Core Agent'
+                : 'Edit Specialist'}
+            : {specialist.displayName}
           </h1>
           <p className="text-xs text-text-muted">{specialist.agentId}</p>
         </div>
@@ -312,7 +319,8 @@ export default function SpecialistEditPage({
         </section>
 
         {/* ── System Prompts Section (core agents) or Behavior Section (specialists) ── */}
-        {isCore && coreAgentRole ? (
+        {/* User specialist has no AI prompt or system prompts — skip both sections */}
+        {isUserSpecialist ? null : isCore && coreAgentRole ? (
           <section className="space-y-4">
             <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
               System Prompts

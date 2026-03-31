@@ -30,6 +30,9 @@
   --color-text-secondary: #6A7A7E; /* Fog: labels, secondary info */
   --color-text-muted: #5A6A6E; /* Dim (bumped for WCAG AA): timestamps, meta */
 
+  /* ── Code text (warm parchment — softer than body, warmer than grey) ── */
+  --color-code-text: #D4CFC4;
+
   /* ── Primary accent (Atelier Gold) ── */
   --color-primary: #B8976A;
   --color-primary-hover: #C8B89A;
@@ -384,6 +387,10 @@
 /* Code blocks — 15px for extended code reading comfort */
 .prose pre {
   font-size: 15px;
+}
+
+.prose pre code {
+  color: var(--color-code-text);
 }
 
 .prose code {

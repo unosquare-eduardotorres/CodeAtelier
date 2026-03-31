@@ -6,10 +6,7 @@ import {
   fileChangeRepository,
   workspaceRepository
 } from '../db/repositories'
-import {
-  generalistService,
-  costTrackerService
-} from '../services'
+import { generalistService, costTrackerService } from '../services'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
@@ -119,7 +116,9 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       validateSender(event)
       const { conversationId, tasks } = args
 
-      log.info(`Executing plan via SubAgents: tasks=${tasks.length}, conversation=${conversationId}`)
+      log.info(
+        `Executing plan via SubAgents: tasks=${tasks.length}, conversation=${conversationId}`
+      )
 
       eventLoggerService.logPlanExecutionStarted({
         conversationId,
@@ -149,7 +148,14 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         if (chunk.type === 'text' && chunk.content) {
           accumulatedContent.value += chunk.content
         }
-        forwardChunkToRenderer(mainWindow, conversationId, 'coordinator', chunk, accumulatedContent, workspacePath ?? undefined)
+        forwardChunkToRenderer(
+          mainWindow,
+          conversationId,
+          'coordinator',
+          chunk,
+          accumulatedContent,
+          workspacePath ?? undefined
+        )
       }
 
       const onComplete = async (): Promise<void> => {

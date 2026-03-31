@@ -77,7 +77,9 @@ export class SDKExecutor {
       heartbeatTimer = setInterval(() => {
         const stalledMs = Date.now() - lastActivityAt
         if (stalledMs > STALL_THRESHOLD_MS) {
-          sdkLog.warn(`SDK query appears stalled — no activity for ${Math.round(stalledMs / 1000)}s`)
+          sdkLog.warn(
+            `SDK query appears stalled — no activity for ${Math.round(stalledMs / 1000)}s`
+          )
         }
         pendingHeartbeat = true
       }, heartbeatInterval)
@@ -100,9 +102,7 @@ export class SDKExecutor {
       // Add per-tool approval hook if enabled
       if (options.enableToolApproval) {
         const { createToolApprovalHook } = await import('./sdk-hooks')
-        preToolUseHooks.push(
-          createToolApprovalHook(options.agentId ?? 'unknown', options.taskId)
-        )
+        preToolUseHooks.push(createToolApprovalHook(options.agentId ?? 'unknown', options.taskId))
       }
 
       const q = query({
@@ -166,7 +166,9 @@ export class SDKExecutor {
                 yield {
                   type: 'tool_use',
                   toolName,
-                  toolInput: toolInput ? summarizeToolInput(toolName, toolInput, options.cwd) : undefined
+                  toolInput: toolInput
+                    ? summarizeToolInput(toolName, toolInput, options.cwd)
+                    : undefined
                 }
               }
             }

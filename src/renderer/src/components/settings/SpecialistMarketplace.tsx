@@ -51,7 +51,8 @@ export default function SpecialistMarketplace({
 
   // Filtered + searched specialists
   const filteredSpecialists = useMemo(() => {
-    let result = specialists
+    // Exclude the user pseudo-specialist from the marketplace grid
+    let result = specialists.filter((s) => s.agentId !== 'user')
 
     // Apply filter
     if (filter === 'active') {

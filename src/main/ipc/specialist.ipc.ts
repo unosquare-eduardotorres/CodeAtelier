@@ -64,6 +64,12 @@ export function registerSpecialistIpc(): void {
       throw new Error('Invalid specialist ID')
     }
 
+    // Block deletion of core agents (generalist, coordinator, user)
+    const specialist = specialistRepository.findById(args.id)
+    if (specialist?.isCore) {
+      throw new Error('Cannot delete core agents')
+    }
+
     const canDeleteResult = specialistRepository.canDelete(args.id)
     if (!canDeleteResult.allowed) {
       throw new Error(

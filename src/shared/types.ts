@@ -5,6 +5,8 @@ export interface UserProfile {
   id: string
   displayName: string
   avatarKey: string
+  pixelSpriteId: string | null
+  usePixelForChat: boolean
   createdAt: string
   updatedAt: string
 }

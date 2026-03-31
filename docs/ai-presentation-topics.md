@@ -39,7 +39,7 @@ Agent Studio uses **three Claude model tiers**, each selected based on task comp
 | Model | ID in Code | Used For |
 |-------|-----------|----------|
 | **Haiku** | `claude-haiku-4-20250414` | Fast, cheap tasks: brain feed summarization, simple sub-tasks (complexity 0-4) |
-| **Sonnet** | `claude-sonnet-4-20250514` | Default model: workspace activation, CLAUDE.md generation, moderate sub-tasks (complexity 5-8), generalist chat, orchestrator |
+| **Sonnet** | `claude-sonnet-4-20250514` | Default model: workspace activation, CLAUDE.md generation, moderate sub-tasks (complexity 5-8), generalist chat, coordinator |
 | **Opus** | (via complexity scoring) | Complex sub-tasks: architecture changes, security-sensitive work, refactors (complexity 9-14) |
 
 **Where models are configured:**
@@ -76,7 +76,7 @@ Agent Studio does **not** use the Anthropic API directly. It spawns **Claude CLI
 - No API keys needed — the CLI handles auth
 - One-time login persists across all spawned agent processes
 
-**Key files:** `generalist.service.ts`, `orchestrator.service.ts`, `specialist-pool.service.ts`, `brain-feed.service.ts`
+**Key files:** `generalist.service.ts`, `generalist.service.ts`, `specialist-pool.service.ts`, `brain-feed.service.ts`
 
 ---
 
@@ -109,7 +109,7 @@ User <--always--> Generalist (long-lived session)
 ### The 16 agents:
 
 1. `generalist-agent` — Default entry point, handles chat/Q&A/review
-2. `orchestrator` — Coordinates specialists, decomposes tasks
+2. `coordinator` — Coordinates specialists, decomposes tasks
 3. `react-architect` — React/TypeScript frontend
 4. `dotnet-architect` — .NET/C# backend
 5. `electron-architect` — Electron desktop app
@@ -124,7 +124,7 @@ User <--always--> Generalist (long-lived session)
 14. `cloud-infrastructure` — Cloud architecture
 15. `docs-diagrams-specialist` — Documentation & Mermaid diagrams
 
-**Key files:** `.claude/agents/*.yml`, `src/main/services/generalist.service.ts`, `src/main/services/orchestrator.service.ts`, `src/main/services/specialist-pool.service.ts`
+**Key files:** `.claude/agents/*.yml`, `src/main/services/generalist.service.ts`, `src/main/services/generalist.service.ts`, `src/main/services/specialist-pool.service.ts`
 
 ---
 
@@ -264,7 +264,7 @@ You are a React/TypeScript architecture specialist...
 | `skills` | Skill names to load (references `.claude/skills/<name>/SKILL.md`) |
 
 ### Special case — Orchestrator:
-The orchestrator uses the `Agent()` tool to delegate to other agents:
+The coordinator uses the `Agent()` tool to delegate to other agents:
 ```yaml
 tools: [Agent(react-architect, dotnet-architect, ...), Read, Grep, Glob]
 ```
@@ -329,7 +329,7 @@ Agent Studio supports two operational modes that change agent permissions:
 
 ## 10. Task Decomposition & Complexity Scoring
 
-When the orchestrator receives a handoff, it decomposes the work into sub-tasks with **automatic complexity scoring**.
+When the coordinator receives a handoff, it decomposes the work into sub-tasks with **automatic complexity scoring**.
 
 ### Decomposition flow:
 1. Generalist detects implementation work and emits a `handoff` block
@@ -359,7 +359,7 @@ When the orchestrator receives a handoff, it decomposes the work into sub-tasks 
 - **Parallel** — Independent tasks run concurrently (topologically sorted)
 - Orchestrator uses `topologicalSort()` to determine execution waves
 
-**Key files:** `src/main/services/system-prompts.ts` (DECOMPOSITION_SYSTEM_PROMPT), `src/main/services/orchestrator.service.ts` (decompose, matchSkill, topologicalSort)
+**Key files:** `src/main/services/system-prompts.ts` (DECOMPOSITION_SYSTEM_PROMPT), `src/main/services/generalist.service.ts` (decompose, matchSkill, topologicalSort)
 
 ---
 
@@ -532,7 +532,7 @@ The handoff protocol is how the generalist delegates work to specialists:
 ### Detection flow:
 1. Generalist's response is parsed by `detectHandoff()` in `generalist.service.ts`
 2. If a `handoff` fenced code block is found, a `HandoffEvent` is emitted
-3. The orchestrator receives the handoff and calls `decompose()` to break it into sub-tasks
+3. The coordinator receives the handoff and calls `decompose()` to break it into sub-tasks
 4. Specialists are spawned based on the decomposition result
 
 ### Mode in handoff:
@@ -700,7 +700,7 @@ These features are referenced in the project plan or skill files but are **not y
 | Types & interfaces | `src/shared/types.ts` |
 | Generalist service | `src/main/services/generalist.service.ts` |
 | Generalist prompts | `src/main/services/generalist-prompts.ts` |
-| Orchestrator service | `src/main/services/orchestrator.service.ts` |
+| Coordinator service | `src/main/services/generalist.service.ts` |
 | System prompts | `src/main/services/system-prompts.ts` |
 | Specialist pool | `src/main/services/specialist-pool.service.ts` |
 | Agent base class | `src/main/services/agent-base.service.ts` |

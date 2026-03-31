@@ -72,7 +72,7 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
 
     gameRef.current = game
 
-    // Enable camera drag (hand/pan) once scene is ready
+    // Wait for Phaser to fully boot before accessing scene internals
     game.events.once('ready', () => {
       const activeScene = game.scene.getScene('PhaserOfficeScene')
       if (activeScene) {
@@ -84,51 +84,53 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
           }
         })
       }
-    })
 
-    // Build the engine interface for the bridge hook after scene create is complete
-    scene.events.once('create', () => {
-      engineRef.current = {
-        addAgent(_id, numericId, spriteIndex, hueShift, seatIndex, displayName, pixelSpriteId) {
-          sceneRef.current?.addAgent(numericId, spriteIndex, hueShift, seatIndex, displayName, pixelSpriteId)
-        },
-        removeAgent(numericId) {
-          sceneRef.current?.removeAgent(numericId)
-        },
-        setAgentActive(numericId, active) {
-          sceneRef.current?.setAgentActive(numericId, active)
-        },
-        setAgentTool(numericId, toolName) {
-          sceneRef.current?.setAgentTool(numericId, toolName)
-        },
-        showPermissionBubble(numericId, _text) {
-          sceneRef.current?.showPermissionBubble(numericId)
-        },
-        clearPermissionBubble(numericId) {
-          sceneRef.current?.clearPermissionBubble(numericId)
-        },
-        getTotalSeats() {
-          return sceneRef.current?.getTotalSeats() ?? 0
-        },
-        getAgentNumericId() {
-          return undefined
-        },
-        getPlaceholderNumericId(agentType) {
-          return sceneRef.current?.getPlaceholderNumericId(agentType)
-        },
-        removePlaceholder(agentType) {
-          sceneRef.current?.removePlaceholder(agentType)
-        },
-        restorePlaceholder(agentType) {
-          sceneRef.current?.restorePlaceholder(agentType)
-        },
-        setAgentThought(numericId, thought) {
-          sceneRef.current?.setAgentThought(numericId, thought)
-        },
-        updateDisplayName(numericId, name) {
-          sceneRef.current?.updateAgentDisplayName(numericId, name)
+      // Build the engine interface once scene.events is available
+      // scene.events is only initialized after Phaser boots, so this must
+      // live inside the 'ready' callback — not at the top level
+      scene.events.once('create', () => {
+        engineRef.current = {
+          addAgent(_id, numericId, spriteIndex, hueShift, seatIndex, displayName, pixelSpriteId) {
+            sceneRef.current?.addAgent(numericId, spriteIndex, hueShift, seatIndex, displayName, pixelSpriteId)
+          },
+          removeAgent(numericId) {
+            sceneRef.current?.removeAgent(numericId)
+          },
+          setAgentActive(numericId, active) {
+            sceneRef.current?.setAgentActive(numericId, active)
+          },
+          setAgentTool(numericId, toolName) {
+            sceneRef.current?.setAgentTool(numericId, toolName)
+          },
+          showPermissionBubble(numericId, _text) {
+            sceneRef.current?.showPermissionBubble(numericId)
+          },
+          clearPermissionBubble(numericId) {
+            sceneRef.current?.clearPermissionBubble(numericId)
+          },
+          getTotalSeats() {
+            return sceneRef.current?.getTotalSeats() ?? 0
+          },
+          getAgentNumericId() {
+            return undefined
+          },
+          getPlaceholderNumericId(agentType) {
+            return sceneRef.current?.getPlaceholderNumericId(agentType)
+          },
+          removePlaceholder(agentType) {
+            sceneRef.current?.removePlaceholder(agentType)
+          },
+          restorePlaceholder(agentType) {
+            sceneRef.current?.restorePlaceholder(agentType)
+          },
+          setAgentThought(numericId, thought) {
+            sceneRef.current?.setAgentThought(numericId, thought)
+          },
+          updateDisplayName(numericId, name) {
+            sceneRef.current?.updateAgentDisplayName(numericId, name)
+          }
         }
-      }
+      })
     })
 
     return () => {

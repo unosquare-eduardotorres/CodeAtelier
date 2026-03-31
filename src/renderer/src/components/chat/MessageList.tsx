@@ -3,7 +3,12 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageSquarePlus } from 'lucide-react'
 import { useChatStore, useChatActions, useProfileStore, useSpecialistStore } from '@renderer/store'
 import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
-import { MessageBubble, HandoffIndicator, TaskPlanCard, GrillQuestionCard } from '@renderer/components/chat'
+import {
+  MessageBubble,
+  HandoffIndicator,
+  TaskPlanCard,
+  GrillQuestionCard
+} from '@renderer/components/chat'
 import InvestigationReportCard from './InvestigationReportCard'
 import IdeaPopover from './IdeaPopover'
 import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
@@ -82,15 +87,26 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const taskProgress = useChatStore((s) => s.taskProgress)
 
   // Single actions object passed to all MessageBubbles — avoids N×useShallow subscriptions
-  const bubbleActions: MessageBubbleActions = useMemo(() => ({
-    updateMode,
-    sendMessage,
-    appendLocalMessage,
-    clearGrillSession,
-    createItemsFromGrill,
-    submitGrillAnswers,
-    skipAllGrillQuestions
-  }), [updateMode, sendMessage, appendLocalMessage, clearGrillSession, createItemsFromGrill, submitGrillAnswers, skipAllGrillQuestions])
+  const bubbleActions: MessageBubbleActions = useMemo(
+    () => ({
+      updateMode,
+      sendMessage,
+      appendLocalMessage,
+      clearGrillSession,
+      createItemsFromGrill,
+      submitGrillAnswers,
+      skipAllGrillQuestions
+    }),
+    [
+      updateMode,
+      sendMessage,
+      appendLocalMessage,
+      clearGrillSession,
+      createItemsFromGrill,
+      submitGrillAnswers,
+      skipAllGrillQuestions
+    ]
+  )
 
   const generalistAlias = useProfileStore((s) => {
     const alias = s.coreAgentAliases.find((a) => a.agentRole === 'generalist')
@@ -116,12 +132,14 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
   // Resolve specialist identity from the store
   const streamingSpecialistData = useSpecialistStore((s) =>
-    streamingSpecialist ? s.specialists.find((sp) => sp.agentId === streamingSpecialist) ?? null : null
+    streamingSpecialist
+      ? (s.specialists.find((sp) => sp.agentId === streamingSpecialist) ?? null)
+      : null
   )
 
   // Look up generalist specialist record for pixel sprite
-  const generalistSpecialist = useSpecialistStore((s) =>
-    s.specialists.find((sp) => sp.agentId === 'generalist') ?? null
+  const generalistSpecialist = useSpecialistStore(
+    (s) => s.specialists.find((sp) => sp.agentId === 'generalist') ?? null
   )
 
   // Compute thinking indicator identity based on streamingRole
@@ -135,10 +153,13 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialistData) {
-      const usePixel = streamingSpecialistData.usePixelForChat && streamingSpecialistData.pixelSpriteId
+      const usePixel =
+        streamingSpecialistData.usePixelForChat && streamingSpecialistData.pixelSpriteId
       return {
         name: streamingSpecialistData.alias ?? streamingSpecialistData.displayName,
-        avatarKey: streamingSpecialistData.avatarUrl ?? getDefaultAvatarForRole(streamingSpecialistData.agentId),
+        avatarKey:
+          streamingSpecialistData.avatarUrl ??
+          getDefaultAvatarForRole(streamingSpecialistData.agentId),
         accentColor: streamingSpecialistData.color ?? '#F59E0B',
         pixelSpriteId: usePixel ? streamingSpecialistData.pixelSpriteId : null
       }
@@ -160,7 +181,17 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       accentColor: thinkingAccentColor,
       pixelSpriteId: usePixel ? generalistSpecialist!.pixelSpriteId : null
     }
-  }, [streamingRole, streamingSpecialistData, streamingSpecialist, generalistAlias, thinkingAvatarKey, thinkingAccentColor, coordinatorAlias, coordinatorAvatarKey, generalistSpecialist])
+  }, [
+    streamingRole,
+    streamingSpecialistData,
+    streamingSpecialist,
+    generalistAlias,
+    thinkingAvatarKey,
+    thinkingAccentColor,
+    coordinatorAlias,
+    coordinatorAvatarKey,
+    generalistSpecialist
+  ])
 
   const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
 
@@ -172,9 +203,10 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const isUserScrolling = useRef(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [showIdeaPopover, setShowIdeaPopover] = useState(false)
-  const [ideaPopoverData, setIdeaPopoverData] = useState<{ title: string; description: string } | null>(
-    null
-  )
+  const [ideaPopoverData, setIdeaPopoverData] = useState<{
+    title: string
+    description: string
+  } | null>(null)
 
   const handleReviseInvestigation = useCallback((): void => {
     clearInvestigationReport()
@@ -314,10 +346,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   return (
     <div className="relative flex-1 min-h-0">
       <FloatingRobots />
-      <div
-        ref={scrollRef}
-        className="relative z-10 flex-1 overflow-y-auto px-6 py-4 h-full"
-      >
+      <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto px-6 py-4 h-full">
         {/* Virtualized message list */}
         <div
           style={{
@@ -450,12 +479,16 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           <div className="flex gap-3 flex-row">
             {/* Avatar — matches MessageBubble layout */}
             <div className="flex-shrink-0 mt-0.5">
-              <Avatar
-                avatarKey={thinkingIdentity.avatarKey}
-                size="md"
-                accentColor={thinkingIdentity.accentColor}
-                fallbackInitials={thinkingIdentity.name}
-              />
+              {thinkingIdentity.pixelSpriteId ? (
+                <PixelSpriteAvatar spriteId={thinkingIdentity.pixelSpriteId} size={54} />
+              ) : (
+                <Avatar
+                  avatarKey={thinkingIdentity.avatarKey}
+                  size="xl"
+                  accentColor={thinkingIdentity.accentColor}
+                  fallbackInitials={thinkingIdentity.name}
+                />
+              )}
             </div>
             <div className="flex flex-col max-w-[85%] items-start">
               <div className="flex flex-col mb-1 px-1 items-start">
@@ -499,7 +532,10 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                           <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
                           <span className="font-mono text-text-body">{activity.toolName}</span>
                           {activity.input && (
-                            <span className="text-text-muted truncate max-w-[300px]">
+                            <span
+                              className="text-text-muted truncate max-w-[300px]"
+                              title={activity.input}
+                            >
                               {activity.input}
                             </span>
                           )}

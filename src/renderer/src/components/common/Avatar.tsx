@@ -13,7 +13,7 @@ const SIZE_MAP = {
   sm: 24,
   md: 36,
   lg: 48,
-  xl: 72
+  xl: 54
 } as const
 
 /**

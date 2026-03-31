@@ -3,7 +3,7 @@
  *
  * Verifies:
  * 1. Handoff indicator appears when generalist detects investigation
- * 2. Task plan card renders after orchestrator decomposes
+ * 2. Task plan card renders after coordinator decomposes
  * 3. After specialist completes, investigation report card renders
  * 4. Action buttons (Fix Sequential, Fix Parallel, Revise, Save as Idea) are present
  * 5. Visual ordering: Da Vinci → Task Plan → Specialist output → Report card

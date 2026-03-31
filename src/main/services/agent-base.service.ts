@@ -8,6 +8,21 @@ import { agentSessionRepository } from '../db/repositories'
 /** Circuit breaker — prevent infinite tool-calling loops (inspired by DevTeam's max_iterations) */
 const MAX_TOOL_CALLS_PER_INTERACTION = 75
 
+/** Detect if Write content is a structured plan the LLM should have emitted inline */
+function isPlanContent(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content)
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      typeof parsed.title === 'string' &&
+      (Array.isArray(parsed.sections) || Array.isArray(parsed.steps))
+    )
+  } catch {
+    return false
+  }
+}
+
 export interface StreamChunk {
   type: 'text' | 'tool_use' | 'tool_result' | 'error' | 'status'
   content?: string
@@ -41,7 +56,10 @@ export function summarizeToolInput(
     case 'Edit':
       return toRelativePath((input.file_path as string) || '', workspacePath)
     case 'Grep':
-      return `/${input.pattern as string}/` + (input.path ? ` in ${toRelativePath(input.path as string, workspacePath)}` : '')
+      return (
+        `/${input.pattern as string}/` +
+        (input.path ? ` in ${toRelativePath(input.path as string, workspacePath)}` : '')
+      )
     case 'Glob':
       return (input.pattern as string) || ''
     case 'WebSearch':
@@ -218,7 +236,9 @@ export abstract class AgentBaseService extends EventEmitter {
                   type: 'tool_use',
                   toolName,
                   toolId,
-                  toolInput: toolInput ? summarizeToolInput(toolName, toolInput, this.cwd) : undefined
+                  toolInput: toolInput
+                    ? summarizeToolInput(toolName, toolInput, this.cwd)
+                    : undefined
                 } as StreamChunk)
 
                 // Plan file safety net (full-message path): When Claude CLI writes a plan to
@@ -229,16 +249,19 @@ export abstract class AgentBaseService extends EventEmitter {
                 if (
                   toolName === 'Write' &&
                   toolInput &&
+                  typeof toolInput.content === 'string' &&
                   typeof toolInput.file_path === 'string' &&
-                  (toolInput.file_path as string).includes('.claude/plans/') &&
-                  typeof toolInput.content === 'string'
+                  (
+                    (toolInput.file_path as string).includes('.claude/plans/') ||
+                    isPlanContent(toolInput.content as string)
+                  )
                 ) {
                   this.emit('chunk', {
                     type: 'text',
                     content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`
                   } as StreamChunk)
                   this.log.info(
-                    'Injected plan content from Write to .claude/plans/ (full-message path)'
+                    `Injected plan content from Write to ${toolInput.file_path} (full-message path)`
                   )
                 }
               }
@@ -348,7 +371,9 @@ export abstract class AgentBaseService extends EventEmitter {
             type: 'tool_use',
             toolName: contentBlock.name as string,
             toolId: contentBlock.id as string,
-            toolInput: toolInput ? summarizeToolInput(this.currentToolName, toolInput, this.cwd) : undefined
+            toolInput: toolInput
+              ? summarizeToolInput(this.currentToolName, toolInput, this.cwd)
+              : undefined
           } as StreamChunk)
         } else if (contentBlock?.type === 'text' && contentBlock.text) {
           this.emit('chunk', {
@@ -363,6 +388,33 @@ export abstract class AgentBaseService extends EventEmitter {
       case 'content_block_stop': {
         // If we were tracking a tool call, emit tool_result to mark it complete
         if (this.currentToolName) {
+          // Plan file safety net (streaming path): When the LLM writes plan content
+          // via a Write tool call, intercept it and emit as a ````plan block so
+          // the UI renders a PlanCard instead of showing a file write.
+          if (this.currentToolName === 'Write' && this.currentToolInput) {
+            try {
+              const toolInput = JSON.parse(this.currentToolInput)
+              if (
+                typeof toolInput.content === 'string' &&
+                typeof toolInput.file_path === 'string' &&
+                (
+                  (toolInput.file_path as string).includes('.claude/plans/') ||
+                  isPlanContent(toolInput.content as string)
+                )
+              ) {
+                this.emit('chunk', {
+                  type: 'text',
+                  content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`
+                } as StreamChunk)
+                this.log.info(
+                  `Injected plan content from Write to ${toolInput.file_path} (streaming path)`
+                )
+              }
+            } catch {
+              // currentToolInput may be incomplete JSON — skip plan injection
+            }
+          }
+
           this.emit('chunk', {
             type: 'tool_result',
             toolName: this.currentToolName,

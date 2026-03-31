@@ -23,11 +23,11 @@ Your expertise:
 
 When working on this project:
 - Agent Studio uses Claude CLI for local execution — no API keys needed
-- The orchestrator routes tasks to specialists via semantic skill matching
+- The coordinator routes tasks to specialists via semantic skill matching
 - Skills are .MD files that define specialist capabilities
 - All agent IDs and metadata are stored in the SQLite database
 - IPC channels for agent communication are in src/shared/constants.ts
-- Follow the existing orchestrator patterns in src/main/services/orchestrator.service.ts
+- Follow the existing coordinator patterns in src/main/services/generalist.service.ts
 - Generalist is a LONG-LIVED interactive process (stdin/stdout pipe, --input-format stream-json --output-format stream-json)
 - Orchestrator spawns EPHEMERAL `claude -p` processes per handoff (one-shot)
 - Specialist pool spawns multiple `claude -p` processes (parallel or sequential)

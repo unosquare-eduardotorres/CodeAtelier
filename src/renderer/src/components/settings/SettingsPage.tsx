@@ -16,6 +16,7 @@ import { useUpdateStore, useProfileStore, useSpecialistStore } from '@renderer/s
 import { Avatar, AvatarPicker, PixelSpriteAvatar } from '@renderer/components/common'
 import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 import type { Specialist } from '../../../../shared/types'
+import PixelSpritePicker from './PixelSpritePicker'
 import AISubscriptionsSection from './AISubscriptionsSection'
 
 function UpdateButton(): React.JSX.Element {
@@ -66,17 +67,27 @@ interface SettingsPageProps {
 }
 
 function ProfileSection(): React.JSX.Element {
-  const { profile, saveProfile } = useProfileStore()
+  const { profile, saveProfile, loadProfile } = useProfileStore()
+  const { specialists } = useSpecialistStore()
   const [isEditing, setIsEditing] = useState(false)
   const [name, setName] = useState(profile?.displayName ?? '')
   const [avatarKey, setAvatarKey] = useState(profile?.avatarKey ?? 'renaissance-scholar')
+  const [pixelSpriteId, setPixelSpriteId] = useState<string | null>(
+    profile?.pixelSpriteId ?? null
+  )
+  const [usePixelForChat, setUsePixelForChat] = useState(profile?.usePixelForChat ?? false)
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+
+  // Find the user specialist record for the pixel sprite picker
+  const userSpecialist = specialists.find((s) => s.agentId === 'user')
 
   useEffect(() => {
     if (profile) {
       setName(profile.displayName)
       setAvatarKey(profile.avatarKey)
+      setPixelSpriteId(profile.pixelSpriteId ?? null)
+      setUsePixelForChat(profile.usePixelForChat ?? false)
     }
   }, [profile])
 
@@ -85,6 +96,15 @@ function ProfileSection(): React.JSX.Element {
     setIsSaving(true)
     try {
       await saveProfile(name.trim(), avatarKey)
+      // Also save pixel sprite fields if user specialist exists
+      if (userSpecialist) {
+        await window.api.updateSpecialist({
+          id: userSpecialist.id,
+          pixelSpriteId,
+          usePixelForChat
+        })
+        await loadProfile()
+      }
       setIsEditing(false)
       setShowAvatarPicker(false)
     } catch (err) {
@@ -92,11 +112,13 @@ function ProfileSection(): React.JSX.Element {
     } finally {
       setIsSaving(false)
     }
-  }, [name, avatarKey, saveProfile])
+  }, [name, avatarKey, pixelSpriteId, usePixelForChat, saveProfile, userSpecialist, loadProfile])
 
   const handleCancel = useCallback(() => {
     setName(profile?.displayName ?? '')
     setAvatarKey(profile?.avatarKey ?? 'renaissance-scholar')
+    setPixelSpriteId(profile?.pixelSpriteId ?? null)
+    setUsePixelForChat(profile?.usePixelForChat ?? false)
     setIsEditing(false)
     setShowAvatarPicker(false)
   }, [profile])
@@ -116,7 +138,11 @@ function ProfileSection(): React.JSX.Element {
           className="relative group cursor-pointer"
           aria-label="Change avatar"
         >
-          <Avatar avatarKey={avatarKey} size="lg" />
+          {usePixelForChat && pixelSpriteId ? (
+            <PixelSpriteAvatar spriteId={pixelSpriteId} size={48} className="rounded-lg" />
+          ) : (
+            <Avatar avatarKey={avatarKey} size="lg" />
+          )}
           <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
             <Pencil size={14} className="text-white" />
           </div>
@@ -172,10 +198,44 @@ function ProfileSection(): React.JSX.Element {
       </div>
 
       {/* Avatar picker overlay */}
-      {showAvatarPicker && (
+      {showAvatarPicker && !usePixelForChat && (
         <div className="mt-4 pt-4 border-t border-border-subtle">
           <p className="text-xs text-text-secondary mb-3">Choose an avatar</p>
           <AvatarPicker value={avatarKey} onChange={setAvatarKey} columns={8} size="lg" />
+        </div>
+      )}
+
+      {/* Pixel Office Avatar Section */}
+      {isEditing && (
+        <div className="mt-4 pt-4 border-t border-border-subtle">
+          <h5 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
+            Pixel Office Avatar
+          </h5>
+          <p className="text-[11px] text-text-muted mb-3">
+            Character sprite shown in the virtual pixel office environment.
+          </p>
+          <PixelSpritePicker
+            value={pixelSpriteId}
+            onChange={setPixelSpriteId}
+            specialists={specialists}
+            currentSpecialistId={userSpecialist?.id ?? ''}
+          />
+          {pixelSpriteId && (
+            <button
+              type="button"
+              onClick={() => setUsePixelForChat(!usePixelForChat)}
+              className={`
+                inline-flex items-center gap-2 mt-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all
+                ${usePixelForChat
+                  ? 'bg-primary text-white'
+                  : 'bg-surface-base text-text-secondary border border-border-subtle hover:bg-surface-overlay'
+                }
+              `}
+            >
+              {usePixelForChat && <Check size={12} />}
+              Use as chat avatar
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -188,10 +248,10 @@ function SpecialistOrder(): React.JSX.Element {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
-  // Initialize from active specialists sorted by priority
+  // Initialize from active specialists sorted by priority (exclude user — always priority -1)
   useEffect(() => {
     const active = [...specialists]
-      .filter((s) => s.isActive)
+      .filter((s) => s.isActive && s.agentId !== 'user')
       .sort((a, b) => a.priority - b.priority)
     setOrderedList(active)
   }, [specialists])

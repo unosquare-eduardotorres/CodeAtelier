@@ -59,7 +59,7 @@ IPC_CHANNELS.CHAT_SEND // Send user message
 IPC_CHANNELS.CHAT_MESSAGE_CHUNK // Stream response chunk
 IPC_CHANNELS.CHAT_MESSAGE_COMPLETE // Signal response finished (MUST always fire)
 IPC_CHANNELS.CHAT_HANDOFF // Generalist detected handoff
-IPC_CHANNELS.CHAT_TASK_PLAN // Orchestrator produced task plan
+IPC_CHANNELS.CHAT_TASK_PLAN // Coordinator produced task plan
 IPC_CHANNELS.CHAT_EXECUTE_PLAN // User approved plan execution
 IPC_CHANNELS.CHAT_TASK_PROGRESS // Specialist task status update
 IPC_CHANNELS.CHAT_STOP // User cancelled
@@ -89,7 +89,7 @@ getGeneralistSystemPrompt(mode)
   + "\n\n---\n\n## Project Brain (Persistent Memory)\n\n" + brainService.getContext()
 ```
 
-### Orchestrator Prompt Assembly
+### Coordinator Prompt Assembly
 
 ```
 PLAN_MODE_SYSTEM_PROMPT or BUILD_MODE_SYSTEM_PROMPT
@@ -139,6 +139,6 @@ RETRY_CONFIG.baseDelayMs = 2000 // 2s initial delay
 RETRY_CONFIG.maxDelayMs = 30000 // 30s max delay
 RETRY_CONFIG.rateLimitDelayMs = 10000 // 10s for rate limits
 
-// Orchestrator
+// Coordinator
 MAX_SESSION_MAP_SIZE = 100 // Evict oldest sessions
 ```

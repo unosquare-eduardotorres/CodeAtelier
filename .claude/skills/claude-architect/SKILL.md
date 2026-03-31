@@ -1,9 +1,9 @@
 ---
 description: >
   Agent Studio multi-agent orchestration: CLI subprocess management, stream-json
-  parsing, Generalist/Orchestrator/Specialist pool, IPC streaming, task decomposition,
+  parsing, Generalist/Coordinator/Specialist pool, IPC streaming, task decomposition,
   worktree isolation, brain injection, skill matching. Trigger: agent services,
-  orchestrator, specialist pool, system-prompts, stream-json, session resume.
+  coordinator, specialist pool, system-prompts, stream-json, session resume.
 ---
 
 # Agent Studio — Agentic Runtime Architect
@@ -28,13 +28,13 @@ User ↔ Renderer (React/Zustand)
          ↕ IPC (contextBridge)
       Main Process (Node.js)
          ├── GeneralistService    → CLI only — long-lived interactive stdin/stdout pipe
-         ├── OrchestratorService  → CLI or SDK — per-handoff (routed by AuthProvider)
+         ├── GeneralistService  → CLI or SDK — per-handoff (routed by AuthProvider)
          ├── SpecialistPoolService → CLI or SDK — per-task (routed by AuthProvider)
          └── SDKExecutor          → Agent SDK query() wrapper, yields StreamChunks
                 └── 14 DB-backed specialists
 ```
 
-**Key principle**: Generalist always runs (CLI) → detects handoff → Orchestrator decomposes (CLI or SDK) → Specialist pool executes (CLI or SDK).
+**Key principle**: Generalist always runs (CLI) → detects handoff → Coordinator decomposes (CLI or SDK) → Specialist pool executes (CLI or SDK).
 
 ### 1.1 SDK Executor (`src/main/services/sdk-executor.ts`)
 
@@ -70,7 +70,7 @@ Key features:
 | `src/main/services/agent-base.service.ts`      | Base class: stream-json parsing, NDJSON buffer, token tracking, env building |
 | `src/main/services/generalist.service.ts`      | Long-lived interactive Claude CLI, handoff detection, session resume         |
 | `src/main/services/generalist-prompts.ts`      | Generalist system prompt construction                                        |
-| `src/main/services/orchestrator.service.ts`    | Per-message CLI or SDK, task decomposition, skill matching                   |
+| `src/main/services/generalist.service.ts`    | Per-message CLI or SDK, task decomposition, skill matching                   |
 | `src/main/services/specialist-pool.service.ts` | Parallel/sequential execution, worktree isolation, retry logic               |
 | `src/main/services/sdk-executor.ts`            | Agent SDK query() wrapper — yields StreamChunks like CLI path               |
 | `src/main/services/sdk-hooks.ts`               | PreToolUse scope guard + dangerous command guard for SDK path                |
@@ -84,7 +84,7 @@ Key features:
 | `src/main/db/repositories/*.ts`                | Data access: specialist, skill, conversation, worktree, agentSession repos   |
 | `src/shared/constants.ts`                      | `IPC_CHANNELS`, constants                                                    |
 | `src/shared/types.ts`                          | All TypeScript interfaces                                                    |
-| `.claude/agents/*.yml`                         | Agent YAML definitions (14 specialists + generalist + orchestrator)          |
+| `.claude/agents/*.yml`                         | Agent YAML definitions (14 specialists + generalist + coordinator)          |
 
 ---
 
@@ -110,7 +110,7 @@ this.process = spawn('claude', args, { cwd: workspacePath, env: this.buildEnvWit
 - Uses `--resume <session_id>` for conversation continuity
 - Auto-compaction at 150K tokens, suggestion at 80K tokens
 
-### 4.2 Orchestrator (Per-Message Spawn)
+### 4.2 Coordinator (Per-Message Spawn)
 
 ```typescript
 const args = [
@@ -157,7 +157,7 @@ this.process = spawn('claude', args, { cwd: workspacePath, env, stdio: ['pipe', 
 - **AP-8**: Running specialists without worktree isolation in build mode
 - **AP-9**: Ignoring task dependency ordering (topological sort)
 - **AP-10**: Not tracking token usage per agent session
-- **AP-11**: Skipping skill matching in orchestrator
+- **AP-11**: Skipping skill matching in coordinator
 - **AP-12**: Not injecting brain context into system prompts
 - **AP-13**: Mutating shared state across parallel specialist executions
 - **AP-14**: Using `--dangerously-skip-permissions` in plan mode

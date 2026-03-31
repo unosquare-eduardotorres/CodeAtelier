@@ -86,14 +86,14 @@ Types:
 | `ipc`          | IPC handlers/channels        |
 | `db`           | Database schema/repositories |
 | `agents`       | Agent system                 |
-| `orchestrator` | Orchestrator service         |
+| `coordinator` | Orchestrator service         |
 | `build`        | Electron-builder, packaging  |
 
 ### Examples
 
 ```
 feat(agents): add specialist skill assignment UI
-fix(ipc): handle timeout in orchestrator start channel
+fix(ipc): handle timeout in coordinator start channel
 refactor(db): extract workspace queries to repository
 chore(build): upgrade electron to v39.2.6
 docs(readme): add development setup instructions
@@ -265,7 +265,7 @@ export default {
     'scope-enum': [
       2,
       'always',
-      ['main', 'renderer', 'preload', 'ipc', 'db', 'agents', 'orchestrator', 'build', 'deps']
+      ['main', 'renderer', 'preload', 'ipc', 'db', 'agents', 'coordinator', 'build', 'deps']
     ]
   }
 }

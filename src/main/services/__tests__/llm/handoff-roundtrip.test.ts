@@ -7,7 +7,7 @@
  *
  * Cost: ~$0.05-0.15 per run
  */
-import { GENERALIST_BASE_PROMPT } from '../../default-prompts'
+import { GENERALIST_BASE_PROMPT, GENERALIST_PLAN_MODE_SECTION } from '../../default-prompts'
 import { parseHandoffBlock } from '../../generalist-utils'
 import { SDKExecutor } from '../../sdk-executor'
 
@@ -130,6 +130,43 @@ async function run(): Promise<void> {
         throw new Error(
           `Expected no handoff for a pure question, but parseHandoffBlock returned: ${JSON.stringify(brief)}`
         )
+      }
+    })
+  )
+
+  await testLLM('plan request produces ````plan block not file write', () =>
+    withRetry(async () => {
+      const { result } = await executor.executeAndCollect({
+        ...baseOptions(),
+        prompt:
+          'Create an implementation plan for adding a user settings page with dark mode toggle and notification preferences.',
+        systemPrompt: GENERALIST_BASE_PROMPT + '\n' + GENERALIST_PLAN_MODE_SECTION
+      })
+
+      // Should contain a plan block
+      const planMatch = result.match(/`{3,4}plan\n([\s\S]*?)`{3,4}/)
+      if (!planMatch) {
+        // Check if the LLM tried to write a file instead
+        if (result.includes('blocked') || result.includes('file path')) {
+          throw new Error(
+            'LLM tried to write plan to file instead of emitting ````plan block. Prompt adherence failure.'
+          )
+        }
+        throw new Error(
+          `Expected \`\`\`\`plan block in response but got:\n${result.slice(0, 500)}`
+        )
+      }
+
+      // Verify the plan content is valid JSON with expected structure
+      try {
+        const parsed = JSON.parse(planMatch[1].trim())
+        if (!parsed.title) throw new Error('Plan missing "title" field')
+        if (!Array.isArray(parsed.sections) && !Array.isArray(parsed.steps)) {
+          throw new Error('Plan missing both "sections" and "steps" arrays')
+        }
+      } catch (err) {
+        if ((err as Error).message.includes('Plan missing')) throw err
+        throw new Error(`Plan block contains invalid JSON: ${(err as Error).message}`)
       }
     })
   )

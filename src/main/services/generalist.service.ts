@@ -19,7 +19,11 @@ import type { SDKAgentDefinition, SDKExecuteResult } from './sdk-executor'
 import { authProvider } from './auth-provider'
 import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
-import { conversationRepository, specialistRepository, workspaceRepository } from '../db/repositories'
+import {
+  conversationRepository,
+  specialistRepository,
+  workspaceRepository
+} from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
 import { enrichTasksWithComplexity } from './complexity-scorer.service'
@@ -231,9 +235,10 @@ export class GeneralistService extends AgentBaseService {
     if (this.pendingModeSwitch) {
       const { from, to } = this.pendingModeSwitch
       const modeLabel = to === 'build' ? 'Build (read + execute)' : 'Plan (read-only)'
-      const permissions = to === 'build'
-        ? 'You now have full permissions to execute commands, run apps, install dependencies, and perform all operational tasks. You can also hand off code changes to specialists.'
-        : 'You are now in read-only mode. You can read files, search the codebase, and provide guidance, but you cannot run commands or write files.'
+      const permissions =
+        to === 'build'
+          ? 'You now have full permissions to execute commands, run apps, install dependencies, and perform all operational tasks. You can also hand off code changes to specialists.'
+          : 'You are now in read-only mode. You can read files, search the codebase, and provide guidance, but you cannot run commands or write files.'
       effectiveMessage = `[Mode switched from ${from} to ${to}. Mode: ${modeLabel}. ${permissions} The conversation history above is still valid — continue from where we left off.]\n\n${message}`
       this.log.info(`Mode switch context injected: ${from} → ${to}`)
       this.pendingModeSwitch = null
@@ -260,9 +265,11 @@ export class GeneralistService extends AgentBaseService {
       const RULES_REMINDER = `[RULES REMINDER — These override all prior instructions]
 Current mode: ${this.currentMode === 'build' ? 'BUILD' : 'PLAN'}
 
-${this.currentMode === 'plan'
-  ? 'PLAN MODE: Answer questions, generate plans, hand off investigations. NEVER modify files. If user asks for code changes, say "Switch to Build mode."'
-  : 'BUILD MODE: Execute operational commands directly. Hand off ALL code changes to specialists via handoff block. NEVER write source code yourself.'}
+${
+  this.currentMode === 'plan'
+    ? 'PLAN MODE: Answer questions, generate plans, hand off investigations. NEVER modify files. If user asks for code changes, say "Switch to Build mode."'
+    : 'BUILD MODE: Execute operational commands directly. Hand off ALL code changes to specialists via handoff block. NEVER write source code yourself.'
+}
 
 RESPONSE STYLE (MANDATORY):
 - Be CONCISE. Match response length to question complexity.
@@ -427,9 +434,7 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
       this.currentStatus = 'idle'
       this.flushTokenUsage()
       this.emit('statusUpdate', this.getStatus())
-      this.log.info(
-        `[PIPELINE:generalist-complete-emitting] conversationId=${conversationId}`
-      )
+      this.log.info(`[PIPELINE:generalist-complete-emitting] conversationId=${conversationId}`)
       this.emit('complete')
     } catch (error) {
       clearTimeout(interactionTimer)
@@ -597,9 +602,7 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
       `[PIPELINE:handoff-detected] specialists=${brief.specialists.join(',')} mode=${brief.mode}`
     )
     this.emit('handoff', brief)
-    this.log.info(
-      `[PIPELINE:handoff-emitted] conversationId=${this.currentConversationId}`
-    )
+    this.log.info(`[PIPELINE:handoff-emitted] conversationId=${this.currentConversationId}`)
 
     // Strategy 2: Post-handoff auto-compact — delay until specialist results
     // have been injected back. The specialist execution takes at minimum 30s,
@@ -756,7 +759,10 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
     }
   }
 
-  private buildDecompositionInputs(brief: HandoffBrief, mode?: ConversationMode): { prompt: string; specialistList: string } {
+  private buildDecompositionInputs(
+    brief: HandoffBrief,
+    mode?: ConversationMode
+  ): { prompt: string; specialistList: string } {
     const activeSpecialists = specialistRepository.findActive()
     const relevantSpecialists =
       brief.specialists.length > 0
@@ -796,9 +802,10 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
       ? `\nRecent conversation context:\n${rawConversation.length > MAX_CONVERSATION_CHARS ? rawConversation.substring(rawConversation.length - MAX_CONVERSATION_CHARS) + '\n[... earlier messages truncated]' : rawConversation}`
       : ''
 
-    const modeInstruction = mode === 'plan'
-      ? '\n\nIMPORTANT: This is a PLAN-MODE decomposition. Create ONLY investigation/analysis tasks. Every task MUST end with "Produce a structured investigation report." Do NOT create fix, implementation, rebuild, or test tasks.'
-      : ''
+    const modeInstruction =
+      mode === 'plan'
+        ? '\n\nIMPORTANT: This is a PLAN-MODE decomposition. Create ONLY investigation/analysis tasks. Every task MUST end with "Produce a structured investigation report." Do NOT create fix, implementation, rebuild, or test tasks.'
+        : ''
 
     const prompt = `Think step by step about the dependencies and potential file conflicts before decomposing.
 
@@ -847,13 +854,16 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
           const settings = this.workspacePath
             ? workspaceRepository.getSettingsByPath(this.workspacePath)
             : {}
-          const costPreference = (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
+          const costPreference =
+            (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
 
           const enrichedTasks = enrichTasksWithComplexity(normalizedTasks, costPreference)
 
           this.log.info(`Decomposed into ${enrichedTasks.length} tasks (cost: ${costPreference})`)
           for (const t of enrichedTasks) {
-            this.log.info(`  ${t.id}: ${t.complexity?.tier}/${t.model} (score: ${t.complexity?.total})`)
+            this.log.info(
+              `  ${t.id}: ${t.complexity?.tier}/${t.model} (score: ${t.complexity?.total})`
+            )
           }
 
           return enrichedTasks
@@ -907,7 +917,7 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
     const agents = this.buildSubAgentDefinitions(taskPlan.tasks, mode)
 
     const taskList = taskPlan.tasks
-      .map(t => {
+      .map((t) => {
         const deps = t.dependsOn.length ? ` (after: ${t.dependsOn.join(', ')})` : ''
         return `- [${t.id}] → Use "${t.specialist}" agent: ${t.description}${deps}`
       })
@@ -991,34 +1001,38 @@ Rules:
     tasks: DecomposedTask[],
     mode: ConversationMode
   ): Record<string, SDKAgentDefinition> {
-    return buildSubAgentDefinitionsUtil(tasks, mode, (specialistId, specialistTasks, specialistMode) => {
-      const specialist = specialistRepository.findByAgentId(specialistId)
-      const assignedSkills = agentRegistry.getSkillsForAgent(specialistId)
-      const taskModels = specialistTasks.map((task) => task.model ?? 'sonnet')
-      const model = taskModels.includes('opus')
-        ? 'opus'
-        : taskModels.includes('sonnet')
-          ? 'sonnet'
-          : 'haiku'
+    return buildSubAgentDefinitionsUtil(
+      tasks,
+      mode,
+      (specialistId, specialistTasks, specialistMode) => {
+        const specialist = specialistRepository.findByAgentId(specialistId)
+        const assignedSkills = agentRegistry.getSkillsForAgent(specialistId)
+        const taskModels = specialistTasks.map((task) => task.model ?? 'sonnet')
+        const model = taskModels.includes('opus')
+          ? 'opus'
+          : taskModels.includes('sonnet')
+            ? 'sonnet'
+            : 'haiku'
 
-      const budgetTier: BudgetTier =
-        model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
-      const systemPrompt = promptBuilder.build({
-        role: 'specialist',
-        mode: specialistMode,
-        specialistId,
-        specialistPrompt: specialist?.prompt || undefined,
-        assignedSkills,
-        workspacePath: this.workspacePath!,
-        brief: this.currentBrief || undefined,
-        budgetTier
-      })
+        const budgetTier: BudgetTier =
+          model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
+        const systemPrompt = promptBuilder.build({
+          role: 'specialist',
+          mode: specialistMode,
+          specialistId,
+          specialistPrompt: specialist?.prompt || undefined,
+          assignedSkills,
+          workspacePath: this.workspacePath!,
+          brief: this.currentBrief || undefined,
+          budgetTier
+        })
 
-      return {
-        systemPrompt,
-        description: `${specialist?.displayName ?? specialistId}: ${specialist?.prompt?.substring(0, 200) ?? 'Specialist agent'}`,
+        return {
+          systemPrompt,
+          description: `${specialist?.displayName ?? specialistId}: ${specialist?.prompt?.substring(0, 200) ?? 'Specialist agent'}`
+        }
       }
-    })
+    )
   }
 
   /**

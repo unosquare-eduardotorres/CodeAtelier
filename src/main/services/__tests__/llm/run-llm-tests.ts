@@ -28,6 +28,9 @@ async function main(): Promise<void> {
 
   const { run: runHandoffRoundtrip } = await import('./handoff-roundtrip.test')
   await runHandoffRoundtrip()
+
+  // Force exit — stalled SDK calls from timed-out tests may keep the event loop alive
+  setTimeout(() => process.exit(process.exitCode ?? 0), 1000)
 }
 
 main()

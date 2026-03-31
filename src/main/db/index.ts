@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 32
+const CURRENT_SCHEMA_VERSION = 34
 
 interface Migration {
   version: number
@@ -555,6 +555,38 @@ const migrations: Migration[] = [
     name: 'remove-orchestrator-core-prompts',
     up: (db) => {
       db.exec(`DELETE FROM core_agent_prompts WHERE agent_role = 'orchestrator'`)
+    }
+  },
+  {
+    version: 33,
+    name: 'create-user-specialist-from-profile',
+    up: (db) => {
+      // Read existing profile (if any)
+      const profile = db
+        .prepare("SELECT display_name, avatar_key FROM user_profile WHERE id = 'default'")
+        .get() as { display_name: string; avatar_key: string } | undefined
+      const displayName = profile?.display_name ?? 'Developer'
+      const avatarKey = profile?.avatar_key ?? 'business-man'
+
+      // Insert user specialist (idempotent)
+      const exists = db.prepare("SELECT 1 FROM specialists WHERE agent_id = 'user'").get()
+      if (!exists) {
+        db.prepare(
+          `INSERT INTO specialists (agent_id, display_name, icon, color, prompt, priority, is_core, avatar_url)
+           VALUES ('user', ?, '👤', '#6366F1', '', -1, 1, ?)`
+        ).run(displayName, avatarKey)
+      }
+    }
+  },
+  {
+    version: 34,
+    name: 'remove-orchestrator-specialist',
+    up: (db) => {
+      db.exec(`DELETE FROM specialists WHERE agent_id = 'orchestrator'`)
+      // Clean up any lingering generalist-agent alias (old naming)
+      db.exec(
+        `DELETE FROM specialists WHERE agent_id = 'generalist-agent' AND EXISTS (SELECT 1 FROM specialists WHERE agent_id = 'generalist')`
+      )
     }
   }
 ]

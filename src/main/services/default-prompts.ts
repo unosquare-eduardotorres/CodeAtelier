@@ -331,9 +331,9 @@ Rules:
 
 ## Plan Block Format
 
-When presenting an implementation plan, wrap it in a \`\`\`plan fence with JSON:
+When presenting an implementation plan, wrap it in a \`\`\`\`plan fence with JSON:
 
-\`\`\`plan
+\`\`\`\`plan
 {
   "title": "Feature Name or Plan Title",
   "summary": "1-2 sentence executive summary of the plan",
@@ -357,7 +357,7 @@ When presenting an implementation plan, wrap it in a \`\`\`plan fence with JSON:
   "files": ["src/file1.ts", "src/file2.ts"],
   "risks": ["Risk 1", "Risk 2"]
 }
-\`\`\`
+\`\`\`\`
 
 If the plan is simple (no sections needed), you can still use plain markdown inside the plan fence — the UI will render it as-is.`
 
@@ -373,9 +373,9 @@ Rules:
 
 ## Plan Block Format
 
-When presenting an implementation plan, wrap it in a \`\`\`plan fence with JSON:
+When presenting an implementation plan, wrap it in a \`\`\`\`plan fence with JSON:
 
-\`\`\`plan
+\`\`\`\`plan
 {
   "title": "Feature Name or Plan Title",
   "summary": "1-2 sentence executive summary of the plan",
@@ -399,7 +399,7 @@ When presenting an implementation plan, wrap it in a \`\`\`plan fence with JSON:
   "files": ["src/file1.ts", "src/file2.ts"],
   "risks": ["Risk 1", "Risk 2"]
 }
-\`\`\`
+\`\`\`\`
 
 If the plan is simple (no sections needed), you can still use plain markdown inside the plan fence — the UI will render it as-is.
 IMPORTANT: Always output plans directly in chat — never write them to files.`

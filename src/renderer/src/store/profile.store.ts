@@ -46,12 +46,34 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   loadProfile: async () => {
     set({ isLoading: true })
     try {
-      const profile = await window.api.getUserProfile()
-      set({
-        profile,
-        hasCompletedWelcome: profile !== null,
-        isLoading: false
-      })
+      // Try to read from user specialist record first
+      const specialists = await window.api.listSpecialists()
+      const userSpec = specialists.find((s) => s.agentId === 'user')
+      if (userSpec) {
+        set({
+          profile: {
+            id: userSpec.id,
+            displayName: userSpec.alias ?? userSpec.displayName,
+            avatarKey: userSpec.avatarUrl ?? 'business-man',
+            pixelSpriteId: userSpec.pixelSpriteId ?? null,
+            usePixelForChat: userSpec.usePixelForChat ?? false,
+            createdAt: userSpec.createdAt,
+            updatedAt: userSpec.updatedAt
+          },
+          hasCompletedWelcome: true,
+          isLoading: false
+        })
+      } else {
+        // Fallback to legacy user_profile table
+        const profile = await window.api.getUserProfile()
+        set({
+          profile: profile
+            ? { ...profile, pixelSpriteId: null, usePixelForChat: false }
+            : null,
+          hasCompletedWelcome: profile !== null,
+          isLoading: false
+        })
+      }
       // Also load core agent aliases
       await get().loadCoreAgentAliases()
     } catch (error) {
@@ -62,8 +84,21 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
   saveProfile: async (displayName: string, avatarKey: string) => {
     try {
-      const profile = await window.api.upsertUserProfile({ displayName, avatarKey })
-      set({ profile, hasCompletedWelcome: true })
+      // Find user specialist and update it
+      const specialists = await window.api.listSpecialists()
+      const userSpec = specialists.find((s) => s.agentId === 'user')
+      if (userSpec) {
+        await window.api.updateSpecialist({
+          id: userSpec.id,
+          displayName,
+          avatarUrl: avatarKey
+        })
+      } else {
+        // Fallback: legacy path
+        await window.api.upsertUserProfile({ displayName, avatarKey })
+      }
+      // Reload to get fresh data
+      await get().loadProfile()
     } catch (error) {
       rendererLog.error('Failed to save user profile:', error)
       throw error

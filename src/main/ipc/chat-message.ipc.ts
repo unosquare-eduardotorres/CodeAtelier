@@ -6,11 +6,7 @@ import {
   workspaceRepository,
   specialistRepository
 } from '../db/repositories'
-import {
-  generalistService,
-  specialistPoolService,
-  fileService
-} from '../services'
+import { generalistService, specialistPoolService, fileService } from '../services'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
@@ -191,7 +187,14 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
       const onChunk = (chunk: StreamChunk): void => {
         try {
           log.debug('Chunk received:', { type: chunk.type, len: chunk.content?.length ?? 0 })
-          forwardChunkToRenderer(mainWindow, conversationId, 'generalist', chunk, streamedContent, workspacePath)
+          forwardChunkToRenderer(
+            mainWindow,
+            conversationId,
+            'generalist',
+            chunk,
+            streamedContent,
+            workspacePath
+          )
         } catch (error) {
           log.error('Failed to forward chunk to renderer:', error)
         }
@@ -368,25 +371,15 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
 
           // Decompose the task into sub-tasks via generalist with full brief
           try {
-            log.info(
-              `[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`
-            )
+            log.info(`[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`)
 
-            const taskPlan = await generalistService.decompose(
-              brief,
-              conversationId,
-              brief.mode
-            )
+            const taskPlan = await generalistService.decompose(brief, conversationId, brief.mode)
 
-            log.info(
-              `[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`
-            )
+            log.info(`[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`)
 
             // Send the task plan to the renderer for user choice (sequential vs parallel)
             mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
-            log.info(
-              `[PIPELINE:task-plan-sent-to-renderer] taskCount=${taskPlan.tasks.length}`
-            )
+            log.info(`[PIPELINE:task-plan-sent-to-renderer] taskCount=${taskPlan.tasks.length}`)
           } catch (error) {
             log.error('Task decomposition failed:', error)
             eventLoggerService.logDecompositionFailed({
