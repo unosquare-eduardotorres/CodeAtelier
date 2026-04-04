@@ -102,6 +102,28 @@ CREATE TABLE IF NOT EXISTS specialist_skills (
   PRIMARY KEY (specialist_id, skill_id)
 );
 
+-- Conversation specialist activation: per-conversation active specialist set with skill gating
+CREATE TABLE IF NOT EXISTS conversation_specialists (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  skills_enabled INTEGER NOT NULL DEFAULT 1,
+  skill_overrides TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(conversation_id, specialist_id)
+);
+
+-- Conversation specialist history: activation/deactivation timeline
+CREATE TABLE IF NOT EXISTS specialist_conversation_history (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK (action IN ('activated', 'deactivated')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- File changes tracked per conversation (for selective git commit)
 CREATE TABLE IF NOT EXISTS conversation_file_changes (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -136,6 +158,11 @@ CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversat
 CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
+CREATE INDEX IF NOT EXISTS idx_conversation_specialists_conversation ON conversation_specialists(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_specialists_specialist ON conversation_specialists(specialist_id);
+CREATE INDEX IF NOT EXISTS idx_specialist_history_conversation ON specialist_conversation_history(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_specialist_history_specialist ON specialist_conversation_history(specialist_id);
+CREATE INDEX IF NOT EXISTS idx_specialist_history_conversation_created ON specialist_conversation_history(conversation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id);
 
@@ -273,3 +300,10 @@ CREATE TABLE IF NOT EXISTS gate_results (
 );
 CREATE INDEX IF NOT EXISTS idx_gate_results_conversation ON gate_results(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_gate_results_task ON gate_results(task_id);
+
+-- App-level key-value preferences
+CREATE TABLE IF NOT EXISTS app_preferences (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

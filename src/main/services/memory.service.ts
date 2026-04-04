@@ -19,17 +19,31 @@ class MemoryService {
    * Build a formatted string of memories suitable for injection into an agent's system prompt.
    * Orders by importance DESC, respects a character budget.
    */
-  getContextForPrompt(workspaceId: string, maxChars: number = DEFAULT_PROMPT_BUDGET): string {
+  getContextForPrompt(
+    workspaceId: string,
+    maxChars: number = DEFAULT_PROMPT_BUDGET,
+    messageHint?: string
+  ): string {
     try {
       const memories = memoryRepository.getForPrompt(workspaceId, maxChars)
       if (memories.length === 0) return ''
 
+      const trimmedHint = messageHint?.trim()
+      const selectedMemories =
+        trimmedHint && trimmedHint.length > 0
+          ? memories.filter(
+              (memory) =>
+                memory.type === 'feedback' || this.scoreRelevance(memory, trimmedHint) > 0
+            )
+          : memories
+      if (selectedMemories.length === 0) return ''
+
       // Touch memories so we track last_accessed_at
-      memoryRepository.touchMemories(memories.map((m) => m.id))
+      memoryRepository.touchMemories(selectedMemories.map((m) => m.id))
 
       // Group by type for structured output
       const grouped: Record<string, Memory[]> = {}
-      for (const mem of memories) {
+      for (const mem of selectedMemories) {
         if (!grouped[mem.type]) grouped[mem.type] = []
         grouped[mem.type].push(mem)
       }
@@ -75,6 +89,31 @@ class MemoryService {
       log.error('Failed to build memory context for prompt:', error)
       return ''
     }
+  }
+
+  private scoreRelevance(memory: Memory, messageHint: string): number {
+    const normalizedHint = messageHint
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!normalizedHint) return 0
+
+    const terms = Array.from(new Set(normalizedHint.split(' '))).filter((term) => term.length >= 3)
+    if (terms.length === 0) return 0
+
+    const title = memory.title.toLowerCase()
+    const content = memory.content.toLowerCase()
+    const tags = memory.tags.join(' ').toLowerCase()
+
+    let score = 0
+    for (const term of terms) {
+      if (title.includes(term)) score += 3
+      if (content.includes(term)) score += 1
+      if (tags.includes(term)) score += 2
+    }
+
+    return score
   }
 
   /**

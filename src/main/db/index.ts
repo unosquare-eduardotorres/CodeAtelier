@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 34
+const CURRENT_SCHEMA_VERSION = 37
 
 interface Migration {
   version: number
@@ -587,6 +587,81 @@ const migrations: Migration[] = [
       db.exec(
         `DELETE FROM specialists WHERE agent_id = 'generalist-agent' AND EXISTS (SELECT 1 FROM specialists WHERE agent_id = 'generalist')`
       )
+    }
+  },
+  {
+    version: 35,
+    name: 'create-conversation-specialist-activation-tables',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_specialists (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(conversation_id, specialist_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS specialist_conversation_history (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
+          action TEXT NOT NULL CHECK (action IN ('activated', 'deactivated')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_specialists_conversation
+          ON conversation_specialists(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_conversation_specialists_specialist
+          ON conversation_specialists(specialist_id);
+        CREATE INDEX IF NOT EXISTS idx_specialist_history_conversation
+          ON specialist_conversation_history(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_specialist_history_specialist
+          ON specialist_conversation_history(specialist_id);
+        CREATE INDEX IF NOT EXISTS idx_specialist_history_conversation_created
+          ON specialist_conversation_history(conversation_id, created_at DESC);
+      `)
+    }
+  },
+  {
+    version: 36,
+    name: 'add-skill-gating-and-app-preferences',
+    up: (db) => {
+      // Add skill-gating columns to conversation_specialists
+      db.exec(`ALTER TABLE conversation_specialists ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`)
+      db.exec(
+        `ALTER TABLE conversation_specialists ADD COLUMN skills_enabled INTEGER NOT NULL DEFAULT 1`
+      )
+      db.exec(`ALTER TABLE conversation_specialists ADD COLUMN skill_overrides TEXT DEFAULT NULL`)
+      db.exec(
+        `ALTER TABLE conversation_specialists ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))`
+      )
+
+      // App-level key-value preferences
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS app_preferences (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      // Seed default preferences
+      db.exec(`
+        INSERT OR IGNORE INTO app_preferences (key, value) VALUES
+          ('specialist_warning_build', 'true'),
+          ('specialist_warning_plan', 'true'),
+          ('specialist_warning_always', 'false')
+      `)
+    }
+  },
+  {
+    version: 37,
+    name: 'add-granular-token-columns',
+    up: (db) => {
+      db.exec(`ALTER TABLE agent_sessions ADD COLUMN input_tokens INTEGER DEFAULT 0`)
+      db.exec(`ALTER TABLE agent_sessions ADD COLUMN output_tokens INTEGER DEFAULT 0`)
+      db.exec(`ALTER TABLE agent_sessions ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`)
+      db.exec(`ALTER TABLE agent_sessions ADD COLUMN cache_creation_tokens INTEGER DEFAULT 0`)
     }
   }
 ]

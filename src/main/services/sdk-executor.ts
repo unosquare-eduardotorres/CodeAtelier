@@ -43,7 +43,12 @@ export interface SDKExecuteOptions {
 export interface SDKExecuteResult {
   sessionId?: string
   result?: string
-  tokenUsage: { input: number; output: number }
+  tokenUsage: {
+    input: number
+    output: number
+    cacheReadInputTokens: number
+    cacheCreationInputTokens: number
+  }
 }
 
 export class SDKExecutor {
@@ -55,7 +60,12 @@ export class SDKExecutor {
   async *execute(
     options: SDKExecuteOptions
   ): AsyncGenerator<StreamChunk & { _meta?: SDKExecuteResult }> {
-    const totalUsage = { input: 0, output: 0 }
+    const totalUsage = {
+      input: 0,
+      output: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0
+    }
     let sessionId: string | undefined
     let resultText: string | undefined
 
@@ -129,7 +139,9 @@ export class SDKExecutor {
           // Cap agentic turns at the SDK level (defense-in-depth alongside circuit breaker)
           ...(options.maxTurns ? { maxTurns: options.maxTurns } : {}),
           // Pass AbortController for cancellation support
-          ...(options.abortController ? { abortController: options.abortController } : {})
+          ...(options.abortController ? { abortController: options.abortController } : {}),
+          // Enable AI-generated progress summaries for sub-agents (~30s intervals)
+          ...(options.agents ? { agentProgressSummaries: true } : {})
         }
       })
 
@@ -146,6 +158,37 @@ export class SDKExecutor {
         // Capture session ID from system.init messages
         if (msg.type === 'system' && msg.subtype === 'init') {
           sessionId = msg.session_id as string | undefined
+        }
+
+        // ── SubAgent lifecycle events ──
+        if (msg.type === 'system' && msg.subtype === 'task_started') {
+          const taskMsg = msg as Record<string, unknown>
+          yield {
+            type: 'subagent_start',
+            content: taskMsg.description as string,
+            toolId: taskMsg.task_id as string,
+            toolName: (taskMsg.task_type as string) || 'Agent'
+          }
+        }
+
+        if (msg.type === 'system' && msg.subtype === 'task_progress') {
+          const taskMsg = msg as Record<string, unknown>
+          yield {
+            type: 'subagent_progress',
+            content: (taskMsg.summary as string) || (taskMsg.description as string),
+            toolId: taskMsg.task_id as string,
+            toolName: taskMsg.last_tool_name as string | undefined
+          }
+        }
+
+        if (msg.type === 'system' && msg.subtype === 'task_notification') {
+          const taskMsg = msg as Record<string, unknown>
+          yield {
+            type: 'subagent_complete',
+            content: taskMsg.summary as string,
+            toolId: taskMsg.task_id as string,
+            toolInput: taskMsg.status as string // 'completed' | 'failed' | 'stopped'
+          }
         }
 
         // Map assistant messages to StreamChunks.
@@ -211,6 +254,8 @@ export class SDKExecutor {
             const startUsage = startMsg?.usage as Record<string, number> | undefined
             if (startUsage) {
               totalUsage.input += startUsage.input_tokens ?? 0
+              totalUsage.cacheReadInputTokens += startUsage.cache_read_input_tokens ?? 0
+              totalUsage.cacheCreationInputTokens += startUsage.cache_creation_input_tokens ?? 0
             }
           }
 
@@ -248,6 +293,14 @@ export class SDKExecutor {
               resultUsage.input_tokens ?? resultUsage.inputTokens ?? totalUsage.input
             totalUsage.output =
               resultUsage.output_tokens ?? resultUsage.outputTokens ?? totalUsage.output
+            totalUsage.cacheReadInputTokens =
+              resultUsage.cache_read_input_tokens ??
+              resultUsage.cacheReadInputTokens ??
+              totalUsage.cacheReadInputTokens
+            totalUsage.cacheCreationInputTokens =
+              resultUsage.cache_creation_input_tokens ??
+              resultUsage.cacheCreationInputTokens ??
+              totalUsage.cacheCreationInputTokens
           }
         }
 
@@ -256,6 +309,8 @@ export class SDKExecutor {
         if (usage && msg.type !== 'result') {
           totalUsage.input += usage.input_tokens ?? 0
           totalUsage.output += usage.output_tokens ?? 0
+          totalUsage.cacheReadInputTokens += usage.cache_read_input_tokens ?? 0
+          totalUsage.cacheCreationInputTokens += usage.cache_creation_input_tokens ?? 0
         }
       }
     } catch (error) {

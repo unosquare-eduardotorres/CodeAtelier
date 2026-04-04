@@ -1,5 +1,6 @@
 import log from 'electron-log/main'
 import { EventEmitter } from 'node:events'
+import { getDatabase } from '../db'
 import { agentSessionRepository, workspaceRepository } from '../db/repositories'
 import { eventLoggerService } from './event-logger.service'
 
@@ -57,6 +58,10 @@ export interface CostSummary {
   totalCostCents: number
   totalTokens: number
   sessionCount: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  /** Cache hit rate as a percentage (0-100) */
+  cacheHitRate: number
   byAgent: {
     agentType: string
     costCents: number
@@ -100,7 +105,11 @@ class CostTrackerService extends EventEmitter {
     const agentCosts = new Map<string, { costCents: number; tokens: number; sessions: number }>()
 
     for (const session of sessions) {
-      const cost = estimateCostFromTotal(session.tokenUsage, session.modelUsed ?? undefined)
+      // Use actual input/output breakdown when available (v37+), fallback to estimate for legacy sessions
+      const cost =
+        session.inputTokens > 0 || session.outputTokens > 0
+          ? estimateCostCents(session.inputTokens, session.outputTokens, session.modelUsed ?? undefined)
+          : estimateCostFromTotal(session.tokenUsage, session.modelUsed ?? undefined)
       totalCostCents += cost
 
       const existing = agentCosts.get(session.agentType) ?? { costCents: 0, tokens: 0, sessions: 0 }
@@ -110,10 +119,21 @@ class CostTrackerService extends EventEmitter {
       agentCosts.set(session.agentType, existing)
     }
 
+    // Compute cache hit rate from aggregated token summary
+    const totalCacheTokens =
+      summary.totalCacheReadTokens + summary.totalCacheCreationTokens + summary.totalInputTokens
+    const cacheHitRate =
+      totalCacheTokens > 0
+        ? (summary.totalCacheReadTokens / totalCacheTokens) * 100
+        : 0
+
     return {
       totalCostCents,
       totalTokens: summary.totalTokens,
       sessionCount: summary.sessionCount,
+      cacheReadTokens: summary.totalCacheReadTokens,
+      cacheCreationTokens: summary.totalCacheCreationTokens,
+      cacheHitRate,
       byAgent: Array.from(agentCosts.entries()).map(([agentType, data]) => ({
         agentType,
         ...data
@@ -126,8 +146,46 @@ class CostTrackerService extends EventEmitter {
    */
   getConversationCostCents(conversationId: string): number {
     const summary = agentSessionRepository.getConversationTokenSummary(conversationId)
-    // Use rough estimate since we don't have per-session model info easily here
+    // Use actual breakdown when available (v37+), fallback to estimate for legacy data
+    if (summary.totalInputTokens > 0 || summary.totalOutputTokens > 0) {
+      return estimateCostCents(summary.totalInputTokens, summary.totalOutputTokens)
+    }
     return estimateCostFromTotal(summary.totalTokens)
+  }
+
+  /**
+   * Gets cost breakdown for all conversations in a workspace (single query, avoids N+1).
+   */
+  getWorkspaceConversationCosts(
+    workspaceId: string
+  ): { conversationId: string; costCents: number; totalTokens: number }[] {
+    const db = getDatabase()
+    const rows = db
+      .prepare(
+        `SELECT conversation_id,
+                COALESCE(SUM(token_usage), 0) as total_tokens,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens
+         FROM agent_sessions
+         WHERE workspace_id = ? AND conversation_id IS NOT NULL
+         GROUP BY conversation_id
+         ORDER BY total_tokens DESC`
+      )
+      .all(workspaceId) as {
+      conversation_id: string
+      total_tokens: number
+      total_input_tokens: number
+      total_output_tokens: number
+    }[]
+
+    return rows.map((r) => ({
+      conversationId: r.conversation_id,
+      totalTokens: r.total_tokens,
+      costCents:
+        r.total_input_tokens > 0 || r.total_output_tokens > 0
+          ? estimateCostCents(r.total_input_tokens, r.total_output_tokens)
+          : estimateCostFromTotal(r.total_tokens)
+    }))
   }
 
   /**

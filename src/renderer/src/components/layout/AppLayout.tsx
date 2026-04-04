@@ -8,6 +8,7 @@ import {
   Building2,
   ClipboardList,
   Hammer,
+  Users,
   ZoomIn,
   ZoomOut,
   CircleHelp,
@@ -36,7 +37,9 @@ import {
   useChatStore,
   useChatActions,
   usePixelOfficeStore,
-  useIdeaStore
+  useIdeaStore,
+  useConversationSpecialistActions,
+  useConversationSpecialists
 } from '@renderer/store'
 import type { ConversationMode } from '../../../../shared/types'
 
@@ -71,13 +74,11 @@ export default function AppLayout(): React.JSX.Element {
   const sessionTokens = useAgentStore((s) => s.sessionTokens)
   const { createConversation, updateMode, sendMessage } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
+  const { hydrateConversationSpecialists } = useConversationSpecialistActions()
+  const conversationSpecialists = useConversationSpecialists(activeConversation?.id)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const [showNewChatModal, setShowNewChatModal] = useState(false)
-  const {
-    isVisible: showPixelOffice,
-    isOfficeCentered,
-    setOfficeCentered
-  } = usePixelOfficeStore()
+  const { isVisible: showPixelOffice, isOfficeCentered, setOfficeCentered } = usePixelOfficeStore()
   const { createIdea, startGrill } = useIdeaStore()
   const [zoomFactor, setZoomFactor] = useState(1.0)
   const [pendingGrill, setPendingGrill] = useState<{
@@ -108,6 +109,17 @@ export default function AppLayout(): React.JSX.Element {
   const activeAgentCount = statuses.filter(
     (s) => s.status === 'thinking' || s.status === 'writing' || s.status === 'reviewing'
   ).length
+  const activeConversationSpecialistCount = conversationSpecialists.filter((s) => s.isActive).length
+
+  useEffect(() => {
+    if (!activeConversation?.id) {
+      return
+    }
+
+    void hydrateConversationSpecialists(activeConversation.id).catch((error) => {
+      console.error('[AppLayout] Failed to hydrate conversation specialists:', error)
+    })
+  }, [activeConversation?.id, hydrateConversationSpecialists])
 
   // #7 - Auto-open agent panel when agents activate
   const prevAgentCount = useRef(0)
@@ -210,7 +222,15 @@ export default function AppLayout(): React.JSX.Element {
         window.api.zoomReset()
       }
     },
-    [activeWorkspace, isOfficeCentered, setOfficeCentered, activeConversation, updateMode, isStreaming, navigateBack]
+    [
+      activeWorkspace,
+      isOfficeCentered,
+      setOfficeCentered,
+      activeConversation,
+      updateMode,
+      isStreaming,
+      navigateBack
+    ]
   )
 
   useEffect(() => {
@@ -234,10 +254,7 @@ export default function AppLayout(): React.JSX.Element {
     setSidebarView('settings')
   }
 
-  const handleCreateIdea = async (data: {
-    title: string
-    description?: string
-  }): Promise<void> => {
+  const handleCreateIdea = async (data: { title: string; description?: string }): Promise<void> => {
     if (!activeWorkspace) return
     await createIdea(activeWorkspace.id, data.title, data.description ?? '')
     handleOpenIdeas()
@@ -537,6 +554,10 @@ export default function AppLayout(): React.JSX.Element {
               </span>
               <span className="text-text-muted truncate max-w-[200px]">
                 {activeConversation.title}
+              </span>
+              <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full border border-border-subtle bg-surface-overlay text-text-secondary font-medium">
+                <Users size={10} />
+                {activeConversationSpecialistCount} specialists
               </span>
             </>
           )}

@@ -3,6 +3,22 @@ export { MessageRepository, messageRepository } from './message.repository'
 export { WorkspaceRepository, workspaceRepository } from './workspace.repository'
 export { SpecialistRepository, specialistRepository } from './specialist.repository'
 export type { CreateSpecialistInput, UpdateSpecialistInput } from './specialist.repository'
+export {
+  ConversationSpecialistRepository,
+  conversationSpecialistRepository
+} from './conversation-specialist.repository'
+export {
+  AppPreferenceRepository,
+  appPreferenceRepository
+} from './app-preference.repository'
+export {
+  SpecialistConversationHistoryRepository,
+  specialistConversationHistoryRepository
+} from './specialist-conversation-history.repository'
+export type {
+  SpecialistConversationHistoryAction,
+  SpecialistConversationHistoryRecord
+} from './specialist-conversation-history.repository'
 export { SkillRepository, skillRepository } from './skill.repository'
 export type { CreateSkillInput, UpdateSkillInput } from './skill.repository'
 export { FileChangeRepository, fileChangeRepository } from './file-change.repository'

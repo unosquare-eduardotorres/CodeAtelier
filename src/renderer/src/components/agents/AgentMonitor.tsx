@@ -217,7 +217,13 @@ export default function AgentMonitor({
             <p className="text-xs text-text-muted">Agents will appear here when processing tasks</p>
           </div>
         ) : (
-          visibleStatuses.map((status) => <AgentStatusCard key={status.agentId} status={status} />)
+          visibleStatuses.map((status) => (
+            <AgentStatusCard
+              key={status.agentId}
+              status={status}
+              isSubagent={status.agentId.startsWith('subagent:')}
+            />
+          ))
         )}
       </div>
 

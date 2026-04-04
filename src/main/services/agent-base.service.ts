@@ -24,7 +24,15 @@ function isPlanContent(content: string): boolean {
 }
 
 export interface StreamChunk {
-  type: 'text' | 'tool_use' | 'tool_result' | 'error' | 'status'
+  type:
+    | 'text'
+    | 'tool_use'
+    | 'tool_result'
+    | 'error'
+    | 'status'
+    | 'subagent_start'
+    | 'subagent_progress'
+    | 'subagent_complete'
   content?: string
   toolName?: string
   toolInput?: string

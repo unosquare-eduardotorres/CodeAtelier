@@ -17,10 +17,16 @@ import type { StreamChunk } from './agent-base.service'
 import { SDKExecutor } from './sdk-executor'
 import type { SDKAgentDefinition, SDKExecuteResult } from './sdk-executor'
 import { authProvider } from './auth-provider'
-import { promptBuilder } from './prompt-builder'
+import { PromptBuilder, promptBuilder, type GeneralistConditionalSections } from './prompt-builder'
+import {
+  ASK_QUESTION_PROMPT,
+  IMAGE_ATTACHMENTS_PROMPT,
+  MEMORY_PROTOCOL_PROMPT
+} from './default-prompts'
 import { memoryService } from './memory.service'
 import {
   conversationRepository,
+  conversationSpecialistRepository,
   specialistRepository,
   workspaceRepository
 } from '../db/repositories'
@@ -46,6 +52,13 @@ const ASK_QUESTION_REGEX = /```ask-question\n([\s\S]*?)```/g
 
 /** Regex to detect grill-evaluation blocks (new structured format with score + questions). */
 const GRILL_EVAL_REGEX = /```grill-evaluation\n([\s\S]*?)```/g
+
+/** Minimal coordinator prompt for SubAgent execution to avoid sending the full generalist prompt twice. */
+const SUBAGENT_ORCHESTRATION_SYSTEM_PROMPT = `You are the Generalist coordinator for specialist SubAgents.
+- Delegate work to the named SubAgents using the Agent tool.
+- Respect dependency order and parallelize independent tasks.
+- Do not implement specialist tasks yourself.
+- Return a concise final summary with outcomes and any failures.`
 
 /**
  * @deprecated Use HandoffBrief from shared/types.ts instead.
@@ -89,6 +102,8 @@ export class GeneralistService extends AgentBaseService {
   private currentBrief: HandoffBrief | null = null
   /** Maps conversationId → SDK session_id for resume support */
   private sessionMap: Map<string, string> = new Map()
+  /** Tracks per-conversation turn count for adaptive prompt budgets. */
+  private turnCountMap: Map<string, number> = new Map()
 
   /**
    * Token thresholds for context compaction.
@@ -119,12 +134,15 @@ export class GeneralistService extends AgentBaseService {
   /** Reusable SDK executor instance */
   private sdkExecutor: SDKExecutor = new SDKExecutor()
 
-  /** Full system prompt — rebuilt on start() and switchMode() */
+  /** Full system prompt — rebuilt per turn in send(). */
   private fullSystemPrompt: string = ''
   /** Memory context string, cached for switchMode() rebuilds */
   private memoryContext: string | undefined
   /** Pending mode switch — when set, the next send() prefixes the message with mode-change context */
   private pendingModeSwitch: { from: ConversationMode; to: ConversationMode } | null = null
+
+  /** Tracks active SubAgent tasks by SDK task_id → specialist metadata */
+  private activeSubagents: Map<string, { specialistId: string; startedAt: number }> = new Map()
 
   /**
    * Initializes the generalist for the given workspace.
@@ -175,12 +193,9 @@ export class GeneralistService extends AgentBaseService {
       // Memory context unavailable — not critical
     }
 
-    this.fullSystemPrompt = promptBuilder.build({
-      role: 'generalist',
-      mode: this.currentMode,
-      workspacePath,
-      memoryContext: this.memoryContext
-    })
+    // S17: prompt is rebuilt per turn in send() so turn-aware shrinking can apply.
+    this.fullSystemPrompt = ''
+    this.turnCountMap.clear()
 
     // If a resume session ID was passed, pre-populate the session map
     if (resumeSessionId && this.currentConversationId) {
@@ -258,41 +273,17 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
-    // For resumed sessions, inject critical rules as a message prefix because
-    // the SDK ignores systemPrompt updates when --resume is set (the CLI uses
-    // the original session's baked-in system prompt instead).
+    // For resumed sessions, inject a mode indicator prefix.
     if (sessionId) {
-      const RULES_REMINDER = `[RULES REMINDER — These override all prior instructions]
-Current mode: ${this.currentMode === 'build' ? 'BUILD' : 'PLAN'}
-
-${
-  this.currentMode === 'plan'
-    ? 'PLAN MODE: Answer questions, generate plans, hand off investigations. NEVER modify files. If user asks for code changes, say "Switch to Build mode."'
-    : 'BUILD MODE: Execute operational commands directly. Hand off ALL code changes to specialists via handoff block. NEVER write source code yourself.'
-}
-
-RESPONSE STYLE (MANDATORY):
-- Be CONCISE. Match response length to question complexity.
-- Simple yes/no questions → 1-3 sentences max.
-- NEVER repeat the same information twice in a response.
-- NEVER use emoji bullets (✅, 🟢, 🚀, 🎉, 📊) as section markers.
-- NEVER produce status-report dashboards.
-- Lead with the answer. No preamble.
-
-HANDOFF RULES (MANDATORY):
-When I ask you to involve a specialist, investigate, debug, or diagnose:
-1. Emit a \`\`\`handoff block IMMEDIATELY — zero tool calls before it
-2. Pick the specialist by technology
-3. ALWAYS use "mode": "plan" — you never set "build"
-4. Summary should describe what to INVESTIGATE or ANALYZE, never "fix" or "implement"
-5. The handoff block format:
-\`\`\`handoff
-{"action":"handoff","summary":"Investigate...","decisions":[],"constraints":[],"filesDiscussed":[],"specialists":["specialist-id"],"mode":"plan"}
-\`\`\``
-
-      effectiveMessage = `${RULES_REMINDER}\n\n${effectiveMessage}`
+      effectiveMessage = `[Current mode: ${this.currentMode.toUpperCase()}]\n\n${effectiveMessage}`
       this.log.info('Rules reminder injected for resumed session:', sessionId)
     }
+
+    // S17: rebuild prompt on every turn, using adaptive budget by turn count.
+    // S12: append optional prompt sections based on the current user turn.
+    const hasImages = (images?.length ?? 0) > 0
+    const turnCount = this.incrementTurnCount(conversationId)
+    this.fullSystemPrompt = this.buildPromptForTurn(message, hasImages, turnCount)
 
     const isBuildMode = this.currentMode === 'build'
     const abortController = new AbortController()
@@ -342,6 +333,7 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
         this.log.info(`Built SDK vision prompt with ${images.length} image(s)`)
       }
 
+      let handoffDetectedInStream = false
       for await (const chunk of this.sdkExecutor.execute({
         prompt: sdkPrompt,
         // Always send system prompt — ensures prompt updates propagate to resumed sessions
@@ -372,11 +364,23 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
           }
           // Track token usage + compaction logic
           this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
+          // S8: Log prompt cache effectiveness
+          const { cacheReadInputTokens, cacheCreationInputTokens } = meta.tokenUsage
+          if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
+            const totalInput = meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
+            const cacheHitRate = totalInput > 0 ? (cacheReadInputTokens / totalInput) * 100 : 0
+            this.log.info(
+              `[PIPELINE:prompt-cache] read=${cacheReadInputTokens} creation=${cacheCreationInputTokens} hitRate=${cacheHitRate.toFixed(1)}%`
+            )
+          }
           this.checkCompaction(meta.tokenUsage.input)
         } else {
           // Accumulate text for handoff/grill detection
           if (chunk.type === 'text' && chunk.content) {
             this.accumulatedText += chunk.content
+            if (this.detectHandoff()) {
+              handoffDetectedInStream = true
+            }
           }
           // Tool call counting + circuit breaker
           if (chunk.type === 'tool_use') {
@@ -409,11 +413,66 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
               toolCallNumber: this.toolCallCount
             })
           }
+          // ── SubAgent lifecycle → per-sub-agent statusUpdate events ──
+          if (chunk.type === 'subagent_start' && chunk.toolId) {
+            const specialistId = this.parseSpecialistFromDescription(chunk.content || '')
+            this.activeSubagents.set(chunk.toolId, {
+              specialistId,
+              startedAt: Date.now()
+            })
+            this.emit('statusUpdate', {
+              agentId: `subagent:${chunk.toolId}`,
+              agentType: specialistId,
+              status: 'thinking',
+              currentTask: chunk.content || undefined,
+              elapsedMs: 0,
+              tokenUsage: 0
+            } as AgentStatus)
+          }
+
+          if (chunk.type === 'subagent_progress' && chunk.toolId) {
+            const sub = this.activeSubagents.get(chunk.toolId)
+            if (sub) {
+              const status = chunk.toolName ? 'writing' : 'thinking'
+              this.emit('statusUpdate', {
+                agentId: `subagent:${chunk.toolId}`,
+                agentType: sub.specialistId,
+                status,
+                currentTask: chunk.content || undefined,
+                elapsedMs: Date.now() - sub.startedAt,
+                tokenUsage: 0
+              } as AgentStatus)
+            }
+          }
+
+          if (chunk.type === 'subagent_complete' && chunk.toolId) {
+            const sub = this.activeSubagents.get(chunk.toolId)
+            if (sub) {
+              const finalStatus = chunk.toolInput === 'failed' ? 'failed' : 'completed'
+              this.emit('statusUpdate', {
+                agentId: `subagent:${chunk.toolId}`,
+                agentType: sub.specialistId,
+                status: finalStatus,
+                currentTask: chunk.content || undefined,
+                elapsedMs: Date.now() - sub.startedAt,
+                tokenUsage: 0
+              } as AgentStatus)
+              this.activeSubagents.delete(chunk.toolId)
+            }
+          }
+
           // Update status based on chunk type
           if (chunk.type === 'text') this.currentStatus = 'writing'
           if (chunk.type === 'tool_use') this.currentStatus = 'reviewing'
           this.emit('statusUpdate', this.getStatus())
           this.emit('chunk', chunk)
+
+          if (handoffDetectedInStream) {
+            this.log.info(
+              `[PIPELINE:handoff-short-circuit] conversationId=${conversationId} streamedLen=${this.accumulatedText.length}`
+            )
+            break
+          }
         }
       }
 
@@ -424,13 +483,16 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
         `[PIPELINE:generalist-response-complete] conversationId=${conversationId} textLen=${this.accumulatedText.length}`
       )
 
-      // Detect handoff/grill patterns in accumulated text
-      this.detectHandoff()
+      // Detect control blocks in accumulated text. Handoff is detected in-stream to reduce latency.
+      if (!handoffDetectedInStream) {
+        this.detectHandoff()
+      }
       this.detectGrillSummary()
       this.detectGrillEvaluation()
       this.detectGrillQuestion()
       this.detectAskQuestion()
 
+      this.activeSubagents.clear()
       this.currentStatus = 'idle'
       this.flushTokenUsage()
       this.emit('statusUpdate', this.getStatus())
@@ -439,6 +501,7 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
     } catch (error) {
       clearTimeout(interactionTimer)
       this.sdkAbortController = null
+      this.activeSubagents.clear()
       if ((error as Error).name === 'AbortError') {
         if (timedOut) {
           this.log.error('SDK query timed out')
@@ -461,6 +524,107 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
       this.emit('statusUpdate', this.getStatus())
       this.emit('complete')
     }
+  }
+
+  private incrementTurnCount(conversationId: string): number {
+    const nextTurn = (this.turnCountMap.get(conversationId) ?? 0) + 1
+    this.turnCountMap.set(conversationId, nextTurn)
+    return nextTurn
+  }
+
+  /**
+   * Scale memory budget by turn count.
+   * Turn 1: full budget (memory is fresh context). Turn 3+: reduced (already in history). Turn 6+: zero.
+   * Strategy S3: saves ~429 tokens on late turns.
+   */
+  private getMemoryBudgetForTurn(turnCount: number): number {
+    if (this.costPreference === 'economy') {
+      return turnCount <= 1 ? 3000 : turnCount <= 3 ? 1000 : 0
+    }
+    return turnCount <= 1 ? 5000 : turnCount <= 3 ? 2000 : 0
+  }
+
+  /**
+   * Builds the generalist system prompt for the current turn using:
+   * 1) DB-backed base prompt via PromptBuilder
+   * 2) adaptive budget tier by turn count
+   * 3) optional conditional sections appended after base prompt resolution
+   */
+  private buildPromptForTurn(message: string, hasImages: boolean, turnCount: number): string {
+    if (!this.workspacePath) return this.fullSystemPrompt
+
+    let memoryContextForTurn = this.memoryContext
+    if (this.workspaceId) {
+      const memoryBudget = this.getMemoryBudgetForTurn(turnCount)
+      try {
+        memoryContextForTurn = memoryService.getContextForPrompt(
+          this.workspaceId,
+          memoryBudget,
+          message
+        )
+        this.memoryContext = memoryContextForTurn || undefined
+      } catch (error) {
+        this.log.warn('Failed to refresh filtered memory context; using cached context', error)
+        memoryContextForTurn = this.memoryContext
+      }
+    }
+
+    const budgetTier = promptBuilder.getGeneralistBudgetTierForTurn(turnCount)
+    const basePrompt = promptBuilder.build({
+      role: 'generalist',
+      mode: this.currentMode,
+      workspacePath: this.workspacePath,
+      memoryContext: memoryContextForTurn,
+      budgetTier
+    })
+
+    const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages)
+    const promptWithConditionals = this.appendConditionalSections(basePrompt, conditionalSections)
+    this.log.info(
+      `[PIPELINE:prompt-adaptive] conversationId=${this.currentConversationId} turn=${turnCount} budget=${budgetTier} ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt}`
+    )
+
+    // S8: Prompt size check — warn if approaching model context limits
+    // TODO: Wire up actual model tier resolution from modelConfigService instead of defaulting to 'sonnet'
+    const sizeCheck = PromptBuilder.checkPromptSize(promptWithConditionals, message, 'sonnet')
+    if (sizeCheck.warning) {
+      this.log.warn(
+        `[PIPELINE:prompt-size] conversationId=${this.currentConversationId} turn=${turnCount} ${sizeCheck.warning}`
+      )
+    }
+
+    return promptWithConditionals
+  }
+
+  private appendConditionalSections(
+    basePrompt: string,
+    conditionalSections: GeneralistConditionalSections
+  ): string {
+    const appendSections: string[] = []
+
+    if (
+      conditionalSections.includeAskQuestionPrompt &&
+      !basePrompt.includes('## Asking Clarifying Questions')
+    ) {
+      appendSections.push(ASK_QUESTION_PROMPT)
+    }
+
+    if (
+      conditionalSections.includeMemoryProtocolPrompt &&
+      !basePrompt.includes('## Memory Protocol')
+    ) {
+      appendSections.push(MEMORY_PROTOCOL_PROMPT)
+    }
+
+    if (
+      conditionalSections.includeImageAttachmentsPrompt &&
+      !basePrompt.includes('## Image Attachments')
+    ) {
+      appendSections.push(IMAGE_ATTACHMENTS_PROMPT)
+    }
+
+    if (appendSections.length === 0) return basePrompt
+    return `${basePrompt}\n\n---\n\n${appendSections.join('\n\n---\n\n')}`
   }
 
   /**
@@ -566,20 +730,20 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
    * Parses the enriched HandoffBrief format with decisions, constraints, and files discussed.
    * Falls back gracefully if only the legacy { summary, specialists, mode } fields are present.
    */
-  private detectHandoff(): void {
+  private detectHandoff(): boolean {
     const match = this.accumulatedText.match(HANDOFF_REGEX)
-    if (!match) return
+    if (!match) return false
 
     let handoffData: { mode?: unknown; summary?: unknown } | null = null
     try {
       handoffData = JSON.parse(match[1].trim()) as { mode?: unknown; summary?: unknown }
     } catch (error) {
       this.log.error('Failed to parse handoff block:', error)
-      return
+      return false
     }
 
     const brief = parseHandoffBlock(this.accumulatedText)
-    if (!brief) return
+    if (!brief) return false
 
     // Log if Da Vinci tried to use build mode (prompt violation)
     if (handoffData.mode === 'build') {
@@ -613,6 +777,8 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
       )
       setTimeout(() => this.compact(), 120_000)
     }
+
+    return true
   }
 
   /**
@@ -727,7 +893,7 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
       throw new Error('Generalist not started — no workspace path set')
     }
 
-    const { prompt } = this.buildDecompositionInputs(brief, mode)
+    const { prompt } = this.buildDecompositionInputs(brief, mode, conversationId)
 
     this.log.info('Decomposing task for specialists:', brief.specialists.join(', '))
 
@@ -761,9 +927,24 @@ When I ask you to involve a specialist, investigate, debug, or diagnose:
 
   private buildDecompositionInputs(
     brief: HandoffBrief,
-    mode?: ConversationMode
+    mode?: ConversationMode,
+    conversationId?: string
   ): { prompt: string; specialistList: string } {
-    const activeSpecialists = specialistRepository.findActive()
+    const globallyActiveSpecialists = specialistRepository.findActive()
+    let activeSpecialists = globallyActiveSpecialists
+
+    if (conversationId) {
+      const overrides = conversationSpecialistRepository.findByConversation(conversationId)
+      if (overrides.length > 0) {
+        const activeSpecialistIds = new Set(
+          overrides.filter((override) => override.isActive).map((override) => override.specialistId)
+        )
+        activeSpecialists = globallyActiveSpecialists.filter((specialist) =>
+          activeSpecialistIds.has(specialist.id)
+        )
+      }
+    }
+
     const relevantSpecialists =
       brief.specialists.length > 0
         ? activeSpecialists.filter((s) => brief.specialists.includes(s.agentId))
@@ -952,7 +1133,7 @@ Rules:
     try {
       for await (const chunk of this.sdkExecutor.execute({
         prompt: orchestrationPrompt,
-        systemPrompt: this.fullSystemPrompt,
+        systemPrompt: SUBAGENT_ORCHESTRATION_SYSTEM_PROMPT,
         model: modelConfigService.getModel(this.workspacePath, 'generalist'),
         cwd: this.workspacePath,
         permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
@@ -972,15 +1153,76 @@ Rules:
             }
           }
           this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
+          // S8: Log prompt cache effectiveness for SubAgent orchestration
+          const { cacheReadInputTokens, cacheCreationInputTokens } = meta.tokenUsage
+          if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
+            const totalInput =
+              meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
+            const cacheHitRate =
+              totalInput > 0 ? (cacheReadInputTokens / totalInput) * 100 : 0
+            this.log.info(
+              `[PIPELINE:subagent-cache] read=${cacheReadInputTokens} creation=${cacheCreationInputTokens} hitRate=${cacheHitRate.toFixed(1)}%`
+            )
+          }
         } else {
           if (chunk.type === 'text' && chunk.content) {
             this.accumulatedText += chunk.content
           }
+
+          // ── SubAgent lifecycle → per-sub-agent statusUpdate events ──
+          if (chunk.type === 'subagent_start' && chunk.toolId) {
+            const specialistId = this.parseSpecialistFromDescription(chunk.content || '')
+            this.activeSubagents.set(chunk.toolId, {
+              specialistId,
+              startedAt: Date.now()
+            })
+            this.emit('statusUpdate', {
+              agentId: `subagent:${chunk.toolId}`,
+              agentType: specialistId,
+              status: 'thinking',
+              currentTask: chunk.content || undefined,
+              elapsedMs: 0,
+              tokenUsage: 0
+            } as AgentStatus)
+          }
+
+          if (chunk.type === 'subagent_progress' && chunk.toolId) {
+            const sub = this.activeSubagents.get(chunk.toolId)
+            if (sub) {
+              const status = chunk.toolName ? 'writing' : 'thinking'
+              this.emit('statusUpdate', {
+                agentId: `subagent:${chunk.toolId}`,
+                agentType: sub.specialistId,
+                status,
+                currentTask: chunk.content || undefined,
+                elapsedMs: Date.now() - sub.startedAt,
+                tokenUsage: 0
+              } as AgentStatus)
+            }
+          }
+
+          if (chunk.type === 'subagent_complete' && chunk.toolId) {
+            const sub = this.activeSubagents.get(chunk.toolId)
+            if (sub) {
+              const finalStatus = chunk.toolInput === 'failed' ? 'failed' : 'completed'
+              this.emit('statusUpdate', {
+                agentId: `subagent:${chunk.toolId}`,
+                agentType: sub.specialistId,
+                status: finalStatus,
+                currentTask: chunk.content || undefined,
+                elapsedMs: Date.now() - sub.startedAt,
+                tokenUsage: 0
+              } as AgentStatus)
+              this.activeSubagents.delete(chunk.toolId)
+            }
+          }
+
           this.emit('chunk', chunk)
         }
       }
 
       this.sdkAbortController = null
+      this.activeSubagents.clear()
       this.currentStatus = 'idle'
       this.emit('statusUpdate', this.getStatus())
       this.emit('subAgentsComplete')
@@ -1045,9 +1287,11 @@ Rules:
       this.sdkAbortController = null
     }
     this.completeDbSession('terminated')
+    this.activeSubagents.clear()
     this.currentStatus = 'idle'
     this.currentConversationId = null
     this.accumulatedText = ''
+    this.turnCountMap.clear()
     // NOTE: Do NOT clear sessionMap — sessions persist so we can resume them
     this.emit('statusUpdate', this.getStatus())
   }
@@ -1065,6 +1309,32 @@ Rules:
       elapsedMs: isActive && this.messageStartedAt ? Date.now() - this.messageStartedAt : 0,
       tokenUsage: this.tokenUsage
     }
+  }
+
+  /** Returns AgentStatus entries for all currently active sub-agents. */
+  getActiveSubagentStatuses(): AgentStatus[] {
+    const statuses: AgentStatus[] = []
+    for (const [taskId, sub] of this.activeSubagents) {
+      statuses.push({
+        agentId: `subagent:${taskId}`,
+        agentType: sub.specialistId,
+        status: 'thinking',
+        elapsedMs: Date.now() - sub.startedAt,
+        tokenUsage: 0
+      })
+    }
+    return statuses
+  }
+
+  /**
+   * Parses the specialist ID from a task_started description.
+   * The SDK description comes from our Agent tool invocation, typically
+   * containing patterns like: 'Use "platform-architect" agent: ...'
+   */
+  private parseSpecialistFromDescription(description: string): string {
+    // Match patterns like: Use "platform-architect" agent, Use platform-architect agent
+    const match = description.match(/(?:Use\s+)?["']?([a-z][\w-]+)["']?\s+agent/i)
+    return match?.[1] ?? 'specialist'
   }
 
   /** SDK-based generalist is running when a workspace path is set. */
@@ -1134,6 +1404,7 @@ Rules:
   /** Removes session tracking for a conversation (e.g. on delete). */
   clearSession(conversationId: string): void {
     this.sessionMap.delete(conversationId)
+    this.turnCountMap.delete(conversationId)
   }
 
   /**
@@ -1154,13 +1425,7 @@ Rules:
     // preserving the full conversation history (session is NOT cleared).
     this.pendingModeSwitch = { from: previousMode, to: mode }
 
-    // Rebuild system prompt for the new mode (used for new sessions only)
-    this.fullSystemPrompt = promptBuilder.build({
-      role: 'generalist',
-      mode: this.currentMode,
-      workspacePath: this.workspacePath,
-      memoryContext: this.memoryContext
-    })
+    // Prompt is rebuilt on each send() turn; mode change only updates pending switch context.
   }
 }
 

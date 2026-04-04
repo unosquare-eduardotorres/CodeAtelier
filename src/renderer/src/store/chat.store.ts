@@ -9,6 +9,7 @@ import type {
   GrillAnswerPayload,
   GrillProposedTask,
   GrillQuestion,
+  InvestigationDepth,
   InvestigationReport,
   Message,
   TaskExecutionProgress,
@@ -116,7 +117,7 @@ interface ChatState {
   // Task plan actions
   setTaskPlan: (plan: TaskPlan) => void
   updateTaskProgress: (progress: TaskExecutionProgress) => void
-  executePlan: (strategy: ExecutionStrategy) => Promise<void>
+  executePlan: (strategy: ExecutionStrategy, investigationDepth?: InvestigationDepth) => Promise<void>
   clearTaskPlan: () => void
 
   // Grill session actions
@@ -500,7 +501,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  executePlan: async (strategy: ExecutionStrategy) => {
+  executePlan: async (strategy: ExecutionStrategy, investigationDepth?: InvestigationDepth) => {
     const { activeTaskPlan } = get()
     if (!activeTaskPlan) return
 
@@ -520,7 +521,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await window.api.executePlan({
         conversationId: activeTaskPlan.conversationId,
         strategy,
-        tasks: activeTaskPlan.tasks
+        tasks: activeTaskPlan.tasks,
+        investigationDepth
       })
     } catch (error) {
       rendererLog.error('Failed to execute plan:', error)

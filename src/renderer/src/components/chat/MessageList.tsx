@@ -406,7 +406,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             mode={activeTaskPlan.mode}
             taskProgress={taskProgress}
             isExecuting={isExecutingPlan}
-            onExecute={executePlan}
+            onExecute={(strategy, depth) => executePlan(strategy, depth)}
             onDismiss={clearTaskPlan}
           />
         )}

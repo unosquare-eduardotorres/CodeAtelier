@@ -31,6 +31,8 @@ const TIER_DOT: Record<ComplexityTier, string> = {
 
 interface AgentStatusCardProps {
   status: AgentStatus
+  /** When true, renders with subtle indentation to indicate this is a sub-agent of the generalist */
+  isSubagent?: boolean
 }
 
 const STATUS_CONFIG: Record<
@@ -94,7 +96,7 @@ function formatTokens(count: number): string {
   return count.toString()
 }
 
-export default function AgentStatusCard({ status }: AgentStatusCardProps): React.JSX.Element {
+export default function AgentStatusCard({ status, isSubagent }: AgentStatusCardProps): React.JSX.Element {
   const [elapsed, setElapsed] = useState(status.elapsedMs)
   const [isExpanded, setIsExpanded] = useState(false)
   const outputRef = useRef<HTMLDivElement>(null)
@@ -139,7 +141,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
 
   return (
     <div
-      className="bg-surface-overlay rounded-lg p-4 border border-border-subtle border-l-2 shadow-sm hover:border-border-default transition-colors"
+      className={`bg-surface-overlay rounded-lg border border-border-subtle border-l-2 shadow-sm hover:border-border-default transition-colors ${isSubagent ? 'ml-4 p-3' : 'p-4'}`}
       style={{ borderLeftColor: meta?.color ?? '#B8976A' }}
     >
       <div
@@ -161,13 +163,18 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
               accentColor={meta?.color ?? '#B8976A'}
             />
           )}
-          <span className="text-sm font-medium text-text-primary">
-            {meta?.displayName ??
-              status.agentType
-                .split('-')
-                .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-                .join(' ')}
-          </span>
+          <div className="flex flex-col">
+            <span className="text-sm font-medium text-text-primary">
+              {meta?.displayName ??
+                status.agentType
+                  .split('-')
+                  .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                  .join(' ')}
+            </span>
+            {isSubagent && (
+              <span className="text-[10px] text-text-muted leading-tight">Sub-agent</span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <span

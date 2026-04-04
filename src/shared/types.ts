@@ -156,6 +156,42 @@ export interface UpdateSpecialistInput {
   usePixelForChat?: boolean
 }
 
+export interface ConversationSpecialist {
+  id: string
+  conversationId: string
+  specialistId: string
+  isActive: boolean
+  skillsEnabled: boolean
+  skillOverrides: string[] | null
+  createdAt: string
+  updatedAt: string
+  // Joined fields for UI convenience
+  specialist?: Specialist
+}
+
+export interface SpecialistTokenEstimate {
+  specialistId: string
+  displayName: string
+  skillCount: number
+  estimatedTokens: number
+}
+
+export interface AppPreferences {
+  specialistWarningBuild: boolean
+  specialistWarningPlan: boolean
+  specialistWarningAlways: boolean
+}
+
+export type SpecialistConversationAction = 'activated' | 'deactivated'
+
+export interface SpecialistConversationHistoryEntry {
+  id: string
+  conversationId: string
+  specialistId: string
+  action: SpecialistConversationAction
+  createdAt: string
+}
+
 // ── Marketplace Models ──
 
 export interface MarketplaceSpecialist {
@@ -281,6 +317,9 @@ export type CostPreference = 'economy' | 'balanced' | 'power'
 /** Budget tier controls how much context is included in system prompts (Strategy 4) */
 export type BudgetTier = 'minimal' | 'standard' | 'full'
 
+/** Investigation depth controls specialist turn/tool budgets (S6) */
+export type InvestigationDepth = 'quick' | 'standard' | 'deep'
+
 export type ComplexityTier = ComplexityScore['tier']
 export type ModelTier = ComplexityScore['model']
 
@@ -322,6 +361,8 @@ export interface TaskPlan {
   brief?: HandoffBrief
   /** When set, the renderer auto-executes via CHAT_EXECUTE_PLAN with this strategy */
   autoExecute?: ExecutionStrategy
+  /** User-selected investigation depth — controls specialist turn/tool budgets (S6) */
+  investigationDepth?: InvestigationDepth
 }
 
 /** Progress event for an individual specialist task */
@@ -501,6 +542,10 @@ export interface AgentSessionRecord {
   startedAt: string
   endedAt: string | null
   tokenUsage: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
   conversationId: string | null
   workspaceId: string | null
 }
@@ -508,6 +553,10 @@ export interface AgentSessionRecord {
 export interface TokenSummary {
   totalTokens: number
   sessionCount: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalCacheReadTokens: number
+  totalCacheCreationTokens: number
   byAgent: { agentType: string; totalTokens: number; sessionCount: number }[]
 }
 
@@ -702,6 +751,66 @@ export interface IpcChannels {
   'specialist:assignSkill': { args: { specialistId: string; skillId: string }; return: void }
   'specialist:removeSkill': { args: { specialistId: string; skillId: string }; return: void }
   'specialist:reorder': { args: { orderedIds: string[] }; return: void }
+  'specialist:getConversationSpecialists': {
+    args: { conversationId: string }
+    return: ConversationSpecialist[]
+  }
+  'specialist:addConversationSpecialist': {
+    args: { conversationId: string; specialistId: string }
+    return: ConversationSpecialist
+  }
+  'specialist:removeConversationSpecialist': {
+    args: { conversationId: string; specialistId: string }
+    return: void
+  }
+  'specialist:replaceConversationSpecialists': {
+    args: { conversationId: string; specialistIds: string[] }
+    return: ConversationSpecialist[]
+  }
+  'specialist:getConversationHistory': {
+    args: { conversationId: string; limit?: number }
+    return: SpecialistConversationHistoryEntry[]
+  }
+  'specialist:addConversationHistoryEntry': {
+    args: { conversationId: string; specialistId: string; action: SpecialistConversationAction }
+    return: SpecialistConversationHistoryEntry
+  }
+  'specialist:clearConversationHistory': {
+    args: { conversationId: string }
+    return: void
+  }
+
+  // Conversation Specialist Activation (with skill gating)
+  'convSpecialist:list': {
+    args: { conversationId: string }
+    return: ConversationSpecialist[]
+  }
+  'convSpecialist:upsert': {
+    args: {
+      conversationId: string
+      specialistId: string
+      isActive?: boolean
+      skillsEnabled?: boolean
+      skillOverrides?: string[] | null
+    }
+    return: void
+  }
+  'convSpecialist:remove': {
+    args: { conversationId: string; specialistId: string }
+    return: void
+  }
+  'convSpecialist:reset': {
+    args: { conversationId: string }
+    return: void
+  }
+  'convSpecialist:estimate': {
+    args: { conversationId: string }
+    return: SpecialistTokenEstimate[]
+  }
+
+  // App Preferences
+  'appPreference:getAll': { args: void; return: AppPreferences }
+  'appPreference:set': { args: { key: string; value: string }; return: void }
 
   // Specialist Marketplace
   'specialist:deploy': {
@@ -788,7 +897,7 @@ export interface IpcChannels {
 
   // Task Execution
   'chat:executePlan': {
-    args: { conversationId: string; strategy: ExecutionStrategy; tasks: DecomposedTask[] }
+    args: { conversationId: string; strategy: ExecutionStrategy; tasks: DecomposedTask[]; investigationDepth?: InvestigationDepth }
     return: void
   }
   'chat:executeInvestigationFix': {

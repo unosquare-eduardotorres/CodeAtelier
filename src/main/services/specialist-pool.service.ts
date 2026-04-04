@@ -4,6 +4,7 @@ import type {
   ConversationMode,
   DecomposedTask,
   HandoffBrief,
+  InvestigationDepth,
   ModelTier,
   TaskExecutionProgress
 } from '../../shared/types'
@@ -13,7 +14,8 @@ import {
   specialistRepository,
   worktreeRepository,
   agentSessionRepository,
-  workspaceRepository
+  workspaceRepository,
+  conversationSpecialistRepository
 } from '../db/repositories'
 import { promptBuilder } from './prompt-builder'
 import { agentRegistry } from './agent-registry'
@@ -83,6 +85,14 @@ interface SpecialistProcessInfo {
   timeoutTimer?: ReturnType<typeof setTimeout>
   /** Accumulated token usage from stream events (input + output) */
   tokenUsage: number
+  /** Granular input token count */
+  inputTokens: number
+  /** Granular output token count */
+  outputTokens: number
+  /** Cache read tokens (prompt caching) */
+  cacheReadTokens: number
+  /** Cache creation tokens (prompt caching) */
+  cacheCreationTokens: number
   /** Track model escalations during retries */
   escalations: { fromModel: string; toModel: string; attempt: number }[]
   /** AbortController for cancelling in-flight SDK queries */
@@ -99,11 +109,34 @@ interface SpecialistProcessInfo {
  */
 export class SpecialistPoolService extends EventEmitter {
   /** Max SDK agentic turns for plan-mode specialists */
-  private static readonly MAX_SPECIALIST_PLAN_TURNS = 30
+  private static readonly MAX_SPECIALIST_PLAN_TURNS = 8
   /** Max SDK agentic turns for build-mode specialists */
   private static readonly MAX_SPECIALIST_BUILD_TURNS = 50
   /** Hard circuit breaker — abort specialist after this many tool calls */
   private static readonly MAX_SPECIALIST_TOOL_CALLS = 75
+  /** Hard circuit breaker for plan-mode tool calls (investigations need ≤10-12 reads) */
+  private static readonly MAX_SPECIALIST_PLAN_TOOL_CALLS = 12
+  /** S6: Investigation depth budgets — controls turn/tool limits for plan-mode specialists */
+  private static readonly DEPTH_BUDGETS: Record<
+    InvestigationDepth,
+    { maxTurns: number; maxToolCalls: number }
+  > = {
+    quick: { maxTurns: 3, maxToolCalls: 5 },
+    standard: {
+      maxTurns: SpecialistPoolService.MAX_SPECIALIST_PLAN_TURNS,
+      maxToolCalls: SpecialistPoolService.MAX_SPECIALIST_PLAN_TOOL_CALLS
+    },
+    deep: { maxTurns: 15, maxToolCalls: 25 }
+  } as const
+  /** S9: Patterns that indicate a specialist has reached a conclusion.
+   * When detected mid-stream in plan mode, we abort to save unnecessary turns. */
+  private static readonly CONCLUSIVE_PATTERNS: RegExp[] = [
+    /```investigation-report\s*\n[\s\S]*?```/, // Existing: structured report
+    /## Summary of Findings\b/, // Common investigation conclusion header
+    /## Root Cause\b/, // Root cause identified
+    /\b(?:In summary|In conclusion|To summarize),\s/, // Natural language conclusions
+    /## Recommendations?\b/ // Recommendation section header
+  ]
 
   private readonly log = specialistPoolLogger
   private workspacePath: string | null = null
@@ -118,6 +151,8 @@ export class SpecialistPoolService extends EventEmitter {
   private conversationBrief: HandoffBrief | null = null
   /** Circuit breaker: consecutive spawn failures across all tasks */
   private consecutiveSpawnFailures = 0
+  /** S6: Current investigation depth (defaults to standard) */
+  private investigationDepth: InvestigationDepth = 'standard'
 
   setWorkspacePath(path: string): void {
     this.workspacePath = path
@@ -129,6 +164,10 @@ export class SpecialistPoolService extends EventEmitter {
 
   setConversationId(id: string): void {
     this.conversationId = id
+  }
+
+  setInvestigationDepth(depth: InvestigationDepth): void {
+    this.investigationDepth = depth
   }
 
   /**
@@ -372,6 +411,10 @@ export class SpecialistPoolService extends EventEmitter {
         dbSessionId,
         attempt,
         tokenUsage: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
         escalations: []
       }
 
@@ -394,10 +437,16 @@ export class SpecialistPoolService extends EventEmitter {
         this.taskResults.set(task.id, info.output)
         this.consecutiveSpawnFailures = 0
 
-        // Complete DB session
+        // Complete DB session with granular token breakdown
         if (info.dbSessionId) {
           try {
-            agentSessionRepository.complete(info.dbSessionId, 'completed', info.tokenUsage)
+            agentSessionRepository.completeWithBreakdown(info.dbSessionId, 'completed', {
+              total: info.tokenUsage,
+              input: info.inputTokens,
+              output: info.outputTokens,
+              cacheRead: info.cacheReadTokens,
+              cacheCreation: info.cacheCreationTokens
+            })
           } catch (err) {
             this.log.error('Failed to complete DB session:', err)
           }
@@ -437,10 +486,16 @@ export class SpecialistPoolService extends EventEmitter {
         info.status = 'failed'
         this.taskStatuses.set(task.id, 'failed')
 
-        // Complete DB session with error
+        // Complete DB session with error (granular token breakdown)
         if (info.dbSessionId) {
           try {
-            agentSessionRepository.complete(info.dbSessionId, 'failed', info.tokenUsage)
+            agentSessionRepository.completeWithBreakdown(info.dbSessionId, 'failed', {
+              total: info.tokenUsage,
+              input: info.inputTokens,
+              output: info.outputTokens,
+              cacheRead: info.cacheReadTokens,
+              cacheCreation: info.cacheCreationTokens
+            })
           } catch (dbErr) {
             this.log.error('Failed to complete DB session on error:', dbErr)
           }
@@ -450,7 +505,8 @@ export class SpecialistPoolService extends EventEmitter {
         const isCircuitBreakerError =
           (error as Error).message.includes('exceeded') &&
           (error as Error).message.includes('tool calls')
-        const isRetryable = !isCircuitBreakerError && info.attempt < RETRY_CONFIG.maxRetries
+        const isRetryable =
+          !this.aborted && !isCircuitBreakerError && info.attempt < RETRY_CONFIG.maxRetries
         if (isRetryable) {
           const delay = Math.min(
             RETRY_CONFIG.baseDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, info.attempt),
@@ -530,6 +586,20 @@ export class SpecialistPoolService extends EventEmitter {
     // Resolve skills deterministically via AgentRegistry
     const assignedSkills = agentRegistry.getSkillsForAgent(task.specialist)
 
+    // Resolve per-conversation specialist overrides (skills enabled + skill subset)
+    let skillsEnabled: boolean | undefined
+    let skillOverrides: string[] | undefined
+    if (this.conversationId && specialist?.id) {
+      const override = conversationSpecialistRepository.findByConversationAndSpecialist(
+        this.conversationId,
+        specialist.id
+      )
+      if (override) {
+        skillsEnabled = override.skillsEnabled
+        skillOverrides = override.skillOverrides ?? undefined
+      }
+    }
+
     // Resolve feedback memories
     let feedbackContext: string | undefined
     try {
@@ -551,7 +621,10 @@ export class SpecialistPoolService extends EventEmitter {
       model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
 
     // Build system prompt via centralized PromptBuilder
-    const systemPrompt = promptBuilder.build({
+    const promptOptions: Parameters<typeof promptBuilder.build>[0] & {
+      skillsEnabled?: boolean
+      skillOverrides?: string[]
+    } = {
       role: 'specialist',
       mode,
       specialistId: task.specialist,
@@ -560,8 +633,17 @@ export class SpecialistPoolService extends EventEmitter {
       workspacePath: this.workspacePath!,
       brief: this.conversationBrief || undefined,
       feedbackContext,
-      budgetTier
-    })
+      budgetTier,
+      // S2: Only load skills for moderate+ complexity tasks (complexity >= 5)
+      skillsEnabled: (task.complexity?.total ?? 5) >= 5
+    }
+    if (skillsEnabled !== undefined) {
+      promptOptions.skillsEnabled = skillsEnabled
+    }
+    if (skillOverrides) {
+      promptOptions.skillOverrides = skillOverrides
+    }
+    const systemPrompt = promptBuilder.build(promptOptions)
 
     // Build context from completed dependency outputs
     let dependencyContext = ''
@@ -666,84 +748,152 @@ export class SpecialistPoolService extends EventEmitter {
     info.abortController = abortController
 
     let toolCallCount = 0
+    const isPlanModeSpecialist = mode === 'plan'
+    const isInvestigationTask =
+      task.description.toLowerCase().includes('investigation report') ||
+      task.description.toLowerCase().includes('investigate')
+    const shouldEarlyExitOnReport = isPlanModeSpecialist && isInvestigationTask
+    const depthBudget = SpecialistPoolService.DEPTH_BUDGETS[this.investigationDepth]
+    const maxToolCalls = isPlanModeSpecialist
+      ? depthBudget.maxToolCalls
+      : SpecialistPoolService.MAX_SPECIALIST_TOOL_CALLS
+    const maxTurns = isPlanModeSpecialist
+      ? depthBudget.maxTurns
+      : SpecialistPoolService.MAX_SPECIALIST_BUILD_TURNS
+    const reportRegex = /```investigation-report\s*\n([\s\S]*?)```/
+    let abortedAfterReportDetection = false
 
     const executor = new SDKExecutor()
-    for await (const chunk of executor.execute({
-      prompt: fullPrompt,
-      systemPrompt,
-      model: modelId,
-      cwd,
-      permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
-      maxThinkingTokens: parseInt(thinkingBudget) || undefined,
-      maxTurns: mode === 'build'
-        ? SpecialistPoolService.MAX_SPECIALIST_BUILD_TURNS
-        : SpecialistPoolService.MAX_SPECIALIST_PLAN_TURNS,
-      abortController
-    })) {
-      if ('_meta' in chunk && chunk._meta) {
-        const meta = chunk._meta as SDKExecuteResult
-        info.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
-      } else if (chunk.type === 'status' && chunk.content === 'heartbeat') {
-        // Forward heartbeat for liveness detection
-        this.emit('taskChunk', {
-          taskId: task.id,
-          specialist: task.specialist,
-          chunk: '' // Empty chunk — renderer uses timestamp for liveness detection
-        })
-      } else if (chunk.type === 'text' && chunk.content) {
-        info.output += chunk.content
-        this.emit('taskChunk', {
-          taskId: task.id,
-          specialist: task.specialist,
-          chunk: chunk.content
-        })
-      } else if (chunk.type === 'tool_use') {
-        toolCallCount++
-        if (toolCallCount >= SpecialistPoolService.MAX_SPECIALIST_TOOL_CALLS) {
-          this.log.error(
-            `Specialist circuit breaker: ${task.specialist} hit ${toolCallCount} tool calls on task ${task.id}`
-          )
-          abortController.abort()
-          throw new Error(
-            `Specialist ${task.specialist} exceeded ${SpecialistPoolService.MAX_SPECIALIST_TOOL_CALLS} tool calls — likely stuck in a loop`
-          )
+    try {
+      for await (const chunk of executor.execute({
+        prompt: fullPrompt,
+        systemPrompt,
+        model: modelId,
+        cwd,
+        permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
+        maxThinkingTokens: parseInt(thinkingBudget) || undefined,
+        maxTurns,
+        abortController
+      })) {
+        if ('_meta' in chunk && chunk._meta) {
+          const meta = chunk._meta as SDKExecuteResult
+          info.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
+          info.inputTokens += meta.tokenUsage.input
+          info.outputTokens += meta.tokenUsage.output
+          info.cacheReadTokens += meta.tokenUsage.cacheReadInputTokens
+          info.cacheCreationTokens += meta.tokenUsage.cacheCreationInputTokens
+          // S8: Log specialist prompt cache metrics
+          const { cacheReadInputTokens, cacheCreationInputTokens } = meta.tokenUsage
+          if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
+            this.log.info(
+              `[PIPELINE:specialist-cache] ${task.specialist}/${task.id} read=${cacheReadInputTokens} creation=${cacheCreationInputTokens}`
+            )
+          }
+        } else if (chunk.type === 'status' && chunk.content === 'heartbeat') {
+          // Forward heartbeat for liveness detection
+          this.emit('taskChunk', {
+            taskId: task.id,
+            specialist: task.specialist,
+            chunk: '' // Empty chunk — renderer uses timestamp for liveness detection
+          })
+        } else if (chunk.type === 'text' && chunk.content) {
+          info.output += chunk.content
+          this.emit('taskChunk', {
+            taskId: task.id,
+            specialist: task.specialist,
+            chunk: chunk.content
+          })
+
+          // S9: Detect any conclusive pattern (not just investigation-report)
+          const matchedPattern =
+            shouldEarlyExitOnReport && !abortedAfterReportDetection
+              ? this.detectConclusivePattern(info.output)
+              : null
+          if (matchedPattern) {
+            abortedAfterReportDetection = true
+            this.log.info(
+              `[PIPELINE:conclusive-pattern-early-exit] ${task.specialist}/${task.id} pattern=${matchedPattern}`
+            )
+            abortController.abort()
+          }
+        } else if (chunk.type === 'tool_use') {
+          toolCallCount++
+          if (toolCallCount >= maxToolCalls) {
+            this.log.error(
+              `Specialist circuit breaker: ${task.specialist} hit ${toolCallCount} tool calls on task ${task.id}`
+            )
+            abortController.abort()
+            throw new Error(
+              `Specialist ${task.specialist} exceeded ${maxToolCalls} tool calls — likely stuck in a loop`
+            )
+          }
+          this.emit('taskChunk', {
+            taskId: task.id,
+            specialist: task.specialist,
+            chunk: '',
+            toolActivity: {
+              type: 'tool_use',
+              toolName: chunk.toolName ?? 'Unknown',
+              toolId: chunk.toolId,
+              input: chunk.toolInput ?? ''
+            }
+          })
+        } else if (chunk.type === 'tool_result') {
+          this.emit('taskChunk', {
+            taskId: task.id,
+            specialist: task.specialist,
+            chunk: '',
+            toolActivity: {
+              type: 'tool_result',
+              toolName: chunk.toolName ?? 'Unknown',
+              toolId: chunk.toolId,
+              input: chunk.content ?? undefined
+            }
+          })
+        } else if (chunk.type === 'error') {
+          if (
+            abortedAfterReportDetection &&
+            typeof chunk.error === 'string' &&
+            /abort/i.test(chunk.error)
+          ) {
+            this.log.debug(
+              `[PIPELINE:investigation-report-early-exit] ${task.specialist}/${task.id} — received abort error chunk after report detection`
+            )
+            break
+          }
+          this.emit('taskChunk', {
+            taskId: task.id,
+            specialist: task.specialist,
+            chunk: `\n⚠️ ${chunk.error}\n`
+          })
+          throw new Error(chunk.error)
         }
-        this.emit('taskChunk', {
-          taskId: task.id,
-          specialist: task.specialist,
-          chunk: '',
-          toolActivity: {
-            type: 'tool_use',
-            toolName: chunk.toolName ?? 'Unknown',
-            toolId: chunk.toolId,
-            input: chunk.toolInput ?? ''
-          }
-        })
-      } else if (chunk.type === 'tool_result') {
-        this.emit('taskChunk', {
-          taskId: task.id,
-          specialist: task.specialist,
-          chunk: '',
-          toolActivity: {
-            type: 'tool_result',
-            toolName: chunk.toolName ?? 'Unknown',
-            toolId: chunk.toolId,
-            input: chunk.content ?? undefined
-          }
-        })
-      } else if (chunk.type === 'error') {
-        this.emit('taskChunk', {
-          taskId: task.id,
-          specialist: task.specialist,
-          chunk: `\n⚠️ ${chunk.error}\n`
-        })
-        throw new Error(chunk.error)
+      }
+    } catch (error) {
+      const errorName =
+        typeof error === 'object' && error !== null && 'name' in error
+          ? String((error as { name: unknown }).name)
+          : ''
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : ''
+      const isAbortErrorByName = errorName === 'AbortError'
+      const isAbortErrorByMessage = /abort/i.test(errorMessage)
+      const isIntentionalEarlyExitAbort =
+        abortedAfterReportDetection &&
+        abortController.signal.aborted &&
+        (isAbortErrorByName || isAbortErrorByMessage)
+      if (!isIntentionalEarlyExitAbort) {
+        throw error
       }
     }
 
     // Detect investigation report in specialist output
     // Support both exact and slightly varied formats (extra whitespace, trailing content)
-    const reportMatch = info.output.match(/```investigation-report\s*\n([\s\S]*?)```/)
+    const reportMatch = info.output.match(reportRegex)
     if (reportMatch) {
       try {
         const rawJson = reportMatch[1].trim()
@@ -757,7 +907,7 @@ export class SpecialistPoolService extends EventEmitter {
           }
         )
         eventLoggerService.logInvestigationReportDetected({
-          conversationId: this.conversationId,
+          conversationId: this.conversationId ?? undefined,
           agentId: task.specialist,
           taskId: task.id,
           impact: report.impact,
@@ -791,16 +941,13 @@ export class SpecialistPoolService extends EventEmitter {
       }
     } else {
       // Check if this was an investigation task that should have produced a report
-      const isInvestigationTask =
-        task.description.toLowerCase().includes('investigation report') ||
-        task.description.toLowerCase().includes('investigate')
       if (isInvestigationTask) {
         this.log.warn(
           `[PIPELINE:investigation-report-missing] ${task.specialist}/${task.id} — no block found`,
           `Output length: ${info.output.length} chars, last 200 chars: "${info.output.slice(-200)}"`
         )
         eventLoggerService.logInvestigationReportMissing({
-          conversationId: this.conversationId,
+          conversationId: this.conversationId ?? undefined,
           agentId: task.specialist,
           taskId: task.id,
           outputLength: info.output.length
@@ -1151,6 +1298,23 @@ export class SpecialistPoolService extends EventEmitter {
     }
   }
 
+  /** S9: Identify which conclusive pattern matched (for logging) */
+  private detectConclusivePattern(output: string): string | null {
+    const labels = [
+      'investigation-report',
+      'summary-of-findings',
+      'root-cause',
+      'natural-conclusion',
+      'recommendations'
+    ]
+    for (let i = 0; i < SpecialistPoolService.CONCLUSIVE_PATTERNS.length; i++) {
+      if (SpecialistPoolService.CONCLUSIVE_PATTERNS[i].test(output)) {
+        return labels[i]
+      }
+    }
+    return null
+  }
+
   private reset(): void {
     this.completedTasks.clear()
     this.taskResults.clear()
@@ -1159,6 +1323,7 @@ export class SpecialistPoolService extends EventEmitter {
     this.aborted = false
     this.conversationBrief = null
     this.consecutiveSpawnFailures = 0
+    this.investigationDepth = 'standard'
     taskLoopService.reset()
     // Note: workspacePath and conversationId are preserved across resets
   }

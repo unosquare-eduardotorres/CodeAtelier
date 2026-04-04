@@ -19,20 +19,37 @@ import type { HandoffBrief } from '../../../../shared/types'
 let passed = 0
 let failed = 0
 
-async function testLLM(name: string, fn: () => Promise<void>, timeoutMs = 120_000): Promise<void> {
+async function testLLM(
+  name: string,
+  fn: (ac: AbortController) => Promise<void>,
+  timeoutMs = 120_000
+): Promise<void> {
+  const ac = new AbortController()
+  let timer: ReturnType<typeof setTimeout>
   try {
     await Promise.race([
-      fn(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs)
-      )
+      fn(ac),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          ac.abort()
+          reject(new Error(`Timeout after ${timeoutMs}ms`))
+        }, timeoutMs)
+        if (timer.unref) timer.unref()
+      })
     ])
+    clearTimeout(timer!)
     console.log(`  ✓ ${name}`)
     passed++
   } catch (err) {
+    clearTimeout(timer!)
+    ac.abort() // ensure cleanup even on non-timeout errors
+    const message = (err as Error).message
     console.error(`  ✗ ${name}`)
-    console.error(`    ${(err as Error).message}`)
+    console.error(`    ${message}`)
     failed++
+    if (message.includes('Timeout')) {
+      await new Promise((r) => setTimeout(r, 2000)) // cooldown after timeout
+    }
   }
 }
 
@@ -87,27 +104,38 @@ async function run(): Promise<void> {
   // Warmup — first SDK call through Claude CLI auth is slow (~30-60s).
   // Fire a cheap throwaway call so subsequent tests don't eat their timeout on cold start.
   console.log('  … warming up SDK (first call may take 30-60s)')
-  try {
-    await Promise.race([
-      executor.executeAndCollect({
-        ...baseOptions(),
-        prompt: 'Reply with just the word "ok".',
-        systemPrompt: 'You are a test assistant. Reply with just "ok".'
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('warmup timeout')), 120_000)
-      )
-    ])
-    console.log('  … warmup complete\n')
-  } catch {
-    console.log('  … warmup timed out — tests may be slow\n')
+  {
+    const warmupAc = new AbortController()
+    let warmupTimer: ReturnType<typeof setTimeout>
+    try {
+      await Promise.race([
+        executor.executeAndCollect({
+          ...baseOptions(warmupAc),
+          prompt: 'Reply with just the word "ok".',
+          systemPrompt: 'You are a test assistant. Reply with just "ok".'
+        }),
+        new Promise<never>((_, reject) => {
+          warmupTimer = setTimeout(() => {
+            warmupAc.abort()
+            reject(new Error('warmup timeout'))
+          }, 120_000)
+          if (warmupTimer.unref) warmupTimer.unref()
+        })
+      ])
+      clearTimeout(warmupTimer!)
+      console.log('  … warmup complete\n')
+    } catch {
+      clearTimeout(warmupTimer!)
+      warmupAc.abort()
+      console.log('  … warmup timed out — tests may be slow\n')
+    }
   }
 
-  await testLLM('decomposition prompt produces valid parseable JSON', () =>
+  await testLLM('decomposition prompt produces valid parseable JSON', (ac) =>
     withRetry(async () => {
       const prompt = buildDecompositionPrompt(MOCK_BRIEF, defaultSpecialists)
       const { result } = await executor.executeAndCollect({
-        ...baseOptions(),
+        ...baseOptions(ac),
         prompt,
         systemPrompt: DECOMPOSITION_SYSTEM_PROMPT
       })
@@ -128,7 +156,7 @@ async function run(): Promise<void> {
     })
   )
 
-  await testLLM('investigation input produces only investigation tasks', () =>
+  await testLLM('investigation input produces only investigation tasks', (ac) =>
     withRetry(async () => {
       const investigationBrief: HandoffBrief = {
         ...MOCK_BRIEF,
@@ -136,7 +164,7 @@ async function run(): Promise<void> {
       }
       const prompt = buildDecompositionPrompt(investigationBrief, defaultSpecialists)
       const { result } = await executor.executeAndCollect({
-        ...baseOptions(),
+        ...baseOptions(ac),
         prompt,
         systemPrompt: DECOMPOSITION_SYSTEM_PROMPT
       })
@@ -157,7 +185,7 @@ async function run(): Promise<void> {
     })
   )
 
-  await testLLM('plan-mode decomposition never produces fix tasks', () =>
+  await testLLM('plan-mode decomposition never produces fix tasks', (ac) =>
     withRetry(async () => {
       const fixBrief: HandoffBrief = {
         ...MOCK_BRIEF,
@@ -166,7 +194,7 @@ async function run(): Promise<void> {
       }
       const prompt = buildDecompositionPrompt(fixBrief, defaultSpecialists)
       const { result } = await executor.executeAndCollect({
-        ...baseOptions(),
+        ...baseOptions(ac),
         prompt,
         systemPrompt: DECOMPOSITION_SYSTEM_PROMPT
       })
@@ -183,7 +211,7 @@ async function run(): Promise<void> {
     })
   )
 
-  await testLLM('decomposition respects specialist list', () =>
+  await testLLM('decomposition respects specialist list', (ac) =>
     withRetry(async () => {
       const singleSpecBrief: HandoffBrief = {
         ...MOCK_BRIEF,
@@ -191,7 +219,7 @@ async function run(): Promise<void> {
       }
       const prompt = buildDecompositionPrompt(singleSpecBrief, ['dotnet-architect'])
       const { result } = await executor.executeAndCollect({
-        ...baseOptions(),
+        ...baseOptions(ac),
         prompt,
         systemPrompt: DECOMPOSITION_SYSTEM_PROMPT
       })
@@ -208,11 +236,11 @@ async function run(): Promise<void> {
     })
   )
 
-  await testLLM('decomposition includes complexity scoring', () =>
+  await testLLM('decomposition includes complexity scoring', (ac) =>
     withRetry(async () => {
       const prompt = buildDecompositionPrompt(MOCK_BRIEF, defaultSpecialists)
       const { result } = await executor.executeAndCollect({
-        ...baseOptions(),
+        ...baseOptions(ac),
         prompt,
         systemPrompt: DECOMPOSITION_SYSTEM_PROMPT
       })

@@ -7,6 +7,9 @@ import type {
   Message,
   AgentStatus,
   Specialist,
+  ConversationSpecialist,
+  SpecialistConversationAction,
+  SpecialistConversationHistoryEntry,
   Skill,
   WorkspaceClaudeStatus,
   ActivationResult,
@@ -15,6 +18,7 @@ import type {
   DiscoveredAgent,
   DecomposedTask,
   ExecutionStrategy,
+  InvestigationDepth,
   TaskPlan,
   TaskExecutionProgress,
   InvestigationReport,
@@ -42,7 +46,9 @@ import type {
   CoreAgentPrompt,
   MarketplaceSpecialist,
   SubscriptionCheckResult,
-  AutoConfigureResult
+  AutoConfigureResult,
+  SpecialistTokenEstimate,
+  AppPreferences
 } from '../shared/types'
 
 const api = {
@@ -119,6 +125,7 @@ const api = {
     conversationId: string
     strategy: ExecutionStrategy
     tasks: DecomposedTask[]
+    investigationDepth?: InvestigationDepth
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_EXECUTE_PLAN, args),
 
   executeInvestigationFix: (args: {
@@ -194,6 +201,81 @@ const api = {
 
   reorderSpecialists: (args: { orderedIds: string[] }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_REORDER, args),
+
+  getConversationSpecialists: (args: {
+    conversationId: string
+  }): Promise<ConversationSpecialist[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_GET_CONVERSATION_SPECIALISTS, args),
+
+  addConversationSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+  }): Promise<ConversationSpecialist> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_ADD_CONVERSATION_SPECIALIST, args),
+
+  removeConversationSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+  }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_REMOVE_CONVERSATION_SPECIALIST, args),
+
+  replaceConversationSpecialists: (args: {
+    conversationId: string
+    specialistIds: string[]
+  }): Promise<ConversationSpecialist[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_REPLACE_CONVERSATION_SPECIALISTS, args),
+
+  getConversationHistory: (args: {
+    conversationId: string
+    limit?: number
+  }): Promise<SpecialistConversationHistoryEntry[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_GET_CONVERSATION_HISTORY, args),
+
+  addConversationHistoryEntry: (args: {
+    conversationId: string
+    specialistId: string
+    action: SpecialistConversationAction
+  }): Promise<SpecialistConversationHistoryEntry> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_ADD_CONVERSATION_HISTORY_ENTRY, args),
+
+  clearConversationHistory: (args: { conversationId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_CLEAR_CONVERSATION_HISTORY, args),
+
+  // ── Conversation Specialist Activation (skill gating) ──
+  listConvSpecialists: (args: {
+    conversationId: string
+  }): Promise<ConversationSpecialist[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_LIST, args),
+
+  upsertConvSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+    isActive?: boolean
+    skillsEnabled?: boolean
+    skillOverrides?: string[] | null
+  }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_UPSERT, args),
+
+  removeConvSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+  }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_REMOVE, args),
+
+  resetConvSpecialists: (args: { conversationId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_RESET, args),
+
+  estimateConvTokens: (args: {
+    conversationId: string
+  }): Promise<SpecialistTokenEstimate[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_ESTIMATE, args),
+
+  // ── App Preferences ──
+  getAppPreferences: (): Promise<AppPreferences> =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_PREFERENCE_GET_ALL),
+
+  setAppPreference: (args: { key: string; value: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_PREFERENCE_SET, args),
 
   // ── Specialist Marketplace ──
   deploySpecialist: (args: { workspacePath: string; specialistId: string }): Promise<void> =>
@@ -644,18 +726,23 @@ const api = {
     }
   },
 
-  onInvestigationReport: (callback: (data: {
-    conversationId: string
-    taskId: string
-    specialist: string
-    report: InvestigationReport
-  }) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: {
+  onInvestigationReport: (
+    callback: (data: {
       conversationId: string
       taskId: string
       specialist: string
       report: InvestigationReport
-    }): void => callback(data)
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        conversationId: string
+        taskId: string
+        specialist: string
+        report: InvestigationReport
+      }
+    ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_INVESTIGATION_REPORT, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.CHAT_INVESTIGATION_REPORT, handler)
@@ -847,14 +934,12 @@ const api = {
     agentRole: 'generalist'
     mode: 'plan' | 'build'
     promptText: string
-  }): Promise<CoreAgentPrompt> =>
-    ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT, args),
+  }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT, args),
 
   resetCoreAgentPrompt: (args: {
     agentRole: 'generalist'
     mode: 'plan' | 'build'
-  }): Promise<CoreAgentPrompt> =>
-    ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_RESET, args),
+  }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_RESET, args),
 
   // ── Renderer Logging Bridge ──
   log: (args: {
@@ -886,7 +971,9 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_ITEM_IN_FOLDER, filePath),
 
   // ── Checkpoints ──
-  listCheckpoints: (args: { conversationId: string }): Promise<
+  listCheckpoints: (args: {
+    conversationId: string
+  }): Promise<
     { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
   > => ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_LIST, args),
 
@@ -896,14 +983,30 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_RESTORE, args),
 
   // ── Cost Tracking ──
-  getCostSummary: (args: { workspaceId: string }): Promise<{
+  getCostSummary: (args: {
+    workspaceId: string
+  }): Promise<{
     totalCostCents: number
     totalTokens: number
     sessionCount: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheHitRate: number
     byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
   }> => ipcRenderer.invoke(IPC_CHANNELS.COST_GET_WORKSPACE_SUMMARY, args),
 
-  checkBudget: (args: { workspaceId: string }): Promise<{
+  getConversationCost: (args: { conversationId: string }): Promise<number> =>
+    ipcRenderer.invoke(IPC_CHANNELS.COST_GET_CONVERSATION, args),
+
+  getWorkspaceConversationCosts: (args: {
+    workspaceId: string
+  }): Promise<
+    { conversationId: string; costCents: number; totalTokens: number }[]
+  > => ipcRenderer.invoke(IPC_CHANNELS.COST_GET_WORKSPACE_CONVERSATIONS, args),
+
+  checkBudget: (args: {
+    workspaceId: string
+  }): Promise<{
     currentCostCents: number
     dailyBudgetCents: number
     sessionBudgetCents: number
@@ -936,11 +1039,7 @@ const api = {
   },
 
   onBudgetExceeded: (
-    callback: (data: {
-      workspaceId: string
-      currentCostCents: number
-      budgetCents: number
-    }) => void
+    callback: (data: { workspaceId: string; currentCostCents: number; budgetCents: number }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
@@ -953,7 +1052,9 @@ const api = {
   },
 
   // ── Events (audit log) ──
-  getRecentEvents: (args?: { limit?: number }): Promise<
+  getRecentEvents: (args?: {
+    limit?: number
+  }): Promise<
     {
       id: string
       sessionId: string | null
@@ -989,7 +1090,9 @@ const api = {
   > => ipcRenderer.invoke(IPC_CHANNELS.EVENTS_GET_BY_CONVERSATION, args),
 
   // ── Gate Results ──
-  getGateResults: (args: { conversationId: string }): Promise<
+  getGateResults: (args: {
+    conversationId: string
+  }): Promise<
     {
       id: string
       sessionId: string | null
@@ -1069,8 +1172,11 @@ const api = {
   // ── AI Subscriptions ──
   validateSubscriptions: (): Promise<SubscriptionCheckResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_VALIDATE_ALL),
-  checkClaudeCli: (): Promise<{ installed: boolean; version: string | null; error: string | null }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_CHECK_CLAUDE_CLI),
+  checkClaudeCli: (): Promise<{
+    installed: boolean
+    version: string | null
+    error: string | null
+  }> => ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_CHECK_CLAUDE_CLI),
   autoConfigureClaude: (): Promise<AutoConfigureResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE)
 } as const

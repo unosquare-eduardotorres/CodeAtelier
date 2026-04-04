@@ -3,7 +3,12 @@ export { default as ChatItem } from './ChatItem'
 export { default as CompleteDialog } from './CompleteDialog'
 export { default as ChatPanel } from './ChatPanel'
 export { default as FloatingRobots } from './FloatingRobots'
-export { default as GrillQuestionCard, QuestionItem, RadioIcon, CheckboxIcon } from './GrillQuestionCard'
+export {
+  default as GrillQuestionCard,
+  QuestionItem,
+  RadioIcon,
+  CheckboxIcon
+} from './GrillQuestionCard'
 export type { QuestionState } from './GrillQuestionCard'
 export { default as GrillEvaluationCard } from './GrillEvaluationCard'
 export { default as GrillResultCard } from './GrillResultCard'
@@ -23,6 +28,10 @@ export { default as ToolActivityBlock } from './ToolActivityBlock'
 export { default as IdeaPopover } from './IdeaPopover'
 export { default as ImagePreviewThumbnail } from './ImagePreviewThumbnail'
 export { default as RepoWarningBanner } from './RepoWarningBanner'
+export { default as ActiveSpecialistsStrip } from './ActiveSpecialistsStrip'
+export { default as SpecialistDrawer } from './SpecialistDrawer'
+export { default as SpecialistWarningDialog } from './SpecialistWarningDialog'
+export type { SpecialistWarningType } from './SpecialistWarningDialog'
 export { default as ScrollToBottomButton } from './ScrollToBottomButton'
 export { default as UnsavedChangesDialog } from './UnsavedChangesDialog'
 export { default as VoiceIndicator } from './VoiceIndicator'

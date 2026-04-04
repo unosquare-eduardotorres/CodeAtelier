@@ -3,10 +3,17 @@ import { Users, UserRound, ArrowRight, CheckCircle2, Clock, Loader2, XCircle, X 
 import type {
   DecomposedTask,
   ExecutionStrategy,
+  InvestigationDepth,
   TaskExecutionProgress,
   Specialist
 } from '../../../../shared/types'
-import { useSpecialistStore } from '@renderer/store'
+import {
+  useChatStore,
+  useConversationSpecialists,
+  useConversationTokenEstimates,
+  useSpecialistStore,
+  useSpecialistWarningPreferences
+} from '@renderer/store'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
 import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
 import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
@@ -17,7 +24,7 @@ interface TaskPlanCardProps {
   mode: 'plan' | 'build'
   taskProgress: Map<string, TaskExecutionProgress>
   isExecuting: boolean
-  onExecute: (strategy: ExecutionStrategy) => void
+  onExecute: (strategy: ExecutionStrategy, depth?: InvestigationDepth) => void
   onDismiss?: () => void
 }
 
@@ -38,13 +45,27 @@ export default function TaskPlanCard({
   onDismiss
 }: TaskPlanCardProps): React.JSX.Element {
   const [hoveredStrategy, setHoveredStrategy] = useState<ExecutionStrategy | null>(null)
+  const [depth, setDepth] = useState<InvestigationDepth>('standard')
   const { specialists } = useSpecialistStore()
+  const activeConversation = useChatStore((state) => state.activeConversation)
+  const conversationSpecialists = useConversationSpecialists(activeConversation?.id)
+  const tokenEstimates = useConversationTokenEstimates(activeConversation?.id)
+  const { specialistWarningBuild, specialistWarningPlan, specialistWarningAlways } =
+    useSpecialistWarningPreferences()
 
   const hasUserChosen = isExecuting || taskProgress.size > 0
   const allDone = tasks.every((t) => {
     const p = taskProgress.get(t.id)
     return p?.status === 'completed' || p?.status === 'failed'
   })
+  const activeSpecialistCount = conversationSpecialists.filter((specialist) => specialist.isActive).length
+  const estimatedSpecialistTokens = tokenEstimates.reduce(
+    (sum, estimate) => sum + estimate.estimatedTokens,
+    0
+  )
+  const showSpecialistWarningBanner =
+    activeSpecialistCount > 0 &&
+    (specialistWarningAlways || (mode === 'build' ? specialistWarningBuild : specialistWarningPlan))
 
   const getSpecialistMeta = (
     agentId: string
@@ -87,6 +108,20 @@ export default function TaskPlanCard({
         )}
       </div>
 
+      {showSpecialistWarningBanner && (
+        <div className="px-4 py-2 border-b border-border-subtle bg-warning-muted/40">
+          <p className="text-xs text-warning flex items-center gap-1.5">
+            <span className="font-medium">
+              {activeSpecialistCount} active specialist{activeSpecialistCount === 1 ? '' : 's'}
+            </span>
+            <span className="text-text-secondary">
+              This {mode} action can include additional specialist context (~
+              {estimatedSpecialistTokens.toLocaleString()} tokens).
+            </span>
+          </p>
+        </div>
+      )}
+
       {/* Task list */}
       <div className="px-4 py-3 space-y-2">
         {/* Independent tasks (can run in parallel) */}
@@ -126,11 +161,38 @@ export default function TaskPlanCard({
         )}
       </div>
 
+      {/* S6: Investigation depth picker — only in plan mode before execution */}
+      {mode === 'plan' && !hasUserChosen && (
+        <div className="flex items-center gap-2 px-4 py-2 border-t border-border-subtle">
+          <span className="text-xs text-text-muted">Depth:</span>
+          {(['quick', 'standard', 'deep'] as const).map((d) => (
+            <button
+              key={d}
+              onClick={() => setDepth(d)}
+              className={`px-2 py-0.5 text-xs rounded-md border transition-colors ${
+                depth === d
+                  ? 'bg-accent/10 border-accent text-accent'
+                  : 'border-border-subtle text-text-muted hover:text-text-primary'
+              }`}
+            >
+              {d === 'quick' ? '⚡ Quick' : d === 'standard' ? '🔍 Standard' : '🔬 Deep'}
+            </button>
+          ))}
+          <span className="text-xs text-text-muted ml-1">
+            {depth === 'quick'
+              ? '3 turns, 5 tools'
+              : depth === 'standard'
+                ? '8 turns, 12 tools'
+                : '15 turns, 25 tools'}
+          </span>
+        </div>
+      )}
+
       {/* Action buttons — only shown before execution starts */}
       {!hasUserChosen && (
         <div className="flex items-stretch border-t border-border-subtle">
           <button
-            onClick={() => onExecute('sequential')}
+            onClick={() => onExecute('sequential', depth)}
             onMouseEnter={() => setHoveredStrategy('sequential')}
             onMouseLeave={() => setHoveredStrategy(null)}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors border-r border-border-subtle"
@@ -147,7 +209,7 @@ export default function TaskPlanCard({
             </div>
           </button>
           <button
-            onClick={() => onExecute('parallel')}
+            onClick={() => onExecute('parallel', depth)}
             onMouseEnter={() => setHoveredStrategy('parallel')}
             onMouseLeave={() => setHoveredStrategy(null)}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors"

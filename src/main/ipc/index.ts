@@ -4,6 +4,8 @@ import { registerChatIpc } from './chat.ipc'
 import { registerAgentIpc } from './agent.ipc'
 import { registerAgentLifecycleIpc } from './agent-lifecycle.ipc'
 import { registerSpecialistIpc } from './specialist.ipc'
+import { registerSpecialistConversationIpc } from './specialist-conversation.ipc'
+import { registerSpecialistConversationHistoryIpc } from './specialist-conversation-history.ipc'
 import { registerSkillIpc } from './skill.ipc'
 import { registerWorkspaceDeployIpc } from './workspace-deploy.ipc'
 import { registerSyncIpc } from './sync.ipc'
@@ -30,6 +32,8 @@ import { registerEventsIpc } from './events.ipc'
 import { registerGateIpc } from './gate.ipc'
 import { registerToolApprovalIpc } from './tool-approval.ipc'
 import { registerSubscriptionIpc } from './subscription.ipc'
+import { registerConversationSpecialistIpc } from './conversation-specialist.ipc'
+import { registerAppPreferenceIpc } from './app-preference.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -37,6 +41,8 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerAgentIpc(mainWindow)
   registerAgentLifecycleIpc(mainWindow)
   registerSpecialistIpc()
+  registerSpecialistConversationIpc()
+  registerSpecialistConversationHistoryIpc()
   registerSkillIpc()
   registerWorkspaceDeployIpc()
   registerSyncIpc()
@@ -63,4 +69,6 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerGateIpc()
   registerToolApprovalIpc()
   registerSubscriptionIpc()
+  registerConversationSpecialistIpc()
+  registerAppPreferenceIpc()
 }

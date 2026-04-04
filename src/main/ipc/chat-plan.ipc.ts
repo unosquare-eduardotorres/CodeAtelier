@@ -14,10 +14,11 @@ import type {
   DecomposedTask,
   ExecutionStrategy,
   HandoffBrief,
-  InvestigationReport,
-  TaskPlan
+  InvestigationDepth,
+  InvestigationReport
 } from '../../shared/types'
 import { memoryService } from '../services/memory.service'
+import { specialistPoolService } from '../services/specialist-pool.service'
 import { buildEnvWithPath } from '../services/env-utils'
 import { chatIpcLogger } from '../logger'
 import { eventLoggerService } from '../services/event-logger.service'
@@ -30,6 +31,8 @@ const log = chatIpcLogger
  * Spawns a short-lived review agent in plan mode to examine the combined
  * specialist output and report issues. Opt-in via workspace setting.
  */
+// @ts-expect-error — retained for future opt-in post-execution review
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function runPostSpecialistReview(
   mainWindow: BrowserWindow,
   conversationId: string,
@@ -111,7 +114,12 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.CHAT_EXECUTE_PLAN,
     async (
       event,
-      args: { conversationId: string; strategy: ExecutionStrategy; tasks: DecomposedTask[] }
+      args: {
+        conversationId: string
+        strategy: ExecutionStrategy
+        tasks: DecomposedTask[]
+        investigationDepth?: InvestigationDepth
+      }
     ) => {
       validateSender(event)
       const { conversationId, tasks } = args
@@ -134,32 +142,67 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       }
 
       const taskPlanBrief = (args as { brief?: HandoffBrief }).brief ?? null
-      const taskPlan: TaskPlan = {
-        conversationId,
-        summary: tasks.map((t) => t.description).join('; '),
-        mode,
-        tasks,
-        brief: taskPlanBrief ?? undefined
+      const accumulatedContent = { value: '' }
+      specialistPoolService.setWorkspacePath(workspacePath)
+      specialistPoolService.setConversationBrief(taskPlanBrief)
+      specialistPoolService.setConversationId(conversationId)
+      if (args.investigationDepth) {
+        specialistPoolService.setInvestigationDepth(args.investigationDepth)
       }
 
-      const accumulatedContent = { value: '' }
+      const poolOnChunk = ({
+        chunk: taskChunk,
+        toolActivity
+      }: {
+        taskId: string
+        specialist: string
+        chunk: string | StreamChunk
+        toolActivity?: {
+          type: 'tool_use' | 'tool_result'
+          toolName?: string
+          toolId?: string
+          input?: string
+        }
+      }): void => {
+        let normalizedChunk: StreamChunk
 
-      const onChunk = (chunk: StreamChunk): void => {
-        if (chunk.type === 'text' && chunk.content) {
-          accumulatedContent.value += chunk.content
+        if (typeof taskChunk === 'string') {
+          if (toolActivity?.type === 'tool_use') {
+            normalizedChunk = {
+              type: 'tool_use',
+              toolName: toolActivity.toolName,
+              toolId: toolActivity.toolId,
+              toolInput: toolActivity.input
+            }
+          } else if (toolActivity?.type === 'tool_result') {
+            normalizedChunk = {
+              type: 'tool_result',
+              toolName: toolActivity.toolName,
+              toolId: toolActivity.toolId,
+              content: toolActivity.input
+            }
+          } else {
+            normalizedChunk = { type: 'text', content: taskChunk }
+          }
+        } else {
+          normalizedChunk = taskChunk
+        }
+
+        if (normalizedChunk.type === 'text' && normalizedChunk.content) {
+          accumulatedContent.value += normalizedChunk.content
         }
         forwardChunkToRenderer(
           mainWindow,
           conversationId,
           'coordinator',
-          chunk,
+          normalizedChunk,
           accumulatedContent,
           workspacePath ?? undefined
         )
       }
 
-      const onComplete = async (): Promise<void> => {
-        log.info('SubAgent execution complete')
+      const poolOnComplete = async (): Promise<void> => {
+        log.info('Direct pool execution complete')
 
         eventLoggerService.logPlanExecutionCompleted({
           conversationId,
@@ -170,7 +213,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         const savedMsg = messageRepository.create(
           conversationId,
           'coordinator',
-          accumulatedContent.value || '_No response from SubAgent execution._'
+          accumulatedContent.value || '_No response from specialist execution._'
         )
 
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
@@ -186,7 +229,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
               memoryService.create({
                 workspaceId: ws.id,
                 type: 'project',
-                title: `Task execution: ${tasks.length} tasks (SubAgent)`,
+                title: `Task execution: ${tasks.length} tasks (direct)`,
                 content: tasks.map((t) => `- ${t.specialist}: ${t.description}`).join('\n'),
                 tags: ['task-execution'],
                 importance: 4
@@ -197,15 +240,20 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           log.warn('Memory update on task complete failed:', e)
         }
 
-        generalistService.removeListener('chunk', onChunk)
-        generalistService.removeListener('subAgentsComplete', onComplete)
+        specialistPoolService.removeListener('taskChunk', poolOnChunk)
+        specialistPoolService.removeListener('allComplete', poolOnComplete)
       }
 
-      generalistService.on('chunk', onChunk)
-      generalistService.on('subAgentsComplete', onComplete)
+      specialistPoolService.on('taskChunk', poolOnChunk)
+      specialistPoolService.on('allComplete', poolOnComplete)
 
       try {
-        await generalistService.executeWithSubAgents(taskPlan, mode, conversationId)
+        const hasDependencies = tasks.some((task) => (task.dependsOn?.length ?? 0) > 0)
+        if (hasDependencies) {
+          await specialistPoolService.executeSequential(tasks, mode)
+        } else {
+          await specialistPoolService.executeParallel(tasks, mode)
+        }
       } catch (error) {
         log.error('SubAgent plan execution failed:', error)
 
@@ -228,8 +276,8 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           messageId: savedMsg.id
         })
 
-        generalistService.removeListener('chunk', onChunk)
-        generalistService.removeListener('subAgentsComplete', onComplete)
+        specialistPoolService.removeListener('taskChunk', poolOnChunk)
+        specialistPoolService.removeListener('allComplete', poolOnComplete)
       }
     }
   )

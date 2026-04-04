@@ -5,6 +5,9 @@ import type {
   Message,
   AgentStatus,
   Specialist,
+  ConversationSpecialist,
+  SpecialistConversationAction,
+  SpecialistConversationHistoryEntry,
   Skill,
   CreateSpecialistInput,
   UpdateSpecialistInput,
@@ -18,6 +21,7 @@ import type {
   DecomposedTask,
   TaskPlan,
   ExecutionStrategy,
+  InvestigationDepth,
   TaskExecutionProgress,
   InvestigationReport,
   FileChange,
@@ -44,7 +48,9 @@ import type {
   CoreAgentPrompt,
   MarketplaceSpecialist,
   SubscriptionCheckResult,
-  AutoConfigureResult
+  AutoConfigureResult,
+  SpecialistTokenEstimate,
+  AppPreferences
 } from '../shared/types'
 
 interface Api {
@@ -92,6 +98,7 @@ interface Api {
     conversationId: string
     strategy: ExecutionStrategy
     tasks: DecomposedTask[]
+    investigationDepth?: InvestigationDepth
   }) => Promise<void>
   executeInvestigationFix: (args: {
     conversationId: string
@@ -126,6 +133,51 @@ interface Api {
   assignSkillToSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
   removeSkillFromSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
   reorderSpecialists: (args: { orderedIds: string[] }) => Promise<void>
+  getConversationSpecialists: (args: {
+    conversationId: string
+  }) => Promise<ConversationSpecialist[]>
+  addConversationSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+  }) => Promise<ConversationSpecialist>
+  removeConversationSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+  }) => Promise<void>
+  replaceConversationSpecialists: (args: {
+    conversationId: string
+    specialistIds: string[]
+  }) => Promise<ConversationSpecialist[]>
+  getConversationHistory: (args: {
+    conversationId: string
+    limit?: number
+  }) => Promise<SpecialistConversationHistoryEntry[]>
+  addConversationHistoryEntry: (args: {
+    conversationId: string
+    specialistId: string
+    action: SpecialistConversationAction
+  }) => Promise<SpecialistConversationHistoryEntry>
+  clearConversationHistory: (args: { conversationId: string }) => Promise<void>
+
+  // Conversation Specialist Activation (skill gating)
+  listConvSpecialists: (args: { conversationId: string }) => Promise<ConversationSpecialist[]>
+  upsertConvSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+    isActive?: boolean
+    skillsEnabled?: boolean
+    skillOverrides?: string[] | null
+  }) => Promise<void>
+  removeConvSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+  }) => Promise<void>
+  resetConvSpecialists: (args: { conversationId: string }) => Promise<void>
+  estimateConvTokens: (args: { conversationId: string }) => Promise<SpecialistTokenEstimate[]>
+
+  // App Preferences
+  getAppPreferences: () => Promise<AppPreferences>
+  setAppPreference: (args: { key: string; value: string }) => Promise<void>
 
   // Specialist Marketplace
   deploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
@@ -266,10 +318,7 @@ interface Api {
     conversationId: string
     summary?: string
   }) => Promise<Idea | null>
-  saveIdeaGrillDecisions: (args: {
-    ideaId: string
-    decisions: string
-  }) => Promise<Idea>
+  saveIdeaGrillDecisions: (args: { ideaId: string; decisions: string }) => Promise<Idea>
 
   // Auto-update
   checkForUpdate: () => Promise<void>
@@ -446,7 +495,9 @@ interface Api {
   showItemInFolder: (filePath: string) => Promise<void>
 
   // Checkpoints
-  listCheckpoints: (args: { conversationId: string }) => Promise<
+  listCheckpoints: (args: {
+    conversationId: string
+  }) => Promise<
     { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
   >
   restoreCheckpoint: (args: {
@@ -458,8 +509,15 @@ interface Api {
     totalCostCents: number
     totalTokens: number
     sessionCount: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheHitRate: number
     byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
   }>
+  getConversationCost: (args: { conversationId: string }) => Promise<number>
+  getWorkspaceConversationCosts: (args: { workspaceId: string }) => Promise<
+    { conversationId: string; costCents: number; totalTokens: number }[]
+  >
   checkBudget: (args: { workspaceId: string }) => Promise<{
     currentCostCents: number
     dailyBudgetCents: number
@@ -477,11 +535,7 @@ interface Api {
     }) => void
   ) => () => void
   onBudgetExceeded: (
-    callback: (data: {
-      workspaceId: string
-      currentCostCents: number
-      budgetCents: number
-    }) => void
+    callback: (data: { workspaceId: string; currentCostCents: number; budgetCents: number }) => void
   ) => () => void
 
   // Events (audit log)
@@ -500,10 +554,7 @@ interface Api {
       createdAt: string
     }[]
   >
-  getConversationEvents: (args: {
-    conversationId: string
-    limit?: number
-  }) => Promise<
+  getConversationEvents: (args: { conversationId: string; limit?: number }) => Promise<
     {
       id: string
       sessionId: string | null

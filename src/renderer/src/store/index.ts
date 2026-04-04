@@ -13,3 +13,17 @@ export { useDocsStore } from './docs.store'
 export { useProfileStore } from './profile.store'
 export { useMarketplaceStore } from './marketplace.store'
 export { useHelpStore } from './help.store'
+export {
+  useConversationSpecialistStore,
+  useConversationSpecialistActions,
+  useConversationSpecialists,
+  useConversationTokenEstimates,
+  useConversationSpecialistStatus
+} from './conversation-specialist.store'
+export {
+  useAppPreferenceStore,
+  useAppPreferenceActions,
+  useAppPreferences,
+  useSpecialistWarningPreferences,
+  useAppPreferenceStatus
+} from './app-preference.store'

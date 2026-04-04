@@ -10,124 +10,21 @@ import { DEFAULT_PROMPTS } from './default-prompts'
 // GENERALIST_PLAN_MODE_SECTION, GENERALIST_BUILD_MODE_SECTION have been moved to
 // default-prompts.ts and are now stored in the core_agent_prompts DB table (user-editable).
 
-const DECOMPOSITION_SYSTEM_PROMPT = `You are a task decomposition and complexity scoring engine. Given a task summary and a list of available specialists, break the task into concrete sub-tasks AND score each sub-task's complexity.
+const DECOMPOSITION_SYSTEM_PROMPT = `Task decomposition + complexity scorer. Return ONLY valid JSON.
+Create 2-8 tasks (id t1..tn). Each task: exactly one provided specialist, 1-2 sentence actionable description, dependsOn for ordering. Keep independent tasks parallel; even with one specialist split into logical parallel-safe steps. Prevent merge conflicts by adding dependsOn when tasks may touch same files/shared surfaces. Use context (decisions, constraints, filesDiscussed).
+Complexity: total(0-14)=filesAffected+estimatedLines+newDependencies+taskType+riskFlags.
+filesAffected 0=1,1=2-3,2=4-6,3=7+; estimatedLines 0=<50,1=50-150,2=150-300,3=300+; newDependencies 0=0,1=1-2,2=3+; taskType 0=docs,1=test,2=impl,3=arch; riskFlags 0=none,1=security,2=external,3=breaking. Map totals: 0-4 simple/haiku, 5-8 moderate/sonnet, 9-14 complex/opus.
+verificationCommand per task: code "npm run typecheck" or "npm run lint"; tests "npm test" (or relevant); docs/config-only null. Keep one fast stack-matched command (.NET dotnet build/test; TS npm run typecheck/lint; Python python -m pytest/mypy).
+Investigation handling: if summary indicates investigation/diagnosis OR caller indicates plan-mode investigation, emit investigation-only tasks. Plan mode is read-only (no fix/rebuild/restart/deploy/test). If a plan-mode summary is action-oriented, reinterpret as investigation. For investigations, output exactly one task per specialist, and each description must end with "Produce a structured investigation report."
+Required JSON shape: {"tasks":[{id,specialist,description,dependsOn,verificationCommand,complexity{filesAffected,estimatedLines,newDependencies,taskType,riskFlags,total,tier,model}}]}`
 
-Rules:
-1. Each sub-task must be assigned to exactly one specialist from the provided list.
-2. Each sub-task must have a short, actionable description (1-2 sentences).
-3. Use "dependsOn" to express ordering constraints — list the IDs of tasks that must complete before this one can start. Tasks with no dependencies can run in parallel.
-4. Keep the number of tasks between 2 and 8 — decompose enough for parallelism but not so much that overhead dominates.
-5. Assign IDs as "t1", "t2", "t3", etc.
-6. If a task spans only one specialist, still decompose into logical steps if they can be parallelized.
-7. IMPORTANT: If two tasks are likely to modify the same files (e.g., shared types, config files, package.json, common utilities), set one to depend on the other using the dependsOn array. Only tasks that touch completely independent files should run in parallel. This prevents merge conflicts when agents work in isolated branches.
-8. USE the provided conversation context (decisions, constraints, files discussed, recent messages) to:
-   - Write more specific task descriptions that reference actual decisions and constraints
-   - Identify file conflicts more accurately (you know which files were discussed)
-   - Assign appropriate complexity scores based on the scope discussed
-   - Ensure no decided constraints are violated in the decomposition
+const SPECIALIST_TASK_SYSTEM_PROMPT = `You are a specialist agent. Complete ONLY your assigned task — do not expand scope.
 
-Complexity scoring — for EACH task, evaluate:
-- filesAffected (0-3): 1 file=0, 2-3=1, 4-6=2, 7+=3
-- estimatedLines (0-3): <50=0, 50-150=1, 150-300=2, 300+=3
-- newDependencies (0-2): 0 deps=0, 1-2=1, 3+=2
-- taskType (0-3): docs/config=0, test=1, implementation=2, architecture/refactor=3
-- riskFlags (0-3): +1 each for security-sensitive, external integration, breaking change
-
-Total = sum of all dimensions (0-14). Assign tier:
-- 0-4: "simple" → model: "haiku"
-- 5-8: "moderate" → model: "sonnet"
-- 9-14: "complex" → model: "opus"
-
-9. For each task, include a "verificationCommand" — a shell command the specialist should run after completing its work to verify correctness. Use the project's available tooling:
-   - For code changes: "npm run lint" or "npm run typecheck" (prefer typecheck for type safety)
-   - For test-related work: "npm test" or the relevant test command
-   - For config/docs changes: null (no verification needed)
-   - Keep it to a single, fast command — no chained commands
-   - Match the verification command to the task's technology stack:
-     - .NET/C# tasks: "dotnet build" or "dotnet test"
-     - TypeScript/React tasks: "npm run typecheck" or "npm run lint"
-     - Python tasks: "python -m pytest" or "mypy ."
-   - NEVER use a frontend verification command for a backend task or vice versa
-10. INVESTIGATION DETECTION: If the task summary contains ANY of these patterns:
-    - Investigation keywords: "investigate", "look into", "analyze", "review", "diagnose",
-      "debug", "find out why", "figure out", "check why"
-    - Error keywords paired with ambiguity: "500 error", "NullReferenceException", "crash",
-      "not working", "broken", "fails", "exception", "bug", "error"
-
-    WHEN DETECTED:
-    - Create ONLY investigation task(s) — ONE task per specialist
-    - Do NOT include fix, implementation, or test tasks
-    - The investigation will produce a report; fixes are planned AFTER the report
-    - Use mode "plan" regardless of handoff mode
-    - Each investigation task MUST end with: "Produce a structured investigation report."
-    - Impact levels: "very-low" | "low" | "medium" | "high" | "critical"
-    - ALSO: If the task is being decomposed in "plan" mode, ALL tasks are read-only investigations.
-      Plan-mode tasks NEVER fix, rebuild, restart, deploy, execute, or test.
-      They read code, analyze, diagnose, and produce investigation reports.
-    - If the task summary starts with "Fix" or another action verb but the mode is "plan",
-      reinterpret it as "Investigate the issue described in: [original summary]"
-
-    WRONG (never do this for investigations):
-    { "tasks": [{ "id": "t1", "description": "Investigate..." },
-                { "id": "t2", "description": "Fix..." },
-                { "id": "t3", "description": "Test..." }] }
-
-    CORRECT:
-    { "tasks": [{ "id": "t1", "description": "Investigate the issue... Produce a structured investigation report." }] }
-
-Respond with ONLY valid JSON, no markdown, no explanation. Use this exact schema:
-{
-  "tasks": [
-    {
-      "id": "t1",
-      "specialist": "specialist-id",
-      "description": "What to do",
-      "dependsOn": [],
-      "verificationCommand": "npm run typecheck",
-      "complexity": {
-        "filesAffected": 1,
-        "estimatedLines": 2,
-        "newDependencies": 0,
-        "taskType": 2,
-        "riskFlags": 0,
-        "total": 5,
-        "tier": "moderate",
-        "model": "sonnet"
-      }
-    }
-  ]
-}`
-
-const SPECIALIST_TASK_SYSTEM_PROMPT = `You are a specialist agent executing a specific sub-task as part of a larger plan. Focus exclusively on your assigned task.
-
-- Complete ONLY the task described — do not expand scope
-- If you encounter a blocker that requires work outside your task, describe it clearly but do not attempt it
-- **Investigation tasks:** Be surgical. Read ONLY the files directly related to the error. Do NOT scan the entire codebase. If the task mentions specific files or classes, start there. Target: ≤ 15 tool calls for investigation. Read → analyze → report.
-- **Verification (stop hook):** If your task description includes a verification command, you MUST run it before finishing. If it fails, fix the issues and re-run verification. Only mark the task complete when verification passes or you've made 2 fix attempts.
-- When done, summarize what you accomplished using this exact format:
-
-## Task Summary
-**Files changed:** [list of files created/modified/deleted]
-**What was done:** [1-2 sentences]
-**Verification:** [passed/failed/skipped — include the command and result]
-**Blockers:** [none, or description of what blocked you]
-
-- **Investigation tasks:** If your task description ends with
-  "Produce a structured investigation report", emit the following
-  block at the end of your response:
-
-  \`\`\`investigation-report
-  {
-    "problem": "Clear explanation of the problem found",
-    "rootCause": "Technical root cause",
-    "proposedFix": "How to fix it — step by step",
-    "filesAffected": [
-      { "path": "src/path/to/file.cs", "reason": "Why this file needs changes" }
-    ],
-    "impact": "medium",
-    "impactReason": "Brief explanation of why this impact level"
-  }
-  \`\`\``
+- Blockers outside your task: describe clearly, do not attempt.
+- Investigation: be surgical — read ONLY files related to the error. Target ≤10 tool calls. Start with mentioned files.
+- Verification: if a command is provided, run it. Fix and retry up to 2×.
+- When done: list files changed, 1-2 sentence summary, verification result, blockers.
+- Investigation reports: emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.`
 
 /**
  * Self-critique appendix for Opus-tier tasks (budgetTier === 'full').
@@ -159,6 +56,10 @@ export interface PromptBuildOptions {
   specialistPrompt?: string
   /** Skills assigned to this specialist (pre-resolved, no LLM needed) */
   assignedSkills?: Skill[]
+  /** Whether specialist skills should be injected for this prompt (defaults to true) */
+  skillsEnabled?: boolean
+  /** Optional per-conversation skill override list (filters assignedSkills when provided) */
+  skillOverrides?: string[]
   /** Workspace path for CLAUDE.md project context injection */
   workspacePath?: string
   /** Include auto memory context (generalist only) */
@@ -171,6 +72,12 @@ export interface PromptBuildOptions {
   dependencyOutputs?: Map<string, string>
   /** Budget tier — controls context size for model-aware prompt budgeting (Strategy 4) */
   budgetTier?: BudgetTier
+}
+
+export interface GeneralistConditionalSections {
+  includeAskQuestionPrompt: boolean
+  includeMemoryProtocolPrompt: boolean
+  includeImageAttachmentsPrompt: boolean
 }
 
 // ── Prompt Builder ──
@@ -188,6 +95,40 @@ const log = promptBuilderLogger
  * (those are handled by the AgentRegistry and PromptBuilder layers).
  */
 export class PromptBuilder {
+  /** Turn-based budget profile for generalist prompt assembly (S17 adaptive prompt). */
+  getGeneralistBudgetTierForTurn(turnCount: number): BudgetTier {
+    if (turnCount <= 1) return 'full'
+    if (turnCount <= 4) return 'standard'
+    return 'minimal'
+  }
+
+  /**
+   * Lightweight heuristics to decide which optional generalist prompt sections
+   * should be injected for the current user turn (S12 conditional injection).
+   */
+  getGeneralistConditionalSections(
+    message: string,
+    hasImages: boolean
+  ): GeneralistConditionalSections {
+    const normalized = message.toLowerCase()
+
+    const includeAskQuestionPrompt =
+      /\b(which|choose|choice|option|pick|select|either|vs|versus|should i|what do you prefer)\b/i.test(
+        normalized
+      )
+
+    const includeMemoryProtocolPrompt =
+      /\b(remember|preference|prefer|i like|i dislike|always|never|for future|from now on|note this|keep in mind)\b/i.test(
+        normalized
+      )
+
+    return {
+      includeAskQuestionPrompt,
+      includeMemoryProtocolPrompt,
+      includeImageAttachmentsPrompt: hasImages
+    }
+  }
+
   /**
    * Build a complete system prompt for any agent role.
    * Composes prompt from layers, deduplicating skill content.
@@ -199,32 +140,51 @@ export class PromptBuilder {
     // Layer 1: Base role prompt
     layers.push(this.getRolePrompt(options.role, options.mode))
 
-    // Layer 2: Specialist-specific prompt (from YAML body / DB)
-    if (options.role === 'specialist' && options.specialistPrompt) {
-      layers.push(`## Specialist Role\n${options.specialistPrompt}`)
+    // Layer 2: Specialist identity
+    if (options.role === 'specialist' && options.specialistId) {
+      layers.push(`## Specialist: ${options.specialistId}`)
     }
 
-    // Layer 2b: Self-critique appendix for Opus-tier tasks (full budget = complex tasks)
-    if (options.role === 'specialist' && budgetTier === 'full') {
+    // Layer 2b: Self-critique appendix for Opus-tier BUILD tasks (not needed for investigations)
+    if (options.role === 'specialist' && options.mode === 'build' && budgetTier === 'full') {
       layers.push(OPUS_SPECIALIST_APPENDIX)
     }
 
-    // Layer 3: Skill content — ONLY for specialists, ONLY their assigned skills
+    // Layer 3: Skill content — ONLY for specialists in BUILD mode, ONLY their assigned skills
+    // Plan-mode specialists only read/analyze — they don't need implementation guides
     // Strategy 3: Tiered skill loading with budget-aware truncation
     // Strategy 8: Selective loading — pass task context for relevance ranking
-    if (options.role === 'specialist' && options.assignedSkills) {
-      const taskContext = options.brief?.summary || options.specialistPrompt || ''
-      const skillContent = this.buildSkillContent(options.assignedSkills, budgetTier, taskContext)
-      if (skillContent) {
-        layers.push(skillContent)
+    if (
+      options.role === 'specialist' &&
+      options.mode === 'build' &&
+      options.assignedSkills &&
+      options.skillsEnabled !== false
+    ) {
+      const assignedSkills = this.filterAssignedSkills(
+        options.assignedSkills,
+        options.skillOverrides
+      )
+      if (assignedSkills.length > 0) {
+        const taskContext = options.brief?.summary || options.specialistPrompt || ''
+        const skillContent = this.buildSkillContent(assignedSkills, budgetTier, taskContext)
+        if (skillContent) {
+          layers.push(skillContent)
+        }
       }
     }
 
     // Layer 4: Workspace project context (CLAUDE.md — project sections only)
-    // Strategy 1: Progressive CLAUDE.md — full for generalist, essential sections for specialists
+    // Strategy 1: Progressive CLAUDE.md by role:
+    // - Generalist build: slim project sections only
+    // - Generalist plan: ultra-light sections for investigation/Q&A
+    // - Specialist: essential sections with explicit heavy-section skips
     // Strategy 4: Minimal tier skips CLAUDE.md entirely (haiku tasks)
     if (options.workspacePath && budgetTier !== 'minimal') {
-      const projectContext = this.readProjectContext(options.workspacePath, options.role)
+      const projectContext = this.readProjectContext(
+        options.workspacePath,
+        options.role,
+        options.mode
+      )
       if (projectContext) {
         layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`)
       }
@@ -276,11 +236,11 @@ export class PromptBuilder {
    * Strategy 3: Tiered skill loading — intelligently selects content:
    * - Tier 1 (core principles, first ~1000 chars) — always included
    * - Tier 2 (remaining content up to budget) — included for standard/full budgets
-   * Budget per skill scales with tier: minimal=500, standard=3000, full=5000
+   * Budget per skill scales with tier: minimal=500, standard=2000, full=4000
    *
    * Strategy 8 (Selective Skill Loading): When multiple skills are assigned,
    * the most relevant skill (by keyword match against task context) gets the
-   * full budget; remaining skills get a condensed summary (~300 chars) to
+   * full budget; remaining skills get a condensed summary (~200 chars) to
    * save 2,000-4,000 tokens per specialist.
    */
   private buildSkillContent(
@@ -290,16 +250,25 @@ export class PromptBuilder {
   ): string {
     const activeSkills = skills.filter((s) => s.isActive)
     if (activeSkills.length === 0) return ''
+    const normalizedTaskContext = taskContext?.trim().toLowerCase()
+    if (normalizedTaskContext) {
+      const hasRelevantSkill = activeSkills.some(
+        (skill) => this.skillRelevanceScore(skill, normalizedTaskContext) > 0
+      )
+      if (!hasRelevantSkill) {
+        log.info('Skipping skill content: no active skill matches task context relevance')
+        return ''
+      }
+    }
 
-    const baseBudget = budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 5000 : 3000
+    const baseBudget = budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 4000 : 2000
 
     // Selective skill loading: rank skills by relevance when >1 skill and we have task context
     let rankedSkills = activeSkills
-    if (activeSkills.length > 1 && taskContext && budgetTier !== 'full') {
-      const contextLower = taskContext.toLowerCase()
+    if (activeSkills.length > 1 && normalizedTaskContext && budgetTier !== 'full') {
       rankedSkills = [...activeSkills].sort((a, b) => {
-        const scoreA = this.skillRelevanceScore(a, contextLower)
-        const scoreB = this.skillRelevanceScore(b, contextLower)
+        const scoreA = this.skillRelevanceScore(a, normalizedTaskContext)
+        const scoreB = this.skillRelevanceScore(b, normalizedTaskContext)
         return scoreB - scoreA // highest relevance first
       })
     }
@@ -310,7 +279,7 @@ export class PromptBuilder {
       const skill = rankedSkills[i]
       // Primary skill gets full budget; secondary skills get condensed summary
       const isPrimary = i === 0 || budgetTier === 'full'
-      const budget = isPrimary ? baseBudget : Math.min(300, baseBudget)
+      const budget = isPrimary ? baseBudget : Math.min(200, baseBudget)
 
       try {
         const content = readFileSync(skill.filePath, 'utf-8')
@@ -338,7 +307,39 @@ export class PromptBuilder {
       }
     }
 
-    return sections.join('\n\n')
+    const totalContent = sections.join('\n\n')
+    if (totalContent.length > 8000) {
+      // Truncate from end (lowest-relevance skills already sorted last)
+      let accumulated = ''
+      const capped: string[] = []
+      for (const section of sections) {
+        if (accumulated.length + section.length + 2 > 8000) break
+        capped.push(section)
+        accumulated += section + '\n\n'
+      }
+      log.info(`Skill content hard-capped: ${totalContent.length} → ${accumulated.length} chars (8000 limit)`)
+      return capped.join('\n\n')
+    }
+    return totalContent
+  }
+
+  /**
+   * Applies optional per-conversation skill overrides to the assigned skill list.
+   * When no overrides are provided, preserves the original list.
+   */
+  private filterAssignedSkills(skills: Skill[], skillOverrides?: string[]): Skill[] {
+    if (!skillOverrides) return skills
+
+    const overrideSet = new Set(
+      skillOverrides.map((value) => value.trim().toLowerCase()).filter((value) => value.length > 0)
+    )
+
+    return skills.filter((skill) => {
+      const id = skill.id.toLowerCase()
+      const name = skill.name.toLowerCase()
+      const filename = skill.filename.toLowerCase()
+      return overrideSet.has(id) || overrideSet.has(name) || overrideSet.has(filename)
+    })
   }
 
   /**
@@ -405,45 +406,47 @@ export class PromptBuilder {
    * Read workspace CLAUDE.md as project context.
    *
    * Strategy 1: Progressive CLAUDE.md injection
-   * - Generalist: full content (needs everything for rich conversation)
-   * - Specialist: essential sections only (Tech stack, Conventions, Project structure, Key commands)
-   *   Skips: Skills table, Agent listing, Deprecation notes, Electron docs reference, Architecture notes
+   * - Generalist build: slim core project sections only
+   * - Generalist plan: ultra-light context for investigation/Q&A
+   * - Specialist: essential sections with explicit skip list for heavy metadata
    */
-  private readProjectContext(workspacePath: string, role: PromptRole = 'generalist'): string {
+  private readProjectContext(
+    workspacePath: string,
+    role: PromptRole = 'generalist',
+    mode: ConversationMode = 'build'
+  ): string {
+    const INLINE_SPECIALIST_CONTEXT = `Tech: Electron 40, React 19, TypeScript 5.9 strict, Tailwind CSS 4, better-sqlite3, Zustand 5.\nConventions: ES modules, @renderer/ alias, kebab-case files, PascalCase components. Never require() in renderer, never disable contextIsolation.`
+    if (role === 'specialist') return INLINE_SPECIALIST_CONTEXT
+
     try {
       const claudeMdPath = join(workspacePath, 'CLAUDE.md')
       const content = readFileSync(claudeMdPath, 'utf-8')
 
-      // Generalist gets full context
-      if (role !== 'specialist') return content
-
-      // Specialist: extract only essential sections
-      return this.extractEssentialClaudeMdSections(content)
+      return this.extractGeneralistClaudeMdSections(content, mode)
     } catch {
       return ''
     }
   }
 
   /**
-   * Extracts essential sections from CLAUDE.md for specialist context.
-   * Keeps: Overview, Tech stack, Conventions, Project structure, Key commands, What NOT to do, Error handling
-   * Skips: Skills table, Agent listing, Deprecation notes, Electron docs reference, Architecture notes
-   *
-   * Strategy 1: Reduces specialist CLAUDE.md from ~15K to ~5K chars.
+   * Extracts a slim CLAUDE.md slice for generalist context.
+   * - Build mode: broader project context for execution planning.
+   * - Plan mode: ultra-light context for investigation/Q&A.
    */
-  private extractEssentialClaudeMdSections(content: string): string {
-    // Sections to KEEP for specialists (essential for writing correct code)
-    const essentialHeadings = [
-      'overview',
-      'tech stack',
-      'conventions',
-      'project structure',
-      'key commands',
-      'what not to do',
-      'error handling'
-    ]
+  private extractGeneralistClaudeMdSections(content: string, mode: ConversationMode): string {
+    const essentialHeadings =
+      mode === 'plan'
+        ? ['tech stack', 'key commands', 'conventions', 'what not to do']
+        : [
+            'overview',
+            'project structure',
+            'tech stack',
+            'key commands',
+            'conventions',
+            'what not to do',
+            'error handling'
+          ]
 
-    // Sections to explicitly SKIP (not useful for task execution)
     const skipHeadings = [
       'skills',
       'available skills',
@@ -454,7 +457,26 @@ export class PromptBuilder {
       'agents'
     ]
 
-    // Split by top-level headings (## )
+    const extracted = this.extractClaudeMdSections(
+      content,
+      essentialHeadings,
+      skipHeadings,
+      false
+    )
+    const profile = mode === 'plan' ? 'generalist-plan (ultra-light)' : 'generalist-build (slim)'
+    log.info(`CLAUDE.md progressive injection: ${content.length} → ${extracted.length} chars for ${profile}`)
+    return extracted
+  }
+
+  /**
+   * Shared CLAUDE.md section extractor.
+   */
+  private extractClaudeMdSections(
+    content: string,
+    essentialHeadings: string[],
+    skipHeadings: string[],
+    keepUnmatchedSections: boolean
+  ): string {
     const lines = content.split('\n')
     const result: string[] = []
     let currentSection = ''
@@ -467,8 +489,8 @@ export class PromptBuilder {
         const isEssential = essentialHeadings.some((h) => currentSection.includes(h))
         const isSkipped = skipHeadings.some((h) => currentSection.includes(h))
 
-        // Explicit keep > explicit skip > default keep
-        isKeeping = isEssential || !isSkipped
+        // Explicit keep > explicit skip > default behavior by profile
+        isKeeping = isEssential || (!isSkipped && keepUnmatchedSections)
       }
 
       if (isKeeping) {
@@ -476,11 +498,7 @@ export class PromptBuilder {
       }
     }
 
-    const extracted = result.join('\n').trim()
-    log.info(
-      `CLAUDE.md progressive injection: ${content.length} → ${extracted.length} chars for specialist`
-    )
-    return extracted
+    return result.join('\n').trim()
   }
 
   /**

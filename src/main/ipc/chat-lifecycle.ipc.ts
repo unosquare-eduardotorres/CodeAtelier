@@ -4,6 +4,7 @@ import { writeFileSync, mkdirSync } from 'node:fs'
 import simpleGit from 'simple-git'
 import {
   conversationRepository,
+  conversationSpecialistRepository,
   messageRepository,
   fileChangeRepository,
   workspaceRepository
@@ -55,7 +56,9 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
         throw new Error('Invalid mode: must be "plan" or "build"')
       }
 
-      return conversationRepository.create(args.workspaceId, args.title, args.mode)
+      const conversation = conversationRepository.create(args.workspaceId, args.title, args.mode)
+      conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
+      return conversation
     }
   )
 

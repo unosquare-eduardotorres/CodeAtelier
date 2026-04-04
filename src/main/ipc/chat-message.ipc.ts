@@ -11,10 +11,12 @@ import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
+  DecomposedTask,
   GrillEvaluation,
   GrillQuestion,
   HandoffBrief,
-  ImageAttachment
+  ImageAttachment,
+  TaskPlan
 } from '../../shared/types'
 import { memoryService } from '../services/memory.service'
 import { chatIpcLogger } from '../logger'
@@ -371,9 +373,49 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
 
           // Decompose the task into sub-tasks via generalist with full brief
           try {
-            log.info(`[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`)
+            let taskPlan: TaskPlan
 
-            const taskPlan = await generalistService.decompose(brief, conversationId, brief.mode)
+            if (brief.specialists.length === 1) {
+              // Direct dispatch — skip decomposition LLM call for single-specialist handoffs.
+              const specialistId = brief.specialists[0]!
+              log.info(`[PIPELINE:direct-dispatch] Single specialist: ${specialistId}`)
+
+              const task: DecomposedTask = {
+                id: 't1',
+                specialist: specialistId,
+                description:
+                  brief.summary +
+                  (brief.mode === 'plan' ? '. Produce a structured investigation report.' : ''),
+                dependsOn: [],
+                complexity: {
+                  tier: 'moderate',
+                  model: 'sonnet',
+                  total: 5,
+                  filesAffected: 1,
+                  estimatedLines: 1,
+                  newDependencies: 0,
+                  taskType: 2,
+                  riskFlags: 0
+                }
+              }
+
+              taskPlan = {
+                conversationId,
+                summary: brief.summary,
+                mode: brief.mode,
+                tasks: [task],
+                brief
+              }
+
+              eventLoggerService.logDecompositionStarted({
+                conversationId,
+                summary: brief.summary,
+                specialists: brief.specialists
+              })
+            } else {
+              log.info(`[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`)
+              taskPlan = await generalistService.decompose(brief, conversationId, brief.mode)
+            }
 
             log.info(`[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`)
 

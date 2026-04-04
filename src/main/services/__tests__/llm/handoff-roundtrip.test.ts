@@ -18,20 +18,37 @@ import type { SDKExecuteOptions } from '../../sdk-executor'
 let passed = 0
 let failed = 0
 
-async function testLLM(name: string, fn: () => Promise<void>, timeoutMs = 90_000): Promise<void> {
+async function testLLM(
+  name: string,
+  fn: (ac: AbortController) => Promise<void>,
+  timeoutMs = 90_000
+): Promise<void> {
+  const ac = new AbortController()
+  let timer: ReturnType<typeof setTimeout>
   try {
     await Promise.race([
-      fn(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs)
-      )
+      fn(ac),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          ac.abort()
+          reject(new Error(`Timeout after ${timeoutMs}ms`))
+        }, timeoutMs)
+        if (timer.unref) timer.unref()
+      })
     ])
+    clearTimeout(timer!)
     console.log(`  ✓ ${name}`)
     passed++
   } catch (err) {
+    clearTimeout(timer!)
+    ac.abort() // ensure cleanup even on non-timeout errors
+    const message = (err as Error).message
     console.error(`  ✗ ${name}`)
-    console.error(`    ${(err as Error).message}`)
+    console.error(`    ${message}`)
     failed++
+    if (message.includes('Timeout')) {
+      await new Promise((r) => setTimeout(r, 2000)) // cooldown after timeout
+    }
   }
 }
 
@@ -51,7 +68,7 @@ async function withRetry(fn: () => Promise<void>, retries = 1): Promise<void> {
 
 const executor = new SDKExecutor()
 
-function baseOptions(): SDKExecuteOptions {
+function baseOptions(ac?: AbortController): SDKExecuteOptions {
   return {
     model: 'haiku',
     cwd: process.cwd(),
@@ -60,7 +77,8 @@ function baseOptions(): SDKExecuteOptions {
     maxTurns: 1,
     prompt: '', // overridden by caller
     systemPrompt: '', // overridden by caller
-    heartbeatIntervalMs: 0 // suppress stall warnings in tests
+    heartbeatIntervalMs: 0, // suppress stall warnings in tests
+    ...(ac ? { abortController: ac } : {})
   }
 }
 
@@ -69,10 +87,10 @@ function baseOptions(): SDKExecuteOptions {
 async function run(): Promise<void> {
   console.log('Handoff round-trip tests (Tier 2 — Haiku)')
 
-  await testLLM('generalist produces parseable handoff for implementation request', () =>
+  await testLLM('generalist produces parseable handoff for implementation request', (ac) =>
     withRetry(async () => {
       const { result } = await executor.executeAndCollect({
-        ...baseOptions(),
+        ...baseOptions(ac),
         prompt:
           'I need you to fix the authentication bug in our token refresh module. Have a specialist look at this.',
         systemPrompt: GENERALIST_BASE_PROMPT
@@ -97,10 +115,10 @@ async function run(): Promise<void> {
     })
   )
 
-  await testLLM('handoff mode is always forced to plan', () =>
+  await testLLM('handoff mode is always forced to plan', (ac) =>
     withRetry(async () => {
       const { result } = await executor.executeAndCollect({
-        ...baseOptions(),
+        ...baseOptions(ac),
         prompt:
           'Build the new payment integration from scratch. Delegate this to a specialist in build mode.',
         systemPrompt: GENERALIST_BASE_PROMPT
@@ -116,10 +134,10 @@ async function run(): Promise<void> {
     })
   )
 
-  await testLLM('non-implementation question does NOT produce handoff', () =>
+  await testLLM('non-implementation question does NOT produce handoff', (ac) =>
     withRetry(async () => {
       const { result } = await executor.executeAndCollect({
-        ...baseOptions(),
+        ...baseOptions(ac),
         prompt:
           'What is the difference between a mutex and a semaphore? Explain briefly with examples.',
         systemPrompt: GENERALIST_BASE_PROMPT
@@ -134,41 +152,44 @@ async function run(): Promise<void> {
     })
   )
 
-  await testLLM('plan request produces ````plan block not file write', () =>
-    withRetry(async () => {
-      const { result } = await executor.executeAndCollect({
-        ...baseOptions(),
-        prompt:
-          'Create an implementation plan for adding a user settings page with dark mode toggle and notification preferences.',
-        systemPrompt: GENERALIST_BASE_PROMPT + '\n' + GENERALIST_PLAN_MODE_SECTION
-      })
+  await testLLM(
+    'plan request produces ````plan block not file write',
+    (ac) =>
+      withRetry(async () => {
+        const { result } = await executor.executeAndCollect({
+          ...baseOptions(ac),
+          prompt:
+            'Create an implementation plan for adding a user settings page with dark mode toggle and notification preferences.',
+          systemPrompt: GENERALIST_BASE_PROMPT + '\n' + GENERALIST_PLAN_MODE_SECTION
+        })
 
-      // Should contain a plan block
-      const planMatch = result.match(/`{3,4}plan\n([\s\S]*?)`{3,4}/)
-      if (!planMatch) {
-        // Check if the LLM tried to write a file instead
-        if (result.includes('blocked') || result.includes('file path')) {
+        // Should contain a plan block
+        const planMatch = result.match(/`{3,4}plan\n([\s\S]*?)`{3,4}/)
+        if (!planMatch) {
+          // Check if the LLM tried to write a file instead
+          if (result.includes('blocked') || result.includes('file path')) {
+            throw new Error(
+              'LLM tried to write plan to file instead of emitting ````plan block. Prompt adherence failure.'
+            )
+          }
           throw new Error(
-            'LLM tried to write plan to file instead of emitting ````plan block. Prompt adherence failure.'
+            `Expected \`\`\`\`plan block in response but got:\n${result.slice(0, 500)}`
           )
         }
-        throw new Error(
-          `Expected \`\`\`\`plan block in response but got:\n${result.slice(0, 500)}`
-        )
-      }
 
-      // Verify the plan content is valid JSON with expected structure
-      try {
-        const parsed = JSON.parse(planMatch[1].trim())
-        if (!parsed.title) throw new Error('Plan missing "title" field')
-        if (!Array.isArray(parsed.sections) && !Array.isArray(parsed.steps)) {
-          throw new Error('Plan missing both "sections" and "steps" arrays')
+        // Verify the plan content is valid JSON with expected structure
+        try {
+          const parsed = JSON.parse(planMatch[1].trim())
+          if (!parsed.title) throw new Error('Plan missing "title" field')
+          if (!Array.isArray(parsed.sections) && !Array.isArray(parsed.steps)) {
+            throw new Error('Plan missing both "sections" and "steps" arrays')
+          }
+        } catch (err) {
+          if ((err as Error).message.includes('Plan missing')) throw err
+          throw new Error(`Plan block contains invalid JSON: ${(err as Error).message}`)
         }
-      } catch (err) {
-        if ((err as Error).message.includes('Plan missing')) throw err
-        throw new Error(`Plan block contains invalid JSON: ${(err as Error).message}`)
-      }
-    })
+      }),
+    180_000
   )
 
   // ── Summary ──

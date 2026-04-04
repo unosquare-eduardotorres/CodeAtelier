@@ -13,12 +13,22 @@ import {
   MicOff
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
+import {
+  useChatStore,
+  useChatActions,
+  useWorkspaceStore,
+  useConversationSpecialistActions,
+  useConversationSpecialists,
+  useConversationTokenEstimates,
+  useSpecialistWarningPreferences,
+  useAppPreferenceActions
+} from '@renderer/store'
 import { useVoiceInput } from '@renderer/hooks'
 import { ConfirmDialog } from '@renderer/components/common'
 import CompleteDialog from './CompleteDialog'
 import IdeaPopover from './IdeaPopover'
 import VoiceIndicator from './VoiceIndicator'
+import SpecialistWarningDialog, { type SpecialistWarningType } from './SpecialistWarningDialog'
 
 interface MessageInputProps {
   attachments: string[]
@@ -86,6 +96,12 @@ export default function MessageInput({
   const [showCompleteDialog, setShowCompleteDialog] = useState(false)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [showIdeaPopover, setShowIdeaPopover] = useState(false)
+  const [showSpecialistWarning, setShowSpecialistWarning] = useState(false)
+  const [specialistWarningType, setSpecialistWarningType] = useState<SpecialistWarningType>('always')
+  const [pendingSend, setPendingSend] = useState<{
+    content: string
+    attachments?: string[]
+  } | null>(null)
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const {
@@ -98,8 +114,23 @@ export default function MessageInput({
   } = useChatActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
   const activeConversation = useChatStore((s) => s.activeConversation)
+  const conversationId = activeConversation?.id
+  const conversationSpecialists = useConversationSpecialists(conversationId)
+  const conversationTokenEstimates = useConversationTokenEstimates(conversationId)
   const agentStatus = useWorkspaceStore((s) => s.agentStatus)
+  const { hydrateConversationSpecialists } = useConversationSpecialistActions()
+  const { specialistWarningBuild, specialistWarningPlan, specialistWarningAlways } =
+    useSpecialistWarningPreferences()
+  const { loadPreferences } = useAppPreferenceActions()
   const isInitializing = agentStatus === 'starting'
+  const activeSpecialistCount = useMemo(
+    () => conversationSpecialists.filter((specialist) => specialist.isActive).length,
+    [conversationSpecialists]
+  )
+  const estimatedSpecialistTokens = useMemo(
+    () => conversationTokenEstimates.reduce((total, estimate) => total + estimate.estimatedTokens, 0),
+    [conversationTokenEstimates]
+  )
 
   // Voice mode state
   const [voiceEnabled, setVoiceEnabled] = useState(false)
@@ -142,6 +173,15 @@ export default function MessageInput({
     adjustHeight()
   }, [text, adjustHeight])
 
+  useEffect(() => {
+    void loadPreferences().catch(() => undefined)
+  }, [loadPreferences])
+
+  useEffect(() => {
+    if (!conversationId) return
+    void hydrateConversationSpecialists(conversationId).catch(() => undefined)
+  }, [conversationId, hydrateConversationSpecialists])
+
   // Slash command filtering
   const filteredCommands = useMemo(() => {
     if (!text.startsWith('/')) return []
@@ -150,11 +190,6 @@ export default function MessageInput({
   }, [text])
 
   const showCommands = text.startsWith('/') && filteredCommands.length > 0
-
-  // Reset selected index when filtered commands change
-  useEffect(() => {
-    setSelectedCommandIndex(0)
-  }, [filteredCommands.length])
 
   // Push-to-talk keyboard shortcut: hold V when input not focused
   useEffect(() => {
@@ -188,6 +223,29 @@ export default function MessageInput({
       window.removeEventListener('keyup', handleKeyUp)
     }
   }, [voiceEnabled, isVoiceSupported, isListening, startListening, stopListening])
+
+  const getWarningTypeForCurrentMode = useCallback((): SpecialistWarningType | null => {
+    if (!activeConversation || activeSpecialistCount === 0) return null
+    if (specialistWarningAlways) return 'always'
+    if (activeConversation.mode === 'build' && specialistWarningBuild) return 'build'
+    if (activeConversation.mode === 'plan' && specialistWarningPlan) return 'plan'
+    return null
+  }, [
+    activeConversation,
+    activeSpecialistCount,
+    specialistWarningAlways,
+    specialistWarningBuild,
+    specialistWarningPlan
+  ])
+
+  const executeSend = useCallback(
+    async (content: string, sendAttachments?: string[]): Promise<void> => {
+      setText('')
+      await sendMessage(content, sendAttachments)
+      onClearAttachments()
+    },
+    [onClearAttachments, sendMessage]
+  )
 
   const handleSend = async (): Promise<void> => {
     const trimmed = text.trim()
@@ -264,9 +322,18 @@ export default function MessageInput({
       }
     }
 
-    setText('')
-    await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined)
-    onClearAttachments()
+    const warningType = getWarningTypeForCurrentMode()
+    if (warningType) {
+      setSpecialistWarningType(warningType)
+      setPendingSend({
+        content: trimmed,
+        attachments: attachments.length > 0 ? [...attachments] : undefined
+      })
+      setShowSpecialistWarning(true)
+      return
+    }
+
+    await executeSend(trimmed, attachments.length > 0 ? attachments : undefined)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -350,7 +417,10 @@ export default function MessageInput({
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            setSelectedCommandIndex(0)
+          }}
           onKeyDown={handleKeyDown}
           placeholder={
             isInitializing
@@ -470,6 +540,24 @@ export default function MessageInput({
           setShowCloseConfirm(false)
         }}
         onCancel={() => setShowCloseConfirm(false)}
+      />
+
+      <SpecialistWarningDialog
+        isOpen={showSpecialistWarning}
+        warningType={specialistWarningType}
+        activeSpecialistCount={activeSpecialistCount}
+        estimatedTokens={estimatedSpecialistTokens}
+        onCancel={() => {
+          setShowSpecialistWarning(false)
+          setPendingSend(null)
+        }}
+        onConfirm={async () => {
+          if (pendingSend) {
+            await executeSend(pendingSend.content, pendingSend.attachments)
+          }
+          setShowSpecialistWarning(false)
+          setPendingSend(null)
+        }}
       />
     </>
   )

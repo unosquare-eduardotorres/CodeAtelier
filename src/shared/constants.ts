@@ -59,6 +59,24 @@ export const IPC_CHANNELS = {
   SPECIALIST_ASSIGN_SKILL: 'specialist:assignSkill',
   SPECIALIST_REMOVE_SKILL: 'specialist:removeSkill',
   SPECIALIST_REORDER: 'specialist:reorder',
+  SPECIALIST_GET_CONVERSATION_SPECIALISTS: 'specialist:getConversationSpecialists',
+  SPECIALIST_ADD_CONVERSATION_SPECIALIST: 'specialist:addConversationSpecialist',
+  SPECIALIST_REMOVE_CONVERSATION_SPECIALIST: 'specialist:removeConversationSpecialist',
+  SPECIALIST_REPLACE_CONVERSATION_SPECIALISTS: 'specialist:replaceConversationSpecialists',
+  SPECIALIST_GET_CONVERSATION_HISTORY: 'specialist:getConversationHistory',
+  SPECIALIST_ADD_CONVERSATION_HISTORY_ENTRY: 'specialist:addConversationHistoryEntry',
+  SPECIALIST_CLEAR_CONVERSATION_HISTORY: 'specialist:clearConversationHistory',
+
+  // Conversation Specialist Activation (with skill gating)
+  CONV_SPECIALIST_LIST: 'convSpecialist:list',
+  CONV_SPECIALIST_UPSERT: 'convSpecialist:upsert',
+  CONV_SPECIALIST_REMOVE: 'convSpecialist:remove',
+  CONV_SPECIALIST_RESET: 'convSpecialist:reset',
+  CONV_SPECIALIST_ESTIMATE: 'convSpecialist:estimate',
+
+  // App Preferences
+  APP_PREFERENCE_GET_ALL: 'appPreference:getAll',
+  APP_PREFERENCE_SET: 'appPreference:set',
 
   // Specialist Marketplace
   SPECIALIST_DEPLOY: 'specialist:deploy',
@@ -227,6 +245,8 @@ export const IPC_CHANNELS = {
 
   // Cost tracking
   COST_GET_WORKSPACE_SUMMARY: 'cost:getWorkspaceSummary',
+  COST_GET_CONVERSATION: 'cost:getConversation',
+  COST_GET_WORKSPACE_CONVERSATIONS: 'cost:getWorkspaceConversations',
   COST_CHECK_BUDGET: 'cost:checkBudget',
   COST_BUDGET_WARNING: 'cost:budgetWarning',
   COST_BUDGET_EXCEEDED: 'cost:budgetExceeded',
