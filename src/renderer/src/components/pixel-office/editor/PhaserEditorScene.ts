@@ -28,8 +28,8 @@ const WALL_BASE_COLOR = 0x0f1517 // --ca-bg-primary deep obsidian stone
 const WALL_ACCENT_COLOR = 0x283337 // --ca-panel-navy mortar lines
 const BASEBOARD_COLOR = 0x8b6f4a // --ca-gold-muted baseboard trim
 
-// Code Atelier Renaissance palette — deep obsidian/teal wood tones
-const PLANK_COLORS = [0x1c272d, 0x1e2e33, 0x1a2328, 0x1d2b30, 0x19222a]
+// Warm wood plank palette
+const PLANK_COLORS = [0x5c3a1e, 0x6b4226, 0x4e3018, 0x7a5030, 0x5a3820]
 
 // Grid overlay
 const GRID_LINE_COLOR = 0xffffff
@@ -212,7 +212,7 @@ export class PhaserEditorScene extends Phaser.Scene {
         g.fillStyle(baseColor, 1)
         g.fillRect(x, y, TILE_SIZE, TILE_SIZE)
 
-        g.lineStyle(1, 0x000000, 0.08)
+        g.lineStyle(1, 0x2a1a0a, 0.15)
         g.lineBetween(x, y, x + TILE_SIZE, y)
       }
     }

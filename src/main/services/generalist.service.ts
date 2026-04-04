@@ -107,15 +107,14 @@ export class GeneralistService extends AgentBaseService {
 
   /**
    * Token thresholds for context compaction.
-   * Strategy 2: Lowered from 80K/150K to 50K/100K — prompt caching helps but
-   * context still grows linearly. Earlier compaction prevents runaway costs.
-   *
-   * Strategy 7: Economy mode uses even lower thresholds (40K/80K).
+   * Strategy 2: Lowered from 80K/150K to 50K/100K.
+   * Strategy 7 (v2): Further lowered — earlier compaction prevents runaway costs.
+   * Economy mode uses even lower thresholds for aggressive cost control.
    */
-  private static readonly COMPACT_SUGGEST_THRESHOLD = 50_000
-  private static readonly COMPACT_AUTO_THRESHOLD = 100_000
-  private static readonly COMPACT_SUGGEST_THRESHOLD_ECONOMY = 40_000
-  private static readonly COMPACT_AUTO_THRESHOLD_ECONOMY = 80_000
+  private static readonly COMPACT_SUGGEST_THRESHOLD = 35_000
+  private static readonly COMPACT_AUTO_THRESHOLD = 70_000
+  private static readonly COMPACT_SUGGEST_THRESHOLD_ECONOMY = 25_000
+  private static readonly COMPACT_AUTO_THRESHOLD_ECONOMY = 50_000
   private compactSuggested: boolean = false
   /** Tracks number of compactions in this session to avoid over-compacting */
   private compactCount: number = 0
@@ -341,7 +340,7 @@ export class GeneralistService extends AgentBaseService {
         model: modelConfigService.getModel(this.workspacePath, 'generalist'),
         cwd: this.workspacePath,
         permissionMode: isBuildMode ? 'bypassPermissions' : 'plan',
-        allowedTools: isBuildMode ? undefined : ['WebSearch', 'WebFetch'],
+        allowedTools: isBuildMode ? undefined : ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
         maxTurns: isBuildMode ? 50 : 25,
         resume: sessionId,
         abortController,
@@ -893,6 +892,67 @@ export class GeneralistService extends AgentBaseService {
       throw new Error('Generalist not started — no workspace path set')
     }
 
+    // ── FAST PATH: single specialist → skip decomposition LLM call entirely ──
+    // When the handoff names exactly 1 specialist, decomposition is a no-op
+    // (it would just return 1 task). Save ~2K tokens + 3-5s latency.
+    if (brief.specialists.length === 1) {
+      this.log.info(
+        `Single-specialist fast path: skipping decomposition for ${brief.specialists[0]}`
+      )
+
+      const isInvestigation =
+        mode === 'plan' ||
+        /investigat|diagnos|analyz|explain|what does|how does/i.test(brief.summary)
+
+      const description = isInvestigation
+        ? `${brief.summary} Produce a structured investigation report.`
+        : brief.summary
+
+      const syntheticTask: DecomposedTask = {
+        id: 't1',
+        specialist: brief.specialists[0],
+        description,
+        dependsOn: [],
+        verificationCommand: isInvestigation ? null as unknown as undefined : 'npm run typecheck'
+      }
+
+      // Enrich with complexity scoring (same as full path)
+      const settings = this.workspacePath
+        ? workspaceRepository.getSettingsByPath(this.workspacePath)
+        : {}
+      const costPreference =
+        (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
+      const enrichedTasks = enrichTasksWithComplexity([syntheticTask], costPreference)
+
+      eventLoggerService.logDecompositionStarted({
+        conversationId,
+        summary: brief.summary,
+        specialists: brief.specialists
+      })
+      eventLoggerService.logDecompositionCompleted({
+        conversationId,
+        taskCount: 1,
+        tasks: enrichedTasks.map((t) => ({
+          id: t.id,
+          specialist: t.specialist,
+          model: t.model
+        }))
+      })
+
+      this.log.info(
+        `  ${enrichedTasks[0].id}: ${enrichedTasks[0].complexity?.tier}/${enrichedTasks[0].model} (score: ${enrichedTasks[0].complexity?.total}) [fast-path]`
+      )
+
+      return {
+        conversationId,
+        summary: brief.summary,
+        mode,
+        tasks: enrichedTasks,
+        brief
+      }
+    }
+
+    // ── FULL PATH: multi-specialist → decompose via LLM ──
     const { prompt } = this.buildDecompositionInputs(brief, mode, conversationId)
 
     this.log.info('Decomposing task for specialists:', brief.specialists.join(', '))

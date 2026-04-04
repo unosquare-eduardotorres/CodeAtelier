@@ -10,13 +10,16 @@ import { DEFAULT_PROMPTS } from './default-prompts'
 // GENERALIST_PLAN_MODE_SECTION, GENERALIST_BUILD_MODE_SECTION have been moved to
 // default-prompts.ts and are now stored in the core_agent_prompts DB table (user-editable).
 
-const DECOMPOSITION_SYSTEM_PROMPT = `Task decomposition + complexity scorer. Return ONLY valid JSON.
-Create 2-8 tasks (id t1..tn). Each task: exactly one provided specialist, 1-2 sentence actionable description, dependsOn for ordering. Keep independent tasks parallel; even with one specialist split into logical parallel-safe steps. Prevent merge conflicts by adding dependsOn when tasks may touch same files/shared surfaces. Use context (decisions, constraints, filesDiscussed).
-Complexity: total(0-14)=filesAffected+estimatedLines+newDependencies+taskType+riskFlags.
-filesAffected 0=1,1=2-3,2=4-6,3=7+; estimatedLines 0=<50,1=50-150,2=150-300,3=300+; newDependencies 0=0,1=1-2,2=3+; taskType 0=docs,1=test,2=impl,3=arch; riskFlags 0=none,1=security,2=external,3=breaking. Map totals: 0-4 simple/haiku, 5-8 moderate/sonnet, 9-14 complex/opus.
-verificationCommand per task: code "npm run typecheck" or "npm run lint"; tests "npm test" (or relevant); docs/config-only null. Keep one fast stack-matched command (.NET dotnet build/test; TS npm run typecheck/lint; Python python -m pytest/mypy).
-Investigation handling: if summary indicates investigation/diagnosis OR caller indicates plan-mode investigation, emit investigation-only tasks. Plan mode is read-only (no fix/rebuild/restart/deploy/test). If a plan-mode summary is action-oriented, reinterpret as investigation. For investigations, output exactly one task per specialist, and each description must end with "Produce a structured investigation report."
-Required JSON shape: {"tasks":[{id,specialist,description,dependsOn,verificationCommand,complexity{filesAffected,estimatedLines,newDependencies,taskType,riskFlags,total,tier,model}}]}`
+/**
+ * Slimmed decomposition prompt (~600 chars vs prior ~1700).
+ * Complexity scoring is now computed in code by enrichTasksWithComplexity(),
+ * so the LLM only needs to produce the task structure.
+ */
+const DECOMPOSITION_SYSTEM_PROMPT = `Task decomposer. Return ONLY valid JSON.
+Create 1-8 tasks (id t1..tn). Each: exactly one provided specialist, 1-2 sentence actionable description, dependsOn for ordering, verificationCommand (code: "npm run typecheck"; tests: "npm test"; docs: null).
+Keep independent tasks parallel. Add dependsOn when tasks touch same files/shared surfaces.
+Investigation mode: if summary indicates investigate/diagnose, emit exactly one task per specialist. Each description must end with "Produce a structured investigation report." Plan mode is read-only — no fix/rebuild/deploy.
+Required JSON shape: {"tasks":[{id,specialist,description,dependsOn,verificationCommand}]}`
 
 const SPECIALIST_TASK_SYSTEM_PROMPT = `You are a specialist agent. Complete ONLY your assigned task — do not expand scope.
 
@@ -25,6 +28,13 @@ const SPECIALIST_TASK_SYSTEM_PROMPT = `You are a specialist agent. Complete ONLY
 - Verification: if a command is provided, run it. Fix and retry up to 2×.
 - When done: list files changed, 1-2 sentence summary, verification result, blockers.
 - Investigation reports: emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.`
+
+/**
+ * Micro specialist prompt for simple/haiku-tier tasks (complexity 0-4).
+ * Saves ~400 tokens vs the full SPECIALIST_TASK_SYSTEM_PROMPT.
+ */
+const SPECIALIST_MICRO_PROMPT = `Complete your assigned task. Be surgical — ≤10 tool calls. When done: files changed + 1 sentence summary.
+Investigation reports: emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.`
 
 /**
  * Self-critique appendix for Opus-tier tasks (budgetTier === 'full').
@@ -137,8 +147,8 @@ export class PromptBuilder {
     const layers: string[] = []
     const budgetTier = options.budgetTier ?? 'standard'
 
-    // Layer 1: Base role prompt
-    layers.push(this.getRolePrompt(options.role, options.mode))
+    // Layer 1: Base role prompt (micro prompt for minimal-budget specialists)
+    layers.push(this.getRolePrompt(options.role, options.mode, budgetTier))
 
     // Layer 2: Specialist identity
     if (options.role === 'specialist' && options.specialistId) {
@@ -178,12 +188,14 @@ export class PromptBuilder {
     // - Generalist build: slim project sections only
     // - Generalist plan: ultra-light sections for investigation/Q&A
     // - Specialist: essential sections with explicit heavy-section skips
-    // Strategy 4: Minimal tier skips CLAUDE.md entirely (haiku tasks)
-    if (options.workspacePath && budgetTier !== 'minimal') {
+    // Strategy 4: Minimal tier skips CLAUDE.md for specialists (haiku tasks)
+    // Strategy 5: Minimal tier generalist gets a micro-summary (turn 5+, already has full CLAUDE.md in history)
+    if (options.workspacePath && !(budgetTier === 'minimal' && options.role === 'specialist')) {
       const projectContext = this.readProjectContext(
         options.workspacePath,
         options.role,
-        options.mode
+        options.mode,
+        budgetTier
       )
       if (projectContext) {
         layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`)
@@ -200,8 +212,8 @@ export class PromptBuilder {
       layers.push(this.buildBriefContext(options.brief))
     }
 
-    // Layer 7: Feedback memories (specialist only)
-    if (options.role === 'specialist' && options.feedbackContext) {
+    // Layer 7: Feedback memories (specialist only, skip for minimal budget — trivial tasks don't need prior corrections)
+    if (options.role === 'specialist' && options.feedbackContext && budgetTier !== 'minimal') {
       layers.push(options.feedbackContext)
     }
 
@@ -218,7 +230,7 @@ export class PromptBuilder {
 
   // ── Private layer builders ──
 
-  private getRolePrompt(role: PromptRole, mode: ConversationMode): string {
+  private getRolePrompt(role: PromptRole, mode: ConversationMode, budgetTier?: BudgetTier): string {
     if (role === 'generalist') {
       // Read from DB (user-editable). Falls back to defaults if DB is empty.
       const dbPrompt = coreAgentPromptRepository.findByRoleAndMode(role, mode)
@@ -226,6 +238,9 @@ export class PromptBuilder {
       // Fallback to defaults (safety net for fresh installs before migration runs)
       return DEFAULT_PROMPTS[role]?.[mode] ?? SPECIALIST_TASK_SYSTEM_PROMPT
     }
+    // Minimal-budget specialists (haiku-tier, complexity 0-4) get a micro prompt
+    // to save ~400 tokens on simple tasks like quick reads and investigations
+    if (budgetTier === 'minimal') return SPECIALIST_MICRO_PROMPT
     return SPECIALIST_TASK_SYSTEM_PROMPT
   }
 
@@ -277,8 +292,10 @@ export class PromptBuilder {
 
     for (let i = 0; i < rankedSkills.length; i++) {
       const skill = rankedSkills[i]
-      // Primary skill gets full budget; secondary skills get condensed summary
-      const isPrimary = i === 0 || budgetTier === 'full'
+      // Primary skill gets full budget; secondary skills only included for full budget tier
+      // Strategy 6: Skip secondary skills entirely for non-full budget (200-char excerpts are useless)
+      const isPrimary = i === 0
+      if (!isPrimary && budgetTier !== 'full') continue
       const budget = isPrimary ? baseBudget : Math.min(200, baseBudget)
 
       try {
@@ -307,17 +324,19 @@ export class PromptBuilder {
       }
     }
 
+    // Strategy 6: Reduced hard cap from 8K to 4K — skills are implementation guides; 4K is enough
+    const SKILL_HARD_CAP = 4000
     const totalContent = sections.join('\n\n')
-    if (totalContent.length > 8000) {
+    if (totalContent.length > SKILL_HARD_CAP) {
       // Truncate from end (lowest-relevance skills already sorted last)
       let accumulated = ''
       const capped: string[] = []
       for (const section of sections) {
-        if (accumulated.length + section.length + 2 > 8000) break
+        if (accumulated.length + section.length + 2 > SKILL_HARD_CAP) break
         capped.push(section)
         accumulated += section + '\n\n'
       }
-      log.info(`Skill content hard-capped: ${totalContent.length} → ${accumulated.length} chars (8000 limit)`)
+      log.info(`Skill content hard-capped: ${totalContent.length} → ${accumulated.length} chars (${SKILL_HARD_CAP} limit)`)
       return capped.join('\n\n')
     }
     return totalContent
@@ -413,10 +432,17 @@ export class PromptBuilder {
   private readProjectContext(
     workspacePath: string,
     role: PromptRole = 'generalist',
-    mode: ConversationMode = 'build'
+    mode: ConversationMode = 'build',
+    budgetTier: BudgetTier = 'standard'
   ): string {
     const INLINE_SPECIALIST_CONTEXT = `Tech: Electron 40, React 19, TypeScript 5.9 strict, Tailwind CSS 4, better-sqlite3, Zustand 5.\nConventions: ES modules, @renderer/ alias, kebab-case files, PascalCase components. Never require() in renderer, never disable contextIsolation.`
     if (role === 'specialist') return INLINE_SPECIALIST_CONTEXT
+
+    // Strategy 5: Minimal-budget generalist (turn 5+) already has CLAUDE.md in history —
+    // send a micro-summary instead of re-extracting sections (~600 tokens saved per turn)
+    if (budgetTier === 'minimal') {
+      return 'Tech: Electron 40, React 19, TS 5.9, Tailwind 4, SQLite, Zustand 5. See CLAUDE.md in prior context for conventions/structure.'
+    }
 
     try {
       const claudeMdPath = join(workspacePath, 'CLAUDE.md')

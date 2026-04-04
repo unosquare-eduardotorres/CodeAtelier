@@ -61,13 +61,13 @@ export interface SceneInitData {
   callbacks?: SceneCallbacks
 }
 
-// ── Code Atelier Renaissance palette — deep obsidian/teal tones ──
+// ── Warm wood plank palette ──
 const PLANK_COLORS = [
-  0x1c272d, // deep teal-slate
-  0x2a2420, // warm dark walnut
-  0x1a2328, // dark slate
-  0x2d2520, // aged mahogany
-  0x1e1a16 // deep umber
+  0x5c3a1e, // medium oak
+  0x6b4226, // warm walnut
+  0x4e3018, // dark oak
+  0x7a5030, // honey oak
+  0x5a3820 // chestnut
 ]
 const WALL_BASE_COLOR = 0x0f1517 // --ca-bg-primary deep obsidian stone
 const WALL_ACCENT_COLOR = 0x283337 // --ca-panel-navy mortar lines
@@ -542,8 +542,8 @@ export class PhaserOfficeScene extends Phaser.Scene {
         g.fillStyle(baseColor, 1)
         g.fillRect(x, y, TILE_SIZE, TILE_SIZE)
 
-        // Add subtle plank line on top edge
-        g.lineStyle(1, 0x000000, 0.08)
+        // Add subtle plank grain line on top edge
+        g.lineStyle(1, 0x2a1a0a, 0.15)
         g.lineBetween(x, y, x + TILE_SIZE, y)
       }
     }
