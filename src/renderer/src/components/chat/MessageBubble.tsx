@@ -20,7 +20,7 @@ import GrillEvaluationCard from './GrillEvaluationCard'
 import GrillResultCard from './GrillResultCard'
 import GrillQuestionCard from './GrillQuestionCard'
 import ToolActivityBlock from './ToolActivityBlock'
-import { useProfileStore, useSpecialistStore } from '@renderer/store'
+import { useSpecialistStore } from '@renderer/store'
 import {
   MermaidDiagram,
   Avatar,
@@ -29,6 +29,7 @@ import {
   PixelSpriteAvatar
 } from '@renderer/components/common'
 import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
+import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 
 /**
  * Remark plugin: wraps emoji characters inside headings with a styled <span class="emoji">
@@ -290,7 +291,7 @@ const markdownComponents = {
 
 /**
  * Resolves the display identity (name, subtitle, avatar, color) for a message.
- * Uses profile store for user messages, specialist store + core agent aliases for agent messages.
+ * Single source of truth: specialist store for ALL roles (user, generalist, coordinator, specialists).
  */
 function useMessageIdentity(message: Message): {
   displayName: string
@@ -299,69 +300,57 @@ function useMessageIdentity(message: Message): {
   accentColor: string
   pixelSpriteId: string | null
 } {
-  // Select only the specific fields we need — avoids re-renders when unrelated store fields change
-  const profileDisplayName = useProfileStore((s) => s.profile?.displayName ?? 'You')
-  const profileAvatarKey = useProfileStore((s) => s.profile?.avatarKey ?? 'business-man')
-  const profilePixelSpriteId = useProfileStore((s) => s.profile?.pixelSpriteId ?? null)
-  const profileUsePixelForChat = useProfileStore((s) => s.profile?.usePixelForChat ?? false)
-  const getCoreAgentAlias = useProfileStore((s) => s.getCoreAgentAlias)
-  // Select only the specialist matching this message's agentId — stable reference if specialist unchanged
-  const specialist = useSpecialistStore((s) =>
-    message.agentId ? (s.specialists.find((sp) => sp.agentId === message.agentId) ?? null) : null
-  )
-
-  // For core agents (generalist/coordinator), look up their specialist record
-  // to get pixel sprite data (usePixelForChat, pixelSpriteId)
-  const coreRole =
-    message.role === 'generalist'
-      ? 'generalist'
-      : message.role === 'coordinator'
-        ? 'coordinator'
-        : null
-  const coreSpecialist = useSpecialistStore((s) =>
-    coreRole ? (s.specialists.find((sp) => sp.agentId === coreRole) ?? null) : null
-  )
+  const specialists = useSpecialistStore((s) => s.specialists)
 
   return useMemo(() => {
+    // For user messages — find the 'user' specialist
     if (message.role === 'user') {
-      const usePixel = profileUsePixelForChat && profilePixelSpriteId
+      const userSpec = specialists.find((s) => s.agentId === 'user')
       return {
-        displayName: profileDisplayName,
+        displayName: userSpec?.alias ?? userSpec?.displayName ?? 'You',
         subtitle: null,
-        avatarKey: profileAvatarKey,
+        avatarKey: userSpec?.avatarUrl ?? 'business-man',
         accentColor: 'var(--color-primary, #6366F1)',
-        pixelSpriteId: usePixel ? profilePixelSpriteId : null
+        pixelSpriteId: userSpec?.pixelSpriteId ?? null
       }
     }
 
-    // Check if this is a core agent (generalist or coordinator)
+    // For core agents (generalist/coordinator) — find their specialist record
+    // Coordinator role is deprecated — map to generalist identity (Da Vinci)
+    const coreRole =
+      message.role === 'generalist'
+        ? 'generalist'
+        : message.role === 'coordinator'
+          ? 'generalist'
+          : null
+
     if (coreRole) {
-      const coreAlias = getCoreAgentAlias(coreRole)
+      const coreSpec = specialists.find((s) => s.agentId === coreRole)
       const defaults = CORE_AGENT_DEFAULTS[coreRole]
-      const alias = coreAlias?.alias ?? null
-      const roleName = defaults?.displayName ?? coreRole
-      // Check specialist record for pixel sprite
-      const usePixel = coreSpecialist?.usePixelForChat && coreSpecialist?.pixelSpriteId
       return {
-        displayName: alias ?? roleName,
-        subtitle: alias ? roleName : null,
-        avatarKey: coreAlias?.avatarKey ?? defaults?.avatarKey ?? 'renaissance-alchemist',
-        accentColor: defaults?.color ?? '#6366F1',
-        pixelSpriteId: usePixel ? coreSpecialist!.pixelSpriteId : null
+        displayName: coreSpec?.alias ?? coreSpec?.displayName ?? defaults?.displayName ?? coreRole,
+        subtitle: coreSpec?.alias ? (coreSpec?.displayName ?? defaults?.displayName ?? null) : null,
+        avatarKey: coreSpec?.avatarUrl ?? defaults?.avatarKey ?? 'renaissance-alchemist',
+        accentColor: coreSpec?.color ?? defaults?.color ?? '#6366F1',
+        pixelSpriteId:
+          coreSpec?.pixelSpriteId ??
+          getSpriteAssignment(coreRole).pixelSpriteId ??
+          null
       }
     }
 
-    // For specialist messages, use pre-selected specialist
+    // For specialist messages — find by agentId
+    const specialist = specialists.find((s) => s.agentId === message.agentId)
     if (specialist) {
-      const alias = specialist.alias
-      const roleName = specialist.displayName
-      const usePixel = specialist.usePixelForChat && specialist.pixelSpriteId
       return {
-        displayName: alias ?? roleName,
-        subtitle: alias ? roleName : null,
+        displayName: specialist.alias ?? specialist.displayName,
+        subtitle: specialist.alias ? specialist.displayName : null,
         avatarKey: specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId),
         accentColor: specialist.color ?? '#F59E0B',
-        pixelSpriteId: usePixel ? specialist.pixelSpriteId : null
+        pixelSpriteId:
+          specialist.pixelSpriteId ??
+          getSpriteAssignment(specialist.agentId).pixelSpriteId ??
+          null
       }
     }
 
@@ -373,18 +362,7 @@ function useMessageIdentity(message: Message): {
       accentColor: '#6366F1',
       pixelSpriteId: null
     }
-  }, [
-    message.role,
-    message.agentId,
-    profileDisplayName,
-    profileAvatarKey,
-    profilePixelSpriteId,
-    profileUsePixelForChat,
-    specialist,
-    getCoreAgentAlias,
-    coreRole,
-    coreSpecialist
-  ])
+  }, [message.role, message.agentId, specialists])
 }
 
 /** Renders a single image attachment inside a message bubble using data URIs */

@@ -37,6 +37,7 @@ import { registerAppPreferenceIpc } from './app-preference.ipc'
 import { registerOllamaIpc } from './ollama.ipc'
 import { registerIndexingIpc } from './indexing.ipc'
 import { registerCodeGraphIpc } from './code-graph.ipc'
+import { registerCodeChangesIpc } from './code-changes.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -77,4 +78,5 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerOllamaIpc(mainWindow)
   registerIndexingIpc(mainWindow)
   registerCodeGraphIpc(mainWindow)
+  registerCodeChangesIpc()
 }

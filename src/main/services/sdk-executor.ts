@@ -83,6 +83,8 @@ export interface SDKExecuteOptions {
   cwd: string
   permissionMode: 'plan' | 'bypassPermissions' | 'acceptEdits'
   allowedTools?: string[]
+  /** Tools to completely remove from model context (cannot be used at all) */
+  disallowedTools?: string[]
   /** SDK SubAgent definitions — specialists spawned as SubAgents */
   agents?: Record<string, SDKAgentDefinition>
   resume?: string
@@ -215,6 +217,10 @@ export class SDKExecutor {
           allowedTools: options.agents
             ? [...new Set([...(options.allowedTools ?? []), 'Agent'])]
             : options.allowedTools,
+          // Block tools completely — removes them from model context
+          ...(options.disallowedTools?.length
+            ? { disallowedTools: options.disallowedTools }
+            : {}),
           resume: options.resume,
           maxThinkingTokens: options.maxThinkingTokens,
           // Required safety flag when using bypassPermissions

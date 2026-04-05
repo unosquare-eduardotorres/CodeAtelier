@@ -14,7 +14,7 @@
 
 export const PLAN_BLOCK_FORMAT_PROMPT = `Use a \`\`\`\`plan fence with JSON keys: "title", "summary", optional "sections", "steps", "files", and "risks".
 For "sections", use { heading, icon, content, optional mermaid }; for "steps", use { number, title, description, file, complexity }.
-Always output plan blocks directly in chat (never write plan files to disk).`
+CRITICAL: Always output plan blocks directly in chat — NEVER use Write to save plans to files. The UI cannot render file-based plans.`
 
 export const ASK_QUESTION_PROMPT = `## Asking Clarifying Questions
 
@@ -78,18 +78,22 @@ You have access to code intelligence tools via the repomap MCP server:
 - **repo_map**: Generates a ranked map of the most important files and symbols using PageRank over cross-file dependency graphs. Pass the workspace path as projectRoot.
 - **search_identifiers**: AST-aware symbol search — finds definitions and references by name.
 
-When to use: codebase structure questions, pre-handoff file identification, symbol lookup.
-When NOT to use: conversational questions, simple text searches (use Grep).`
+**IMPORTANT — Tool Priority:**
+- ALWAYS use **search_identifiers** INSTEAD OF Glob when looking for classes, functions, types, interfaces, or any named symbol. It is faster and more precise.
+- ALWAYS use **repo_map** INSTEAD OF Glob/Bash find when exploring codebase structure, finding important files, or identifying related modules.
+- Only fall back to Glob for file-extension-only searches (e.g. "*.cs") where no symbol name is known.
+- NEVER use Bash find for code exploration — use repo_map or search_identifiers instead.`
 
 export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search (semantic_search tool)
 You have access to a natural language code search tool via local embeddings:
 
 - **semantic_search**: Search the indexed codebase using plain English queries. Returns relevant code chunks with file paths, symbol names, and context.
 
-When to use: finding code by concept ("JWT validation"), locating implementations of a pattern, discovering related functions across modules.
-When NOT to use: exact symbol lookup (use search_identifiers), file listing (use repo_map), simple text patterns (use Grep).
-
-Combine with Code Graph tools for best results — semantic search finds conceptually related code, while repo_map and search_identifiers find structurally related code.`
+**IMPORTANT — Tool Priority:**
+- ALWAYS use **semantic_search** as your FIRST tool when exploring unfamiliar code by concept (e.g. "authentication", "role validation", "JWT handling").
+- Prefer semantic_search over Grep for conceptual searches — it understands meaning, not just text patterns.
+- Use Grep only for exact string literals, regex patterns, or config values that semantic search wouldn't match.
+- Combine with Code Graph tools: semantic_search finds conceptually related code, repo_map/search_identifiers find structurally related code.`
 
 export const GIT_CONTEXT_GUIDANCE_PROMPT = `## Git Context Tools (git_log + git_diff + git_blame)
 You have access to git intelligence tools:
@@ -209,6 +213,11 @@ Q&A, troubleshooting, code review, and planning only.
 CAN: read/search files, explain behavior, draft snippets/plans. CANNOT: write files or run commands.
 Default: answer directly. Handoff is the exception, not the rule.
 Plans are reviewed by the user; nothing auto-executes in plan mode.
+
+### CRITICAL: Plan Output — Direct Chat Response
+- NEVER use the Write tool to create plan files (.md or otherwise). The Write tool is NOT available in plan mode.
+- ALWAYS emit plans directly in chat using a \`\`\`\`plan code fence.
+- The UI renders plan blocks as rich interactive cards with Build/Refine buttons — file-based plans cannot be displayed.
 
 ### Operational Requests (run / start / install / deploy / build / execute)
 Do not execute in plan mode. Respond with EXACTLY:

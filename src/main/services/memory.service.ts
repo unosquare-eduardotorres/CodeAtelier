@@ -154,7 +154,7 @@ class MemoryService {
         // Determine workspace scope: user/feedback are cross-workspace (null), project/reference are per-workspace
         const memWorkspaceId = data.type === 'user' || data.type === 'feedback' ? null : workspaceId
 
-        memoryRepository.create({
+        const mem = memoryRepository.createIfNotDuplicate({
           workspaceId: memWorkspaceId,
           type: data.type,
           title: data.title,
@@ -164,6 +164,11 @@ class MemoryService {
           sourceAgentId: agentId,
           importance: typeof data.importance === 'number' ? data.importance : 5
         })
+
+        if (!mem) {
+          log.info(`Memory skipped (duplicate): [${data.type}] ${data.title}`)
+          continue
+        }
 
         created++
         log.info(`Memory created: [${data.type}] ${data.title}`)

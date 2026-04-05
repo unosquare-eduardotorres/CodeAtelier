@@ -7,7 +7,6 @@
 import { useEffect, useMemo, useRef, type RefObject } from 'react'
 import { useAgentStore } from '@renderer/store'
 import { useSpecialistStore } from '@renderer/store/specialist.store'
-import { useProfileStore } from '@renderer/store/profile.store'
 import {
   getSpriteAssignment,
   getDefaultSeatIndex,
@@ -31,7 +30,6 @@ export function useAgentSync(
 ): void {
   const statuses = useAgentStore((s) => s.statuses)
   const specialists = useSpecialistStore((s) => s.specialists)
-  const coreAgentAliases = useProfileStore((s) => s.coreAgentAliases)
 
   const specialistMap = useMemo(
     () => new Map(specialists.map((s) => [s.agentId, s])),
@@ -61,11 +59,7 @@ export function useAgentSync(
         const seatIndex = getDefaultSeatIndex(status.agentType, totalSeats)
         const numericId = agentIdToNumeric(status.agentId)
 
-        const displayName = resolveDisplayName(
-          status.agentType,
-          coreAgentAliases,
-          specialist?.displayName
-        )
+        const displayName = resolveDisplayName(status.agentType, specialist)
 
         const pixelSpriteId = specialist?.pixelSpriteId ?? assignment.pixelSpriteId
 
@@ -142,11 +136,7 @@ export function useAgentSync(
       if (trackedAgents.current.has(status.agentId)) {
         const numericId = agentIdToNumeric(status.agentId)
         const specialist = specialistMap.get(status.agentType)
-        const displayName = resolveDisplayName(
-          status.agentType,
-          coreAgentAliases,
-          specialist?.displayName
-        )
+        const displayName = resolveDisplayName(status.agentType, specialist)
         engine.updateDisplayName(numericId, displayName)
       }
     }
@@ -156,10 +146,10 @@ export function useAgentSync(
       const placeholderNumericId = engine.getPlaceholderNumericId(agentType)
       if (placeholderNumericId === undefined) continue
       const specialist = specialistMap.get(agentType)
-      const displayName = resolveDisplayName(agentType, coreAgentAliases, specialist?.displayName)
+      const displayName = resolveDisplayName(agentType, specialist)
       engine.updateDisplayName(placeholderNumericId, displayName)
     }
-  }, [statuses, specialistMap, coreAgentAliases, engineRef, engineReady])
+  }, [statuses, specialistMap, engineRef, engineReady])
 
   // Cleanup on unmount
   useEffect(() => {

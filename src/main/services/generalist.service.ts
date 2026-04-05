@@ -502,6 +502,10 @@ export class GeneralistService extends AgentBaseService {
                   ]
                 : [])
             ],
+        // Plan mode: block write tools AND SDK built-in tools that conflict with our ````plan UI
+        disallowedTools: isBuildMode
+          ? undefined
+          : ['Write', 'Edit', 'ExitPlanMode', 'ToolSearch'],
         maxTurns: isBuildMode ? 50 : 25,
         resume: sessionId,
         abortController,
@@ -842,7 +846,19 @@ export class GeneralistService extends AgentBaseService {
     let promptWithConditionals = this.appendConditionalSections(basePrompt, conditionalSections)
 
     // Inject active specialist roster so generalist knows who to hand off to
-    const activeSpecialists = specialistRepository.findActive()
+    // Scoped to conversation-specific overrides when available
+    let activeSpecialists = specialistRepository.findActive()
+
+    if (this.currentConversationId) {
+      const overrides = conversationSpecialistRepository.findByConversation(this.currentConversationId)
+      if (overrides.length > 0) {
+        const activeSpecialistIds = new Set(
+          overrides.filter((o) => o.isActive).map((o) => o.specialistId)
+        )
+        activeSpecialists = activeSpecialists.filter((s) => activeSpecialistIds.has(s.id))
+      }
+    }
+
     const nonCoreSpecialists = activeSpecialists.filter(
       (s) => !['generalist', 'generalist-agent', 'user'].includes(s.agentId)
     )

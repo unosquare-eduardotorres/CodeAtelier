@@ -17,6 +17,7 @@ import {
 import { getAgentMeta } from '@renderer/utils/agentMeta'
 import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
 import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
+import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 import SpecialistWarningDialog from './SpecialistWarningDialog'
 import type { SpecialistWarningType } from './SpecialistWarningDialog'
 
@@ -323,8 +324,11 @@ function TaskRow({
   return (
     <div className="flex items-start gap-2.5 py-1.5 px-2 rounded-lg bg-surface-raised/40">
       <div className="flex-shrink-0 mt-0.5">
-        {specialist?.usePixelForChat && specialist?.pixelSpriteId ? (
-          <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={20} />
+        {(specialist?.pixelSpriteId || getSpriteAssignment(task.specialist).pixelSpriteId) ? (
+          <PixelSpriteAvatar
+            spriteId={specialist?.pixelSpriteId ?? getSpriteAssignment(task.specialist).pixelSpriteId!}
+            size={20}
+          />
         ) : (
           <Avatar
             avatarKey={specialist?.avatarUrl ?? getDefaultAvatarForRole(task.specialist)}

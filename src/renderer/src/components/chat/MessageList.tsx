@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageSquarePlus } from 'lucide-react'
-import { useChatStore, useChatActions, useProfileStore, useSpecialistStore } from '@renderer/store'
+import { useChatStore, useChatActions, useSpecialistStore } from '@renderer/store'
 import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
+import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 import {
   MessageBubble,
   HandoffIndicator,
@@ -108,27 +109,18 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     ]
   )
 
-  const generalistAlias = useProfileStore((s) => {
-    const alias = s.coreAgentAliases.find((a) => a.agentRole === 'generalist')
-    return alias?.alias || CORE_AGENT_DEFAULTS.generalist.displayName
-  })
+  const generalistSpec = useSpecialistStore(
+    (s) => s.specialists.find((sp) => sp.agentId === 'generalist') ?? null
+  )
+  const generalistAlias =
+    generalistSpec?.alias ?? generalistSpec?.displayName ?? CORE_AGENT_DEFAULTS.generalist.displayName
+  const thinkingAvatarKey =
+    generalistSpec?.avatarUrl ?? CORE_AGENT_DEFAULTS.generalist.avatarKey
+  const thinkingAccentColor = generalistSpec?.color ?? CORE_AGENT_DEFAULTS.generalist.color
 
-  // Avatar info for the thinking indicator — matches MessageBubble's generalist identity
-  // Split into scalar selectors to avoid new-object re-render loops with Zustand
-  const thinkingAvatarKey = useProfileStore((s) => {
-    const alias = s.coreAgentAliases.find((a) => a.agentRole === 'generalist')
-    return alias?.avatarKey ?? CORE_AGENT_DEFAULTS.generalist.avatarKey
-  })
-  const thinkingAccentColor = CORE_AGENT_DEFAULTS.generalist.color
-
-  const coordinatorAlias = useProfileStore((s) => {
-    const alias = s.coreAgentAliases.find((a) => a.agentRole === 'coordinator')
-    return alias?.alias || CORE_AGENT_DEFAULTS.coordinator.displayName
-  })
-  const coordinatorAvatarKey = useProfileStore((s) => {
-    const alias = s.coreAgentAliases.find((a) => a.agentRole === 'coordinator')
-    return alias?.avatarKey ?? CORE_AGENT_DEFAULTS.coordinator.avatarKey
-  })
+  // Coordinator role is deprecated — map to generalist identity (Da Vinci)
+  const coordinatorAlias = generalistAlias
+  const coordinatorAvatarKey = thinkingAvatarKey
 
   // Resolve specialist identity from the store
   const streamingSpecialistData = useSpecialistStore((s) =>
@@ -145,23 +137,28 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   // Compute thinking indicator identity based on streamingRole
   const thinkingIdentity = useMemo(() => {
     if (streamingRole === 'coordinator') {
+      // Coordinator role deprecated — use generalist identity (Da Vinci)
       return {
         name: coordinatorAlias,
         avatarKey: coordinatorAvatarKey,
-        accentColor: CORE_AGENT_DEFAULTS.coordinator.color,
-        pixelSpriteId: null as string | null
+        accentColor: CORE_AGENT_DEFAULTS.generalist.color,
+        pixelSpriteId:
+          generalistSpec?.pixelSpriteId ??
+          getSpriteAssignment('generalist').pixelSpriteId ??
+          null
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialistData) {
-      const usePixel =
-        streamingSpecialistData.usePixelForChat && streamingSpecialistData.pixelSpriteId
       return {
         name: streamingSpecialistData.alias ?? streamingSpecialistData.displayName,
         avatarKey:
           streamingSpecialistData.avatarUrl ??
           getDefaultAvatarForRole(streamingSpecialistData.agentId),
         accentColor: streamingSpecialistData.color ?? '#F59E0B',
-        pixelSpriteId: usePixel ? streamingSpecialistData.pixelSpriteId : null
+        pixelSpriteId:
+          streamingSpecialistData.pixelSpriteId ??
+          getSpriteAssignment(streamingSpecialistData.agentId).pixelSpriteId ??
+          null
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialist) {
@@ -170,16 +167,18 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         name: streamingSpecialist,
         avatarKey: getDefaultAvatarForRole(streamingSpecialist),
         accentColor: '#F59E0B',
-        pixelSpriteId: null as string | null
+        pixelSpriteId: getSpriteAssignment(streamingSpecialist).pixelSpriteId ?? null
       }
     }
     // Default: generalist (Da Vinci)
-    const usePixel = generalistSpecialist?.usePixelForChat && generalistSpecialist?.pixelSpriteId
     return {
       name: generalistAlias,
       avatarKey: thinkingAvatarKey,
       accentColor: thinkingAccentColor,
-      pixelSpriteId: usePixel ? generalistSpecialist!.pixelSpriteId : null
+      pixelSpriteId:
+        generalistSpecialist?.pixelSpriteId ??
+        getSpriteAssignment('generalist').pixelSpriteId ??
+        null
     }
   }, [
     streamingRole,
@@ -190,10 +189,15 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     thinkingAccentColor,
     coordinatorAlias,
     coordinatorAvatarKey,
+    generalistSpec,
     generalistSpecialist
   ])
 
-  const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
+  const userName = useSpecialistStore((s) => {
+    const userSpec = s.specialists.find((sp) => sp.agentId === 'user')
+    const name = userSpec?.alias ?? userSpec?.displayName
+    return name?.split(' ')[0] ?? null
+  })
 
   // Scroll container ref for virtualizer
   const scrollRef = useRef<HTMLDivElement>(null)

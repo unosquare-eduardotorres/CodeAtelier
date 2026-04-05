@@ -16,13 +16,12 @@ import type {
   InvestigationDepth,
   InvestigationReport
 } from '../../shared/types'
-import { memoryService } from '../services/memory.service'
 import { specialistPoolService } from '../services/specialist-pool.service'
 import { buildEnvWithPath } from '../services/env-utils'
 import { chatIpcLogger } from '../logger'
 import { eventLoggerService } from '../services/event-logger.service'
 import { validateSender } from './validate-sender'
-import { forwardChunkToRenderer, isMemoryEnabled } from './chat-shared'
+import { forwardChunkToRenderer } from './chat-shared'
 
 const log = chatIpcLogger
 
@@ -81,6 +80,8 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       }
 
       const poolOnChunk = ({
+        taskId,
+        specialist: specialistId,
         chunk: taskChunk,
         toolActivity
       }: {
@@ -124,15 +125,20 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         forwardChunkToRenderer(
           mainWindow,
           conversationId,
-          'coordinator',
+          'specialist',
           normalizedChunk,
           accumulatedContent,
-          workspacePath ?? undefined
+          workspacePath ?? undefined,
+          { specialist: specialistId, taskId }
         )
       }
 
       const poolOnComplete = async (): Promise<void> => {
         log.info('Direct pool execution complete')
+
+        if (!accumulatedContent.value.trim()) {
+          log.warn(`[PIPELINE:empty-specialist-output] conversationId=${conversationId} — specialist produced no text`)
+        }
 
         eventLoggerService.logPlanExecutionCompleted({
           conversationId,
@@ -142,7 +148,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
 
         const savedMsg = messageRepository.create(
           conversationId,
-          'coordinator',
+          'generalist',
           accumulatedContent.value || '_No response from specialist execution._'
         )
 
@@ -172,28 +178,10 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           log.warn('Context injection after specialist execution failed:', e)
         }
 
-        try {
-          if (workspacePath && isMemoryEnabled(workspacePath)) {
-            const allWs = workspaceRepository.findAll()
-            const ws = allWs.find((w) => w.repoPath === workspacePath)
-            if (ws) {
-              memoryService.create({
-                workspaceId: ws.id,
-                type: 'project',
-                title: `Task execution: ${tasks.length} tasks (direct)`,
-                content: tasks.map((t) => `- ${t.specialist}: ${t.description}`).join('\n'),
-                tags: ['task-execution'],
-                importance: 4
-              })
-            }
-          }
-        } catch (e) {
-          log.warn('Memory update on task complete failed:', e)
-        }
-
         specialistPoolService.removeListener('taskChunk', poolOnChunk)
         specialistPoolService.removeListener('allComplete', poolOnComplete)
         specialistPoolService.removeListener('taskRetry', poolOnRetry)
+        specialistPoolService.removeListener('taskProgress', poolOnTaskProgress)
       }
 
       // Forward task retry events to renderer for UI visibility
@@ -208,9 +196,19 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_RETRY, retryInfo)
       }
 
+      // Forward task progress events to renderer for UI updates (e.g. "1/3 done")
+      const poolOnTaskProgress = (progress: {
+        taskId: string
+        specialist: string
+        status: string
+      }): void => {
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PROGRESS, progress)
+      }
+
       specialistPoolService.on('taskChunk', poolOnChunk)
       specialistPoolService.on('allComplete', poolOnComplete)
       specialistPoolService.on('taskRetry', poolOnRetry)
+      specialistPoolService.on('taskProgress', poolOnTaskProgress)
 
       try {
         const hasDependencies = tasks.some((task) => (task.dependsOn?.length ?? 0) > 0)
@@ -229,12 +227,12 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         })
 
         const errorMsg = `**Execution Error:** ${(error as Error).message}`
-        const savedMsg = messageRepository.create(conversationId, 'coordinator', errorMsg)
+        const savedMsg = messageRepository.create(conversationId, 'generalist', errorMsg)
 
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
           conversationId,
           chunk: errorMsg,
-          role: 'coordinator'
+          role: 'generalist'
         })
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
           conversationId,
@@ -244,6 +242,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         specialistPoolService.removeListener('taskChunk', poolOnChunk)
         specialistPoolService.removeListener('allComplete', poolOnComplete)
         specialistPoolService.removeListener('taskRetry', poolOnRetry)
+        specialistPoolService.removeListener('taskProgress', poolOnTaskProgress)
       }
     }
   )
@@ -280,7 +279,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId,
         chunk: '\n> **Mode switched to Build** — executing fix plan.\n\n',
-        role: 'coordinator'
+        role: 'generalist'
       })
 
       // Decompose into fix tasks

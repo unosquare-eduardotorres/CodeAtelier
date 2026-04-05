@@ -275,10 +275,13 @@ export function createScheduler(name: SchedulingStrategyName): SchedulingStrateg
  * Useful for blending e.g. capability-match (70%) + least-busy (30%).
  */
 export class CompositeScheduler implements SchedulingStrategy {
-  readonly name = 'capability-match' as SchedulingStrategyName // primary
+  readonly name: SchedulingStrategyName
   private strategies: Array<{ strategy: SchedulingStrategy; weight: number }>
 
   constructor(strategies: Array<{ name: SchedulingStrategyName; weight: number }>) {
+    // Use the highest-weighted strategy's name for logging/identification
+    const sorted = [...strategies].sort((a, b) => b.weight - a.weight)
+    this.name = sorted[0]?.name ?? 'dependency-first'
     this.strategies = strategies.map((s) => ({
       strategy: createScheduler(s.name),
       weight: s.weight

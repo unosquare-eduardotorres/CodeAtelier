@@ -121,12 +121,12 @@ describe('Suite 6: Pipeline ordering', () => {
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId: MOCK_CONVERSATION.id,
       chunk: '',
-      role: 'coordinator'
+      role: 'generalist'
     })
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId: MOCK_CONVERSATION.id,
       chunk: `Delegating to **${specialistNames}** for review.\n\n`,
-      role: 'coordinator'
+      role: 'generalist'
     })
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
 
@@ -151,7 +151,7 @@ describe('Suite 6: Pipeline ordering', () => {
       mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId: MOCK_CONVERSATION.id,
         chunk: `\n\n**Error:** Task decomposition failed. ${(error as Error).message}`,
-        role: 'coordinator'
+        role: 'generalist'
       })
       const savedMsg = repos.messageRepository.create(
         MOCK_CONVERSATION.id,
@@ -243,7 +243,7 @@ describe('Suite 7: CHAT_EXECUTE_PLAN contracts', () => {
       mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId: MOCK_CONVERSATION.id,
         chunk: errorMsg,
-        role: 'coordinator'
+        role: 'generalist'
       })
       mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
         conversationId: MOCK_CONVERSATION.id,
@@ -332,7 +332,7 @@ describe('Suite 8: Investigation fix flow', () => {
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId: MOCK_CONVERSATION.id,
       chunk: '\n> **Mode switched to Build** — executing fix plan.\n\n',
-      role: 'coordinator'
+      role: 'generalist'
     })
 
     const chunkMsg = mainWindow.sentMessages.find((m) => m.channel === IPC_CHANNELS.CHAT_MESSAGE_CHUNK)

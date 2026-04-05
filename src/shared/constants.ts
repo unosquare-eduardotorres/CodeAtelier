@@ -158,8 +158,6 @@ export const IPC_CHANNELS = {
   MEMORY_UPDATE_SETTING: 'memory:updateSetting',
 
   // Memory feed (ingest sources into memories)
-  MEMORY_FEED_CLAUDE_MD: 'memory:feedClaudeMd',
-  MEMORY_FEED_CODEBASE: 'memory:feedCodebase',
   MEMORY_FEED_DOCUMENT: 'memory:feedDocument',
   MEMORY_FEED_PROGRESS: 'memory:feedProgress',
   MEMORY_FEED_CANCEL: 'memory:feedCancel',
@@ -218,6 +216,15 @@ export const IPC_CHANNELS = {
   REPO_SET_REMOTE: 'repo:setRemote',
   REPO_GET_INFO: 'repo:getInfo',
   REPO_HAS_UNSAVED_CHANGES: 'repo:hasUnsavedChanges',
+
+  // Code Changes
+  REPO_GET_FILE_DETAILS: 'repo:getFileDetails',
+  REPO_GET_FILE_DIFF: 'repo:getFileDiff',
+  REPO_COMMIT_FILES: 'repo:commitFiles',
+  REPO_PUSH: 'repo:push',
+  REPO_GET_PUSH_STATUS: 'repo:getPushStatus',
+  REPO_GENERATE_COMMIT_MESSAGE: 'repo:generateCommitMessage',
+  REPO_CREATE_PR: 'repo:createPr',
 
   // PR Description Generation
   CHAT_GENERATE_PR_DESCRIPTION: 'chat:generatePrDescription',

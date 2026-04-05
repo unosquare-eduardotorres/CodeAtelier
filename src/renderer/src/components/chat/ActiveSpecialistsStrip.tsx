@@ -9,6 +9,7 @@ import {
 } from '@renderer/store'
 import { PixelSpriteAvatar, Avatar } from '@renderer/components/common'
 import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
+import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 
 interface ActiveSpecialistsStripProps {
   conversationId: string
@@ -28,10 +29,18 @@ export default function ActiveSpecialistsStrip({
   const { isLoading, isEstimating, error } = useConversationSpecialistStatus(conversationId)
   const { hydrateConversationSpecialists } = useConversationSpecialistActions()
   const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
+  const loadSpecialists = useSpecialistStore((state) => state.loadSpecialists)
 
   useEffect(() => {
     void hydrateConversationSpecialists(conversationId).catch(() => undefined)
   }, [conversationId, hydrateConversationSpecialists])
+
+  // Eagerly load workspace specialists if not yet loaded — prevents UUID display
+  useEffect(() => {
+    if (workspaceSpecialists.length === 0) {
+      void loadSpecialists().catch(() => undefined)
+    }
+  }, [workspaceSpecialists.length, loadSpecialists])
 
   const specialistMap = useMemo(
     () => new Map(workspaceSpecialists.map((specialist) => [specialist.id, specialist])),
@@ -48,9 +57,13 @@ export default function ActiveSpecialistsStrip({
       workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id)
     )
     return conversationSpecialists.filter(
-      (specialist) => specialist.isActive && !coreIds.has(specialist.specialistId)
+      (specialist) =>
+        specialist.isActive &&
+        !coreIds.has(specialist.specialistId) &&
+        // Only show resolvable specialists — hide raw UUIDs
+        (specialist.specialist || specialistMap.has(specialist.specialistId))
     )
-  }, [conversationSpecialists, workspaceSpecialists])
+  }, [conversationSpecialists, workspaceSpecialists, specialistMap])
 
   const totalEstimatedTokens = useMemo(
     () => tokenEstimates.reduce((sum, estimate) => sum + estimate.estimatedTokens, 0),
@@ -96,8 +109,11 @@ export default function ActiveSpecialistsStrip({
                     className="inline-flex items-center justify-center w-5 h-5 rounded-full overflow-hidden"
                     style={{ backgroundColor: `${color}22`, color }}
                   >
-                    {specialist?.pixelSpriteId ? (
-                      <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={16} />
+                    {(specialist?.pixelSpriteId || (specialist?.agentId && getSpriteAssignment(specialist.agentId).pixelSpriteId)) ? (
+                      <PixelSpriteAvatar
+                        spriteId={specialist?.pixelSpriteId ?? getSpriteAssignment(specialist!.agentId).pixelSpriteId!}
+                        size={16}
+                      />
                     ) : specialist?.avatarUrl ? (
                       <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={color} />
                     ) : specialist?.agentId && AGENT_ICON_MAP[specialist.agentId] ? (

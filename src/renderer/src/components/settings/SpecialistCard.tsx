@@ -3,6 +3,7 @@ import { Loader2, Settings, Zap, Brain, Sparkles, Shield } from 'lucide-react'
 import type { MarketplaceSpecialist } from '../../../../shared/types'
 import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
 import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
+import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 
 interface SpecialistCardProps {
   specialist: MarketplaceSpecialist
@@ -89,8 +90,11 @@ export default function SpecialistCard({
           className="flex items-center justify-center w-10 h-10 rounded-sm flex-shrink-0 overflow-hidden"
           style={{ backgroundColor: `${specialist.color}18`, border: `1px solid ${specialist.color}35` }}
         >
-          {specialist.usePixelForChat && specialist.pixelSpriteId ? (
-            <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={32} />
+          {(specialist.pixelSpriteId || getSpriteAssignment(specialist.agentId).pixelSpriteId) ? (
+            <PixelSpriteAvatar
+              spriteId={specialist.pixelSpriteId ?? getSpriteAssignment(specialist.agentId).pixelSpriteId!}
+              size={32}
+            />
           ) : specialist.avatarUrl ? (
             <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={specialist.color} />
           ) : AGENT_ICON_MAP[specialist.agentId] ? (

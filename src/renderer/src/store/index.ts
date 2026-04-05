@@ -27,3 +27,10 @@ export {
   useSpecialistWarningPreferences,
   useAppPreferenceStatus
 } from './app-preference.store'
+export {
+  useCodeChangesStore,
+  useCodeChangesFiles,
+  useCodeChangesSelectedFile,
+  useCodeChangesPushStatus
+} from './code-changes.store'
+export type { FileChangeDetail } from './code-changes.store'

@@ -72,8 +72,12 @@ function baseOptions(ac?: AbortController): SDKExecuteOptions {
   return {
     model: 'haiku',
     cwd: process.cwd(),
-    permissionMode: 'plan' as const,
+    // Use 'default' instead of 'plan' to avoid SDK injecting ExitPlanMode built-in tool.
+    // Tests verify prompt adherence, not SDK permission behavior.
+    permissionMode: 'default' as const,
     allowedTools: [] as string[],
+    // Keep disallowedTools as defense-in-depth in case SDK changes behavior
+    disallowedTools: ['ExitPlanMode', 'ToolSearch'],
     maxTurns: 1,
     prompt: '', // overridden by caller
     systemPrompt: '', // overridden by caller
@@ -158,16 +162,28 @@ async function run(): Promise<void> {
       withRetry(async () => {
         const { result } = await executor.executeAndCollect({
           ...baseOptions(ac),
+          // Block write tools + SDK plan tools — mirrors generalist.service.ts
+          disallowedTools: ['Write', 'Edit', 'ExitPlanMode', 'ToolSearch'],
           prompt:
             'Create an implementation plan for adding a user settings page with dark mode toggle and notification preferences.',
           systemPrompt: GENERALIST_BASE_PROMPT + '\n' + GENERALIST_PLAN_MODE_SECTION
         })
 
+        // Must NOT try to write files or use ExitPlanMode
+        if (result.includes('ExitPlanMode')) {
+          throw new Error(
+            'LLM tried to use ExitPlanMode instead of emitting ````plan block. disallowedTools not working.'
+          )
+        }
+
         // Should contain a plan block
         const planMatch = result.match(/`{3,4}plan\n([\s\S]*?)`{3,4}/)
         if (!planMatch) {
-          // Check if the LLM tried to write a file instead
-          if (result.includes('blocked') || result.includes('file path')) {
+          if (
+            result.includes('blocked') ||
+            result.includes('file path') ||
+            result.includes('Write')
+          ) {
             throw new Error(
               'LLM tried to write plan to file instead of emitting ````plan block. Prompt adherence failure.'
             )

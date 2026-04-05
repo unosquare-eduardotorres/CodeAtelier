@@ -14,6 +14,7 @@ import { getAgentMeta } from '@renderer/utils/agentMeta'
 import { useSpecialistStore, useAgentStore } from '@renderer/store'
 import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
 import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
+import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 
 // Model tier badge config
 const MODEL_BADGE: Record<ModelTier, { label: string; bg: string; text: string }> = {
@@ -154,8 +155,11 @@ export default function AgentStatusCard({ status, isSubagent }: AgentStatusCardP
         }}
       >
         <div className="flex items-center gap-2">
-          {specialist?.usePixelForChat && specialist?.pixelSpriteId ? (
-            <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={20} />
+          {(specialist?.pixelSpriteId || getSpriteAssignment(status.agentType).pixelSpriteId) ? (
+            <PixelSpriteAvatar
+              spriteId={specialist?.pixelSpriteId ?? getSpriteAssignment(status.agentType).pixelSpriteId!}
+              size={20}
+            />
           ) : (
             <Avatar
               avatarKey={specialist?.avatarUrl ?? getDefaultAvatarForRole(status.agentType)}

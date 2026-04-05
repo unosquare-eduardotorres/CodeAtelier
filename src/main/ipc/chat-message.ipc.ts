@@ -11,6 +11,7 @@ import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
+  ExecutionStrategy,
   GrillEvaluation,
   GrillQuestion,
   HandoffBrief,
@@ -350,11 +351,11 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
           })
           log.info(`[PIPELINE:handoff-sent-to-renderer] conversationId=${conversationId}`)
 
-          // Switch streaming identity to coordinator during decomposition
+          // Switch streaming identity to generalist during decomposition
           mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
             conversationId,
             chunk: '',
-            role: 'coordinator'
+            role: 'generalist'
           })
 
           // Emit generalist confirmation — "Delegating to .NET Architect for review."
@@ -367,7 +368,7 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
           mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
             conversationId,
             chunk: `Delegating to **${specialistNames}** for ${brief.mode === 'plan' ? 'review' : 'implementation'}.\n\n`,
-            role: 'coordinator'
+            role: 'generalist'
           })
 
           // Update conversation mode to match the handoff (always plan for investigations).
@@ -392,9 +393,16 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
 
             log.info(`[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`)
 
-            // Send the task plan to the renderer for user choice (sequential vs parallel)
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
-            log.info(`[PIPELINE:task-plan-sent-to-renderer] taskCount=${taskPlan.tasks.length}`)
+            // Send the task plan to the renderer — auto-execute in build mode
+            if (taskPlan.mode === 'build') {
+              mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, {
+                ...taskPlan,
+                autoExecute: 'sequential' as ExecutionStrategy
+              })
+            } else {
+              mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
+            }
+            log.info(`[PIPELINE:task-plan-sent-to-renderer] taskCount=${taskPlan.tasks.length} autoExecute=${taskPlan.mode === 'build'}`)
           } catch (error) {
             log.error('Task decomposition failed:', error)
             eventLoggerService.logDecompositionFailed({
@@ -406,11 +414,11 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
             mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
               conversationId,
               chunk: `\n\n**Error:** Task decomposition failed. ${(error as Error).message}`,
-              role: 'coordinator'
+              role: 'generalist'
             })
             const savedMsg = messageRepository.create(
               conversationId,
-              'coordinator',
+              'generalist',
               `**Error:** Task decomposition failed.\n\n${(error as Error).message}`
             )
             mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {

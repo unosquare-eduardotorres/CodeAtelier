@@ -29,6 +29,12 @@ export function createScopeGuard(allowedCwd: string): HookCallback {
     const toolName = (input as Record<string, unknown>).tool_name as string
     const toolInput = (input as Record<string, unknown>).tool_input as Record<string, unknown>
 
+    // Block SDK built-in plan tool — Agent Studio uses its own ````plan block rendering
+    if (toolName === 'ExitPlanMode') {
+      hookLog.warn('Blocked ExitPlanMode — Agent Studio uses inline ````plan blocks')
+      return { decision: 'block', reason: 'ExitPlanMode disabled — use ````plan blocks instead' }
+    }
+
     // File scope check for Write/Edit
     if (toolName === 'Write' || toolName === 'Edit') {
       const filePath = toolInput?.file_path as string

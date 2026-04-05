@@ -294,11 +294,9 @@ interface Api {
   memorySelectDocument: () => Promise<string | null>
   memoryFeedCancel: () => Promise<void>
   memoryGetFeedTimestamps: (args: { workspaceId: string }) => Promise<WorkspaceFeedTimestamps>
-  memoryFeedClaudeMd: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
   memoryRegenerateClaudeMd: (args: {
     workspacePath: string
   }) => Promise<{ success: boolean; content: string; existing: string | null; error?: string }>
-  memoryFeedCodebase: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
   memoryFeedDocument: (args: {
     workspacePath: string
     filePath: string
@@ -479,6 +477,37 @@ interface Api {
   hasUnsavedChanges: (args: {
     conversationId: string
   }) => Promise<{ hasChanges: boolean; fileCount: number; files: string[] }>
+
+  // Code Changes
+  getFileDetails: (args: {
+    conversationId: string
+  }) => Promise<Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>>
+  getFileDiff: (args: {
+    conversationId: string
+    filePath: string
+  }) => Promise<{ oldContent: string; newContent: string; language: string }>
+  commitFiles: (args: {
+    conversationId: string
+    filePaths: string[]
+    message: string
+  }) => Promise<{ commitHash: string }>
+  repoPush: (args: {
+    conversationId: string
+  }) => Promise<{ branch: string; remote: string }>
+  getPushStatus: (args: {
+    conversationId: string
+  }) => Promise<{ branch: string; commitsAhead: number; hasRemote: boolean }>
+  generateCommitMessage: (args: {
+    conversationId: string
+    filePaths: string[]
+  }) => Promise<{ message: string }>
+  createPr: (args: {
+    conversationId: string
+    title: string
+    body: string
+    base: string
+    head: string
+  }) => Promise<{ url: string; number: number }>
 
   // User Profile
   getUserProfile: () => Promise<UserProfile | null>

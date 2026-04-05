@@ -473,16 +473,10 @@ const api = {
   memoryGetFeedTimestamps: (args: { workspaceId: string }): Promise<WorkspaceFeedTimestamps> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_GET_FEED_TIMESTAMPS, args),
 
-  memoryFeedClaudeMd: (args: { workspacePath: string }): Promise<MemoryFeedResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CLAUDE_MD, args),
-
   memoryRegenerateClaudeMd: (args: {
     workspacePath: string
   }): Promise<{ success: boolean; content: string; existing: string | null; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REGENERATE_CLAUDE_MD, args),
-
-  memoryFeedCodebase: (args: { workspacePath: string }): Promise<MemoryFeedResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CODEBASE, args),
 
   memoryFeedDocument: (args: {
     workspacePath: string
@@ -952,6 +946,50 @@ const api = {
     conversationId: string
   }): Promise<{ hasChanges: boolean; fileCount: number; files: string[] }> =>
     ipcRenderer.invoke(IPC_CHANNELS.REPO_HAS_UNSAVED_CHANGES, args),
+
+  // ── Code Changes ──
+  getFileDetails: (args: {
+    conversationId: string
+  }): Promise<Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DETAILS, args),
+
+  getFileDiff: (args: {
+    conversationId: string
+    filePath: string
+  }): Promise<{ oldContent: string; newContent: string; language: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DIFF, args),
+
+  commitFiles: (args: {
+    conversationId: string
+    filePaths: string[]
+    message: string
+  }): Promise<{ commitHash: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_COMMIT_FILES, args),
+
+  repoPush: (args: {
+    conversationId: string
+  }): Promise<{ branch: string; remote: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_PUSH, args),
+
+  getPushStatus: (args: {
+    conversationId: string
+  }): Promise<{ branch: string; commitsAhead: number; hasRemote: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_PUSH_STATUS, args),
+
+  generateCommitMessage: (args: {
+    conversationId: string
+    filePaths: string[]
+  }): Promise<{ message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE, args),
+
+  createPr: (args: {
+    conversationId: string
+    title: string
+    body: string
+    base: string
+    head: string
+  }): Promise<{ url: string; number: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_CREATE_PR, args),
 
   // ── User Profile ──
   getUserProfile: (): Promise<UserProfile | null> =>

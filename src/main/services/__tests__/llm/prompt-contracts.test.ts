@@ -73,8 +73,12 @@ function baseOptions(ac?: AbortController): SDKExecuteOptions {
   return {
     model: 'haiku',
     cwd: process.cwd(),
-    permissionMode: 'plan' as const,
+    // Use 'default' instead of 'plan' to avoid SDK injecting ExitPlanMode built-in tool.
+    // Tests verify prompt adherence, not SDK permission behavior.
+    permissionMode: 'default' as const,
     allowedTools: [] as string[],
+    // Keep disallowedTools as defense-in-depth in case SDK changes behavior
+    disallowedTools: ['ExitPlanMode', 'ToolSearch'],
     maxTurns: 1,
     prompt: '', // overridden by caller
     systemPrompt: '', // overridden by caller

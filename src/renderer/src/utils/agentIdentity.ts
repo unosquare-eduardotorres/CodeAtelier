@@ -8,7 +8,7 @@ export const CORE_AGENT_DEFAULTS: Record<
   { displayName: string; avatarKey: string; color: string }
 > = {
   generalist: { displayName: 'Da Vinci', avatarKey: 'renaissance-painter', color: '#D97706' },
-  coordinator: { displayName: 'Stravinsky', avatarKey: 'renaissance-astronomer', color: '#8B5CF6' }
+  coordinator: { displayName: 'Da Vinci', avatarKey: 'renaissance-painter', color: '#D97706' }
 }
 
 /**

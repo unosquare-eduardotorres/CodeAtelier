@@ -478,3 +478,18 @@ CREATE TABLE IF NOT EXISTS turn_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
 CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id);
+
+-- Agent context: per-conversation persistent memory for long-running agent context (Anthropic pattern)
+CREATE TABLE IF NOT EXISTS agent_context (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  task_id TEXT,
+  context_type TEXT NOT NULL CHECK (context_type IN ('finding', 'decision', 'artifact', 'summary')),
+  content TEXT NOT NULL,
+  token_estimate INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_agent_context_conversation ON agent_context(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_agent_context_agent ON agent_context(conversation_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_context_type ON agent_context(conversation_id, context_type);

@@ -46,6 +46,7 @@
     "playwright-core": "^1.59.0-alpha-2026-03-27",
     "prism-react-renderer": "^2.4.1",
     "react": "^19.2.1",
+    "react-diff-viewer-continued": "^4.2.0",
     "react-dom": "^19.2.1",
     "react-dropzone": "^15.0.0",
     "react-markdown": "^10.1.0",

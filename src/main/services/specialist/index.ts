@@ -83,6 +83,9 @@ export {
 // ── Structured Logging ──
 export { createStructuredLogger, type SpecialistLogFields } from './structured-log'
 
+// ── Agent Context Persistence ──
+export { agentContextService } from '../agent-context.service'
+
 // ── Task Scheduler (existing) ──
 export {
   topologicalSort,

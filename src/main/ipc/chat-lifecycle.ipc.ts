@@ -16,11 +16,9 @@ import {
 } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { ConversationMode } from '../../shared/types'
-import { memoryService } from '../services/memory.service'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
-import { isMemoryEnabled } from './chat-shared'
 
 const log = chatIpcLogger
 
@@ -215,33 +213,6 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
       log.warn('Branch cleanup failed:', e)
     }
 
-    // Log conversation context as a project memory before close
-    try {
-      if (workspacePath && isMemoryEnabled(workspacePath)) {
-        const conversation = conversationRepository.findById(conversationId)
-        const allWs = workspaceRepository.findAll()
-        const ws = allWs.find((w) => w.repoPath === workspacePath)
-        if (conversation && ws) {
-          // Get last few messages for a summary
-          const messages = messageRepository.findByConversation(conversationId)
-          const lastMsgs = messages
-            .slice(-5)
-            .map((m) => m.contentMd.substring(0, 200))
-            .join(' | ')
-          memoryService.create({
-            workspaceId: ws.id,
-            type: 'project',
-            title: `Conversation: ${conversation.title}`,
-            content: lastMsgs || 'No messages',
-            tags: ['conversation-close'],
-            importance: 3
-          })
-        }
-      }
-    } catch (e) {
-      log.warn('Memory update failed on /close:', e)
-    }
-
     // Delete conversation (cascades: file_changes, messages, attachments, agent_worktrees)
     conversationRepository.delete(conversationId)
   })
@@ -372,22 +343,6 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
           } catch (e) {
             log.warn('GitHub PR creation failed (push succeeded):', e)
           }
-        }
-
-        // Log completion as a project memory
-        try {
-          if (isMemoryEnabled(workspace.repoPath)) {
-            memoryService.create({
-              workspaceId: workspace.id,
-              type: 'project',
-              title: `Completed: ${commitMessage.substring(0, 80)}`,
-              content: `Branch: ${branchName}\nCommit: ${commitHash}\nFiles: ${filesToStage.join(', ')}${prUrl ? `\nPR: ${prUrl}` : ''}`,
-              tags: ['completion', 'git-commit'],
-              importance: 6
-            })
-          }
-        } catch (e) {
-          log.warn('Memory update failed on /complete:', e)
         }
 
         // 8. Cleanup: stop agents, clear DB data, delete conversation

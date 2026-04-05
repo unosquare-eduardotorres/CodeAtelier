@@ -5,8 +5,6 @@ import {
   RefreshCw,
   Download,
   CheckCircle2,
-  Pencil,
-  Check,
   GripVertical,
   ChevronUp,
   ChevronDown,
@@ -14,16 +12,14 @@ import {
 } from 'lucide-react'
 import {
   useUpdateStore,
-  useProfileStore,
   useSpecialistStore,
   useAppPreferenceActions,
   useSpecialistWarningPreferences,
   useAppPreferenceStatus
 } from '@renderer/store'
-import { Avatar, AvatarPicker, PixelSpriteAvatar } from '@renderer/components/common'
+import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
 import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 import type { Specialist } from '../../../../shared/types'
-import PixelSpritePicker from './PixelSpritePicker'
 import AISubscriptionsSection from './AISubscriptionsSection'
 
 function UpdateButton(): React.JSX.Element {
@@ -170,181 +166,6 @@ function SpecialistWarningPreferencesSection(): React.JSX.Element {
 
       {error && (
         <p className="text-xs text-danger mt-3">Failed to update warning preferences: {error}</p>
-      )}
-    </div>
-  )
-}
-
-function ProfileSection(): React.JSX.Element {
-  const { profile, saveProfile, loadProfile } = useProfileStore()
-  const { specialists } = useSpecialistStore()
-  const [isEditing, setIsEditing] = useState(false)
-  const [name, setName] = useState(profile?.displayName ?? '')
-  const [avatarKey, setAvatarKey] = useState(profile?.avatarKey ?? 'renaissance-scholar')
-  const [pixelSpriteId, setPixelSpriteId] = useState<string | null>(profile?.pixelSpriteId ?? null)
-  const [usePixelForChat, setUsePixelForChat] = useState(profile?.usePixelForChat ?? false)
-  const [showAvatarPicker, setShowAvatarPicker] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
-
-  // Find the user specialist record for the pixel sprite picker
-  const userSpecialist = specialists.find((s) => s.agentId === 'user')
-
-  useEffect(() => {
-    if (profile) {
-      setName(profile.displayName)
-      setAvatarKey(profile.avatarKey)
-      setPixelSpriteId(profile.pixelSpriteId ?? null)
-      setUsePixelForChat(profile.usePixelForChat ?? false)
-    }
-  }, [profile])
-
-  const handleSave = useCallback(async () => {
-    if (!name.trim()) return
-    setIsSaving(true)
-    try {
-      await saveProfile(name.trim(), avatarKey)
-      // Also save pixel sprite fields if user specialist exists
-      if (userSpecialist) {
-        await window.api.updateSpecialist({
-          id: userSpecialist.id,
-          pixelSpriteId,
-          usePixelForChat
-        })
-        await loadProfile()
-      }
-      setIsEditing(false)
-      setShowAvatarPicker(false)
-    } catch (err) {
-      console.error('Failed to save profile:', err)
-    } finally {
-      setIsSaving(false)
-    }
-  }, [name, avatarKey, pixelSpriteId, usePixelForChat, saveProfile, userSpecialist, loadProfile])
-
-  const handleCancel = useCallback(() => {
-    setName(profile?.displayName ?? '')
-    setAvatarKey(profile?.avatarKey ?? 'renaissance-scholar')
-    setPixelSpriteId(profile?.pixelSpriteId ?? null)
-    setUsePixelForChat(profile?.usePixelForChat ?? false)
-    setIsEditing(false)
-    setShowAvatarPicker(false)
-  }, [profile])
-
-  return (
-    <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
-      <h4 className="text-sm font-medium text-text-primary">Your Profile</h4>
-      <p className="text-xs text-text-secondary mt-0.5 mb-4">
-        Your name and avatar appear in all conversations
-      </p>
-      <div className="flex items-center gap-4">
-        <button
-          onClick={() => {
-            setIsEditing(true)
-            setShowAvatarPicker(true)
-          }}
-          className="relative group cursor-pointer"
-          aria-label="Change avatar"
-        >
-          {usePixelForChat && pixelSpriteId ? (
-            <PixelSpriteAvatar spriteId={pixelSpriteId} size={48} className="rounded-lg" />
-          ) : (
-            <Avatar avatarKey={avatarKey} size="lg" />
-          )}
-          <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-            <Pencil size={14} className="text-white" />
-          </div>
-        </button>
-        <div className="flex-1">
-          {isEditing ? (
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
-              maxLength={50}
-              className="w-full h-10 px-3 rounded-lg bg-surface-base border border-border-subtle text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSave()
-                if (e.key === 'Escape') handleCancel()
-              }}
-            />
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-text-primary">
-                {profile?.displayName ?? 'Developer'}
-              </span>
-              <button
-                onClick={() => setIsEditing(true)}
-                className="p-1 rounded-md hover:bg-surface-float text-text-muted hover:text-text-primary transition-colors"
-                aria-label="Edit name"
-              >
-                <Pencil size={12} />
-              </button>
-            </div>
-          )}
-        </div>
-        {isEditing && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleCancel}
-              className="px-3 py-1.5 text-xs font-medium text-text-body hover:text-text-primary bg-surface-float hover:bg-surface-overlay rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!name.trim() || isSaving}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors disabled:opacity-50"
-            >
-              <Check size={12} />
-              Save
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Avatar picker overlay */}
-      {showAvatarPicker && !usePixelForChat && (
-        <div className="mt-4 pt-4 border-t border-border-subtle">
-          <p className="text-xs text-text-secondary mb-3">Choose an avatar</p>
-          <AvatarPicker value={avatarKey} onChange={setAvatarKey} columns={8} size="lg" />
-        </div>
-      )}
-
-      {/* Pixel Office Avatar Section */}
-      {isEditing && (
-        <div className="mt-4 pt-4 border-t border-border-subtle">
-          <h5 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
-            Pixel Office Avatar
-          </h5>
-          <p className="text-[11px] text-text-muted mb-3">
-            Character sprite shown in the virtual pixel office environment.
-          </p>
-          <PixelSpritePicker
-            value={pixelSpriteId}
-            onChange={setPixelSpriteId}
-            specialists={specialists}
-            currentSpecialistId={userSpecialist?.id ?? ''}
-          />
-          {pixelSpriteId && (
-            <button
-              type="button"
-              onClick={() => setUsePixelForChat(!usePixelForChat)}
-              className={`
-                inline-flex items-center gap-2 mt-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all
-                ${
-                  usePixelForChat
-                    ? 'bg-primary text-white'
-                    : 'bg-surface-base text-text-secondary border border-border-subtle hover:bg-surface-overlay'
-                }
-              `}
-            >
-              {usePixelForChat && <Check size={12} />}
-              Use as chat avatar
-            </button>
-          )}
-        </div>
       )}
     </div>
   )
@@ -506,9 +327,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
                 Workspace Settings.
               </p>
             </div>
-
-            {/* Profile section */}
-            <ProfileSection />
 
             {/* AI Subscriptions section */}
             <AISubscriptionsSection />

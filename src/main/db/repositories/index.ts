@@ -56,5 +56,7 @@ export { CodeGraphTagRepository, codeGraphTagRepository } from './code-graph-tag
 export type { CodeGraphTagRow, RepomapTag } from './code-graph-tag.repository'
 export { CodeGraphRankRepository, codeGraphRankRepository } from './code-graph-rank.repository'
 export { AgentMessageRepository, agentMessageRepository } from './agent-message.repository'
+export { AgentContextRepository, agentContextRepository } from './agent-context.repository'
+export type { AgentContextRecord, AgentContextType } from './agent-context.repository'
 export { TurnUsageRepository, turnUsageRepository } from './turn-usage.repository'
 export type { TurnUsage } from './turn-usage.repository'

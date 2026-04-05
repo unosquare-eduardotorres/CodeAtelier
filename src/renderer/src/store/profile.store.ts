@@ -1,23 +1,19 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
-import type { UserProfile, CoreAgentAlias, CoreAgentPrompt } from '../../../shared/types'
+import type { UserProfile, CoreAgentPrompt } from '../../../shared/types'
 
 interface ProfileState {
   profile: UserProfile | null
-  coreAgentAliases: CoreAgentAlias[]
+  /** @deprecated Use specialist store for alias/avatar data. Kept for backward compat. */
+  coreAgentAliases: Array<{ agentRole: string; alias: string | null; avatarKey: string | null }>
   coreAgentPrompts: CoreAgentPrompt[]
   isLoading: boolean
   hasCompletedWelcome: boolean
 
   loadProfile: () => Promise<void>
   saveProfile: (displayName: string, avatarKey: string) => Promise<void>
-  loadCoreAgentAliases: () => Promise<void>
-  saveCoreAgentAlias: (
-    agentRole: 'generalist' | 'coordinator',
-    alias: string | null,
-    avatarKey: string | null
-  ) => Promise<void>
-  getCoreAgentAlias: (role: 'generalist' | 'coordinator') => CoreAgentAlias | undefined
+  /** @deprecated Use specialist store lookups instead. */
+  getCoreAgentAlias: (role: 'generalist' | 'coordinator') => { agentRole: string; alias: string | null; avatarKey: string | null } | undefined
 
   // Core Agent Prompts
   loadCoreAgentPrompts: () => Promise<void>
@@ -74,8 +70,6 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
           isLoading: false
         })
       }
-      // Also load core agent aliases
-      await get().loadCoreAgentAliases()
     } catch (error) {
       rendererLog.error('Failed to load user profile:', error)
       set({ isLoading: false })
@@ -105,36 +99,9 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     }
   },
 
-  loadCoreAgentAliases: async () => {
-    try {
-      const aliases = await window.api.listCoreAgentAliases()
-      set({ coreAgentAliases: aliases })
-    } catch (error) {
-      rendererLog.error('Failed to load core agent aliases:', error)
-    }
-  },
-
-  saveCoreAgentAlias: async (
-    agentRole: 'generalist' | 'coordinator',
-    alias: string | null,
-    avatarKey: string | null
-  ) => {
-    try {
-      const updated = await window.api.upsertCoreAgentAlias({ agentRole, alias, avatarKey })
-      set((state) => ({
-        coreAgentAliases: [
-          ...state.coreAgentAliases.filter((a) => a.agentRole !== agentRole),
-          updated
-        ]
-      }))
-    } catch (error) {
-      rendererLog.error('Failed to save core agent alias:', error)
-      throw error
-    }
-  },
-
-  getCoreAgentAlias: (role: 'generalist' | 'coordinator') => {
-    return get().coreAgentAliases.find((a) => a.agentRole === role)
+  /** @deprecated Use specialist store lookups instead. */
+  getCoreAgentAlias: () => {
+    return undefined
   },
 
   // ── Core Agent Prompts ──

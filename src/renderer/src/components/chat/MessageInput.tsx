@@ -250,8 +250,8 @@ export default function MessageInput({
   const executeSend = useCallback(
     async (content: string, sendAttachments?: string[]): Promise<void> => {
       setText('')
-      await sendMessage(content, sendAttachments)
       onClearAttachments()
+      await sendMessage(content, sendAttachments)
     },
     [onClearAttachments, sendMessage]
   )
@@ -278,8 +278,8 @@ export default function MessageInput({
 
       if (cmd === '/compact') {
         setText('')
-        await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined)
         onClearAttachments()
+        await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined)
         return
       }
 

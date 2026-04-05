@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 46
+const CURRENT_SCHEMA_VERSION = 49
 
 interface Migration {
   version: number
@@ -1015,6 +1015,66 @@ const migrations: Migration[] = [
     name: 'add-specialist-description-column',
     up: (db) => {
       db.exec('ALTER TABLE specialists ADD COLUMN description TEXT DEFAULT NULL')
+    }
+  },
+  {
+    version: 47,
+    name: 'create-agent-context-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_context (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          task_id TEXT,
+          context_type TEXT NOT NULL CHECK (context_type IN ('finding', 'decision', 'artifact', 'summary')),
+          content TEXT NOT NULL,
+          token_estimate INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_context_conversation ON agent_context(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_context_agent ON agent_context(conversation_id, agent_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_context_type ON agent_context(conversation_id, context_type);
+      `)
+    }
+  },
+  {
+    version: 48,
+    name: 'cleanup-noise-memories',
+    up: (db) => {
+      // Remove auto-generated noise memories that are redundant with system prompt
+      // or too low-value to justify injection token cost:
+      // - conversation-close summaries (importance 3, noise)
+      // - task-execution logs (importance 4, noise)
+      // - git-commit completion memories (importance <= 6, available via git log)
+      // - CLAUDE.md/codebase feed memories (redundant with system prompt Layer 4)
+      db.exec(`
+        DELETE FROM memories
+        WHERE tags LIKE '%conversation-close%'
+           OR tags LIKE '%task-execution%'
+           OR (tags LIKE '%completion%' AND tags LIKE '%git-commit%' AND importance <= 6)
+           OR (source_agent_id IN ('memory-feed-claude-md', 'memory-feed-codebase')
+               AND importance <= 5);
+      `)
+    }
+  },
+  {
+    version: 49,
+    name: 'update-plan-prompt-no-write-tool',
+    up: (db) => {
+      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+
+      // Update default_prompt_text always.
+      // Update prompt_text ONLY if user hasn't customized it (is_custom = 0).
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'plan'
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
     }
   }
 ]

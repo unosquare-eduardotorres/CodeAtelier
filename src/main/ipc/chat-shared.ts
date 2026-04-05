@@ -9,22 +9,24 @@ const log = chatIpcLogger
 
 /**
  * Shared helper to forward a StreamChunk to the renderer.
- * Eliminates duplicated chunk-handling logic between generalist and coordinator paths.
+ * Eliminates duplicated chunk-handling logic between generalist and specialist paths.
  */
 export function forwardChunkToRenderer(
   mainWindow: BrowserWindow,
   conversationId: string,
-  role: 'generalist' | 'coordinator',
+  role: 'generalist' | 'specialist',
   chunk: StreamChunk,
   contentAccumulator: { value: string },
-  workspacePath?: string
+  workspacePath?: string,
+  specialistMeta?: { specialist: string; taskId: string }
 ): void {
   if (chunk.type === 'text' && chunk.content) {
     contentAccumulator.value += chunk.content
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId,
       chunk: chunk.content,
-      role
+      role,
+      ...specialistMeta
     })
   } else if (chunk.type === 'tool_use') {
     // Track file changes for Write/Edit tools
@@ -43,6 +45,7 @@ export function forwardChunkToRenderer(
       conversationId,
       chunk: '',
       role,
+      ...specialistMeta,
       toolActivity: {
         id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         toolName: chunk.toolName ?? 'Unknown',
@@ -73,7 +76,8 @@ export function forwardChunkToRenderer(
           mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
             conversationId,
             chunk: planBlock,
-            role
+            role,
+            ...specialistMeta
           })
           log.info('Injected plan content from Write to .claude/plans/', parsed.file_path)
         }
@@ -95,6 +99,7 @@ export function forwardChunkToRenderer(
       conversationId,
       chunk: '',
       role,
+      ...specialistMeta,
       toolActivity
     })
   } else if (chunk.type === 'error') {
@@ -102,7 +107,8 @@ export function forwardChunkToRenderer(
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId,
       chunk: `\n\n**Error:** ${chunk.error}`,
-      role
+      role,
+      ...specialistMeta
     })
   } else if (chunk.type === 'status' && chunk.content) {
     // Skip internal heartbeat signals — they're for stall detection, not user-facing
@@ -114,7 +120,8 @@ export function forwardChunkToRenderer(
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId,
       chunk: statusText,
-      role
+      role,
+      ...specialistMeta
     })
   }
 }

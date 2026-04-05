@@ -63,22 +63,15 @@ export const KNOWN_AGENT_TYPES = [
 ] as const
 
 /**
- * Resolve the display name for an agent using alias, specialist name, or ID derivation.
+ * Resolve the display name for an agent using specialist data or ID derivation.
+ * Single source of truth: specialist records from the specialist store.
  */
 export function resolveDisplayName(
   agentType: string,
-  coreAgentAliases: Array<{ agentRole: string; alias: string | null }>,
-  specialistName?: string
+  specialist?: { alias?: string | null; displayName?: string } | null
 ): string {
-  if (agentType === 'generalist') {
-    const alias = coreAgentAliases.find((a) => a.agentRole === 'generalist')?.alias
-    if (alias) return alias
-  }
-  if (agentType === 'coordinator') {
-    const alias = coreAgentAliases.find((a) => a.agentRole === 'coordinator')?.alias
-    if (alias) return alias
-  }
-  if (specialistName) return specialistName
+  if (specialist?.alias) return specialist.alias
+  if (specialist?.displayName) return specialist.displayName
   return agentType
     .split('-')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
