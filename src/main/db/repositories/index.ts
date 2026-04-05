@@ -42,3 +42,19 @@ export { CheckpointRepository, checkpointRepository } from './checkpoint.reposit
 export type { CheckpointRecord } from './checkpoint.repository'
 export { GateResultRepository, gateResultRepository } from './gate-result.repository'
 export type { GateResultRecord, GateType } from './gate-result.repository'
+export { CodeChunkRepository, codeChunkRepository } from './code-chunk.repository'
+export {
+  ChunkEmbeddingRepository,
+  chunkEmbeddingRepository,
+  serializeEmbedding,
+  deserializeEmbedding
+} from './chunk-embedding.repository'
+export type { EmbeddingEntry } from './chunk-embedding.repository'
+export { CodeGraphEdgeRepository, codeGraphEdgeRepository } from './code-graph-edge.repository'
+export type { CodeGraphEdge, EdgeType } from './code-graph-edge.repository'
+export { CodeGraphTagRepository, codeGraphTagRepository } from './code-graph-tag.repository'
+export type { CodeGraphTagRow, RepomapTag } from './code-graph-tag.repository'
+export { CodeGraphRankRepository, codeGraphRankRepository } from './code-graph-rank.repository'
+export { AgentMessageRepository, agentMessageRepository } from './agent-message.repository'
+export { TurnUsageRepository, turnUsageRepository } from './turn-usage.repository'
+export type { TurnUsage } from './turn-usage.repository'

@@ -1,8 +1,25 @@
 import { useState, useEffect } from 'react'
-import { GitBranch, Check, X, Loader2, ExternalLink, AlertTriangle, Pencil } from 'lucide-react'
+import {
+  GitBranch,
+  Check,
+  X,
+  Loader2,
+  ExternalLink,
+  AlertTriangle,
+  Pencil,
+  Search,
+  Database,
+  RefreshCw,
+  Info,
+  ChevronDown,
+  ChevronRight
+} from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { SettingsCard } from '@renderer/components/common'
-import type { RepoInfo } from '../../../../shared/types'
+import type { RepoInfo, OllamaStatus } from '../../../../shared/types'
+import OllamaSetupModal from './OllamaSetupModal'
+import IndexingProgressPanel from './IndexingProgressPanel'
+import CodeGraphProgressPanel from './CodeGraphProgressPanel'
 
 export default function RepositorySettingsTab(): React.JSX.Element {
   const { activeWorkspace, repoInfo, githubStatus, loadRepoInfo, loadGitHubStatus } =
@@ -14,6 +31,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
   const [isInitializingRepo, setIsInitializingRepo] = useState(false)
   const [isEditingRemote, setIsEditingRemote] = useState(false)
   const [remoteSaved, setRemoteSaved] = useState(false)
+  const [codeGraphJustEnabled, setCodeGraphJustEnabled] = useState(false)
 
   // GitHub token state
   const [token, setToken] = useState('')
@@ -24,11 +42,46 @@ export default function RepositorySettingsTab(): React.JSX.Element {
   // Automation toggles
   const [settings, setSettings] = useState<Record<string, unknown>>({})
 
+  // Semantic search state
+  const [showOllamaSetup, setShowOllamaSetup] = useState(false)
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
+  const [isStartingIndex, setIsStartingIndex] = useState(false)
+
+  const [showAiDescInfo, setShowAiDescInfo] = useState(false)
+
+  // Persisted index state
+  const [persistedIndexStatus, setPersistedIndexStatus] = useState<{
+    loaded: boolean
+    symbolCount?: number
+    loading: boolean
+  }>({ loaded: false, loading: false })
+
   useEffect(() => {
     if (activeWorkspace) {
       loadRepoInfo(activeWorkspace.id)
       loadGitHubStatus(activeWorkspace.id)
-      window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id }).then(setSettings)
+      window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id }).then((s) => {
+        setSettings(s)
+        // Check Ollama status if semantic search is enabled
+        if (s.semanticSearchEnabled) {
+          window.api.ollamaCheckStatus().then(setOllamaStatus).catch(() => {})
+        }
+      })
+
+      // Auto-load persisted index on workspace open
+      setPersistedIndexStatus((prev) => ({ ...prev, loading: true }))
+      window.api
+        .loadPersistedIndex({ workspaceId: activeWorkspace.id })
+        .then((result) => {
+          setPersistedIndexStatus({
+            loaded: result.loaded,
+            symbolCount: result.symbolCount,
+            loading: false
+          })
+        })
+        .catch(() => {
+          setPersistedIndexStatus({ loaded: false, loading: false })
+        })
     }
   }, [activeWorkspace, loadRepoInfo, loadGitHubStatus])
 
@@ -403,6 +456,243 @@ export default function RepositorySettingsTab(): React.JSX.Element {
           </div>
         </SettingsCard>
       </section>
+
+      {/* Code Intelligence */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="text-sm text-text-secondary uppercase tracking-wider font-medium">
+            Code Intelligence
+          </h3>
+          {!!settings.repomapEnabled && (
+            <span className="flex items-center gap-1 text-xs text-success bg-success-muted px-2 py-0.5 rounded-full font-medium">
+              <Check size={10} /> Active
+            </span>
+          )}
+        </div>
+        <SettingsCard className="divide-y divide-border-subtle">
+          <div className="py-3 first:pt-0 last:pb-0">
+            <ToggleRow
+              label="Code Graph (repomap)"
+              description="Index the codebase with Tree-sitter + PageRank for structural code navigation."
+              checked={!!settings.repomapEnabled}
+              onChange={async (v) => {
+                await handleToggleSetting('repomapEnabled', v)
+                if (v && activeWorkspace) {
+                  const hasIndex = await window.api.codeGraphHasIndex({
+                    workspaceId: activeWorkspace.id
+                  })
+                  if (!hasIndex) {
+                    // Auto-start indexing — progress panel will appear
+                    await window.api.codeGraphIndexStart({ workspaceId: activeWorkspace.id })
+                  } else {
+                    setCodeGraphJustEnabled(true)
+                    setTimeout(() => setCodeGraphJustEnabled(false), 4000)
+                  }
+                }
+              }}
+            />
+            {codeGraphJustEnabled && (
+              <div className="flex items-center gap-2 text-xs text-success mt-2 pl-1">
+                <Check size={12} />
+                <span>
+                  Code Graph enabled — agents will use Tree-sitter navigation in their next
+                  session.
+                </span>
+              </div>
+            )}
+
+            {/* Progress panel (auto-shows when indexing is active) */}
+            {activeWorkspace && !!settings.repomapEnabled && (
+              <CodeGraphProgressPanel workspaceId={activeWorkspace.id} />
+            )}
+
+            {/* Re-index button (shown when enabled) */}
+            {activeWorkspace && !!settings.repomapEnabled && (
+              <div className="mt-2 pl-1">
+                <button
+                  onClick={async () => {
+                    await window.api.codeGraphIndexStart({ workspaceId: activeWorkspace.id })
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-primary bg-primary/10 border border-primary/30 hover:bg-primary/20 rounded-md transition-colors"
+                >
+                  <RefreshCw size={12} />
+                  Re-index Code Graph
+                </button>
+              </div>
+            )}
+          </div>
+          {/* Semantic Search */}
+          <div className="py-3 first:pt-0 last:pb-0">
+            <ToggleRow
+              label="Semantic Search (Ollama)"
+              description="Enable natural language code search using local embeddings."
+              checked={!!settings.semanticSearchEnabled}
+              onChange={async (v) => {
+                await handleToggleSetting('semanticSearchEnabled', v)
+                if (v) {
+                  // Check Ollama when enabling
+                  try {
+                    const status = await window.api.ollamaCheckStatus()
+                    setOllamaStatus(status)
+                    if (!status.running || !status.installed) {
+                      setShowOllamaSetup(true)
+                    }
+                  } catch {
+                    setShowOllamaSetup(true)
+                  }
+                }
+              }}
+            />
+          </div>
+
+          {/* Semantic search sub-settings (shown when enabled) */}
+          {!!settings.semanticSearchEnabled && (
+            <div className="py-3 space-y-3 border-t border-border-subtle">
+              {/* Ollama status badge */}
+              <div className="flex items-center gap-2">
+                <Search size={12} className="text-text-secondary" />
+                <span className="text-xs text-text-secondary">Ollama:</span>
+                {ollamaStatus?.running ? (
+                  <span className="flex items-center gap-1 text-xs text-success">
+                    <Check size={10} />
+                    Running{ollamaStatus.version ? ` (v${ollamaStatus.version})` : ''}
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setShowOllamaSetup(true)}
+                    className="text-xs text-warning hover:text-warning/80 flex items-center gap-1"
+                  >
+                    <AlertTriangle size={10} />
+                    Not running — click to set up
+                  </button>
+                )}
+              </div>
+
+              {/* AI Descriptions toggle */}
+              <div className="pl-1 space-y-2">
+                <ToggleRow
+                  label="AI Descriptions"
+                  description="Enrich each code symbol with a plain English summary before embedding."
+                  checked={!!settings.semanticSearchDescriptions}
+                  onChange={(v) => handleToggleSetting('semanticSearchDescriptions', v)}
+                />
+                {/* Expandable info section */}
+                <button
+                  onClick={() => setShowAiDescInfo(!showAiDescInfo)}
+                  className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors ml-0.5"
+                >
+                  {showAiDescInfo ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                  <Info size={10} />
+                  <span>Why enable this?</span>
+                </button>
+                {showAiDescInfo && (
+                  <div className="text-xs text-text-secondary bg-surface-base rounded-md p-3 ml-0.5 space-y-2 border border-border-subtle">
+                    <p>
+                      <strong className="text-text-body">What it does:</strong> During indexing, each code
+                      chunk (function, class, method) is sent to Claude Haiku which generates a one-line
+                      natural language description — e.g.{' '}
+                      <span className="italic text-text-muted">
+                        &quot;Validates JWT tokens and extracts user claims from the authorization header&quot;
+                      </span>
+                      . This description is embedded alongside the raw code.
+                    </p>
+                    <p>
+                      <strong className="text-text-body">Why it helps:</strong> Raw code embeddings match
+                      well for literal searches, but struggle with intent-based queries. When you search{' '}
+                      <span className="italic text-text-muted">&quot;how does authentication work?&quot;</span>, the
+                      AI-generated description matches far more accurately than the raw{' '}
+                      <code className="text-[10px] bg-surface-raised px-1 py-0.5 rounded">validateJwt()</code>{' '}
+                      function body alone. Expect noticeably better semantic search recall.
+                    </p>
+                    <p>
+                      <strong className="text-text-body">Tradeoff:</strong> Indexing takes longer and uses
+                      Claude Haiku tokens from your subscription (one short call per code symbol).
+                      Descriptions are cached — re-indexing only regenerates changed files.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Persisted index status */}
+              {activeWorkspace && (
+                <div className="pl-1">
+                  {persistedIndexStatus.loading ? (
+                    <div className="flex items-center gap-2 text-xs text-text-secondary">
+                      <Loader2 size={12} className="animate-spin" />
+                      <span>Loading cached index...</span>
+                    </div>
+                  ) : persistedIndexStatus.loaded ? (
+                    <div className="flex items-center gap-2 text-xs text-success">
+                      <Database size={12} />
+                      <span>
+                        Index loaded from cache ({persistedIndexStatus.symbolCount?.toLocaleString()} symbols)
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-xs text-text-muted">
+                      <Database size={12} />
+                      <span>No cached index — click below to start indexing</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Start / Re-index button */}
+              {activeWorkspace && ollamaStatus?.running && (
+                <div className="pl-1">
+                  <button
+                    onClick={async () => {
+                      setIsStartingIndex(true)
+                      try {
+                        await window.api.indexingStart({ workspaceId: activeWorkspace.id })
+                      } catch (e) {
+                        console.error('Failed to start indexing:', e)
+                      }
+                      setIsStartingIndex(false)
+                    }}
+                    disabled={isStartingIndex}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-primary bg-primary/10 border border-primary/30 hover:bg-primary/20 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isStartingIndex ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : persistedIndexStatus.loaded ? (
+                      <RefreshCw size={12} />
+                    ) : (
+                      <Search size={12} />
+                    )}
+                    {isStartingIndex
+                      ? 'Starting…'
+                      : persistedIndexStatus.loaded
+                        ? 'Re-index'
+                        : 'Start Indexing'}
+                  </button>
+                  <p className="text-xs text-text-muted mt-1">
+                    {persistedIndexStatus.loaded
+                      ? 'Rebuild the semantic search index from scratch.'
+                      : 'Scan the codebase and build the semantic search index.'}
+                  </p>
+                </div>
+              )}
+
+              {/* Indexing progress */}
+              {activeWorkspace && (
+                <IndexingProgressPanel workspaceId={activeWorkspace.id} />
+              )}
+            </div>
+          )}
+        </SettingsCard>
+      </section>
+      {/* Ollama Setup Modal */}
+      {showOllamaSetup && (
+        <OllamaSetupModal
+          onClose={() => {
+            setShowOllamaSetup(false)
+            // Refresh Ollama status after closing modal
+            window.api.ollamaCheckStatus().then(setOllamaStatus).catch(() => {})
+          }}
+          model={(settings.ollamaModel as string) ?? 'qwen3-embedding:4b'}
+        />
+      )}
     </div>
   )
 }

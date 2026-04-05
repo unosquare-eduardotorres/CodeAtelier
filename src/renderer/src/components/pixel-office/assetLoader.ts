@@ -8,12 +8,12 @@
  * No pngjs needed — uses browser-native Image + Canvas for decoding.
  */
 
-import type { SpriteData } from './engine/types'
 import { setFloorSprites } from './floorTiles'
 import { setWallSprites } from './wallTiles'
 import { setCharacterTemplates } from './sprites/spriteData'
+import { loadImage, imageToSpriteData, fullImageToSpriteData } from './sprites/imageUtils'
 import { buildDynamicCatalog } from './layout/furnitureCatalog'
-import { FURNITURE_PNG_MAP, FURNITURE_CATALOG } from './furnitureRegistry'
+import { FURNITURE_PNG_MAP, FURNITURE_CATALOG } from './furnitureLoader'
 
 // ── Constants ──
 const CHAR_FRAME_W = 32
@@ -23,7 +23,6 @@ const WALL_PIECE_W = 16
 const WALL_PIECE_H = 32
 const WALL_GRID_COLS = 4
 const WALL_BITMASK_COUNT = 16
-const ALPHA_THRESHOLD = 2
 
 // ── Import floor tile PNGs ──
 import floor0 from '@renderer/assets/pixel-office/floors/floor_0.png'
@@ -51,58 +50,6 @@ import char4 from '@renderer/assets/pixel-office/characters/char_4.png'
 import char5 from '@renderer/assets/pixel-office/characters/char_5.png'
 
 const CHAR_URLS = [char0, char1, char2, char3, char4, char5]
-
-// ── Helpers ──
-
-function rgbaToHex(r: number, g: number, b: number, a: number): string {
-  if (a < ALPHA_THRESHOLD) return ''
-  const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-  if (a >= 255) return hex
-  return `${hex}${a.toString(16).padStart(2, '0')}`
-}
-
-/** Load an image from URL and return it */
-function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = reject
-    img.src = url
-  })
-}
-
-/** Extract pixel data from an image region as SpriteData */
-function imageToSpriteData(
-  ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  sx: number,
-  sy: number,
-  sw: number,
-  sh: number
-): SpriteData {
-  ctx.canvas.width = sw
-  ctx.canvas.height = sh
-  ctx.clearRect(0, 0, sw, sh)
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
-  const imageData = ctx.getImageData(0, 0, sw, sh)
-  const data = imageData.data
-
-  const sprite: string[][] = []
-  for (let y = 0; y < sh; y++) {
-    const row: string[] = []
-    for (let x = 0; x < sw; x++) {
-      const i = (y * sw + x) * 4
-      row.push(rgbaToHex(data[i], data[i + 1], data[i + 2], data[i + 3]))
-    }
-    sprite.push(row)
-  }
-  return sprite
-}
-
-/** Extract full image as SpriteData */
-function fullImageToSpriteData(ctx: CanvasRenderingContext2D, img: HTMLImageElement): SpriteData {
-  return imageToSpriteData(ctx, img, 0, 0, img.width, img.height)
-}
 
 // ── Loaders ──
 

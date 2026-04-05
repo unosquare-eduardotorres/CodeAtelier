@@ -7,6 +7,8 @@ import {
   useConversationTokenEstimates,
   useSpecialistStore
 } from '@renderer/store'
+import { PixelSpriteAvatar, Avatar } from '@renderer/components/common'
+import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
 
 interface ActiveSpecialistsStripProps {
   conversationId: string
@@ -41,10 +43,14 @@ export default function ActiveSpecialistsStrip({
     [tokenEstimates]
   )
 
-  const activeSpecialists = useMemo(
-    () => conversationSpecialists.filter((specialist) => specialist.isActive),
-    [conversationSpecialists]
-  )
+  const activeSpecialists = useMemo(() => {
+    const coreIds = new Set(
+      workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id)
+    )
+    return conversationSpecialists.filter(
+      (specialist) => specialist.isActive && !coreIds.has(specialist.specialistId)
+    )
+  }, [conversationSpecialists, workspaceSpecialists])
 
   const totalEstimatedTokens = useMemo(
     () => tokenEstimates.reduce((sum, estimate) => sum + estimate.estimatedTokens, 0),
@@ -87,10 +93,18 @@ export default function ActiveSpecialistsStrip({
                   title={estimate ? `${label} · ~${estimate.estimatedTokens} tokens` : label}
                 >
                   <span
-                    className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px]"
+                    className="inline-flex items-center justify-center w-5 h-5 rounded-full overflow-hidden"
                     style={{ backgroundColor: `${color}22`, color }}
                   >
-                    {icon}
+                    {specialist?.pixelSpriteId ? (
+                      <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={16} />
+                    ) : specialist?.avatarUrl ? (
+                      <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={color} />
+                    ) : specialist?.agentId && AGENT_ICON_MAP[specialist.agentId] ? (
+                      <AgentIcon agentType={specialist.agentId} size={14} />
+                    ) : (
+                      <span className="text-[10px] leading-none">{icon}</span>
+                    )}
                   </span>
                   <span className="max-w-28 truncate">{label}</span>
                 </span>

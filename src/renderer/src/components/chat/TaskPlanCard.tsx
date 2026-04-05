@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { Users, UserRound, ArrowRight, CheckCircle2, Clock, Loader2, XCircle, X } from 'lucide-react'
 import type {
   DecomposedTask,
@@ -17,6 +17,8 @@ import {
 import { getAgentMeta } from '@renderer/utils/agentMeta'
 import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
 import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
+import SpecialistWarningDialog from './SpecialistWarningDialog'
+import type { SpecialistWarningType } from './SpecialistWarningDialog'
 
 interface TaskPlanCardProps {
   summary: string
@@ -26,6 +28,8 @@ interface TaskPlanCardProps {
   isExecuting: boolean
   onExecute: (strategy: ExecutionStrategy, depth?: InvestigationDepth) => void
   onDismiss?: () => void
+  /** Strategy 13: Pre-selected investigation depth from heuristics (default: 'standard') */
+  suggestedDepth?: InvestigationDepth
 }
 
 const STATUS_ICONS: Record<TaskExecutionProgress['status'], React.ReactNode> = {
@@ -42,10 +46,14 @@ export default function TaskPlanCard({
   taskProgress,
   isExecuting,
   onExecute,
-  onDismiss
+  onDismiss,
+  suggestedDepth
 }: TaskPlanCardProps): React.JSX.Element {
   const [hoveredStrategy, setHoveredStrategy] = useState<ExecutionStrategy | null>(null)
-  const [depth, setDepth] = useState<InvestigationDepth>('standard')
+  // Strategy 13: Use the pre-selected depth from heuristics, defaulting to 'standard'
+  const [depth, setDepth] = useState<InvestigationDepth>(suggestedDepth ?? 'standard')
+  const [showWarningDialog, setShowWarningDialog] = useState(false)
+  const pendingExecuteRef = useRef<{ strategy: ExecutionStrategy; depth?: InvestigationDepth } | null>(null)
   const { specialists } = useSpecialistStore()
   const activeConversation = useChatStore((state) => state.activeConversation)
   const conversationSpecialists = useConversationSpecialists(activeConversation?.id)
@@ -58,7 +66,15 @@ export default function TaskPlanCard({
     const p = taskProgress.get(t.id)
     return p?.status === 'completed' || p?.status === 'failed'
   })
-  const activeSpecialistCount = conversationSpecialists.filter((specialist) => specialist.isActive).length
+  // Exclude core specialists (User, Da Vinci) from the count — they are always active
+  // and should not trigger the specialist usage warning dialog
+  const coreSpecialistIds = useMemo(
+    () => new Set(specialists.filter((s) => s.isCore).map((s) => s.id)),
+    [specialists]
+  )
+  const activeSpecialistCount = conversationSpecialists.filter(
+    (specialist) => specialist.isActive && !coreSpecialistIds.has(specialist.specialistId)
+  ).length
   const estimatedSpecialistTokens = tokenEstimates.reduce(
     (sum, estimate) => sum + estimate.estimatedTokens,
     0
@@ -66,6 +82,38 @@ export default function TaskPlanCard({
   const showSpecialistWarningBanner =
     activeSpecialistCount > 0 &&
     (specialistWarningAlways || (mode === 'build' ? specialistWarningBuild : specialistWarningPlan))
+
+  // Strategy 6: Determine whether execution should be gated behind the warning dialog.
+  // The dialog only shows when active specialists exist AND the relevant warning preference is enabled.
+  const warningType: SpecialistWarningType = mode === 'build' ? 'build' : 'plan'
+  const shouldGateExecution =
+    activeSpecialistCount > 0 &&
+    (specialistWarningAlways || (mode === 'build' ? specialistWarningBuild : specialistWarningPlan))
+
+  const handleExecuteRequest = useCallback(
+    (strategy: ExecutionStrategy, requestedDepth?: InvestigationDepth) => {
+      if (shouldGateExecution) {
+        pendingExecuteRef.current = { strategy, depth: requestedDepth }
+        setShowWarningDialog(true)
+      } else {
+        onExecute(strategy, requestedDepth)
+      }
+    },
+    [shouldGateExecution, onExecute]
+  )
+
+  const handleWarningConfirm = useCallback(() => {
+    setShowWarningDialog(false)
+    if (pendingExecuteRef.current) {
+      onExecute(pendingExecuteRef.current.strategy, pendingExecuteRef.current.depth)
+      pendingExecuteRef.current = null
+    }
+  }, [onExecute])
+
+  const handleWarningCancel = useCallback(() => {
+    setShowWarningDialog(false)
+    pendingExecuteRef.current = null
+  }, [])
 
   const getSpecialistMeta = (
     agentId: string
@@ -192,7 +240,7 @@ export default function TaskPlanCard({
       {!hasUserChosen && (
         <div className="flex items-stretch border-t border-border-subtle">
           <button
-            onClick={() => onExecute('sequential', depth)}
+            onClick={() => handleExecuteRequest('sequential', depth)}
             onMouseEnter={() => setHoveredStrategy('sequential')}
             onMouseLeave={() => setHoveredStrategy(null)}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors border-r border-border-subtle"
@@ -209,7 +257,7 @@ export default function TaskPlanCard({
             </div>
           </button>
           <button
-            onClick={() => onExecute('parallel', depth)}
+            onClick={() => handleExecuteRequest('parallel', depth)}
             onMouseEnter={() => setHoveredStrategy('parallel')}
             onMouseLeave={() => setHoveredStrategy(null)}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors"
@@ -245,6 +293,16 @@ export default function TaskPlanCard({
           <span className="text-xs text-success">All tasks completed</span>
         </div>
       )}
+
+      {/* Strategy 6: Specialist warning dialog — gates execution when active specialists + warning enabled */}
+      <SpecialistWarningDialog
+        isOpen={showWarningDialog}
+        warningType={warningType}
+        activeSpecialistCount={activeSpecialistCount}
+        estimatedTokens={estimatedSpecialistTokens > 0 ? estimatedSpecialistTokens : undefined}
+        onConfirm={handleWarningConfirm}
+        onCancel={handleWarningCancel}
+      />
     </div>
   )
 }

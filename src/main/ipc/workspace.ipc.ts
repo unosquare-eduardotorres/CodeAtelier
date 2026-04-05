@@ -6,6 +6,7 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import { workspaceRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 import { agentSyncService } from '../services/agent-sync.service'
+import { fileWatcherService } from '../services/file-watcher.service'
 import { dbLogger } from '../logger'
 
 export function registerWorkspaceIpc(): void {
@@ -104,6 +105,19 @@ export function registerWorkspaceIpc(): void {
 
     // Auto memory is DB-backed — no directory initialization needed
 
+    // Start file watcher if Code Graph or Semantic Search is enabled
+    try {
+      const wsSettings = JSON.parse(workspace.settingsJson || '{}')
+      if (wsSettings.repomapEnabled || wsSettings.semanticSearchEnabled) {
+        fileWatcherService.start(workspace.id, workspace.repoPath, {
+          codeGraphEnabled: !!wsSettings.repomapEnabled,
+          semanticSearchEnabled: !!wsSettings.semanticSearchEnabled
+        })
+      }
+    } catch (e) {
+      dbLogger.warn('Failed to start file watcher on workspace open:', e)
+    }
+
     return workspace
   })
 
@@ -114,6 +128,7 @@ export function registerWorkspaceIpc(): void {
       throw new Error('Invalid workspace ID')
     }
 
+    fileWatcherService.stop(args.id)
     workspaceRepository.delete(args.id)
   })
 
@@ -142,16 +157,33 @@ export function registerWorkspaceIpc(): void {
       // (e.g., githubTokenEncrypted set by github.service)
       const existing = workspaceRepository.getSettings(args.workspaceId)
       const merged = { ...existing, ...args.settings }
-      return workspaceRepository.updateSettings(args.workspaceId, merged)
+      const result = workspaceRepository.updateSettings(args.workspaceId, merged)
+
+      // Update file watcher based on new settings
+      try {
+        const ws = workspaceRepository.findById(args.workspaceId)
+        if (ws) {
+          const s = merged as Record<string, unknown>
+          if (s.repomapEnabled || s.semanticSearchEnabled) {
+            fileWatcherService.start(args.workspaceId, ws.repoPath, {
+              codeGraphEnabled: !!s.repomapEnabled,
+              semanticSearchEnabled: !!s.semanticSearchEnabled
+            })
+          } else {
+            fileWatcherService.stop(args.workspaceId)
+          }
+        }
+      } catch (e) {
+        dbLogger.warn('Failed to update file watcher on settings change:', e)
+      }
+
+      return result
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_UPDATE_AUTH,
-    async (
-      event,
-      args: { workspaceId: string; authMode: string; anthropicApiKey?: string }
-    ) => {
+    async (event, args: { workspaceId: string; authMode: string; anthropicApiKey?: string }) => {
       validateSender(event)
       if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
         throw new Error('Invalid workspace ID')

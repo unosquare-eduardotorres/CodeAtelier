@@ -408,6 +408,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             isExecuting={isExecutingPlan}
             onExecute={(strategy, depth) => executePlan(strategy, depth)}
             onDismiss={clearTaskPlan}
+            suggestedDepth={activeTaskPlan.investigationDepth}
           />
         )}
 

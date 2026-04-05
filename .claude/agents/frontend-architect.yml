@@ -4,8 +4,6 @@ description: >
   Frontend React/TypeScript specialist. Delegates to this agent for React component
   architecture, state management, routing, performance optimization, and TypeScript patterns.
   Use proactively when the task involves React, JSX, TSX, hooks, or frontend UI work.
-model: sonnet
-tools: [Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch]
 skills:
   - electron-pro
   - ipc-patterns

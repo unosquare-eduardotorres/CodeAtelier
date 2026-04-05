@@ -1,35 +1,33 @@
-// Adapted from vendor: pixel-agents/webview-ui/src/hooks/useEditorActions.ts
-// Connects React editor UI to EditorState + pure action functions.
-// Uses Electron IPC for layout persistence instead of VS Code messaging.
+/**
+ * useEditorActions — Orchestrator hook that composes focused sub-hooks.
+ *
+ * Previously a 562 LOC monolith (complexity 92). Now delegates to:
+ * - useLayoutPersistence: debounced save, dirty tracking
+ * - useUndoRedo: undo/redo stack, applyEdit, reset
+ * - useTilePainting: tile paint, wall paint, erase, eyedropper, grid expansion
+ * - useFurnitureOps: place, delete, rotate, toggle, color, pick, select
+ * - useDragMove: drag-move validation + application
+ */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
-import { LAYOUT_SAVE_DEBOUNCE_MS } from '../constants'
-import type { ExpandDirection } from './editorActions'
-import {
-  canPlaceFurniture,
-  expandLayout,
-  getWallPlacementRow,
-  moveFurniture,
-  paintTile,
-  placeFurniture,
-  removeFurniture,
-  rotateFurniture,
-  toggleFurnitureState
-} from './editorActions'
 import type { EditorState } from './editorState'
-import { getCatalogEntry, getRotatedType, getToggledType } from '../layout/furnitureCatalog'
+import type { EditorHookContext } from './hooks'
+import { useLayoutPersistence } from './hooks/useLayoutPersistence'
+import { useUndoRedo } from './hooks/useUndoRedo'
+import { useTilePainting } from './hooks/useTilePainting'
+import { useFurnitureOps } from './hooks/useFurnitureOps'
+import { useDragMove } from './hooks/useDragMove'
+import { EditTool, TileType } from '../engine/types'
 import type {
   EditTool as EditToolType,
   FloorColor,
   OfficeLayout,
-  PlacedFurniture,
   TileType as TileTypeVal
 } from '../engine/types'
-import { EditTool, TileType } from '../engine/types'
 import type { OfficeState } from '../engine/officeState'
 
-export interface EditorActions {
+interface EditorActions {
   editorTick: number
   isDirty: boolean
   setLastSavedLayout: (layout: OfficeLayout) => void
@@ -58,40 +56,37 @@ export function useEditorActions(
   editorState: EditorState
 ): EditorActions {
   const [editorTick, setEditorTick] = useState(0)
-  const [isDirty, setIsDirty] = useState(false)
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastSavedLayoutRef = useRef<OfficeLayout | null>(null)
 
-  const setLastSavedLayout = useCallback((layout: OfficeLayout) => {
-    lastSavedLayoutRef.current = structuredClone(layout)
-  }, [])
+  // ── Persistence ──
+  const persistence = useLayoutPersistence(getOfficeState, editorState)
 
-  // Debounced layout save via IPC
-  const saveLayout = useCallback((layout: OfficeLayout) => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => {
-      window.api
-        .saveOfficeLayout({ layout: JSON.stringify(layout) })
-        .catch((err: unknown) => console.error('Failed to save layout:', err))
-    }, LAYOUT_SAVE_DEBOUNCE_MS)
-  }, [])
+  // ── Undo/Redo ──
+  const undoCtx: Omit<EditorHookContext, 'applyEdit'> = useMemo(() => ({
+    getOfficeState,
+    editorState,
+    saveLayout: persistence.saveLayout,
+    setIsDirty: persistence.setIsDirty,
+    setEditorTick
+  }), [getOfficeState, editorState, persistence.saveLayout, persistence.setIsDirty, setEditorTick])
 
-  // Apply a layout edit: push undo, clear redo, rebuild state, save, mark dirty
-  const applyEdit = useCallback(
-    (newLayout: OfficeLayout) => {
-      const os = getOfficeState()
-      editorState.pushUndo(os.getLayout())
-      editorState.clearRedo()
-      editorState.isDirty = true
-      setIsDirty(true)
-      os.rebuildFromLayout(newLayout)
-      saveLayout(newLayout)
-      setEditorTick((n) => n + 1)
-    },
-    [getOfficeState, editorState, saveLayout]
-  )
+  const undoRedo = useUndoRedo(undoCtx, persistence.lastSavedLayoutRef)
 
-  // Tool toggle: clicking already-active tool deselects it (returns to SELECT)
+  // ── Shared context for sub-hooks (includes applyEdit from undoRedo) ──
+  const ctx: EditorHookContext = useMemo(() => ({
+    ...undoCtx,
+    applyEdit: undoRedo.applyEdit
+  }), [undoCtx, undoRedo.applyEdit])
+
+  // ── Tile Painting ──
+  const tilePainting = useTilePainting(ctx)
+
+  // ── Furniture Operations ──
+  const furnitureOps = useFurnitureOps(ctx)
+
+  // ── Drag Move ──
+  const dragMove = useDragMove(ctx)
+
+  // ── Tool Change (resets selection/ghost state) ──
   const handleToolChange = useCallback(
     (tool: EditToolType) => {
       if (editorState.activeTool === tool) {
@@ -102,32 +97,17 @@ export function useEditorActions(
       editorState.clearSelection()
       editorState.clearGhost()
       editorState.clearDrag()
-      colorEditUidRef.current = null
+      furnitureOps.resetColorEdit()
       wallColorEditActiveRef.current = false
       setEditorTick((n) => n + 1)
     },
-    [editorState]
-  )
-
-  const handleTileTypeChange = useCallback(
-    (type: TileTypeVal) => {
-      editorState.selectedTileType = type
-      setEditorTick((n) => n + 1)
-    },
-    [editorState]
-  )
-
-  const handleFloorColorChange = useCallback(
-    (color: FloorColor) => {
-      editorState.floorColor = color
-      setEditorTick((n) => n + 1)
-    },
-    [editorState]
+    [editorState, furnitureOps, setEditorTick]
   )
 
   // Track whether we've already pushed undo for the current wall color editing session
   const wallColorEditActiveRef = useRef(false)
 
+  // ── Wall Color Change (with undo batching for continuous edits) ──
   const handleWallColorChange = useCallback(
     (color: FloorColor) => {
       editorState.wallColor = color
@@ -152,221 +132,16 @@ export function useEditorActions(
         }
         const newLayout = { ...layout, tileColors: newColors }
         editorState.isDirty = true
-        setIsDirty(true)
+        persistence.setIsDirty(true)
         os.rebuildFromLayout(newLayout)
-        saveLayout(newLayout)
+        persistence.saveLayout(newLayout)
       }
       setEditorTick((n) => n + 1)
     },
-    [editorState, getOfficeState, saveLayout]
+    [getOfficeState, editorState, persistence, setEditorTick]
   )
 
-  const handleWallSetChange = useCallback(
-    (setIndex: number) => {
-      editorState.selectedWallSet = setIndex
-      setEditorTick((n) => n + 1)
-    },
-    [editorState]
-  )
-
-  // Track which uid we've already pushed undo for during color editing
-  const colorEditUidRef = useRef<string | null>(null)
-
-  const handleSelectedFurnitureColorChange = useCallback(
-    (color: FloorColor | null) => {
-      const uid = editorState.selectedFurnitureUid
-      if (!uid) return
-      const os = getOfficeState()
-      const layout = os.getLayout()
-
-      if (colorEditUidRef.current !== uid) {
-        editorState.pushUndo(layout)
-        editorState.clearRedo()
-        colorEditUidRef.current = uid
-      }
-
-      const newFurniture = layout.furniture.map((f) =>
-        f.uid === uid ? { ...f, color: color ?? undefined } : f
-      )
-      const newLayout = { ...layout, furniture: newFurniture }
-
-      editorState.isDirty = true
-      setIsDirty(true)
-      os.rebuildFromLayout(newLayout)
-      saveLayout(newLayout)
-      setEditorTick((n) => n + 1)
-    },
-    [getOfficeState, editorState, saveLayout]
-  )
-
-  const handleFurnitureTypeChange = useCallback(
-    (type: string) => {
-      if (editorState.selectedFurnitureType === type) {
-        editorState.selectedFurnitureType = ''
-        editorState.clearGhost()
-      } else {
-        editorState.selectedFurnitureType = type
-      }
-      setEditorTick((n) => n + 1)
-    },
-    [editorState]
-  )
-
-  const handleDeleteSelected = useCallback(() => {
-    const uid = editorState.selectedFurnitureUid
-    if (!uid) return
-    const os = getOfficeState()
-    const newLayout = removeFurniture(os.getLayout(), uid)
-    if (newLayout !== os.getLayout()) {
-      applyEdit(newLayout)
-      editorState.clearSelection()
-      colorEditUidRef.current = null
-    }
-  }, [getOfficeState, editorState, applyEdit])
-
-  const handleRotateSelected = useCallback(() => {
-    if (editorState.activeTool === EditTool.FURNITURE_PLACE) {
-      const rotated = getRotatedType(editorState.selectedFurnitureType, 'cw')
-      if (rotated) {
-        editorState.selectedFurnitureType = rotated
-        setEditorTick((n) => n + 1)
-      }
-      return
-    }
-    const uid = editorState.selectedFurnitureUid
-    if (!uid) return
-    const os = getOfficeState()
-    const newLayout = rotateFurniture(os.getLayout(), uid, 'cw')
-    if (newLayout !== os.getLayout()) {
-      applyEdit(newLayout)
-    }
-  }, [getOfficeState, editorState, applyEdit])
-
-  const handleToggleState = useCallback(() => {
-    if (editorState.activeTool === EditTool.FURNITURE_PLACE) {
-      const toggled = getToggledType(editorState.selectedFurnitureType)
-      if (toggled) {
-        editorState.selectedFurnitureType = toggled
-        setEditorTick((n) => n + 1)
-      }
-      return
-    }
-    const uid = editorState.selectedFurnitureUid
-    if (!uid) return
-    const os = getOfficeState()
-    const newLayout = toggleFurnitureState(os.getLayout(), uid)
-    if (newLayout !== os.getLayout()) {
-      applyEdit(newLayout)
-    }
-  }, [getOfficeState, editorState, applyEdit])
-
-  const handleUndo = useCallback(() => {
-    const prev = editorState.popUndo()
-    if (!prev) return
-    const os = getOfficeState()
-    editorState.pushRedo(os.getLayout())
-    os.rebuildFromLayout(prev)
-    saveLayout(prev)
-    editorState.isDirty = true
-    setIsDirty(true)
-    setEditorTick((n) => n + 1)
-  }, [getOfficeState, editorState, saveLayout])
-
-  const handleRedo = useCallback(() => {
-    const next = editorState.popRedo()
-    if (!next) return
-    const os = getOfficeState()
-    editorState.pushUndo(os.getLayout())
-    os.rebuildFromLayout(next)
-    saveLayout(next)
-    editorState.isDirty = true
-    setIsDirty(true)
-    setEditorTick((n) => n + 1)
-  }, [getOfficeState, editorState, saveLayout])
-
-  const handleReset = useCallback(() => {
-    if (!lastSavedLayoutRef.current) return
-    const saved = structuredClone(lastSavedLayoutRef.current)
-    applyEdit(saved)
-    editorState.reset()
-    setIsDirty(false)
-  }, [editorState, applyEdit])
-
-  const handleSave = useCallback(() => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current)
-      saveTimerRef.current = null
-    }
-    const os = getOfficeState()
-    const layout = os.getLayout()
-    lastSavedLayoutRef.current = structuredClone(layout)
-    window.api
-      .saveOfficeLayout({ layout: JSON.stringify(layout) })
-      .catch((err: unknown) => console.error('Failed to save layout:', err))
-    editorState.isDirty = false
-    setIsDirty(false)
-  }, [getOfficeState, editorState])
-
-  const handleEditorSelectionChange = useCallback(() => {
-    colorEditUidRef.current = null
-    setEditorTick((n) => n + 1)
-  }, [])
-
-  const handleDragMove = useCallback(
-    (uid: string, newCol: number, newRow: number) => {
-      const os = getOfficeState()
-      const layout = os.getLayout()
-      const newLayout = moveFurniture(layout, uid, newCol, newRow)
-      if (newLayout !== layout) {
-        applyEdit(newLayout)
-      }
-    },
-    [getOfficeState, applyEdit]
-  )
-
-  /**
-   * Expand layout if click is on a ghost border tile (outside current bounds).
-   */
-  const maybeExpand = useCallback(
-    (
-      layout: OfficeLayout,
-      col: number,
-      row: number
-    ): {
-      layout: OfficeLayout
-      col: number
-      row: number
-      shift: { col: number; row: number }
-    } | null => {
-      if (col >= 0 && col < layout.cols && row >= 0 && row < layout.rows) return null
-
-      const directions: ExpandDirection[] = []
-      if (col < 0) directions.push('left')
-      if (col >= layout.cols) directions.push('right')
-      if (row < 0) directions.push('up')
-      if (row >= layout.rows) directions.push('down')
-
-      let current = layout
-      let totalShiftCol = 0
-      let totalShiftRow = 0
-      for (const dir of directions) {
-        const result = expandLayout(current, dir)
-        if (!result) return null
-        current = result.layout
-        totalShiftCol += result.shift.col
-        totalShiftRow += result.shift.row
-      }
-
-      return {
-        layout: current,
-        col: col + totalShiftCol,
-        row: row + totalShiftRow,
-        shift: { col: totalShiftCol, row: totalShiftRow }
-      }
-    },
-    []
-  )
-
+  // ── Main Tile Action Dispatcher ──
   const handleEditorTileAction = useCallback(
     (col: number, row: number) => {
       const os = getOfficeState()
@@ -379,7 +154,7 @@ export function useEditorActions(
         editorState.activeTool === EditTool.TILE_PAINT ||
         editorState.activeTool === EditTool.WALL_PAINT
       ) {
-        const expansion = maybeExpand(layout, col, row)
+        const expansion = tilePainting.maybeExpand(layout, col, row)
         if (expansion) {
           layout = expansion.layout
           effectiveCol = expansion.col
@@ -388,175 +163,68 @@ export function useEditorActions(
         }
       }
 
+      let newLayout: ReturnType<typeof tilePainting.handleTilePaint> = null
+
       if (editorState.activeTool === EditTool.TILE_PAINT) {
-        const newLayout = paintTile(
-          layout,
-          effectiveCol,
-          effectiveRow,
-          editorState.selectedTileType,
-          editorState.floorColor
-        )
-        if (newLayout !== layout) {
-          applyEdit(newLayout)
-        }
+        newLayout = tilePainting.handleTilePaint(layout, effectiveCol, effectiveRow, os)
       } else if (editorState.activeTool === EditTool.WALL_PAINT) {
-        const idx = effectiveRow * layout.cols + effectiveCol
-        const isWall = layout.tiles[idx] === TileType.WALL
-
-        if (editorState.wallDragAdding === null) {
-          editorState.wallDragAdding = !isWall
-        }
-
-        if (editorState.wallDragAdding) {
-          const newLayout = paintTile(
-            layout,
-            effectiveCol,
-            effectiveRow,
-            TileType.WALL,
-            editorState.wallColor
-          )
-          if (newLayout !== layout) {
-            applyEdit(newLayout)
-          }
-        } else {
-          if (isWall) {
-            const newLayout = paintTile(
-              layout,
-              effectiveCol,
-              effectiveRow,
-              editorState.selectedTileType,
-              editorState.floorColor
-            )
-            if (newLayout !== layout) {
-              applyEdit(newLayout)
-            }
-          }
-        }
+        newLayout = tilePainting.handleWallPaint(layout, effectiveCol, effectiveRow, os)
       } else if (editorState.activeTool === EditTool.ERASE) {
-        if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) return
-        const idx = row * layout.cols + col
-        if (layout.tiles[idx] === TileType.VOID) return
-        const newLayout = paintTile(layout, col, row, TileType.VOID)
-        if (newLayout !== layout) {
-          applyEdit(newLayout)
-        }
+        newLayout = tilePainting.handleErase(layout, col, row)
       } else if (editorState.activeTool === EditTool.FURNITURE_PLACE) {
-        const type = editorState.selectedFurnitureType
-        if (type === '') {
-          const hit = layout.furniture.find((f) => {
-            const entry = getCatalogEntry(f.type)
-            if (!entry) return false
-            return (
-              col >= f.col &&
-              col < f.col + entry.footprintW &&
-              row >= f.row &&
-              row < f.row + entry.footprintH
-            )
-          })
-          editorState.selectedFurnitureUid = hit ? hit.uid : null
-          setEditorTick((n) => n + 1)
-        } else {
-          const placementRow = getWallPlacementRow(type, row)
-          if (!canPlaceFurniture(layout, type, col, placementRow)) return
-          const uid = `f-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-          const placed: PlacedFurniture = { uid, type, col, row: placementRow }
-          if (editorState.pickedFurnitureColor) {
-            placed.color = { ...editorState.pickedFurnitureColor }
-          }
-          const newLayout = placeFurniture(layout, placed)
-          if (newLayout !== layout) {
-            applyEdit(newLayout)
-          }
-        }
+        newLayout = furnitureOps.handleFurniturePlaceTile(layout, col, row)
       } else if (editorState.activeTool === EditTool.FURNITURE_PICK) {
-        const hit = layout.furniture.find((f) => {
-          const entry = getCatalogEntry(f.type)
-          if (!entry) return false
-          return (
-            col >= f.col &&
-            col < f.col + entry.footprintW &&
-            row >= f.row &&
-            row < f.row + entry.footprintH
-          )
-        })
-        if (hit) {
-          editorState.selectedFurnitureType = hit.type
-          editorState.pickedFurnitureColor = hit.color ? { ...hit.color } : null
-          editorState.activeTool = EditTool.FURNITURE_PLACE
-        }
-        setEditorTick((n) => n + 1)
+        furnitureOps.handleFurniturePick(layout, col, row)
+        return
       } else if (editorState.activeTool === EditTool.EYEDROPPER) {
-        const idx = row * layout.cols + col
-        const tile = layout.tiles[idx]
-        if (tile !== undefined && tile !== TileType.WALL && tile !== TileType.VOID) {
-          editorState.selectedTileType = tile
-          const color = layout.tileColors?.[idx]
-          if (color) {
-            editorState.floorColor = { ...color }
-          }
-          editorState.activeTool = EditTool.TILE_PAINT
-        } else if (tile === TileType.WALL) {
-          const color = layout.tileColors?.[idx]
-          if (color) {
-            editorState.wallColor = { ...color }
-          }
-          editorState.activeTool = EditTool.WALL_PAINT
-        }
-        setEditorTick((n) => n + 1)
+        tilePainting.handleEyedropper(layout, col, row)
+        return
       } else if (editorState.activeTool === EditTool.SELECT) {
-        const hit = layout.furniture.find((f) => {
-          const entry = getCatalogEntry(f.type)
-          if (!entry) return false
-          return (
-            col >= f.col &&
-            col < f.col + entry.footprintW &&
-            row >= f.row &&
-            row < f.row + entry.footprintH
-          )
-        })
-        editorState.selectedFurnitureUid = hit ? hit.uid : null
-        setEditorTick((n) => n + 1)
+        furnitureOps.handleSelectTile(layout, col, row)
+        return
+      }
+
+      if (newLayout) {
+        undoRedo.applyEdit(newLayout)
       }
     },
-    [getOfficeState, editorState, applyEdit, maybeExpand]
+    [getOfficeState, editorState, tilePainting, furnitureOps, undoRedo]
   )
 
+  // ── Erase Action ──
   const handleEditorEraseAction = useCallback(
     (col: number, row: number) => {
       const os = getOfficeState()
       const layout = os.getLayout()
-      if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) return
-      const idx = row * layout.cols + col
-      if (layout.tiles[idx] === TileType.VOID) return
-      const newLayout = paintTile(layout, col, row, TileType.VOID)
-      if (newLayout !== layout) {
-        applyEdit(newLayout)
+      const newLayout = tilePainting.handleErase(layout, col, row)
+      if (newLayout) {
+        undoRedo.applyEdit(newLayout)
       }
     },
-    [getOfficeState, applyEdit]
+    [getOfficeState, tilePainting, undoRedo]
   )
 
   return {
     editorTick,
-    isDirty,
-    setLastSavedLayout,
+    isDirty: persistence.isDirty,
+    setLastSavedLayout: persistence.setLastSavedLayout,
     handleToolChange,
-    handleTileTypeChange,
-    handleFloorColorChange,
+    handleTileTypeChange: tilePainting.handleTileTypeChange,
+    handleFloorColorChange: tilePainting.handleFloorColorChange,
     handleWallColorChange,
-    handleWallSetChange,
-    handleSelectedFurnitureColorChange,
-    handleFurnitureTypeChange,
-    handleDeleteSelected,
-    handleRotateSelected,
-    handleToggleState,
-    handleUndo,
-    handleRedo,
-    handleReset,
-    handleSave,
+    handleWallSetChange: tilePainting.handleWallSetChange,
+    handleSelectedFurnitureColorChange: furnitureOps.handleSelectedFurnitureColorChange,
+    handleFurnitureTypeChange: furnitureOps.handleFurnitureTypeChange,
+    handleDeleteSelected: furnitureOps.handleDeleteSelected,
+    handleRotateSelected: furnitureOps.handleRotateSelected,
+    handleToggleState: furnitureOps.handleToggleState,
+    handleUndo: undoRedo.handleUndo,
+    handleRedo: undoRedo.handleRedo,
+    handleReset: undoRedo.handleReset,
+    handleSave: persistence.handleSave,
     handleEditorTileAction,
     handleEditorEraseAction,
-    handleEditorSelectionChange,
-    handleDragMove
+    handleEditorSelectionChange: furnitureOps.handleEditorSelectionChange,
+    handleDragMove: dragMove.handleDragMove
   }
 }

@@ -50,7 +50,12 @@ import type {
   SubscriptionCheckResult,
   AutoConfigureResult,
   SpecialistTokenEstimate,
-  AppPreferences
+  AppPreferences,
+  OllamaStatus,
+  PullProgress,
+  IndexingState,
+  SemanticSearchResult,
+  CodeGraphIndexingState
 } from '../shared/types'
 
 interface Api {
@@ -120,6 +125,13 @@ interface Api {
   // Agents
   getAgentStatuses: () => Promise<AgentStatus[]>
   stopAllAgents: () => Promise<string[]>
+  /** Strategy M: Cache efficiency metrics for dashboard */
+  getCacheEfficiency: () => Promise<{
+    hitRate: number
+    savedTokens: number
+    totalInput: number
+    turns: number
+  }>
 
   // Agent lifecycle
   startAgent: (workspacePath: string) => Promise<void>
@@ -192,6 +204,16 @@ interface Api {
     priority?: number
   }) => Promise<Specialist>
   getMarketplace: (args: { workspacePath: string }) => Promise<MarketplaceSpecialist[]>
+
+  // Cache metrics (Strategy 15)
+  getCacheMetrics: () => Promise<{
+    totalInputTokens: number
+    totalOutputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheHitRate: number
+    taskCount: number
+  }>
 
   // Skills
   listSkills: () => Promise<Skill[]>
@@ -393,6 +415,16 @@ interface Api {
     }) => void
   ) => () => void
   onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void
+  onTaskRetry: (
+    callback: (data: {
+      taskId: string
+      specialist: string
+      attempt: number
+      maxRetries: number
+      escalation?: { fromModel: string; toModel: string }
+      reason: string
+    }) => void
+  ) => () => void
   onAgentReady: (callback: () => void) => () => void
   onAgentTaskChunk: (
     callback: (data: { agentId: string; taskId: string; text: string }) => void
@@ -617,6 +649,40 @@ interface Api {
     error: string | null
   }>
   autoConfigureClaude: () => Promise<AutoConfigureResult>
+
+  // Ollama
+  ollamaCheckStatus: () => Promise<OllamaStatus>
+  ollamaPullModel: (args: { model: string }) => Promise<void>
+  ollamaCancelPull: () => Promise<void>
+  ollamaRemoveModel: (args: { model: string }) => Promise<void>
+  ollamaStart: () => Promise<boolean>
+  onOllamaPullProgress: (callback: (data: PullProgress) => void) => () => void
+  onOllamaPullComplete: (callback: (model: string) => void) => () => void
+  onOllamaPullError: (callback: (error: string) => void) => () => void
+
+  // Indexing (semantic search)
+  indexingStart: (args: { workspaceId: string }) => Promise<void>
+  indexingPause: (args: { workspaceId: string }) => Promise<void>
+  indexingResume: (args: { workspaceId: string }) => Promise<void>
+  indexingCancel: (args: { workspaceId: string }) => Promise<void>
+  indexingGetStatus: (args: { workspaceId: string }) => Promise<IndexingState>
+  loadPersistedIndex: (
+    args: { workspaceId: string }
+  ) => Promise<{ loaded: boolean; status: string; symbolCount?: number }>
+  onIndexingProgress: (callback: (state: IndexingState) => void) => () => void
+  semanticSearchQuery: (args: {
+    workspaceId: string
+    query: string
+    language?: string
+    directory?: string
+    nResults?: number
+  }) => Promise<SemanticSearchResult[]>
+
+  // Code Graph (persisted repomap)
+  codeGraphIndexStart: (args: { workspaceId: string }) => Promise<void>
+  codeGraphGetStatus: (args: { workspaceId: string }) => Promise<CodeGraphIndexingState>
+  codeGraphHasIndex: (args: { workspaceId: string }) => Promise<boolean>
+  onCodeGraphProgress: (callback: (state: CodeGraphIndexingState) => void) => () => void
 }
 
 declare global {

@@ -14,22 +14,28 @@
 
 import Phaser from 'phaser'
 
-import type { OfficeLayout, FloorColor, SpriteData } from '../engine/types'
+import type { OfficeLayout, FloorColor, FurnitureInstance, SpriteData, Character } from '../engine/types'
 import { TileType, TILE_SIZE } from '../engine/types'
 import { OfficeState } from '../engine/officeState'
 import { deserializeLayout } from '../layout'
 import { loadAllAssets } from '../assetLoader'
 import {
   createCharacterTextures,
-  createRpgCharacterTexture,
-  registerCharacterAnimations,
   createBubbleTextures,
   registerSpriteDataTexture
 } from './PhaserSpriteLoader'
-import { getSpriteById } from '@renderer/assets/pixel-office/sprites'
+import { loadAndSwapRpgTexture } from './RpgTextureLoader'
 import { PhaserAgentManager } from './PhaserAgentManager'
-import { SPRITE_ASSIGNMENTS, DEFAULT_SEAT_ASSIGNMENTS } from '../agentMapping'
+// SPRITE_ASSIGNMENTS and DEFAULT_SEAT_ASSIGNMENTS are now used internally by PlaceholderManager
 import { PhaserDragSystem } from './PhaserDragSystem'
+import { DustParticleSystem } from './DustParticleSystem'
+import { PlaceholderManager, AGENT_NAMES } from './PlaceholderManager'
+import {
+  drawWalls as drawWallsShared,
+  drawFloorTiles,
+  createFurnitureSprites as createFurnitureSpritesShared,
+  clearFurnitureSprites
+} from './renderUtils'
 import { MAX_DELTA_TIME_SEC } from '../constants'
 
 import defaultLayoutJson from '@renderer/assets/pixel-office/default-layout.json'
@@ -61,35 +67,7 @@ export interface SceneInitData {
   callbacks?: SceneCallbacks
 }
 
-// ── Warm wood plank palette ──
-const PLANK_COLORS = [
-  0x5c3a1e, // medium oak
-  0x6b4226, // warm walnut
-  0x4e3018, // dark oak
-  0x7a5030, // honey oak
-  0x5a3820 // chestnut
-]
-const WALL_BASE_COLOR = 0x0f1517 // --ca-bg-primary deep obsidian stone
-const WALL_ACCENT_COLOR = 0x283337 // --ca-panel-navy mortar lines
-const BASEBOARD_COLOR = 0x8b6f4a // --ca-gold-muted baseboard trim
-
-// ── Agent display names (used for idle placeholder agents) ──
-const AGENT_NAMES: Record<string, string> = {
-  coordinator: 'Coordinator',
-  generalist: 'Generalist',
-  'react-architect': 'React Architect',
-  'dotnet-architect': '.NET Architect',
-  'electron-architect': 'Electron Architect',
-  'agentic-architect': 'Agentic Architect',
-  'db-architect': 'DB Architect',
-  'ux-ui-specialist': 'UX/UI Specialist',
-  'git-github-specialist': 'Git Specialist',
-  'requirements-specialist': 'Requirements',
-  'code-planner': 'Code Planner',
-  'execution-planner': 'Exec Planner',
-  'cicd-devops': 'CI/CD DevOps',
-  'cloud-infrastructure': 'Cloud Infra'
-}
+// Renaissance palette constants imported from ./renderUtils
 
 /**
  * PhaserOfficeScene — Phaser.Scene that renders the pixel office.
@@ -99,38 +77,24 @@ export class PhaserOfficeScene extends Phaser.Scene {
   private officeState: OfficeState | null = null
   private initData: SceneInitData = {}
 
-  /** Tracks placeholder (idle) agent numericIds keyed by agentType */
-  private placeholderAgents = new Map<string, number>()
-
   // Pre-init layout (set from React before Phaser calls create())
   private pendingLayout: OfficeLayout | null = null
 
   // Sub-systems
   private agentManager: PhaserAgentManager | null = null
   private dragSystem: PhaserDragSystem | null = null
+  private readonly dustSystem = new DustParticleSystem()
+  private readonly placeholderMgr = new PlaceholderManager()
 
   // Phaser rendering objects
   private floorGraphics: Phaser.GameObjects.Graphics | null = null
   private furnitureSprites: Phaser.GameObjects.Image[] = []
-  private dustParticles: Phaser.GameObjects.Graphics | null = null
 
   // Furniture texture cache — keyed by SpriteData reference
   private furnitureTextureCache = new Map<SpriteData, string>()
-  private furnitureTexCounter = 0
 
   // Track furniture array reference to avoid unnecessary rebuilds
   private lastFurnitureRef: readonly import('../engine/types').FurnitureInstance[] | null = null
-
-  // Dust particle state
-  private dustMotes: Array<{
-    x: number
-    y: number
-    vx: number
-    vy: number
-    alpha: number
-    life: number
-    maxLife: number
-  }> = []
 
   // Track if assets are loaded
   private assetsLoaded = false
@@ -207,11 +171,11 @@ export class PhaserOfficeScene extends Phaser.Scene {
     // Create furniture textures once and add sprites
     this.createFurniture()
 
-    // Initialize dust particles
-    this.initDustParticles()
+    // Initialize dust particles (extracted system)
+    this.dustSystem.init(this, this.officeState.getLayout())
 
     // Populate idle placeholder agents (gives life to the office at rest)
-    this.populateAgents()
+    this.populatePlaceholders()
 
     // Center camera on the office (no bounds — let RESIZE mode handle viewport)
     const worldW = layoutData.cols * TILE_SIZE
@@ -258,6 +222,11 @@ export class PhaserOfficeScene extends Phaser.Scene {
 
     // Disable scroll wheel zoom on the Phaser canvas
     this.input.mouse?.disableContextMenu()
+
+    // Signal that the scene is fully initialized (assets loaded, placeholders populated).
+    // PhaserOfficeCanvas listens for this instead of the Phaser 'create' event, which
+    // fires before this async method completes.
+    this.events.emit('office-ready')
   }
 
   update(_time: number, deltaMs: number): void {
@@ -275,8 +244,8 @@ export class PhaserOfficeScene extends Phaser.Scene {
     // Update furniture (only if array reference changed)
     this.updateFurniture()
 
-    // Update dust particles
-    this.updateDustParticles(dt)
+    // Update dust particles (extracted system)
+    this.dustSystem.update(dt, this.officeState?.getLayout())
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -299,57 +268,40 @@ export class PhaserOfficeScene extends Phaser.Scene {
     if (!office || !this.agentManager) return
 
     office.addAgent(numericId, spriteIndex, hueShift)
-
-    const seatEntries = Array.from(office.seats.values())
-    if (seatIndex !== undefined && seatIndex < seatEntries.length) {
-      office.reassignSeat(numericId, seatEntries[seatIndex].uid)
-    }
+    this.assignAgentSeat(office, numericId, seatIndex)
 
     const ch = office.characters.get(numericId)
     if (!ch) return
 
-    // Set display name if provided
     if (displayName) ch.displayName = displayName
+    this.spawnInIdleZone(office, ch)
 
-    // Spawn in idle zone if available
-    const idleZone = office.idleZoneTiles
-    if (idleZone.length > 0) {
-      const spot = idleZone[Math.floor(Math.random() * idleZone.length)]
-      ch.x = spot.col * TILE_SIZE + TILE_SIZE / 2
-      ch.y = spot.row * TILE_SIZE + TILE_SIZE / 2
-      ch.tileCol = spot.col
-      ch.tileRow = spot.row
+    if (pixelSpriteId && this.agentManager) {
+      loadAndSwapRpgTexture(this, pixelSpriteId, this.agentManager, numericId, resolveRpgSpriteSrc)
     }
 
-    // Try RPG sprite — load async and swap texture when ready
-    if (pixelSpriteId) {
-      const spriteEntry = getSpriteById(pixelSpriteId)
-      if (spriteEntry) {
-        const imageUrl = resolveRpgSpriteSrc(spriteEntry.src)
-        if (imageUrl) {
-          const texKey = `rpg-${pixelSpriteId}`
-          createRpgCharacterTexture(this, imageUrl, texKey).then((key) => {
-            const visual = this.agentManager?.getAgent(numericId)
-            if (visual) {
-              registerCharacterAnimations(this, key)
-              visual.textureKey = key
-              visual.sprite.setTexture(key, 1)
-            }
-          })
-        }
-      }
-    }
-
-    this.agentManager.createAgent(
-      numericId,
-      spriteIndex,
-      hueShift,
-      ch.x,
-      ch.y,
-      displayName
-    )
-
+    this.agentManager.createAgent(numericId, spriteIndex, hueShift, ch.x, ch.y, displayName)
     this.agentManager.playSpawnAnimation(numericId)
+  }
+
+  /** Assign an agent to a specific seat by index, if valid. */
+  private assignAgentSeat(office: OfficeState, numericId: number, seatIndex?: number): void {
+    if (seatIndex === undefined) return
+    const seatEntries = Array.from(office.seats.values())
+    if (seatIndex < seatEntries.length) {
+      office.reassignSeat(numericId, seatEntries[seatIndex].uid)
+    }
+  }
+
+  /** Spawn a character at a random idle zone tile, if any exist. */
+  private spawnInIdleZone(office: OfficeState, ch: Character): void {
+    const idleZone = office.idleZoneTiles
+    if (idleZone.length === 0) return
+    const spot = idleZone[Math.floor(Math.random() * idleZone.length)]
+    ch.x = spot.col * TILE_SIZE + TILE_SIZE / 2
+    ch.y = spot.row * TILE_SIZE + TILE_SIZE / 2
+    ch.tileCol = spot.col
+    ch.tileRow = spot.row
   }
 
   removeAgent(numericId: number): void {
@@ -388,33 +340,23 @@ export class PhaserOfficeScene extends Phaser.Scene {
    * Get the placeholder (idle) numeric ID for an agent type, if one exists.
    */
   getPlaceholderNumericId(agentType: string): number | undefined {
-    return this.placeholderAgents.get(agentType)
+    return this.placeholderMgr.getNumericId(agentType)
   }
 
   /**
    * Remove a placeholder agent to make room for a real (active) agent session.
    */
   removePlaceholder(agentType: string): void {
-    const numericId = this.placeholderAgents.get(agentType)
-    if (numericId === undefined) return
-    this.placeholderAgents.delete(agentType)
-    if (!this.officeState || !this.agentManager) return
-    // Remove without despawn animation — the real agent will replace it
-    this.officeState.removeAgent(numericId)
-    this.agentManager.removeAgent(numericId, false)
+    this.placeholderMgr.remove(agentType, this.officeState, this.agentManager)
   }
 
   /**
    * Restore a placeholder idle agent when a real agent session ends.
    */
   restorePlaceholder(agentType: string): void {
-    if (this.placeholderAgents.has(agentType)) return
-    const assignment = SPRITE_ASSIGNMENTS[agentType]
-    if (!assignment) return
-    const seatIdx = DEFAULT_SEAT_ASSIGNMENTS[agentType]
-    const numericId = this.nextPlaceholderId()
-    this.placeholderAgents.set(agentType, numericId)
-    this.addAgent(numericId, assignment.spriteIndex, assignment.hueShift, seatIdx, AGENT_NAMES[agentType])
+    const info = this.placeholderMgr.restore(agentType)
+    if (!info) return
+    this.addAgent(info.numericId, info.spriteIndex, info.hueShift, info.seatIdx, info.displayName)
   }
 
   /**
@@ -433,70 +375,19 @@ export class PhaserOfficeScene extends Phaser.Scene {
 
   // ─── Placeholder agent population ───
 
-  private placeholderIdCounter = 50000
-
-  private nextPlaceholderId(): number {
-    return this.placeholderIdCounter++
-  }
-
   /**
-   * Populate all known agents as idle placeholders.
-   * Only adds agents that the bridge hasn't already added.
-   * Uses RPG sprites when available (pixelSpriteId), falls back to legacy char sheets.
+   * Populate idle placeholder agents using the extracted PlaceholderManager.
+   * Delegates population logic while keeping RPG texture loading in the scene.
    */
-  private populateAgents(): void {
+  private populatePlaceholders(): void {
     const office = this.officeState
     if (!office || !this.agentManager) return
 
-    const totalSeats = office.seats.size
-    for (const [agentType, assignment] of Object.entries(SPRITE_ASSIGNMENTS)) {
-      const seatIdx = DEFAULT_SEAT_ASSIGNMENTS[agentType]
-      if (seatIdx !== undefined && seatIdx >= totalSeats) continue
-
-      const numericId = this.nextPlaceholderId()
-      this.placeholderAgents.set(agentType, numericId)
-
-      office.addAgent(numericId, assignment.spriteIndex, assignment.hueShift, undefined, true)
-
-      const seatEntries = Array.from(office.seats.values())
-      if (seatIdx !== undefined && seatIdx < seatEntries.length) {
-        office.reassignSeat(numericId, seatEntries[seatIdx].uid)
+    this.placeholderMgr.populate(office, this.agentManager, (spriteId, numericId) => {
+      if (this.agentManager) {
+        loadAndSwapRpgTexture(this, spriteId, this.agentManager, numericId, resolveRpgSpriteSrc)
       }
-
-      const ch = office.characters.get(numericId)
-      if (!ch) continue
-      ch.displayName = AGENT_NAMES[agentType]
-      // Start placeholder agents as inactive (idle wandering)
-      ch.isActive = false
-
-      this.agentManager.createAgent(
-        numericId,
-        assignment.spriteIndex,
-        assignment.hueShift,
-        ch.x,
-        ch.y,
-        AGENT_NAMES[agentType]
-      )
-
-      // Load RPG sprite asynchronously and swap texture when ready
-      if (assignment.pixelSpriteId) {
-        const spriteEntry = getSpriteById(assignment.pixelSpriteId)
-        if (spriteEntry) {
-          const imageUrl = resolveRpgSpriteSrc(spriteEntry.src)
-          if (imageUrl) {
-            const texKey = `rpg-${assignment.pixelSpriteId}`
-            createRpgCharacterTexture(this, imageUrl, texKey).then((key) => {
-              const visual = this.agentManager?.getAgent(numericId)
-              if (visual) {
-                registerCharacterAnimations(this, key)
-                visual.textureKey = key
-                visual.sprite.setTexture(key, 1)
-              }
-            })
-          }
-        }
-      }
-    }
+    })
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -523,168 +414,11 @@ export class PhaserOfficeScene extends Phaser.Scene {
     const rows = tileMap.length
     const cols = rows > 0 ? tileMap[0].length : 0
 
-    // ── Pass 1: Draw floor tiles ──
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const tile = tileMap[r][c]
-        if (tile === TileType.VOID || tile === TileType.WALL) continue
-
-        const x = c * TILE_SIZE
-        const y = r * TILE_SIZE
-
-        // Floor: use layout tileColors if available, otherwise warm wood plank palette
-        const colorIdx = r * layout.cols + c
-        const floorColor = layout.tileColors?.[colorIdx]
-        const baseColor = floorColor
-          ? this.floorColorToHex(floorColor)
-          : PLANK_COLORS[r % PLANK_COLORS.length]
-
-        g.fillStyle(baseColor, 1)
-        g.fillRect(x, y, TILE_SIZE, TILE_SIZE)
-
-        // Add subtle plank grain line on top edge
-        g.lineStyle(1, 0x2a1a0a, 0.15)
-        g.lineBetween(x, y, x + TILE_SIZE, y)
-      }
-    }
+    // ── Pass 1: Draw floor tiles (shared) ──
+    drawFloorTiles(g, tileMap, layout)
 
     // ── Pass 2: Draw walls procedurally ──
-    this.drawWalls(g, tileMap, rows, cols)
-  }
-
-  /**
-   * Draw wall tiles procedurally with baseboard accents on all floor-adjacent edges,
-   * stone mortar grid lines, and doorway shadow depth.
-   */
-  private drawWalls(
-    g: Phaser.GameObjects.Graphics,
-    tileMap: number[][],
-    rows: number,
-    cols: number
-  ): void {
-    const isFloor = (r: number, c: number): boolean =>
-      r >= 0 &&
-      r < rows &&
-      c >= 0 &&
-      c < cols &&
-      tileMap[r][c] !== TileType.WALL &&
-      tileMap[r][c] !== TileType.VOID
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (tileMap[r][c] !== TileType.WALL) continue
-
-        const x = c * TILE_SIZE
-        const y = r * TILE_SIZE
-
-        // Wall base fill
-        g.fillStyle(WALL_BASE_COLOR, 1)
-        g.fillRect(x, y, TILE_SIZE, TILE_SIZE)
-
-        // Stone mortar grid lines — horizontal and vertical for textured look
-        g.lineStyle(1, WALL_ACCENT_COLOR, 0.3)
-        // Horizontal mortar lines every 4px
-        for (let my = 4; my < TILE_SIZE; my += 4) {
-          g.lineBetween(x, y + my, x + TILE_SIZE, y + my)
-        }
-        // Vertical mortar lines offset per row for a brick pattern
-        const vOffset = (r % 2) * (TILE_SIZE / 2)
-        for (let mx = vOffset; mx < TILE_SIZE; mx += TILE_SIZE) {
-          g.lineStyle(1, WALL_ACCENT_COLOR, 0.2)
-          g.lineBetween(x + (mx % TILE_SIZE), y, x + (mx % TILE_SIZE), y + TILE_SIZE)
-        }
-        // Subtle vertical accent line on left edge
-        g.lineStyle(1, WALL_ACCENT_COLOR, 0.5)
-        g.lineBetween(x, y, x, y + TILE_SIZE)
-
-        // Baseboard accents on ALL edges adjacent to floor tiles
-        const hasFloorBelow = isFloor(r + 1, c)
-        const hasFloorAbove = isFloor(r - 1, c)
-        const hasFloorLeft = isFloor(r, c - 1)
-        const hasFloorRight = isFloor(r, c + 1)
-
-        if (hasFloorBelow) {
-          g.fillStyle(BASEBOARD_COLOR, 1)
-          g.fillRect(x, y + TILE_SIZE - 3, TILE_SIZE, 3)
-        }
-        if (hasFloorAbove) {
-          g.fillStyle(BASEBOARD_COLOR, 1)
-          g.fillRect(x, y, TILE_SIZE, 3)
-        }
-        if (hasFloorLeft) {
-          g.fillStyle(BASEBOARD_COLOR, 1)
-          g.fillRect(x, y, 3, TILE_SIZE)
-        }
-        if (hasFloorRight) {
-          g.fillStyle(BASEBOARD_COLOR, 1)
-          g.fillRect(x + TILE_SIZE - 3, y, 3, TILE_SIZE)
-        }
-
-        // Doorway edge shadows — darker shadow on wall tiles that border a doorway
-        // Check if this wall tile is next to a floor tile that forms a doorway opening
-        if (hasFloorBelow || hasFloorAbove) {
-          // Check if left or right neighbor is also floor (doorway edge)
-          if (hasFloorLeft) {
-            g.fillStyle(0x0F1517, 0.4)
-            g.fillRect(x, y, 2, TILE_SIZE)
-          }
-          if (hasFloorRight) {
-            g.fillStyle(0x0F1517, 0.4)
-            g.fillRect(x + TILE_SIZE - 2, y, 2, TILE_SIZE)
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Convert FloorColor (HSL-ish) to a Phaser hex color number.
-   * Improved conversion that produces warm, natural floor tones.
-   */
-  private floorColorToHex(color: FloorColor): number {
-    const h = ((color.h % 360) + 360) % 360
-    // Lower floor + steeper curve — negative b values produce truly dark tones
-    const l = Math.max(0.06, Math.min(0.55, 0.25 + color.b / 150))
-    const s = Math.max(0.08, Math.min(0.5, 0.25 + color.s / 200))
-
-    // HSL → RGB (simplified)
-    const c = (1 - Math.abs(2 * l - 1)) * s
-    const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
-    const m = l - c / 2
-
-    let r1 = 0,
-      g1 = 0,
-      b1 = 0
-    if (h < 60) {
-      r1 = c
-      g1 = x
-      b1 = 0
-    } else if (h < 120) {
-      r1 = x
-      g1 = c
-      b1 = 0
-    } else if (h < 180) {
-      r1 = 0
-      g1 = c
-      b1 = x
-    } else if (h < 240) {
-      r1 = 0
-      g1 = x
-      b1 = c
-    } else if (h < 300) {
-      r1 = x
-      g1 = 0
-      b1 = c
-    } else {
-      r1 = c
-      g1 = 0
-      b1 = x
-    }
-
-    const ri = Math.round((r1 + m) * 255)
-    const gi = Math.round((g1 + m) * 255)
-    const bi = Math.round((b1 + m) * 255)
-    return (ri << 16) | (gi << 8) | bi
+    drawWallsShared(g, tileMap, rows, cols)
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -695,39 +429,27 @@ export class PhaserOfficeScene extends Phaser.Scene {
    * Get or create a cached Phaser texture key for a SpriteData.
    * Textures are created once and reused by reference identity.
    */
-  private getFurnitureTextureKey(sprite: SpriteData): string {
-    const cached = this.furnitureTextureCache.get(sprite)
-    if (cached) return cached
-
-    const key = `furn-${this.furnitureTexCounter++}`
-    registerSpriteDataTexture(this, key, sprite)
-    this.furnitureTextureCache.set(sprite, key)
-    return key
-  }
+  private readonly furnitureTexCounterObj = { value: 0 }
 
   private createFurniture(): void {
-    this.clearFurniture()
+    clearFurnitureSprites(this.furnitureSprites)
     const office = this.officeState
     if (!office) return
 
-    for (const fi of office.furniture) {
-      const key = this.getFurnitureTextureKey(fi.sprite)
-      const img = this.add.image(fi.x, fi.y, key)
-      img.setOrigin(0, 0)
-      img.setDepth(fi.zY)
-      if (fi.mirrored) img.setFlipX(true)
-      this.furnitureSprites.push(img)
-    }
-
-    // Track reference for change detection
+    this.furnitureSprites = createFurnitureSpritesShared(
+      this,
+      office.furniture as FurnitureInstance[],
+      this.furnitureTextureCache,
+      this.furnitureTexCounterObj,
+      'furn',
+      registerSpriteDataTexture,
+      false
+    )
     this.lastFurnitureRef = office.furniture
   }
 
   private clearFurniture(): void {
-    for (const sprite of this.furnitureSprites) {
-      sprite.destroy()
-    }
-    this.furnitureSprites = []
+    clearFurnitureSprites(this.furnitureSprites)
   }
 
   /**
@@ -738,20 +460,20 @@ export class PhaserOfficeScene extends Phaser.Scene {
     const office = this.officeState
     if (!office) return
 
-    // Only rebuild if the furniture array reference actually changed
     const newFurniture = office.furniture
     if (this.lastFurnitureRef === newFurniture) return
     this.lastFurnitureRef = newFurniture
 
-    this.clearFurniture()
-    for (const fi of newFurniture) {
-      const key = this.getFurnitureTextureKey(fi.sprite)
-      const img = this.add.image(fi.x, fi.y, key)
-      img.setOrigin(0, 0)
-      img.setDepth(fi.zY)
-      if (fi.mirrored) img.setFlipX(true)
-      this.furnitureSprites.push(img)
-    }
+    clearFurnitureSprites(this.furnitureSprites)
+    this.furnitureSprites = createFurnitureSpritesShared(
+      this,
+      newFurniture as FurnitureInstance[],
+      this.furnitureTextureCache,
+      this.furnitureTexCounterObj,
+      'furn',
+      registerSpriteDataTexture,
+      false
+    )
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -774,78 +496,6 @@ export class PhaserOfficeScene extends Phaser.Scene {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // Private: Ambient dust particles (Outworked-style)
-  // ═══════════════════════════════════════════════════════════════
-
-  private initDustParticles(): void {
-    this.dustParticles = this.add.graphics()
-    this.dustParticles.setDepth(500)
-
-    // Seed initial dust motes
-    const layout = this.officeState?.getLayout()
-    if (!layout) return
-
-    const worldW = layout.cols * TILE_SIZE
-    const worldH = layout.rows * TILE_SIZE
-
-    for (let i = 0; i < 20; i++) {
-      this.spawnDustMote(worldW, worldH)
-    }
-  }
-
-  private spawnDustMote(worldW: number, worldH: number): void {
-    this.dustMotes.push({
-      x: Math.random() * worldW,
-      y: Math.random() * worldH,
-      vx: (Math.random() - 0.5) * 3,
-      vy: (Math.random() - 0.5) * 1.5 - 1, // Slight upward drift
-      alpha: Math.random() * 0.3,
-      life: 0,
-      maxLife: 3 + Math.random() * 4
-    })
-  }
-
-  private updateDustParticles(dt: number): void {
-    if (!this.dustParticles) return
-
-    const layout = this.officeState?.getLayout()
-    if (!layout) return
-
-    const worldW = layout.cols * TILE_SIZE
-    const worldH = layout.rows * TILE_SIZE
-
-    this.dustParticles.clear()
-
-    for (let i = this.dustMotes.length - 1; i >= 0; i--) {
-      const mote = this.dustMotes[i]
-      mote.x += mote.vx * dt
-      mote.y += mote.vy * dt
-      mote.life += dt
-
-      // Fade in and out
-      const progress = mote.life / mote.maxLife
-      let alpha = mote.alpha
-      if (progress < 0.2) {
-        alpha *= progress / 0.2
-      } else if (progress > 0.8) {
-        alpha *= (1 - progress) / 0.2
-      }
-
-      if (mote.life >= mote.maxLife) {
-        this.dustMotes.splice(i, 1)
-        this.spawnDustMote(worldW, worldH)
-        continue
-      }
-
-      // Draw dust mote — warm amber/parchment tones (floating embers)
-      const dustColors = [0xd4a855, 0xc89640, 0xe8c070, 0xb88830]
-      const dustColor = dustColors[i % dustColors.length]
-      this.dustParticles.fillStyle(dustColor, alpha)
-      this.dustParticles.fillCircle(mote.x, mote.y, 0.5)
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════════════
   // Cleanup
   // ═══════════════════════════════════════════════════════════════
 
@@ -855,7 +505,6 @@ export class PhaserOfficeScene extends Phaser.Scene {
     this.clearFurniture()
     this.furnitureTextureCache.clear()
     this.floorGraphics?.destroy()
-    this.dustParticles?.destroy()
-    this.dustMotes = []
+    this.dustSystem.destroy()
   }
 }

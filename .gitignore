@@ -8,3 +8,6 @@ out
 .claude/worktrees/
 e2e/screenshots/
 e2e/test-results/
+.repomap.tags.cache/
+description-cache.db
+chroma/

@@ -6,8 +6,6 @@ description: >
   Detects the project's framework and routes to framework-specific reference patterns.
   Use for writing tests, test strategy, coverage improvement, CI test pipelines,
   TDD/BDD workflows, debugging flaky tests, or test architecture decisions.
-model: sonnet
-tools: [Read, Write, Edit, Bash, Grep, Glob]
 skills: [testing-specialist]
 ---
 

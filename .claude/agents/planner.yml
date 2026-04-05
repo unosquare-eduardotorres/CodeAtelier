@@ -4,8 +4,6 @@ description: >
   Full-lifecycle planning specialist. Handles requirements analysis, user stories, acceptance
   criteria, code architecture planning, module decomposition, task sequencing, effort estimation,
   dependency analysis, and execution planning. Use for any planning or analysis work.
-model: sonnet
-tools: [Read, Write, Grep, Glob]
 skills: [planner]
 ---
 

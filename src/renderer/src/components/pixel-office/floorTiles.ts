@@ -5,8 +5,9 @@
 // Uses shared colorize module for HSL tinting (Photoshop-style Colorize).
 // Caches colorized SpriteData by (pattern, h, s, b, c) key.
 
-import { FALLBACK_FLOOR_COLOR, TILE_SIZE } from './constants'
+import { FALLBACK_FLOOR_COLOR } from './constants'
 import { clearColorizeCache, getColorizedSprite } from './colorize'
+import { TILE_SIZE } from './engine/types'
 import type { FloorColor, SpriteData } from './engine/types'
 
 /** Default solid gray 16x16 tile used when floor tile PNGs are not loaded */
@@ -48,10 +49,6 @@ export function getFloorPatternCount(): number {
   return floorSprites.length > 0 ? floorSprites.length : 1
 }
 
-/** Get all floor sprites (for preview rendering, falls back to default solid tile) */
-export function getAllFloorSprites(): SpriteData[] {
-  return floorSprites.length > 0 ? floorSprites : [DEFAULT_FLOOR_SPRITE]
-}
 
 /**
  * Get a colorized version of a floor sprite.

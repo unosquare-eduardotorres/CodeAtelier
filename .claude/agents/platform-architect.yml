@@ -4,8 +4,6 @@ description: >
   Electron desktop app and agentic systems architect. Handles main process architecture,
   IPC communication, BrowserWindow management, Agent SDK integration, multi-agent orchestration,
   process management, Claude CLI/SDK patterns, auto-updates, packaging, and security hardening.
-model: sonnet
-tools: [Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch]
 skills: [electron-pro, claude-code-cli, claude-architect, ipc-patterns, agent-sdk-patterns, security]
 ---
 

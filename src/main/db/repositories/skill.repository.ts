@@ -1,5 +1,5 @@
 import { getDatabase } from '../index'
-import type { Skill } from '../../../shared/types'
+import type { BudgetTier, Skill } from '../../../shared/types'
 
 interface SkillRow {
   id: string
@@ -11,6 +11,10 @@ interface SkillRow {
   last_updated_date: string | null
   created_at: string
   updated_at: string
+  summary_full: string | null
+  summary_standard: string | null
+  summary_minimal: string | null
+  summary_hash: string | null
 }
 
 function mapRow(row: SkillRow): Skill {
@@ -23,7 +27,11 @@ function mapRow(row: SkillRow): Skill {
     isActive: row.is_active === 1,
     lastUpdatedDate: row.last_updated_date,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    summaryFull: row.summary_full,
+    summaryStandard: row.summary_standard,
+    summaryMinimal: row.summary_minimal,
+    summaryHash: row.summary_hash
   }
 }
 
@@ -183,6 +191,40 @@ export class SkillRepository {
 
     if (!row) throw new Error(`Skill not found: ${id}`)
     return mapRow(row)
+  }
+
+  /** Store pre-computed semantic summaries for a skill */
+  updateSummaries(
+    skillId: string,
+    summaries: { full: string; standard: string; minimal: string; hash: string }
+  ): void {
+    const db = getDatabase()
+    db.prepare(
+      `
+      UPDATE skills SET
+        summary_full = ?,
+        summary_standard = ?,
+        summary_minimal = ?,
+        summary_hash = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `
+    ).run(summaries.full, summaries.standard, summaries.minimal, summaries.hash, skillId)
+  }
+
+  /** Get pre-computed summary for a specific budget tier */
+  getSummary(skillId: string, tier: BudgetTier): string | null {
+    const col =
+      tier === 'full'
+        ? 'summary_full'
+        : tier === 'standard'
+          ? 'summary_standard'
+          : 'summary_minimal'
+    const db = getDatabase()
+    const row = db.prepare(`SELECT ${col} as summary FROM skills WHERE id = ?`).get(skillId) as
+      | { summary: string | null }
+      | undefined
+    return row?.summary ?? null
   }
 }
 

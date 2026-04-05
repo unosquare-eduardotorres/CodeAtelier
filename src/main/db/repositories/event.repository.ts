@@ -23,6 +23,7 @@ export interface EventRecord {
   dataJson: string
   agentId: string | null
   model: string | null
+  sequenceNumber: number | null
   createdAt: string
 }
 
@@ -37,6 +38,7 @@ interface EventRow {
   data_json: string
   agent_id: string | null
   model: string | null
+  sequence_number: number | null
   created_at: string
 }
 
@@ -52,6 +54,7 @@ function toModel(row: EventRow): EventRecord {
     dataJson: row.data_json,
     agentId: row.agent_id,
     model: row.model,
+    sequenceNumber: row.sequence_number,
     createdAt: row.created_at
   }
 }
@@ -68,12 +71,13 @@ export class EventRepository {
     data?: Record<string, unknown>
     agentId?: string
     model?: string
+    sequenceNumber?: number
   }): EventRecord {
     const db = getDatabase()
     const row = db
       .prepare(
-        `INSERT INTO events (event_type, category, message, session_id, conversation_id, workspace_id, data_json, agent_id, model)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO events (event_type, category, message, session_id, conversation_id, workspace_id, data_json, agent_id, model, sequence_number)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
       .get(
@@ -85,7 +89,8 @@ export class EventRepository {
         opts.workspaceId ?? null,
         opts.data ? JSON.stringify(opts.data) : '{}',
         opts.agentId ?? null,
-        opts.model ?? null
+        opts.model ?? null,
+        opts.sequenceNumber ?? null
       ) as EventRow
     return toModel(row)
   }

@@ -1,0 +1,116 @@
+import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
+import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
+import { z } from 'zod'
+import log from 'electron-log/main'
+import { codeGraphService } from './code-graph.service'
+
+/**
+ * Manages per-workspace MCP servers that expose `repo_map` and `search_identifiers`
+ * tools to the Claude Agent SDK. Reads from the persisted SQLite code graph —
+ * no filesystem walk or PageRank recomputation on each tool call.
+ *
+ * Replaces the `repomap-mcp` createServer() with our DB-backed implementation.
+ * Tool names match the original so the generalist's REPOMAP_GUIDANCE_PROMPT works unchanged.
+ */
+class CodeGraphMcpService {
+  private servers = new Map<string, McpServerConfig>()
+
+  /**
+   * Get or create an MCP server config for the given workspace.
+   * Exposes `repo_map` and `search_identifiers` tools backed by SQLite.
+   */
+  getMcpServersConfig(
+    workspaceId: string,
+    workspacePath: string
+  ): Record<string, McpServerConfig> {
+    let config = this.servers.get(workspaceId)
+    if (config) {
+      return { 'code-graph': config }
+    }
+
+    config = createSdkMcpServer({
+      name: 'code-graph',
+      version: '1.0.0',
+      tools: [
+        {
+          name: 'repo_map',
+          description:
+            'Generate a ranked repository map of code definitions ' +
+            'via PageRank over cross-file reference graphs. ' +
+            'Useful for understanding codebase structure, discovering entry points, ' +
+            'or finding code related to specific files or identifiers.',
+          inputSchema: {
+            projectRoot: z.string().describe('Absolute path to the repository root'),
+            focusFiles: z
+              .array(z.string())
+              .optional()
+              .describe('Already-known files used as ranking anchor (x20 boost)'),
+            tokenLimit: z
+              .number()
+              .optional()
+              .default(8192)
+              .describe('Maximum token count for the output map'),
+            excludeUnranked: z.boolean().optional().default(false),
+            priorityFiles: z.array(z.string()).optional(),
+            priorityIdentifiers: z.array(z.string()).optional()
+          },
+          handler: async (args) => {
+            log.info(`[CodeGraph] MCP repo_map query (workspace: ${workspaceId})`)
+            const result = await codeGraphService.getRepoMap(workspaceId, workspacePath, {
+              focusFiles: args.focusFiles as string[] | undefined,
+              mapTokens: args.tokenLimit as number | undefined,
+              excludeUnranked: args.excludeUnranked as boolean | undefined,
+              priorityFiles: args.priorityFiles as string[] | undefined,
+              priorityIdentifiers: args.priorityIdentifiers as string[] | undefined
+            })
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }]
+            }
+          }
+        },
+        {
+          name: 'search_identifiers',
+          description:
+            'Search for code identifiers (functions, classes, variables) across the repository ' +
+            'via Tree-sitter AST analysis. Returns matching definitions and references with code context.',
+          inputSchema: {
+            query: z
+              .string()
+              .describe('Identifier name to search for (case-insensitive substring match)'),
+            maxResults: z.number().optional().default(50),
+            includeDefinitions: z.boolean().optional().default(true),
+            includeReferences: z.boolean().optional().default(true)
+          },
+          handler: async (args) => {
+            const query = args.query as string
+            log.info(
+              `[CodeGraph] MCP search_identifiers: "${query}" (workspace: ${workspaceId})`
+            )
+            const results = await codeGraphService.searchIdentifiers(
+              workspaceId,
+              workspacePath,
+              query,
+              {
+                maxResults: args.maxResults as number | undefined,
+                includeDefinitions: args.includeDefinitions as boolean | undefined,
+                includeReferences: args.includeReferences as boolean | undefined
+              }
+            )
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify({ results }, null, 2) }]
+            }
+          }
+        }
+      ]
+    })
+
+    this.servers.set(workspaceId, config)
+    return { 'code-graph': config }
+  }
+
+  dispose(workspaceId: string): void {
+    this.servers.delete(workspaceId)
+  }
+}
+
+export const codeGraphMcpService = new CodeGraphMcpService()

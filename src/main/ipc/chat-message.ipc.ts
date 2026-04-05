@@ -11,7 +11,6 @@ import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
-  DecomposedTask,
   GrillEvaluation,
   GrillQuestion,
   HandoffBrief,
@@ -322,14 +321,24 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
           })
 
           // ── Enrich with recent conversation messages ──
-          try {
-            const allMessages = messageRepository.findByConversation(conversationId)
-            brief.recentMessages = allMessages
-              .slice(-10) // Last 10 messages (5 user + 5 assistant turns)
-              .map((m) => ({ role: m.role, content: m.contentMd.substring(0, 2000) }))
-            log.info(`Enriched handoff with ${brief.recentMessages.length} recent messages`)
-          } catch (error) {
-            log.warn('Failed to enrich handoff with recent messages:', error)
+          // Strategy F: Only load recentMessages when decomposition will actually use them.
+          // For single-specialist handoffs (which skip decomposition), these messages are
+          // loaded from the DB and attached to the brief but never appear in any prompt — pure waste.
+          // Saves DB I/O + ~5,700 tokens of unused data loading for single-specialist handoffs.
+          if (brief.specialists.length > 1) {
+            try {
+              const allMessages = messageRepository.findByConversation(conversationId)
+              brief.recentMessages = allMessages
+                .slice(-10) // Last 10 messages (5 user + 5 assistant turns)
+                .map((m) => ({ role: m.role, content: m.contentMd.substring(0, 2000) }))
+              log.info(`Enriched handoff with ${brief.recentMessages.length} recent messages`)
+            } catch (error) {
+              log.warn('Failed to enrich handoff with recent messages:', error)
+            }
+          } else {
+            log.info(
+              '[PIPELINE:skip-recent-messages] Single-specialist handoff — skipping recentMessages enrichment (Strategy F)'
+            )
           }
 
           // Send visual handoff indicator to the renderer
@@ -371,51 +380,15 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
             }
           }
 
-          // Decompose the task into sub-tasks via generalist with full brief
+          // Strategy E: Unified decomposition — always route through generalist.decompose()
+          // which has cost-preference-aware model selection via enrichTasksWithComplexity().
+          // Previously, single-specialist handoffs were dispatched directly here with hardcoded
+          // 'sonnet' model, bypassing economy-mode haiku selection (6× token overhead bug).
+          // The decompose() method already has a fast path for single-specialist handoffs
+          // that skips the LLM call — so this consolidation costs nothing extra.
           try {
-            let taskPlan: TaskPlan
-
-            if (brief.specialists.length === 1) {
-              // Direct dispatch — skip decomposition LLM call for single-specialist handoffs.
-              const specialistId = brief.specialists[0]!
-              log.info(`[PIPELINE:direct-dispatch] Single specialist: ${specialistId}`)
-
-              const task: DecomposedTask = {
-                id: 't1',
-                specialist: specialistId,
-                description:
-                  brief.summary +
-                  (brief.mode === 'plan' ? '. Produce a structured investigation report.' : ''),
-                dependsOn: [],
-                complexity: {
-                  tier: 'moderate',
-                  model: 'sonnet',
-                  total: 5,
-                  filesAffected: 1,
-                  estimatedLines: 1,
-                  newDependencies: 0,
-                  taskType: 2,
-                  riskFlags: 0
-                }
-              }
-
-              taskPlan = {
-                conversationId,
-                summary: brief.summary,
-                mode: brief.mode,
-                tasks: [task],
-                brief
-              }
-
-              eventLoggerService.logDecompositionStarted({
-                conversationId,
-                summary: brief.summary,
-                specialists: brief.specialists
-              })
-            } else {
-              log.info(`[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`)
-              taskPlan = await generalistService.decompose(brief, conversationId, brief.mode)
-            }
+            log.info(`[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`)
+            const taskPlan = await generalistService.decompose(brief, conversationId, brief.mode)
 
             log.info(`[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`)
 

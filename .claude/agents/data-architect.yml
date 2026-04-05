@@ -5,8 +5,6 @@ description: >
   SQL queries, indexing strategies, data modeling, migrations, and database performance tuning.
   Use when the task involves databases, SQL, SQLite, schema changes, or data access patterns.
   Also use for Supabase PostgreSQL or Drizzle ORM work on external projects (e.g., MarketingHQ).
-model: sonnet
-tools: [Read, Write, Edit, Bash, Grep, Glob, WebSearch]
 skills: [sqlite-patterns, supabase-architect]
 ---
 

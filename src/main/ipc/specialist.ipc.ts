@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { specialistRepository } from '../db/repositories'
 import type { CreateSpecialistInput, UpdateSpecialistInput } from '../db/repositories'
+import { specialistPoolService } from '../services/specialist-pool.service'
 import { validateSender } from './validate-sender'
 
 export function registerSpecialistIpc(): void {
@@ -22,8 +23,8 @@ export function registerSpecialistIpc(): void {
       throw new Error(`Specialist not found: ${args.id}`)
     }
 
-    // Attach skills to the specialist
-    specialist.skills = specialistRepository.getSkills(args.id)
+    // Attach all skills (including inactive) for the Settings UI
+    specialist.skills = specialistRepository.getAllSkills(args.id)
     return specialist
   })
 
@@ -116,4 +117,10 @@ export function registerSpecialistIpc(): void {
       specialistRepository.removeSkill(args.specialistId, args.skillId)
     }
   )
+
+  // Strategy 15: Cache metrics dashboard — exposes aggregate prompt cache stats to renderer
+  ipcMain.handle(IPC_CHANNELS.SPECIALIST_CACHE_METRICS, async (event) => {
+    validateSender(event)
+    return specialistPoolService.getCacheMetrics()
+  })
 }

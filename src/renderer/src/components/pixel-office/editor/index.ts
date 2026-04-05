@@ -9,7 +9,6 @@ export { PhaserEditorScene } from './PhaserEditorScene'
 export { EditorState } from './editorState'
 export { useEditorActions } from './useEditorActions'
 export { useEditorKeyboard } from './useEditorKeyboard'
-export type { EditorActions } from './useEditorActions'
 
 // Re-export editor action pure functions
 export {

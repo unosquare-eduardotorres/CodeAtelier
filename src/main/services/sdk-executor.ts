@@ -7,11 +7,73 @@ import log from 'electron-log/main'
 
 const sdkLog = log.scope('SDKExecutor')
 
+/**
+ * Lightweight API request lifecycle telemetry.
+ * Tracks start time, completion, errors, and retries for SDK calls.
+ */
+export interface ApiRequestTelemetry {
+  requestId: string
+  startedAt: number
+  completedAt?: number
+  durationMs?: number
+  model: string
+  status: 'started' | 'succeeded' | 'failed'
+  error?: string
+  tokenUsage?: {
+    input: number
+    output: number
+    cacheReadInputTokens: number
+    cacheCreationInputTokens: number
+  }
+  turnCount?: number
+}
+
+/** In-memory telemetry buffer — last 100 requests for dashboard / debugging */
+const telemetryBuffer: ApiRequestTelemetry[] = []
+const MAX_TELEMETRY_BUFFER = 100
+let requestCounter = 0
+
+function recordTelemetry(entry: ApiRequestTelemetry): void {
+  telemetryBuffer.push(entry)
+  if (telemetryBuffer.length > MAX_TELEMETRY_BUFFER) {
+    telemetryBuffer.shift()
+  }
+}
+
+/** Get recent API request telemetry entries */
+export function getRecentTelemetry(limit: number = 50): ApiRequestTelemetry[] {
+  return telemetryBuffer.slice(-limit)
+}
+
+/** Get aggregate telemetry stats */
+export function getTelemetryStats(): {
+  totalRequests: number
+  successCount: number
+  failureCount: number
+  avgDurationMs: number
+  p95DurationMs: number
+} {
+  const completed = telemetryBuffer.filter((t) => t.status !== 'started')
+  const durations = completed.filter((t) => t.durationMs != null).map((t) => t.durationMs!)
+  durations.sort((a, b) => a - b)
+
+  return {
+    totalRequests: telemetryBuffer.length,
+    successCount: completed.filter((t) => t.status === 'succeeded').length,
+    failureCount: completed.filter((t) => t.status === 'failed').length,
+    avgDurationMs:
+      durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0,
+    p95DurationMs: durations.length > 0 ? durations[Math.floor(durations.length * 0.95)] : 0
+  }
+}
+
 export interface SDKAgentDefinition {
   description: string
   prompt: string
   tools?: string[]
   model?: 'sonnet' | 'opus' | 'haiku' | 'inherit'
+  /** MCP server references for SubAgents — e.g. [{ 'code-graph': { type: 'sdk', name: 'code-graph' } }] */
+  mcpServers?: Array<string | Record<string, unknown>>
 }
 
 export interface SDKExecuteOptions {
@@ -38,6 +100,8 @@ export interface SDKExecuteOptions {
   enableToolApproval?: boolean
   /** Max agentic turns (tool-use rounds). SDK stops the loop after this many turns. */
   maxTurns?: number
+  /** MCP server configurations for in-process MCP tools (e.g. repomap) */
+  mcpServers?: Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig>
 }
 
 export interface SDKExecuteResult {
@@ -68,6 +132,17 @@ export class SDKExecutor {
     }
     let sessionId: string | undefined
     let resultText: string | undefined
+
+    // API lifecycle telemetry
+    const requestId = `sdk-${++requestCounter}-${Date.now()}`
+    const telemetryEntry: ApiRequestTelemetry = {
+      requestId,
+      startedAt: Date.now(),
+      model: options.model,
+      status: 'started'
+    }
+    recordTelemetry(telemetryEntry)
+    sdkLog.info(`[TELEMETRY:request-started] id=${requestId} model=${options.model}`)
 
     // Heartbeat / stall detection
     const heartbeatInterval = options.heartbeatIntervalMs ?? 15000
@@ -122,8 +197,20 @@ export class SDKExecutor {
           systemPrompt: options.systemPrompt,
           cwd: options.cwd,
           permissionMode: options.permissionMode,
-          // Wire SubAgent definitions
-          ...(options.agents ? { agents: options.agents } : {}),
+          // Wire SubAgent definitions (pass through mcpServers per agent if defined)
+          ...(options.agents
+            ? {
+                agents: Object.fromEntries(
+                  Object.entries(options.agents).map(([name, agent]) => [
+                    name,
+                    {
+                      ...agent,
+                      ...(agent.mcpServers?.length ? { mcpServers: agent.mcpServers } : {})
+                    }
+                  ])
+                )
+              }
+            : {}),
           // Auto-include Agent tool when agents are defined
           allowedTools: options.agents
             ? [...new Set([...(options.allowedTools ?? []), 'Agent'])]
@@ -141,7 +228,9 @@ export class SDKExecutor {
           // Pass AbortController for cancellation support
           ...(options.abortController ? { abortController: options.abortController } : {}),
           // Enable AI-generated progress summaries for sub-agents (~30s intervals)
-          ...(options.agents ? { agentProgressSummaries: true } : {})
+          ...(options.agents ? { agentProgressSummaries: true } : {}),
+          // Wire in-process MCP servers (e.g. repomap code graph)
+          ...(options.mcpServers ? { mcpServers: options.mcpServers } : {})
         }
       })
 
@@ -315,12 +404,31 @@ export class SDKExecutor {
       }
     } catch (error) {
       sdkLog.error('SDK execution error:', error)
+      // Telemetry: record failure
+      telemetryEntry.status = 'failed'
+      telemetryEntry.completedAt = Date.now()
+      telemetryEntry.durationMs = telemetryEntry.completedAt - telemetryEntry.startedAt
+      telemetryEntry.error = (error as Error).message
+      sdkLog.info(
+        `[TELEMETRY:request-failed] id=${requestId} duration=${telemetryEntry.durationMs}ms error=${telemetryEntry.error}`
+      )
       yield {
         type: 'error',
         error: `SDK execution failed: ${(error as Error).message}`
       }
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer)
+    }
+
+    // Telemetry: record success
+    if (telemetryEntry.status === 'started') {
+      telemetryEntry.status = 'succeeded'
+      telemetryEntry.completedAt = Date.now()
+      telemetryEntry.durationMs = telemetryEntry.completedAt - telemetryEntry.startedAt
+      telemetryEntry.tokenUsage = { ...totalUsage }
+      sdkLog.info(
+        `[TELEMETRY:request-succeeded] id=${requestId} duration=${telemetryEntry.durationMs}ms input=${totalUsage.input} output=${totalUsage.output}`
+      )
     }
 
     // Yield final metadata chunk (callers can check for _meta)

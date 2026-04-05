@@ -48,7 +48,12 @@ import type {
   SubscriptionCheckResult,
   AutoConfigureResult,
   SpecialistTokenEstimate,
-  AppPreferences
+  AppPreferences,
+  OllamaStatus,
+  PullProgress,
+  IndexingState,
+  SemanticSearchResult,
+  CodeGraphIndexingState
 } from '../shared/types'
 
 const api = {
@@ -156,6 +161,14 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.AGENT_GET_STATUSES),
 
   stopAllAgents: (): Promise<string[]> => ipcRenderer.invoke(IPC_CHANNELS.AGENT_STOP_ALL),
+
+  /** Strategy M: Cache efficiency metrics for dashboard */
+  getCacheEfficiency: (): Promise<{
+    hitRate: number
+    savedTokens: number
+    totalInput: number
+    turns: number
+  }> => ipcRenderer.invoke(IPC_CHANNELS.AGENT_CACHE_EFFICIENCY),
 
   // ── Agent Lifecycle ──
   startAgent: (workspacePath: string): Promise<void> =>
@@ -296,6 +309,16 @@ const api = {
 
   getMarketplace: (args: { workspacePath: string }): Promise<MarketplaceSpecialist[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_GET_MARKETPLACE, args),
+
+  // Strategy 15: Cache metrics dashboard
+  getCacheMetrics: (): Promise<{
+    totalInputTokens: number
+    totalOutputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheHitRate: number
+    taskCount: number
+  }> => ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_CACHE_METRICS),
 
   // ── Skills ──
   listSkills: (): Promise<Skill[]> => ipcRenderer.invoke(IPC_CHANNELS.SKILL_LIST),
@@ -758,6 +781,33 @@ const api = {
     }
   },
 
+  onTaskRetry: (
+    callback: (data: {
+      taskId: string
+      specialist: string
+      attempt: number
+      maxRetries: number
+      escalation?: { fromModel: string; toModel: string }
+      reason: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        taskId: string
+        specialist: string
+        attempt: number
+        maxRetries: number
+        escalation?: { fromModel: string; toModel: string }
+        reason: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.AGENT_TASK_RETRY, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TASK_RETRY, handler)
+    }
+  },
+
   onAgentReady: (callback: () => void): (() => void) => {
     const handler = (): void => callback()
     ipcRenderer.on(IPC_CHANNELS.AGENT_READY, handler)
@@ -1178,7 +1228,107 @@ const api = {
     error: string | null
   }> => ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_CHECK_CLAUDE_CLI),
   autoConfigureClaude: (): Promise<AutoConfigureResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE)
+    ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE),
+
+  // ── Ollama ──
+  ollamaCheckStatus: (): Promise<OllamaStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_CHECK_STATUS),
+
+  ollamaPullModel: (args: { model: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_PULL_MODEL, args),
+
+  ollamaCancelPull: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_CANCEL_PULL),
+
+  ollamaRemoveModel: (args: { model: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_REMOVE_MODEL, args),
+
+  ollamaStart: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_START),
+
+  onOllamaPullProgress: (callback: (data: PullProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: PullProgress): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.OLLAMA_PULL_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.OLLAMA_PULL_PROGRESS, handler)
+    }
+  },
+
+  onOllamaPullComplete: (callback: (model: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, model: string): void => callback(model)
+    ipcRenderer.on(IPC_CHANNELS.OLLAMA_PULL_COMPLETE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.OLLAMA_PULL_COMPLETE, handler)
+    }
+  },
+
+  onOllamaPullError: (callback: (error: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, error: string): void => callback(error)
+    ipcRenderer.on(IPC_CHANNELS.OLLAMA_PULL_ERROR, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.OLLAMA_PULL_ERROR, handler)
+    }
+  },
+
+  // ── Indexing (semantic search) ──
+  indexingStart: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_START, args),
+
+  indexingPause: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_PAUSE, args),
+
+  indexingResume: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_RESUME, args),
+
+  indexingCancel: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_CANCEL, args),
+
+  indexingGetStatus: (args: { workspaceId: string }): Promise<IndexingState> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_GET_STATUS, args),
+
+  loadPersistedIndex: (
+    args: { workspaceId: string }
+  ): Promise<{ loaded: boolean; status: string; symbolCount?: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_LOAD_PERSISTED, args),
+
+  onIndexingProgress: (callback: (state: IndexingState) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: IndexingState): void =>
+      callback(state)
+    ipcRenderer.on(IPC_CHANNELS.INDEXING_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.INDEXING_PROGRESS, handler)
+    }
+  },
+
+  semanticSearchQuery: (args: {
+    workspaceId: string
+    query: string
+    language?: string
+    directory?: string
+    nResults?: number
+  }): Promise<SemanticSearchResult[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SEMANTIC_SEARCH_QUERY, args),
+
+  // ── Code Graph (persisted repomap) ──
+  codeGraphIndexStart: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CODE_GRAPH_INDEX_START, args),
+
+  codeGraphGetStatus: (args: { workspaceId: string }): Promise<CodeGraphIndexingState> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CODE_GRAPH_GET_STATUS, args),
+
+  codeGraphHasIndex: (args: { workspaceId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CODE_GRAPH_HAS_INDEX, args),
+
+  onCodeGraphProgress: (
+    callback: (state: CodeGraphIndexingState) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: CodeGraphIndexingState
+    ): void => callback(state)
+    ipcRenderer.on(IPC_CHANNELS.CODE_GRAPH_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CODE_GRAPH_PROGRESS, handler)
+    }
+  }
 } as const
 
 if (process.contextIsolated) {

@@ -12,6 +12,21 @@ const eventLog = log.scope('EventLogger')
  * and hook actions are logged to the events DB table for analysis and debugging.
  */
 class EventLoggerService {
+  /** Monotonic sequence counters per session — enables total ordering of events within a session */
+  private sequenceCounters = new Map<string, number>()
+
+  /** Get the next monotonic sequence number for a session */
+  private nextSequence(sessionId: string): number {
+    const current = this.sequenceCounters.get(sessionId) ?? 0
+    this.sequenceCounters.set(sessionId, current + 1)
+    return current + 1
+  }
+
+  /** Reset sequence counter for a session (e.g. when session ends) */
+  resetSequence(sessionId: string): void {
+    this.sequenceCounters.delete(sessionId)
+  }
+
   private log(
     eventType: string,
     category: EventCategory,
@@ -26,10 +41,12 @@ class EventLoggerService {
     } = {}
   ): void {
     try {
+      const sequenceNumber = opts.sessionId ? this.nextSequence(opts.sessionId) : undefined
       eventRepository.create({
         eventType,
         category,
         message,
+        sequenceNumber,
         ...opts
       })
     } catch (err) {
@@ -128,6 +145,34 @@ class EventLoggerService {
       'agent',
       `Specialist ${opts.agentId} failed task ${opts.taskId ?? 'unknown'}: ${opts.error}`,
       { ...opts, data: { taskId: opts.taskId, error: opts.error, attempt: opts.attempt } }
+    )
+  }
+
+  // ── Task Retry Events ──
+
+  logTaskRetry(opts: {
+    conversationId?: string
+    agentId: string
+    taskId: string
+    attempt: number
+    maxRetries: number
+    escalation?: { fromModel: string; toModel: string }
+    reason: string
+  }): void {
+    this.log(
+      'agent.retry',
+      'agent',
+      `Specialist ${opts.agentId} retrying task ${opts.taskId} (attempt ${opts.attempt}/${opts.maxRetries}): ${opts.reason}`,
+      {
+        ...opts,
+        data: {
+          taskId: opts.taskId,
+          attempt: opts.attempt,
+          maxRetries: opts.maxRetries,
+          escalation: opts.escalation,
+          reason: opts.reason
+        }
+      }
     )
   }
 

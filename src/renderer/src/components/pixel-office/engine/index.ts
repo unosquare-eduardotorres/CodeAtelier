@@ -3,3 +3,4 @@
 
 export { createCharacter, getCharacterSprite, isReadingTool, updateCharacter } from './characters'
 export { OfficeState } from './officeState'
+export { randomInt, randomRange } from './utils'

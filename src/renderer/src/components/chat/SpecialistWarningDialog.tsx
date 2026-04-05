@@ -13,7 +13,7 @@ interface SpecialistWarningDialogProps {
   warningType: SpecialistWarningType
   activeSpecialistCount: number
   estimatedTokens?: number
-  onConfirm: () => void | Promise<void>
+  onConfirm: () => void
   onCancel: () => void
 }
 
@@ -77,7 +77,8 @@ export default function SpecialistWarningDialog({
       if (dontShowAgain) {
         await setPreference(preferenceKey, false)
       }
-      await onConfirm()
+      // onConfirm is now sync (closes dialog + fires send in background)
+      onConfirm()
     } finally {
       setIsSubmitting(false)
     }

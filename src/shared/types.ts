@@ -90,6 +90,93 @@ export interface AgentStatus {
   complexityTier?: ComplexityTier
 }
 
+// ── Typed Stream Events (discriminated union for compile-time exhaustiveness) ──
+
+/** Token usage reported per SDK turn */
+export interface TurnTokenUsage {
+  input: number
+  output: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+}
+
+/**
+ * Discriminated union of all stream events emitted by agents.
+ * Replaces string-based `type` switching with compile-time exhaustiveness checking.
+ */
+export type StreamEvent =
+  | { type: 'assistant'; message: AssistantMessage }
+  | { type: 'content_block_start'; block: ContentBlock }
+  | { type: 'content_block_delta'; delta: TextDelta | ToolInputDelta }
+  | { type: 'content_block_stop'; index: number }
+  | { type: 'message_stop'; usage: TurnTokenUsage }
+  | { type: 'user'; message: UserToolResult }
+  | { type: 'error'; error: string }
+
+/** Content within an assistant message */
+export interface AssistantMessage {
+  content: ContentBlock[]
+}
+
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input?: Record<string, unknown> }
+
+export interface TextDelta {
+  type: 'text_delta'
+  text: string
+}
+
+export interface ToolInputDelta {
+  type: 'input_json_delta'
+  partial_json: string
+}
+
+export interface UserToolResult {
+  content: { type: 'tool_result'; tool_use_id: string; content?: string }[]
+}
+
+// ── Structured Agent Errors (discriminated union for typed error handling) ──
+
+/**
+ * Typed error hierarchy for agent errors.
+ * Enables pattern-matching recovery and better user-facing messages.
+ */
+export type AgentError =
+  | { kind: 'timeout'; elapsedMs: number; toolCallCount: number }
+  | { kind: 'circuit_breaker'; toolCallCount: number; limit: number }
+  | { kind: 'api_error'; statusCode: number; message: string; retryable: boolean }
+  | { kind: 'budget_exceeded'; currentCents: number; limitCents: number }
+  | { kind: 'abort'; reason: 'user' | 'timeout' | 'system' }
+  | { kind: 'stream_incomplete'; lastEventType: string }
+  | { kind: 'parse_error'; rawData: string; message: string }
+
+/**
+ * Maps an AgentError to a human-readable message for the UI.
+ */
+export function agentErrorMessage(error: AgentError): string {
+  switch (error.kind) {
+    case 'timeout':
+      return `Response exceeded maximum time after ${error.toolCallCount} tool calls. The agent may be stuck. Try simplifying your request.`
+    case 'circuit_breaker':
+      return `The agent made ${error.toolCallCount} tool calls (limit: ${error.limit}), which suggests it got stuck in a loop. Try rephrasing your request.`
+    case 'api_error':
+      return error.retryable
+        ? `API error (${error.statusCode}): ${error.message}. Retrying...`
+        : `API error (${error.statusCode}): ${error.message}`
+    case 'budget_exceeded':
+      return `Budget exceeded: $${(error.currentCents / 100).toFixed(2)} > $${(error.limitCents / 100).toFixed(2)}`
+    case 'abort':
+      return error.reason === 'user'
+        ? 'Request cancelled.'
+        : `Request aborted: ${error.reason}`
+    case 'stream_incomplete':
+      return `Stream ended unexpectedly (last event: ${error.lastEventType}). The response may be incomplete.`
+    case 'parse_error':
+      return `Failed to parse agent response: ${error.message}`
+  }
+}
+
 // ── Tool Activity ──
 export interface ToolActivity {
   id: string
@@ -105,6 +192,8 @@ export interface Specialist {
   id: string
   agentId: string
   displayName: string
+  /** Agent description — from YAML description field, stored in DB */
+  description: string
   icon: string
   color: string
   prompt: string
@@ -131,6 +220,14 @@ export interface Skill {
   lastUpdatedDate: string | null
   createdAt: string
   updatedAt: string
+  /** Pre-computed semantic summary for full budget tier (~2000 chars) */
+  summaryFull: string | null
+  /** Pre-computed semantic summary for standard budget tier (~800 chars) */
+  summaryStandard: string | null
+  /** Pre-computed semantic summary for minimal budget tier (~200 chars) */
+  summaryMinimal: string | null
+  /** SHA-256 hash of SKILL.md content for staleness detection */
+  summaryHash: string | null
 }
 
 export interface CreateSpecialistInput {
@@ -710,6 +807,69 @@ export interface AutoConfigureResult {
   error: string | null
 }
 
+// ── Ollama ──
+export interface OllamaStatus {
+  installed: boolean
+  running: boolean
+  version?: string
+  models: string[]
+}
+
+export interface PullProgress {
+  model: string
+  status: string
+  completed: number
+  total: number
+  percent: number
+}
+
+// ── Code Graph (persisted repomap) ──
+export interface CodeGraphIndexingState {
+  workspaceId: string
+  status: 'idle' | 'scanning' | 'parsing' | 'ranking' | 'persisting' | 'complete' | 'error'
+  totalFiles: number
+  processedFiles: number
+  totalTags: number
+  totalEdges: number
+  currentFile: string
+  error?: string
+}
+
+// ── Semantic Search / Indexing ──
+export interface IndexingState {
+  workspaceId?: string
+  status:
+    | 'idle'
+    | 'scanning'
+    | 'preprocessing'
+    | 'indexing-files'
+    | 'indexing-chunks'
+    | 'paused'
+    | 'complete'
+    | 'error'
+  totalFiles: number
+  processedFiles: number
+  totalChunks: number
+  processedChunks: number
+  preprocessTotal: number
+  preprocessComplete: number
+  preprocessSkipped: number
+  descriptionsGenerated: number
+  descriptionsCached: number
+  descriptionsTotal: number
+  descriptionsProcessed: number
+  currentFile?: string
+  error?: string
+}
+
+export interface SemanticSearchResult {
+  filePath: string
+  symbolName: string
+  body: string
+  score: number
+  metadata: Record<string, unknown>
+}
+
 // ── IPC Channel Map (type-safe) ──
 export interface IpcChannels {
   'workspace:list': { args: void; return: Workspace[] }
@@ -1065,6 +1225,33 @@ export interface IpcChannels {
     return: { installed: boolean; version: string | null; error: string | null }
   }
   'subscription:autoConfigure': { args: void; return: AutoConfigureResult }
+
+  // Ollama
+  'ollama:checkStatus': { args: void; return: OllamaStatus }
+  'ollama:pullModel': { args: { model: string }; return: void }
+  'ollama:removeModel': { args: { model: string }; return: void }
+  'ollama:cancelPull': { args: void; return: void }
+  'ollama:start': { args: void; return: boolean }
+
+  // Indexing / Semantic Search
+  'indexing:start': { args: { workspaceId: string }; return: void }
+  'indexing:pause': { args: { workspaceId: string }; return: void }
+  'indexing:resume': { args: { workspaceId: string }; return: void }
+  'indexing:cancel': { args: { workspaceId: string }; return: void }
+  'indexing:getStatus': { args: { workspaceId: string }; return: IndexingState }
+  'indexing:loadPersisted': {
+    args: { workspaceId: string }
+    return: { loaded: boolean; status: string; symbolCount?: number }
+  }
+  'semanticSearch:query': {
+    args: { workspaceId: string; query: string; language?: string; directory?: string; nResults?: number }
+    return: SemanticSearchResult[]
+  }
+
+  // Code Graph (persisted repomap)
+  'codeGraph:indexStart': { args: { workspaceId: string }; return: void }
+  'codeGraph:getStatus': { args: { workspaceId: string }; return: CodeGraphIndexingState }
+  'codeGraph:hasIndex': { args: { workspaceId: string }; return: boolean }
 }
 
 // ── IPC Event Channels (main → renderer streaming) ──
@@ -1097,8 +1284,20 @@ export interface IpcEvents {
     specialist: string
     attempt: number
     maxRetries: number
+    /** Model escalation info (present when model was escalated on this retry) */
+    escalation?: {
+      fromModel: string
+      toModel: string
+    }
+    /** Human-readable reason for the retry */
+    reason: string
   }
   'workspace:activationProgress': ActivationProgressEvent
   'memory:feedProgress': MemoryFeedProgress
   'dream:progress': DreamProgress
+  'indexing:progress': IndexingState
+  'codeGraph:progress': CodeGraphIndexingState
+  'ollama:pullProgress': PullProgress
+  'ollama:pullComplete': string
+  'ollama:pullError': string
 }

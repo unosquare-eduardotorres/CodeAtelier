@@ -12,8 +12,8 @@ import Phaser from 'phaser'
 import { ZoomIn, ZoomOut, Maximize } from 'lucide-react'
 
 import { PhaserOfficeScene } from './phaser'
-import type { PixelOfficeEngine } from '@renderer/hooks/usePixelOfficeBridge'
-import { usePixelOfficeBridge } from '@renderer/hooks/usePixelOfficeBridge'
+import type { PixelOfficeEngine } from './hooks/usePixelOfficeBridge'
+import { usePixelOfficeBridge } from './hooks/usePixelOfficeBridge'
 import type { OfficeLayout } from './engine/types'
 import { TILE_SIZE } from './engine/types'
 
@@ -30,6 +30,9 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
   const gameRef = useRef<Phaser.Game | null>(null)
   const sceneRef = useRef<PhaserOfficeScene | null>(null)
   const engineRef = useRef<PixelOfficeEngine | null>(null)
+
+  // Engine readiness — triggers re-render so bridge hooks can sync
+  const [engineReady, setEngineReady] = useState(false)
 
   // Zoom state
   const [zoomLevel, setZoomLevel] = useState(DEFAULT_ZOOM)
@@ -85,11 +88,14 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
         })
       }
 
-      // Build the engine interface once scene.events is available
-      // scene.events is only initialized after Phaser boots, so this must
-      // live inside the 'ready' callback — not at the top level
-      scene.events.once('create', () => {
-        engineRef.current = {
+      // Build the engine interface once the scene is fully initialized.
+      // We listen for 'office-ready' (emitted at the end of the async create() method)
+      // instead of 'create', because Phaser 3 emits 'create' synchronously before the
+      // async create() completes — meaning assets and placeholders aren't ready yet.
+      scene.events.once('office-ready', () => {
+        // Build engine interface with compile-time contract check.
+        // If PixelOfficeEngine changes a method signature, this will fail at build time.
+        const engine: PixelOfficeEngine = {
           addAgent(_id, numericId, spriteIndex, hueShift, seatIndex, displayName, pixelSpriteId) {
             sceneRef.current?.addAgent(numericId, spriteIndex, hueShift, seatIndex, displayName, pixelSpriteId)
           },
@@ -129,7 +135,9 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
           updateDisplayName(numericId, name) {
             sceneRef.current?.updateAgentDisplayName(numericId, name)
           }
-        }
+        } satisfies PixelOfficeEngine
+        engineRef.current = engine
+        setEngineReady(true)
       })
     })
 
@@ -138,6 +146,7 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
       gameRef.current = null
       sceneRef.current = null
       engineRef.current = null
+      setEngineReady(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout])
@@ -207,7 +216,7 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
   }, [])
 
   // ── Bridge hook ──
-  usePixelOfficeBridge(engineRef)
+  usePixelOfficeBridge(engineRef, engineReady)
 
   // ── Fit to view on initial mount ──
   useEffect(() => {

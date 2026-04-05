@@ -103,10 +103,17 @@ export function buildSubAgentDefinitions(
     specialistId: string,
     tasks: DecomposedTask[],
     mode: ConversationMode
-  ) => { systemPrompt: string; description: string }
+  ) => { systemPrompt: string; description: string },
+  /** Names of active MCP servers to expose to SubAgents (e.g. ['code-graph', 'semantic-search']) */
+  mcpServerNames?: string[]
 ): Record<string, SDKAgentDefinition> {
   const agents: Record<string, SDKAgentDefinition> = {}
   const specialistIds = [...new Set(tasks.map((task) => task.specialist))]
+
+  // Build MCP server references for SubAgents — references the parent query's in-process instances by name
+  const mcpServers = mcpServerNames?.length
+    ? mcpServerNames.map((name) => ({ [name]: { type: 'sdk' as const, name } }))
+    : undefined
 
   for (const specialistId of specialistIds) {
     const specialistTasks = tasks.filter((task) => task.specialist === specialistId)
@@ -130,7 +137,8 @@ export function buildSubAgentDefinitions(
       description,
       prompt: `${systemPrompt}\n\n## Your Assigned Tasks\n${taskList}`,
       tools,
-      model
+      model,
+      ...(mcpServers ? { mcpServers } : {})
     }
   }
 

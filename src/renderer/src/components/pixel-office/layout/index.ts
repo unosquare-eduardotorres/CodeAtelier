@@ -13,3 +13,5 @@ export {
   serializeLayout
 } from './layoutSerializer'
 export { findPath, getWalkableTiles, isWalkable } from './tileMap'
+export { validateLayout, validateLayoutOrNull } from './layoutValidator'
+export type { LayoutValidationResult } from './layoutValidator'

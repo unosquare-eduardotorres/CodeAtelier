@@ -1,5 +1,4 @@
 import { ipcMain, type BrowserWindow } from 'electron'
-import { spawn } from 'node:child_process'
 import {
   conversationRepository,
   messageRepository,
@@ -26,78 +25,6 @@ import { validateSender } from './validate-sender'
 import { forwardChunkToRenderer, isMemoryEnabled } from './chat-shared'
 
 const log = chatIpcLogger
-
-/**
- * Spawns a short-lived review agent in plan mode to examine the combined
- * specialist output and report issues. Opt-in via workspace setting.
- */
-// @ts-expect-error — retained for future opt-in post-execution review
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function runPostSpecialistReview(
-  mainWindow: BrowserWindow,
-  conversationId: string,
-  tasks: DecomposedTask[],
-  workspacePath: string
-): Promise<void> {
-  const taskSummary = tasks.map((t) => `- ${t.specialist} (${t.id}): ${t.description}`).join('\n')
-
-  const reviewPrompt = `Review the changes made by the following specialist tasks for integration issues, bugs, or convention violations:
-
-${taskSummary}
-
-Check:
-1. Are there any obvious integration conflicts between the tasks?
-2. Do the changes follow the project conventions from CLAUDE.md?
-3. Are there any missing imports, type errors, or broken references?
-4. Any security concerns?
-
-Be concise. Only report actual issues found — do not speculate. If everything looks good, say so briefly.`
-
-  const env = buildEnvWithPath()
-
-  return new Promise<void>((resolve) => {
-    const child = spawn(
-      'claude',
-      ['-p', reviewPrompt, '--permission-mode', 'plan', '--output-format', 'text'],
-      { cwd: workspacePath, stdio: ['ignore', 'pipe', 'pipe'], env }
-    )
-
-    let output = ''
-    child.stdout?.on('data', (data: Buffer) => {
-      output += data.toString()
-    })
-    child.stderr?.on('data', (data: Buffer) => {
-      log.warn('Review agent stderr:', data.toString().substring(0, 200))
-    })
-    child.on('exit', (code) => {
-      if (code === 0 && output.trim()) {
-        const reviewContent = `## 🔍 Post-Execution Review\n\n${output.trim()}`
-        const savedMsg = messageRepository.create(conversationId, 'coordinator', reviewContent)
-        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-          conversationId,
-          chunk: reviewContent,
-          role: 'coordinator'
-        })
-        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-          conversationId,
-          messageId: savedMsg.id
-        })
-      }
-      resolve()
-    })
-    child.on('error', () => resolve())
-
-    // 60s timeout for review
-    setTimeout(() => {
-      try {
-        child.kill('SIGTERM')
-      } catch {
-        /* ignore */
-      }
-      resolve()
-    }, 60000)
-  })
-}
 
 export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
   // ── Forward cost tracker budget events to renderer ──
@@ -144,6 +71,9 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       const taskPlanBrief = (args as { brief?: HandoffBrief }).brief ?? null
       const accumulatedContent = { value: '' }
       specialistPoolService.setWorkspacePath(workspacePath)
+      // Pass workspaceId so specialists can access MCP tools (code-graph, semantic-search)
+      const ws = workspaceRepository.findAll().find((w) => w.repoPath === workspacePath)
+      if (ws) specialistPoolService.setWorkspaceId(ws.id)
       specialistPoolService.setConversationBrief(taskPlanBrief)
       specialistPoolService.setConversationId(conversationId)
       if (args.investigationDepth) {
@@ -221,6 +151,27 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           messageId: savedMsg.id
         })
 
+        // Strategy 1: Inject specialist results back into generalist context.
+        // Without this, follow-up questions re-trigger the full handoff pipeline (~12K tokens)
+        // instead of using the generalist's existing conversation context (~2K tokens).
+        try {
+          const contextSummary = accumulatedContent.value.substring(0, 4000)
+          if (contextSummary.trim()) {
+            const taskDescriptions = tasks
+              .map((t) => `- ${t.specialist}: ${t.description}`)
+              .join('\n')
+            await generalistService.injectContext(
+              `[Specialist execution complete — ${tasks.length} task(s)]\n\nTasks executed:\n${taskDescriptions}\n\nResults summary:\n${contextSummary}`,
+              conversationId
+            )
+            log.info(
+              `[PIPELINE:context-injection] Injected ${contextSummary.length} chars of specialist results into generalist context`
+            )
+          }
+        } catch (e) {
+          log.warn('Context injection after specialist execution failed:', e)
+        }
+
         try {
           if (workspacePath && isMemoryEnabled(workspacePath)) {
             const allWs = workspaceRepository.findAll()
@@ -242,10 +193,24 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
 
         specialistPoolService.removeListener('taskChunk', poolOnChunk)
         specialistPoolService.removeListener('allComplete', poolOnComplete)
+        specialistPoolService.removeListener('taskRetry', poolOnRetry)
+      }
+
+      // Forward task retry events to renderer for UI visibility
+      const poolOnRetry = (retryInfo: {
+        taskId: string
+        specialist: string
+        attempt: number
+        maxRetries: number
+        escalation?: { fromModel: string; toModel: string }
+        reason: string
+      }): void => {
+        mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_RETRY, retryInfo)
       }
 
       specialistPoolService.on('taskChunk', poolOnChunk)
       specialistPoolService.on('allComplete', poolOnComplete)
+      specialistPoolService.on('taskRetry', poolOnRetry)
 
       try {
         const hasDependencies = tasks.some((task) => (task.dependsOn?.length ?? 0) > 0)
@@ -278,6 +243,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
 
         specialistPoolService.removeListener('taskChunk', poolOnChunk)
         specialistPoolService.removeListener('allComplete', poolOnComplete)
+        specialistPoolService.removeListener('taskRetry', poolOnRetry)
       }
     }
   )

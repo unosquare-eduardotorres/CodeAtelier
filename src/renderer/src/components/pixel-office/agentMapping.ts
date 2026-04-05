@@ -7,12 +7,8 @@
 
 // ── Status → Animation mapping ──
 
-export type PixelAnimationState = 'IDLE' | 'WALK' | 'TYPE' | 'READING'
-
-/**
- * Maps AgentStatus.status to pixel character animation states.
- */
-export const STATUS_TO_ANIMATION: Record<string, PixelAnimationState> = {
+/** @deprecated Use agent status directly. Retained for backward compat. */
+export const STATUS_TO_ANIMATION: Record<string, string> = {
   idle: 'IDLE',
   thinking: 'READING',
   writing: 'TYPE',
@@ -31,7 +27,7 @@ export const STATUS_BUBBLES: Record<string, { text: string; durationMs: number }
 
 // ── Agent → Sprite mapping ──
 
-export interface SpriteAssignment {
+interface SpriteAssignment {
   /** Index of the base character sprite (0-5) — legacy fallback */
   spriteIndex: number
   /** Hue shift in degrees (-180 to 180) for visual differentiation — legacy fallback */
@@ -47,22 +43,18 @@ export interface SpriteAssignment {
 export const SPRITE_ASSIGNMENTS: Record<string, SpriteAssignment> = {
   generalist: { spriteIndex: 1, hueShift: 60, pixelSpriteId: 'male-07-1' },
   coordinator: { spriteIndex: 0, hueShift: 0, pixelSpriteId: 'male-06-1' },
-  'electron-architect': {
-    spriteIndex: 4,
-    hueShift: 160,
-    pixelSpriteId: 'other-pipo-charachip-soldier01'
-  },
-  'react-architect': { spriteIndex: 2, hueShift: 180, pixelSpriteId: 'enemy-02-1' },
-  'dotnet-architect': { spriteIndex: 3, hueShift: 270, pixelSpriteId: 'male-09-1' },
-  'ux-ui-specialist': { spriteIndex: 1, hueShift: 300, pixelSpriteId: 'male-02-2' },
-  'cloud-infrastructure': { spriteIndex: 1, hueShift: 200, pixelSpriteId: 'male-16-2' },
-  'agentic-architect': { spriteIndex: 5, hueShift: 30, pixelSpriteId: 'female-03-1' },
-  'db-architect': { spriteIndex: 0, hueShift: 220, pixelSpriteId: 'male-04-1' },
-  'git-github-specialist': { spriteIndex: 2, hueShift: 90, pixelSpriteId: 'male-14-1' },
-  'requirements-specialist': { spriteIndex: 3, hueShift: 140, pixelSpriteId: 'female-12-1' },
-  'code-planner': { spriteIndex: 4, hueShift: 240, pixelSpriteId: 'male-11-1' },
-  'execution-planner': { spriteIndex: 5, hueShift: 120, pixelSpriteId: 'male-13-1' },
-  'cicd-devops': { spriteIndex: 0, hueShift: 330, pixelSpriteId: 'soldier-03-1' }
+  'electron-architect': { spriteIndex: 4, hueShift: 160, pixelSpriteId: 'male-18-1' },
+  'react-architect': { spriteIndex: 2, hueShift: 180, pixelSpriteId: 'female-07-1' },
+  'dotnet-architect': { spriteIndex: 3, hueShift: 270, pixelSpriteId: 'male-03-2' },
+  'ux-ui-specialist': { spriteIndex: 1, hueShift: 300, pixelSpriteId: 'female-15-1' },
+  'cloud-infrastructure': { spriteIndex: 1, hueShift: 200, pixelSpriteId: 'male-10-3' },
+  'agentic-architect': { spriteIndex: 5, hueShift: 30, pixelSpriteId: 'female-05-2' },
+  'db-architect': { spriteIndex: 0, hueShift: 220, pixelSpriteId: 'male-15-1' },
+  'git-github-specialist': { spriteIndex: 2, hueShift: 90, pixelSpriteId: 'male-01-3' },
+  'requirements-specialist': { spriteIndex: 3, hueShift: 140, pixelSpriteId: 'female-09-2' },
+  'code-planner': { spriteIndex: 4, hueShift: 240, pixelSpriteId: 'male-05-4' },
+  'execution-planner': { spriteIndex: 5, hueShift: 120, pixelSpriteId: 'female-02-3' },
+  'cicd-devops': { spriteIndex: 0, hueShift: 330, pixelSpriteId: 'male-12-1' }
 }
 
 /**
@@ -141,13 +133,6 @@ export function getSpriteAssignment(agentId: string, color?: string): SpriteAssi
   const hueShift = color ? hexToHue(color) : (hashString(agentId + '_hue') % 360) - 180
 
   return { spriteIndex, hueShift }
-}
-
-/**
- * Get animation state for an agent status.
- */
-export function getAnimationState(status: string): PixelAnimationState {
-  return STATUS_TO_ANIMATION[status] ?? 'IDLE'
 }
 
 /**

@@ -6,8 +6,6 @@ description: >
   MSBuild project configuration, NuGet package management, performance optimization,
   unit testing, and .NET version migrations.
   Use when the task involves .NET, C#, NuGet, MSBuild, EF Core, or backend API development.
-model: sonnet
-tools: [Read, Write, Edit, Bash, Grep, Glob]
 skills: [dotnet-architect]
 ---
 

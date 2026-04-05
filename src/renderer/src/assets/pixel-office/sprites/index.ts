@@ -2074,6 +2074,15 @@ export const PIXEL_SPRITE_CATALOG: PixelSpriteEntry[] = [
     src: './Enemy/Enemy 22.png'
   },
   {
+    id: 'other-ironman-01',
+    category: 'other',
+    label: 'Ironman 01',
+    designGroup: 'other-ironman-01',
+    variant: null,
+    totalVariants: 1,
+    src: './Other/ironman-01.png'
+  },
+  {
     id: 'other-pien',
     category: 'other',
     label: 'Pien',

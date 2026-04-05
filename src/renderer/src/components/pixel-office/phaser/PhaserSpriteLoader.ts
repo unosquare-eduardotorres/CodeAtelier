@@ -10,6 +10,10 @@ import Phaser from 'phaser'
 
 import type { SpriteData } from '../engine/types'
 import { adjustSprite } from '../colorize'
+import type { BubbleSpriteJson } from '../sprites/spriteData'
+import { resolveBubbleSprite } from '../sprites/spriteData'
+import { loadImage, imageToSpriteData } from '../sprites/imageUtils'
+import { rgbaToHex, flipSpriteH, pixelDataToSpriteData, spriteDataToPixelData } from '../sprites/spriteUtils'
 
 // ── Asset imports (same PNGs the old engine uses) ──
 
@@ -27,7 +31,6 @@ export const CHAR_URLS = [char0, char1, char2, char3, char4, char5]
 const CHAR_FRAME_W = 32
 const CHAR_FRAME_H = 32
 const CHAR_FRAMES_PER_ROW = 7
-const ALPHA_THRESHOLD = 2
 
 // ── Types ──
 
@@ -52,85 +55,18 @@ export interface CharacterAnimKeys {
 
 // ── Helpers ──
 
-function rgbaToHex(r: number, g: number, b: number, a: number): string {
-  if (a < ALPHA_THRESHOLD) return ''
-  const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-  if (a >= 255) return hex
-  return `${hex}${a.toString(16).padStart(2, '0')}`
-}
-
-/** Render SpriteData to an HTMLCanvasElement for texture registration */
+/** Render SpriteData to an HTMLCanvasElement for texture registration (requires DOM) */
 function spriteDataToCanvas(sprite: SpriteData): HTMLCanvasElement {
-  const rows = sprite.length
-  const cols = rows > 0 ? sprite[0].length : 0
+  const { data, width, height } = spriteDataToPixelData(sprite)
   const canvas = document.createElement('canvas')
-  canvas.width = cols
-  canvas.height = rows
+  canvas.width = width
+  canvas.height = height
   const ctx = canvas.getContext('2d')!
   ctx.imageSmoothingEnabled = false
-
-  const imageData = ctx.createImageData(cols, rows)
-  const data = imageData.data
-
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const pixel = sprite[r][c]
-      if (pixel === '') continue
-
-      const i = (r * cols + c) * 4
-      data[i] = parseInt(pixel.slice(1, 3), 16)
-      data[i + 1] = parseInt(pixel.slice(3, 5), 16)
-      data[i + 2] = parseInt(pixel.slice(5, 7), 16)
-      data[i + 3] = pixel.length > 7 ? parseInt(pixel.slice(7, 9), 16) : 255
-    }
-  }
-
+  const imageData = ctx.createImageData(width, height)
+  imageData.data.set(data)
   ctx.putImageData(imageData, 0, 0)
   return canvas
-}
-
-/** Load an image from URL */
-function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = reject
-    img.src = url
-  })
-}
-
-
-/** Extract pixel data from an image region as SpriteData */
-function imageToSpriteData(
-  ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  sx: number,
-  sy: number,
-  sw: number,
-  sh: number
-): SpriteData {
-  ctx.canvas.width = sw
-  ctx.canvas.height = sh
-  ctx.clearRect(0, 0, sw, sh)
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
-  const imageData = ctx.getImageData(0, 0, sw, sh)
-  const data = imageData.data
-
-  const sprite: string[][] = []
-  for (let y = 0; y < sh; y++) {
-    const row: string[] = []
-    for (let x = 0; x < sw; x++) {
-      const i = (y * sw + x) * 4
-      row.push(rgbaToHex(data[i], data[i + 1], data[i + 2], data[i + 3]))
-    }
-    sprite.push(row)
-  }
-  return sprite
-}
-
-/** Flip SpriteData horizontally */
-function flipSpriteH(sprite: SpriteData): SpriteData {
-  return sprite.map((row) => [...row].reverse())
 }
 
 // ── Character texture generation ──
@@ -255,16 +191,8 @@ export function createHueShiftedCharTexture(
   const srcCtx = canvasSource.getContext('2d')!
   const srcData = srcCtx.getImageData(0, 0, w, h)
 
-  // Build SpriteData from base texture
-  const sprite: SpriteData = []
-  for (let y = 0; y < h; y++) {
-    const row: string[] = []
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4
-      row.push(rgbaToHex(srcData.data[i], srcData.data[i + 1], srcData.data[i + 2], srcData.data[i + 3]))
-    }
-    sprite.push(row)
-  }
+  // Build SpriteData from base texture using extracted pure function
+  const sprite = pixelDataToSpriteData(srcData.data, w, h)
 
   // Apply hue shift using existing colorize module
   const shifted = adjustSprite(sprite, { h: hueShift, s: 0, b: 0, c: 0 })
@@ -367,64 +295,6 @@ export async function createRpgCharacterTexture(
   }
 
   return textureKey
-}
-
-/**
- * Create a hue-shifted RPG character texture.
- * Loads the RPG sprite, converts to the composite format, then applies hue shift.
- */
-export async function createHueShiftedRpgTexture(
-  scene: Phaser.Scene,
-  imageUrl: string,
-  textureKey: string,
-  hueShift: number
-): Promise<string> {
-  if (hueShift === 0) return createRpgCharacterTexture(scene, imageUrl, textureKey)
-
-  const variantKey = `${textureKey}-hue${hueShift}`
-  if (scene.textures.exists(variantKey)) return variantKey
-
-  // First create the base RPG texture
-  const baseKey = await createRpgCharacterTexture(scene, imageUrl, textureKey)
-
-  // Get the base texture's canvas source
-  const baseTex = scene.textures.get(baseKey)
-  const baseSource = baseTex.getSourceImage()
-  if (!baseSource || !('getContext' in baseSource)) return baseKey
-
-  const canvasSource = baseSource as HTMLCanvasElement
-  const w = canvasSource.width
-  const h = canvasSource.height
-  const srcCtx = canvasSource.getContext('2d')!
-  const srcData = srcCtx.getImageData(0, 0, w, h)
-
-  // Build SpriteData from base texture
-  const sprite: SpriteData = []
-  for (let y = 0; y < h; y++) {
-    const row: string[] = []
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4
-      row.push(rgbaToHex(srcData.data[i], srcData.data[i + 1], srcData.data[i + 2], srcData.data[i + 3]))
-    }
-    sprite.push(row)
-  }
-
-  // Apply hue shift
-  const shifted = adjustSprite(sprite, { h: hueShift, s: 0, b: 0, c: 0 })
-  const shiftedCanvas = spriteDataToCanvas(shifted)
-
-  // Register as canvas texture with frames
-  const canvasTex = scene.textures.addCanvas(variantKey, shiftedCanvas)
-  if (canvasTex) {
-    const totalFrames = 4 * CHAR_FRAMES_PER_ROW
-    for (let i = 0; i < totalFrames; i++) {
-      const col = i % CHAR_FRAMES_PER_ROW
-      const row = Math.floor(i / CHAR_FRAMES_PER_ROW)
-      canvasTex.add(i, 0, col * CHAR_FRAME_W, row * CHAR_FRAME_H, CHAR_FRAME_W, CHAR_FRAME_H)
-    }
-  }
-
-  return variantKey
 }
 
 /**
@@ -551,14 +421,6 @@ export function registerSpriteDataTexture(
 import bubblePermissionData from '../sprites/bubble-permission.json'
 import bubbleWaitingData from '../sprites/bubble-waiting.json'
 
-interface BubbleSpriteJson {
-  palette: Record<string, string>
-  pixels: string[][]
-}
-
-function resolveBubbleSprite(data: BubbleSpriteJson): SpriteData {
-  return data.pixels.map((row) => row.map((key) => data.palette[key] ?? key))
-}
 
 /**
  * Create bubble textures (permission and waiting).

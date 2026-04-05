@@ -4,8 +4,6 @@ description: >
   Developer experience specialist. Handles Git workflows, GitHub PRs, branching strategies,
   documentation, Mermaid diagrams, architecture docs, design docs, code-to-diagram conversion,
   changelogs, and technical writing.
-model: sonnet
-tools: [Read, Write, Edit, Bash, Grep, Glob]
 skills: [git-workflow, mermaid-diagrams, design-docs, general-dev]
 ---
 

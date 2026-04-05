@@ -9,12 +9,12 @@ import bubbleWaitingData from './bubble-waiting.json'
 
 // -- Speech Bubble Sprites ------------------------------------------------
 
-interface BubbleSpriteJson {
+export interface BubbleSpriteJson {
   palette: Record<string, string>
   pixels: string[][]
 }
 
-function resolveBubbleSprite(data: BubbleSpriteJson): SpriteData {
+export function resolveBubbleSprite(data: BubbleSpriteJson): SpriteData {
   return data.pixels.map((row) => row.map((key) => data.palette[key] ?? key))
 }
 

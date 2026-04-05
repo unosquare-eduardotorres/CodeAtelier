@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { dbLogger } from '../logger'
 import { specialistRepository } from '../db/repositories/specialist.repository'
 import { skillRepository } from '../db/repositories/skill.repository'
 import { workspaceDeployService } from './workspace-deploy.service'
+import { skillSummaryService } from './skill-summary.service'
 import type {
   SyncDiff,
   SyncResult,
@@ -283,7 +285,7 @@ export class AgentSyncService {
 
     // Compare skill assignments
     const yamlSkillNames = new Set(agent.parsed.skills)
-    const dbSkills = specialistRepository.getSkills(dbRecord.id)
+    const dbSkills = specialistRepository.getAllSkills(dbRecord.id)
     const dbSkillNames = new Set(
       dbSkills.map((sk) => {
         // Reverse-map DB skill filename to YAML skill reference
@@ -304,12 +306,13 @@ export class AgentSyncService {
 
   /** Create a new specialist from a discovered YAML agent */
   private createSpecialistFromAgent(agent: DiscoveredAgent): Specialist {
-    // Look up meta from AGENT_META for icon/color defaults
+    // Check if specialist already exists in DB (from prior sync) for icon/color defaults
     const meta = this.getAgentMeta(agent.parsed.name)
 
     return specialistRepository.create({
       agentId: agent.parsed.name,
       displayName: meta?.displayName ?? this.formatDisplayName(agent.parsed.name),
+      description: agent.parsed.description || '',
       icon: meta?.icon ?? '🔧',
       color: meta?.color ?? '#6366F1',
       prompt: agent.bodyContent || agent.parsed.description || '',
@@ -319,15 +322,19 @@ export class AgentSyncService {
     })
   }
 
-  /** Import a discovered skill into the DB */
+  /** Import a discovered skill into the DB and generate semantic summaries */
   private importSkillFromDiscovered(discovered: DiscoveredSkill): Skill {
     const filename = `${discovered.name}.md`
 
     // Check if already exists
     const existing = skillRepository.findByFilename(filename)
-    if (existing) return existing
+    if (existing) {
+      // Regenerate summaries if stale
+      this.generateSkillSummaries(existing)
+      return existing
+    }
 
-    return skillRepository.create({
+    const skill = skillRepository.create({
       name: discovered.frontmatter?.name ?? this.formatDisplayName(discovered.name),
       description: discovered.frontmatter?.description ?? '',
       filename,
@@ -335,6 +342,36 @@ export class AgentSyncService {
       isActive: false,
       lastUpdatedDate: discovered.lastUpdated ?? undefined
     })
+
+    // Generate semantic summaries for the new skill
+    this.generateSkillSummaries(skill)
+
+    return skill
+  }
+
+  /** Generate and store semantic summaries for a skill if stale or missing */
+  private generateSkillSummaries(skill: Skill): void {
+    try {
+      const content = readFileSync(skill.filePath, 'utf-8')
+      if (!skillSummaryService.isStale(skill, content)) return
+
+      const summaries = skillSummaryService.generateSummaries(content)
+      const hash = skillSummaryService.contentHash(content)
+
+      skillRepository.updateSummaries(skill.id, {
+        full: summaries.full,
+        standard: summaries.standard,
+        minimal: summaries.minimal,
+        hash
+      })
+
+      dbLogger.info(
+        `Generated semantic summaries for skill "${skill.name}" ` +
+          `(full: ${summaries.full.length}, standard: ${summaries.standard.length}, minimal: ${summaries.minimal.length} chars)`
+      )
+    } catch (e) {
+      dbLogger.warn(`Could not generate summaries for skill "${skill.name}": ${(e as Error).message}`)
+    }
   }
 
   /** Sync specialist-skill junction table based on YAML skill references */
@@ -351,7 +388,7 @@ export class AgentSyncService {
       const specialist = specialistRepository.findByAgentId(agent.parsed.name)
       if (!specialist) continue
 
-      const currentSkills = specialistRepository.getSkills(specialist.id)
+      const currentSkills = specialistRepository.getAllSkills(specialist.id)
       const currentSkillIds = new Set(currentSkills.map((s) => s.id))
 
       // Build the set of skill IDs that YAML expects
@@ -387,53 +424,26 @@ export class AgentSyncService {
     }
   }
 
-  /** Get agent meta from AGENT_META constant for icon/color/displayName defaults */
+  /**
+   * Get agent meta for icon/color/displayName defaults.
+   * First checks if the specialist already exists in DB (from a prior sync),
+   * preserving user customizations. Falls back to generic defaults for first-time imports.
+   */
   private getAgentMeta(
     agentId: string
   ): { icon: string; color: string; displayName: string; priority: number } | null {
-    // Import at runtime to avoid circular deps
-    // Core agents (generalist aliases) are managed via DB — not included here
-    const AGENT_META: Record<string, { icon: string; color: string; displayName: string }> = {
-      'react-architect': { icon: '⚛️', color: '#61DAFB', displayName: 'React Architect' },
-      'dotnet-architect': { icon: '🟣', color: '#512BD4', displayName: '.NET Architect' },
-      'electron-architect': { icon: '⚡', color: '#47848F', displayName: 'Electron Architect' },
-      'agentic-architect': { icon: '🤖', color: '#D97706', displayName: 'Agentic Architect' },
-      'db-architect': { icon: '🗄️', color: '#336791', displayName: 'DB Architect' },
-      'ux-ui-specialist': { icon: '🎨', color: '#DB2777', displayName: 'UX/UI Specialist' },
-      'git-github-specialist': {
-        icon: '🔀',
-        color: '#64748B',
-        displayName: 'Git/GitHub Specialist'
-      },
-      'requirements-specialist': {
-        icon: '📋',
-        color: '#059669',
-        displayName: 'Requirements Specialist'
-      },
-      'code-planner': { icon: '📝', color: '#475569', displayName: 'Code Planner' },
-      'execution-planner': { icon: '📅', color: '#DC6843', displayName: 'Execution Planner' },
-      'cicd-devops': { icon: '🚀', color: '#DC2626', displayName: 'CI/CD DevOps' },
-      'cloud-infrastructure': { icon: '☁️', color: '#0D9488', displayName: 'Cloud Infrastructure' }
+    // Check if specialist already exists in DB (from prior sync)
+    const existing = specialistRepository.findByAgentId(agentId)
+    if (existing) {
+      return {
+        icon: existing.icon,
+        color: existing.color,
+        displayName: existing.displayName,
+        priority: existing.priority
+      }
     }
-
-    const AGENT_PRIORITIES: Record<string, number> = {
-      'react-architect': 2,
-      'dotnet-architect': 3,
-      'electron-architect': 4,
-      'agentic-architect': 5,
-      'db-architect': 6,
-      'ux-ui-specialist': 7,
-      'git-github-specialist': 8,
-      'requirements-specialist': 9,
-      'code-planner': 10,
-      'execution-planner': 11,
-      'cicd-devops': 12,
-      'cloud-infrastructure': 13
-    }
-
-    const meta = AGENT_META[agentId]
-    if (!meta) return null
-    return { ...meta, priority: AGENT_PRIORITIES[agentId] ?? 100 }
+    // Fallback for first-time import — generic defaults
+    return null
   }
 
   /** Convert kebab-case agent ID to display name */

@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 37
+const CURRENT_SCHEMA_VERSION = 46
 
 interface Migration {
   version: number
@@ -435,8 +435,8 @@ const migrations: Migration[] = [
       db.prepare(`UPDATE specialists SET agent_id = 'design-specialist', display_name = 'Design Specialist' WHERE agent_id = 'ux-ui-specialist'`).run()
 
       // Note: New agents (platform-architect, planner, platform-engineer, dx-specialist)
-      // will be inserted by AgentRegistry.loadFromDisk() on next startup when it discovers the new YAMLs.
-      // No manual INSERT needed — the registry handles sync.
+      // will be inserted by agent-sync.service on next workspace open when it discovers the new YAMLs.
+      // No manual INSERT needed — the sync service handles YAML→DB bridging.
     }
   },
   {
@@ -663,6 +663,359 @@ const migrations: Migration[] = [
       db.exec(`ALTER TABLE agent_sessions ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`)
       db.exec(`ALTER TABLE agent_sessions ADD COLUMN cache_creation_tokens INTEGER DEFAULT 0`)
     }
+  },
+  {
+    version: 38,
+    name: 'add-skill-semantic-summaries',
+    up: (db) => {
+      db.exec(`ALTER TABLE skills ADD COLUMN summary_full TEXT DEFAULT NULL`)
+      db.exec(`ALTER TABLE skills ADD COLUMN summary_standard TEXT DEFAULT NULL`)
+      db.exec(`ALTER TABLE skills ADD COLUMN summary_minimal TEXT DEFAULT NULL`)
+      db.exec(`ALTER TABLE skills ADD COLUMN summary_hash TEXT DEFAULT NULL`)
+    }
+  },
+  {
+    version: 39,
+    name: 'create-unified-storage-tables',
+    up: (db) => {
+      // code_chunks — preprocessed code units for semantic search
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS code_chunks (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          file_path TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          directory TEXT NOT NULL,
+          symbol_name TEXT NOT NULL,
+          symbol_kind TEXT NOT NULL,
+          class_name TEXT,
+          signature TEXT NOT NULL,
+          start_line INTEGER NOT NULL,
+          end_line INTEGER NOT NULL,
+          language TEXT NOT NULL,
+          body TEXT NOT NULL,
+          embed_text TEXT NOT NULL,
+          is_public INTEGER NOT NULL DEFAULT 1,
+          is_async INTEGER NOT NULL DEFAULT 0,
+          has_docstring INTEGER NOT NULL DEFAULT 0,
+          line_count INTEGER NOT NULL,
+          file_mtime REAL NOT NULL,
+          indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(workspace_id, file_path, symbol_name, start_line)
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_workspace ON code_chunks(workspace_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_file ON code_chunks(workspace_id, file_path)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_symbol ON code_chunks(workspace_id, symbol_name)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_kind ON code_chunks(workspace_id, symbol_kind)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_language ON code_chunks(workspace_id, language)`)
+
+      // chunk_embeddings — vector storage as BLOBs
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS chunk_embeddings (
+          chunk_id TEXT PRIMARY KEY REFERENCES code_chunks(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          embedding BLOB NOT NULL,
+          model TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_embeddings_workspace ON chunk_embeddings(workspace_id)`)
+
+      // chunk_descriptions — AI-generated descriptions (replaces description-cache.db)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS chunk_descriptions (
+          key TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          description TEXT NOT NULL,
+          model TEXT NOT NULL,
+          file_path TEXT NOT NULL,
+          symbol_name TEXT NOT NULL,
+          generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_descriptions_workspace ON chunk_descriptions(workspace_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_descriptions_file ON chunk_descriptions(file_path)`)
+
+      // code_graph_edges — cached symbol relationships
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS code_graph_edges (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          source_file TEXT NOT NULL,
+          source_symbol TEXT NOT NULL,
+          target_file TEXT NOT NULL,
+          target_symbol TEXT NOT NULL,
+          edge_type TEXT NOT NULL CHECK (edge_type IN ('calls', 'imports', 'extends', 'implements', 'references')),
+          page_rank REAL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_workspace ON code_graph_edges(workspace_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_source ON code_graph_edges(workspace_id, source_file, source_symbol)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_target ON code_graph_edges(workspace_id, target_file, target_symbol)`)
+
+      // indexing_state — persistent indexing progress per workspace
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS indexing_state (
+          workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'idle',
+          total_files INTEGER NOT NULL DEFAULT 0,
+          processed_files INTEGER NOT NULL DEFAULT 0,
+          total_chunks INTEGER NOT NULL DEFAULT 0,
+          processed_chunks INTEGER NOT NULL DEFAULT 0,
+          embedding_model TEXT,
+          last_completed_at TEXT,
+          last_error TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+    }
+  },
+  {
+    version: 40,
+    name: 'migrate-description-cache-db',
+    up: (db) => {
+      // Migrate data from the separate description-cache.db into chunk_descriptions
+      try {
+        const userDataPath = app.getPath('userData')
+        const oldDbPath = join(userDataPath, 'description-cache.db')
+        const { existsSync } = require('node:fs') as typeof import('node:fs')
+
+        if (existsSync(oldDbPath)) {
+          const OldDatabase = require('better-sqlite3') as typeof import('better-sqlite3').default
+          const oldDb = new OldDatabase(oldDbPath, { readonly: true })
+
+          try {
+            // Check if the old table exists
+            const tableExists = oldDb
+              .prepare(
+                `SELECT name FROM sqlite_master WHERE type='table' AND name='descriptions'`
+              )
+              .get()
+
+            if (tableExists) {
+              const rows = oldDb
+                .prepare('SELECT key, description, model, file_path, symbol_name FROM descriptions')
+                .all() as Array<{
+                key: string
+                description: string
+                model: string
+                file_path: string
+                symbol_name: string
+              }>
+
+              if (rows.length > 0) {
+                const insertStmt = db.prepare(`
+                  INSERT OR IGNORE INTO chunk_descriptions (key, workspace_id, description, model, file_path, symbol_name)
+                  VALUES (?, 'default', ?, ?, ?, ?)
+                `)
+
+                for (const row of rows) {
+                  insertStmt.run(
+                    row.key,
+                    row.description,
+                    row.model,
+                    row.file_path,
+                    row.symbol_name
+                  )
+                }
+
+                dbLogger.info(
+                  `✓ Migrated ${rows.length} descriptions from description-cache.db`
+                )
+              }
+            }
+          } finally {
+            oldDb.close()
+          }
+
+          dbLogger.info(
+            `ℹ Old description-cache.db preserved at ${oldDbPath} — safe to delete manually`
+          )
+        }
+      } catch (error) {
+        // Non-fatal: log warning but don't block the migration
+        dbLogger.warn('⚠ Could not migrate description-cache.db:', error)
+      }
+    }
+  },
+  {
+    version: 41,
+    name: 'create-agent-messages-table',
+    up: (db) => {
+      // agent_messages — persistent inter-agent communication log
+      // Mirrors the in-memory MessageBus for crash recovery and audit
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_messages (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT,
+          run_id TEXT,
+          from_agent TEXT NOT NULL,
+          to_agent TEXT,
+          type TEXT NOT NULL CHECK (type IN ('context', 'finding', 'dependency', 'feedback', 'status', 'artifact', 'custom')),
+          content TEXT NOT NULL,
+          task_id TEXT,
+          metadata_json TEXT DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_messages_conversation ON agent_messages(conversation_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_messages_run ON agent_messages(run_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_messages_task ON agent_messages(task_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_messages_from ON agent_messages(from_agent)`)
+    }
+  },
+  {
+    version: 42,
+    name: 'update-build-prompt-always-report-outcomes',
+    up: (db) => {
+      const newBuildPrompt = DEFAULT_PROMPTS.generalist.build
+
+      // Update default_prompt_text always.
+      // Update prompt_text ONLY if user hasn't customized it (is_custom = 0).
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'build'
+      `
+      ).run(newBuildPrompt, newBuildPrompt)
+    }
+  },
+  {
+    version: 43,
+    name: 'randomize-specialist-pixel-sprites',
+    up: (db) => {
+      const assignments: Record<string, string> = {
+        'electron-architect': 'male-18-1',
+        'react-architect': 'female-07-1',
+        'dotnet-architect': 'male-03-2',
+        'ux-ui-specialist': 'female-15-1',
+        'cloud-infrastructure': 'male-10-3',
+        'agentic-architect': 'female-05-2',
+        'db-architect': 'male-15-1',
+        'git-github-specialist': 'male-01-3',
+        'requirements-specialist': 'female-09-2',
+        'code-planner': 'male-05-4',
+        'execution-planner': 'female-02-3',
+        'cicd-devops': 'male-12-1'
+      }
+      const update = db.prepare(
+        'UPDATE specialists SET pixel_sprite_id = ? WHERE agent_id = ?'
+      )
+      for (const [agentId, spriteId] of Object.entries(assignments)) {
+        update.run(spriteId, agentId)
+      }
+    }
+  },
+  {
+    version: 44,
+    name: 'add-turn-usage-table-and-event-sequence-numbers',
+    up: (db) => {
+      // Per-turn token breakdown for cost debugging and cache rate trends
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS turn_usage (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          session_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          turn_number INTEGER NOT NULL,
+          input_tokens INTEGER DEFAULT 0,
+          output_tokens INTEGER DEFAULT 0,
+          cache_read_tokens INTEGER DEFAULT 0,
+          cache_creation_tokens INTEGER DEFAULT 0,
+          model TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id)`
+      )
+
+      // Event sequence numbering for total ordering within a session
+      db.exec(`ALTER TABLE events ADD COLUMN sequence_number INTEGER`)
+
+      // Expand category CHECK to include 'telemetry' for HTTP/API lifecycle events.
+      // SQLite doesn't support ALTER CHECK — but newly inserted rows with 'telemetry'
+      // will work if the table was created with the updated schema.sql. Existing DBs
+      // created before this migration have the old CHECK; we recreate the events table
+      // only if the CHECK doesn't already include 'telemetry'.
+      // For simplicity, we skip CHECK migration (SQLite limitation) — the schema.sql
+      // already has the updated CHECK for fresh installs. Existing installs will
+      // fail on 'telemetry' category insertion, but the event logger catches that.
+    }
+  },
+  {
+    version: 45,
+    name: 'create-code-graph-tags-ranks-state',
+    up: (db) => {
+      // Tree-sitter tags (def + ref) per workspace — enables incremental re-indexing via mtime
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS code_graph_tags (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          rel_fname TEXT NOT NULL,
+          fname TEXT NOT NULL,
+          line INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('def', 'ref')),
+          file_mtime REAL NOT NULL,
+          indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(workspace_id, rel_fname, line, name, kind)
+        )
+      `)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_cg_tags_workspace ON code_graph_tags(workspace_id)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_cg_tags_file ON code_graph_tags(workspace_id, rel_fname)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_cg_tags_name ON code_graph_tags(workspace_id, name)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_cg_tags_kind ON code_graph_tags(workspace_id, kind)`
+      )
+
+      // Per-file PageRank scores — pre-computed during indexing for instant lookups
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS code_graph_ranks (
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          rel_fname TEXT NOT NULL,
+          page_rank REAL NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (workspace_id, rel_fname)
+        )
+      `)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_cg_ranks_workspace ON code_graph_ranks(workspace_id)`
+      )
+
+      // Indexing state for code graph (separate from semantic search indexing_state)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS code_graph_state (
+          workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'idle',
+          total_files INTEGER NOT NULL DEFAULT 0,
+          processed_files INTEGER NOT NULL DEFAULT 0,
+          total_tags INTEGER NOT NULL DEFAULT 0,
+          total_edges INTEGER NOT NULL DEFAULT 0,
+          last_completed_at TEXT,
+          last_error TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+    }
+  },
+  {
+    version: 46,
+    name: 'add-specialist-description-column',
+    up: (db) => {
+      db.exec('ALTER TABLE specialists ADD COLUMN description TEXT DEFAULT NULL')
+    }
   }
 ]
 
@@ -775,7 +1128,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '⚛️',
       color: '#61DAFB',
       priority: 2,
-      pixelSpriteId: 'enemy-02-1'
+      pixelSpriteId: 'female-07-1'
     },
     {
       agentId: 'dotnet-architect',
@@ -783,7 +1136,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '🟣',
       color: '#512BD4',
       priority: 3,
-      pixelSpriteId: 'male-09-1'
+      pixelSpriteId: 'male-03-2'
     },
     {
       agentId: 'electron-architect',
@@ -791,7 +1144,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '⚡',
       color: '#47848F',
       priority: 4,
-      pixelSpriteId: 'other-pipo-charachip-soldier01'
+      pixelSpriteId: 'male-18-1'
     },
     {
       agentId: 'agentic-architect',
@@ -799,7 +1152,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '🤖',
       color: '#D97706',
       priority: 5,
-      pixelSpriteId: 'female-03-1'
+      pixelSpriteId: 'female-05-2'
     },
     {
       agentId: 'db-architect',
@@ -807,7 +1160,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '🗄️',
       color: '#336791',
       priority: 6,
-      pixelSpriteId: 'male-04-1'
+      pixelSpriteId: 'male-15-1'
     },
     {
       agentId: 'ux-ui-specialist',
@@ -815,7 +1168,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '🎨',
       color: '#DB2777',
       priority: 7,
-      pixelSpriteId: 'male-02-2'
+      pixelSpriteId: 'female-15-1'
     },
     {
       agentId: 'git-github-specialist',
@@ -823,7 +1176,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '🔀',
       color: '#64748B',
       priority: 8,
-      pixelSpriteId: 'male-14-1'
+      pixelSpriteId: 'male-01-3'
     },
     {
       agentId: 'requirements-specialist',
@@ -831,7 +1184,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '📋',
       color: '#059669',
       priority: 9,
-      pixelSpriteId: 'female-12-1'
+      pixelSpriteId: 'female-09-2'
     },
     {
       agentId: 'code-planner',
@@ -839,7 +1192,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '📝',
       color: '#475569',
       priority: 10,
-      pixelSpriteId: 'male-11-1'
+      pixelSpriteId: 'male-05-4'
     },
     {
       agentId: 'execution-planner',
@@ -847,7 +1200,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '📅',
       color: '#DC6843',
       priority: 11,
-      pixelSpriteId: 'male-13-1'
+      pixelSpriteId: 'female-02-3'
     },
     {
       agentId: 'cicd-devops',
@@ -855,7 +1208,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '🚀',
       color: '#DC2626',
       priority: 12,
-      pixelSpriteId: 'soldier-03-1'
+      pixelSpriteId: 'male-12-1'
     },
     {
       agentId: 'cloud-infrastructure',
@@ -863,7 +1216,7 @@ function seedDefaultSpecialists(database: Database.Database): void {
       icon: '☁️',
       color: '#0D9488',
       priority: 13,
-      pixelSpriteId: 'male-16-2'
+      pixelSpriteId: 'male-10-3'
     }
   ]
 

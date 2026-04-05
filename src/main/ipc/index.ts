@@ -34,6 +34,9 @@ import { registerToolApprovalIpc } from './tool-approval.ipc'
 import { registerSubscriptionIpc } from './subscription.ipc'
 import { registerConversationSpecialistIpc } from './conversation-specialist.ipc'
 import { registerAppPreferenceIpc } from './app-preference.ipc'
+import { registerOllamaIpc } from './ollama.ipc'
+import { registerIndexingIpc } from './indexing.ipc'
+import { registerCodeGraphIpc } from './code-graph.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -71,4 +74,7 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerSubscriptionIpc()
   registerConversationSpecialistIpc()
   registerAppPreferenceIpc()
+  registerOllamaIpc(mainWindow)
+  registerIndexingIpc(mainWindow)
+  registerCodeGraphIpc(mainWindow)
 }

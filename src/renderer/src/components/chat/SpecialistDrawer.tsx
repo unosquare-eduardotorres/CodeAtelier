@@ -8,6 +8,8 @@ import {
   useSpecialistStore
 } from '@renderer/store'
 import type { Skill, Specialist } from '../../../../shared/types'
+import { PixelSpriteAvatar, Avatar } from '@renderer/components/common'
+import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
 
 interface SpecialistDrawerProps {
   conversationId: string
@@ -112,6 +114,7 @@ export default function SpecialistDrawer({
   const activeCount = useMemo(
     () =>
       sortedSpecialists.filter((specialist) => {
+        if (specialist.isCore) return false
         const effective = getEffectiveState(specialist, conversationMap.get(specialist.id))
         return effective.isActive
       }).length,
@@ -240,14 +243,22 @@ export default function SpecialistDrawer({
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-3 min-w-0">
                       <div
-                        className="w-9 h-9 rounded-lg border flex items-center justify-center text-sm shrink-0"
+                        className="w-9 h-9 rounded-lg border flex items-center justify-center text-sm shrink-0 overflow-hidden"
                         style={{
                           backgroundColor: `${specialist.color}22`,
                           borderColor: `${specialist.color}40`,
                           color: specialist.color
                         }}
                       >
-                        {specialist.icon}
+                        {specialist.pixelSpriteId ? (
+                          <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={28} />
+                        ) : specialist.avatarUrl ? (
+                          <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={specialist.color} />
+                        ) : AGENT_ICON_MAP[specialist.agentId] ? (
+                          <AgentIcon agentType={specialist.agentId} size={22} />
+                        ) : (
+                          <span className="text-lg leading-none">{specialist.icon}</span>
+                        )}
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-text-primary truncate">
@@ -262,22 +273,28 @@ export default function SpecialistDrawer({
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void handleToggleActive(specialist.id, !effective.isActive).catch(
-                          () => undefined
-                        )
-                      }
-                      disabled={isMutating}
-                      className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                        effective.isActive
-                          ? 'border-success/30 bg-success-muted text-success'
-                          : 'border-border-default bg-surface-float text-text-secondary hover:text-text-primary'
-                      }`}
-                    >
-                      {effective.isActive ? 'Active' : 'Activate'}
-                    </button>
+                    {specialist.isCore ? (
+                      <span className="px-2.5 py-1 rounded-md text-xs font-medium border border-success/30 bg-success-muted text-success cursor-default">
+                        Required
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleToggleActive(specialist.id, !effective.isActive).catch(
+                            () => undefined
+                          )
+                        }
+                        disabled={isMutating}
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                          effective.isActive
+                            ? 'border-success/30 bg-success-muted text-success'
+                            : 'border-border-default bg-surface-float text-text-secondary hover:text-text-primary'
+                        }`}
+                      >
+                        {effective.isActive ? 'Active' : 'Activate'}
+                      </button>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2 mt-3">
@@ -313,19 +330,21 @@ export default function SpecialistDrawer({
                       {isExpanded ? 'Hide skill overrides' : 'Adjust skill overrides'}
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void removeConversationSpecialist({
-                          conversationId,
-                          specialistId: specialist.id
-                        }).catch(() => undefined)
-                      }
-                      disabled={isMutating}
-                      className="ml-auto text-[11px] text-text-muted hover:text-text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Reset specialist
-                    </button>
+                    {!specialist.isCore && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void removeConversationSpecialist({
+                            conversationId,
+                            specialistId: specialist.id
+                          }).catch(() => undefined)
+                        }
+                        disabled={isMutating}
+                        className="ml-auto text-[11px] text-text-muted hover:text-text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Reset specialist
+                      </button>
+                    )}
                   </div>
                 </div>
 

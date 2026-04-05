@@ -3,13 +3,6 @@
 
 import type { FloorColor } from './engine/types'
 
-// -- Grid & Layout --------------------------------------------------------
-export const TILE_SIZE = 16
-export const DEFAULT_COLS = 20
-export const DEFAULT_ROWS = 11
-export const MAX_COLS = 64
-export const MAX_ROWS = 64
-
 // -- Character Animation --------------------------------------------------
 export const WALK_SPEED_PX_PER_SEC = 48
 export const WALK_FRAME_DURATION_SEC = 0.15

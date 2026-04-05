@@ -7,9 +7,10 @@ import type {
   GrillQuestion,
   HandoffBrief,
   ImageAttachment,
+  InvestigationDepth,
   TaskPlan
 } from '../../shared/types'
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { SDKUserMessage, McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { AGENT_IDS, DEFAULT_COST_PREFERENCE } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
@@ -20,20 +21,37 @@ import { authProvider } from './auth-provider'
 import { PromptBuilder, promptBuilder, type GeneralistConditionalSections } from './prompt-builder'
 import {
   ASK_QUESTION_PROMPT,
+  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
+  DIRECT_ANSWER_BOOST_PROMPT,
+  GIT_CONTEXT_GUIDANCE_PROMPT,
+  GITHUB_CONTEXT_GUIDANCE_PROMPT,
   IMAGE_ATTACHMENTS_PROMPT,
-  MEMORY_PROTOCOL_PROMPT
+  MEMORY_PROTOCOL_PROMPT,
+  REPOMAP_GUIDANCE_PROMPT,
+  SEMANTIC_SEARCH_GUIDANCE_PROMPT,
+  TASK_CONTEXT_GUIDANCE_PROMPT
 } from './default-prompts'
+import { vectorSearchService } from './vector-search.service'
+import { semanticSearchMcpService } from './semantic-search.tool'
+import { gitContextMcpService } from './git-context.tool'
+import { taskContextMcpService } from './task-context.tool'
+import { checkpointContextMcpService } from './checkpoint-context.tool'
+import { gitHubContextMcpService } from './github-context.tool'
+import { githubService } from './github.service'
 import { memoryService } from './memory.service'
 import {
   conversationRepository,
   conversationSpecialistRepository,
   specialistRepository,
-  workspaceRepository
+  workspaceRepository,
+  turnUsageRepository
 } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
 import { enrichTasksWithComplexity } from './complexity-scorer.service'
-import { agentRegistry } from './agent-registry'
+import { enrichFilesDiscussed } from './mcp-server.service'
+import { codeGraphMcpService } from './code-graph.tool'
+import { codeGraphService } from './code-graph.service'
 import {
   HANDOFF_REGEX,
   buildSubAgentDefinitions as buildSubAgentDefinitionsUtil,
@@ -106,15 +124,21 @@ export class GeneralistService extends AgentBaseService {
   private turnCountMap: Map<string, number> = new Map()
 
   /**
-   * Token thresholds for context compaction.
+   * Token thresholds for context compaction — configurable via workspace settings.
    * Strategy 2: Lowered from 80K/150K to 50K/100K.
    * Strategy 7 (v2): Further lowered — earlier compaction prevents runaway costs.
    * Economy mode uses even lower thresholds for aggressive cost control.
+   *
+   * These defaults can be overridden per-workspace via settings:
+   *   compactSuggestThreshold, compactAutoThreshold
    */
-  private static readonly COMPACT_SUGGEST_THRESHOLD = 35_000
-  private static readonly COMPACT_AUTO_THRESHOLD = 70_000
-  private static readonly COMPACT_SUGGEST_THRESHOLD_ECONOMY = 25_000
-  private static readonly COMPACT_AUTO_THRESHOLD_ECONOMY = 50_000
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 35_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 70_000
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 25_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 50_000
+  /** Workspace-specific compaction thresholds (loaded from settings, fallback to defaults) */
+  private compactSuggestThreshold: number = GeneralistService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
+  private compactAutoThreshold: number = GeneralistService.DEFAULT_COMPACT_AUTO_THRESHOLD
   private compactSuggested: boolean = false
   /** Tracks number of compactions in this session to avoid over-compacting */
   private compactCount: number = 0
@@ -140,8 +164,54 @@ export class GeneralistService extends AgentBaseService {
   /** Pending mode switch — when set, the next send() prefixes the message with mode-change context */
   private pendingModeSwitch: { from: ConversationMode; to: ConversationMode } | null = null
 
+  /**
+   * Strategy A: Pending context injection — stored here and prepended to the next send() call.
+   * Eliminates the expensive injectContext() SDK call that replays the entire session (30-50K tokens).
+   * Maps conversationId → context string to inject.
+   */
+  private pendingContextInjection: Map<string, string> = new Map()
+
+  /**
+   * Strategy B: Pending compaction flag — when set, the next send() prefixes with /compact.
+   * Eliminates the expensive compact() SDK call that replays the entire session (30-50K tokens).
+   * Maps conversationId → compaction prompt.
+   */
+  private pendingCompaction: Map<string, string> = new Map()
+
   /** Tracks active SubAgent tasks by SDK task_id → specialist metadata */
   private activeSubagents: Map<string, { specialistId: string; startedAt: number }> = new Map()
+
+  /**
+   * Strategy M: Aggregate prompt cache statistics for dashboard.
+   * Tracks cache read/creation across all turns for cache efficiency analysis.
+   */
+  private cacheStats = { totalInput: 0, cacheRead: 0, cacheCreation: 0, turns: 0 }
+
+  /** Whether repomap code graph is enabled for this workspace */
+  private repomapEnabled: boolean = false
+  /** Whether semantic search (Ollama embeddings) is enabled for this workspace */
+  private semanticSearchEnabled: boolean = false
+  /** Whether GitHub token is configured for this workspace */
+  private githubConfigured: boolean = false
+
+  /**
+   * Refresh feature flags from workspace settings.
+   * Called on every send() so toggling Code Graph or Semantic Search
+   * takes effect immediately without restarting the session.
+   */
+  private refreshFeatureFlags(): void {
+    if (!this.workspaceId) return
+    try {
+      const workspace = workspaceRepository.findById(this.workspaceId)
+      if (!workspace) return
+      const settings = JSON.parse(workspace.settingsJson || '{}')
+      this.repomapEnabled = !!settings.repomapEnabled
+      this.semanticSearchEnabled = !!settings.semanticSearchEnabled
+      this.githubConfigured = githubService.isConfigured(this.workspaceId)
+    } catch {
+      // Non-critical — keep existing flags
+    }
+  }
 
   /**
    * Initializes the generalist for the given workspace.
@@ -188,6 +258,25 @@ export class GeneralistService extends AgentBaseService {
 
       // Strategy 7: Load cost preference to adjust compaction thresholds
       this.costPreference = (settings.costPreference as CostPreference) || 'balanced'
+
+      // Load configurable compaction thresholds from workspace settings (with defaults)
+      if (this.costPreference === 'economy') {
+        this.compactSuggestThreshold =
+          settings.compactSuggestThreshold ??
+          GeneralistService.DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY
+        this.compactAutoThreshold =
+          settings.compactAutoThreshold ?? GeneralistService.DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY
+      } else {
+        this.compactSuggestThreshold =
+          settings.compactSuggestThreshold ?? GeneralistService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
+        this.compactAutoThreshold =
+          settings.compactAutoThreshold ?? GeneralistService.DEFAULT_COMPACT_AUTO_THRESHOLD
+      }
+
+      // Code graph: enable repomap MCP tools if workspace setting is on
+      this.repomapEnabled = !!settings.repomapEnabled
+      // Semantic search: enable vector search if workspace setting is on
+      this.semanticSearchEnabled = !!settings.semanticSearchEnabled
     } catch {
       // Memory context unavailable — not critical
     }
@@ -228,6 +317,12 @@ export class GeneralistService extends AgentBaseService {
       throw new Error('Generalist not started — call start() first')
     }
 
+    // Refresh feature flags so settings changes take effect immediately
+    this.refreshFeatureFlags()
+    this.log.info(
+      `[PIPELINE:feature-flags] repomap=${this.repomapEnabled} semanticSearch=${this.semanticSearchEnabled}`
+    )
+
     // Conversation switch: log it (SDK handles session resume seamlessly)
     if (this.currentConversationId && this.currentConversationId !== conversationId) {
       this.log.info(`Conversation switch: ${this.currentConversationId} → ${conversationId}`)
@@ -241,11 +336,35 @@ export class GeneralistService extends AgentBaseService {
     this.accumulatedText = ''
     this.toolCallCount = 0
     this.circuitBroken = false
+    let hasTextAfterLastTool = true
     this.emit('statusUpdate', this.getStatus())
+
+    // ── Strategy A: Prepend any pending context injection ──
+    // This replaces the old injectContext() SDK call that replayed the entire session.
+    // The context piggybacks on this send() call at zero additional cost.
+    let effectiveMessage = message
+    const pendingContext = this.pendingContextInjection.get(conversationId)
+    if (pendingContext) {
+      effectiveMessage = `[Context from prior specialist execution — use this to answer follow-up questions without re-delegating]\n\n${pendingContext}\n\n---\n\n${effectiveMessage}`
+      this.pendingContextInjection.delete(conversationId)
+      this.log.info(
+        `[PIPELINE:lazy-inject] Prepended ${pendingContext.length} chars of specialist context to user message (saves ~30-50K tokens vs SDK replay)`
+      )
+    }
+
+    // ── Strategy B: Prepend any pending compaction ──
+    // This replaces the old compact() SDK call that replayed the entire session.
+    const pendingCompact = this.pendingCompaction.get(conversationId)
+    if (pendingCompact) {
+      effectiveMessage = `${pendingCompact}\n\n---\n\n${effectiveMessage}`
+      this.pendingCompaction.delete(conversationId)
+      this.log.info(
+        '[PIPELINE:lazy-compact] Prepended compaction instruction to user message (saves ~30-50K tokens vs SDK replay)'
+      )
+    }
 
     // If a mode switch is pending, prefix the user's message with context so the agent
     // knows its permissions changed — without clearing the session (preserves history).
-    let effectiveMessage = message
     if (this.pendingModeSwitch) {
       const { from, to } = this.pendingModeSwitch
       const modeLabel = to === 'build' ? 'Build (read + execute)' : 'Plan (read-only)'
@@ -283,6 +402,13 @@ export class GeneralistService extends AgentBaseService {
     const hasImages = (images?.length ?? 0) > 0
     const turnCount = this.incrementTurnCount(conversationId)
     this.fullSystemPrompt = this.buildPromptForTurn(message, hasImages, turnCount)
+
+    // Strategy C: Inject memory context into user prompt (not system prompt).
+    // buildPromptForTurn() refreshes this.memoryContext but no longer puts it in the system prompt.
+    // This keeps the system prompt stable across turns for prompt cache hits (~90% discount).
+    if (this.memoryContext) {
+      effectiveMessage = `## Auto Memory\n\n${this.memoryContext}\n\n---\n\n${effectiveMessage}`
+    }
 
     const isBuildMode = this.currentMode === 'build'
     const abortController = new AbortController()
@@ -333,6 +459,8 @@ export class GeneralistService extends AgentBaseService {
       }
 
       let handoffDetectedInStream = false
+      /** Stream termination validation — tracks whether the SDK emitted a proper completion signal */
+      let messageStopReceived = false
       for await (const chunk of this.sdkExecutor.execute({
         prompt: sdkPrompt,
         // Always send system prompt — ensures prompt updates propagate to resumed sessions
@@ -340,16 +468,85 @@ export class GeneralistService extends AgentBaseService {
         model: modelConfigService.getModel(this.workspacePath, 'generalist'),
         cwd: this.workspacePath,
         permissionMode: isBuildMode ? 'bypassPermissions' : 'plan',
-        allowedTools: isBuildMode ? undefined : ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
+        allowedTools: isBuildMode
+          ? undefined
+          : [
+              'Read',
+              'Glob',
+              'Grep',
+              'WebSearch',
+              'WebFetch',
+              // Existing MCP tools
+              ...(this.repomapEnabled && this.workspaceId
+                ? ['mcp__code-graph__repo_map', 'mcp__code-graph__search_identifiers']
+                : []),
+              ...(this.semanticSearchEnabled && this.workspaceId
+                ? ['mcp__semantic-search__semantic_search']
+                : []),
+              // Git context (always available)
+              'mcp__git-context__git_log',
+              'mcp__git-context__git_diff',
+              'mcp__git-context__git_blame',
+              // Task context (always available — no-ops gracefully if no active plan)
+              'mcp__task-context__list_tasks',
+              'mcp__task-context__get_task_output',
+              // Checkpoint context
+              'mcp__checkpoint-context__list_checkpoints',
+              'mcp__checkpoint-context__get_checkpoint',
+              // GitHub context (conditional on token)
+              ...(this.githubConfigured
+                ? [
+                    'mcp__github-context__get_pr_status',
+                    'mcp__github-context__list_pr_comments',
+                    'mcp__github-context__list_issues'
+                  ]
+                : [])
+            ],
         maxTurns: isBuildMode ? 50 : 25,
         resume: sessionId,
         abortController,
-        agentId: AGENT_IDS.GENERALIST
+        agentId: AGENT_IDS.GENERALIST,
+        // MCP tools: expose all configured servers to the generalist
+        ...(() => {
+          const servers: Record<string, McpServerConfig> = {}
+          // Existing: code graph + semantic search (conditional)
+          if (this.repomapEnabled && this.workspaceId)
+            Object.assign(
+              servers,
+              codeGraphMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath!)
+            )
+          if (this.semanticSearchEnabled && this.workspaceId)
+            Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(this.workspaceId))
+          // Git context: always on
+          Object.assign(servers, gitContextMcpService.getMcpServersConfig(this.workspacePath!))
+          // Task + checkpoint context: conversation-scoped
+          if (this.currentConversationId) {
+            Object.assign(
+              servers,
+              taskContextMcpService.getMcpServersConfig(
+                this.currentConversationId,
+                this.workspacePath!
+              )
+            )
+            Object.assign(
+              servers,
+              checkpointContextMcpService.getMcpServersConfig(this.currentConversationId)
+            )
+          }
+          // GitHub context: conditional on token
+          if (this.githubConfigured && this.workspaceId)
+            Object.assign(
+              servers,
+              gitHubContextMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath!)
+            )
+          return Object.keys(servers).length > 0 ? { mcpServers: servers } : {}
+        })()
       })) {
         // Circuit breaker check
         if (this.circuitBroken) break
 
         if ('_meta' in chunk && chunk._meta) {
+          messageStopReceived = true
           const meta = chunk._meta as SDKExecuteResult
           // Capture session ID for resume
           if (meta.sessionId && conversationId) {
@@ -363,26 +560,64 @@ export class GeneralistService extends AgentBaseService {
           }
           // Track token usage + compaction logic
           this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
-          // S8: Log prompt cache effectiveness
+          // S8 + Strategy M: Log and aggregate prompt cache effectiveness
           const { cacheReadInputTokens, cacheCreationInputTokens } = meta.tokenUsage
           if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
-            const totalInput = meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
+            const totalInput =
+              meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
             const cacheHitRate = totalInput > 0 ? (cacheReadInputTokens / totalInput) * 100 : 0
             this.log.info(
               `[PIPELINE:prompt-cache] read=${cacheReadInputTokens} creation=${cacheCreationInputTokens} hitRate=${cacheHitRate.toFixed(1)}%`
             )
           }
+          // Strategy M: Accumulate cache stats for dashboard
+          this.cacheStats.totalInput += meta.tokenUsage.input
+          this.cacheStats.cacheRead += cacheReadInputTokens
+          this.cacheStats.cacheCreation += cacheCreationInputTokens
+          this.cacheStats.turns++
+
+          // Per-turn token breakdown storage — enables cost debugging and cache rate trends
+          if (this.dbSessionId && conversationId) {
+            try {
+              const previousTurn = turnUsageRepository.getLastTurn(conversationId)
+              turnUsageRepository.record({
+                sessionId: this.dbSessionId,
+                conversationId,
+                turnNumber: turnCount,
+                inputTokens: meta.tokenUsage.input,
+                outputTokens: meta.tokenUsage.output,
+                cacheReadTokens: cacheReadInputTokens,
+                cacheCreationTokens: cacheCreationInputTokens,
+                model: modelConfigService.getModel(this.workspacePath!, 'generalist')
+              })
+              // Token growth rate alert — warn if input tokens spiked >30%
+              if (previousTurn && previousTurn.inputTokens > 0) {
+                const growthRate =
+                  (meta.tokenUsage.input - previousTurn.inputTokens) / previousTurn.inputTokens
+                if (growthRate > 0.3) {
+                  this.log.warn(
+                    `[PIPELINE:token-spike] ${(growthRate * 100).toFixed(0)}% input growth (${previousTurn.inputTokens} → ${meta.tokenUsage.input}) — possible context explosion`
+                  )
+                }
+              }
+            } catch (err) {
+              this.log.error('Failed to record turn usage:', err)
+            }
+          }
+
           this.checkCompaction(meta.tokenUsage.input)
         } else {
           // Accumulate text for handoff/grill detection
           if (chunk.type === 'text' && chunk.content) {
             this.accumulatedText += chunk.content
+            hasTextAfterLastTool = true
             if (this.detectHandoff()) {
               handoffDetectedInStream = true
             }
           }
           // Tool call counting + circuit breaker
           if (chunk.type === 'tool_use') {
+            hasTextAfterLastTool = false
             this.toolCallCount++
             const toolCallLimit = isBuildMode
               ? GeneralistService.MAX_BUILD_TOOL_CALLS
@@ -478,9 +713,32 @@ export class GeneralistService extends AgentBaseService {
       clearTimeout(interactionTimer)
       this.sdkAbortController = null
 
+      // Stream termination validation — warn if stream ended without proper completion
+      if (!messageStopReceived && !this.circuitBroken && !timedOut) {
+        this.log.warn(
+          `[PIPELINE:stream-incomplete] Stream ended without MessageStop event for conversationId=${conversationId}`
+        )
+      }
+
       this.log.info(
         `[PIPELINE:generalist-response-complete] conversationId=${conversationId} textLen=${this.accumulatedText.length}`
       )
+
+      // Guardrail: if tools were used but model didn't produce follow-up text,
+      // inject a synthetic feedback message so the user isn't left without feedback.
+      // Skip if handoff was detected (handoff responses don't need post-tool text).
+      if (this.toolCallCount > 0 && !hasTextAfterLastTool && !handoffDetectedInStream) {
+        const fallbackMessage =
+          '\n\n_Command executed but no summary was provided. You can ask me for the status or try again._'
+        this.log.warn(
+          `[PIPELINE:silent-tool-completion] conversationId=${conversationId} toolCalls=${this.toolCallCount} — injecting fallback message`
+        )
+        this.accumulatedText += fallbackMessage
+        this.emit('chunk', {
+          type: 'text',
+          content: fallbackMessage
+        } as StreamChunk)
+      }
 
       // Detect control blocks in accumulated text. Handoff is detected in-stream to reduce latency.
       if (!handoffDetectedInStream) {
@@ -552,11 +810,14 @@ export class GeneralistService extends AgentBaseService {
   private buildPromptForTurn(message: string, hasImages: boolean, turnCount: number): string {
     if (!this.workspacePath) return this.fullSystemPrompt
 
-    let memoryContextForTurn = this.memoryContext
+    // Strategy C: Memory context is now injected into the user prompt (not system prompt).
+    // This keeps the system prompt identical across turns → Claude prompt caching gives
+    // a 90% discount on the entire system prompt after the first turn (~1,350 tokens/turn saved).
+    // Memory is still refreshed per turn — it just lives in a different location.
     if (this.workspaceId) {
       const memoryBudget = this.getMemoryBudgetForTurn(turnCount)
       try {
-        memoryContextForTurn = memoryService.getContextForPrompt(
+        const memoryContextForTurn = memoryService.getContextForPrompt(
           this.workspaceId,
           memoryBudget,
           message
@@ -564,7 +825,6 @@ export class GeneralistService extends AgentBaseService {
         this.memoryContext = memoryContextForTurn || undefined
       } catch (error) {
         this.log.warn('Failed to refresh filtered memory context; using cached context', error)
-        memoryContextForTurn = this.memoryContext
       }
     }
 
@@ -573,14 +833,30 @@ export class GeneralistService extends AgentBaseService {
       role: 'generalist',
       mode: this.currentMode,
       workspacePath: this.workspacePath,
-      memoryContext: memoryContextForTurn,
+      // Strategy C: memoryContext is NO LONGER passed here — it goes into the user prompt
+      // via the effectiveMessage prefix in send(). The system prompt stays stable for caching.
       budgetTier
     })
 
     const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages)
-    const promptWithConditionals = this.appendConditionalSections(basePrompt, conditionalSections)
+    let promptWithConditionals = this.appendConditionalSections(basePrompt, conditionalSections)
+
+    // Inject active specialist roster so generalist knows who to hand off to
+    const activeSpecialists = specialistRepository.findActive()
+    const nonCoreSpecialists = activeSpecialists.filter(
+      (s) => !['generalist', 'generalist-agent', 'user'].includes(s.agentId)
+    )
+    if (nonCoreSpecialists.length > 0) {
+      const roster = nonCoreSpecialists
+        .map(
+          (s) =>
+            `- "${s.agentId}" — ${s.displayName}: ${(s.description || s.prompt || '').substring(0, 100)}`
+        )
+        .join('\n')
+      promptWithConditionals += `\n\n## Available Specialists\n\nUse these exact IDs in handoff blocks:\n${roster}`
+    }
     this.log.info(
-      `[PIPELINE:prompt-adaptive] conversationId=${this.currentConversationId} turn=${turnCount} budget=${budgetTier} ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt}`
+      `[PIPELINE:prompt-adaptive] conversationId=${this.currentConversationId} turn=${turnCount} budget=${budgetTier} ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost}`
     )
 
     // S8: Prompt size check — warn if approaching model context limits
@@ -622,66 +898,78 @@ export class GeneralistService extends AgentBaseService {
       appendSections.push(IMAGE_ATTACHMENTS_PROMPT)
     }
 
+    // Strategy 3: Direct Answer Boost ��� nudge generalist to answer directly for simple questions
+    if (
+      conditionalSections.includeDirectAnswerBoost &&
+      !basePrompt.includes('## Direct Answer Mode')
+    ) {
+      appendSections.push(DIRECT_ANSWER_BOOST_PROMPT)
+    }
+
+    // Code graph: inject repomap tool guidance when enabled
+    if (this.repomapEnabled && !basePrompt.includes('## Code Graph Tools')) {
+      appendSections.push(REPOMAP_GUIDANCE_PROMPT)
+    }
+
+    // Semantic search: inject tool guidance when enabled
+    if (this.semanticSearchEnabled && !basePrompt.includes('## Semantic Search')) {
+      appendSections.push(SEMANTIC_SEARCH_GUIDANCE_PROMPT)
+    }
+
+    // Git context: always inject guidance
+    if (!basePrompt.includes('## Git Context Tools')) {
+      appendSections.push(GIT_CONTEXT_GUIDANCE_PROMPT)
+    }
+
+    // Task context: inject when in multi-task plan
+    if (this.currentConversationId && !basePrompt.includes('## Task Context Tools')) {
+      appendSections.push(TASK_CONTEXT_GUIDANCE_PROMPT)
+    }
+
+    // Checkpoint context: inject guidance
+    if (!basePrompt.includes('## Checkpoint Tools')) {
+      appendSections.push(CHECKPOINT_CONTEXT_GUIDANCE_PROMPT)
+    }
+
+    // GitHub context: conditional on token
+    if (this.githubConfigured && !basePrompt.includes('## GitHub Tools')) {
+      appendSections.push(GITHUB_CONTEXT_GUIDANCE_PROMPT)
+    }
+
     if (appendSections.length === 0) return basePrompt
     return `${basePrompt}\n\n---\n\n${appendSections.join('\n\n---\n\n')}`
   }
 
   /**
-   * Injects a context message into the generalist's conversation without
-   * triggering the full send/response cycle. Used to feed specialist/subagent
-   * results back so the generalist has awareness for follow-up questions.
-   * The generalist's response is silently consumed (not forwarded to renderer).
+   * Strategy A: Lazy context injection — stores context to be prepended to the next send() call.
+   *
+   * Previously this method fired a full SDK query() with session resume, which replayed the
+   * entire conversation history (30-50K tokens on long conversations). Now we simply store
+   * the context and piggyback it on the next user message at zero additional cost — the
+   * session resume is already happening for the user's message.
+   *
+   * The context is prepended as a clearly-delimited block so the generalist can distinguish
+   * it from the user's actual message.
    */
   async injectContext(context: string, conversationId: string): Promise<void> {
     if (!this.workspacePath) {
       this.log.warn('Cannot inject context — generalist not started')
       return
     }
-    if (this.currentStatus !== 'idle') {
-      this.log.warn('Cannot inject context — generalist is busy:', this.currentStatus)
-      return
-    }
 
-    this.log.info('Injecting context via SDK (silent query)')
-
-    // Look up session for the conversation
-    const sessionId = this.sessionMap.get(conversationId)
-    if (!sessionId) {
-      this.log.warn('Cannot inject context — no session for conversation:', conversationId)
-      return
-    }
-
-    // Fire a silent SDK query that doesn't emit chunks to the renderer
-    const executor = new SDKExecutor()
-    try {
-      for await (const chunk of executor.execute({
-        prompt: context,
-        systemPrompt: '',
-        model: modelConfigService.getModel(this.workspacePath, 'generalist'),
-        cwd: this.workspacePath,
-        permissionMode: this.currentMode === 'build' ? 'bypassPermissions' : 'plan',
-        resume: sessionId,
-        // Disable tool use during context injection
-        allowedTools: [],
-        agentId: AGENT_IDS.GENERALIST
-      })) {
-        // Only capture session ID and token usage — suppress all other output
-        if ('_meta' in chunk && chunk._meta) {
-          const meta = chunk._meta as SDKExecuteResult
-          if (meta.sessionId) {
-            this.sessionMap.set(conversationId, meta.sessionId)
-            try {
-              conversationRepository.updateSessionId(conversationId, meta.sessionId)
-            } catch (err) {
-              this.log.error('Failed to persist session ID:', err)
-            }
-          }
-          this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
-        }
-      }
-      this.log.info('Context injection complete')
-    } catch (error) {
-      this.log.error('Context injection failed:', error)
+    // Accumulate multiple injections (e.g. multi-specialist results) — they'll all
+    // be prepended together on the next send().
+    const existing = this.pendingContextInjection.get(conversationId)
+    if (existing) {
+      this.pendingContextInjection.set(conversationId, `${existing}\n\n${context}`)
+      this.log.info(
+        `Appended to pending context injection for conversation ${conversationId} (${context.length} chars added, total: ${existing.length + context.length + 2} chars)`
+      )
+    } else {
+      this.pendingContextInjection.set(conversationId, context)
+      this.log.info(
+        `Stored pending context injection for conversation ${conversationId} (${context.length} chars — will prepend to next send())`
+      )
     }
   }
 
@@ -700,22 +988,30 @@ export class GeneralistService extends AgentBaseService {
    * Checks input token count against compaction thresholds and emits
    * compactNeeded events or auto-triggers compaction.
    */
+  /**
+   * Strategy 7: Smarter compaction triggers.
+   * - Only auto-compact when idle (never during active tool execution)
+   * - Prefer compacting after specialist results are injected (not before)
+   * - Use structured compaction via injectContext() instead of send()
+   */
   private checkCompaction(inputTokens: number): void {
-    const autoThreshold =
-      this.costPreference === 'economy'
-        ? GeneralistService.COMPACT_AUTO_THRESHOLD_ECONOMY
-        : GeneralistService.COMPACT_AUTO_THRESHOLD
-    const suggestThreshold =
-      this.costPreference === 'economy'
-        ? GeneralistService.COMPACT_SUGGEST_THRESHOLD_ECONOMY
-        : GeneralistService.COMPACT_SUGGEST_THRESHOLD
+    const autoThreshold = this.compactAutoThreshold
+    const suggestThreshold = this.compactSuggestThreshold
 
     if (inputTokens >= autoThreshold) {
       this.log.warn(`Context very large (${inputTokens} input tokens) — auto-compacting`)
       this.emit('compactNeeded', { level: 'critical', inputTokens })
       // Auto-trigger compaction at critical threshold. Max 5 compactions per session.
+      // Strategy 7: Delay slightly to allow specialist results to be injected first.
       if (this.compactCount < 5) {
-        setTimeout(() => this.compact(), 1000)
+        setTimeout(() => {
+          // Only compact when idle — don't interrupt active queries
+          if (this.currentStatus === 'idle') {
+            this.compact().catch((err) => this.log.error('Auto-compaction failed:', err))
+          } else {
+            this.log.info('Deferring compaction — generalist is busy')
+          }
+        }, 2000)
       }
     } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
       this.compactSuggested = true
@@ -892,6 +1188,62 @@ export class GeneralistService extends AgentBaseService {
       throw new Error('Generalist not started — no workspace path set')
     }
 
+    // Refresh feature flags so settings changes take effect immediately
+    this.refreshFeatureFlags()
+
+    // ── Code Graph + Semantic Search: enrich filesDiscussed ──
+    if (this.repomapEnabled || this.semanticSearchEnabled) {
+      try {
+        const sources: { source: string; files: string[]; priority: number }[] = [
+          { source: 'generalist', files: brief.filesDiscussed, priority: 0 }
+        ]
+
+        if (this.repomapEnabled && this.workspaceId) {
+          const repomapFiles = await codeGraphService.getTopRankedFiles(
+            this.workspaceId,
+            brief.filesDiscussed,
+            50
+          )
+          if (repomapFiles.length > 0) {
+            sources.push({ source: 'repomap', files: repomapFiles, priority: 1 })
+          }
+        }
+
+        if (this.semanticSearchEnabled && this.workspaceId) {
+          try {
+            const semanticResults = await vectorSearchService.search(
+              this.workspaceId,
+              brief.summary,
+              { nResults: 10 }
+            )
+            if (semanticResults.length > 0) {
+              const semanticFiles = semanticResults.map((r) => r.filePath)
+              sources.push({ source: 'semantic', files: semanticFiles, priority: 2 })
+            }
+          } catch (semanticError) {
+            this.log.warn(
+              '[PIPELINE:semantic-enrich] Failed — skipping semantic enrichment:',
+              semanticError
+            )
+          }
+        }
+
+        if (sources.length > 1) {
+          const originalCount = brief.filesDiscussed.length
+          const { files, contributions } = enrichFilesDiscussed(sources)
+          brief.filesDiscussed = files
+          const contribStr = Object.entries(contributions)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(', ')
+          this.log.info(
+            `[PIPELINE:file-enrich] ${originalCount} → ${files.length} files (${contribStr})`
+          )
+        }
+      } catch (error) {
+        this.log.warn('[PIPELINE:file-enrich] Failed — using original filesDiscussed:', error)
+      }
+    }
+
     // ── FAST PATH: single specialist → skip decomposition LLM call entirely ──
     // When the handoff names exactly 1 specialist, decomposition is a no-op
     // (it would just return 1 task). Save ~2K tokens + 3-5s latency.
@@ -913,15 +1265,14 @@ export class GeneralistService extends AgentBaseService {
         specialist: brief.specialists[0],
         description,
         dependsOn: [],
-        verificationCommand: isInvestigation ? null as unknown as undefined : 'npm run typecheck'
+        verificationCommand: isInvestigation ? (null as unknown as undefined) : 'npm run typecheck'
       }
 
       // Enrich with complexity scoring (same as full path)
       const settings = this.workspacePath
         ? workspaceRepository.getSettingsByPath(this.workspacePath)
         : {}
-      const costPreference =
-        (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
+      const costPreference = (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
       const enrichedTasks = enrichTasksWithComplexity([syntheticTask], costPreference)
 
       eventLoggerService.logDecompositionStarted({
@@ -943,12 +1294,26 @@ export class GeneralistService extends AgentBaseService {
         `  ${enrichedTasks[0].id}: ${enrichedTasks[0].complexity?.tier}/${enrichedTasks[0].model} (score: ${enrichedTasks[0].complexity?.total}) [fast-path]`
       )
 
+      // Strategy 13: Pre-select investigation depth based on question complexity.
+      // Quick mode (3 turns, 5 tools) saves 1,500-3,500 tokens for simple questions.
+      const filesCount = brief.filesDiscussed?.length ?? 0
+      const summaryLower = brief.summary.toLowerCase()
+      const needsDeepInvestigation =
+        summaryLower.includes('audit') ||
+        summaryLower.includes('comprehensive') ||
+        summaryLower.includes('all files') ||
+        summaryLower.includes('across the codebase') ||
+        filesCount > 3
+      const suggestedDepth = needsDeepInvestigation ? 'standard' : 'quick'
+      this.log.info(`[PIPELINE:depth-preselect] files=${filesCount} suggested=${suggestedDepth}`)
+
       return {
         conversationId,
         summary: brief.summary,
         mode,
         tasks: enrichedTasks,
-        brief
+        brief,
+        investigationDepth: suggestedDepth as InvestigationDepth
       }
     }
 
@@ -1144,6 +1509,10 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
     }
   }
 
+  /**
+   * @deprecated Strategy 14: Not used in production — specialistPoolService handles execution.
+   * Retained only for test compatibility. Do NOT add new callers.
+   */
   async executeWithSubAgents(
     taskPlan: TaskPlan,
     mode: ConversationMode,
@@ -1153,9 +1522,25 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
       throw new Error('Generalist not started')
     }
 
+    // Refresh feature flags so settings changes take effect immediately
+    this.refreshFeatureFlags()
+
     this.currentBrief = taskPlan.brief ?? null
 
-    const agents = this.buildSubAgentDefinitions(taskPlan.tasks, mode)
+    // Collect active MCP server names so SubAgents can reference the parent's in-process instances
+    const activeMcpNames: string[] = []
+    if (this.repomapEnabled && this.workspaceId) activeMcpNames.push('code-graph')
+    if (this.semanticSearchEnabled && this.workspaceId) activeMcpNames.push('semantic-search')
+    // git-context is available to SubAgent specialists (always on)
+    activeMcpNames.push('git-context')
+    // NOTE: task-context, checkpoint-context, github-context are generalist-only — NOT passed to SubAgents
+
+    const agents = this.buildSubAgentDefinitions(
+      taskPlan.tasks,
+      mode,
+      conversationId,
+      activeMcpNames
+    )
 
     const taskList = taskPlan.tasks
       .map((t) => {
@@ -1200,7 +1585,36 @@ Rules:
         agents,
         resume: sessionId,
         abortController,
-        agentId: AGENT_IDS.GENERALIST
+        agentId: AGENT_IDS.GENERALIST,
+        // MCP tools: expose all configured servers during SubAgent orchestration
+        ...(() => {
+          const servers: Record<string, McpServerConfig> = {}
+          // Existing: code graph + semantic search (conditional)
+          if (this.repomapEnabled && this.workspaceId)
+            Object.assign(
+              servers,
+              codeGraphMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath!)
+            )
+          if (this.semanticSearchEnabled && this.workspaceId)
+            Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(this.workspaceId))
+          // Git context: always on
+          Object.assign(servers, gitContextMcpService.getMcpServersConfig(this.workspacePath!))
+          // Task + checkpoint context: conversation-scoped (generalist-level only)
+          if (conversationId) {
+            Object.assign(
+              servers,
+              taskContextMcpService.getMcpServersConfig(conversationId, this.workspacePath!)
+            )
+            Object.assign(servers, checkpointContextMcpService.getMcpServersConfig(conversationId))
+          }
+          // GitHub context: conditional on token
+          if (this.githubConfigured && this.workspaceId)
+            Object.assign(
+              servers,
+              gitHubContextMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath!)
+            )
+          return Object.keys(servers).length > 0 ? { mcpServers: servers } : {}
+        })()
       })) {
         if ('_meta' in chunk && chunk._meta) {
           const meta = chunk._meta as SDKExecuteResult
@@ -1218,8 +1632,7 @@ Rules:
           if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
             const totalInput =
               meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
-            const cacheHitRate =
-              totalInput > 0 ? (cacheReadInputTokens / totalInput) * 100 : 0
+            const cacheHitRate = totalInput > 0 ? (cacheReadInputTokens / totalInput) * 100 : 0
             this.log.info(
               `[PIPELINE:subagent-cache] read=${cacheReadInputTokens} creation=${cacheCreationInputTokens} hitRate=${cacheHitRate.toFixed(1)}%`
             )
@@ -1301,14 +1714,26 @@ Rules:
 
   private buildSubAgentDefinitions(
     tasks: DecomposedTask[],
-    mode: ConversationMode
+    mode: ConversationMode,
+    conversationId?: string,
+    mcpServerNames?: string[]
   ): Record<string, SDKAgentDefinition> {
+    // Strategy A: Look up conversation-level specialist overrides to determine
+    // skillsEnabled/skillOverrides per specialist. When no specialists are "active"
+    // (skillsEnabled=false), we still inject the YAML persona prompt but skip all SKILL.md content.
+    const conversationOverrides = conversationId
+      ? conversationSpecialistRepository.findByConversation(conversationId)
+      : []
+    const overrideMap = new Map(
+      conversationOverrides.map((override) => [override.specialistId, override])
+    )
+
     return buildSubAgentDefinitionsUtil(
       tasks,
       mode,
       (specialistId, specialistTasks, specialistMode) => {
         const specialist = specialistRepository.findByAgentId(specialistId)
-        const assignedSkills = agentRegistry.getSkillsForAgent(specialistId)
+        const assignedSkills = specialist ? specialistRepository.getSkills(specialist.id) : []
         const taskModels = specialistTasks.map((task) => task.model ?? 'sonnet')
         const model = taskModels.includes('opus')
           ? 'opus'
@@ -1318,12 +1743,21 @@ Rules:
 
         const budgetTier: BudgetTier =
           model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
+
+        // Strategy A: Resolve per-specialist skill settings from conversation overrides.
+        // When skillsEnabled is false, only the YAML persona prompt is injected (no SKILL.md).
+        const override = overrideMap.get(specialist?.id ?? '')
+        const skillsEnabled = override?.skillsEnabled ?? true
+        const skillOverrides = override?.skillOverrides ?? undefined
+
         const systemPrompt = promptBuilder.build({
           role: 'specialist',
           mode: specialistMode,
           specialistId,
           specialistPrompt: specialist?.prompt || undefined,
           assignedSkills,
+          skillsEnabled,
+          skillOverrides,
           workspacePath: this.workspacePath!,
           brief: this.currentBrief || undefined,
           budgetTier
@@ -1333,7 +1767,8 @@ Rules:
           systemPrompt,
           description: `${specialist?.displayName ?? specialistId}: ${specialist?.prompt?.substring(0, 200) ?? 'Specialist agent'}`
         }
-      }
+      },
+      mcpServerNames
     )
   }
 
@@ -1346,6 +1781,16 @@ Rules:
       this.sdkAbortController.abort()
       this.sdkAbortController = null
     }
+    // Clean up code graph MCP server
+    if (this.workspaceId) codeGraphMcpService.dispose(this.workspaceId)
+    this.repomapEnabled = false
+    // Clean up semantic search
+    if (this.semanticSearchEnabled && this.workspaceId) {
+      semanticSearchMcpService.dispose(this.workspaceId)
+      await vectorSearchService.dispose(this.workspaceId)
+    }
+    this.semanticSearchEnabled = false
+
     this.completeDbSession('terminated')
     this.activeSubagents.clear()
     this.currentStatus = 'idle'
@@ -1425,8 +1870,47 @@ Rules:
   }
 
   /**
-   * Sends a compact command via the SDK, asking the agent to summarize
-   * and compress the conversation context to save tokens.
+   * Strategy M: Returns prompt cache efficiency metrics for dashboard display.
+   * Tracks cumulative cache read/creation across all turns for this session.
+   */
+  getCacheEfficiency(): {
+    hitRate: number
+    savedTokens: number
+    totalInput: number
+    turns: number
+  } {
+    const totalWithCache =
+      this.cacheStats.totalInput + this.cacheStats.cacheRead + this.cacheStats.cacheCreation
+    const hitRate = totalWithCache > 0 ? (this.cacheStats.cacheRead / totalWithCache) * 100 : 0
+    return {
+      hitRate,
+      savedTokens: this.cacheStats.cacheRead,
+      totalInput: this.cacheStats.totalInput,
+      turns: this.cacheStats.turns
+    }
+  }
+
+  /**
+   * Strategy 7: Structured compaction via injectContext() instead of send().
+   *
+   * Previous approach used send() which:
+   * - Counted as a user turn (changed budget tier)
+   * - Triggered full prompt rebuild pipeline
+   * - Produced unstructured prose summaries
+   *
+   * New approach uses injectContext() which:
+   * - Does NOT count as a user turn
+   * - Does NOT rebuild the system prompt
+   * - Sends a structured compaction prompt that produces a concise summary
+   * - Only fires after specialist results are injected (not before)
+   */
+  /**
+   * Strategy B: Lazy compaction — stores a compaction instruction to be prepended to the next send().
+   *
+   * Previously this called injectContext() which fired a full SDK query() with session resume,
+   * replaying the entire conversation history (30-50K tokens). Now we store the compaction
+   * instruction and piggyback it on the next user message — the compaction happens as part
+   * of the normal message flow at zero additional cost.
    */
   async compact(): Promise<void> {
     if (!this.workspacePath || !this.currentConversationId) {
@@ -1438,16 +1922,24 @@ Rules:
       throw new Error('No session to compact')
     }
 
-    this.log.info(`Compacting context... (compact #${this.compactCount + 1})`)
+    this.log.info(
+      `Scheduling lazy compaction (compact #${this.compactCount + 1}) — will execute on next send()`
+    )
     this.compactCount++
     this.compactSuggested = false
 
-    // Send compaction prompt via SDK using the existing session
-    await this.send(
-      '/compact — Summarize our entire conversation so far into a concise context summary. ' +
-        'Include: key decisions made, current task state, any pending items, and important code/file references. ' +
-        'Then continue using this summary as your working context.',
-      this.currentConversationId
+    // Store the compaction instruction — will be prepended to the next user message in send()
+    this.pendingCompaction.set(
+      this.currentConversationId,
+      `/compact — Before answering the user's message below, first summarize our entire conversation into a concise context summary:
+
+**Decisions:** Key decisions made (architecture choices, approach selections)
+**Current Task:** What we're actively working on
+**Files:** Important file paths referenced or modified
+**Pending:** Unresolved items or next steps
+**Specialist Findings:** Key results from any specialist investigations
+
+Be extremely terse — bullet points only. Omit categories with no items. Then continue using this summary as your working context and answer the user's message that follows.`
     )
   }
 

@@ -7,8 +7,6 @@ description: >
   Kubernetes, message queues, caching, microservices, serverless functions, data processing,
   CLI tool development, and general backend/infrastructure work. Use when no other specialist
   matches the technology or task domain.
-model: sonnet
-tools: [Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch]
 skills:
   - general-dev
 ---

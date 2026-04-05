@@ -10,7 +10,7 @@ import type {
   PlacedFurniture,
   TileType as TileTypeVal
 } from '../engine/types'
-import { MAX_COLS, MAX_ROWS, TileType } from '../engine/types'
+import { EditTool, MAX_COLS, MAX_ROWS, TileType } from '../engine/types'
 
 /** Paint a single tile with pattern and color. Returns new layout (immutable). */
 export function paintTile(
@@ -201,6 +201,136 @@ export function canPlaceFurniture(
   }
 
   return true
+}
+
+/**
+ * Find the first furniture item whose footprint covers (col, row).
+ * Shared hit-test used by editor tools, PhaserEditorScene, and sub-hooks.
+ */
+export function findFurnitureAtTile(
+  furniture: PlacedFurniture[],
+  col: number,
+  row: number
+): PlacedFurniture | undefined {
+  return furniture.find((f) => {
+    const entry = getCatalogEntry(f.type)
+    if (!entry) return false
+    return (
+      col >= f.col &&
+      col < f.col + entry.footprintW &&
+      row >= f.row &&
+      row < f.row + entry.footprintH
+    )
+  })
+}
+
+// ── Pure decision functions (extracted from hooks to reduce complexity) ──
+
+/** Resolve a tile paint action. Returns new layout or null if unchanged. */
+export function resolveTilePaintAction(
+  layout: OfficeLayout,
+  col: number,
+  row: number,
+  tileType: TileTypeVal,
+  floorColor: FloorColor
+): OfficeLayout | null {
+  const newLayout = paintTile(layout, col, row, tileType, floorColor)
+  return newLayout !== layout ? newLayout : null
+}
+
+/**
+ * Resolve a wall paint action with drag-adding state machine.
+ * Returns { layout, wallDragAdding } where layout is null if no change.
+ */
+export function resolveWallPaintAction(
+  layout: OfficeLayout,
+  col: number,
+  row: number,
+  wallDragAdding: boolean | null,
+  wallColor: FloorColor,
+  fallbackTileType: TileTypeVal,
+  fallbackFloorColor: FloorColor
+): { layout: OfficeLayout | null; wallDragAdding: boolean | null } {
+  const idx = row * layout.cols + col
+  const isWall = layout.tiles[idx] === TileType.WALL
+
+  const dragAdding = wallDragAdding === null ? !isWall : wallDragAdding
+
+  if (dragAdding) {
+    const newLayout = paintTile(layout, col, row, TileType.WALL, wallColor)
+    return { layout: newLayout !== layout ? newLayout : null, wallDragAdding: dragAdding }
+  } else {
+    if (isWall) {
+      const newLayout = paintTile(layout, col, row, fallbackTileType, fallbackFloorColor)
+      return { layout: newLayout !== layout ? newLayout : null, wallDragAdding: dragAdding }
+    }
+  }
+  return { layout: null, wallDragAdding: dragAdding }
+}
+
+/** Resolve an erase action. Returns new layout or null if unchanged. */
+export function resolveEraseAction(
+  layout: OfficeLayout,
+  col: number,
+  row: number
+): OfficeLayout | null {
+  if (col < 0 || col >= layout.cols || row < 0 || row >= layout.rows) return null
+  const idx = row * layout.cols + col
+  if (layout.tiles[idx] === TileType.VOID) return null
+  const newLayout = paintTile(layout, col, row, TileType.VOID)
+  return newLayout !== layout ? newLayout : null
+}
+
+/** Result of resolving an eyedropper sample */
+interface EyedropperResult {
+  /** Tool to switch to */
+  tool: typeof EditTool.TILE_PAINT | typeof EditTool.WALL_PAINT
+  /** Sampled tile type (only for floor tiles) */
+  tileType?: TileTypeVal
+  /** Sampled color */
+  color?: FloorColor
+}
+
+/** Resolve an eyedropper action at (col, row). Returns what was sampled or null if void. */
+export function resolveEyedropperAction(
+  layout: OfficeLayout,
+  col: number,
+  row: number
+): EyedropperResult | null {
+  const idx = row * layout.cols + col
+  const tile = layout.tiles[idx]
+  if (tile === undefined || tile === TileType.VOID) return null
+
+  const color = layout.tileColors?.[idx] ?? undefined
+
+  if (tile !== TileType.WALL) {
+    return { tool: EditTool.TILE_PAINT, tileType: tile, color: color ? { ...color } : undefined }
+  } else {
+    return { tool: EditTool.WALL_PAINT, color: color ? { ...color } : undefined }
+  }
+}
+
+/**
+ * Resolve furniture placement at (col, row).
+ * Returns the new layout and placed item, or null if placement is invalid.
+ */
+export function resolveFurniturePlacement(
+  layout: OfficeLayout,
+  col: number,
+  row: number,
+  furnitureType: string,
+  color?: FloorColor | null
+): { layout: OfficeLayout; placed: PlacedFurniture } | null {
+  const placementRow = getWallPlacementRow(furnitureType, row)
+  if (!canPlaceFurniture(layout, furnitureType, col, placementRow)) return null
+  const uid = `f-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  const placed: PlacedFurniture = { uid, type: furnitureType, col, row: placementRow }
+  if (color) {
+    placed.color = { ...color }
+  }
+  const newLayout = placeFurniture(layout, placed)
+  if (newLayout === layout) return null
+  return { layout: newLayout, placed }
 }
 
 export type ExpandDirection = 'left' | 'right' | 'up' | 'down'

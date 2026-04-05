@@ -136,6 +136,93 @@ export class GitHubService {
   }
 
   /**
+   * List review comments on a pull request.
+   */
+  async listPullRequestComments(
+    workspaceId: string,
+    repoPath: string,
+    prNumber: number,
+    perPage: number = 10
+  ): Promise<
+    Array<{
+      id: number
+      author: string
+      body: string
+      path: string
+      line: number | null
+      createdAt: string
+    }>
+  > {
+    const octokit = this.getOctokit(workspaceId)
+    const { owner, repo } = await this.parseRemoteUrl(repoPath)
+
+    const response = await octokit.rest.pulls.listReviewComments({
+      owner,
+      repo,
+      pull_number: prNumber,
+      per_page: perPage,
+      sort: 'created',
+      direction: 'desc'
+    })
+
+    return response.data.map((c) => ({
+      id: c.id,
+      author: c.user?.login ?? 'unknown',
+      body: c.body.slice(0, 500),
+      path: c.path,
+      line: c.line ?? null,
+      createdAt: c.created_at
+    }))
+  }
+
+  /**
+   * List issues for the repository.
+   */
+  async listIssues(
+    workspaceId: string,
+    repoPath: string,
+    opts: { state?: 'open' | 'closed' | 'all'; perPage?: number; labels?: string } = {}
+  ): Promise<
+    Array<{
+      number: number
+      title: string
+      author: string
+      state: string
+      labels: string[]
+      createdAt: string
+      body: string | null
+    }>
+  > {
+    const octokit = this.getOctokit(workspaceId)
+    const { owner, repo } = await this.parseRemoteUrl(repoPath)
+
+    const params: Record<string, unknown> = {
+      owner,
+      repo,
+      state: opts.state ?? 'open',
+      per_page: opts.perPage ?? 10,
+      sort: 'created',
+      direction: 'desc'
+    }
+    if (opts.labels) params.labels = opts.labels
+
+    const response = await octokit.rest.issues.listForRepo(params)
+
+    // Filter out pull requests (GitHub API returns PRs as issues too)
+    return response.data
+      .filter((i) => !i.pull_request)
+      .map((i) => ({
+        number: i.number,
+        title: i.title,
+        author: i.user?.login ?? 'unknown',
+        state: i.state ?? 'unknown',
+        labels: (i.labels ?? []).map((l) => (typeof l === 'string' ? l : (l.name ?? ''))),
+        createdAt: i.created_at,
+        body: i.body ? i.body.slice(0, 300) : null
+      }))
+  }
+
+  /**
    * Get an authenticated Octokit instance for a workspace.
    */
   private getOctokit(workspaceId: string): Octokit {

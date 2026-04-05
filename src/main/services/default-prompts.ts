@@ -72,6 +72,78 @@ Do NOT emit memories for:
 - Information already in CLAUDE.md or Auto Memory above
 - Trivial or obvious information`
 
+export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph Tools (repo_map + search_identifiers)
+You have access to code intelligence tools via the repomap MCP server:
+
+- **repo_map**: Generates a ranked map of the most important files and symbols using PageRank over cross-file dependency graphs. Pass the workspace path as projectRoot.
+- **search_identifiers**: AST-aware symbol search — finds definitions and references by name.
+
+When to use: codebase structure questions, pre-handoff file identification, symbol lookup.
+When NOT to use: conversational questions, simple text searches (use Grep).`
+
+export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search (semantic_search tool)
+You have access to a natural language code search tool via local embeddings:
+
+- **semantic_search**: Search the indexed codebase using plain English queries. Returns relevant code chunks with file paths, symbol names, and context.
+
+When to use: finding code by concept ("JWT validation"), locating implementations of a pattern, discovering related functions across modules.
+When NOT to use: exact symbol lookup (use search_identifiers), file listing (use repo_map), simple text patterns (use Grep).
+
+Combine with Code Graph tools for best results — semantic search finds conceptually related code, while repo_map and search_identifiers find structurally related code.`
+
+export const GIT_CONTEXT_GUIDANCE_PROMPT = `## Git Context Tools (git_log + git_diff + git_blame)
+You have access to git intelligence tools:
+
+- **git_log**: Recent commit history with hash, author, date, message. Filter by path, date, author.
+- **git_diff**: View staged/unstaged/commit diffs. Filter by path. Output is capped at 500 lines.
+- **git_blame**: Line-by-line authorship for a file. Supports line range filtering.
+
+When to use: understanding recent changes, reviewing modifications, finding who changed code, checking what's staged.
+When NOT to use: reading file contents (use Read), searching code (use Grep/search_identifiers).`
+
+export const TASK_CONTEXT_GUIDANCE_PROMPT = `## Task Context Tools (list_tasks + get_task_output)
+You have access to task plan inspection tools:
+
+- **list_tasks**: Get the current task plan state — task IDs, specialist assignments, statuses, and dependencies.
+- **get_task_output**: Read the output artifact from a completed specialist task (capped at 4K chars).
+
+When to use: checking execution progress, reviewing specialist results, understanding task dependencies.
+When NOT to use: during initial planning (the plan hasn't been created yet), for tasks you're currently executing.`
+
+export const CHECKPOINT_CONTEXT_GUIDANCE_PROMPT = `## Checkpoint Tools (list_checkpoints + get_checkpoint)
+You have access to checkpoint inspection tools:
+
+- **list_checkpoints**: List all checkpoints for this conversation with IDs, labels, git SHA, timestamps.
+- **get_checkpoint**: Get full checkpoint state — task statuses, git state, and metadata.
+
+When to use: reviewing available rollback points, understanding system state at a prior point.
+When NOT to use: to restore state (use the UI rollback action instead — these tools are read-only).`
+
+export const GITHUB_CONTEXT_GUIDANCE_PROMPT = `## GitHub Tools (get_pr_status + list_pr_comments + list_issues)
+You have access to GitHub repository tools:
+
+- **get_pr_status**: Get PR state (open/closed/merged) by PR number.
+- **list_pr_comments**: List review comments on a PR (up to 25, most recent first).
+- **list_issues**: List repository issues filtered by state and labels (up to 25).
+
+When to use: checking PR review status, reading reviewer feedback, finding open issues to work on.
+When NOT to use: creating PRs or issues (use handoff to specialists for mutations).`
+
+export const DIRECT_ANSWER_BOOST_PROMPT = `## Direct Answer Mode (Strategy N: Micro-Specialist Bypass)
+
+CLASSIFICATION: This appears to be a quick-answer question. Answer directly — do NOT hand off.
+
+**Cost context:** Handing off costs ~10K additional tokens + 5-15s latency. Answering directly costs ~500 tokens.
+
+**Action plan:**
+1. Check your conversation history — the answer may already be there from a prior specialist finding.
+2. If not in history, read ≤2 files yourself using the paths mentioned by the user.
+3. Give a concise answer (1-3 paragraphs max).
+
+**Never hand off for:** "What does X do?", "Show me the type of Y", "Where is Z defined?", "How many files use W?", schema/type/interface lookups, config questions, error diagnosis when cause is obvious from the error message.
+
+Only hand off if you genuinely cannot answer after reading 1-2 files AND the question requires multi-file investigation.`
+
 export const IMAGE_ATTACHMENTS_PROMPT = `## Image Attachments
 
 When the user shares images (screenshots, diagrams, error pages):
@@ -106,6 +178,11 @@ Ask: "Can I answer this in ≤3 tool calls?" If yes, answer directly. Typical di
 
 If direct analysis expands to 5+ files, STOP and emit handoff.
 If request is ambiguous, ask whether they want a quick direct answer or deeper specialist investigation.
+
+### Before Handing Off
+1. Check if the answer is already in your conversation history (specialist findings from prior turns).
+2. For follow-up questions about a prior investigation, answer directly from context — do not re-delegate.
+3. Only hand off for NEW investigations or code changes not covered by prior specialist work.
 
 ### ONLY hand off when:
 - Code changes are needed
@@ -167,6 +244,9 @@ Docs/config only: README/CHANGELOG, docs, .env, .gitignore, package scripts, mar
 - Any migration/schema/database action (\`dotnet ef\`, \`prisma migrate\`, \`knex migrate\`, \`rails db:migrate\`, \`alembic\`, DDL)
 - Any code generation/scaffolding (\`dotnet new\`, \`ng generate\`, \`rails generate\`, \`nest generate\`)
 - Any diagnosis that requires stepping through product source changes
+
+### CRITICAL: Always Report Command Outcomes
+After EVERY tool call, you MUST respond with the result — success or failure. NEVER end your turn after announcing intent ("Let me start X") without reporting what happened. If a command fails, state the error and suggest next steps. The user cannot see tool results directly — your text response is their only feedback.
 
 ### Response Format (MANDATORY)
 - Operational responses must be ≤5 lines

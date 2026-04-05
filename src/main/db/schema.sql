@@ -259,12 +259,13 @@ CREATE TABLE IF NOT EXISTS events (
   event_type TEXT NOT NULL,
   category TEXT NOT NULL CHECK (category IN (
     'session', 'agent', 'escalation', 'gate', 'abandonment',
-    'checkpoint', 'hook', 'budget', 'error'
+    'checkpoint', 'hook', 'budget', 'error', 'telemetry'
   )),
   message TEXT NOT NULL,
   data_json TEXT DEFAULT '{}',
   agent_id TEXT,
   model TEXT,
+  sequence_number INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
@@ -307,3 +308,173 @@ CREATE TABLE IF NOT EXISTS app_preferences (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ── Unified Storage: Code Intelligence Tables ───────────────────────────────
+
+-- Preprocessed code units for semantic search
+CREATE TABLE IF NOT EXISTS code_chunks (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  directory TEXT NOT NULL,
+  symbol_name TEXT NOT NULL,
+  symbol_kind TEXT NOT NULL,
+  class_name TEXT,
+  signature TEXT NOT NULL,
+  start_line INTEGER NOT NULL,
+  end_line INTEGER NOT NULL,
+  language TEXT NOT NULL,
+  body TEXT NOT NULL,
+  embed_text TEXT NOT NULL,
+  is_public INTEGER NOT NULL DEFAULT 1,
+  is_async INTEGER NOT NULL DEFAULT 0,
+  has_docstring INTEGER NOT NULL DEFAULT 0,
+  line_count INTEGER NOT NULL,
+  file_mtime REAL NOT NULL,
+  indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(workspace_id, file_path, symbol_name, start_line)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_workspace ON code_chunks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_file ON code_chunks(workspace_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_chunks_symbol ON code_chunks(workspace_id, symbol_name);
+CREATE INDEX IF NOT EXISTS idx_chunks_kind ON code_chunks(workspace_id, symbol_kind);
+CREATE INDEX IF NOT EXISTS idx_chunks_language ON code_chunks(workspace_id, language);
+
+-- Vector embeddings stored as BLOBs (768 floats x 4 bytes = 3,072 bytes per vector)
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+  chunk_id TEXT PRIMARY KEY REFERENCES code_chunks(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  embedding BLOB NOT NULL,
+  model TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_workspace ON chunk_embeddings(workspace_id);
+
+-- AI-generated code descriptions (replaces description-cache.db)
+CREATE TABLE IF NOT EXISTS chunk_descriptions (
+  key TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  description TEXT NOT NULL,
+  model TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  symbol_name TEXT NOT NULL,
+  generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_descriptions_workspace ON chunk_descriptions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_descriptions_file ON chunk_descriptions(file_path);
+
+-- Cached symbol relationships from code graph / repomap
+CREATE TABLE IF NOT EXISTS code_graph_edges (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  source_file TEXT NOT NULL,
+  source_symbol TEXT NOT NULL,
+  target_file TEXT NOT NULL,
+  target_symbol TEXT NOT NULL,
+  edge_type TEXT NOT NULL CHECK (edge_type IN ('calls', 'imports', 'extends', 'implements', 'references')),
+  page_rank REAL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_workspace ON code_graph_edges(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_graph_source ON code_graph_edges(workspace_id, source_file, source_symbol);
+CREATE INDEX IF NOT EXISTS idx_graph_target ON code_graph_edges(workspace_id, target_file, target_symbol);
+
+-- Tree-sitter tags (def + ref) per workspace — enables incremental re-indexing via mtime
+CREATE TABLE IF NOT EXISTS code_graph_tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  rel_fname TEXT NOT NULL,
+  fname TEXT NOT NULL,
+  line INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('def', 'ref')),
+  file_mtime REAL NOT NULL,
+  indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(workspace_id, rel_fname, line, name, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cg_tags_workspace ON code_graph_tags(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_cg_tags_file ON code_graph_tags(workspace_id, rel_fname);
+CREATE INDEX IF NOT EXISTS idx_cg_tags_name ON code_graph_tags(workspace_id, name);
+CREATE INDEX IF NOT EXISTS idx_cg_tags_kind ON code_graph_tags(workspace_id, kind);
+
+-- Per-file PageRank scores — pre-computed during indexing for instant lookups
+CREATE TABLE IF NOT EXISTS code_graph_ranks (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  rel_fname TEXT NOT NULL,
+  page_rank REAL NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (workspace_id, rel_fname)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cg_ranks_workspace ON code_graph_ranks(workspace_id);
+
+-- Indexing state for code graph (separate from semantic search indexing_state)
+CREATE TABLE IF NOT EXISTS code_graph_state (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'idle',
+  total_files INTEGER NOT NULL DEFAULT 0,
+  processed_files INTEGER NOT NULL DEFAULT 0,
+  total_tags INTEGER NOT NULL DEFAULT 0,
+  total_edges INTEGER NOT NULL DEFAULT 0,
+  last_completed_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Persistent indexing progress per workspace (resume-after-crash)
+CREATE TABLE IF NOT EXISTS indexing_state (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'idle',
+  total_files INTEGER NOT NULL DEFAULT 0,
+  processed_files INTEGER NOT NULL DEFAULT 0,
+  total_chunks INTEGER NOT NULL DEFAULT 0,
+  processed_chunks INTEGER NOT NULL DEFAULT 0,
+  embedding_model TEXT,
+  last_completed_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Inter-Agent Communication ──────────────────────────────────────────────
+
+-- Persistent inter-agent message log for crash recovery and audit
+CREATE TABLE IF NOT EXISTS agent_messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  run_id TEXT,
+  from_agent TEXT NOT NULL,
+  to_agent TEXT,
+  type TEXT NOT NULL CHECK (type IN ('context', 'finding', 'dependency', 'feedback', 'status', 'artifact', 'custom')),
+  content TEXT NOT NULL,
+  task_id TEXT,
+  metadata_json TEXT DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_conversation ON agent_messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_run ON agent_messages(run_id);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_task ON agent_messages(task_id);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_from ON agent_messages(from_agent);
+
+-- ── Per-Turn Token Usage ──────────────────────────────────────────────────
+
+-- Fine-grained token usage per turn for cost debugging and cache rate trends
+CREATE TABLE IF NOT EXISTS turn_usage (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  session_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  turn_number INTEGER NOT NULL,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cache_read_tokens INTEGER DEFAULT 0,
+  cache_creation_tokens INTEGER DEFAULT 0,
+  model TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id);

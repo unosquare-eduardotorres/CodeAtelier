@@ -4,8 +4,6 @@ description: >
   CI/CD, DevOps, and cloud infrastructure specialist. Handles build pipelines, GitHub Actions,
   electron-builder packaging, code signing, Docker, cloud services (AWS/Azure/GCP), IaC
   (Terraform/CloudFormation), release automation, and deployment strategies.
-model: sonnet
-tools: [Read, Write, Edit, Bash, Grep, Glob]
 skills: [electron-pro, infrastructure]
 ---
 

@@ -33,7 +33,7 @@ class SpecialistDeployService {
       throw new Error(`Cannot deploy/undeploy core agent: ${specialist.agentId}`)
     }
 
-    const skills = specialistRepository.getSkills(specialistId)
+    const skills = specialistRepository.getAllSkills(specialistId)
     const agentFilename = `${specialist.agentId}.yml`
 
     // 1. Deploy agent YAML
@@ -82,7 +82,7 @@ class SpecialistDeployService {
       throw new Error(`Cannot undeploy core agent: ${specialist.agentId}`)
     }
 
-    const skills = specialistRepository.getSkills(specialistId)
+    const skills = specialistRepository.getAllSkills(specialistId)
     const agentFilename = `${specialist.agentId}.yml`
 
     // 1. Remove agent YAML

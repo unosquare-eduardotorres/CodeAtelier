@@ -39,6 +39,12 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
     return results
   })
 
+  // Strategy M: Cache efficiency metrics for dashboard
+  ipcMain.handle(IPC_CHANNELS.AGENT_CACHE_EFFICIENCY, async (event) => {
+    validateSender(event)
+    return generalistService.getCacheEfficiency()
+  })
+
   // Forward status updates from generalist
   generalistService.on('statusUpdate', (status: AgentStatus) => {
     mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, status)

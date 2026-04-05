@@ -12,19 +12,8 @@ import type {
 } from '../engine/types'
 import { DEFAULT_COLS, DEFAULT_ROWS, Direction, TILE_SIZE, TileType } from '../engine/types'
 import { getCatalogEntry, getOrientationInGroup } from './furnitureCatalog'
+import { validateLayout } from './layoutValidator'
 
-// ── Colorize stub ────────────────────────────────────────────────
-// The original uses getColorizedSprite from ../colorize.js for runtime
-// furniture tinting. Provide a pluggable hook so consumers can inject
-// the real implementation without coupling this module to canvas helpers.
-
-type ColorizeSpriteFn = (key: string, sprite: string[][], color: FloorColor) => string[][]
-let _colorizeSprite: ColorizeSpriteFn | null = null
-
-/** Register a colorize implementation (call once at startup if colorized furniture is needed). */
-export function setColorizeSpriteImpl(fn: ColorizeSpriteFn): void {
-  _colorizeSprite = fn
-}
 
 /** Convert flat tile array from layout into 2D grid */
 export function layoutToTileMap(layout: OfficeLayout): TileTypeVal[][] {
@@ -88,16 +77,7 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
       }
     }
 
-    // Colorize sprite if this furniture has a color override
-    let sprite = entry.sprite
-    if (item.color && _colorizeSprite) {
-      const { h, s, b: bv, c: cv } = item.color
-      sprite = _colorizeSprite(
-        `furn-${item.type}-${h}-${s}-${bv}-${cv}-${item.color.colorize ? 1 : 0}`,
-        entry.sprite,
-        item.color
-      )
-    }
+    const sprite = entry.sprite
 
     // Determine if this instance should be mirrored (side asset used in "left" orientation)
     let mirrored = false
@@ -320,13 +300,16 @@ function migrateFurnitureTypes(furniture: PlacedFurniture[]): PlacedFurniture[] 
   return migrated
 }
 
-/** Deserialize layout from JSON string, migrating old tile types if needed */
+/** Deserialize layout from JSON string, validating and migrating old tile types if needed */
 export function deserializeLayout(json: string): OfficeLayout | null {
   try {
     const obj = JSON.parse(json)
-    if (obj && obj.version && Array.isArray(obj.tiles) && Array.isArray(obj.furniture)) {
-      return migrateLayout(obj as OfficeLayout)
+    const result = validateLayout(obj)
+    if (!result.valid) {
+      console.warn('Layout validation errors:', result.errors)
+      return null
     }
+    return migrateLayout(result.layout!)
   } catch {
     /* ignore parse errors */
   }

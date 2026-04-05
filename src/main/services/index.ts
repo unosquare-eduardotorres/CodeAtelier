@@ -11,15 +11,9 @@ export type { PromptBuildOptions, PromptRole } from './prompt-builder'
 
 // Backward-compatible re-exports of prompt constants (from prompt-builder)
 export {
-  PLAN_MODE_SYSTEM_PROMPT,
-  BUILD_MODE_SYSTEM_PROMPT,
   DECOMPOSITION_SYSTEM_PROMPT,
   SPECIALIST_TASK_SYSTEM_PROMPT
 } from './prompt-builder'
-
-// Agent registry — YAML single source of truth
-export { AgentRegistry, agentRegistry } from './agent-registry'
-export type { AgentDefinition } from './agent-registry'
 
 export { SpecialistPoolService, specialistPoolService } from './specialist-pool.service'
 export { GitWorktreeService, gitWorktreeService } from './git-worktree.service'

@@ -21,7 +21,8 @@ import {
   useConversationSpecialists,
   useConversationTokenEstimates,
   useSpecialistWarningPreferences,
-  useAppPreferenceActions
+  useAppPreferenceActions,
+  useSpecialistStore
 } from '@renderer/store'
 import { useVoiceInput } from '@renderer/hooks'
 import { ConfirmDialog } from '@renderer/components/common'
@@ -123,9 +124,17 @@ export default function MessageInput({
     useSpecialistWarningPreferences()
   const { loadPreferences } = useAppPreferenceActions()
   const isInitializing = agentStatus === 'starting'
+  const workspaceSpecialists = useSpecialistStore((s) => s.specialists)
+  const coreSpecialistIds = useMemo(
+    () => new Set(workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id)),
+    [workspaceSpecialists]
+  )
   const activeSpecialistCount = useMemo(
-    () => conversationSpecialists.filter((specialist) => specialist.isActive).length,
-    [conversationSpecialists]
+    () =>
+      conversationSpecialists.filter(
+        (specialist) => specialist.isActive && !coreSpecialistIds.has(specialist.specialistId)
+      ).length,
+    [conversationSpecialists, coreSpecialistIds]
   )
   const estimatedSpecialistTokens = useMemo(
     () => conversationTokenEstimates.reduce((total, estimate) => total + estimate.estimatedTokens, 0),
@@ -551,12 +560,14 @@ export default function MessageInput({
           setShowSpecialistWarning(false)
           setPendingSend(null)
         }}
-        onConfirm={async () => {
-          if (pendingSend) {
-            await executeSend(pendingSend.content, pendingSend.attachments)
-          }
+        onConfirm={() => {
+          // Close dialog immediately — don't await the send
+          const pending = pendingSend
           setShowSpecialistWarning(false)
           setPendingSend(null)
+          if (pending) {
+            void executeSend(pending.content, pending.attachments)
+          }
         }}
       />
     </>

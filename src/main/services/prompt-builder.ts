@@ -1,8 +1,9 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BudgetTier, ConversationMode, HandoffBrief, Skill } from '../../shared/types'
 import { promptBuilderLogger } from '../logger'
 import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.repository'
+import { skillRepository } from '../db/repositories/skill.repository'
 import { DEFAULT_PROMPTS } from './default-prompts'
 
 // ── Non-editable prompts (kept in code — specialist/decomposition) ──
@@ -27,7 +28,7 @@ const SPECIALIST_TASK_SYSTEM_PROMPT = `You are a specialist agent. Complete ONLY
 - Investigation: be surgical — read ONLY files related to the error. Target ≤10 tool calls. Start with mentioned files.
 - Verification: if a command is provided, run it. Fix and retry up to 2×.
 - When done: list files changed, 1-2 sentence summary, verification result, blockers.
-- Investigation reports: emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.`
+- Investigation reports: max 1,500 characters. Focus on: root cause (1 sentence), affected files (list), proposed fix (1-2 sentences). Skip background context the user already knows. Emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.`
 
 /**
  * Micro specialist prompt for simple/haiku-tier tasks (complexity 0-4).
@@ -88,6 +89,8 @@ export interface GeneralistConditionalSections {
   includeAskQuestionPrompt: boolean
   includeMemoryProtocolPrompt: boolean
   includeImageAttachmentsPrompt: boolean
+  /** Strategy 3: Nudge generalist to answer directly for simple questions (saves ~10K tokens by skipping handoff) */
+  includeDirectAnswerBoost: boolean
 }
 
 // ── Prompt Builder ──
@@ -102,9 +105,22 @@ const log = promptBuilderLogger
  * - **Specialist** gets: role prompt + specialist prompt + assigned skills only + CLAUDE.md (project context) + brief + feedback.
  *
  * CLAUDE.md is injected as **project context only** — agent/skill listings are NOT included
- * (those are handled by the AgentRegistry and PromptBuilder layers).
+ * (those are handled by the DB specialist/skill registry and PromptBuilder layers).
  */
 export class PromptBuilder {
+  /**
+   * Strategy G: In-memory CLAUDE.md cache with mtime invalidation.
+   * Eliminates disk I/O on every turn — reads once and re-reads only when the file changes.
+   */
+  private claudeMdCache: Map<string, { content: string; mtimeMs: number }> = new Map()
+
+  /**
+   * Strategy O: In-memory skill file cache with mtime invalidation.
+   * SKILL.md files rarely change during a session — cache them to eliminate
+   * per-specialist-task readFileSync() calls and truncation overhead.
+   */
+  private skillFileCache: Map<string, { content: string; mtimeMs: number }> = new Map()
+
   /** Turn-based budget profile for generalist prompt assembly (S17 adaptive prompt). */
   getGeneralistBudgetTierForTurn(turnCount: number): BudgetTier {
     if (turnCount <= 1) return 'full'
@@ -132,10 +148,24 @@ export class PromptBuilder {
         normalized
       )
 
+    // Strategy 3: Direct Answer Boost — classify simple questions that don't need specialist handoff.
+    // Simple questions are short, use interrogative verbs, and DON'T request code changes.
+    const isQuestionPattern =
+      /\b(what|why|how|where|which|explain|show me|list|describe|tell me|is there)\b/i.test(
+        normalized
+      )
+    const isChangeRequest =
+      /\b(fix|implement|build|create|add|refactor|update|change|modify|delete|remove|write|migrate|deploy|scaffold|generate)\b/i.test(
+        normalized
+      )
+    const includeDirectAnswerBoost =
+      isQuestionPattern && !isChangeRequest && message.length < 300
+
     return {
       includeAskQuestionPrompt,
       includeMemoryProtocolPrompt,
-      includeImageAttachmentsPrompt: hasImages
+      includeImageAttachmentsPrompt: hasImages,
+      includeDirectAnswerBoost
     }
   }
 
@@ -150,12 +180,19 @@ export class PromptBuilder {
     // Layer 1: Base role prompt (micro prompt for minimal-budget specialists)
     layers.push(this.getRolePrompt(options.role, options.mode, budgetTier))
 
-    // Layer 2: Specialist identity
-    if (options.role === 'specialist' && options.specialistId) {
+    // Layer 2: Specialist identity (skip for minimal-budget haiku tasks — just the micro prompt + task is enough)
+    if (options.role === 'specialist' && options.specialistId && budgetTier !== 'minimal') {
       layers.push(`## Specialist: ${options.specialistId}`)
     }
 
-    // Layer 2b: Self-critique appendix for Opus-tier BUILD tasks (not needed for investigations)
+    // Layer 2b: Specialist persona prompt from YAML/DB — always injected (even when skills are disabled).
+    // Strategy A: This gives the LLM role context like "You are the .NET architect" without the
+    // full SKILL.md implementation guide. Skipped for minimal-budget haiku tasks.
+    if (options.role === 'specialist' && options.specialistPrompt && budgetTier !== 'minimal') {
+      layers.push(`## Role\n\n${options.specialistPrompt}`)
+    }
+
+    // Layer 2c: Self-critique appendix for Opus-tier BUILD tasks (not needed for investigations)
     if (options.role === 'specialist' && options.mode === 'build' && budgetTier === 'full') {
       layers.push(OPUS_SPECIALIST_APPENDIX)
     }
@@ -164,6 +201,12 @@ export class PromptBuilder {
     // Plan-mode specialists only read/analyze — they don't need implementation guides
     // Strategy 3: Tiered skill loading with budget-aware truncation
     // Strategy 8: Selective loading — pass task context for relevance ranking
+    // Strategy A: When skillsEnabled=false (no active specialists), skip SKILL.md entirely
+    if (options.role === 'specialist' && options.skillsEnabled === false) {
+      log.info(
+        `Skill-free mode: specialist=${options.specialistId} — persona-only, no SKILL.md content (saves ~400-1,140 tokens)`
+      )
+    }
     if (
       options.role === 'specialist' &&
       options.mode === 'build' &&
@@ -207,17 +250,41 @@ export class PromptBuilder {
       layers.push(`## Auto Memory\n\n${options.memoryContext}`)
     }
 
-    // Layer 6: Conversation brief context (specialist only — from handoff)
-    if (options.role === 'specialist' && options.brief) {
-      layers.push(this.buildBriefContext(options.brief))
-    }
-
-    // Layer 7: Feedback memories (specialist only, skip for minimal budget — trivial tasks don't need prior corrections)
-    if (options.role === 'specialist' && options.feedbackContext && budgetTier !== 'minimal') {
-      layers.push(options.feedbackContext)
-    }
+    // Strategy 8: Layers 6 & 7 (brief, feedback) moved to buildDynamicContext() for specialists.
+    // The system prompt now contains only STATIC content (role + identity + persona + skills + CLAUDE.md)
+    // which is identical for all tasks of the same specialist → maximizes Claude prompt cache hits (90% discount).
+    // Dynamic per-task content (brief + feedback) is prepended to the user prompt instead.
+    //
+    // For generalist: brief and feedback don't apply (generalist has its own memory system).
 
     return layers.join('\n\n---\n\n')
+  }
+
+  /**
+   * Strategy 8: Build dynamic per-task context that varies between specialist tasks.
+   * This content is prepended to the user prompt (NOT the system prompt) so that
+   * the system prompt stays stable across tasks and benefits from Claude's prompt caching.
+   *
+   * Returns an empty string if no dynamic context is needed.
+   */
+  buildDynamicContext(options: Pick<PromptBuildOptions, 'role' | 'brief' | 'feedbackContext' | 'budgetTier'>): string {
+    const budgetTier = options.budgetTier ?? 'standard'
+    if (options.role !== 'specialist' || budgetTier === 'minimal') return ''
+
+    const sections: string[] = []
+
+    // Brief context (from handoff)
+    if (options.brief) {
+      sections.push(this.buildBriefContext(options.brief))
+    }
+
+    // Feedback memories
+    if (options.feedbackContext) {
+      sections.push(options.feedbackContext)
+    }
+
+    if (sections.length === 0) return ''
+    return `## Context\n\n${sections.join('\n\n')}\n\n## Task\n\n`
   }
 
   /**
@@ -299,26 +366,38 @@ export class PromptBuilder {
       const budget = isPrimary ? baseBudget : Math.min(200, baseBudget)
 
       try {
-        const content = readFileSync(skill.filePath, 'utf-8')
+        // Try pre-computed semantic summary first (token-optimized, ~50-60% savings)
+        const summaryTier = isPrimary ? budgetTier : 'minimal'
+        const summary = skillRepository.getSummary(skill.id, summaryTier)
 
         let selected: string
-        if (content.length <= budget) {
-          selected = content
-        } else if (!isPrimary || budgetTier === 'minimal') {
-          // Condensed: extract skill title + first paragraph only
-          selected = content.substring(0, budget) + '\n\n[... see full skill file for details]'
+        if (summary) {
+          selected = summary
+          log.info(
+            `Skill "${skill.name}" using pre-computed ${summaryTier} summary (${summary.length} chars)`
+          )
         } else {
-          // Primary skill: smart section extraction
-          selected = this.extractSkillSections(content, budget)
+          // Fallback: read from disk if summaries not yet generated
+          const content = this.readSkillFile(skill.filePath)
+
+          if (content.length <= budget) {
+            selected = content
+          } else if (!isPrimary || budgetTier === 'minimal') {
+            // Condensed: extract skill title + first paragraph only
+            selected = content.substring(0, budget) + '\n\n[... see full skill file for details]'
+          } else {
+            // Primary skill: smart section extraction
+            selected = this.extractSkillSections(content, budget)
+          }
+
+          if (content.length > budget) {
+            log.info(
+              `Skill "${skill.name}" ${isPrimary ? 'trimmed' : 'condensed'} from ${content.length} to ~${budget} chars (budget: ${budgetTier}, fallback — no summary)`
+            )
+          }
         }
 
         sections.push(`## Skill: ${skill.name}\n${selected}`)
-
-        if (content.length > budget) {
-          log.info(
-            `Skill "${skill.name}" ${isPrimary ? 'trimmed' : 'condensed'} from ${content.length} to ~${budget} chars (budget: ${budgetTier})`
-          )
-        }
       } catch {
         log.warn(`Could not read skill file: ${skill.filePath}`)
       }
@@ -340,6 +419,27 @@ export class PromptBuilder {
       return capped.join('\n\n')
     }
     return totalContent
+  }
+
+  /**
+   * Strategy O: Read a skill file with in-memory caching and mtime invalidation.
+   * SKILL.md files rarely change during a session — this eliminates redundant disk I/O.
+   */
+  private readSkillFile(filePath: string): string {
+    const cached = this.skillFileCache.get(filePath)
+    try {
+      const stat = statSync(filePath)
+      if (cached && cached.mtimeMs === stat.mtimeMs) {
+        return cached.content
+      }
+      const content = readFileSync(filePath, 'utf-8')
+      this.skillFileCache.set(filePath, { content, mtimeMs: stat.mtimeMs })
+      return content
+    } catch {
+      // stat failed — fall back to direct read (file may not exist)
+      const content = readFileSync(filePath, 'utf-8')
+      return content
+    }
   }
 
   /**
@@ -446,7 +546,27 @@ export class PromptBuilder {
 
     try {
       const claudeMdPath = join(workspacePath, 'CLAUDE.md')
-      const content = readFileSync(claudeMdPath, 'utf-8')
+
+      // Strategy G: Check in-memory cache first — only re-read from disk when mtime changes.
+      // Eliminates readFileSync() on every generalist turn (saves ~1-5ms disk I/O per turn).
+      const cached = this.claudeMdCache.get(claudeMdPath)
+      let content: string
+
+      try {
+        const stat = statSync(claudeMdPath)
+        if (cached && cached.mtimeMs === stat.mtimeMs) {
+          content = cached.content
+        } else {
+          content = readFileSync(claudeMdPath, 'utf-8')
+          this.claudeMdCache.set(claudeMdPath, { content, mtimeMs: stat.mtimeMs })
+          if (cached) {
+            log.info(`[PIPELINE:claude-md-cache] Invalidated — file changed (${claudeMdPath})`)
+          }
+        }
+      } catch {
+        // stat failed — fall back to direct read
+        content = readFileSync(claudeMdPath, 'utf-8')
+      }
 
       return this.extractGeneralistClaudeMdSections(content, mode)
     } catch {
@@ -479,8 +599,10 @@ export class PromptBuilder {
       'electron skill trigger',
       'deprecation notes',
       'electron documentation reference',
+      'electron documentation',
       'architecture notes',
-      'agents'
+      'agents',
+      'design system'
     ]
 
     const extracted = this.extractClaudeMdSections(
@@ -608,7 +730,3 @@ export {
   DECOMPOSITION_SYSTEM_PROMPT,
   SPECIALIST_TASK_SYSTEM_PROMPT
 }
-export {
-  PLAN_MODE_SYSTEM_PROMPT,
-  BUILD_MODE_SYSTEM_PROMPT
-} from './default-prompts'

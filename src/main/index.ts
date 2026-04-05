@@ -17,14 +17,24 @@ import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
 import { registerAllIpcHandlers } from './ipc'
 import { generalistService, skillService } from './services'
-import { agentRegistry } from './services/agent-registry'
 import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
+import { bridgeTracerToEventLogger } from './services/specialist/trace-bridge'
+import { bridgeBusToPersistence } from './services/specialist/bus-persistence'
+import { initFileWatcherHandler } from './services/file-watcher.handler'
+import { fileWatcherService } from './services/file-watcher.service'
 
 // Initialize electron-log for the main process
 // Must happen before app.whenReady() for early error capture
 log.initialize()
+
+// Bridge execution tracer events to the persistent event logger
+// Single point of truth — trace spans automatically log agent started/completed/failed
+bridgeTracerToEventLogger()
+
+// Bridge message bus to persistent DB storage for crash recovery and audit
+bridgeBusToPersistence()
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
@@ -156,16 +166,11 @@ function createWindow(): void {
     dbLogger.debug('Event pruning on startup failed (non-critical):', error)
   }
 
-  // Initialize agent registry from YAML files (single source of truth)
-  try {
-    agentRegistry.loadFromDisk()
-    agentRegistry.startWatching()
-  } catch (error) {
-    dbLogger.warn('Failed to initialize agent registry:', error)
-  }
-
   // Register IPC handlers
   registerAllIpcHandlers(mainWindow)
+
+  // Initialize file watcher handler — connects fs.watch events to Code Graph + Semantic Search
+  initFileWatcherHandler()
 
   // Initialize auto-updater (production only — dev uses electron-vite HMR)
   if (!is.dev) {
@@ -343,8 +348,8 @@ app.on('before-quit', async (event) => {
     log.debug('Memory feed shutdown error (expected during quit):', e)
   }
 
-  // Stop watching agent YAML files
-  agentRegistry.stopWatching()
+  // Stop all file watchers for Code Graph / Semantic Search
+  fileWatcherService.stopAll()
 
   closeDatabase()
   app.quit()

@@ -131,7 +131,7 @@ export interface PlacedFurniture {
   color?: FloorColor
 }
 
-export interface OfficeZone {
+interface OfficeZone {
   colMin: number
   colMax: number
   rowMin: number

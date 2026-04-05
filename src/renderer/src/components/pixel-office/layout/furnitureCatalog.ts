@@ -2,6 +2,16 @@
 // Removed VS Code messaging dependencies
 
 import type { FurnitureCatalogEntry, SpriteData } from '../engine/types'
+import {
+  buildCatalogEntries,
+  createMirrorEntries,
+  detectRotationGroups,
+  detectStatePairs,
+  registerOnStateRotations,
+  detectAnimationGroups,
+  buildVisibleCatalog
+} from './catalogBuilder'
+import type { RotationGroup } from './catalogBuilder'
 
 export interface LoadedAssetData {
   catalog: Array<{
@@ -41,14 +51,6 @@ export interface CatalogEntryWithCategory extends FurnitureCatalogEntry {
 }
 
 // ── Rotation groups ──────────────────────────────────────────────
-// Flexible rotation: supports 2+ orientations (not just all 4)
-interface RotationGroup {
-  /** Ordered list of orientations available for this group */
-  orientations: string[]
-  /** Maps orientation → asset ID (for the default/off state) */
-  members: Record<string, string>
-}
-
 // Maps any member asset ID → its rotation group
 const rotationGroups = new Map<string, RotationGroup>()
 
@@ -79,238 +81,55 @@ let dynamicCategories: FurnitureCategory[] | null = null
 export function buildDynamicCatalog(assets: LoadedAssetData): boolean {
   if (!assets?.catalog || !assets?.sprites) return false
 
-  // Build all entries (including non-front variants)
-  const allEntries = assets.catalog
-    .map((asset) => {
-      const sprite = assets.sprites[asset.id]
-      if (!sprite) {
-        console.warn(`No sprite data for asset ${asset.id}`)
-        return null
-      }
-      return {
-        type: asset.id,
-        label: asset.label,
-        footprintW: asset.footprintW,
-        footprintH: asset.footprintH,
-        sprite,
-        isDesk: asset.isDesk,
-        category: asset.category as FurnitureCategory,
-        ...(asset.orientation ? { orientation: asset.orientation } : {}),
-        ...(asset.canPlaceOnSurfaces ? { canPlaceOnSurfaces: true } : {}),
-        ...(asset.backgroundTiles ? { backgroundTiles: asset.backgroundTiles } : {}),
-        ...(asset.canPlaceOnWalls ? { canPlaceOnWalls: true } : {}),
-        ...(asset.mirrorSide ? { mirrorSide: true } : {})
-      }
-    })
-    .filter((e): e is CatalogEntryWithCategory => e !== null)
+  // Stage 1: Build all entries from raw assets
+  const allEntries = buildCatalogEntries(assets)
 
-  // Create virtual ":left" entries for mirrorSide assets.
-  // These share the same sprite but have a distinct type ID so rotation groups work.
-  for (const asset of assets.catalog) {
-    if (asset.mirrorSide && asset.orientation === 'side') {
-      const sideEntry = allEntries.find((e) => e.type === asset.id)
-      if (sideEntry) {
-        allEntries.push({
-          ...sideEntry,
-          type: `${asset.id}:left`,
-          orientation: 'left',
-          mirrorSide: true
-        })
-      }
-    }
-  }
+  // Stage 2: Create virtual ":left" mirror entries
+  const mirrors = createMirrorEntries(allEntries, assets)
+  allEntries.push(...mirrors)
 
   if (allEntries.length === 0) return false
 
-  // Build rotation groups from groupId + orientation metadata
+  // Clear module-level state
   rotationGroups.clear()
   stateGroups.clear()
   offToOn.clear()
   onToOff.clear()
   animationGroups.clear()
 
-  // Phase 1: Collect orientations per group (only "off" or stateless variants for rotation)
-  // For mirrorSide assets with orientation "side", register as both "right" and virtual "left"
-  const groupMap = new Map<string, Map<string, string>>() // groupId → (orientation → assetId)
-  for (const asset of assets.catalog) {
-    if (asset.groupId && asset.orientation) {
-      // For rotation groups, only use the "off" or stateless variant
-      if (asset.state && asset.state !== 'off') continue
-      let orientMap = groupMap.get(asset.groupId)
-      if (!orientMap) {
-        orientMap = new Map()
-        groupMap.set(asset.groupId, orientMap)
-      }
-
-      if (asset.orientation === 'side') {
-        // "side" is registered as "right" in the rotation group
-        orientMap.set('right', asset.id)
-        if (asset.mirrorSide) {
-          // Register the virtual ":left" entry with a distinct type ID
-          orientMap.set('left', `${asset.id}:left`)
-        }
-      } else {
-        orientMap.set(asset.orientation, asset.id)
-      }
-    }
+  // Stage 3: Detect rotation groups
+  const rotResult = detectRotationGroups(assets)
+  for (const [id, group] of rotResult.rotationGroups) {
+    rotationGroups.set(id, group)
   }
 
-  // For 2-way rotation schemes, "side" maps to "right" only (no left)
-  // Check rotationScheme from assets
-  const rotationSchemes = new Map<string, string>() // groupId → rotationScheme
-  for (const asset of assets.catalog) {
-    if (asset.groupId && asset.rotationScheme) {
-      rotationSchemes.set(asset.groupId, asset.rotationScheme)
-    }
-  }
+  // Stage 4: Detect state pairs (on/off)
+  const stateResult = detectStatePairs(assets)
+  for (const [k, v] of stateResult.stateGroups) stateGroups.set(k, v)
+  for (const [k, v] of stateResult.offToOn) offToOn.set(k, v)
+  for (const [k, v] of stateResult.onToOff) onToOff.set(k, v)
 
-  // Phase 2: Register rotation groups with 2+ orientations
-  const nonFrontIds = new Set<string>()
-  const orientationOrder = ['front', 'right', 'back', 'left']
-  for (const [groupId, orientMap] of groupMap) {
-    if (orientMap.size < 2) continue
-    const scheme = rotationSchemes.get(groupId)
+  // Stage 5: Register rotation groups for "on" state variants
+  registerOnStateRotations(assets, rotationGroups, stateGroups)
 
-    // For 2-way scheme, only use front and right (side)
-    let allowedOrients = orientationOrder
-    if (scheme === '2-way') {
-      allowedOrients = ['front', 'right']
-    }
+  // Stage 6: Detect animation groups
+  const animResult = detectAnimationGroups(assets)
+  for (const [k, v] of animResult) animationGroups.set(k, v)
 
-    // Build ordered list of available orientations
-    const orderedOrients = allowedOrients.filter((o) => orientMap.has(o))
-    if (orderedOrients.length < 2) continue
-    const members: Record<string, string> = {}
-    for (const o of orderedOrients) {
-      members[o] = orientMap.get(o)!
-    }
-    const rg: RotationGroup = { orientations: orderedOrients, members }
-    // Register each unique asset ID in the rotation group
-    const registeredIds = new Set<string>()
-    for (const id of Object.values(members)) {
-      if (!registeredIds.has(id)) {
-        rotationGroups.set(id, rg)
-        registeredIds.add(id)
-      }
-    }
-    // Track non-front IDs to exclude from visible catalog
-    for (const [orient, id] of Object.entries(members)) {
-      if (orient !== 'front') nonFrontIds.add(id)
-    }
-  }
-
-  // Phase 3: Build state groups (on ↔ off pairs within same groupId + orientation)
-  const stateMap = new Map<string, Map<string, string>>() // "groupId|orientation" → (state → assetId)
-  for (const asset of assets.catalog) {
-    if (asset.groupId && asset.state) {
-      const key = `${asset.groupId}|${asset.orientation || ''}`
-      let sm = stateMap.get(key)
-      if (!sm) {
-        sm = new Map()
-        stateMap.set(key, sm)
-      }
-      // For animation groups, use the first frame as the "on" representative
-      if (asset.animationGroup && asset.frame !== undefined && asset.frame > 0) continue
-      sm.set(asset.state, asset.id)
-    }
-  }
-  for (const sm of stateMap.values()) {
-    const onId = sm.get('on')
-    const offId = sm.get('off')
-    if (onId && offId) {
-      stateGroups.set(onId, offId)
-      stateGroups.set(offId, onId)
-      offToOn.set(offId, onId)
-      onToOff.set(onId, offId)
-    }
-  }
-
-  // Also register rotation groups for "on" state variants (so rotation works on on-state items too)
-  for (const asset of assets.catalog) {
-    if (asset.groupId && asset.orientation && asset.state === 'on') {
-      // Skip non-first animation frames
-      if (asset.animationGroup && asset.frame !== undefined && asset.frame > 0) continue
-
-      // Find the off-variant's rotation group
-      const offCounterpart = stateGroups.get(asset.id)
-      if (offCounterpart) {
-        const offGroup = rotationGroups.get(offCounterpart)
-        if (offGroup) {
-          // Build an equivalent group for the "on" state
-          const onMembers: Record<string, string> = {}
-          for (const orient of offGroup.orientations) {
-            const offId = offGroup.members[orient]
-            const onId = stateGroups.get(offId)
-            // Use on-state variant if available, otherwise fall back to off-state
-            onMembers[orient] = onId ?? offId
-          }
-          const onGroup: RotationGroup = {
-            orientations: offGroup.orientations,
-            members: onMembers
-          }
-          for (const id of Object.values(onMembers)) {
-            if (!rotationGroups.has(id)) {
-              rotationGroups.set(id, onGroup)
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Phase 4: Build animation groups
-  const animGroupCollector = new Map<string, Array<{ id: string; frame: number }>>()
-  for (const asset of assets.catalog) {
-    if (asset.animationGroup && asset.frame !== undefined) {
-      let frames = animGroupCollector.get(asset.animationGroup)
-      if (!frames) {
-        frames = []
-        animGroupCollector.set(asset.animationGroup, frames)
-      }
-      frames.push({ id: asset.id, frame: asset.frame })
-    }
-  }
-  for (const [, frames] of animGroupCollector) {
-    frames.sort((a, b) => a.frame - b.frame)
-    animationGroups.set(
-      frames[0].id, // use first frame's ID as group key
-      frames.map((f) => f.id)
-    )
-  }
-
-  // Track "on" variant IDs and animation frame IDs (non-first) to exclude from visible catalog
-  const onStateIds = new Set<string>()
-  for (const asset of assets.catalog) {
-    if (asset.state === 'on') onStateIds.add(asset.id)
-  }
-
-  // Store full internal catalog (all variants — for getCatalogEntry lookups)
+  // Store full internal catalog (all variants)
   internalCatalog = allEntries
 
-  // Visible catalog: exclude non-front variants and "on" state variants
-  const visibleEntries = allEntries.filter(
-    (e) => !nonFrontIds.has(e.type) && !onStateIds.has(e.type)
+  // Stage 7: Build visible catalog for editor palette
+  const visResult = buildVisibleCatalog(
+    allEntries, assets, rotResult.nonFrontIds, rotationGroups, stateGroups
   )
-
-  // Strip orientation/state suffix from labels for grouped variants
-  for (const entry of visibleEntries) {
-    if (rotationGroups.has(entry.type) || stateGroups.has(entry.type)) {
-      entry.label = entry.label
-        .replace(/ - Front - Off$/, '')
-        .replace(/ - Front$/, '')
-        .replace(/ - Off$/, '')
-    }
-  }
-
-  dynamicCatalog = visibleEntries
-  dynamicCategories = Array.from(new Set(visibleEntries.map((e) => e.category)))
-    .filter((c): c is FurnitureCategory => !!c)
-    .sort()
+  dynamicCatalog = visResult.visibleEntries
+  dynamicCategories = visResult.categories
 
   const rotGroupCount = new Set(Array.from(rotationGroups.values())).size
   const animGroupCount = animationGroups.size
   console.log(
-    `Built dynamic catalog with ${allEntries.length} assets (${visibleEntries.length} visible, ${rotGroupCount} rotation groups, ${stateGroups.size / 2} state pairs, ${animGroupCount} animation groups)`
+    `Built dynamic catalog with ${allEntries.length} assets (${visResult.visibleEntries.length} visible, ${rotGroupCount} rotation groups, ${stateGroups.size / 2} state pairs, ${animGroupCount} animation groups)`
   )
   return true
 }
@@ -369,11 +188,6 @@ export function getToggledType(currentType: string): string | null {
 /** Returns the "on" variant if this type has one, otherwise returns the type unchanged. */
 export function getOnStateType(currentType: string): string {
   return offToOn.get(currentType) ?? currentType
-}
-
-/** Returns the "off" variant if this type has one, otherwise returns the type unchanged. */
-export function getOffStateType(currentType: string): string {
-  return onToOff.get(currentType) ?? currentType
 }
 
 /** Returns true if the given furniture type is part of a rotation group. */

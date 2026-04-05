@@ -40,6 +40,8 @@ export const IPC_CHANNELS = {
   AGENT_GET_STATUSES: 'agent:getStatuses',
   AGENT_STATUS_UPDATE: 'agent:statusUpdate',
   AGENT_STOP_ALL: 'agent:stopAll',
+  /** Strategy M: Cache efficiency metrics for dashboard */
+  AGENT_CACHE_EFFICIENCY: 'agent:cacheEfficiency',
 
   // Agent lifecycle
   AGENT_START: 'agent:start',
@@ -83,6 +85,9 @@ export const IPC_CHANNELS = {
   SPECIALIST_UNDEPLOY: 'specialist:undeploy',
   SPECIALIST_UPDATE_CONFIG: 'specialist:updateConfig',
   SPECIALIST_GET_MARKETPLACE: 'specialist:getMarketplace',
+
+  // Cache metrics (Strategy 15)
+  SPECIALIST_CACHE_METRICS: 'specialist:getCacheMetrics',
 
   // Skills
   SKILL_LIST: 'skill:list',
@@ -277,7 +282,35 @@ export const IPC_CHANNELS = {
   // AI Subscriptions
   SUBSCRIPTION_VALIDATE_ALL: 'subscription:validateAll',
   SUBSCRIPTION_CHECK_CLAUDE_CLI: 'subscription:checkClaudeCli',
-  SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure'
+  SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure',
+
+  // Ollama
+  OLLAMA_CHECK_STATUS: 'ollama:checkStatus',
+  OLLAMA_PULL_MODEL: 'ollama:pullModel',
+  OLLAMA_CANCEL_PULL: 'ollama:cancelPull',
+  OLLAMA_REMOVE_MODEL: 'ollama:removeModel',
+  OLLAMA_START: 'ollama:start',
+  OLLAMA_PULL_PROGRESS: 'ollama:pullProgress',
+  OLLAMA_PULL_COMPLETE: 'ollama:pullComplete',
+  OLLAMA_PULL_ERROR: 'ollama:pullError',
+
+  // Indexing (semantic search)
+  INDEXING_START: 'indexing:start',
+  INDEXING_PAUSE: 'indexing:pause',
+  INDEXING_RESUME: 'indexing:resume',
+  INDEXING_CANCEL: 'indexing:cancel',
+  INDEXING_PROGRESS: 'indexing:progress',
+  INDEXING_GET_STATUS: 'indexing:getStatus',
+  INDEXING_LOAD_PERSISTED: 'indexing:loadPersisted',
+
+  // Semantic Search
+  SEMANTIC_SEARCH_QUERY: 'semanticSearch:query',
+
+  // Code Graph (persisted repomap)
+  CODE_GRAPH_INDEX_START: 'codeGraph:indexStart',
+  CODE_GRAPH_GET_STATUS: 'codeGraph:getStatus',
+  CODE_GRAPH_HAS_INDEX: 'codeGraph:hasIndex',
+  CODE_GRAPH_PROGRESS: 'codeGraph:progress'
 } as const
 
 export const CONVERSATION_MODES = {
