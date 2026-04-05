@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Monitor,
   Bot,
@@ -39,7 +39,8 @@ import {
   usePixelOfficeStore,
   useIdeaStore,
   useConversationSpecialistActions,
-  useConversationSpecialists
+  useConversationSpecialists,
+  useSpecialistStore
 } from '@renderer/store'
 import type { ConversationMode } from '../../../../shared/types'
 
@@ -109,7 +110,26 @@ export default function AppLayout(): React.JSX.Element {
   const activeAgentCount = statuses.filter(
     (s) => s.status === 'thinking' || s.status === 'writing' || s.status === 'reviewing'
   ).length
-  const activeConversationSpecialistCount = conversationSpecialists.filter((s) => s.isActive).length
+  const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
+  const loadSpecialists = useSpecialistStore((state) => state.loadSpecialists)
+  const coreSpecialistIds = useMemo(
+    () => new Set(workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id)),
+    [workspaceSpecialists]
+  )
+  const activeConversationSpecialistCount = useMemo(
+    () =>
+      conversationSpecialists.filter(
+        (s) => s.isActive && !coreSpecialistIds.has(s.specialistId)
+      ).length,
+    [conversationSpecialists, coreSpecialistIds]
+  )
+
+  // Ensure workspace specialists are loaded so we can identify core agents for the counter
+  useEffect(() => {
+    if (workspaceSpecialists.length === 0) {
+      void loadSpecialists().catch(() => undefined)
+    }
+  }, [workspaceSpecialists.length, loadSpecialists])
 
   useEffect(() => {
     if (!activeConversation?.id) {

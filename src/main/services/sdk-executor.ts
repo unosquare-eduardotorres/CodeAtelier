@@ -104,6 +104,11 @@ export interface SDKExecuteOptions {
   maxTurns?: number
   /** MCP server configurations for in-process MCP tools (e.g. repomap) */
   mcpServers?: Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig>
+  /**
+   * Strategy η: Hard cap on output tokens. The model stops generating after this limit.
+   * Used to control specialist output verbosity based on investigation depth.
+   */
+  maxOutputTokens?: number
 }
 
 export interface SDKExecuteResult {
@@ -158,6 +163,7 @@ export class SDKExecutor {
     // complete content as a replay. Without dedup, every text/tool block gets yielded twice.
     let hasStreamedText = false
     const processedToolIds = new Set<string>()
+    const exitPlanModeToolIds = new Set<string>() // Track ExitPlanMode tool IDs to suppress their tool_result
 
     // Start heartbeat timer — sets a flag that the generator checks on each iteration
     if (heartbeatInterval > 0) {
@@ -236,7 +242,9 @@ export class SDKExecutor {
           // Enable AI-generated progress summaries for sub-agents (~30s intervals)
           ...(options.agents ? { agentProgressSummaries: true } : {}),
           // Wire in-process MCP servers (e.g. repomap code graph)
-          ...(options.mcpServers ? { mcpServers: options.mcpServers } : {})
+          ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+          // Strategy η: Hard cap on output tokens — model stops generating after this limit
+          ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {})
         }
       })
 
@@ -297,10 +305,29 @@ export class SDKExecutor {
                 hasStreamedText = true // prevent result message from re-yielding
                 yield { type: 'text', content: block.text as string }
               } else if (block.type === 'tool_use') {
-                const toolId = block.id as string | undefined
-                if (toolId && processedToolIds.has(toolId)) continue
                 const toolName = block.name as string
                 const toolInput = block.input as Record<string, unknown> | undefined
+
+                // Intercept ExitPlanMode: extract plan content and emit as ````plan block.
+                // The scope guard will still block the actual tool (preventing file writes),
+                // but the plan content reaches the UI as a PlanCard.
+                if (
+                  toolName === 'ExitPlanMode' &&
+                  toolInput?.plan &&
+                  typeof toolInput.plan === 'string'
+                ) {
+                  sdkLog.info(
+                    'Intercepted ExitPlanMode — injecting plan content as ````plan block'
+                  )
+                  yield {
+                    type: 'text',
+                    content: `\n\n\`\`\`\`plan\n${toolInput.plan}\n\`\`\`\`\n`
+                  }
+                  continue
+                }
+
+                const toolId = block.id as string | undefined
+                if (toolId && processedToolIds.has(toolId)) continue
                 yield {
                   type: 'tool_use',
                   toolName,
@@ -334,6 +361,11 @@ export class SDKExecutor {
               const toolId = cb.id as string | undefined
               if (toolId) processedToolIds.add(toolId)
               const toolName = cb.name as string
+              // Suppress ExitPlanMode tool_use — plan content extracted in assistant message handler
+              if (toolName === 'ExitPlanMode') {
+                if (toolId) exitPlanModeToolIds.add(toolId)
+                continue
+              }
               const toolInput = cb.input as Record<string, unknown> | undefined
               yield {
                 type: 'tool_use',
@@ -369,6 +401,9 @@ export class SDKExecutor {
           if (userMsg?.content && Array.isArray(userMsg.content)) {
             for (const block of userMsg.content as Record<string, unknown>[]) {
               if (block.type === 'tool_result') {
+                // Suppress tool_result for ExitPlanMode — no orphan "completed" tool activity
+                const toolUseId = block.tool_use_id as string | undefined
+                if (toolUseId && exitPlanModeToolIds.has(toolUseId)) continue
                 yield { type: 'tool_result', toolName: 'tool' }
               }
             }

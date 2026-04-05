@@ -187,12 +187,48 @@ export class GeneralistService extends AgentBaseService {
    */
   private cacheStats = { totalInput: 0, cacheRead: 0, cacheCreation: 0, turns: 0 }
 
+  /**
+   * Strategy θ: Per-turn cost breakdown for diagnostics.
+   * Tracks input/output/cache tokens per turn to identify cost hot spots.
+   * Exposed via getCacheEfficiency() for the renderer cost waterfall chart.
+   */
+  private turnBreakdown: Array<{
+    turn: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheHitRate: number
+    timestamp: number
+  }> = []
+
   /** Whether repomap code graph is enabled for this workspace */
   private repomapEnabled: boolean = false
   /** Whether semantic search (Ollama embeddings) is enabled for this workspace */
   private semanticSearchEnabled: boolean = false
   /** Whether GitHub token is configured for this workspace */
   private githubConfigured: boolean = false
+  /**
+   * Strategy γ: User-controlled investigation mode.
+   * When OFF, generalist always answers directly and never hands off to specialists.
+   * When ON (default), normal handoff protocol applies.
+   */
+  private investigationModeEnabled: boolean = true
+
+  /**
+   * Strategy β: Specialist roster string, built once per turn by buildPromptForTurn()
+   * and injected into the user message on turn 1 only. Removed from system prompt entirely.
+   */
+  private specialistRoster: string | null = null
+
+  /**
+   * Strategy ζ: Cached system prompt snapshot. Rebuilt only when mode changes,
+   * conversation changes, or workspace settings update. Eliminates redundant DB queries
+   * + disk I/O (stat calls) on every turn.
+   */
+  private systemPromptSnapshot: string | null = null
+  private systemPromptSnapshotMode: ConversationMode | null = null
+  private systemPromptSnapshotConversationId: string | null = null
 
   /**
    * Refresh feature flags from workspace settings.
@@ -208,6 +244,8 @@ export class GeneralistService extends AgentBaseService {
       this.repomapEnabled = !!settings.repomapEnabled
       this.semanticSearchEnabled = !!settings.semanticSearchEnabled
       this.githubConfigured = githubService.isConfigured(this.workspaceId)
+      // Strategy γ: Investigation mode toggle — default ON (normal handoff behavior)
+      this.investigationModeEnabled = settings.investigationModeEnabled !== false
     } catch {
       // Non-critical — keep existing flags
     }
@@ -284,6 +322,11 @@ export class GeneralistService extends AgentBaseService {
     // S17: prompt is rebuilt per turn in send() so turn-aware shrinking can apply.
     this.fullSystemPrompt = ''
     this.turnCountMap.clear()
+
+    // Strategy ζ: Invalidate system prompt snapshot on start
+    this.systemPromptSnapshot = null
+    this.systemPromptSnapshotMode = null
+    this.systemPromptSnapshotConversationId = null
 
     // If a resume session ID was passed, pre-populate the session map
     if (resumeSessionId && this.currentConversationId) {
@@ -398,10 +441,25 @@ export class GeneralistService extends AgentBaseService {
     }
 
     // S17: rebuild prompt on every turn, using adaptive budget by turn count.
-    // S12: append optional prompt sections based on the current user turn.
     const hasImages = (images?.length ?? 0) > 0
     const turnCount = this.incrementTurnCount(conversationId)
     this.fullSystemPrompt = this.buildPromptForTurn(message, hasImages, turnCount)
+
+    // Strategy α: Move ALL conditional sections to user prompt prefix.
+    // This makes the system prompt 100% deterministic per mode — every turn after the first
+    // gets a 90% cache discount (~630-900 tokens saved). The conditionals (ASK_QUESTION,
+    // MEMORY_PROTOCOL, IMAGE_ATTACHMENTS, DIRECT_ANSWER_BOOST) now live in the user message
+    // where they can toggle freely without breaking the system prompt cache.
+    const conditionalPrefix = this.buildConditionalPrefix(message, hasImages)
+    if (conditionalPrefix) {
+      effectiveMessage = `${conditionalPrefix}\n\n---\n\n${effectiveMessage}`
+    }
+
+    // Strategy β: Inject specialist roster on turn 1 only — already in history on turns 2+.
+    // This removes ~400 tokens of static overhead from the system prompt on every turn.
+    if (turnCount <= 1 && this.specialistRoster) {
+      effectiveMessage = `${this.specialistRoster}\n\n---\n\n${effectiveMessage}`
+    }
 
     // Strategy C: Inject memory context into user prompt (not system prompt).
     // buildPromptForTurn() refreshes this.memoryContext but no longer puts it in the system prompt.
@@ -579,6 +637,20 @@ export class GeneralistService extends AgentBaseService {
           this.cacheStats.cacheRead += cacheReadInputTokens
           this.cacheStats.cacheCreation += cacheCreationInputTokens
           this.cacheStats.turns++
+
+          // Strategy θ: Per-turn cost breakdown for diagnostics
+          const totalInputForRate =
+            meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
+          this.turnBreakdown.push({
+            turn: turnCount,
+            inputTokens: meta.tokenUsage.input,
+            outputTokens: meta.tokenUsage.output,
+            cacheReadTokens: cacheReadInputTokens,
+            cacheCreationTokens: cacheCreationInputTokens,
+            cacheHitRate:
+              totalInputForRate > 0 ? (cacheReadInputTokens / totalInputForRate) * 100 : 0,
+            timestamp: Date.now()
+          })
 
           // Per-turn token breakdown storage — enables cost debugging and cache rate trends
           if (this.dbSessionId && conversationId) {
@@ -832,95 +904,126 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
-    const budgetTier = promptBuilder.getGeneralistBudgetTierForTurn(turnCount)
-    const basePrompt = promptBuilder.build({
-      role: 'generalist',
-      mode: this.currentMode,
-      workspacePath: this.workspacePath,
-      // Strategy C: memoryContext is NO LONGER passed here — it goes into the user prompt
-      // via the effectiveMessage prefix in send(). The system prompt stays stable for caching.
-      budgetTier
-    })
+    // Strategy ζ: System prompt snapshot — reuse cached prompt when mode + conversation
+    // haven't changed. Eliminates DB queries + disk I/O on every turn.
+    // The snapshot is invalidated on mode switches and conversation changes.
+    const canReuseSnapshot =
+      this.systemPromptSnapshot &&
+      this.systemPromptSnapshotMode === this.currentMode &&
+      this.systemPromptSnapshotConversationId === this.currentConversationId &&
+      turnCount > 1 // Always rebuild on turn 1 to pick up latest settings
 
-    const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages)
-    let promptWithConditionals = this.appendConditionalSections(basePrompt, conditionalSections)
+    let promptWithMcpGuidance: string
+    if (canReuseSnapshot) {
+      promptWithMcpGuidance = this.systemPromptSnapshot!
+      this.log.info(
+        `[PIPELINE:prompt-snapshot] Reusing cached system prompt (turn ${turnCount}, mode=${this.currentMode})`
+      )
+    } else {
+      const budgetTier = promptBuilder.getGeneralistBudgetTierForTurn(turnCount)
+      const basePrompt = promptBuilder.build({
+        role: 'generalist',
+        mode: this.currentMode,
+        workspacePath: this.workspacePath,
+        // Strategy C: memoryContext is NO LONGER passed here — it goes into the user prompt
+        // via the effectiveMessage prefix in send(). The system prompt stays stable for caching.
+        budgetTier
+      })
 
-    // Inject active specialist roster so generalist knows who to hand off to
-    // Scoped to conversation-specific overrides when available
-    let activeSpecialists = specialistRepository.findActive()
+      // Strategy α: Conditional sections (ASK_QUESTION, MEMORY_PROTOCOL, IMAGE_ATTACHMENTS,
+      // DIRECT_ANSWER_BOOST) are NO LONGER appended to the system prompt. They are now injected
+      // into the user message prefix via buildConditionalPrefix() in send().
+      // This makes the system prompt deterministic per mode → 90% cache discount on every turn.
+      //
+      // MCP tool guidance sections are still appended here on turn 1 only (Strategy δ),
+      // since they are workspace-stable and don't toggle between turns.
+      promptWithMcpGuidance = this.appendMcpToolGuidance(basePrompt, turnCount)
 
-    if (this.currentConversationId) {
-      const overrides = conversationSpecialistRepository.findByConversation(this.currentConversationId)
-      if (overrides.length > 0) {
-        const activeSpecialistIds = new Set(
-          overrides.filter((o) => o.isActive).map((o) => o.specialistId)
-        )
-        activeSpecialists = activeSpecialists.filter((s) => activeSpecialistIds.has(s.id))
-      }
+      // Cache the snapshot for reuse on subsequent turns
+      this.systemPromptSnapshot = promptWithMcpGuidance
+      this.systemPromptSnapshotMode = this.currentMode
+      this.systemPromptSnapshotConversationId = this.currentConversationId
     }
 
-    const nonCoreSpecialists = activeSpecialists.filter(
-      (s) => !['generalist', 'generalist-agent', 'user'].includes(s.agentId)
-    )
-    if (nonCoreSpecialists.length > 0) {
-      const roster = nonCoreSpecialists
-        .map(
-          (s) =>
-            `- "${s.agentId}" — ${s.displayName}: ${(s.description || s.prompt || '').substring(0, 100)}`
-        )
-        .join('\n')
-      promptWithConditionals += `\n\n## Available Specialists\n\nUse these exact IDs in handoff blocks:\n${roster}`
-    }
+    // Strategy β: Specialist roster is now injected into the user prompt on turn 1 only.
+    // On turn 2+, the roster is already in conversation history. This removes ~400 tokens
+    // of static overhead from the system prompt on every turn.
+    // The roster is built and stored in this.specialistRoster for the user prefix in send().
+    this.specialistRoster = this.buildSpecialistRoster()
+
     this.log.info(
-      `[PIPELINE:prompt-adaptive] conversationId=${this.currentConversationId} turn=${turnCount} budget=${budgetTier} ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost}`
+      `[PIPELINE:prompt-adaptive] conversationId=${this.currentConversationId} turn=${turnCount} budget=${budgetTier} rosterSize=${this.specialistRoster ? this.specialistRoster.split('\n').length : 0}`
     )
 
     // S8: Prompt size check — warn if approaching model context limits
     // TODO: Wire up actual model tier resolution from modelConfigService instead of defaulting to 'sonnet'
-    const sizeCheck = PromptBuilder.checkPromptSize(promptWithConditionals, message, 'sonnet')
+    const sizeCheck = PromptBuilder.checkPromptSize(promptWithMcpGuidance, message, 'sonnet')
     if (sizeCheck.warning) {
       this.log.warn(
         `[PIPELINE:prompt-size] conversationId=${this.currentConversationId} turn=${turnCount} ${sizeCheck.warning}`
       )
     }
 
-    return promptWithConditionals
+    return promptWithMcpGuidance
   }
 
-  private appendConditionalSections(
-    basePrompt: string,
-    conditionalSections: GeneralistConditionalSections
-  ): string {
+  /**
+   * Strategy α: Build a conditional prefix for the user message.
+   * These sections (ASK_QUESTION, MEMORY_PROTOCOL, IMAGE_ATTACHMENTS, DIRECT_ANSWER_BOOST)
+   * toggle based on the user's message content. Moving them to the user prompt prefix
+   * makes the system prompt 100% deterministic per mode → 90% cache discount on every turn.
+   */
+  private buildConditionalPrefix(message: string, hasImages: boolean): string {
+    const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages)
+    const sections: string[] = []
+
+    if (conditionalSections.includeAskQuestionPrompt) {
+      sections.push(ASK_QUESTION_PROMPT)
+    }
+
+    if (conditionalSections.includeMemoryProtocolPrompt) {
+      sections.push(MEMORY_PROTOCOL_PROMPT)
+    }
+
+    if (conditionalSections.includeImageAttachmentsPrompt) {
+      sections.push(IMAGE_ATTACHMENTS_PROMPT)
+    }
+
+    // Strategy N: Direct Answer Boost — nudge generalist to answer directly for simple questions
+    if (conditionalSections.includeDirectAnswerBoost) {
+      sections.push(DIRECT_ANSWER_BOOST_PROMPT)
+    }
+
+    // Strategy γ: When investigation mode is OFF, inject NO HANDOFF directive.
+    // The generalist must answer everything directly — no specialist delegation.
+    // Saves 5-12K tokens per question that would otherwise trigger a handoff.
+    if (!this.investigationModeEnabled) {
+      sections.push(
+        `## NO HANDOFF MODE (Investigation Mode OFF)\n\n` +
+        `Do NOT hand off to specialists. Answer everything directly using your own tool access.\n` +
+        `If you need to read files, do it yourself. Target ≤5 tool calls.\n` +
+        `If you genuinely cannot answer after reading 3-5 files, tell the user:\n` +
+        `"I couldn't fully answer this — enable Investigation Mode in settings for a deeper specialist analysis."`
+      )
+    }
+
+    this.log.info(
+      `[PIPELINE:conditional-prefix] ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost} investigationMode=${this.investigationModeEnabled}`
+    )
+
+    return sections.length > 0 ? `[Contextual guidelines for this message]\n\n${sections.join('\n\n')}` : ''
+  }
+
+  /**
+   * Strategy δ: Append MCP tool guidance sections to system prompt — turn 1 only.
+   * These are workspace-stable (don't toggle between turns) so they are safe in the system prompt.
+   * On turns 2+, the guidance is already in conversation history from turn 1.
+   */
+  private appendMcpToolGuidance(basePrompt: string, turnCount: number): string {
+    // Strategy δ: Only inject MCP guidance on turn 1. On turns 2+, guidance is in history.
+    if (turnCount > 1) return basePrompt
+
     const appendSections: string[] = []
-
-    if (
-      conditionalSections.includeAskQuestionPrompt &&
-      !basePrompt.includes('## Asking Clarifying Questions')
-    ) {
-      appendSections.push(ASK_QUESTION_PROMPT)
-    }
-
-    if (
-      conditionalSections.includeMemoryProtocolPrompt &&
-      !basePrompt.includes('## Memory Protocol')
-    ) {
-      appendSections.push(MEMORY_PROTOCOL_PROMPT)
-    }
-
-    if (
-      conditionalSections.includeImageAttachmentsPrompt &&
-      !basePrompt.includes('## Image Attachments')
-    ) {
-      appendSections.push(IMAGE_ATTACHMENTS_PROMPT)
-    }
-
-    // Strategy 3: Direct Answer Boost ��� nudge generalist to answer directly for simple questions
-    if (
-      conditionalSections.includeDirectAnswerBoost &&
-      !basePrompt.includes('## Direct Answer Mode')
-    ) {
-      appendSections.push(DIRECT_ANSWER_BOOST_PROMPT)
-    }
 
     // Code graph: inject repomap tool guidance when enabled
     if (this.repomapEnabled && !basePrompt.includes('## Code Graph Tools')) {
@@ -954,6 +1057,34 @@ export class GeneralistService extends AgentBaseService {
 
     if (appendSections.length === 0) return basePrompt
     return `${basePrompt}\n\n---\n\n${appendSections.join('\n\n---\n\n')}`
+  }
+
+  /**
+   * Strategy β: Build specialist roster string for user prompt injection.
+   * Returns the roster with compressed format (IDs only), or null if no specialists.
+   */
+  private buildSpecialistRoster(): string | null {
+    let activeSpecialists = specialistRepository.findActive()
+
+    if (this.currentConversationId) {
+      const overrides = conversationSpecialistRepository.findByConversation(this.currentConversationId)
+      if (overrides.length > 0) {
+        const activeSpecialistIds = new Set(
+          overrides.filter((o) => o.isActive).map((o) => o.specialistId)
+        )
+        activeSpecialists = activeSpecialists.filter((s) => activeSpecialistIds.has(s.id))
+      }
+    }
+
+    const nonCoreSpecialists = activeSpecialists.filter(
+      (s) => !['generalist', 'generalist-agent', 'user'].includes(s.agentId)
+    )
+
+    if (nonCoreSpecialists.length === 0) return null
+
+    // Compressed format: IDs only — saves ~200 tokens vs full descriptions.
+    // The generalist already knows specialist capabilities from CLAUDE.md.
+    return `Available specialists: ${nonCoreSpecialists.map((s) => s.agentId).join(', ')}`
   }
 
   /**
@@ -1013,6 +1144,9 @@ export class GeneralistService extends AgentBaseService {
   private checkCompaction(inputTokens: number): void {
     const autoThreshold = this.compactAutoThreshold
     const suggestThreshold = this.compactSuggestThreshold
+    // Strategy μ: Pre-compact warning threshold at 80% of suggest threshold.
+    // Warns the user proactively before the next message triggers compaction.
+    const warningThreshold = Math.floor(suggestThreshold * 0.8)
 
     if (inputTokens >= autoThreshold) {
       this.log.warn(`Context very large (${inputTokens} input tokens) — auto-compacting`)
@@ -1033,6 +1167,18 @@ export class GeneralistService extends AgentBaseService {
       this.compactSuggested = true
       this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
       this.emit('compactNeeded', { level: 'suggest', inputTokens })
+    } else if (inputTokens >= warningThreshold && !this.compactSuggested) {
+      // Strategy μ: Proactive warning — inform the UI that compaction is approaching.
+      // The renderer can display a non-intrusive banner:
+      // "⚡ Context is getting large (~45K tokens). Your next message may include a compaction step."
+      this.log.info(
+        `[PIPELINE:compact-warning] Context approaching threshold (${inputTokens}/${suggestThreshold} tokens)`
+      )
+      this.emit('compactNeeded', {
+        level: 'warning',
+        inputTokens,
+        estimatedNextCost: Math.round(inputTokens * 0.05) // ~5% overhead for compaction
+      })
     }
   }
 
@@ -1042,6 +1188,12 @@ export class GeneralistService extends AgentBaseService {
    * Falls back gracefully if only the legacy { summary, specialists, mode } fields are present.
    */
   private detectHandoff(): boolean {
+    // Strategy γ: When investigation mode is OFF, ignore handoff blocks entirely.
+    // The generalist should answer directly — any handoff blocks are stale LLM behavior.
+    if (!this.investigationModeEnabled) {
+      return false
+    }
+
     const match = this.accumulatedText.match(HANDOFF_REGEX)
     if (!match) return false
 
@@ -1894,6 +2046,16 @@ Rules:
     savedTokens: number
     totalInput: number
     turns: number
+    /** Strategy θ: Per-turn cost breakdown for cost waterfall chart */
+    turnBreakdown: Array<{
+      turn: number
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheCreationTokens: number
+      cacheHitRate: number
+      timestamp: number
+    }>
   } {
     const totalWithCache =
       this.cacheStats.totalInput + this.cacheStats.cacheRead + this.cacheStats.cacheCreation
@@ -1902,7 +2064,8 @@ Rules:
       hitRate,
       savedTokens: this.cacheStats.cacheRead,
       totalInput: this.cacheStats.totalInput,
-      turns: this.cacheStats.turns
+      turns: this.cacheStats.turns,
+      turnBreakdown: this.turnBreakdown
     }
   }
 
@@ -1944,18 +2107,26 @@ Rules:
     this.compactCount++
     this.compactSuggested = false
 
-    // Store the compaction instruction — will be prepended to the next user message in send()
+    // Strategy μ: Smarter compaction — compress only the oldest conversation context,
+    // keeping recent specialist findings and current task context verbatim.
+    // This preserves recent context quality while still reducing total size.
     this.pendingCompaction.set(
       this.currentConversationId,
-      `/compact — Before answering the user's message below, first summarize our entire conversation into a concise context summary:
+      `/compact — Before answering the user's message below, compress our conversation context:
 
-**Decisions:** Key decisions made (architecture choices, approach selections)
-**Current Task:** What we're actively working on
-**Files:** Important file paths referenced or modified
-**Pending:** Unresolved items or next steps
-**Specialist Findings:** Key results from any specialist investigations
+**Instructions:**
+1. Summarize ONLY the OLDER parts of our conversation (first ~50% of messages) into bullet points.
+2. Keep the MOST RECENT specialist findings and current task context VERBATIM — do not summarize recent work.
+3. Preserve ALL file paths, decisions, and specialist report data from the last 2-3 turns exactly.
 
-Be extremely terse — bullet points only. Omit categories with no items. Then continue using this summary as your working context and answer the user's message that follows.`
+**Summary format (terse bullet points only, omit empty categories):**
+- **Decisions:** Architecture choices, approach selections
+- **Current Task:** What we're actively working on
+- **Files:** Important file paths referenced or modified
+- **Pending:** Unresolved items or next steps
+- **Specialist Findings:** Key results from investigations (preserve report data)
+
+Then continue using this summary as your working context and answer the user's message that follows.`
     )
   }
 
@@ -1987,6 +2158,9 @@ Be extremely terse — bullet points only. Omit categories with no items. Then c
     const previousMode = this.currentMode
     this.log.info(`Switching mode: ${previousMode} → ${mode}`)
     this.currentMode = mode
+
+    // Strategy ζ: Invalidate system prompt snapshot on mode switch
+    this.systemPromptSnapshot = null
 
     // Flag the mode switch — the next send() will prefix the user's message with
     // mode-change context so the agent knows its permissions changed, while

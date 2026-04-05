@@ -390,7 +390,7 @@ export default function SpecialistEditPage({
             Skills
           </h2>
           <p className="text-[11px] text-text-muted">
-            Skills assigned to this specialist. Managed through agent YAML configuration files.
+            Skills assigned to this specialist. Managed through the database — synced from YAML on workspace open.
           </p>
           {specialist.skills && specialist.skills.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

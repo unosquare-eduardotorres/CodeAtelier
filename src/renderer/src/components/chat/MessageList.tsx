@@ -260,7 +260,8 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
     const handleScroll = (): void => {
       const { scrollTop, scrollHeight, clientHeight } = container
-      const nearBottom = scrollHeight - scrollTop - clientHeight < 100
+      // Use 150px threshold (larger than virtualizer's estimateSize) to avoid jitter
+      const nearBottom = scrollHeight - scrollTop - clientHeight < 150
       shouldAutoScroll.current = nearBottom
       setIsAtBottom(nearBottom)
 
@@ -268,7 +269,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       clearTimeout(scrollTimeout)
       scrollTimeout = setTimeout(() => {
         isUserScrolling.current = false
-      }, 150)
+      }, 250) // Longer debounce to let virtualizer settle
     }
 
     container.addEventListener('scroll', handleScroll, { passive: true })
@@ -288,8 +289,13 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
   // Auto-scroll to bottom when new messages arrive, streaming content updates, or investigation report appears
   useEffect(() => {
-    if (shouldAutoScroll.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    if (shouldAutoScroll.current && scrollRef.current && !isUserScrolling.current) {
+      // Use requestAnimationFrame to let virtualizer settle first
+      requestAnimationFrame(() => {
+        if (shouldAutoScroll.current && scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        }
+      })
     }
   }, [messages.length, streamingContent, investigationReport])
 

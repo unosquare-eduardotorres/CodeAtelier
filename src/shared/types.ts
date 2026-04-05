@@ -270,6 +270,9 @@ export interface SpecialistTokenEstimate {
   specialistId: string
   displayName: string
   skillCount: number
+  promptTokens: number
+  skillTokens: number
+  skillBreakdown: { name: string; tokens: number }[]
   estimatedTokens: number
 }
 

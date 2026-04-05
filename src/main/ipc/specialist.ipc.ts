@@ -8,7 +8,7 @@ import { validateSender } from './validate-sender'
 export function registerSpecialistIpc(): void {
   ipcMain.handle(IPC_CHANNELS.SPECIALIST_LIST, async (event) => {
     validateSender(event)
-    return specialistRepository.findAll()
+    return specialistRepository.findAllWithSkills()
   })
 
   ipcMain.handle(IPC_CHANNELS.SPECIALIST_GET, async (event, args: { id: string }) => {

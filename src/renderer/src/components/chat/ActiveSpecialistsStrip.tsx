@@ -109,7 +109,7 @@ export default function ActiveSpecialistsStrip({
                     className="inline-flex items-center justify-center w-5 h-5 rounded-full overflow-hidden"
                     style={{ backgroundColor: `${color}22`, color }}
                   >
-                    {(specialist?.pixelSpriteId || (specialist?.agentId && getSpriteAssignment(specialist.agentId).pixelSpriteId)) ? (
+                    {specialist?.usePixelForChat && (specialist?.pixelSpriteId || (specialist?.agentId && getSpriteAssignment(specialist.agentId).pixelSpriteId)) ? (
                       <PixelSpriteAvatar
                         spriteId={specialist?.pixelSpriteId ?? getSpriteAssignment(specialist!.agentId).pixelSpriteId!}
                         size={16}

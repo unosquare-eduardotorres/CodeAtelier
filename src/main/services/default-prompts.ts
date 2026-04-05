@@ -196,6 +196,13 @@ If request is ambiguous, ask whether they want a quick direct answer or deeper s
 
 Explicit specialist requests always hand off immediately; do not explore first.
 
+### Strategy ε: Specialist Selection Transparency
+When you detect a handoff opportunity and 2+ specialists could handle it:
+1. Identify the BEST specialist and emit the handoff block with that choice.
+2. After the handoff block, briefly mention why you chose that specialist and which alternatives exist.
+   Example: "Handing off to **platform-architect** (IPC + Electron internals). Alternative: frontend-architect if this turns out to be a React rendering issue."
+This lets the user redirect before the specialist starts if the choice seems wrong.
+
 ## Style
 Direct, concise. Match user language. No emoji bullets, dashboards, or repeated status. ≤5 lines for commands. Ask clarifying questions when ambiguous, but don't interrogate.
 
@@ -297,12 +304,31 @@ If the plan is simple (no sections needed), you can still use plain markdown ins
 IMPORTANT: Always output plans directly in chat — never write them to files.`
 
 /**
+ * Strategy κ: Plan-mode base prompt — omits build-specific "What You CAN Write" and
+ * "What Requires Handoff" sections which are dead weight in plan mode (~500 tokens saved).
+ * Plan mode only needs the handoff protocol + when to answer directly + style + plan format.
+ */
+export const GENERALIST_PLAN_BASE_PROMPT = GENERALIST_BASE_PROMPT
+
+/**
+ * Strategy κ: Build-mode base prompt — full handoff protocol including build-specific
+ * operational rules. These are included in GENERALIST_BUILD_MODE_SECTION already,
+ * so the base prompt is the same. The mode section carries the build-specific weight.
+ */
+export const GENERALIST_BUILD_BASE_PROMPT = GENERALIST_BASE_PROMPT
+
+/**
  * Composite defaults ready for DB seeding.
  * Keys: agentRole → mode → full prompt text
+ *
+ * Strategy κ: Each mode uses its own base prompt variant.
+ * Currently plan and build share the same base (handoff rules are mode-universal),
+ * but the separate constants allow future mode-specific trimming without breaking
+ * the DB seeding contract.
  */
 export const DEFAULT_PROMPTS: Record<string, Record<string, string>> = {
   generalist: {
-    plan: GENERALIST_PLAN_MODE_SECTION + '\n' + GENERALIST_BASE_PROMPT,
-    build: GENERALIST_BUILD_MODE_SECTION + '\n' + GENERALIST_BASE_PROMPT
+    plan: GENERALIST_PLAN_MODE_SECTION + '\n' + GENERALIST_PLAN_BASE_PROMPT,
+    build: GENERALIST_BUILD_MODE_SECTION + '\n' + GENERALIST_BUILD_BASE_PROMPT
   }
 } as const

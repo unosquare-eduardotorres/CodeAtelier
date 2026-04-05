@@ -145,7 +145,7 @@ export class ConversationSpecialistRepository {
     db.prepare(
       `
       INSERT OR IGNORE INTO conversation_specialists (conversation_id, specialist_id, is_active, skills_enabled)
-      SELECT ?, id, 1, 1 FROM specialists WHERE is_active = 1
+      SELECT ?, id, 1, 1 FROM specialists WHERE is_active = 1 AND is_core = 0
     `
     ).run(conversationId)
   }

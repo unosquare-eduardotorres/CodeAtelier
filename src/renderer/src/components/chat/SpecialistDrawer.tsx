@@ -250,7 +250,7 @@ export default function SpecialistDrawer({
                           color: specialist.color
                         }}
                       >
-                        {specialist.pixelSpriteId ? (
+                        {specialist.usePixelForChat && specialist.pixelSpriteId ? (
                           <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={28} />
                         ) : specialist.avatarUrl ? (
                           <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={specialist.color} />

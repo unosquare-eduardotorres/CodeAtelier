@@ -125,12 +125,21 @@ interface Api {
   // Agents
   getAgentStatuses: () => Promise<AgentStatus[]>
   stopAllAgents: () => Promise<string[]>
-  /** Strategy M: Cache efficiency metrics for dashboard */
+  /** Strategy M + θ: Cache efficiency metrics with per-turn breakdown for dashboard */
   getCacheEfficiency: () => Promise<{
     hitRate: number
     savedTokens: number
     totalInput: number
     turns: number
+    turnBreakdown: Array<{
+      turn: number
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheCreationTokens: number
+      cacheHitRate: number
+      timestamp: number
+    }>
   }>
 
   // Agent lifecycle

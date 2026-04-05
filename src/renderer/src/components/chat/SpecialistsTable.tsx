@@ -300,7 +300,7 @@ function SpecialistRow({
               color
             }}
           >
-            {specialist.pixelSpriteId ? (
+            {specialist.usePixelForChat && specialist.pixelSpriteId ? (
               <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={24} />
             ) : specialist.avatarUrl ? (
               <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={color} />
@@ -434,6 +434,19 @@ function SpecialistRow({
                       </button>
                     )
                   })}
+                </div>
+              </div>
+            )}
+            {estimate && estimate.estimatedTokens > 0 && (
+              <div className="mt-2 pt-2 border-t border-border-subtle/50">
+                <p className="text-[11px] text-text-muted mb-1">Token breakdown:</p>
+                <div className="text-[11px] text-text-secondary space-y-0.5">
+                  {estimate.promptTokens > 0 && (
+                    <div>Prompt: ~{TOKEN_FORMATTER.format(estimate.promptTokens)}</div>
+                  )}
+                  {estimate.skillBreakdown?.map((s) => (
+                    <div key={s.name}>{s.name}: ~{TOKEN_FORMATTER.format(s.tokens)}</div>
+                  ))}
                 </div>
               </div>
             )}

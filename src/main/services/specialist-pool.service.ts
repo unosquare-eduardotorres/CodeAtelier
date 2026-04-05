@@ -171,14 +171,15 @@ export class SpecialistPoolService extends EventEmitter {
   /** S6: Investigation depth budgets — controls turn/tool limits for plan-mode specialists */
   private static readonly DEPTH_BUDGETS: Record<
     InvestigationDepth,
-    { maxTurns: number; maxToolCalls: number }
+    { maxTurns: number; maxToolCalls: number; maxOutputTokens: number }
   > = {
-    quick: { maxTurns: 3, maxToolCalls: 5 },
+    quick: { maxTurns: 3, maxToolCalls: 5, maxOutputTokens: 800 },
     standard: {
       maxTurns: SpecialistPoolService.MAX_SPECIALIST_PLAN_TURNS,
-      maxToolCalls: SpecialistPoolService.MAX_SPECIALIST_PLAN_TOOL_CALLS
+      maxToolCalls: SpecialistPoolService.MAX_SPECIALIST_PLAN_TOOL_CALLS,
+      maxOutputTokens: 2000
     },
-    deep: { maxTurns: 15, maxToolCalls: 25 }
+    deep: { maxTurns: 15, maxToolCalls: 25, maxOutputTokens: 4000 }
   } as const
   // S9: Conclusive patterns moved to specialist/task-scheduler.ts
   // Use getConclusivePatterns() for pattern access
@@ -210,6 +211,15 @@ export class SpecialistPoolService extends EventEmitter {
   ])
   /** Current trace run ID for structured tracing correlation */
   private currentRunId: string | null = null
+
+  /**
+   * Strategy λ: Session-level specialist prompt cache.
+   * When the same specialist is called multiple times in a conversation, the system prompt
+   * is byte-identical (brief + feedback moved to user prompt in Strategy 8). This cache
+   * ensures we don't rebuild from scratch → 90% prompt cache discount on repeated calls.
+   * Key: `${specialistId}:${mode}:${budgetTier}:${skillsEnabled}`
+   */
+  private specialistPromptCache: Map<string, string> = new Map()
 
   setWorkspacePath(path: string): void {
     this.workspacePath = path
@@ -916,32 +926,53 @@ export class SpecialistPoolService extends EventEmitter {
       model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
 
     // Build system prompt via centralized PromptBuilder
-    const promptOptions: Parameters<typeof promptBuilder.build>[0] & {
-      skillsEnabled?: boolean
-      skillOverrides?: string[]
-    } = {
-      role: 'specialist',
-      mode,
-      specialistId: task.specialist,
-      specialistPrompt: specialist?.prompt || undefined,
-      assignedSkills,
-      workspacePath: this.workspacePath!,
-      brief: this.conversationBrief || undefined,
-      feedbackContext,
-      budgetTier,
-      // S2: Only load skills for moderate+ complexity tasks (complexity >= 5)
-      // Strategy D: Also skip skills for single-file changes — skills are implementation guides
-      // for multi-file architectural work, not needed for simple one-file fixes.
-      // This saves 400-1,140 tokens per specialist call for simple tasks.
-      skillsEnabled: (task.complexity?.total ?? 5) >= 5 && (task.complexity?.filesAffected ?? 1) > 1
+    const effectiveSkillsEnabled = skillsEnabled !== undefined
+      ? skillsEnabled
+      : (task.complexity?.total ?? 5) >= 5 && (task.complexity?.filesAffected ?? 1) > 1
+
+    // Strategy λ: Check specialist prompt cache before rebuilding.
+    // Cache key includes all factors that affect system prompt content.
+    const cacheKey = `${task.specialist}:${mode}:${budgetTier}:${effectiveSkillsEnabled}:${skillOverrides?.join(',') ?? ''}`
+    let systemPrompt = this.specialistPromptCache.get(cacheKey)
+
+    if (!systemPrompt) {
+      const promptOptions: Parameters<typeof promptBuilder.build>[0] & {
+        skillsEnabled?: boolean
+        skillOverrides?: string[]
+      } = {
+        role: 'specialist',
+        mode,
+        specialistId: task.specialist,
+        specialistPrompt: specialist?.prompt || undefined,
+        assignedSkills,
+        workspacePath: this.workspacePath!,
+        brief: this.conversationBrief || undefined,
+        feedbackContext,
+        budgetTier,
+        // S2: Only load skills for moderate+ complexity tasks (complexity >= 5)
+        // Strategy D: Also skip skills for single-file changes — skills are implementation guides
+        // for multi-file architectural work, not needed for simple one-file fixes.
+        // This saves 400-1,140 tokens per specialist call for simple tasks.
+        skillsEnabled: effectiveSkillsEnabled
+      }
+      if (skillsEnabled !== undefined) {
+        promptOptions.skillsEnabled = skillsEnabled
+      }
+      if (skillOverrides) {
+        promptOptions.skillOverrides = skillOverrides
+      }
+      systemPrompt = promptBuilder.build(promptOptions)
+
+      // Cache for reuse on subsequent calls with the same specialist
+      this.specialistPromptCache.set(cacheKey, systemPrompt)
+      this.log.info(
+        `[PIPELINE:specialist-prompt-cache] MISS — built and cached prompt for ${cacheKey} (${systemPrompt.length} chars)`
+      )
+    } else {
+      this.log.info(
+        `[PIPELINE:specialist-prompt-cache] HIT — reusing cached prompt for ${cacheKey}`
+      )
     }
-    if (skillsEnabled !== undefined) {
-      promptOptions.skillsEnabled = skillsEnabled
-    }
-    if (skillOverrides) {
-      promptOptions.skillOverrides = skillOverrides
-    }
-    const systemPrompt = promptBuilder.build(promptOptions)
 
     // Build context from completed dependency outputs
     let dependencyContext = ''
@@ -1091,6 +1122,12 @@ export class SpecialistPoolService extends EventEmitter {
 
     const executor = new SDKExecutor()
     try {
+      // Strategy η: Compute output token budget based on investigation depth.
+      // For investigation tasks, hard-cap output to prevent verbose responses.
+      // Build-mode tasks get no cap — they need full output for code generation.
+      const depthBudget = SpecialistPoolService.DEPTH_BUDGETS[this.investigationDepth]
+      const maxOutputTokens = execState.isInvestigationTask ? depthBudget.maxOutputTokens : undefined
+
       for await (const chunk of executor.execute({
         prompt: fullPrompt,
         systemPrompt,
@@ -1100,7 +1137,8 @@ export class SpecialistPoolService extends EventEmitter {
         maxThinkingTokens: parseInt(thinkingBudget) || undefined,
         maxTurns: execState.maxTurns,
         abortController: execState.abortController,
-        ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {})
+        ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
+        ...(maxOutputTokens ? { maxOutputTokens } : {})
       })) {
         const shouldBreak = this.processSDKStreamChunk(chunk, execState)
         if (shouldBreak) break
@@ -1928,6 +1966,8 @@ export class SpecialistPoolService extends EventEmitter {
     this.currentRunId = null
     this.semaphore.drain()
     taskLoopService.reset()
+    // Strategy λ: Clear specialist prompt cache on reset (new conversation = new context)
+    this.specialistPromptCache.clear()
     // Note: workspacePath and conversationId are preserved across resets
   }
 

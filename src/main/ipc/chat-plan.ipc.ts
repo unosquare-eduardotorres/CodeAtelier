@@ -157,21 +157,36 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           messageId: savedMsg.id
         })
 
-        // Strategy 1: Inject specialist results back into generalist context.
-        // Without this, follow-up questions re-trigger the full handoff pipeline (~12K tokens)
-        // instead of using the generalist's existing conversation context (~2K tokens).
+        // Strategy ι: Extract just the investigation report JSON from the specialist output
+        // for injection, instead of the full raw output. This reduces the lazy injection payload
+        // from ~4K chars to ~200 chars (structured report) or ~1K chars (fallback).
+        // Saves ~230-860 tokens on the next user message.
         try {
-          const contextSummary = accumulatedContent.value.substring(0, 4000)
-          if (contextSummary.trim()) {
+          const rawOutput = accumulatedContent.value
+          const reportMatch = rawOutput.match(/```investigation-report\s*\n([\s\S]*?)```/)
+          let contextToInject: string
+
+          if (reportMatch) {
+            // Structured report found — inject only the parsed report (compact)
+            contextToInject = `Investigation result: ${reportMatch[1].trim()}`
+            log.info(
+              `[PIPELINE:context-injection-dedup] Extracted investigation report (${contextToInject.length} chars vs ${rawOutput.length} raw)`
+            )
+          } else {
+            // No structured report — truncate raw output to 1K chars
+            contextToInject = rawOutput.substring(0, 1000)
+          }
+
+          if (contextToInject.trim()) {
             const taskDescriptions = tasks
               .map((t) => `- ${t.specialist}: ${t.description}`)
               .join('\n')
             await generalistService.injectContext(
-              `[Specialist execution complete — ${tasks.length} task(s)]\n\nTasks executed:\n${taskDescriptions}\n\nResults summary:\n${contextSummary}`,
+              `[Specialist execution complete — ${tasks.length} task(s)]\n\nTasks executed:\n${taskDescriptions}\n\nResults summary:\n${contextToInject}`,
               conversationId
             )
             log.info(
-              `[PIPELINE:context-injection] Injected ${contextSummary.length} chars of specialist results into generalist context`
+              `[PIPELINE:context-injection] Injected ${contextToInject.length} chars of specialist results into generalist context`
             )
           }
         } catch (e) {
