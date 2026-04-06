@@ -11,7 +11,8 @@ import type {
   ExecutionStrategy,
   HandoffBrief,
   InvestigationDepth,
-  InvestigationReport
+  InvestigationReport,
+  StructuredPlan
 } from '../../shared/types'
 import { taskPipeline } from '../services/task-pipeline.service'
 import { buildEnvWithPath } from '../services/env-utils'
@@ -65,6 +66,34 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         conversationId: args.conversationId,
         report: args.report,
         autoExecuteStrategy: args.strategy
+      })
+    }
+  )
+
+  // ── Direct plan-to-build: skip generalist round-trip ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_BUILD_FROM_PLAN,
+    async (
+      event,
+      args: {
+        conversationId: string
+        plan: StructuredPlan
+        planContent: string
+      }
+    ) => {
+      validateSender(event)
+      if (!args?.conversationId) throw new Error('Missing conversationId')
+      if (!args?.plan) throw new Error('Missing structured plan')
+
+      log.info(
+        `[IPC:buildFromPlan] Direct plan execution for conversation=${args.conversationId}, steps=${args.plan.steps?.length ?? 0}`
+      )
+
+      await taskPipeline.prepare({
+        type: 'planExecution',
+        conversationId: args.conversationId,
+        plan: args.plan,
+        planContent: args.planContent
       })
     }
   )

@@ -175,6 +175,44 @@ export class CodeGraphTagRepository {
   }
 
   /**
+   * Find definitions with zero cross-file references in the workspace.
+   * A "dead" symbol has a 'def' tag but no matching 'ref' tag by name
+   * in any other file. Optional pathPrefix filters results to a subdirectory.
+   */
+  findDeadCode(
+    workspaceId: string,
+    options?: { pathPrefix?: string; maxResults?: number }
+  ): RepomapTag[] {
+    const db = getDatabase()
+    const limit = options?.maxResults ?? 100
+    const pathFilter = options?.pathPrefix ? `AND d.rel_fname LIKE ? || '%'` : ''
+    const params: (string | number)[] = [workspaceId, workspaceId]
+    if (options?.pathPrefix) {
+      params.push(options.pathPrefix)
+    }
+    params.push(limit)
+
+    const rows = db
+      .prepare(
+        `SELECT d.rel_fname, d.fname, d.line, d.name, d.kind
+         FROM code_graph_tags d
+         WHERE d.workspace_id = ? AND d.kind = 'def'
+         ${pathFilter}
+         AND NOT EXISTS (
+           SELECT 1 FROM code_graph_tags r
+           WHERE r.workspace_id = ?
+             AND r.kind = 'ref'
+             AND r.name = d.name
+             AND r.rel_fname != d.rel_fname
+         )
+         ORDER BY d.rel_fname, d.line
+         LIMIT ?`
+      )
+      .all(...params) as CodeGraphTagRow[]
+    return rows.map(mapRowToTag)
+  }
+
+  /**
    * Count total tags for a workspace.
    */
   countByWorkspace(workspaceId: string): number {

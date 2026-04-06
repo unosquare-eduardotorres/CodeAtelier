@@ -121,10 +121,6 @@ export class SDKExecutor {
     // complete content as a replay. Without dedup, every text/tool block gets yielded twice.
     let hasStreamedText = false
     const processedToolIds = new Set<string>()
-    const exitPlanModeToolIds = new Set<string>() // Track ExitPlanMode tool IDs to suppress their tool_result
-    let planExtracted = false // Track ExitPlanMode → abort after plan yield
-    let planDetectedInStream = false // Suppress parallel tool_use events after ExitPlanMode in stream
-
     // Start heartbeat timer — sets a flag that the generator checks on each iteration
     if (heartbeatInterval > 0) {
       heartbeatTimer = setInterval(() => {
@@ -268,28 +264,6 @@ export class SDKExecutor {
                 const toolName = block.name as string
                 const toolInput = block.input as Record<string, unknown> | undefined
 
-                // Intercept ExitPlanMode: extract plan content and emit as ````plan block.
-                // The scope guard will still block the actual tool (preventing file writes),
-                // but the plan content reaches the UI as a PlanCard.
-                if (
-                  toolName === 'ExitPlanMode' &&
-                  toolInput?.plan &&
-                  typeof toolInput.plan === 'string'
-                ) {
-                  sdkLog.info(
-                    'Intercepted ExitPlanMode — injecting plan content and aborting session'
-                  )
-                  yield {
-                    type: 'text',
-                    content: `\n\n\`\`\`\`plan\n${toolInput.plan}\n\`\`\`\`\n`
-                  }
-                  planExtracted = true
-                  // Abort the SDK session to prevent the agent from continuing after plan submission.
-                  // The catch block below handles this gracefully when planExtracted is true.
-                  options.abortController?.abort('plan-submitted')
-                  break // Exit inner block loop — outer loop will hit AbortError on next iteration
-                }
-
                 const toolId = block.id as string | undefined
                 if (toolId && processedToolIds.has(toolId)) continue
                 yield {
@@ -325,6 +299,11 @@ export class SDKExecutor {
               const toolId = cb.id as string | undefined
               if (toolId) processedToolIds.add(toolId)
               const toolName = cb.name as string
+              // Suppress AskUserQuestion tool_use in stream — content extracted in assistant message handler
+              if (toolName === 'AskUserQuestion') {
+                if (toolId) askQuestionToolIds.add(toolId)
+                continue
+              }
               // Suppress ExitPlanMode tool_use — plan content extracted in assistant message handler
               if (toolName === 'ExitPlanMode') {
                 if (toolId) exitPlanModeToolIds.add(toolId)
@@ -374,6 +353,7 @@ export class SDKExecutor {
                 // Suppress tool_result for ExitPlanMode — no orphan "completed" tool activity
                 const toolUseId = block.tool_use_id as string | undefined
                 if (toolUseId && exitPlanModeToolIds.has(toolUseId)) continue
+                if (toolUseId && askQuestionToolIds.has(toolUseId)) continue
                 yield { type: 'tool_result', toolName: 'tool' }
               }
             }

@@ -1,20 +1,12 @@
 /**
- * Merged investigation keyword detection — single source of truth.
- * Used by: handoff mode resolution, decompose() description rewriting,
- * specialist pool execution limits.
+ * Investigation keyword detection — single source of truth.
+ * Used by: specialist pool execution limits (more turns/tools for investigation tasks).
  */
 const INVESTIGATION_KEYWORDS = [
-  // From specialist-pool.service.ts
   'investigation report',
   'investigate',
-  'analyze',
   'diagnose',
-  'audit',
-  'review',
-  // From generalist.service.ts regex (partial-match equivalents)
-  'explain',
-  'what does',
-  'how does'
+  'produce a structured investigation'
 ]
 
 /**

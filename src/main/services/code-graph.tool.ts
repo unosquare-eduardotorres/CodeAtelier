@@ -100,6 +100,44 @@ class CodeGraphMcpService {
               content: [{ type: 'text' as const, text: JSON.stringify({ results }, null, 2) }]
             }
           }
+        },
+        {
+          name: 'find_dead_code',
+          description:
+            'Find potentially unused code definitions (functions, classes, variables) ' +
+            'that have no cross-file references in the codebase. ' +
+            'Useful for cleanup, identifying orphaned symbols, or finding dead code after refactoring. ' +
+            'Scope results with pathPrefix for targeted analysis.',
+          inputSchema: {
+            pathPrefix: z
+              .string()
+              .optional()
+              .describe(
+                'Filter results to files under this path prefix (e.g. "src/main/services")'
+              ),
+            maxResults: z
+              .number()
+              .optional()
+              .default(50)
+              .describe('Maximum number of dead code entries to return')
+          },
+          handler: async (args) => {
+            log.info(
+              `[CodeGraph] MCP find_dead_code (workspace: ${workspaceId}, prefix: ${args.pathPrefix ?? 'all'})`
+            )
+            const results = await codeGraphService.findDeadCode(workspaceId, workspacePath, {
+              pathPrefix: args.pathPrefix as string | undefined,
+              maxResults: args.maxResults as number | undefined
+            })
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({ results, count: results.length }, null, 2)
+                }
+              ]
+            }
+          }
         }
       ]
     })

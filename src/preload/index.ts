@@ -19,7 +19,6 @@ import type {
   DecomposedTask,
   ExecutionStrategy,
   InvestigationDepth,
-  TaskPlan,
   TaskExecutionProgress,
   InvestigationReport,
   FileChange,
@@ -54,7 +53,8 @@ import type {
   IndexingState,
   CodeGraphIndexingState,
   SchedulingWeights,
-  ContextUsage
+  ContextUsage,
+  StructuredPlan
 } from '../shared/types'
 
 const api = {
@@ -139,6 +139,13 @@ const api = {
     strategy: ExecutionStrategy
     report: InvestigationReport
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_EXECUTE_INVESTIGATION_FIX, args),
+
+  /** Direct plan-to-build: skip generalist round-trip when user clicks "Build This" on inline plan */
+  buildFromPlan: (args: {
+    conversationId: string
+    plan: StructuredPlan
+    planContent: string
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_BUILD_FROM_PLAN, args),
 
   // Chat commands
   completeConversation: (args: {
@@ -736,14 +743,6 @@ const api = {
     }
   },
 
-  onTaskPlan: (callback: (data: TaskPlan) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: TaskPlan): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.CHAT_TASK_PLAN, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_TASK_PLAN, handler)
-    }
-  },
-
   onInvestigationReport: (
     callback: (data: {
       conversationId: string
@@ -773,6 +772,19 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.CHAT_TASK_PROGRESS, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.CHAT_TASK_PROGRESS, handler)
+    }
+  },
+
+  onBuildTasks: (
+    callback: (data: { conversationId: string; tasks: DecomposedTask[] }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; tasks: DecomposedTask[] }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_BUILD_TASKS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_BUILD_TASKS, handler)
     }
   },
 

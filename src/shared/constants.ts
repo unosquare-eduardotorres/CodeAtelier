@@ -27,14 +27,16 @@ export const IPC_CHANNELS = {
   CHAT_GRILL_QUESTION: 'chat:grillQuestion',
   CHAT_GRILL_EVALUATION: 'chat:grillEvaluation',
   CHAT_ASK_QUESTION: 'chat:askQuestion',
-  CHAT_TASK_PLAN: 'chat:taskPlan',
   CHAT_EXECUTE_PLAN: 'chat:executePlan',
   CHAT_TASK_PROGRESS: 'chat:taskProgress',
+  CHAT_BUILD_TASKS: 'chat:buildTasks',
   CHAT_COMPLETE: 'chat:complete',
   CHAT_CLOSE: 'chat:close',
   CHAT_GET_FILE_CHANGES: 'chat:getFileChanges',
   CHAT_INVESTIGATION_REPORT: 'chat:investigationReport',
   CHAT_EXECUTE_INVESTIGATION_FIX: 'chat:executeInvestigationFix',
+  /** Direct plan-to-build: skip generalist round-trip when user clicks "Build This" on inline plan */
+  CHAT_BUILD_FROM_PLAN: 'chat:buildFromPlan',
 
   // Agents
   AGENT_GET_STATUSES: 'agent:getStatuses',

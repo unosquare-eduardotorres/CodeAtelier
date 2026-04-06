@@ -57,6 +57,8 @@ import { createStructuredLogger } from './specialist/structured-log'
 import { codeGraphMcpService } from './code-graph.tool'
 import { semanticSearchMcpService } from './semantic-search.tool'
 import { gitContextMcpService } from './git-context.tool'
+import { gitHubContextMcpService } from './github-context.tool'
+import { githubService } from './github.service'
 import { agentContextService } from './agent-context.service'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 
@@ -1187,7 +1189,11 @@ export class SpecialistPoolService extends EventEmitter {
       ? config.skillsEnabled
       : (task.complexity?.total ?? 5) >= 5 && (task.complexity?.filesAffected ?? 1) > 1
 
-    const cacheKey = `${task.specialist}:${mode}:${config.budgetTier}:${effectiveSkillsEnabled}:${config.skillOverrides?.join(',') ?? ''}`
+    // Detect which MCP servers are active for conditional tool guidance injection
+    const mcpFlags = this.detectEnabledMcpServers()
+    const mcpFlagKey = `${mcpFlags.codeGraph}:${mcpFlags.semanticSearch}:${mcpFlags.gitContext}:${mcpFlags.githubContext}`
+
+    const cacheKey = `${task.specialist}:${mode}:${config.budgetTier}:${effectiveSkillsEnabled}:${config.skillOverrides?.join(',') ?? ''}:${mcpFlagKey}`
     let systemPrompt = this.specialistPromptCache.get(cacheKey)
 
     if (!systemPrompt) {
@@ -1208,7 +1214,9 @@ export class SpecialistPoolService extends EventEmitter {
         // Strategy D: Also skip skills for single-file changes — skills are implementation guides
         // for multi-file architectural work, not needed for simple one-file fixes.
         // This saves 400-1,140 tokens per specialist call for simple tasks.
-        skillsEnabled: effectiveSkillsEnabled
+        skillsEnabled: effectiveSkillsEnabled,
+        // Conditional MCP guidance — only inject tool guidance for active servers
+        enabledMcpServers: mcpFlags
       }
       if (config.skillsEnabled !== undefined) {
         promptOptions.skillsEnabled = config.skillsEnabled
@@ -1394,23 +1402,15 @@ export class SpecialistPoolService extends EventEmitter {
       }
     }
 
-    // Append code intelligence strategy guidance to help specialists work efficiently
-    const codeIntelligenceGuidance = `
-
-## Code Intelligence Strategy (MANDATORY)
-1. FIRST: Use mcp__semantic-search__semantic_search to find relevant code by concept
-2. SECOND: Use mcp__code-graph__search_identifiers to find specific symbols (classes, functions, types)
-3. THIRD: Use mcp__code-graph__repo_map to understand file importance and relationships
-4. FOURTH: Read ONLY the specific files identified — do NOT scan directories
-5. For API errors (4xx/5xx): Check the API endpoint handler FIRST, then trace the error path
-6. Do NOT re-read files you have already read — your context window already contains the file content from earlier Read calls
+    // Efficiency rules appended to specialist context (MCP guidance is in system prompt via buildSpecialistMcpGuidance)
+    const efficiencyRules = `
 
 ## Efficiency Rules
 - Maximum 3 reads of any single file per session
 - Target resolution in ≤10 tool calls for moderate tasks
 - If stuck after 15 tool calls, summarize findings and stop`
 
-    const enhancedFullPrompt = fullPrompt + codeIntelligenceGuidance
+    const enhancedFullPrompt = fullPrompt + efficiencyRules
 
     return { systemPrompt, fullPrompt: enhancedFullPrompt, cwd, modelId, thinkingBudget }
   }
@@ -1525,7 +1525,9 @@ export class SpecialistPoolService extends EventEmitter {
     info.abortController = abortController
 
     const isPlanModeSpecialist = mode === 'plan'
-    const isInvestigationTask = isInvestigationIntent(task.description)
+    // Plan mode specialists produce ````plan blocks, not investigation-report blocks.
+    // Only detect investigation intent in build mode to avoid maxOutputTokens capping.
+    const isInvestigationTask = !isPlanModeSpecialist && isInvestigationIntent(task.description)
 
     const depthBudget = SpecialistPoolService.DEPTH_BUDGETS[this.investigationDepth]
     const maxToolCalls = isPlanModeSpecialist
@@ -1559,6 +1561,33 @@ export class SpecialistPoolService extends EventEmitter {
   }
 
   /**
+   * Detects which MCP servers are active for this workspace.
+   * Mirrors the generalist's refreshFeatureFlags() logic — checks workspace settings
+   * to determine if code graph and semantic search are enabled.
+   * Used by buildOrCacheSystemPrompt() to conditionally inject tool guidance —
+   * prevents specialists from trying to call phantom tools for unconfigured servers.
+   */
+  private detectEnabledMcpServers(): import('./default-prompts').SpecialistMcpFlags {
+    let codeGraph = false
+    let semanticSearch = false
+    if (this.workspaceId && this.workspacePath) {
+      try {
+        const workspace = workspaceRepository.findById(this.workspaceId)
+        if (workspace) {
+          const settings = JSON.parse(workspace.settingsJson || '{}')
+          codeGraph = !!settings.repomapEnabled
+          semanticSearch = !!settings.semanticSearchEnabled
+        }
+      } catch {
+        // Non-critical — default to false (no phantom tools)
+      }
+    }
+    const gitContext = !!this.workspacePath
+    const githubContext = !!(this.workspaceId && this.workspacePath && githubService.isConfigured(this.workspaceId))
+    return { codeGraph, semanticSearch, gitContext, githubContext }
+  }
+
+  /**
    * Builds MCP server configs for specialist access to code graph,
    * semantic search, and git context.
    */
@@ -1573,6 +1602,13 @@ export class SpecialistPoolService extends EventEmitter {
     }
     if (this.workspacePath) {
       Object.assign(mcpServers, gitContextMcpService.getMcpServersConfig(this.workspacePath))
+    }
+    // GitHub context: expose PR/issue tools when configured
+    if (this.workspaceId && this.workspacePath && githubService.isConfigured(this.workspaceId)) {
+      Object.assign(
+        mcpServers,
+        gitHubContextMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath)
+      )
     }
     return mcpServers
   }

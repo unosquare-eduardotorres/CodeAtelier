@@ -7,11 +7,13 @@ import type {
   HandoffBrief,
   InvestigationDepth,
   InvestigationReport,
+  StructuredPlan,
   TaskExecutionProgress
 } from '../../shared/types'
 import { IPC_CHANNELS } from '../../shared/constants'
 import {
   conversationRepository,
+  conversationSpecialistRepository,
   messageRepository,
   workspaceRepository,
   specialistRepository
@@ -20,7 +22,6 @@ import { generalistService } from '../services'
 import type { StreamChunk } from '../services'
 import { specialistPoolService } from './specialist-pool.service'
 import { eventLoggerService } from './event-logger.service'
-import { isInvestigationIntent } from './specialist'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
 import { chatIpcLogger } from '../logger'
 
@@ -65,7 +66,16 @@ export interface InvestigationFixPrepare {
   autoExecuteStrategy: ExecutionStrategy
 }
 
-export type PrepareOptions = HandoffPrepare | InvestigationFixPrepare
+/** Direct plan execution — skip generalist round-trip when user clicks "Build This" on inline plan */
+export interface PlanExecutionPrepare {
+  type: 'planExecution'
+  conversationId: string
+  plan: StructuredPlan
+  /** Raw plan content (JSON string) for context injection */
+  planContent: string
+}
+
+export type PrepareOptions = HandoffPrepare | InvestigationFixPrepare | PlanExecutionPrepare
 
 export interface ExecuteOptions {
   conversationId: string
@@ -112,13 +122,16 @@ export class TaskPipelineService {
       case 'handoff': {
         const { brief } = options
         const conversation = conversationRepository.findById(conversationId)
-        const isInvestigation = isInvestigationIntent(brief.summary)
+
+        // Respect the user's explicit mode choice.
+        // Only default to plan when conversation mode is not set to build.
+        // When user is in build mode, honor it — even for investigation-like summaries.
         const effectiveMode: ConversationMode =
-          conversation?.mode === 'build' && !isInvestigation ? 'build' : 'plan'
+          conversation?.mode === 'build' ? 'build' : 'plan'
 
         if (effectiveMode !== brief.mode) {
           log.info(
-            `[PIPELINE:mode-resolve] effectiveMode=${effectiveMode} (conversation=${conversation?.mode}, investigation=${isInvestigation}, brief=${brief.mode})`
+            `[PIPELINE:mode-resolve] effectiveMode=${effectiveMode} (conversation=${conversation?.mode}, brief=${brief.mode})`
           )
         }
         brief.mode = effectiveMode
@@ -164,9 +177,69 @@ export class TaskPipelineService {
         }
         break
       }
+
+      case 'planExecution': {
+        const { plan, planContent } = options
+
+        // Switch to build mode
+        const conversation = conversationRepository.findById(conversationId)
+        if (conversation?.mode === 'plan') {
+          conversationRepository.updateMode(conversationId, 'build')
+          generalistService.switchMode('build')
+          log.info('[PIPELINE:plan-execution] Switched to build mode for direct plan execution')
+        }
+
+        // Resolve specialists from conversation overrides or plan context
+        const overrides = conversationSpecialistRepository.findByConversation(conversationId)
+        let specialists: string[]
+        if (overrides.length > 0) {
+          specialists = overrides.map((o) => o.specialistId)
+        } else {
+          // Fallback: use all active specialists — decompose will select the right ones
+          const activeSpecs = specialistRepository.findActive()
+          specialists = activeSpecs.map((s) => s.agentId)
+        }
+
+        // Collect files from plan steps and filesChanged
+        const filesFromSteps = (plan.steps ?? []).map((s) => s.file).filter(Boolean) as string[]
+        const filesFromChanges = (plan.filesChanged ?? []).map((f) => f.file)
+        const filesFromScope = plan.files ?? []
+        const allFiles = [...new Set([...filesFromSteps, ...filesFromChanges, ...filesFromScope])]
+
+        // Collect decisions from plan
+        const decisions = (plan.decisions ?? []).map((d) => `${d.what}: ${d.why}`)
+
+        // Build brief from structured plan — no generalist round-trip needed
+        const planBrief: HandoffBrief = {
+          summary: plan.summary || plan.title,
+          decisions,
+          constraints: [],
+          filesDiscussed: allFiles,
+          recentMessages: [],
+          specialists,
+          mode: 'build'
+        }
+
+        // Inject plan content as a recent message for specialist context
+        planBrief.recentMessages = [
+          {
+            role: 'assistant',
+            content: `Here is the implementation plan:\n\n${planContent.substring(0, 4000)}`
+          }
+        ]
+
+        config = {
+          brief: planBrief,
+          effectiveMode: 'build',
+          autoExecuteStrategy: 'sequential',
+          enrichMessages: specialists.length > 1,
+          notifications: ['handoff', 'delegation']
+        }
+        break
+      }
     }
 
-    const { brief, effectiveMode, autoExecuteStrategy, enrichMessages, notifications } = config
+    const { brief, effectiveMode, enrichMessages, notifications } = config
 
     // ── Step 1: Event logging ──
     eventLoggerService.logHandoffDetected({
@@ -250,21 +323,18 @@ export class TaskPipelineService {
       const taskPlan = await generalistService.decompose(brief, conversationId, effectiveMode)
       log.info(`[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`)
 
-      // ── Step 6: Present to renderer ──
-      const autoExecute =
-        autoExecuteStrategy ?? (taskPlan.mode === 'build' ? ('sequential' as ExecutionStrategy) : undefined)
-      if (autoExecute) {
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, {
-          ...taskPlan,
-          brief,
-          autoExecute
-        })
-      } else {
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
-      }
+      // ── Step 6: Auto-execute directly — no floating card ──
+      // In plan mode, specialist will produce a ```plan block → inline card in MessageBubble
+      // In build mode, specialist executes changes directly
       log.info(
-        `[PIPELINE:task-plan-sent] taskCount=${taskPlan.tasks.length} autoExecute=${!!autoExecute}`
+        `[PIPELINE:auto-executing] taskCount=${taskPlan.tasks.length} mode=${taskPlan.mode}`
       )
+      await this.execute({
+        conversationId,
+        tasks: taskPlan.tasks,
+        brief,
+        investigationDepth: taskPlan.investigationDepth
+      })
     } catch (error) {
       log.error('Task decomposition failed:', error)
       eventLoggerService.logDecompositionFailed({
@@ -305,10 +375,18 @@ export class TaskPipelineService {
 
     log.info(`Executing plan: tasks=${tasks.length}, conversation=${conversationId}`)
 
+    const startTime = Date.now()
+
     eventLoggerService.logPlanExecutionStarted({
       conversationId,
       strategy: 'subagent' as ExecutionStrategy,
       taskCount: tasks.length
+    })
+
+    // Emit task list to renderer for progress card
+    this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_BUILD_TASKS, {
+      conversationId,
+      tasks
     })
 
     const conversation = conversationRepository.findById(conversationId)
@@ -389,6 +467,15 @@ export class TaskPipelineService {
           workspacePath ?? undefined,
           { specialist: specialistId, taskId }
         )
+
+        // Feed Agent Monitor output panel
+        if (normalizedChunk.type === 'text' && normalizedChunk.content) {
+          this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_CHUNK, {
+            agentId: specialistId,
+            taskId,
+            text: normalizedChunk.content
+          })
+        }
       },
 
       allComplete: async (): Promise<void> => {
@@ -398,7 +485,8 @@ export class TaskPipelineService {
             tasks,
             mode,
             accumulatedContent,
-            taskResultMap
+            taskResultMap,
+            startTime
           )
         } finally {
           dispose?.()
@@ -473,7 +561,8 @@ export class TaskPipelineService {
     tasks: DecomposedTask[],
     mode: ConversationMode,
     accumulatedContent: { value: string },
-    taskResultMap: Map<string, { status: string; error?: string; specialist: string }>
+    taskResultMap: Map<string, { status: string; error?: string; specialist: string }>,
+    startTime?: number
   ): Promise<void> {
     log.info('Pipeline execution complete')
 
@@ -487,28 +576,31 @@ export class TaskPipelineService {
       taskCount: tasks.length
     })
 
-    // Build structured completion summary
-    const summaryLines: string[] = []
-    summaryLines.push(`## Execution Complete\n`)
-    summaryLines.push(`**${tasks.length} task(s)** executed in ${mode} mode.\n`)
-
-    for (const task of tasks) {
-      const result = taskResultMap.get(task.id)
-      const status = result?.status === 'failed' ? '❌' : '✅'
-      summaryLines.push(`${status} **${task.specialist}**: ${task.description}`)
-      if (result?.error) {
-        summaryLines.push(`  → Error: ${result.error}`)
-      }
+    // Build structured completion summary as build-summary JSON block
+    const buildSummary = {
+      tasks: tasks.map((task) => {
+        const result = taskResultMap.get(task.id)
+        return {
+          taskId: task.id,
+          specialist: task.specialist,
+          description: task.description,
+          status: result?.status === 'failed' ? ('failed' as const) : ('completed' as const),
+          error: result?.error
+        }
+      }),
+      totalDuration: startTime ? Date.now() - startTime : 0,
+      mode
     }
 
-    const summaryBlock = summaryLines.join('\n')
+    const summaryJson = JSON.stringify(buildSummary)
+    const summaryBlock = `\`\`\`build-summary\n${summaryJson}\n\`\`\``
 
     this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId,
-      chunk: `\n\n---\n\n${summaryBlock}\n`,
+      chunk: `\n\n${summaryBlock}\n`,
       role: 'generalist'
     })
-    accumulatedContent.value += `\n\n---\n\n${summaryBlock}\n`
+    accumulatedContent.value += `\n\n${summaryBlock}\n`
 
     const savedMsg = messageRepository.create(
       conversationId,

@@ -10,11 +10,10 @@ import type {
   GrillAnswerPayload,
   GrillProposedTask,
   GrillQuestion,
-  InvestigationDepth,
   InvestigationReport,
   Message,
+  DecomposedTask,
   TaskExecutionProgress,
-  TaskPlan,
   ToolActivity
 } from '../../../shared/types'
 
@@ -68,9 +67,9 @@ interface ChatState {
   toolActivities: ToolActivity[]
 
   // Task plan state
-  activeTaskPlan: TaskPlan | null
   taskProgress: Map<string, TaskExecutionProgress>
   isExecutingPlan: boolean
+  decomposedTasks: DecomposedTask[]
 
   // Compact suggestion state
   compactSuggestion: { level: string; inputTokens: number } | null
@@ -116,10 +115,8 @@ interface ChatState {
   setCompactSuggestion: (data: { level: string; inputTokens: number } | null) => void
 
   // Task plan actions
-  setTaskPlan: (plan: TaskPlan) => void
+  setDecomposedTasks: (tasks: DecomposedTask[]) => void
   updateTaskProgress: (progress: TaskExecutionProgress) => void
-  executePlan: (strategy: ExecutionStrategy, investigationDepth?: InvestigationDepth) => Promise<void>
-  clearTaskPlan: () => void
 
   // Grill session actions
   startGrillSession: () => void
@@ -183,7 +180,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: previousChatState?.isStreaming ?? false,
   activeHandoff: previousChatState?.activeHandoff ?? null,
   toolActivities: previousChatState?.toolActivities ?? [],
-  activeTaskPlan: previousChatState?.activeTaskPlan ?? null,
   taskProgress: previousChatState?.taskProgress ?? new Map(),
   isExecutingPlan: previousChatState?.isExecutingPlan ?? false,
   compactSuggestion: previousChatState?.compactSuggestion ?? null,
@@ -266,7 +262,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!conversation) return
 
     const messages = await window.api.getMessages({ conversationId: id })
-    set({ activeConversation: conversation, messages, streamingContent: '', isStreaming: false })
+    set({
+      activeConversation: conversation,
+      messages,
+      streamingContent: '',
+      isStreaming: false,
+      // Clear ephemeral UI state from previous conversation
+      taskProgress: new Map(),
+      isExecutingPlan: false,
+      decomposedTasks: [],
+      investigationReport: null,
+      activeHandoff: null,
+      toolActivities: [],
+      grillSession: null,
+      compactSuggestion: null,
+      pendingQuestions: null
+    })
 
     // CLI mode sync is deferred — will happen automatically on next message send
     // No need to restart the CLI process just because the user switched conversations
@@ -497,8 +508,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ activeHandoff: null })
   },
 
-  setTaskPlan: (plan: TaskPlan) => {
-    set({ activeTaskPlan: plan, taskProgress: new Map(), isExecutingPlan: false, investigationReport: null })
+  setDecomposedTasks: (tasks: DecomposedTask[]) => {
+    set({ decomposedTasks: tasks, isExecutingPlan: tasks.length > 0 })
   },
 
   updateTaskProgress: (progress: TaskExecutionProgress) => {
@@ -506,50 +517,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const updated = new Map(state.taskProgress)
       updated.set(progress.taskId, progress)
 
-      // Check if all tasks are done
-      const allDone = state.activeTaskPlan?.tasks.every((t) => {
-        const p = updated.get(t.id)
-        return p?.status === 'completed' || p?.status === 'failed'
-      })
+      // Check if all tracked tasks are done
+      const allDone = Array.from(updated.values()).every(
+        (p) => p.status === 'completed' || p.status === 'failed'
+      )
 
       return {
         taskProgress: updated,
         isExecutingPlan: !allDone
       }
     })
-  },
-
-  executePlan: async (strategy: ExecutionStrategy, investigationDepth?: InvestigationDepth) => {
-    const { activeTaskPlan } = get()
-    if (!activeTaskPlan) return
-
-    // Determine the initial specialist from the first task
-    const firstTask = activeTaskPlan.tasks[0]
-    set({
-      isExecutingPlan: true,
-      isStreaming: true,
-      streamingContent: '',
-      streamingRole: 'specialist',
-      streamingSpecialist: firstTask?.specialist ?? null,
-      streamingTaskId: firstTask?.id ?? null,
-      toolActivities: []
-    })
-
-    try {
-      await window.api.executePlan({
-        conversationId: activeTaskPlan.conversationId,
-        strategy,
-        tasks: activeTaskPlan.tasks,
-        investigationDepth
-      })
-    } catch (error) {
-      rendererLog.error('Failed to execute plan:', error)
-      set({ isExecutingPlan: false })
-    }
-  },
-
-  clearTaskPlan: () => {
-    set({ activeTaskPlan: null, taskProgress: new Map(), isExecutingPlan: false })
   },
 
   setInvestigationReport: (data) => set({ investigationReport: data }),
@@ -569,8 +546,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         strategy,
         report: investigationReport.report
       })
-      // Don't clear investigationReport here — it will be naturally replaced
-      // when the new task plan arrives (setTaskPlan clears isExecutingPlan)
+      // Don't clear investigationReport here — isExecutingPlan will be cleared
+      // when task progress events arrive marking all tasks as done
     } catch (error) {
       rendererLog.error('Failed to execute investigation fix:', error)
       set({ isExecutingPlan: false })
@@ -597,9 +574,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: '',
       isStreaming: false,
       toolActivities: [],
-      activeTaskPlan: null,
       taskProgress: new Map(),
-      isExecutingPlan: false
+      isExecutingPlan: false,
+      decomposedTasks: []
     })
 
     return result
@@ -859,9 +836,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: false,
       activeHandoff: null,
       toolActivities: [],
-      activeTaskPlan: null,
       taskProgress: new Map(),
       isExecutingPlan: false,
+      decomposedTasks: [],
       compactSuggestion: null,
       grillSession: null,
       investigationReport: null,
@@ -895,10 +872,7 @@ export const useChatActions = (): Pick<
   | 'skipAllGrillQuestions'
   | 'createItemsFromGrill'
   | 'setCompactSuggestion'
-  | 'setTaskPlan'
   | 'updateTaskProgress'
-  | 'executePlan'
-  | 'clearTaskPlan'
   | 'setGrillQuestions'
   | 'endGrillSession'
   | 'appendStreamChunk'
@@ -939,10 +913,8 @@ export const useChatActions = (): Pick<
       skipAllGrillQuestions: s.skipAllGrillQuestions,
       createItemsFromGrill: s.createItemsFromGrill,
       setCompactSuggestion: s.setCompactSuggestion,
-      setTaskPlan: s.setTaskPlan,
+      setDecomposedTasks: s.setDecomposedTasks,
       updateTaskProgress: s.updateTaskProgress,
-      executePlan: s.executePlan,
-      clearTaskPlan: s.clearTaskPlan,
       setGrillQuestions: s.setGrillQuestions,
       endGrillSession: s.endGrillSession,
       appendStreamChunk: s.appendStreamChunk,

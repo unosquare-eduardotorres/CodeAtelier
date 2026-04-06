@@ -39,7 +39,6 @@ import { checkpointContextMcpService } from './checkpoint-context.tool'
 import { gitHubContextMcpService } from './github-context.tool'
 import { githubService } from './github.service'
 import { memoryService } from './memory.service'
-import { isInvestigationIntent } from './specialist'
 import {
   conversationRepository,
   conversationSpecialistRepository,
@@ -360,6 +359,7 @@ export class GeneralistService extends AgentBaseService {
     this.toolCallCount = 0
     this.circuitBroken = false
     let hasTextAfterLastTool = true
+    let textLenBeforeLastTool = 0
     this.emit('statusUpdate', this.getStatus())
 
     // ── Strategy A: Prepend any pending context injection ──
@@ -395,7 +395,10 @@ export class GeneralistService extends AgentBaseService {
         to === 'build'
           ? 'You now have full permissions to execute commands, run apps, install dependencies, and perform all operational tasks. You can also hand off code changes to specialists.'
           : 'You are now in read-only mode. You can read files, search the codebase, and provide guidance, but you cannot run commands or write files.'
-      effectiveMessage = `[Mode switched from ${from} to ${to}. Mode: ${modeLabel}. ${permissions} The conversation history above is still valid — continue from where we left off.]\n\n${message}`
+      const planReinforcement = to === 'plan'
+        ? ' Always produce ````plan blocks for planning and diagnostic requests — never text summaries.'
+        : ''
+      effectiveMessage = `[Mode switched from ${from} to ${to}. Mode: ${modeLabel}. ${permissions}${planReinforcement} The conversation history above is still valid — continue from where we left off.]\n\n${message}`
       this.log.info(`Mode switch context injected: ${from} → ${to}`)
       this.pendingModeSwitch = null
     }
@@ -540,12 +543,14 @@ export class GeneralistService extends AgentBaseService {
                   ]
                 : [])
             ],
-        // Plan mode: block write tools AND SDK built-in tools that conflict with our ````plan UI
-        // Build mode = plan protections + more permissions (Write/Edit allowed).
-        // Both modes block ToolSearch (wastes turns) and ExitPlanMode (conflicts with UI).
+        // Block SDK built-in tools that conflict with our code-fence UI paradigm.
+        // We use code fences (````plan, ```ask-question, ```handoff) detected via regex
+        // instead of SDK tools — single paradigm, single code path, easy to debug.
+        // Both modes block: ExitPlanMode (use ````plan fence), AskUserQuestion (use ```ask-question fence),
+        // ToolSearch (wastes turns). Build mode additionally blocks Agent (handoff protocol).
         disallowedTools: isBuildMode
-          ? ['Agent', 'ToolSearch', 'ExitPlanMode'] // Handoff protocol + no tool discovery + no plan UI conflict
-          : ['Write', 'Edit', 'ExitPlanMode', 'ToolSearch'],
+          ? ['Agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion']
+          : ['Write', 'Edit', 'ExitPlanMode', 'AskUserQuestion', 'ToolSearch'],
         maxTurns: isBuildMode ? 50 : 25,
         resume: sessionId,
         abortController,
@@ -675,8 +680,19 @@ export class GeneralistService extends AgentBaseService {
           }
           // Tool call counting + circuit breaker
           if (chunk.type === 'tool_use') {
+            textLenBeforeLastTool = this.accumulatedText.length
             hasTextAfterLastTool = false
             this.toolCallCount++
+
+            // Gratuitous tool detection — if model already wrote a substantial answer
+            // (500+ chars) and is now making its FIRST tool call, it's a post-answer
+            // verification pattern. Soft-stop via circuit breaker to prevent further turns.
+            if (this.toolCallCount === 1 && textLenBeforeLastTool >= 500) {
+              this.log.warn(
+                `[PIPELINE:gratuitous-tool-soft-stop] conversationId=${conversationId} textLen=${textLenBeforeLastTool} — already answered, stopping after this tool`
+              )
+              this.circuitBroken = true
+            }
 
             // Soft warning at 5 tool calls — approaching prompt-stated target
             if (this.toolCallCount === 5 && isBuildMode) {
@@ -986,6 +1002,38 @@ export class GeneralistService extends AgentBaseService {
       sections.push(DIRECT_ANSWER_BOOST_PROMPT)
     }
 
+    // Strategy ζ: Plan Output Reinforcement — inject a plan-format reminder closest to the
+    // user message (strongest positional influence). This prevents the LLM from emitting plain
+    // text summaries instead of the ````plan JSON blocks the UI requires to render cards.
+    //
+    // In plan mode: fires for any plan/investigate/diagnose/audit/review keyword.
+    // In build mode: fires only for explicit plan-generation intent (plan/design/architect/propose)
+    //   — action keywords like "fix" should trigger handoff, not a plan card.
+    const isPlanGenerationRequest =
+      /\b(plan|design|architect|propose|draft a plan|create a plan)\b/i.test(message)
+    const isPlanModeInvestigation =
+      this.currentMode === 'plan' &&
+      /\b(plan|investigate|diagnose|audit|review|check|improve|fix|design|architect|analyze|analyse)\b/i.test(
+        message
+      )
+    const planReminderInjected = isPlanModeInvestigation || isPlanGenerationRequest
+
+    if (planReminderInjected) {
+      const antiHandoff =
+        this.currentMode === 'plan'
+          ? `\nDo NOT emit a \`\`\`handoff block. You are the plan author — read files yourself and produce the plan directly.`
+          : ''
+      sections.push(
+        `## Plan Output Reminder\n` +
+          `Your response MUST include a \`\`\`\`plan code fence with valid JSON. ` +
+          `The UI renders this as an interactive card with Build Now / Refine buttons. ` +
+          `Plain text summaries are NOT visible as actionable plans — only \`\`\`\`plan blocks are.` +
+          antiHandoff +
+          `\n` +
+          `If you investigated files and have findings, wrap them in the plan JSON structure.`
+      )
+    }
+
     // Strategy γ: When investigation mode is OFF, inject NO HANDOFF directive.
     // The generalist must answer everything directly — no specialist delegation.
     // Saves 5-12K tokens per question that would otherwise trigger a handoff.
@@ -1000,7 +1048,7 @@ export class GeneralistService extends AgentBaseService {
     }
 
     this.log.info(
-      `[PIPELINE:conditional-prefix] ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost} investigationMode=${this.investigationModeEnabled}`
+      `[PIPELINE:conditional-prefix] ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost} investigationMode=${this.investigationModeEnabled} planReminder=${planReminderInjected}`
     )
 
     return sections.length > 0 ? `[Contextual guidelines for this message]\n\n${sections.join('\n\n')}` : ''
@@ -1183,6 +1231,20 @@ export class GeneralistService extends AgentBaseService {
     // Strategy γ: When investigation mode is OFF, ignore handoff blocks entirely.
     // The generalist should answer directly — any handoff blocks are stale LLM behavior.
     if (!this.investigationModeEnabled) {
+      return false
+    }
+
+    // Strategy ζ-guard: In plan mode, handoffs are NEVER allowed.
+    // The generalist must produce plans directly. The only exception is
+    // when the user explicitly requested a specialist by name.
+    if (this.currentMode === 'plan') {
+      const match = this.accumulatedText.match(HANDOFF_REGEX)
+      if (match) {
+        this.log.warn(
+          `[PIPELINE:handoff-suppressed] Plan-mode handoff blocked — generalist must produce plan directly. ` +
+            `Accumulated text contains handoff block but mode=plan.`
+        )
+      }
       return false
     }
 
@@ -1412,18 +1474,14 @@ export class GeneralistService extends AgentBaseService {
         `Single-specialist fast path: skipping decomposition for ${brief.specialists[0]}`
       )
 
-      const isInvestigation = mode === 'plan' || isInvestigationIntent(brief.summary)
-
-      const description = isInvestigation
-        ? `${brief.summary} Produce a structured investigation report.`
-        : brief.summary
+      const description = brief.summary
 
       const syntheticTask: DecomposedTask = {
         id: 't1',
         specialist: brief.specialists[0],
         description,
         dependsOn: [],
-        verificationCommand: isInvestigation ? (null as unknown as undefined) : 'npm run typecheck'
+        verificationCommand: 'npm run typecheck'
       }
 
       // Enrich with complexity scoring (same as full path)
@@ -1569,7 +1627,7 @@ export class GeneralistService extends AgentBaseService {
     const modeInstruction =
       mode === 'plan'
         ? '\n\nIMPORTANT: This is a PLAN-MODE decomposition. Create ONLY investigation/analysis tasks. Every task MUST end with "Produce a structured investigation report." Do NOT create fix, implementation, rebuild, or test tasks.'
-        : ''
+        : '\n\nIMPORTANT: This is a BUILD-MODE decomposition. Create IMPLEMENTATION tasks that write code, modify files, and make changes. Use action verbs: implement, fix, create, refactor, update, add. Do NOT create investigation-only tasks — the user wants code changes, not reports. Include verificationCommand for each task (e.g., "npm run typecheck").'
 
     const prompt = `Think step by step about the dependencies and potential file conflicts before decomposing.
 

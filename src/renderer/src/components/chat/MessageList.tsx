@@ -8,12 +8,14 @@ import {
   MessageBubble,
   HandoffIndicator,
   TaskPlanCard,
-  GrillQuestionCard
+  GrillQuestionCard,
+  BuildProgressCard
 } from '@renderer/components/chat'
-import InvestigationReportCard from './InvestigationReportCard'
+// InvestigationReportCard has been merged into TaskPlanCard (unified card)
 import IdeaPopover from './IdeaPopover'
 import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
 import type { MessageBubbleActions } from './MessageBubble'
+import type { StructuredPlan } from '../../../../shared/types'
 import FloatingRobots from './FloatingRobots'
 import ScrollToBottomButton from './ScrollToBottomButton'
 
@@ -74,8 +76,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const isStreaming = useChatStore((s) => s.isStreaming)
   const activeHandoff = useChatStore((s) => s.activeHandoff)
   const toolActivities = useChatStore((s) => s.toolActivities)
-  const activeTaskPlan = useChatStore((s) => s.activeTaskPlan)
   const isExecutingPlan = useChatStore((s) => s.isExecutingPlan)
+  const decomposedTasks = useChatStore((s) => s.decomposedTasks)
+  const taskProgress = useChatStore((s) => s.taskProgress)
   const compactSuggestion = useChatStore((s) => s.compactSuggestion)
   const pendingGrillQuestions = useChatStore((s) => s.grillSession?.pendingQuestions ?? null)
   const hasPendingGrillQuestions = (pendingGrillQuestions?.length ?? 0) > 0
@@ -84,8 +87,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const investigationReport = useChatStore((s) => s.investigationReport)
 
   const {
-    executePlan,
-    clearTaskPlan,
     setCompactSuggestion,
     sendMessage,
     submitGrillAnswers,
@@ -99,9 +100,34 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     executeInvestigationFix,
     clearInvestigationReport
   } = useChatActions()
-  const taskProgress = useChatStore((s) => s.taskProgress)
 
   // Single actions object passed to all MessageBubbles — avoids N×useShallow subscriptions
+  const handleSaveAsIdea = useCallback(
+    (title: string, description: string): void => {
+      setIdeaPopoverData({ title, description })
+      setShowIdeaPopover(true)
+    },
+    []
+  )
+
+  const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
+
+  /** Direct plan-to-build: skip generalist round-trip when structured plan is available */
+  const handleBuildFromPlan = useCallback(
+    async (plan: StructuredPlan, planContent: string): Promise<void> => {
+      if (!activeConversationId) return
+      // Switch to build mode first (optimistic update)
+      await updateMode('build')
+      // Call the direct execution path — no generalist round-trip
+      await window.api.buildFromPlan({
+        conversationId: activeConversationId,
+        plan,
+        planContent
+      })
+    },
+    [activeConversationId, updateMode]
+  )
+
   const bubbleActions: MessageBubbleActions = useMemo(
     () => ({
       updateMode,
@@ -110,7 +136,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       clearGrillSession,
       createItemsFromGrill,
       submitGrillAnswers,
-      skipAllGrillQuestions
+      skipAllGrillQuestions,
+      saveAsIdea: handleSaveAsIdea,
+      buildFromPlan: handleBuildFromPlan
     }),
     [
       updateMode,
@@ -119,7 +147,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       clearGrillSession,
       createItemsFromGrill,
       submitGrillAnswers,
-      skipAllGrillQuestions
+      skipAllGrillQuestions,
+      handleSaveAsIdea,
+      handleBuildFromPlan
     ]
   )
 
@@ -227,11 +257,12 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   } | null>(null)
 
   const handleReviseInvestigation = useCallback((): void => {
-    clearInvestigationReport()
+    // Don't clear investigationReport — card stays visible with buttons hidden
+    // (TaskPlanCard's internal userClicked state hides the buttons after click)
     appendLocalMessage(
-      "Investigation findings cleared. Provide additional context or instructions, and I'll re-analyze the issue."
+      'Refine this investigation — tell me what to re-analyze and I\'ll update it.'
     )
-  }, [clearInvestigationReport, appendLocalMessage])
+  }, [appendLocalMessage])
 
   const handleSaveInvestigationAsIdea = useCallback((): void => {
     if (!investigationReport) return
@@ -249,9 +280,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     setIdeaPopoverData({ title, description })
     setShowIdeaPopover(true)
   }, [investigationReport])
-
-  // Track active conversation to reset scroll on switch
-  const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
 
   // Force scroll to bottom when switching conversations
   useEffect(() => {
@@ -311,7 +339,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         }
       })
     }
-  }, [messages.length, streamingContent, investigationReport])
+  }, [messages.length, streamingContent, investigationReport, decomposedTasks.length])
 
   // Scroll-to-bottom handler for the floating button
   // Two-step approach: first tell virtualizer to render bottom items,
@@ -415,7 +443,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         {/* Non-virtualized footer items — always rendered below the virtual list */}
 
         {/* Handoff indicator — shown when generalist triggers a handoff */}
-        {activeHandoff && !activeTaskPlan && (
+        {activeHandoff && (
           <HandoffIndicator
             summary={activeHandoff.summary}
             specialists={activeHandoff.specialists}
@@ -423,30 +451,30 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           />
         )}
 
-        {/* Task plan card — shown after the generalist decomposes the handoff */}
-        {activeTaskPlan && (
+        {/* Investigation report — rendered via unified TaskPlanCard */}
+        {investigationReport && (
           <TaskPlanCard
-            summary={activeTaskPlan.summary}
-            tasks={activeTaskPlan.tasks}
-            mode={activeTaskPlan.mode}
-            taskProgress={taskProgress}
+            summary={investigationReport.report.problem}
+            mode="plan"
+            investigation={investigationReport.report}
+            investigationSpecialist={investigationReport.specialist}
             isExecuting={isExecutingPlan}
-            onExecute={(strategy, depth) => executePlan(strategy, depth)}
-            onDismiss={clearTaskPlan}
-            suggestedDepth={activeTaskPlan.investigationDepth}
+            onBuildNow={() => executeInvestigationFix('sequential')}
+            onOrchestratedBuild={() => executeInvestigationFix('parallel')}
+            onRefine={handleReviseInvestigation}
+            onSaveAsIdea={handleSaveInvestigationAsIdea}
           />
         )}
 
-        {investigationReport && (
-          <InvestigationReportCard
-            report={investigationReport.report}
-            specialist={investigationReport.specialist}
-            isExecuting={isExecutingPlan}
-            onFixSequential={() => executeInvestigationFix('sequential')}
-            onFixParallel={() => executeInvestigationFix('parallel')}
-            onRevise={handleReviseInvestigation}
-            onSaveAsIdea={handleSaveInvestigationAsIdea}
-          />
+        {/* Build progress card — live task checklist during execution */}
+        {isExecutingPlan && decomposedTasks.length > 0 && (
+          <div className="px-4">
+            <BuildProgressCard
+              tasks={decomposedTasks}
+              taskProgress={taskProgress}
+              isExecuting={isExecutingPlan}
+            />
+          </div>
         )}
 
         {showIdeaPopover && ideaPopoverData && (

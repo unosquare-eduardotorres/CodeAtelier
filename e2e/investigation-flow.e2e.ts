@@ -112,14 +112,14 @@ test.describe('Investigation Flow', () => {
         await sequentialBtn.click()
       }
 
-      // 4. Wait for completion or investigation report
-      const reportCard = page!.locator('[data-testid="investigation-report-card"]')
+      // 4. Wait for completion or investigation report (unified card)
+      const reportCard = page!.locator('[data-testid="task-plan-card"]')
       await expect(reportCard).toBeVisible({ timeout: 120000 })
 
-      // 5. Verify action buttons are present
-      await expect(page!.locator('button:has-text("Fix Sequential")')).toBeVisible()
-      await expect(page!.locator('button:has-text("Fix Parallel")')).toBeVisible()
-      await expect(page!.locator('button:has-text("Revise")')).toBeVisible()
+      // 5. Verify unified action buttons are present
+      await expect(page!.locator('button:has-text("Build Now")')).toBeVisible()
+      await expect(page!.locator('button:has-text("Orchestrated Build")')).toBeVisible()
+      await expect(page!.locator('button:has-text("Refine Plan")')).toBeVisible()
       await expect(page!.locator('button:has-text("Save as Idea")')).toBeVisible()
     }
   })

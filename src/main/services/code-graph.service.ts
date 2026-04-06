@@ -436,6 +436,43 @@ class CodeGraphService extends EventEmitter {
   }
 
   /**
+   * Find potentially dead code — definitions with no cross-file references.
+   * Wraps repository query with workspace validation and formatting.
+   */
+  async findDeadCode(
+    workspaceId: string,
+    workspacePath: string,
+    options?: { pathPrefix?: string; maxResults?: number }
+  ): Promise<Array<{ file: string; line: number; name: string; context: string }>> {
+    const { renderTreeContext } =
+      (await import('repomap-mcp/dist/tree-context.js')) as typeof import('repomap-mcp/dist/tree-context.js')
+
+    const deadDefs = codeGraphTagRepository.findDeadCode(workspaceId, options)
+
+    const results: Array<{ file: string; line: number; name: string; context: string }> = []
+
+    for (const tag of deadDefs) {
+      const absPath = `${workspacePath}/${tag.relFname}`
+      let context = ''
+      try {
+        const code = readFileSync(absPath, 'utf-8')
+        context = renderTreeContext(code, [tag.line])
+      } catch {
+        // File may have been deleted
+      }
+
+      results.push({
+        file: tag.relFname,
+        line: tag.line,
+        name: tag.name,
+        context
+      })
+    }
+
+    return results
+  }
+
+  /**
    * Get top-ranked files for decompose() — replaces prefetchRankedFiles().
    * Optionally boosts focus files by placing them first.
    */

@@ -7,7 +7,7 @@
  * Cost: ~$0.05-0.10 per run
  */
 import { parseDecompositionResult } from '../../generalist-utils'
-import { DECOMPOSITION_SYSTEM_PROMPT } from '../../prompt-builder'
+import { DECOMPOSITION_SYSTEM_PROMPT } from '../../default-prompts'
 import { SDKExecutor } from '../../sdk-executor'
 import { MOCK_BRIEF } from '../fixtures/pipeline-fixtures'
 

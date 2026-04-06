@@ -4,78 +4,20 @@ import type { BudgetTier, ConversationMode, HandoffBrief, Skill } from '../../sh
 import { promptBuilderLogger } from '../logger'
 import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.repository'
 import { skillRepository } from '../db/repositories/skill.repository'
-import { DEFAULT_PROMPTS } from './default-prompts'
+import {
+  buildSpecialistMcpGuidance,
+  DEFAULT_PROMPTS,
+  DECOMPOSITION_SYSTEM_PROMPT,
+  OPUS_SPECIALIST_APPENDIX,
+  SPECIALIST_MICRO_PROMPT,
+  SPECIALIST_TASK_SYSTEM_PROMPT
+} from './default-prompts'
+import type { SpecialistMcpFlags } from './default-prompts'
 
-// ── Non-editable prompts (kept in code — specialist/decomposition) ──
-// NOTE: PLAN_MODE_SYSTEM_PROMPT, BUILD_MODE_SYSTEM_PROMPT, GENERALIST_BASE_PROMPT,
-// GENERALIST_PLAN_MODE_SECTION, GENERALIST_BUILD_MODE_SECTION have been moved to
-// default-prompts.ts and are now stored in the core_agent_prompts DB table (user-editable).
-
-/**
- * Slimmed decomposition prompt (~600 chars vs prior ~1700).
- * Complexity scoring is now computed in code by enrichTasksWithComplexity(),
- * so the LLM only needs to produce the task structure.
- */
-const DECOMPOSITION_SYSTEM_PROMPT = `Task decomposer. Return ONLY valid JSON.
-Create 1-8 tasks (id t1..tn). Each: exactly one provided specialist, 1-2 sentence actionable description, dependsOn for ordering, verificationCommand (code: "npm run typecheck"; tests: "npm test"; docs: null).
-Keep independent tasks parallel. Add dependsOn when tasks touch same files/shared surfaces.
-Investigation mode: if summary indicates investigate/diagnose, emit exactly one task per specialist. Each description must end with "Produce a structured investigation report." Plan mode is read-only — no fix/rebuild/deploy.
-Required JSON shape: {"tasks":[{id,specialist,description,dependsOn,verificationCommand}]}`
-
-const SPECIALIST_MCP_TOOL_GUIDANCE = `
-
-## Code Intelligence Tools (MANDATORY — use before Read/Grep/Glob)
-
-You have these MCP tools available. Use them FIRST for all code exploration:
-
-- **mcp__code-graph__search_identifiers**: Find classes, functions, types, interfaces by name. ALWAYS use instead of Grep/Glob for symbol lookups.
-- **mcp__code-graph__repo_map**: Ranked overview of important files via PageRank. Use to understand codebase structure instead of directory scanning.
-- **mcp__semantic-search__semantic_search**: Natural language code search. Use for concept-based queries ("error handling", "authentication flow").
-- **mcp__git-context__git_log**: Recent commit history. Use to understand recent changes.
-- **mcp__git-context__git_diff**: View staged/unstaged/commit diffs.
-- **mcp__git-context__git_blame**: Line-by-line authorship for a file.
-- **mcp__code-graph__find_dead_code**: Find unused code definitions with no references. Use when cleaning up after changes, or when asked to find dead/orphaned code. Scope with a path prefix for targeted results.
-
-**Tool priority (ALWAYS follow this order):**
-1. mcp__code-graph__search_identifiers → for finding any named symbol
-2. mcp__semantic-search__semantic_search → for conceptual/meaning-based search
-3. mcp__code-graph__repo_map → for understanding overall structure
-4. mcp__code-graph__find_dead_code → for finding unused/orphaned symbols
-5. Grep → ONLY for exact string literals, regex, config values
-6. Glob → ONLY for file-extension searches when no symbol name is known
-7. Read → ONLY after you've identified the right file via tools above`
-
-const SPECIALIST_TASK_SYSTEM_PROMPT = `You are a specialist agent. Complete ONLY your assigned task — do not expand scope.
-
-- Blockers outside your task: describe clearly, do not attempt.
-- Investigation: be surgical — use code intelligence tools to find relevant files. Target ≤10 tool calls. Start with mentioned files.
-- Verification: if a command is provided, run it. Fix and retry up to 2×.
-- When done: list files changed, 1-2 sentence summary, verification result, blockers.
-- Investigation reports: max 1,500 characters. Focus on: root cause (1 sentence), affected files (list), proposed fix (1-2 sentences). Skip background context the user already knows. Emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.
-${SPECIALIST_MCP_TOOL_GUIDANCE}`
-
-/**
- * Micro specialist prompt for simple/haiku-tier tasks (complexity 0-4).
- * Saves ~400 tokens vs the full SPECIALIST_TASK_SYSTEM_PROMPT.
- */
-const SPECIALIST_MICRO_PROMPT = `Complete your assigned task. Be surgical — ≤10 tool calls. When done: files changed + 1 sentence summary.
-Investigation reports: emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.
-${SPECIALIST_MCP_TOOL_GUIDANCE}`
-
-/**
- * Self-critique appendix for Opus-tier tasks (budgetTier === 'full').
- * Adds iterative refinement — the specialist reviews its own work before finishing.
- * Adds ~100 output tokens but catches bugs and convention violations pre-merge.
- */
-const OPUS_SPECIALIST_APPENDIX = `
-
-## Self-Review (required before finishing)
-
-After completing your implementation, briefly critique it:
-- Are there edge cases you missed?
-- Does it follow the project conventions from CLAUDE.md?
-- Could any part cause a merge conflict with parallel tasks?
-If you find issues, fix them before finishing.`
+// ── Specialist behavioral prompts consolidated ──
+// All prompt constants now live in default-prompts.ts (single source of truth).
+// Specialist MCP guidance is assembled conditionally via buildSpecialistMcpGuidance()
+// to avoid injecting guidance for unconfigured MCP servers.
 
 // ── Prompt Builder Types ──
 
@@ -108,6 +50,8 @@ interface PromptBuildOptions {
   dependencyOutputs?: Map<string, string>
   /** Budget tier — controls context size for model-aware prompt budgeting (Strategy 4) */
   budgetTier?: BudgetTier
+  /** Which MCP servers are active — controls conditional tool guidance injection */
+  enabledMcpServers?: SpecialistMcpFlags
 }
 
 export interface GeneralistConditionalSections {
@@ -180,7 +124,7 @@ export class PromptBuilder {
         normalized
       )
     const isChangeRequest =
-      /\b(fix|implement|build|create|add|refactor|update|change|modify|delete|remove|write|migrate|deploy|scaffold|generate)\b/i.test(
+      /\b(fix|implement|build|create|add|refactor|update|change|modify|delete|remove|write|migrate|deploy|scaffold|generate|plan|design|architect|propose|draft|investigate|diagnose|check|audit|review)\b/i.test(
         normalized
       )
     const includeDirectAnswerBoost =
@@ -203,7 +147,8 @@ export class PromptBuilder {
     const budgetTier = options.budgetTier ?? 'standard'
 
     // Layer 1: Base role prompt (micro prompt for minimal-budget specialists)
-    layers.push(this.getRolePrompt(options.role, options.mode, budgetTier))
+    // Specialist MCP guidance is conditionally assembled based on enabledMcpServers flags
+    layers.push(this.getRolePrompt(options.role, options.mode, budgetTier, options.enabledMcpServers))
 
     // Layer 2: Specialist identity (skip for minimal-budget haiku tasks — just the micro prompt + task is enough)
     if (options.role === 'specialist' && options.specialistId && budgetTier !== 'minimal') {
@@ -222,8 +167,8 @@ export class PromptBuilder {
       layers.push(OPUS_SPECIALIST_APPENDIX)
     }
 
-    // Layer 3: Skill content — ONLY for specialists in BUILD mode, ONLY their assigned skills
-    // Plan-mode specialists only read/analyze — they don't need implementation guides
+    // Layer 3: Skill content — for specialists in BUILD or PLAN mode, ONLY their assigned skills
+    // Plan-mode specialists get skills at minimal budget tier for grounded analysis
     // Strategy 3: Tiered skill loading with budget-aware truncation
     // Strategy 8: Selective loading — pass task context for relevance ranking
     // Strategy A: When skillsEnabled=false (no active specialists), skip SKILL.md entirely
@@ -234,17 +179,18 @@ export class PromptBuilder {
     }
     if (
       options.role === 'specialist' &&
-      options.mode === 'build' &&
       options.assignedSkills &&
       options.skillsEnabled !== false
     ) {
+      // Plan-mode specialists get skills at minimal budget tier for lighter analysis context
+      const effectiveBudgetTier = options.mode === 'plan' ? 'minimal' as BudgetTier : budgetTier
       const assignedSkills = this.filterAssignedSkills(
         options.assignedSkills,
         options.skillOverrides
       )
       if (assignedSkills.length > 0) {
         const taskContext = options.brief?.summary || options.specialistPrompt || ''
-        const skillContent = this.buildSkillContent(assignedSkills, budgetTier, taskContext)
+        const skillContent = this.buildSkillContent(assignedSkills, effectiveBudgetTier, taskContext)
         if (skillContent) {
           layers.push(skillContent)
         }
@@ -322,7 +268,12 @@ export class PromptBuilder {
 
   // ── Private layer builders ──
 
-  private getRolePrompt(role: PromptRole, mode: ConversationMode, budgetTier?: BudgetTier): string {
+  private getRolePrompt(
+    role: PromptRole,
+    mode: ConversationMode,
+    budgetTier?: BudgetTier,
+    mcpFlags?: SpecialistMcpFlags
+  ): string {
     if (role === 'generalist') {
       // Read from DB (user-editable). Falls back to defaults if DB is empty.
       const dbPrompt = coreAgentPromptRepository.findByRoleAndMode(role, mode)
@@ -330,10 +281,12 @@ export class PromptBuilder {
       // Fallback to defaults (safety net for fresh installs before migration runs)
       return DEFAULT_PROMPTS[role]?.[mode] ?? SPECIALIST_TASK_SYSTEM_PROMPT
     }
+    // Assemble specialist MCP guidance conditionally (only active servers)
+    const mcpGuidance = buildSpecialistMcpGuidance(mcpFlags)
     // Minimal-budget specialists (haiku-tier, complexity 0-4) get a micro prompt
     // to save ~400 tokens on simple tasks like quick reads and investigations
-    if (budgetTier === 'minimal') return SPECIALIST_MICRO_PROMPT
-    return SPECIALIST_TASK_SYSTEM_PROMPT
+    const basePrompt = budgetTier === 'minimal' ? SPECIALIST_MICRO_PROMPT : SPECIALIST_TASK_SYSTEM_PROMPT
+    return basePrompt + mcpGuidance
   }
 
   /**
@@ -746,11 +699,3 @@ export class PromptBuilder {
 
 /** Singleton instance */
 export const promptBuilder = new PromptBuilder()
-
-// ── Re-exports for backward compatibility ──
-// These allow existing code to import from prompt-builder during migration.
-// Generalist prompts now come from default-prompts.ts (DB-editable).
-
-export {
-  DECOMPOSITION_SYSTEM_PROMPT
-}

@@ -130,7 +130,11 @@ export function buildSubAgentDefinitions(
     // Build MCP tool names from active server names so the SDK exposes them to SubAgents
     const mcpToolNames: string[] = []
     if (mcpServerNames?.includes('code-graph')) {
-      mcpToolNames.push('mcp__code-graph__repo_map', 'mcp__code-graph__search_identifiers')
+      mcpToolNames.push(
+        'mcp__code-graph__repo_map',
+        'mcp__code-graph__search_identifiers',
+        'mcp__code-graph__find_dead_code'
+      )
     }
     if (mcpServerNames?.includes('semantic-search')) {
       mcpToolNames.push('mcp__semantic-search__semantic_search')
@@ -140,6 +144,25 @@ export function buildSubAgentDefinitions(
         'mcp__git-context__git_log',
         'mcp__git-context__git_diff',
         'mcp__git-context__git_blame'
+      )
+    }
+    // Task context: allows specialists to inspect sibling task outputs
+    if (mcpServerNames?.includes('task-context')) {
+      mcpToolNames.push('mcp__task-context__list_tasks', 'mcp__task-context__get_task_output')
+    }
+    // Checkpoint context: allows specialists to inspect conversation checkpoints
+    if (mcpServerNames?.includes('checkpoint-context')) {
+      mcpToolNames.push(
+        'mcp__checkpoint-context__list_checkpoints',
+        'mcp__checkpoint-context__get_checkpoint'
+      )
+    }
+    // GitHub context: allows specialists to check PR status and issues
+    if (mcpServerNames?.includes('github-context')) {
+      mcpToolNames.push(
+        'mcp__github-context__get_pr_status',
+        'mcp__github-context__list_pr_comments',
+        'mcp__github-context__list_issues'
       )
     }
 

@@ -644,6 +644,7 @@ export interface PlanStep {
   number: number
   title: string
   description: string
+  icon?: string
   file?: string
   complexity?: 'low' | 'medium' | 'high'
 }
@@ -658,10 +659,34 @@ export interface PlanSection {
 export interface StructuredPlan {
   title: string
   summary: string
+  problemSummary?: string
+  rootCause?: string
+  decisions?: Array<{ what: string; why: string }>
   sections?: PlanSection[]
   steps?: PlanStep[]
   files?: string[]
-  risks?: string[]
+  filesChanged?: Array<{ file: string; change: string }>
+  risks?: Array<{ risk: string; severity: 'low' | 'medium' | 'high'; mitigation?: string }>
+  expectedOutcome?: string
+  deferredItems?: string[]
+  diagrams?: Array<{ title: string; mermaid: string }>
+}
+
+// ── Build Summary Type ──
+export interface BuildSummary {
+  tasks: Array<{
+    taskId: string
+    specialist: string
+    description: string
+    status: 'completed' | 'failed' | 'skipped'
+    filesChanged?: string[]
+    error?: string
+    duration?: number
+  }>
+  totalDuration: number
+  mode: ConversationMode
+  deferredItems?: string[]
+  recommendations?: string[]
 }
 
 // ── Agent Session & Token Tracking ──

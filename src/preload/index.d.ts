@@ -19,7 +19,6 @@ import type {
   SyncDiff,
   SyncResult,
   DecomposedTask,
-  TaskPlan,
   ExecutionStrategy,
   InvestigationDepth,
   TaskExecutionProgress,
@@ -56,7 +55,8 @@ import type {
   IndexingState,
   CodeGraphIndexingState,
   SchedulingWeights,
-  ContextUsage
+  ContextUsage,
+  StructuredPlan
 } from '../shared/types'
 
 interface Api {
@@ -110,6 +110,13 @@ interface Api {
     conversationId: string
     strategy: ExecutionStrategy
     report: InvestigationReport
+  }) => Promise<void>
+
+  /** Direct plan-to-build: skip generalist round-trip when user clicks "Build This" on inline plan */
+  buildFromPlan: (args: {
+    conversationId: string
+    plan: StructuredPlan
+    planContent: string
   }) => Promise<void>
 
   // Chat commands
@@ -413,7 +420,6 @@ interface Api {
       suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
     }) => void
   ) => () => void
-  onTaskPlan: (callback: (data: TaskPlan) => void) => () => void
   onInvestigationReport: (
     callback: (data: {
       conversationId: string
@@ -423,6 +429,9 @@ interface Api {
     }) => void
   ) => () => void
   onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void
+  onBuildTasks: (
+    callback: (data: { conversationId: string; tasks: DecomposedTask[] }) => void
+  ) => () => void
   onTaskRetry: (
     callback: (data: {
       taskId: string

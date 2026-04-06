@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import type { ConversationMode, ExecutionStrategy, HandoffBrief, TaskPlan } from '../../../shared/types'
+import type { ConversationMode, HandoffBrief, TaskPlan } from '../../../shared/types'
 import { IPC_CHANNELS } from '../../../shared/constants'
 import {
   HANDOFF_REGEX,
@@ -47,99 +47,29 @@ function describe(name: string, fn: () => void) {
   fn()
 }
 
-type TaskPlanEventPayload = TaskPlan & { autoExecute?: ExecutionStrategy }
-
-function makePlan(mode: ConversationMode = 'plan', brief: HandoffBrief = MOCK_BRIEF): TaskPlan {
+function makePlan(mode: ConversationMode = 'plan', brief: HandoffBrief = MOCK_BRIEF) {
   return parseDecompositionResult(VALID_DECOMPOSITION_JSON, MOCK_CONVERSATION.id, brief, mode)
 }
 
-describe('Suite 5: TaskPlan delivery — no auto-execute', () => {
-  test('plan-mode task plan does NOT include autoExecute', () => {
-    const mainWindow = createMockMainWindow()
+describe('Suite 5: Pipeline auto-executes after decomposition (no CHAT_TASK_PLAN)', () => {
+  test('decomposition produces valid tasks for sub-agent definitions', () => {
     assert.ok(HANDOFF_REGEX.test(VALID_HANDOFF_BLOCK))
 
     const parsedBrief = parseHandoffBlock(VALID_HANDOFF_BLOCK)
     assert.ok(parsedBrief)
     assert.equal(parsedBrief.mode, 'plan')
 
-    const decompose = () => makePlan('plan', parsedBrief)
-    const taskPlan = decompose()
+    const taskPlan = makePlan('plan', parsedBrief)
 
     const subAgents = buildSubAgentDefinitions(taskPlan.tasks, 'plan', (specialistId) => ({
       systemPrompt: `You are ${specialistId}`,
       description: `Specialist ${specialistId}`
     }))
     assert.ok(Object.keys(subAgents).length > 0)
-
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
-
-    const sentPlan = mainWindow.sentMessages[0].data as Record<string, unknown>
-    assert.equal(Object.prototype.hasOwnProperty.call(sentPlan, 'autoExecute'), false)
-  })
-
-  test('investigation fix plan includes autoExecute', () => {
-    const mainWindow = createMockMainWindow()
-    const taskPlan = makePlan('build')
-
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, {
-      ...taskPlan,
-      autoExecute: 'sequential' as ExecutionStrategy
-    })
-
-    const sentPlan = mainWindow.sentMessages[0].data as TaskPlanEventPayload
-    assert.equal(sentPlan.autoExecute, 'sequential')
-  })
-
-  test('TaskPlan type allows optional autoExecute', () => {
-    const basePlan = makePlan('plan')
-    const withoutAutoExecute: TaskPlanEventPayload = { ...basePlan }
-    const withAutoExecute: TaskPlanEventPayload = {
-      ...basePlan,
-      autoExecute: 'parallel'
-    }
-
-    assert.equal(withoutAutoExecute.autoExecute, undefined)
-    assert.equal(withAutoExecute.autoExecute, 'parallel')
   })
 })
 
 describe('Suite 6: Pipeline ordering', () => {
-  test('handoff emits events in order: HANDOFF → chunk → TASK_PLAN', () => {
-    const mainWindow = createMockMainWindow()
-    const parsedBrief = parseHandoffBlock(VALID_HANDOFF_BLOCK)
-    assert.ok(parsedBrief)
-
-    const specialistNames = parsedBrief.specialists.join(', ')
-    const taskPlan = makePlan('plan', parsedBrief)
-
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
-      conversationId: MOCK_CONVERSATION.id,
-      summary: parsedBrief.summary,
-      specialists: parsedBrief.specialists,
-      mode: parsedBrief.mode
-    })
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId: MOCK_CONVERSATION.id,
-      chunk: '',
-      role: 'generalist'
-    })
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId: MOCK_CONVERSATION.id,
-      chunk: `Delegating to **${specialistNames}** for review.\n\n`,
-      role: 'generalist'
-    })
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
-
-    assert.deepEqual(
-      mainWindow.sentMessages.map((m) => m.channel),
-      [
-        'chat:handoff',
-        'chat:messageChunk',
-        'chat:messageChunk',
-        'chat:taskPlan'
-      ]
-    )
-  })
 
   test('decomposition failure sends error chunk AND COMPLETE', () => {
     const mainWindow = createMockMainWindow()
@@ -336,8 +266,7 @@ describe('Suite 8: Investigation fix flow', () => {
     )
   })
 
-  test('sends plan with autoExecute flag', () => {
-    const mainWindow = createMockMainWindow()
+  test('investigation fix produces valid task plan for auto-execution', () => {
     const fixBrief: HandoffBrief = {
       ...MOCK_BRIEF,
       summary: 'Fix: Apply investigation recommendations',
@@ -345,14 +274,9 @@ describe('Suite 8: Investigation fix flow', () => {
     }
     const taskPlan = makePlan('build', fixBrief)
 
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, {
-      ...taskPlan,
-      brief: fixBrief,
-      autoExecute: 'sequential' as ExecutionStrategy
-    })
-
-    const sentPlan = mainWindow.sentMessages[0].data as TaskPlanEventPayload
-    assert.equal(sentPlan.autoExecute, 'sequential')
+    // Pipeline now auto-executes directly — no CHAT_TASK_PLAN emission
+    assert.ok(taskPlan.tasks.length > 0)
+    assert.equal(taskPlan.mode, 'build')
   })
 })
 

@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 51
+const CURRENT_SCHEMA_VERSION = 55
 
 interface Migration {
   version: number
@@ -1133,6 +1133,114 @@ const migrations: Migration[] = [
           AND c2.created_at > conversations.created_at
         )
       `)
+    }
+  },
+  {
+    version: 52,
+    name: 'sync-prompts-build-mode-fix',
+    up: (db) => {
+      // Sync updated prompts after build-mode fix:
+      // - Handoff rules are now mode-aware (plan/build) instead of hardcoded plan
+      // - Shared sections (Step Narration, Final Summary, Plan Generation, Code Exploration)
+      //   extracted into base prompt to eliminate ~800 tokens of duplication
+      // - Plan block format now includes a concrete example
+      // - MCP tool names use full mcp__code-graph__* format for consistency
+      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+      const newBuildPrompt = DEFAULT_PROMPTS.generalist.build
+
+      // Update plan prompt
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'plan'
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
+
+      // Update build prompt
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'build'
+      `
+      ).run(newBuildPrompt, newBuildPrompt)
+    }
+  },
+  {
+    version: 53,
+    name: 'update-plan-mode-prompt-v2',
+    up: (db) => {
+      // Sync updated plan-mode prompt with strengthened plan quality requirements,
+      // depth expectations, and unified card button labels (Build Now / Orchestrated Build / etc.)
+      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'plan'
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
+    }
+  },
+  {
+    version: 54,
+    name: 'reinforce-plan-block-format-v3',
+    up: (db) => {
+      // Sync updated plan-mode prompt with reinforced plan-block format instructions:
+      // - Reordered base prompt (plan format at end for recency bias)
+      // - Added FINAL RULE closing reinforcement to plan-mode section
+      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'plan'
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
+    }
+  },
+  {
+    version: 55,
+    name: 'generalist-only-plan-generation',
+    up: (db) => {
+      // Enforce generalist-only plan generation: plan-mode handoffs are now blocked,
+      // plan-mode prompt explicitly forbids handoff, build-mode prompt adds plan-generation rule,
+      // specialist prompts no longer have plan-card instructions.
+      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+      const newBuildPrompt = DEFAULT_PROMPTS.generalist.build
+
+      // Update plan mode prompt
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'plan'
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
+
+      // Update build mode prompt
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'build'
+      `
+      ).run(newBuildPrompt, newBuildPrompt)
     }
   }
 ]

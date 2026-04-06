@@ -13,9 +13,12 @@ import type {
   GrillProposedTask,
   GrillQuestion,
   GrillAnswerPayload,
-  ConversationMode
+  ConversationMode,
+  BuildSummary,
+  StructuredPlan
 } from '../../../../shared/types'
-import PlanCard from './PlanCard'
+import TaskPlanCard from './TaskPlanCard'
+import BuildSummaryCard from './BuildSummaryCard'
 import GrillEvaluationCard from './GrillEvaluationCard'
 import GrillResultCard from './GrillResultCard'
 import GrillQuestionCard from './GrillQuestionCard'
@@ -89,6 +92,9 @@ export interface MessageBubbleActions {
   ) => Promise<void>
   submitGrillAnswers: (answers: GrillAnswerPayload[]) => void
   skipAllGrillQuestions: () => void
+  saveAsIdea?: (title: string, description: string) => void
+  /** Direct plan-to-build: skip generalist round-trip when structured plan is available */
+  buildFromPlan?: (plan: StructuredPlan, planContent: string) => Promise<void>
 }
 
 interface MessageBubbleProps {
@@ -418,7 +424,8 @@ function MessageBubbleInner({
     clearGrillSession,
     createItemsFromGrill,
     submitGrillAnswers,
-    skipAllGrillQuestions
+    skipAllGrillQuestions,
+    buildFromPlan
   } = actions!
   const identity = useMessageIdentity(message)
 
@@ -432,6 +439,7 @@ function MessageBubbleInner({
     displayContent,
     planMatch,
     planContent,
+    structuredPlan,
     beforePlan,
     afterPlan,
     grillMatch,
@@ -449,7 +457,10 @@ function MessageBubbleInner({
     afterGrillEval,
     handoffMatch,
     beforeHandoff,
-    afterHandoff
+    afterHandoff,
+    buildSummaryData,
+    beforeBuildSummary,
+    afterBuildSummary
   } = useMemo(() => {
     // Parse attachments
     let parsedAttachments: string[] = []
@@ -483,6 +494,19 @@ function MessageBubbleInner({
     const pContent = pMatch ? pMatch[1] : null
     const bPlan = pMatch ? message.contentMd.substring(0, pMatch.index!) : null
     const aPlan = pMatch ? message.contentMd.substring(pMatch.index! + pMatch[0].length) : null
+
+    // Try to parse planContent as structured plan for direct execution path
+    let sPlan: StructuredPlan | null = null
+    if (pContent) {
+      try {
+        const parsed = JSON.parse(pContent)
+        if (parsed && typeof parsed === 'object' && typeof parsed.title === 'string') {
+          sPlan = parsed as StructuredPlan
+        }
+      } catch {
+        /* noop — raw markdown plan, will use fallback generalist path */
+      }
+    }
 
     // Detect grill-summary blocks
     const gMatch = !isUser ? message.contentMd.match(/```grill-summary\n([\s\S]*?)```/) : null
@@ -554,6 +578,21 @@ function MessageBubbleInner({
     const bHandoff = hMatch ? message.contentMd.substring(0, hMatch.index!) : null
     const aHandoff = hMatch ? message.contentMd.substring(hMatch.index! + hMatch[0].length) : null
 
+    // Detect build-summary blocks
+    const bsMatch = !isUser ? message.contentMd.match(/```build-summary\n([\s\S]*?)```/) : null
+    let bsData: BuildSummary | null = null
+    if (bsMatch) {
+      try {
+        bsData = JSON.parse(bsMatch[1].trim()) as BuildSummary
+      } catch {
+        /* noop */
+      }
+    }
+    const bBuildSummary = bsMatch ? message.contentMd.substring(0, bsMatch.index!) : null
+    const aBuildSummary = bsMatch
+      ? message.contentMd.substring(bsMatch.index! + bsMatch[0].length)
+      : null
+
     return {
       attachments: parsedAttachments,
       imageAttachments: imageAtts,
@@ -563,6 +602,7 @@ function MessageBubbleInner({
       displayContent: dispContent,
       planMatch: pMatch,
       planContent: pContent,
+      structuredPlan: sPlan,
       beforePlan: bPlan,
       afterPlan: aPlan,
       grillMatch: gMatch,
@@ -580,11 +620,21 @@ function MessageBubbleInner({
       afterGrillEval: aGrillEval,
       handoffMatch: hMatch,
       beforeHandoff: bHandoff,
-      afterHandoff: aHandoff
+      afterHandoff: aHandoff,
+      buildSummaryMatch: bsMatch,
+      buildSummaryData: bsData,
+      beforeBuildSummary: bBuildSummary,
+      afterBuildSummary: aBuildSummary
     }
   }, [message.contentMd, message.attachmentsJson, isUser, suppressInlineGrillCard])
 
-  const handleBuild = (): void => {
+  const handleBuildNow = (): void => {
+    // Direct path: skip generalist round-trip when structured plan is available
+    if (structuredPlan && planContent && buildFromPlan) {
+      buildFromPlan(structuredPlan, planContent)
+      return
+    }
+    // Fallback: raw markdown plan — go through generalist
     updateMode('build')
     sendMessage(
       'Implement the plan we just discussed. If the plan has multiple phases (3+ sections or 8+ steps), start with only the first phase and let me know you will continue with the remaining phases afterward. If the plan is small enough, implement it all at once.'
@@ -592,7 +642,27 @@ function MessageBubbleInner({
   }
 
   const handleRefine = (): void => {
-    appendLocalMessage('📋 Plan cancelled. Please provide a new prompt to generate a fresh plan.')
+    appendLocalMessage('Refine this plan — tell me what to change and I\'ll update it.')
+  }
+
+  const handleOrchestratedBuild = (): void => {
+    // Direct path: skip generalist round-trip when structured plan is available
+    if (structuredPlan && planContent && buildFromPlan) {
+      buildFromPlan(structuredPlan, planContent)
+      return
+    }
+    // Fallback: raw markdown plan — go through generalist
+    updateMode('build')
+    sendMessage(
+      'Implement the plan we just discussed using multiple specialists in parallel where possible.'
+    )
+  }
+
+  const handleSaveAsIdea = (): void => {
+    if (!actions?.saveAsIdea) return
+    const title = 'Implementation Plan'
+    const description = planContent ?? ''
+    actions.saveAsIdea(title, description)
   }
 
   const handleGrillKeepIterating = (): void => {
@@ -790,6 +860,37 @@ function MessageBubbleInner({
               </ReactMarkdown>
             </div>
           </div>
+        ) : buildSummaryData ? (
+          /* Message with a build-summary block — split into before/summary/after */
+          <div className="space-y-3 max-w-full">
+            {beforeBuildSummary?.trim() && (
+              <div className={aiBubbleClass}>
+                <div className="prose max-w-none">
+                  <ReactMarkdown
+                    remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
+                    components={markdownComponents}
+                  >
+                    {beforeBuildSummary}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+            <BuildSummaryCard summary={buildSummaryData} />
+            {afterBuildSummary?.trim() && (
+              <div className={aiBubbleClass}>
+                <div className="prose max-w-none">
+                  <ReactMarkdown
+                    remarkPlugins={REMARK_PLUGINS}
+                    rehypePlugins={REHYPE_PLUGINS}
+                    components={markdownComponents}
+                  >
+                    {afterBuildSummary}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+          </div>
         ) : planContent ? (
           /* Message with a plan block — split into before/plan/after */
           <div className="space-y-3 max-w-full">
@@ -806,7 +907,15 @@ function MessageBubbleInner({
                 </div>
               </div>
             )}
-            <PlanCard planContent={planContent} onBuild={handleBuild} onRefine={handleRefine} />
+            <TaskPlanCard
+              summary="Implementation Plan"
+              mode="plan"
+              planContent={planContent}
+              onBuildNow={handleBuildNow}
+              onOrchestratedBuild={handleOrchestratedBuild}
+              onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
+              onRefine={handleRefine}
+            />
             {afterPlan?.trim() && (
               <div className={aiBubbleClass}>
                 <div className="prose max-w-none">

@@ -1,144 +1,145 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Users, UserRound, ArrowRight, CheckCircle2, Clock, Loader2, XCircle, X } from 'lucide-react'
-import type {
-  DecomposedTask,
-  ExecutionStrategy,
-  InvestigationDepth,
-  TaskExecutionProgress,
-  Specialist
-} from '../../../../shared/types'
+import { useMemo, useState } from 'react'
 import {
-  useChatStore,
-  useConversationSpecialists,
-  useConversationTokenEstimates,
-  useSpecialistStore,
-  useSpecialistWarningPreferences
-} from '@renderer/store'
-import { getAgentMeta } from '@renderer/utils/agentMeta'
-import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
-import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
-import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
-import SpecialistWarningDialog from './SpecialistWarningDialog'
-import type { SpecialistWarningType } from './SpecialistWarningDialog'
+  Users,
+  Loader2,
+  Hammer,
+  RefreshCw,
+  ClipboardList,
+  Lightbulb,
+  Search,
+  AlertTriangle,
+  Bug,
+  GitBranch,
+  FileCode,
+  AlertCircle,
+  CheckCircle2,
+  Clock
+} from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import type {
+  InvestigationReport,
+  StructuredPlan
+} from '../../../../shared/types'
+import { MermaidDiagram } from '@renderer/components/common'
+
+function shortenPath(filePath: string): string {
+  const parts = filePath.split('/')
+  return parts.length > 2 ? parts.slice(-2).join('/') : filePath
+}
 
 interface TaskPlanCardProps {
   summary: string
-  tasks: DecomposedTask[]
   mode: 'plan' | 'build'
-  taskProgress: Map<string, TaskExecutionProgress>
-  isExecuting: boolean
-  onExecute: (strategy: ExecutionStrategy, depth?: InvestigationDepth) => void
-  onDismiss?: () => void
-  /** Strategy 13: Pre-selected investigation depth from heuristics (default: 'standard') */
-  suggestedDepth?: InvestigationDepth
-}
+  isExecuting?: boolean
 
-const STATUS_ICONS: Record<TaskExecutionProgress['status'], React.ReactNode> = {
-  pending: <Clock size={14} className="text-text-muted" />,
-  running: <Loader2 size={14} className="text-info animate-spin" />,
-  completed: <CheckCircle2 size={14} className="text-success" />,
-  failed: <XCircle size={14} className="text-danger" />
+  // Inline plan content (from ```plan block in generalist output)
+  planContent?: string
+
+  // Investigation report content (merged into unified card)
+  investigation?: InvestigationReport
+  investigationSpecialist?: string
+
+  // Unified action callbacks
+  onBuildNow?: () => void
+  onOrchestratedBuild?: () => void
+  onSaveAsIdea?: () => void
+  onRefine?: () => void
 }
 
 export default function TaskPlanCard({
   summary,
-  tasks,
   mode,
-  taskProgress,
-  isExecuting,
-  onExecute,
-  onDismiss,
-  suggestedDepth
+  isExecuting = false,
+  planContent,
+  investigation,
+  investigationSpecialist,
+  onBuildNow,
+  onOrchestratedBuild,
+  onSaveAsIdea,
+  onRefine
 }: TaskPlanCardProps): React.JSX.Element {
-  const [hoveredStrategy, setHoveredStrategy] = useState<ExecutionStrategy | null>(null)
-  // Strategy 13: Use the pre-selected depth from heuristics, defaulting to 'standard'
-  const [depth, setDepth] = useState<InvestigationDepth>(suggestedDepth ?? 'standard')
-  const [showWarningDialog, setShowWarningDialog] = useState(false)
-  const pendingExecuteRef = useRef<{ strategy: ExecutionStrategy; depth?: InvestigationDepth } | null>(null)
-  const { specialists } = useSpecialistStore()
-  const activeConversation = useChatStore((state) => state.activeConversation)
-  const conversationSpecialists = useConversationSpecialists(activeConversation?.id)
-  const tokenEstimates = useConversationTokenEstimates(activeConversation?.id)
-  const { specialistWarningBuild, specialistWarningPlan, specialistWarningAlways } =
-    useSpecialistWarningPreferences()
+  // ── Content type detection ──
+  const isInlinePlan = !!planContent
+  const isInvestigation = !!investigation
 
-  const hasUserChosen = isExecuting || taskProgress.size > 0
-  const allDone = tasks.every((t) => {
-    const p = taskProgress.get(t.id)
-    return p?.status === 'completed' || p?.status === 'failed'
-  })
-  // Exclude core specialists (User, Da Vinci) from the count — they are always active
-  // and should not trigger the specialist usage warning dialog
-  const coreSpecialistIds = useMemo(
-    () => new Set(specialists.filter((s) => s.isCore).map((s) => s.id)),
-    [specialists]
-  )
-  const activeSpecialistCount = conversationSpecialists.filter(
-    (specialist) => specialist.isActive && !coreSpecialistIds.has(specialist.specialistId)
-  ).length
-  const estimatedSpecialistTokens = tokenEstimates.reduce(
-    (sum, estimate) => sum + estimate.estimatedTokens,
-    0
-  )
-  const showSpecialistWarningBanner =
-    activeSpecialistCount > 0 &&
-    (specialistWarningAlways || (mode === 'build' ? specialistWarningBuild : specialistWarningPlan))
-
-  // Strategy 6: Determine whether execution should be gated behind the warning dialog.
-  // The dialog only shows when active specialists exist AND the relevant warning preference is enabled.
-  const warningType: SpecialistWarningType = mode === 'build' ? 'build' : 'plan'
-  const shouldGateExecution =
-    activeSpecialistCount > 0 &&
-    (specialistWarningAlways || (mode === 'build' ? specialistWarningBuild : specialistWarningPlan))
-
-  const handleExecuteRequest = useCallback(
-    (strategy: ExecutionStrategy, requestedDepth?: InvestigationDepth) => {
-      if (shouldGateExecution) {
-        pendingExecuteRef.current = { strategy, depth: requestedDepth }
-        setShowWarningDialog(true)
-      } else {
-        onExecute(strategy, requestedDepth)
+  // Try to parse planContent as structured plan JSON
+  const structuredPlan = useMemo<StructuredPlan | null>(() => {
+    if (!planContent) return null
+    try {
+      const parsed = JSON.parse(planContent)
+      if (parsed && typeof parsed === 'object' && typeof parsed.title === 'string') {
+        return parsed as StructuredPlan
       }
-    },
-    [shouldGateExecution, onExecute]
-  )
-
-  const handleWarningConfirm = useCallback(() => {
-    setShowWarningDialog(false)
-    if (pendingExecuteRef.current) {
-      onExecute(pendingExecuteRef.current.strategy, pendingExecuteRef.current.depth)
-      pendingExecuteRef.current = null
+      return null
+    } catch {
+      return null
     }
-  }, [onExecute])
+  }, [planContent])
 
-  const handleWarningCancel = useCallback(() => {
-    setShowWarningDialog(false)
-    pendingExecuteRef.current = null
-  }, [])
-
-  const getSpecialistMeta = (
-    agentId: string
-  ): { icon: string; color: string; displayName: string } => {
-    return getAgentMeta(agentId, specialists)
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
+  const toggleSection = (key: string): void => {
+    setExpandedSections((prev) => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
   }
 
-  // Group tasks by dependency level for visual layout
-  const independentTasks = tasks.filter((t) => t.dependsOn.length === 0)
-  const dependentTasks = tasks.filter((t) => t.dependsOn.length > 0)
-  const sequentialActionLabel = mode === 'plan' ? 'Run Investigation' : 'Execute Sequential'
-  const parallelActionLabel = mode === 'plan' ? 'Run Investigation (Team)' : 'Execute Parallel'
+  const [userClicked, setUserClicked] = useState(false)
+  const hasUserChosen = isExecuting || userClicked
+
+  // Impact badge styling for investigation content
+  const impactStyles: Record<string, string> = {
+    'very-low': 'text-text-muted bg-surface-overlay',
+    low: 'text-info bg-info-muted',
+    medium: 'text-warning bg-warning-muted',
+    high: 'text-danger bg-danger-muted',
+    critical: 'text-white bg-danger'
+  }
+
+  // Header styling varies by content type
+  const headerBg = isInvestigation
+    ? 'border-primary/20 bg-primary/15'
+    : isInlinePlan
+      ? 'border-mode-plan-border bg-mode-plan/15'
+      : 'border-border-subtle bg-surface-raised'
+  const headerIconBg = isInvestigation
+    ? 'bg-primary-muted'
+    : isInlinePlan
+      ? 'bg-mode-plan-muted'
+      : 'bg-primary-muted'
+  const headerIconColor = isInvestigation
+    ? 'text-primary-text'
+    : isInlinePlan
+      ? 'text-mode-plan-text'
+      : 'text-primary-text'
+  const headerTitle = isInvestigation
+    ? 'Investigation Complete'
+    : isInlinePlan
+      ? 'Implementation Plan'
+      : 'Task Plan'
 
   return (
-    <div data-testid="task-plan-card" className="my-3 rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden">
+    <div data-testid="task-plan-card" className={`my-3 rounded-xl border ${isInvestigation ? 'border-primary/30' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}>
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle bg-surface-raised">
-        <div className="w-8 h-8 rounded-lg bg-primary-muted flex items-center justify-center">
-          <span className="text-sm">📋</span>
+      <div className={`flex items-center gap-3 px-4 py-3 border-b ${headerBg}`}>
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${headerIconBg}`}>
+          {isInvestigation ? (
+            <Search size={16} className={headerIconColor} />
+          ) : (
+            <ClipboardList size={16} className={headerIconColor} />
+          )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-text-primary">Task Plan</p>
+          <p className="text-sm font-medium text-text-primary">{headerTitle}</p>
           <p className="text-xs text-text-secondary truncate">{summary}</p>
         </div>
+        {isInvestigation && investigation && (
+          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${impactStyles[investigation.impact] ?? impactStyles.medium}`}>
+            {investigation.impact} impact
+          </span>
+        )}
         <span
           className={`text-[10px] px-2 py-0.5 rounded-full ${
             mode === 'build' ? 'bg-mode-build-muted text-mode-build-text' : 'bg-mode-plan-muted text-mode-plan-text'
@@ -146,287 +147,387 @@ export default function TaskPlanCard({
         >
           {mode}
         </span>
-        {!hasUserChosen && onDismiss && (
-          <button
-            onClick={onDismiss}
-            className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
-            title="Dismiss plan"
-          >
-            <X size={14} />
-          </button>
-        )}
       </div>
 
-      {showSpecialistWarningBanner && (
-        <div className="px-4 py-2 border-b border-border-subtle bg-warning-muted/40">
-          <p className="text-xs text-warning flex items-center gap-1.5">
-            <span className="font-medium">
-              {activeSpecialistCount} active specialist{activeSpecialistCount === 1 ? '' : 's'}
-            </span>
-            <span className="text-text-secondary">
-              This {mode} action can include additional specialist context (~
-              {estimatedSpecialistTokens.toLocaleString()} tokens).
-            </span>
-          </p>
-        </div>
-      )}
-
-      {/* Task list */}
-      <div className="px-4 py-3 space-y-2">
-        {/* Independent tasks (can run in parallel) */}
-        {independentTasks.length > 0 && (
-          <div className="space-y-1.5">
-            <p className="text-[10px] uppercase tracking-wider text-text-muted font-medium">
-              Independent tasks {independentTasks.length > 1 ? '(parallelizable)' : ''}
-            </p>
-            {independentTasks.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                meta={getSpecialistMeta(task.specialist)}
-                specialist={specialists.find((s) => s.agentId === task.specialist)}
-                progress={taskProgress.get(task.id)}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Dependent tasks */}
-        {dependentTasks.length > 0 && (
-          <div className="space-y-1.5 mt-2">
-            <p className="text-[10px] uppercase tracking-wider text-text-muted font-medium">
-              Depends on previous
-            </p>
-            {dependentTasks.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                meta={getSpecialistMeta(task.specialist)}
-                specialist={specialists.find((s) => s.agentId === task.specialist)}
-                progress={taskProgress.get(task.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* S6: Investigation depth picker — only in plan mode before execution */}
-      {mode === 'plan' && !hasUserChosen && (
-        <div className="flex items-center gap-2 px-4 py-2 border-t border-border-subtle">
-          <span className="text-xs text-text-muted">Depth:</span>
-          {(['quick', 'standard', 'deep'] as const).map((d) => (
-            <button
-              key={d}
-              onClick={() => setDepth(d)}
-              className={`px-2 py-0.5 text-xs rounded-md border transition-colors ${
-                depth === d
-                  ? 'bg-accent/10 border-accent text-accent'
-                  : 'border-border-subtle text-text-muted hover:text-text-primary'
-              }`}
-            >
-              {d === 'quick' ? '⚡ Quick' : d === 'standard' ? '🔍 Standard' : '🔬 Deep'}
-            </button>
-          ))}
-          <span className="text-xs text-text-muted ml-1">
-            {depth === 'quick'
-              ? '3 turns, 5 tools'
-              : depth === 'standard'
-                ? '8 turns, 12 tools'
-                : '15 turns, 25 tools'}
-          </span>
-        </div>
-      )}
-
-      {/* Action buttons — only shown before execution starts */}
-      {!hasUserChosen && (
-        <div className="flex items-stretch border-t border-border-subtle">
-          <button
-            onClick={() => handleExecuteRequest('sequential', depth)}
-            onMouseEnter={() => setHoveredStrategy('sequential')}
-            onMouseLeave={() => setHoveredStrategy(null)}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors border-r border-border-subtle"
-          >
-            <UserRound
-              size={16}
-              className={hoveredStrategy === 'sequential' ? 'text-info' : 'text-text-muted'}
-            />
-            <div className="text-left">
-              <span className="block text-sm">{sequentialActionLabel}</span>
-              <span className="block text-[10px] text-text-muted">
-                {mode === 'plan' ? 'One specialist investigates at a time' : 'One at a time, more control'}
-              </span>
+      {/* ── Investigation report content ── */}
+      {isInvestigation && investigation && (
+        <div>
+          {/* Problem */}
+          <div className="px-5 py-3 border-b border-border-subtle">
+            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">Problem</span>
+            <div className="mt-1 prose prose-sm prose-invert max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{investigation.problem}</ReactMarkdown>
             </div>
-          </button>
-          <button
-            onClick={() => handleExecuteRequest('parallel', depth)}
-            onMouseEnter={() => setHoveredStrategy('parallel')}
-            onMouseLeave={() => setHoveredStrategy(null)}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors"
-          >
-            <Users
-              size={16}
-              className={hoveredStrategy === 'parallel' ? 'text-success' : 'text-text-muted'}
-            />
-            <div className="text-left">
-              <span className="block text-sm">{parallelActionLabel}</span>
-              <span className="block text-[10px] text-text-muted">
-                {mode === 'plan' ? 'Multiple specialists investigate together' : 'Faster, agents work together'}
-              </span>
-            </div>
-          </button>
-        </div>
-      )}
+          </div>
 
-      {/* Execution status footer */}
-      {hasUserChosen && !allDone && (() => {
-        const completedCount = tasks.filter((t) => taskProgress.get(t.id)?.status === 'completed').length
-        const runningTask = tasks.find((t) => taskProgress.get(t.id)?.status === 'running')
-        return (
-          <div className="px-4 py-2.5 border-t border-border-subtle bg-info-muted">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <Loader2 size={14} className="text-info animate-spin" />
-                <span className="text-xs font-medium text-info">
-                  Building... ({completedCount}/{tasks.length} tasks)
-                </span>
+          {/* Root Cause */}
+          <div className="px-5 py-3 border-b border-border-subtle">
+            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">Root Cause</span>
+            <div className="mt-1 prose prose-sm prose-invert max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{investigation.rootCause}</ReactMarkdown>
+            </div>
+          </div>
+
+          {/* Proposed Fix */}
+          <div className="px-5 py-3 border-b border-border-subtle">
+            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">How to Fix</span>
+            <div className="mt-1 prose prose-sm prose-invert max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{investigation.proposedFix}</ReactMarkdown>
+            </div>
+          </div>
+
+          {/* Files Affected */}
+          {investigation.filesAffected.length > 0 && (
+            <div className="px-5 py-3 border-b border-border-subtle">
+              <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+                Files Affected
+              </span>
+              <div className="mt-2 space-y-1">
+                {investigation.filesAffected.map((file, idx) => (
+                  <div key={idx} className="flex items-start gap-2 text-sm">
+                    <code className="text-xs font-mono text-primary-text bg-surface-overlay px-1.5 py-0.5 rounded shrink-0">
+                      {file.path}
+                    </code>
+                    <span className="text-text-secondary">{file.reason}</span>
+                  </div>
+                ))}
               </div>
-              {runningTask && (
-                <span className="text-[10px] text-text-muted">
-                  Current: {getSpecialistMeta(runningTask.specialist).displayName}
-                </span>
-              )}
             </div>
-            <div className="h-1 bg-surface-overlay rounded-full overflow-hidden">
-              <div
-                className="h-full bg-info rounded-full transition-all duration-300"
-                style={{ width: `${(completedCount / tasks.length) * 100}%` }}
-              />
+          )}
+
+          {/* Impact reason */}
+          {investigation.impactReason && (
+            <div className="px-5 py-2 text-xs text-text-muted">
+              <strong>Impact:</strong> {investigation.impactReason}
             </div>
-          </div>
-        )
-      })()}
-      {allDone && taskProgress.size > 0 && (() => {
-        const failedCount = tasks.filter((t) => taskProgress.get(t.id)?.status === 'failed').length
-        const successCount = tasks.length - failedCount
-        return (
-          <div className="flex items-center gap-2 px-4 py-2 border-t border-border-subtle bg-success-muted">
-            <CheckCircle2 size={14} className="text-success" />
-            <span className="text-xs text-success">
-              All tasks completed — {successCount} succeeded{failedCount > 0 ? `, ${failedCount} failed` : ''}
-            </span>
-          </div>
-        )
-      })()}
-
-      {/* Strategy 6: Specialist warning dialog — gates execution when active specialists + warning enabled */}
-      <SpecialistWarningDialog
-        isOpen={showWarningDialog}
-        warningType={warningType}
-        activeSpecialistCount={activeSpecialistCount}
-        estimatedTokens={estimatedSpecialistTokens > 0 ? estimatedSpecialistTokens : undefined}
-        onConfirm={handleWarningConfirm}
-        onCancel={handleWarningCancel}
-      />
-    </div>
-  )
-}
-
-/** Small component that ticks every second showing live elapsed time */
-function ElapsedTimer({ startedAt }: { startedAt: number }): React.JSX.Element {
-  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - startedAt) / 1000))
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startedAt) / 1000))
-    }, 1000)
-    return (): void => clearInterval(interval)
-  }, [startedAt])
-
-  const mins = Math.floor(elapsed / 60)
-  const secs = elapsed % 60
-
-  return (
-    <span className="text-[10px] text-text-muted tabular-nums">
-      {mins > 0 ? `${mins}m ${secs}s` : `${secs}s`}
-    </span>
-  )
-}
-
-function TaskRow({
-  task,
-  meta,
-  specialist,
-  progress
-}: {
-  task: DecomposedTask
-  meta: { icon: string; color: string; displayName: string }
-  specialist?: Specialist
-  progress?: TaskExecutionProgress
-}): React.JSX.Element {
-  const statusIcon = progress ? STATUS_ICONS[progress.status] : STATUS_ICONS.pending
-
-  return (
-    <div className="flex items-start gap-2.5 py-1.5 px-2 rounded-lg bg-surface-raised/40">
-      <div className="flex-shrink-0 mt-0.5">
-        {(specialist?.pixelSpriteId || getSpriteAssignment(task.specialist).pixelSpriteId) ? (
-          <PixelSpriteAvatar
-            spriteId={specialist?.pixelSpriteId ?? getSpriteAssignment(task.specialist).pixelSpriteId!}
-            size={20}
-          />
-        ) : (
-          <Avatar
-            avatarKey={specialist?.avatarUrl ?? getDefaultAvatarForRole(task.specialist)}
-            size="sm"
-            accentColor={meta.color}
-          />
-        )}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-medium" style={{ color: meta.color }}>
-            {meta.displayName}
-          </span>
-          <span className="text-[10px] text-text-muted">{task.id}</span>
-          {task.dependsOn.length > 0 && (
-            <span className="flex items-center gap-0.5 text-[10px] text-text-muted">
-              <ArrowRight size={10} />
-              {task.dependsOn.join(', ')}
-            </span>
           )}
         </div>
-        <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">{task.description}</p>
-        {progress?.status === 'running' && progress.currentTool && (
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
-            <span className="text-[10px] font-mono text-text-muted">
-              {progress.currentTool}
-            </span>
-            {progress.currentToolSummary && (
-              <span className="text-[10px] text-text-muted truncate max-w-[250px]">
-                {progress.currentToolSummary}
-              </span>
-            )}
-            {(progress.toolCallCount ?? 0) > 0 && (
-              <span className="text-[10px] text-text-muted">
-                ({progress.toolCallCount} tool calls)
-              </span>
-            )}
+      )}
+
+      {/* ── Inline plan content (from ```plan block) ── */}
+      {isInlinePlan && structuredPlan && (
+        <div className="px-5 py-4 space-y-4">
+          <div className="border-l-4 border-sky-500 pl-4">
+            <h3 className="text-base font-bold text-[var(--color-plan-card-text)] flex items-center gap-2">
+              <ClipboardList size={16} className="text-[var(--color-plan-card)]" />
+              {structuredPlan.title}
+            </h3>
           </div>
-        )}
-        {progress?.error && <p className="text-xs text-danger mt-0.5">{progress.error}</p>}
-      </div>
-      <div className="flex-shrink-0 mt-0.5 flex flex-col items-end gap-0.5">
-        {statusIcon}
-        {progress?.startedAt && (
-          progress.completedAt ? (
-            <span className="text-[10px] text-text-muted tabular-nums">
-              {((progress.completedAt - progress.startedAt) / 1000).toFixed(1)}s
-            </span>
-          ) : progress.status === 'running' ? (
-            <ElapsedTimer startedAt={progress.startedAt} />
-          ) : null
-        )}
-      </div>
+
+          {structuredPlan.summary && (
+            <div className="text-sm text-text-body bg-[var(--color-plan-card-muted)] rounded-lg px-4 py-3 border border-[var(--color-plan-card-border)]">
+              {structuredPlan.summary}
+            </div>
+          )}
+
+          {'problemSummary' in structuredPlan && typeof structuredPlan.problemSummary === 'string' && structuredPlan.problemSummary && (
+            <div className="rounded-lg border border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-muted)] overflow-hidden">
+              <button
+                type="button"
+                onClick={() => toggleSection('problemSummary')}
+                className="w-full px-4 py-3 flex items-center justify-between text-left"
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-text)]">
+                  <AlertTriangle size={14} className="text-amber-400" />
+                  Problem Summary
+                </span>
+                <span className="text-xs text-text-secondary">
+                  {expandedSections.has('problemSummary') ? 'Hide' : 'Show'}
+                </span>
+              </button>
+              {expandedSections.has('problemSummary') && (
+                <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{structuredPlan.problemSummary}</ReactMarkdown>
+                </div>
+              )}
+            </div>
+          )}
+
+          {'rootCause' in structuredPlan && typeof structuredPlan.rootCause === 'string' && structuredPlan.rootCause && (
+            <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
+                <Bug size={14} className="text-rose-400" />
+                Root Cause
+              </div>
+              <div className="prose prose-sm prose-invert max-w-none">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{structuredPlan.rootCause}</ReactMarkdown>
+              </div>
+            </div>
+          )}
+
+          {'decisions' in structuredPlan && Array.isArray(structuredPlan.decisions) && structuredPlan.decisions.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <GitBranch size={14} className="text-sky-400" />
+                Decisions
+              </div>
+              <div className="prose prose-sm prose-invert max-w-none prose-table:border-collapse prose-th:border prose-th:border-border-subtle prose-th:bg-surface-raised prose-th:px-3 prose-th:py-1.5 prose-td:border prose-td:border-border-subtle prose-td:px-3 prose-td:py-1.5">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>What</th>
+                      <th>Why</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {structuredPlan.decisions.map((decision, index) => (
+                      <tr key={`decision-${index}`}>
+                        <td>{decision.what}</td>
+                        <td>{decision.why}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {structuredPlan.steps && structuredPlan.steps.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-text-primary">Execution Steps</div>
+              <ol className="space-y-2">
+                {structuredPlan.steps.map((step) => {
+                  const complexityClass =
+                    step.complexity === 'low'
+                      ? 'text-emerald-300 bg-emerald-500/20'
+                      : step.complexity === 'high'
+                        ? 'text-red-300 bg-red-500/20'
+                        : 'text-amber-300 bg-amber-500/20'
+                  return (
+                    <li key={`${step.number}-${step.title}`} className="rounded-lg border border-border-subtle bg-surface-base/40 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-sky-500/20 text-sky-300 text-xs font-semibold">
+                              {step.number}
+                            </span>
+                            <span className="text-sm font-semibold text-text-primary">{step.title}</span>
+                            {step.complexity && (
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide ${complexityClass}`}>
+                                {step.complexity}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-sm text-text-body">{step.description}</p>
+                        </div>
+                        {step.file && (
+                          <span className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 cursor-pointer font-mono text-xs bg-sky-400/10 px-1.5 py-0.5 rounded">
+                            <FileCode size={12} />
+                            {shortenPath(step.file)}
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ol>
+            </div>
+          )}
+
+          {'filesChanged' in structuredPlan && Array.isArray(structuredPlan.filesChanged) && structuredPlan.filesChanged.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <FileCode size={14} className="text-sky-400" />
+                Files Changed
+              </div>
+              <div className="prose prose-sm prose-invert max-w-none prose-table:border-collapse prose-th:border prose-th:border-border-subtle prose-th:bg-surface-raised prose-th:px-3 prose-th:py-1.5 prose-td:border prose-td:border-border-subtle prose-td:px-3 prose-td:py-1.5">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>File</th>
+                      <th>Change</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {structuredPlan.filesChanged.map((entry, index) => (
+                      <tr key={`file-change-${index}`}>
+                        <td>
+                          <span className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 cursor-pointer font-mono text-xs bg-sky-400/10 px-1.5 py-0.5 rounded">
+                            <FileCode size={12} />
+                            {shortenPath(entry.file)}
+                          </span>
+                        </td>
+                        <td>{entry.change}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {'files' in structuredPlan && Array.isArray(structuredPlan.files) && structuredPlan.files.length > 0 && !('filesChanged' in structuredPlan && Array.isArray(structuredPlan.filesChanged) && structuredPlan.filesChanged.length > 0) && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <FileCode size={14} className="text-sky-400" />
+                Files in Scope
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {structuredPlan.files.map((file, index) => (
+                  <span
+                    key={`scope-file-${index}`}
+                    className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 cursor-pointer font-mono text-xs bg-sky-400/10 px-1.5 py-0.5 rounded"
+                  >
+                    <FileCode size={12} />
+                    {shortenPath(file)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {'risks' in structuredPlan && Array.isArray(structuredPlan.risks) && structuredPlan.risks.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <AlertCircle size={14} className="text-rose-400" />
+                Risks
+              </div>
+              <div className="space-y-2">
+                {structuredPlan.risks.map((riskItem, index) => {
+                  const risk = typeof riskItem === 'string' ? riskItem : riskItem.risk
+                  const severity = typeof riskItem === 'string' ? 'medium' : riskItem.severity
+                  const mitigation = typeof riskItem === 'string' ? undefined : riskItem.mitigation
+                  const severityClass =
+                    severity === 'low'
+                      ? 'text-emerald-300 bg-emerald-500/20'
+                      : severity === 'high'
+                        ? 'text-red-300 bg-red-500/20'
+                        : 'text-amber-300 bg-amber-500/20'
+                  return (
+                    <div key={`risk-${index}`} className="rounded-lg border border-border-subtle bg-surface-base/40 p-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide ${severityClass}`}>
+                          {severity}
+                        </span>
+                        <p className="text-sm text-text-body">{risk}</p>
+                      </div>
+                      {mitigation && <p className="mt-2 text-xs text-text-secondary"><strong>Mitigation:</strong> {mitigation}</p>}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {'expectedOutcome' in structuredPlan && typeof structuredPlan.expectedOutcome === 'string' && structuredPlan.expectedOutcome && (
+            <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-300 mb-2">
+                <CheckCircle2 size={14} />
+                Expected Outcome
+              </div>
+              <div className="text-sm text-text-body">{structuredPlan.expectedOutcome}</div>
+            </div>
+          )}
+
+          {'deferredItems' in structuredPlan && Array.isArray(structuredPlan.deferredItems) && structuredPlan.deferredItems.length > 0 && (
+            <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
+                <Clock size={14} className="text-slate-300" />
+                Deferred Items
+              </div>
+              <ul className="list-disc pl-5 space-y-1 text-sm text-text-body">
+                {structuredPlan.deferredItems.map((item, index) => (
+                  <li key={`deferred-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {'diagrams' in structuredPlan && Array.isArray(structuredPlan.diagrams) && structuredPlan.diagrams.length > 0 && (
+            <div className="space-y-3">
+              {structuredPlan.diagrams.map((diagram, index) => (
+                <div key={`diagram-${index}`} className="rounded-lg border border-border-subtle bg-surface-base p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
+                    {diagram.title}
+                  </div>
+                  <MermaidDiagram definition={diagram.mermaid} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Legacy sections for backward compatibility */}
+          {structuredPlan.sections && structuredPlan.sections.length > 0 && (
+            <div className="space-y-3">
+              {structuredPlan.sections.map((section, index) => (
+                <div key={`${section.heading}-${index}`} className="rounded-lg border border-mode-plan-border bg-mode-plan-muted overflow-hidden">
+                  <div className="px-4 py-3">
+                    {section.icon && <span className="text-base mr-2">{section.icon}</span>}
+                    <span className="text-sm font-semibold text-mode-plan-text">{section.heading}</span>
+                  </div>
+                  <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.content}</ReactMarkdown>
+                  </div>
+                  {section.mermaid && (
+                    <div className="px-4 pb-4">
+                      <div className="rounded-lg border border-border-subtle bg-surface-base p-3">
+                        <MermaidDiagram definition={section.mermaid} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {isInlinePlan && !structuredPlan && (
+        <div className="px-5 py-4 prose prose-sm prose-invert max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{planContent!}</ReactMarkdown>
+        </div>
+      )}
+
+      {/* ── Unified action buttons ── */}
+      {!hasUserChosen && (onBuildNow || onOrchestratedBuild || onSaveAsIdea || onRefine) && (
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-border-subtle bg-surface-base/50">
+          {onBuildNow && (
+            <button
+              onClick={() => { setUserClicked(true); onBuildNow() }}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-mode-build/50 press-scale"
+            >
+              <Hammer size={14} />
+              Build Now
+            </button>
+          )}
+          {onOrchestratedBuild && (
+            <button
+              onClick={() => { setUserClicked(true); onOrchestratedBuild() }}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
+            >
+              <Users size={14} />
+              Orchestrated Build
+            </button>
+          )}
+          {onSaveAsIdea && (
+            <button
+              onClick={() => { setUserClicked(true); onSaveAsIdea() }}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
+            >
+              <Lightbulb size={14} />
+              Save as Idea
+            </button>
+          )}
+          {onRefine && (
+            <button
+              onClick={() => { setUserClicked(true); onRefine() }}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
+            >
+              <RefreshCw size={14} />
+              Refine Plan
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Executing indicator for investigation content */}
+      {isInvestigation && isExecuting && (
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-primary/20 bg-primary-muted text-text-muted text-sm">
+          <Loader2 size={14} className="animate-spin" />
+          Preparing fix plan...
+        </div>
+      )}
+
     </div>
   )
 }
+

@@ -11,7 +11,7 @@ import {
   useDreamStore,
   useProfileStore
 } from '@renderer/store'
-import type { ConversationMode, TaskPlan } from '../../shared/types'
+import type { ConversationMode } from '../../shared/types'
 import { rendererLog } from '@renderer/utils/logger'
 
 // Check if this window was opened as a Pixel Office pop-out
@@ -31,9 +31,8 @@ function App(): React.JSX.Element {
     setHandoff,
     addToolActivity,
     updateToolActivity,
-    setTaskPlan,
-    executePlan,
     updateTaskProgress,
+    setDecomposedTasks,
     setCompactSuggestion,
     endGrillSession,
     setGrillQuestions,
@@ -146,16 +145,6 @@ function App(): React.JSX.Element {
       setPendingQuestions(data.questions)
     })
 
-    const unsubTaskPlan = window.api.onTaskPlan((data) => {
-      const plan = data as TaskPlan
-      setTaskPlan(plan)
-
-      // Auto-execute only when backend explicitly requests it
-      if (plan.autoExecute) {
-        setTimeout(() => executePlan(plan.autoExecute!), 500)
-      }
-    })
-
     const unsubTaskProgress = window.api.onTaskProgress((data) => {
       if (data.status === 'completed' || data.status === 'failed') {
         rendererLog.info(
@@ -163,6 +152,10 @@ function App(): React.JSX.Element {
         )
       }
       updateTaskProgress(data)
+    })
+
+    const unsubBuildTasks = window.api.onBuildTasks((data) => {
+      setDecomposedTasks(data.tasks)
     })
 
     const unsubInvestigationReport = window.api.onInvestigationReport((data) => {
@@ -187,6 +180,7 @@ function App(): React.JSX.Element {
           | 'reviewing'
           | 'completed'
           | 'failed',
+        currentTask: data.currentTask,
         elapsedMs: data.elapsedMs,
         tokenUsage: data.tokenUsage,
         model: data.model,
@@ -229,8 +223,8 @@ function App(): React.JSX.Element {
       unsubGrillComplete()
       unsubGrillQuestion()
       unsubAskQuestion()
-      unsubTaskPlan()
       unsubTaskProgress()
+      unsubBuildTasks()
       unsubInvestigationReport()
       unsubReady()
       unsubAgent()
@@ -249,8 +243,6 @@ function App(): React.JSX.Element {
     updateStreamingIdentity,
     finalizeStream,
     setHandoff,
-    setTaskPlan,
-    executePlan,
     updateTaskProgress,
     addToolActivity,
     updateToolActivity,
