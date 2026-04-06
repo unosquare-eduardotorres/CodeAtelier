@@ -14,7 +14,8 @@ import type {
   ExecutionStrategy,
   HandoffBrief,
   InvestigationDepth,
-  InvestigationReport
+  InvestigationReport,
+  TaskExecutionProgress
 } from '../../shared/types'
 import { specialistPoolService } from '../services/specialist-pool.service'
 import { buildEnvWithPath } from '../services/env-utils'
@@ -69,6 +70,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
 
       const taskPlanBrief = (args as { brief?: HandoffBrief }).brief ?? null
       const accumulatedContent = { value: '' }
+      const taskResultMap = new Map<string, { status: string; error?: string; specialist: string }>()
       specialistPoolService.setWorkspacePath(workspacePath)
       // Pass workspaceId so specialists can access MCP tools (code-graph, semantic-search)
       const ws = workspaceRepository.findAll().find((w) => w.repoPath === workspacePath)
@@ -146,6 +148,30 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
           taskCount: tasks.length
         })
 
+        // Build structured completion summary
+        const summaryLines: string[] = []
+        summaryLines.push(`## Execution Complete\n`)
+        summaryLines.push(`**${tasks.length} task(s)** executed in ${mode} mode.\n`)
+
+        for (const task of tasks) {
+          const result = taskResultMap.get(task.id)
+          const status = result?.status === 'failed' ? '❌' : '✅'
+          summaryLines.push(`${status} **${task.specialist}**: ${task.description}`)
+          if (result?.error) {
+            summaryLines.push(`  → Error: ${result.error}`)
+          }
+        }
+
+        const summaryBlock = summaryLines.join('\n')
+
+        // Send summary as a chunk to renderer before CHAT_MESSAGE_COMPLETE
+        mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+          conversationId,
+          chunk: `\n\n---\n\n${summaryBlock}\n`,
+          role: 'generalist'
+        })
+        accumulatedContent.value += `\n\n---\n\n${summaryBlock}\n`
+
         const savedMsg = messageRepository.create(
           conversationId,
           'generalist',
@@ -212,11 +238,15 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       }
 
       // Forward task progress events to renderer for UI updates (e.g. "1/3 done")
-      const poolOnTaskProgress = (progress: {
-        taskId: string
-        specialist: string
-        status: string
-      }): void => {
+      const poolOnTaskProgress = (progress: TaskExecutionProgress): void => {
+        // Store terminal states for completion summary
+        if (progress.status === 'completed' || progress.status === 'failed') {
+          taskResultMap.set(progress.taskId, {
+            status: progress.status,
+            error: progress.error,
+            specialist: progress.specialist
+          })
+        }
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PROGRESS, progress)
       }
 

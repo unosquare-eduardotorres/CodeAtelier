@@ -76,6 +76,21 @@ export default function TokenUsagePage(): React.JSX.Element {
   const [budgetStatus, setBudgetStatus] = useState<BudgetStatus | null>(null)
   const [conversationCosts, setConversationCosts] = useState<ConversationCost[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [cacheEfficiency, setCacheEfficiency] = useState<{
+    hitRate: number
+    savedTokens: number
+    totalInput: number
+    turns: number
+    turnBreakdown: Array<{
+      turn: number
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheCreationTokens: number
+      cacheHitRate: number
+      timestamp: number
+    }>
+  } | null>(null)
 
   useEffect(() => {
     if (!activeWorkspace) return
@@ -88,15 +103,17 @@ export default function TokenUsagePage(): React.JSX.Element {
       window.api.getRecentSessions({ workspaceId: activeWorkspace.id, limit: 50 }),
       window.api.getCostSummary({ workspaceId: activeWorkspace.id }),
       window.api.checkBudget({ workspaceId: activeWorkspace.id }),
-      window.api.getWorkspaceConversationCosts({ workspaceId: activeWorkspace.id })
+      window.api.getWorkspaceConversationCosts({ workspaceId: activeWorkspace.id }),
+      window.api.getCacheEfficiency()
     ])
-      .then(([sum, sess, cost, budget, convCosts]) => {
+      .then(([sum, sess, cost, budget, convCosts, cacheEff]) => {
         if (cancelled) return
         setSummary(sum)
         setSessions(sess)
         setCostSummary(cost)
         setBudgetStatus(budget)
         setConversationCosts(convCosts)
+        setCacheEfficiency(cacheEff)
       })
       .catch((err) => {
         console.error('Failed to load token data:', err)
@@ -294,6 +311,89 @@ export default function TokenUsagePage(): React.JSX.Element {
           <div className="text-xs text-text-secondary mt-1">Highest token consumption</div>
         </div>
       </div>
+
+      {/* Strategy θ: Cache Efficiency & Per-Turn Breakdown */}
+      {cacheEfficiency && cacheEfficiency.turns > 0 && (
+        <section className="mb-8">
+          <h3 className="text-sm text-text-secondary uppercase tracking-wider font-medium mb-3">
+            Cache Efficiency
+          </h3>
+          <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 space-y-4">
+            {/* Summary stats row */}
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <p className="text-lg font-semibold text-primary">
+                  {cacheEfficiency.hitRate.toFixed(1)}%
+                </p>
+                <p className="text-xs text-text-secondary">Cache Hit Rate</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-success">
+                  {formatTokens(cacheEfficiency.savedTokens)}
+                </p>
+                <p className="text-xs text-text-secondary">Tokens Saved</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-text-body">{cacheEfficiency.turns}</p>
+                <p className="text-xs text-text-secondary">Turns Tracked</p>
+              </div>
+            </div>
+
+            {/* Per-turn breakdown bars */}
+            {cacheEfficiency.turnBreakdown.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs text-text-secondary font-medium">
+                  Per-Turn Token Breakdown
+                </p>
+                {cacheEfficiency.turnBreakdown.map((t) => {
+                  const total = t.inputTokens + t.outputTokens + t.cacheReadTokens
+                  if (total === 0) return null
+                  return (
+                    <div key={t.turn} className="flex items-center gap-2 text-xs">
+                      <span className="w-8 text-text-muted text-right">T{t.turn}</span>
+                      <div className="flex-1 flex h-4 rounded overflow-hidden bg-surface-base">
+                        {/* Input tokens */}
+                        <div
+                          className="bg-primary/60"
+                          style={{ width: `${(t.inputTokens / total) * 100}%` }}
+                          title={`Input: ${formatTokens(t.inputTokens)}`}
+                        />
+                        {/* Cache read tokens */}
+                        <div
+                          className="bg-success/60"
+                          style={{ width: `${(t.cacheReadTokens / total) * 100}%` }}
+                          title={`Cache read: ${formatTokens(t.cacheReadTokens)}`}
+                        />
+                        {/* Output tokens */}
+                        <div
+                          className="bg-warning/60"
+                          style={{ width: `${(t.outputTokens / total) * 100}%` }}
+                          title={`Output: ${formatTokens(t.outputTokens)}`}
+                        />
+                      </div>
+                      <span className="w-12 text-text-muted text-right">
+                        {t.cacheHitRate.toFixed(0)}%
+                      </span>
+                    </div>
+                  )
+                })}
+                {/* Legend */}
+                <div className="flex gap-4 mt-1 text-[10px] text-text-muted">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded bg-primary/60" /> Input
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded bg-success/60" /> Cache
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded bg-warning/60" /> Output
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Per-Agent Breakdown */}
       {summary && summary.byAgent.length > 0 && (

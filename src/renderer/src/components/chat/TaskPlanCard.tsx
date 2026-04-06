@@ -278,22 +278,45 @@ export default function TaskPlanCard({
       )}
 
       {/* Execution status footer */}
-      {hasUserChosen && !allDone && (
-        <div className="flex items-center gap-2 px-4 py-2 border-t border-border-subtle bg-info-muted">
-          <Loader2 size={14} className="text-info animate-spin" />
-          <span className="text-xs text-info">
-            Executing tasks... (
-            {tasks.filter((t) => taskProgress.get(t.id)?.status === 'completed').length}/
-            {tasks.length} done)
-          </span>
-        </div>
-      )}
-      {allDone && taskProgress.size > 0 && (
-        <div className="flex items-center gap-2 px-4 py-2 border-t border-border-subtle bg-success-muted">
-          <CheckCircle2 size={14} className="text-success" />
-          <span className="text-xs text-success">All tasks completed</span>
-        </div>
-      )}
+      {hasUserChosen && !allDone && (() => {
+        const completedCount = tasks.filter((t) => taskProgress.get(t.id)?.status === 'completed').length
+        const runningTask = tasks.find((t) => taskProgress.get(t.id)?.status === 'running')
+        return (
+          <div className="px-4 py-2.5 border-t border-border-subtle bg-info-muted">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <Loader2 size={14} className="text-info animate-spin" />
+                <span className="text-xs font-medium text-info">
+                  Building... ({completedCount}/{tasks.length} tasks)
+                </span>
+              </div>
+              {runningTask && (
+                <span className="text-[10px] text-text-muted">
+                  Current: {getSpecialistMeta(runningTask.specialist).displayName}
+                </span>
+              )}
+            </div>
+            <div className="h-1 bg-surface-overlay rounded-full overflow-hidden">
+              <div
+                className="h-full bg-info rounded-full transition-all duration-300"
+                style={{ width: `${(completedCount / tasks.length) * 100}%` }}
+              />
+            </div>
+          </div>
+        )
+      })()}
+      {allDone && taskProgress.size > 0 && (() => {
+        const failedCount = tasks.filter((t) => taskProgress.get(t.id)?.status === 'failed').length
+        const successCount = tasks.length - failedCount
+        return (
+          <div className="flex items-center gap-2 px-4 py-2 border-t border-border-subtle bg-success-muted">
+            <CheckCircle2 size={14} className="text-success" />
+            <span className="text-xs text-success">
+              All tasks completed — {successCount} succeeded{failedCount > 0 ? `, ${failedCount} failed` : ''}
+            </span>
+          </div>
+        )
+      })()}
 
       {/* Strategy 6: Specialist warning dialog — gates execution when active specialists + warning enabled */}
       <SpecialistWarningDialog
@@ -372,9 +395,38 @@ function TaskRow({
           )}
         </div>
         <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">{task.description}</p>
+        {progress?.status === 'running' && progress.currentTool && (
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
+            <span className="text-[10px] font-mono text-text-muted">
+              {progress.currentTool}
+            </span>
+            {progress.currentToolSummary && (
+              <span className="text-[10px] text-text-muted truncate max-w-[250px]">
+                {progress.currentToolSummary}
+              </span>
+            )}
+            {(progress.toolCallCount ?? 0) > 0 && (
+              <span className="text-[10px] text-text-muted">
+                ({progress.toolCallCount} tool calls)
+              </span>
+            )}
+          </div>
+        )}
         {progress?.error && <p className="text-xs text-danger mt-0.5">{progress.error}</p>}
       </div>
-      <div className="flex-shrink-0 mt-0.5">{statusIcon}</div>
+      <div className="flex-shrink-0 mt-0.5 flex flex-col items-end gap-0.5">
+        {statusIcon}
+        {progress?.startedAt && (
+          progress.completedAt ? (
+            <span className="text-[10px] text-text-muted tabular-nums">
+              {((progress.completedAt - progress.startedAt) / 1000).toFixed(1)}s
+            </span>
+          ) : progress.status === 'running' ? (
+            <ElapsedTimer startedAt={progress.startedAt} />
+          ) : null
+        )}
+      </div>
     </div>
   )
 }

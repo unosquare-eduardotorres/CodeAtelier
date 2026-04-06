@@ -18,29 +18,43 @@ import FloatingRobots from './FloatingRobots'
 import ScrollToBottomButton from './ScrollToBottomButton'
 
 function CompactSuggestionBanner({
+  level,
   inputTokens,
   onCompact,
   onDismiss
 }: {
+  level: string
   inputTokens: number
   onCompact: () => void
   onDismiss: () => void
 }): React.JSX.Element {
+  const isWarning = level === 'warning'
   return (
-    <div className="mx-4 mb-2 px-4 py-2.5 rounded-lg bg-warning-muted border border-warning/30 flex items-center gap-3">
-      <span className="text-warning text-sm font-medium">!</span>
+    <div
+      className={`mx-4 mb-2 px-4 py-2.5 rounded-lg flex items-center gap-3 ${
+        isWarning
+          ? 'bg-info-muted border border-info/30'
+          : 'bg-warning-muted border border-warning/30'
+      }`}
+    >
+      <span className={`text-sm font-medium ${isWarning ? 'text-info' : 'text-warning'}`}>
+        {isWarning ? '⚡' : '!'}
+      </span>
       <div className="flex-1">
-        <p className="text-sm text-warning">
-          Context is getting large ({Math.round(inputTokens / 1000)}K tokens). Consider compacting
-          to preserve performance.
+        <p className={`text-sm ${isWarning ? 'text-info' : 'text-warning'}`}>
+          {isWarning
+            ? `Context is approaching limits (~${Math.round(inputTokens / 1000)}K tokens). Your next message may include a compaction step.`
+            : `Context is getting large (${Math.round(inputTokens / 1000)}K tokens). Consider compacting to preserve performance.`}
         </p>
       </div>
-      <button
-        onClick={onCompact}
-        className="px-3 py-1 rounded bg-mode-build hover:brightness-110 text-white text-xs font-medium transition-colors"
-      >
-        /compact
-      </button>
+      {!isWarning && (
+        <button
+          onClick={onCompact}
+          className="px-3 py-1 rounded bg-mode-build hover:brightness-110 text-white text-xs font-medium transition-colors"
+        >
+          /compact
+        </button>
+      )}
       <button onClick={onDismiss} className="text-text-muted hover:text-text-primary text-xs">
         Dismiss
       </button>
@@ -450,6 +464,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         {/* Compact suggestion banner */}
         {compactSuggestion && (
           <CompactSuggestionBanner
+            level={compactSuggestion.level}
             inputTokens={compactSuggestion.inputTokens}
             onCompact={() => {
               setCompactSuggestion(null)
