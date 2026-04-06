@@ -7,7 +7,8 @@ import {
   conversationSpecialistRepository,
   messageRepository,
   fileChangeRepository,
-  workspaceRepository
+  workspaceRepository,
+  turnUsageRepository
 } from '../db/repositories'
 import {
   generalistService,
@@ -417,6 +418,42 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
 
       const { base64, mimeType } = fileService.readImageAsBase64(resolved)
       return `data:${mimeType};base64,${base64}`
+    }
+  )
+
+  // ── Context usage: return token consumption for a conversation ──
+  ipcMain.handle(
+    IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE,
+    async (event, args: { conversationId: string }) => {
+      validateSender(event)
+      if (!args?.conversationId) throw new Error('Invalid conversation ID')
+
+      const lastTurn = turnUsageRepository.getLastTurn(args.conversationId)
+      const inputTokens = lastTurn?.inputTokens ?? 0
+      const contextWindowSize = 200_000
+      const percentage = Math.round((inputTokens / contextWindowSize) * 100)
+      const level =
+        percentage > 50 ? 'critical' : percentage > 40 ? 'red' : percentage > 25 ? 'yellow' : 'green'
+
+      return {
+        conversationId: args.conversationId,
+        inputTokens,
+        contextWindowSize,
+        percentage,
+        level
+      }
+    }
+  )
+
+  // ── Reorder conversations ──
+  ipcMain.handle(
+    IPC_CHANNELS.CONVERSATION_REORDER,
+    async (event, args: { orderedIds: string[] }) => {
+      validateSender(event)
+      if (!args?.orderedIds || !Array.isArray(args.orderedIds)) {
+        throw new Error('Invalid orderedIds')
+      }
+      conversationRepository.reorderConversations(args.orderedIds)
     }
   )
 }

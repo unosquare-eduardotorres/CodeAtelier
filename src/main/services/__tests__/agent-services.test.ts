@@ -3,28 +3,9 @@
  * Tests summarizeToolInput, conclusive pattern detection, and topological sort logic.
  */
 import assert from 'node:assert/strict'
+import { test, describe } from './test-harness'
 
 import { summarizeToolInput } from '../agent-base.service'
-
-let passed = 0
-let failed = 0
-
-function test(name: string, fn: () => void): void {
-  try {
-    fn()
-    console.log(`  ✓ ${name}`)
-    passed++
-  } catch (err) {
-    console.error(`  ✗ ${name}`)
-    console.error(`    ${(err as Error).message}`)
-    failed++
-  }
-}
-
-function describe(name: string, fn: () => void): void {
-  console.log(`\n${name}`)
-  fn()
-}
 
 // ── summarizeToolInput ──────────────────────────────────────
 
@@ -372,7 +353,4 @@ describe('tierToModelAction', () => {
   })
 })
 
-// ── Report ──────────────────────────────────────────────
-
-console.log(`\n─── agent-services.test.ts: ${passed} passed, ${failed} failed ───`)
-if (failed > 0) process.exit(1)
+// Report handled by test runner

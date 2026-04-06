@@ -88,18 +88,3 @@ export function createToolApprovalHook(agentId: string, taskId?: string): HookCa
     return {} // Allow
   }
 }
-
-/**
- * Creates a standalone dangerous command guard (Bash-only).
- */
-export function createDangerousCommandGuard(): HookCallback {
-  return async (input) => {
-    const toolName = (input as Record<string, unknown>).tool_name as string
-    if (toolName !== 'Bash') return {}
-    const command = ((input as Record<string, unknown>).tool_input as Record<string, unknown>)?.command as string
-    if (command && isDangerousCommand(command)) {
-      return { decision: 'block', reason: 'Dangerous command blocked' }
-    }
-    return {}
-  }
-}

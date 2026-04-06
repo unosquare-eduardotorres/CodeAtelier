@@ -16,7 +16,7 @@ import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
 import { SDKExecutor } from './sdk-executor'
-import type { SDKAgentDefinition, SDKExecuteResult } from './sdk-executor'
+import type { SDKExecuteResult } from './sdk-executor'
 import { authProvider } from './auth-provider'
 import { PromptBuilder, promptBuilder, type GeneralistConditionalSections } from './prompt-builder'
 import {
@@ -39,6 +39,7 @@ import { checkpointContextMcpService } from './checkpoint-context.tool'
 import { gitHubContextMcpService } from './github-context.tool'
 import { githubService } from './github.service'
 import { memoryService } from './memory.service'
+import { isInvestigationIntent } from './specialist'
 import {
   conversationRepository,
   conversationSpecialistRepository,
@@ -54,7 +55,6 @@ import { codeGraphMcpService } from './code-graph.tool'
 import { codeGraphService } from './code-graph.service'
 import {
   HANDOFF_REGEX,
-  buildSubAgentDefinitions as buildSubAgentDefinitionsUtil,
   parseDecompositionResult as parseDecompositionResultUtil,
   parseHandoffBlock
 } from './generalist-utils'
@@ -71,33 +71,16 @@ const ASK_QUESTION_REGEX = /```ask-question\n([\s\S]*?)```/g
 /** Regex to detect grill-evaluation blocks (new structured format with score + questions). */
 const GRILL_EVAL_REGEX = /```grill-evaluation\n([\s\S]*?)```/g
 
-/** Minimal coordinator prompt for SubAgent execution to avoid sending the full generalist prompt twice. */
-const SUBAGENT_ORCHESTRATION_SYSTEM_PROMPT = `You are the Generalist coordinator for specialist SubAgents.
-- Delegate work to the named SubAgents using the Agent tool.
-- Respect dependency order and parallelize independent tasks.
-- Do not implement specialist tasks yourself.
-- Return a concise final summary with outcomes and any failures.`
-
-/**
- * @deprecated Use HandoffBrief from shared/types.ts instead.
- * Kept for backward compatibility with legacy listeners.
- */
-export interface HandoffEvent {
-  summary: string
-  specialists: string[]
-  mode: ConversationMode
-}
-
-export interface GrillCompleteEvent {
+interface GrillCompleteEvent {
   summary: string
   proposedTasks: Array<{ title: string; description: string }>
 }
 
-export interface GrillQuestionEvent {
+interface GrillQuestionEvent {
   questions: GrillQuestion[]
 }
 
-export interface AskQuestionEvent {
+interface AskQuestionEvent {
   questions: GrillQuestion[]
 }
 
@@ -177,9 +160,6 @@ export class GeneralistService extends AgentBaseService {
    * Maps conversationId → compaction prompt.
    */
   private pendingCompaction: Map<string, string> = new Map()
-
-  /** Tracks active SubAgent tasks by SDK task_id → specialist metadata */
-  private activeSubagents: Map<string, { specialistId: string; startedAt: number }> = new Map()
 
   /**
    * Strategy M: Aggregate prompt cache statistics for dashboard.
@@ -562,7 +542,7 @@ export class GeneralistService extends AgentBaseService {
             ],
         // Plan mode: block write tools AND SDK built-in tools that conflict with our ````plan UI
         disallowedTools: isBuildMode
-          ? undefined
+          ? ['Agent'] // Force handoff protocol — all code work goes through specialist-pool
           : ['Write', 'Edit', 'ExitPlanMode', 'ToolSearch'],
         maxTurns: isBuildMode ? 50 : 25,
         resume: sessionId,
@@ -695,6 +675,20 @@ export class GeneralistService extends AgentBaseService {
           if (chunk.type === 'tool_use') {
             hasTextAfterLastTool = false
             this.toolCallCount++
+
+            // Soft warning at 5 tool calls — approaching prompt-stated target
+            if (this.toolCallCount === 5 && isBuildMode) {
+              this.log.warn(
+                `[PIPELINE:tool-limit-warning] conversationId=${conversationId} — 5 tool calls reached, approaching limit`
+              )
+            }
+            // Hard limit warning at 8 — prompt-stated HARD LIMIT exceeded
+            if (this.toolCallCount === 8 && isBuildMode) {
+              this.log.warn(
+                `[PIPELINE:tool-limit-reached] conversationId=${conversationId} — 8 tool calls, prompt hard limit exceeded`
+              )
+            }
+
             const toolCallLimit = isBuildMode
               ? GeneralistService.MAX_BUILD_TOOL_CALLS
               : GeneralistService.MAX_PLAN_TOOL_CALLS
@@ -723,54 +717,6 @@ export class GeneralistService extends AgentBaseService {
               toolCallNumber: this.toolCallCount
             })
           }
-          // ── SubAgent lifecycle → per-sub-agent statusUpdate events ──
-          if (chunk.type === 'subagent_start' && chunk.toolId) {
-            const specialistId = this.parseSpecialistFromDescription(chunk.content || '')
-            this.activeSubagents.set(chunk.toolId, {
-              specialistId,
-              startedAt: Date.now()
-            })
-            this.emit('statusUpdate', {
-              agentId: `subagent:${chunk.toolId}`,
-              agentType: specialistId,
-              status: 'thinking',
-              currentTask: chunk.content || undefined,
-              elapsedMs: 0,
-              tokenUsage: 0
-            } as AgentStatus)
-          }
-
-          if (chunk.type === 'subagent_progress' && chunk.toolId) {
-            const sub = this.activeSubagents.get(chunk.toolId)
-            if (sub) {
-              const status = chunk.toolName ? 'writing' : 'thinking'
-              this.emit('statusUpdate', {
-                agentId: `subagent:${chunk.toolId}`,
-                agentType: sub.specialistId,
-                status,
-                currentTask: chunk.content || undefined,
-                elapsedMs: Date.now() - sub.startedAt,
-                tokenUsage: 0
-              } as AgentStatus)
-            }
-          }
-
-          if (chunk.type === 'subagent_complete' && chunk.toolId) {
-            const sub = this.activeSubagents.get(chunk.toolId)
-            if (sub) {
-              const finalStatus = chunk.toolInput === 'failed' ? 'failed' : 'completed'
-              this.emit('statusUpdate', {
-                agentId: `subagent:${chunk.toolId}`,
-                agentType: sub.specialistId,
-                status: finalStatus,
-                currentTask: chunk.content || undefined,
-                elapsedMs: Date.now() - sub.startedAt,
-                tokenUsage: 0
-              } as AgentStatus)
-              this.activeSubagents.delete(chunk.toolId)
-            }
-          }
-
           // Update status based on chunk type
           if (chunk.type === 'text') this.currentStatus = 'writing'
           if (chunk.type === 'tool_use') this.currentStatus = 'reviewing'
@@ -805,7 +751,9 @@ export class GeneralistService extends AgentBaseService {
       // Skip if handoff was detected (handoff responses don't need post-tool text).
       if (this.toolCallCount > 0 && !hasTextAfterLastTool && !handoffDetectedInStream) {
         const fallbackMessage =
-          '\n\n_Command executed but no summary was provided. You can ask me for the status or try again._'
+          this.toolCallCount === 1
+            ? '\n\n_I read a file but my response was cut short. Could you repeat your question?_'
+            : `\n\n_I used ${this.toolCallCount} tools but didn't produce a summary. Try rephrasing or asking what I found._`
         this.log.warn(
           `[PIPELINE:silent-tool-completion] conversationId=${conversationId} toolCalls=${this.toolCallCount} — injecting fallback message`
         )
@@ -825,7 +773,6 @@ export class GeneralistService extends AgentBaseService {
       this.detectGrillQuestion()
       this.detectAskQuestion()
 
-      this.activeSubagents.clear()
       this.currentStatus = 'idle'
       this.flushTokenUsage()
       this.emit('statusUpdate', this.getStatus())
@@ -834,7 +781,6 @@ export class GeneralistService extends AgentBaseService {
     } catch (error) {
       clearTimeout(interactionTimer)
       this.sdkAbortController = null
-      this.activeSubagents.clear()
       if ((error as Error).name === 'AbortError') {
         if (timedOut) {
           this.log.error('SDK query timed out')
@@ -1420,9 +1366,7 @@ export class GeneralistService extends AgentBaseService {
         `Single-specialist fast path: skipping decomposition for ${brief.specialists[0]}`
       )
 
-      const isInvestigation =
-        mode === 'plan' ||
-        /investigat|diagnos|analyz|explain|what does|how does/i.test(brief.summary)
+      const isInvestigation = mode === 'plan' || isInvestigationIntent(brief.summary)
 
       const description = isInvestigation
         ? `${brief.summary} Produce a structured investigation report.`
@@ -1677,289 +1621,6 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
     }
   }
 
-  /**
-   * @deprecated Strategy 14: Not used in production — specialistPoolService handles execution.
-   * Retained only for test compatibility. Do NOT add new callers.
-   */
-  async executeWithSubAgents(
-    taskPlan: TaskPlan,
-    mode: ConversationMode,
-    conversationId: string
-  ): Promise<void> {
-    if (!this.workspacePath) {
-      throw new Error('Generalist not started')
-    }
-
-    // Refresh feature flags so settings changes take effect immediately
-    this.refreshFeatureFlags()
-
-    this.currentBrief = taskPlan.brief ?? null
-
-    // Collect active MCP server names so SubAgents can reference the parent's in-process instances
-    const activeMcpNames: string[] = []
-    if (this.repomapEnabled && this.workspaceId) activeMcpNames.push('code-graph')
-    if (this.semanticSearchEnabled && this.workspaceId) activeMcpNames.push('semantic-search')
-    // git-context is available to SubAgent specialists (always on)
-    activeMcpNames.push('git-context')
-    // NOTE: task-context, checkpoint-context, github-context are generalist-only — NOT passed to SubAgents
-
-    // Diagnostic: Log MCP tools being passed to SubAgents
-    this.log.info(
-      `[PIPELINE:subagent-mcp] activeMcpNames=[${activeMcpNames.join(', ')}] for ${taskPlan.tasks.length} tasks`
-    )
-
-    const agents = this.buildSubAgentDefinitions(
-      taskPlan.tasks,
-      mode,
-      conversationId,
-      activeMcpNames
-    )
-
-    const taskList = taskPlan.tasks
-      .map((t) => {
-        const deps = t.dependsOn.length ? ` (after: ${t.dependsOn.join(', ')})` : ''
-        return `- [${t.id}] → Use "${t.specialist}" agent: ${t.description}${deps}`
-      })
-      .join('\n')
-
-    const orchestrationPrompt = `Execute this task plan by delegating to the specialist SubAgents listed below.
-
-## Task Plan: ${taskPlan.summary}
-
-${taskList}
-
-Rules:
-- Invoke each specialist SubAgent by name using the Agent tool
-- Respect dependency ordering — tasks with dependsOn must wait for those tasks to complete
-- Tasks with NO dependencies should be delegated in parallel when possible
-- After all agents complete, provide a concise summary of outcomes
-- If a SubAgent fails, report the failure and continue with independent tasks
-- Do NOT do the work yourself — always delegate to the named SubAgent`
-
-    this.log.info(`Executing task plan with ${Object.keys(agents).length} SubAgent(s)`)
-
-    this.currentStatus = 'thinking'
-    this.messageStartedAt = Date.now()
-    this.accumulatedText = ''
-    this.emit('statusUpdate', this.getStatus())
-
-    const abortController = new AbortController()
-    this.sdkAbortController = abortController
-
-    const sessionId = this.sessionMap.get(conversationId)
-
-    try {
-      for await (const chunk of this.sdkExecutor.execute({
-        prompt: orchestrationPrompt,
-        systemPrompt: SUBAGENT_ORCHESTRATION_SYSTEM_PROMPT,
-        model: modelConfigService.getModel(this.workspacePath, 'generalist'),
-        cwd: this.workspacePath,
-        permissionMode: mode === 'build' ? 'bypassPermissions' : 'default',
-        agents,
-        resume: sessionId,
-        abortController,
-        agentId: AGENT_IDS.GENERALIST,
-        // MCP tools: expose all configured servers during SubAgent orchestration
-        ...(() => {
-          const servers: Record<string, McpServerConfig> = {}
-          // Existing: code graph + semantic search (conditional)
-          if (this.repomapEnabled && this.workspaceId)
-            Object.assign(
-              servers,
-              codeGraphMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath!)
-            )
-          if (this.semanticSearchEnabled && this.workspaceId)
-            Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(this.workspaceId))
-          // Git context: always on
-          Object.assign(servers, gitContextMcpService.getMcpServersConfig(this.workspacePath!))
-          // Task + checkpoint context: conversation-scoped (generalist-level only)
-          if (conversationId) {
-            Object.assign(
-              servers,
-              taskContextMcpService.getMcpServersConfig(conversationId, this.workspacePath!)
-            )
-            Object.assign(servers, checkpointContextMcpService.getMcpServersConfig(conversationId))
-          }
-          // GitHub context: conditional on token
-          if (this.githubConfigured && this.workspaceId)
-            Object.assign(
-              servers,
-              gitHubContextMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath!)
-            )
-          return Object.keys(servers).length > 0 ? { mcpServers: servers } : {}
-        })()
-      })) {
-        if ('_meta' in chunk && chunk._meta) {
-          const meta = chunk._meta as SDKExecuteResult
-          if (meta.sessionId && conversationId) {
-            this.sessionMap.set(conversationId, meta.sessionId)
-            try {
-              conversationRepository.updateSessionId(conversationId, meta.sessionId)
-            } catch (err) {
-              this.log.error('Failed to persist session ID:', err)
-            }
-          }
-          this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
-          // S8: Log prompt cache effectiveness for SubAgent orchestration
-          const { cacheReadInputTokens, cacheCreationInputTokens } = meta.tokenUsage
-          if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
-            const totalInput =
-              meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
-            const cacheHitRate = totalInput > 0 ? (cacheReadInputTokens / totalInput) * 100 : 0
-            this.log.info(
-              `[PIPELINE:subagent-cache] read=${cacheReadInputTokens} creation=${cacheCreationInputTokens} hitRate=${cacheHitRate.toFixed(1)}%`
-            )
-          }
-        } else {
-          if (chunk.type === 'text' && chunk.content) {
-            this.accumulatedText += chunk.content
-          }
-
-          // ── SubAgent lifecycle → per-sub-agent statusUpdate events ──
-          if (chunk.type === 'subagent_start' && chunk.toolId) {
-            const specialistId = this.parseSpecialistFromDescription(chunk.content || '')
-            this.activeSubagents.set(chunk.toolId, {
-              specialistId,
-              startedAt: Date.now()
-            })
-            this.emit('statusUpdate', {
-              agentId: `subagent:${chunk.toolId}`,
-              agentType: specialistId,
-              status: 'thinking',
-              currentTask: chunk.content || undefined,
-              elapsedMs: 0,
-              tokenUsage: 0
-            } as AgentStatus)
-          }
-
-          if (chunk.type === 'subagent_progress' && chunk.toolId) {
-            const sub = this.activeSubagents.get(chunk.toolId)
-            if (sub) {
-              const status = chunk.toolName ? 'writing' : 'thinking'
-              this.emit('statusUpdate', {
-                agentId: `subagent:${chunk.toolId}`,
-                agentType: sub.specialistId,
-                status,
-                currentTask: chunk.content || undefined,
-                elapsedMs: Date.now() - sub.startedAt,
-                tokenUsage: 0
-              } as AgentStatus)
-            }
-          }
-
-          if (chunk.type === 'subagent_complete' && chunk.toolId) {
-            const sub = this.activeSubagents.get(chunk.toolId)
-            if (sub) {
-              const finalStatus = chunk.toolInput === 'failed' ? 'failed' : 'completed'
-              this.emit('statusUpdate', {
-                agentId: `subagent:${chunk.toolId}`,
-                agentType: sub.specialistId,
-                status: finalStatus,
-                currentTask: chunk.content || undefined,
-                elapsedMs: Date.now() - sub.startedAt,
-                tokenUsage: 0
-              } as AgentStatus)
-              this.activeSubagents.delete(chunk.toolId)
-            }
-          }
-
-          this.emit('chunk', chunk)
-        }
-      }
-
-      this.sdkAbortController = null
-      this.activeSubagents.clear()
-      this.currentStatus = 'idle'
-      this.emit('statusUpdate', this.getStatus())
-      this.emit('subAgentsComplete')
-    } catch (error) {
-      this.sdkAbortController = null
-      this.log.error('SubAgent execution failed:', error)
-      this.emit('chunk', {
-        type: 'error',
-        error: `SubAgent execution error: ${(error as Error).message}`
-      } as StreamChunk)
-      this.currentStatus = 'failed'
-      this.emit('statusUpdate', this.getStatus())
-      this.emit('subAgentsComplete')
-    }
-  }
-
-  private buildSubAgentDefinitions(
-    tasks: DecomposedTask[],
-    mode: ConversationMode,
-    conversationId?: string,
-    mcpServerNames?: string[]
-  ): Record<string, SDKAgentDefinition> {
-    // Strategy A: Look up conversation-level specialist overrides to determine
-    // skillsEnabled/skillOverrides per specialist. When no specialists are "active"
-    // (skillsEnabled=false), we still inject the YAML persona prompt but skip all SKILL.md content.
-    const conversationOverrides = conversationId
-      ? conversationSpecialistRepository.findByConversation(conversationId)
-      : []
-    const overrideMap = new Map(
-      conversationOverrides.map((override) => [override.specialistId, override])
-    )
-
-    return buildSubAgentDefinitionsUtil(
-      tasks,
-      mode,
-      (specialistId, specialistTasks, specialistMode) => {
-        const specialist = specialistRepository.findByAgentId(specialistId)
-        const assignedSkills = specialist ? specialistRepository.getSkills(specialist.id) : []
-        const taskModels = specialistTasks.map((task) => task.model ?? 'sonnet')
-        const model = taskModels.includes('opus')
-          ? 'opus'
-          : taskModels.includes('sonnet')
-            ? 'sonnet'
-            : 'haiku'
-
-        const budgetTier: BudgetTier =
-          model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
-
-        // Strategy A: Resolve per-specialist skill settings from conversation overrides.
-        // When skillsEnabled is false, only the YAML persona prompt is injected (no SKILL.md).
-        const override = overrideMap.get(specialist?.id ?? '')
-        const skillsEnabled = override?.skillsEnabled ?? true
-        const skillOverrides = override?.skillOverrides ?? undefined
-
-        let systemPrompt = promptBuilder.build({
-          role: 'specialist',
-          mode: specialistMode,
-          specialistId,
-          specialistPrompt: specialist?.prompt || undefined,
-          assignedSkills,
-          skillsEnabled,
-          skillOverrides,
-          workspacePath: this.workspacePath!,
-          brief: this.currentBrief || undefined,
-          budgetTier
-        })
-
-        // Inject MCP tool guidance into specialist prompts when corresponding servers are active.
-        // Without this guidance, specialists don't know the tools exist and never call them.
-        const mcpGuidanceSections: string[] = []
-        if (mcpServerNames?.includes('code-graph')) {
-          mcpGuidanceSections.push(REPOMAP_GUIDANCE_PROMPT)
-        }
-        if (mcpServerNames?.includes('semantic-search')) {
-          mcpGuidanceSections.push(SEMANTIC_SEARCH_GUIDANCE_PROMPT)
-        }
-        if (mcpServerNames?.includes('git-context')) {
-          mcpGuidanceSections.push(GIT_CONTEXT_GUIDANCE_PROMPT)
-        }
-        if (mcpGuidanceSections.length > 0) {
-          systemPrompt += `\n\n---\n\n${mcpGuidanceSections.join('\n\n---\n\n')}`
-        }
-
-        return {
-          systemPrompt,
-          description: `${specialist?.displayName ?? specialistId}: ${specialist?.prompt?.substring(0, 200) ?? 'Specialist agent'}`
-        }
-      },
-      mcpServerNames
-    )
-  }
 
   /**
    * Stops the generalist — cancels any in-flight SDK query and resets state.
@@ -1981,7 +1642,6 @@ Rules:
     this.semanticSearchEnabled = false
 
     this.completeDbSession('terminated')
-    this.activeSubagents.clear()
     this.currentStatus = 'idle'
     this.currentConversationId = null
     this.accumulatedText = ''
@@ -2010,32 +1670,6 @@ Rules:
     }
   }
 
-  /** Returns AgentStatus entries for all currently active sub-agents. */
-  getActiveSubagentStatuses(): AgentStatus[] {
-    const statuses: AgentStatus[] = []
-    for (const [taskId, sub] of this.activeSubagents) {
-      statuses.push({
-        agentId: `subagent:${taskId}`,
-        agentType: sub.specialistId,
-        status: 'thinking',
-        elapsedMs: Date.now() - sub.startedAt,
-        tokenUsage: 0
-      })
-    }
-    return statuses
-  }
-
-  /**
-   * Parses the specialist ID from a task_started description.
-   * The SDK description comes from our Agent tool invocation, typically
-   * containing patterns like: 'Use "platform-architect" agent: ...'
-   */
-  private parseSpecialistFromDescription(description: string): string {
-    // Match patterns like: Use "platform-architect" agent, Use platform-architect agent
-    const match = description.match(/(?:Use\s+)?["']?([a-z][\w-]+)["']?\s+agent/i)
-    return match?.[1] ?? 'specialist'
-  }
-
   /** SDK-based generalist is running when a workspace path is set. */
   isRunning(): boolean {
     return this.workspacePath !== null
@@ -2052,11 +1686,6 @@ Rules:
   /** Returns the streamed content accumulated so far in the current response cycle */
   getStreamedContent(): string {
     return this.accumulatedText
-  }
-
-  /** SDK-based generalist is always ready when started (no process to wait for). */
-  isReady(): boolean {
-    return this.workspacePath !== null
   }
 
   getMode(): ConversationMode {
@@ -2159,11 +1788,6 @@ Then continue using this summary as your working context and answer the user's m
   /** Returns the session ID for a given conversation, if captured. */
   getSessionId(conversationId: string): string | undefined {
     return this.sessionMap.get(conversationId)
-  }
-
-  /** Stores a session ID for a conversation (e.g. loaded from DB). */
-  setSessionId(conversationId: string, sessionId: string): void {
-    this.sessionMap.set(conversationId, sessionId)
   }
 
   /** Removes session tracking for a conversation (e.g. on delete). */

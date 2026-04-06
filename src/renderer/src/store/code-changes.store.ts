@@ -216,12 +216,3 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
   }
 }))
 
-// ── Selector hooks ──
-export const useCodeChangesFiles = (): FileChangeDetail[] =>
-  useCodeChangesStore((s) => s.files)
-
-export const useCodeChangesSelectedFile = (): string | null =>
-  useCodeChangesStore((s) => s.selectedFile)
-
-export const useCodeChangesPushStatus = (): CodeChangesState['pushStatus'] =>
-  useCodeChangesStore((s) => s.pushStatus)

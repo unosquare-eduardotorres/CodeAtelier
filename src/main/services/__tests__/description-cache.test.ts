@@ -7,26 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-
-let passed = 0
-let failed = 0
-
-function test(name: string, fn: () => void): void {
-  try {
-    fn()
-    console.log(`  \u2713 ${name}`)
-    passed++
-  } catch (err) {
-    console.error(`  \u2717 ${name}`)
-    console.error(`    ${(err as Error).message}`)
-    failed++
-  }
-}
-
-function describe(name: string, fn: () => void): void {
-  console.log(`\n${name}`)
-  fn()
-}
+import { test, describe } from './test-harness'
 
 // ── Key generation (pure function — testable without Electron) ──
 
@@ -157,12 +138,4 @@ describe('DescriptionCache (mock)', () => {
   })
 })
 
-// ── Summary ──
-
-console.log(`\n──────────────────────────────────`)
-console.log(`Description cache tests: ${passed} passed, ${failed} failed`)
-console.log(`──────────────────────────────────\n`)
-
-if (failed > 0) {
-  process.exit(1)
-}
+// Report handled by test runner

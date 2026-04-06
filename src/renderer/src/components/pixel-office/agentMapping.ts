@@ -5,18 +5,6 @@
  * Dynamic fallback for DB-backed specialists not in the static map.
  */
 
-// ── Status → Animation mapping ──
-
-/** @deprecated Use agent status directly. Retained for backward compat. */
-export const STATUS_TO_ANIMATION: Record<string, string> = {
-  idle: 'IDLE',
-  thinking: 'READING',
-  writing: 'TYPE',
-  reviewing: 'READING',
-  completed: 'IDLE',
-  failed: 'IDLE'
-}
-
 /**
  * Statuses that should show a brief speech bubble on transition.
  */

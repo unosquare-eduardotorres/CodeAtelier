@@ -28,9 +28,6 @@ export {
   useAppPreferenceStatus
 } from './app-preference.store'
 export {
-  useCodeChangesStore,
-  useCodeChangesFiles,
-  useCodeChangesSelectedFile,
-  useCodeChangesPushStatus
+  useCodeChangesStore
 } from './code-changes.store'
 export type { FileChangeDetail } from './code-changes.store'

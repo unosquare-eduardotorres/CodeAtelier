@@ -55,7 +55,7 @@ export interface AgentMessage {
   metadata?: Record<string, unknown>
 }
 
-export type MessageSubscriber = (message: AgentMessage) => void
+type MessageSubscriber = (message: AgentMessage) => void
 
 /**
  * Persistence adapter interface — allows MessageBus to persist messages
@@ -228,11 +228,6 @@ export class MessageBus {
         msg.from !== agentId &&
         (msg.to === agentId || msg.to === undefined)
     ).length
-  }
-
-  /** Total messages in the bus. */
-  get messageCount(): number {
-    return this.messages.length
   }
 
   /**

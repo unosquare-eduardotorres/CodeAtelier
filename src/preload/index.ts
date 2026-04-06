@@ -52,8 +52,9 @@ import type {
   OllamaStatus,
   PullProgress,
   IndexingState,
-  SemanticSearchResult,
-  CodeGraphIndexingState
+  CodeGraphIndexingState,
+  SchedulingWeights,
+  ContextUsage
 } from '../shared/types'
 
 const api = {
@@ -1338,15 +1339,6 @@ const api = {
     }
   },
 
-  semanticSearchQuery: (args: {
-    workspaceId: string
-    query: string
-    language?: string
-    directory?: string
-    nResults?: number
-  }): Promise<SemanticSearchResult[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SEMANTIC_SEARCH_QUERY, args),
-
   // ── Code Graph (persisted repomap) ──
   codeGraphIndexStart: (args: { workspaceId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CODE_GRAPH_INDEX_START, args),
@@ -1368,7 +1360,23 @@ const api = {
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.CODE_GRAPH_PROGRESS, handler)
     }
-  }
+  },
+
+  // ── Scheduling Strategy ──
+  getSchedulingWeights: (): Promise<SchedulingWeights> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SCHEDULING_GET_WEIGHTS),
+
+  setSchedulingWeights: (weights: SchedulingWeights): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SCHEDULING_SET_WEIGHTS, weights),
+
+  // ── Context Usage ──
+  getContextUsage: (args: { conversationId: string }): Promise<ContextUsage> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE, args),
+
+  // ── Conversation Reorder ──
+  reorderConversations: (args: { orderedIds: string[] }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_REORDER, args),
+
 } as const
 
 if (process.contextIsolated) {

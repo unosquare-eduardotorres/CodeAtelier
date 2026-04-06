@@ -92,7 +92,11 @@ export default function MessageInput({
   onClearAttachments,
   onStartGrillMe
 }: MessageInputProps): React.JSX.Element {
-  const [text, setText] = useState('')
+  const activeConversation = useChatStore((s) => s.activeConversation)
+  const currentConversationId = activeConversation?.id ?? ''
+  const draftText = useChatStore((s) => s.draftTexts[currentConversationId] ?? '')
+  const { setDraftText, clearDraftText } = useChatActions()
+  const [text, setText] = useState(draftText)
   const [showStopConfirm, setShowStopConfirm] = useState(false)
   const [showCompleteDialog, setShowCompleteDialog] = useState(false)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
@@ -114,7 +118,6 @@ export default function MessageInput({
     closeConversation
   } = useChatActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
-  const activeConversation = useChatStore((s) => s.activeConversation)
   const conversationId = activeConversation?.id
   const conversationSpecialists = useConversationSpecialists(conversationId)
   const conversationTokenEstimates = useConversationTokenEstimates(conversationId)
@@ -191,6 +194,20 @@ export default function MessageInput({
     void hydrateConversationSpecialists(conversationId).catch(() => undefined)
   }, [conversationId, hydrateConversationSpecialists])
 
+  // Sync local text to draft store (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (currentConversationId) setDraftText(currentConversationId, text)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [text, currentConversationId, setDraftText])
+
+  // Restore draft when conversation changes
+  useEffect(() => {
+    setText(useChatStore.getState().draftTexts[currentConversationId] ?? '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentConversationId])
+
   // Slash command filtering
   const filteredCommands = useMemo(() => {
     if (!text.startsWith('/')) return []
@@ -250,10 +267,11 @@ export default function MessageInput({
   const executeSend = useCallback(
     async (content: string, sendAttachments?: string[]): Promise<void> => {
       setText('')
+      if (currentConversationId) clearDraftText(currentConversationId)
       onClearAttachments()
       await sendMessage(content, sendAttachments)
     },
-    [onClearAttachments, sendMessage]
+    [onClearAttachments, sendMessage, currentConversationId, clearDraftText]
   )
 
   const handleSend = async (): Promise<void> => {

@@ -9,6 +9,7 @@ import { generalistService, costTrackerService } from '../services'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
+  AgentStatus,
   ConversationMode,
   DecomposedTask,
   ExecutionStrategy,
@@ -223,6 +224,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         specialistPoolService.removeListener('allComplete', poolOnComplete)
         specialistPoolService.removeListener('taskRetry', poolOnRetry)
         specialistPoolService.removeListener('taskProgress', poolOnTaskProgress)
+        specialistPoolService.removeListener('agentStatus', poolOnAgentStatus)
       }
 
       // Forward task retry events to renderer for UI visibility
@@ -250,10 +252,16 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PROGRESS, progress)
       }
 
+      // Forward agent status updates to Agent Monitor in the renderer
+      const poolOnAgentStatus = (agentStatus: AgentStatus): void => {
+        mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, agentStatus)
+      }
+
       specialistPoolService.on('taskChunk', poolOnChunk)
       specialistPoolService.on('allComplete', poolOnComplete)
       specialistPoolService.on('taskRetry', poolOnRetry)
       specialistPoolService.on('taskProgress', poolOnTaskProgress)
+      specialistPoolService.on('agentStatus', poolOnAgentStatus)
 
       try {
         const hasDependencies = tasks.some((task) => (task.dependsOn?.length ?? 0) > 0)
@@ -288,6 +296,7 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
         specialistPoolService.removeListener('allComplete', poolOnComplete)
         specialistPoolService.removeListener('taskRetry', poolOnRetry)
         specialistPoolService.removeListener('taskProgress', poolOnTaskProgress)
+        specialistPoolService.removeListener('agentStatus', poolOnAgentStatus)
       }
     }
   )

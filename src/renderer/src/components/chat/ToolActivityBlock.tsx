@@ -142,6 +142,9 @@ export default function ToolActivityBlock({
                   {shortenInput(activity.input)}
                 </span>
               )}
+              {activity.status === 'completed' && activity.result && (
+                <span className="text-text-muted text-[10px] ml-1">— {activity.result}</span>
+              )}
             </div>
           ))}
         </div>

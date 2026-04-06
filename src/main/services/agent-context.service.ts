@@ -67,18 +67,6 @@ class AgentContextService {
   }
 
   /**
-   * Persist an artifact reference (file path, commit hash, etc.).
-   */
-  persistArtifact(
-    conversationId: string,
-    agentId: string,
-    content: string,
-    taskId?: string
-  ): void {
-    this.persist(conversationId, agentId, 'artifact', content, taskId)
-  }
-
-  /**
    * Build formatted context string for injection into specialist prompts.
    * Returns empty string if no prior context exists.
    */

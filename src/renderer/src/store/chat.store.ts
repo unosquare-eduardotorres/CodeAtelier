@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
 import type {
   CompleteResult,
+  ContextUsage,
   Conversation,
   ConversationMode,
   ExecutionStrategy,
@@ -152,6 +153,19 @@ interface ChatState {
   ) => Promise<CompleteResult>
   closeConversation: (id: string) => Promise<void>
 
+  // Draft text per conversation (persists across tab switches)
+  draftTexts: Record<string, string>
+  setDraftText: (conversationId: string, text: string) => void
+  getDraftText: (conversationId: string) => string
+  clearDraftText: (conversationId: string) => void
+
+  // Context usage per conversation
+  contextUsages: Record<string, ContextUsage>
+  loadContextUsage: (conversationId: string) => Promise<void>
+
+  // Conversation reordering
+  reorderConversations: (orderedIds: string[]) => Promise<void>
+
   reset: () => void
 }
 
@@ -176,6 +190,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   grillSession: previousChatState?.grillSession ?? null,
   pendingQuestions: previousChatState?.pendingQuestions ?? null,
   investigationReport: null,
+  draftTexts: previousChatState?.draftTexts ?? {},
+  contextUsages: previousChatState?.contextUsages ?? {},
 
   // Bind lazy refs for the safety timer helper (runs once on store creation)
   ...(() => { _storeGet = get; _storeSet = set; return {} })(),
@@ -423,6 +439,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { streamingContent, streamingRole, streamingSpecialist, activeConversation } = get()
 
     if (streamingContent && activeConversation) {
+      const currentToolActivities = get().toolActivities
       const finalMessage: Message = {
         id: messageId,
         conversationId: activeConversation.id,
@@ -433,7 +450,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : {}),
         contentMd: streamingContent,
         attachmentsJson: '[]',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        toolActivities: currentToolActivities.length > 0 ? [...currentToolActivities] : undefined
       }
 
       set((state) => ({
@@ -783,6 +801,53 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
   },
 
+  // ── Draft text per conversation ──
+  setDraftText: (conversationId: string, text: string) =>
+    set((state) => ({
+      draftTexts: { ...state.draftTexts, [conversationId]: text }
+    })),
+
+  getDraftText: (conversationId: string) => get().draftTexts[conversationId] ?? '',
+
+  clearDraftText: (conversationId: string) =>
+    set((state) => {
+      const { [conversationId]: _, ...rest } = state.draftTexts
+      return { draftTexts: rest }
+    }),
+
+  // ── Context usage per conversation ──
+  loadContextUsage: async (conversationId: string) => {
+    try {
+      const usage = await window.api.getContextUsage({ conversationId })
+      set((state) => ({
+        contextUsages: { ...state.contextUsages, [conversationId]: usage }
+      }))
+    } catch (error) {
+      rendererLog.error('Failed to load context usage:', error)
+    }
+  },
+
+  // ─��� Conversation reordering ──
+  reorderConversations: async (orderedIds: string[]) => {
+    // Optimistically reorder local state
+    set((state) => {
+      const map = new Map(state.conversations.map((c) => [c.id, c]))
+      const reordered = orderedIds
+        .map((id, i) => {
+          const c = map.get(id)
+          return c ? { ...c, sortOrder: i } : null
+        })
+        .filter(Boolean) as Conversation[]
+      const remaining = state.conversations.filter((c) => !orderedIds.includes(c.id))
+      return { conversations: [...reordered, ...remaining] }
+    })
+    try {
+      await window.api.reorderConversations({ orderedIds })
+    } catch (error) {
+      rendererLog.error('Failed to reorder conversations:', error)
+    }
+  },
+
   reset: () => {
     set({
       conversations: [],
@@ -799,7 +864,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isExecutingPlan: false,
       compactSuggestion: null,
       grillSession: null,
-      investigationReport: null
+      investigationReport: null,
+      draftTexts: {},
+      contextUsages: {}
     })
   }
 }))
@@ -847,6 +914,10 @@ export const useChatActions = (): Pick<
   | 'setInvestigationReport'
   | 'executeInvestigationFix'
   | 'clearInvestigationReport'
+  | 'setDraftText'
+  | 'clearDraftText'
+  | 'loadContextUsage'
+  | 'reorderConversations'
 > =>
   useChatStore(
     useShallow((s) => ({
@@ -886,7 +957,11 @@ export const useChatActions = (): Pick<
       skipAllQuestions: s.skipAllQuestions,
       setInvestigationReport: s.setInvestigationReport,
       executeInvestigationFix: s.executeInvestigationFix,
-      clearInvestigationReport: s.clearInvestigationReport
+      clearInvestigationReport: s.clearInvestigationReport,
+      setDraftText: s.setDraftText,
+      clearDraftText: s.clearDraftText,
+      loadContextUsage: s.loadContextUsage,
+      reorderConversations: s.reorderConversations
     }))
   )
 

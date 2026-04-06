@@ -192,7 +192,6 @@ describe('Suite 6: Pipeline ordering', () => {
 describe('Suite 7: CHAT_EXECUTE_PLAN contracts', () => {
   test('reads mode from conversation DB, not task plan args', () => {
     const repos = createMockRepositories()
-    const generalistService = createMockGeneralistService()
 
     repos.conversationRepository.findById = (id: string) => ({
       id,
@@ -201,14 +200,8 @@ describe('Suite 7: CHAT_EXECUTE_PLAN contracts', () => {
       title: 'Test'
     })
 
-    let usedMode: ConversationMode | null = null
-    generalistService.executeWithSubAgents = async (
-      _taskPlan: unknown,
-      mode: unknown
-    ): Promise<void> => {
-      usedMode = mode as ConversationMode
-    }
-
+    // The contract: mode is resolved from the DB conversation record, not from task plan args.
+    // Even if the task plan was created with 'build', the execution mode comes from the DB.
     const argsMode: ConversationMode = 'build'
     const tasks = makePlan(argsMode).tasks
     const conversation = repos.conversationRepository.findById(MOCK_CONVERSATION.id)
@@ -220,9 +213,9 @@ describe('Suite 7: CHAT_EXECUTE_PLAN contracts', () => {
       tasks
     }
 
-    void generalistService.executeWithSubAgents(taskPlan, mode, MOCK_CONVERSATION.id)
-    assert.equal(usedMode, 'plan')
+    // DB says 'plan', so mode should be 'plan' regardless of argsMode='build'
     assert.equal(mode, 'plan')
+    assert.equal(taskPlan.mode, 'plan')
   })
 
   test('always sends CHAT_MESSAGE_COMPLETE even on error', () => {
@@ -285,7 +278,7 @@ describe('Suite 7: CHAT_EXECUTE_PLAN contracts', () => {
     generalistService.on('subAgentsComplete', onComplete)
 
     try {
-      throw new Error('executeWithSubAgents failed')
+      throw new Error('Execution failed')
     } catch {
       generalistService.removeListener('chunk', onChunk)
       generalistService.removeListener('subAgentsComplete', onComplete)

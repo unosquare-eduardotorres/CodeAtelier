@@ -11,7 +11,7 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.AGENT_GET_STATUSES, async (event) => {
     validateSender(event)
 
-    return [generalistService.getStatus(), ...generalistService.getActiveSubagentStatuses()]
+    return [generalistService.getStatus()]
   })
 
   ipcMain.handle(IPC_CHANNELS.AGENT_STOP_ALL, async (event) => {

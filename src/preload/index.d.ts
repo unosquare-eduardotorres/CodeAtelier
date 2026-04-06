@@ -54,8 +54,9 @@ import type {
   OllamaStatus,
   PullProgress,
   IndexingState,
-  SemanticSearchResult,
-  CodeGraphIndexingState
+  CodeGraphIndexingState,
+  SchedulingWeights,
+  ContextUsage
 } from '../shared/types'
 
 interface Api {
@@ -709,19 +710,22 @@ interface Api {
     args: { workspaceId: string }
   ) => Promise<{ loaded: boolean; status: string; symbolCount?: number }>
   onIndexingProgress: (callback: (state: IndexingState) => void) => () => void
-  semanticSearchQuery: (args: {
-    workspaceId: string
-    query: string
-    language?: string
-    directory?: string
-    nResults?: number
-  }) => Promise<SemanticSearchResult[]>
-
   // Code Graph (persisted repomap)
   codeGraphIndexStart: (args: { workspaceId: string }) => Promise<void>
   codeGraphGetStatus: (args: { workspaceId: string }) => Promise<CodeGraphIndexingState>
   codeGraphHasIndex: (args: { workspaceId: string }) => Promise<boolean>
   onCodeGraphProgress: (callback: (state: CodeGraphIndexingState) => void) => () => void
+
+  // Scheduling Strategy
+  getSchedulingWeights: () => Promise<SchedulingWeights>
+  setSchedulingWeights: (weights: SchedulingWeights) => Promise<void>
+
+  // Context Usage
+  getContextUsage: (args: { conversationId: string }) => Promise<ContextUsage>
+
+  // Conversation Reorder
+  reorderConversations: (args: { orderedIds: string[] }) => Promise<void>
+
 }
 
 declare global {

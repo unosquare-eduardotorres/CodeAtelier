@@ -55,6 +55,18 @@ export interface Conversation {
   prUrl?: string
   /** Git branch name created during /complete */
   branchName?: string
+  /** User-defined sort order for sidebar reordering */
+  sortOrder?: number
+}
+
+export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
+
+export interface ContextUsage {
+  conversationId: string
+  inputTokens: number
+  contextWindowSize: number
+  percentage: number
+  level: ContextUsageLevel
 }
 
 export interface Message {
@@ -65,6 +77,7 @@ export interface Message {
   contentMd: string
   attachmentsJson: string
   createdAt: string
+  toolActivities?: ToolActivity[]
 }
 
 export interface Attachment {
@@ -185,6 +198,7 @@ export interface ToolActivity {
   toolName: string
   status: 'running' | 'completed' | 'error'
   input?: string
+  result?: string
   startedAt: number
   completedAt?: number
 }
@@ -884,6 +898,12 @@ export interface SemanticSearchResult {
   body: string
   score: number
   metadata: Record<string, unknown>
+}
+
+export interface SchedulingWeights {
+  dependencyFirst: number // 0-1, default 0.6
+  capabilityMatch: number // 0-1, default 0.3
+  leastBusy: number // 0-1, default 0.1
 }
 
 // ── IPC Channel Map (type-safe) ──

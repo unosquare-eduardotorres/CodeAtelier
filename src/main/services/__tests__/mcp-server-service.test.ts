@@ -3,27 +3,8 @@
  * Tests parsing of repomap output and multi-source file merging.
  */
 import assert from 'node:assert/strict'
+import { test, describe } from './test-harness'
 import { parseRepomapFiles, enrichFilesDiscussed } from '../mcp-server.service'
-
-let passed = 0
-let failed = 0
-
-function test(name: string, fn: () => void): void {
-  try {
-    fn()
-    console.log(`  ✓ ${name}`)
-    passed++
-  } catch (err) {
-    console.error(`  ✗ ${name}`)
-    console.error(`    ${(err as Error).message}`)
-    failed++
-  }
-}
-
-function describe(name: string, fn: () => void): void {
-  console.log(`\n${name}`)
-  fn()
-}
 
 // ── parseRepomapFiles ──────────────────────────────────────
 
@@ -175,5 +156,4 @@ describe('enrichFilesDiscussed', () => {
   })
 })
 
-console.log(`\n─── mcp-server-service.test.ts: ${passed} passed, ${failed} failed ───`)
-if (failed > 0) process.exit(1)
+// Report handled by test runner

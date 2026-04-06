@@ -76,11 +76,3 @@ export function detectConclusivePattern(output: string): string | null {
   }
   return null
 }
-
-/**
- * Returns the raw conclusive patterns array for use by consumers that need
- * to test patterns against streaming output (e.g., SDK execution loop).
- */
-export function getConclusivePatterns(): ReadonlyArray<RegExp> {
-  return CONCLUSIVE_PATTERNS
-}

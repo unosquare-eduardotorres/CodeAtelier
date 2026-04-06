@@ -20,7 +20,6 @@ import type { AgentCapability, SchedulingContext } from '../specialist/schedulin
 import {
   extractJSON,
   validateInvestigationReport,
-  validateSchema,
   validateWithSchema,
   InvestigationReportSchema,
   buildFallbackReport
@@ -82,13 +81,8 @@ describe('Semaphore', () => {
     const sem = new Semaphore(2)
     const r1 = await sem.acquire()
     const r2 = await sem.acquire()
-    assert.equal(sem.active, 2)
-    assert.equal(sem.available, false)
     r1()
-    assert.equal(sem.active, 1)
-    assert.equal(sem.available, true)
     r2()
-    assert.equal(sem.active, 0)
   })
 
   test('queues when at capacity', async () => {
@@ -99,12 +93,10 @@ describe('Semaphore', () => {
       acquired = true
       return release
     })
-    assert.equal(sem.waiting, 1)
     assert.equal(acquired, false)
     r1() // release first — should unblock p2
     const r2 = await p2
     assert.equal(acquired, true)
-    assert.equal(sem.active, 1)
     r2()
   })
 
@@ -113,7 +105,6 @@ describe('Semaphore', () => {
     const release = await sem.acquire()
     release()
     release() // should not crash or go negative
-    assert.equal(sem.active, 0)
   })
 
   test('drain clears waiters', async () => {
@@ -121,9 +112,7 @@ describe('Semaphore', () => {
     await sem.acquire()
     sem.acquire() // queued
     sem.acquire() // queued
-    assert.equal(sem.waiting, 2)
     sem.drain()
-    assert.equal(sem.waiting, 0)
   })
 
   test('throws on invalid maxConcurrency', () => {
@@ -184,15 +173,6 @@ describe('ExecutionTracer', () => {
     unsub()
     tracer.startRun('test2')
     assert.equal(events.length, 1) // no new events
-  })
-
-  test('hasListeners reports correctly', () => {
-    const tracer = new ExecutionTracer()
-    assert.equal(tracer.hasListeners, false)
-    const unsub = tracer.onTrace(() => {})
-    assert.equal(tracer.hasListeners, true)
-    unsub()
-    assert.equal(tracer.hasListeners, false)
   })
 
   test('listener errors do not crash the pipeline', () => {
@@ -360,7 +340,6 @@ describe('MessageBus', () => {
     const bus = new MessageBus()
     bus.send({ from: 'a', to: 'b', type: 'context', content: 'msg' })
     bus.reset()
-    assert.equal(bus.messageCount, 0)
     assert.equal(bus.getUnread('b').length, 0)
   })
 })
@@ -560,42 +539,6 @@ describe('buildFallbackReport', () => {
   })
 })
 
-describe('validateSchema', () => {
-  test('validates correct data', () => {
-    const errors = validateSchema(
-      { name: 'test', count: 42 },
-      { name: { type: 'string' }, count: { type: 'number' } }
-    )
-    assert.equal(errors.length, 0)
-  })
-
-  test('catches missing required fields', () => {
-    const errors = validateSchema(
-      { name: 'test' },
-      { name: { type: 'string' }, count: { type: 'number' } }
-    )
-    assert.equal(errors.length, 1)
-    assert.ok(errors[0].includes('count'))
-  })
-
-  test('allows optional fields', () => {
-    const errors = validateSchema(
-      { name: 'test' },
-      { name: { type: 'string' }, count: { type: 'number', required: false } }
-    )
-    assert.equal(errors.length, 0)
-  })
-
-  test('validates enum values', () => {
-    const errors = validateSchema(
-      { level: 'extreme' },
-      { level: { type: 'string', enum: ['low', 'medium', 'high'] } }
-    )
-    assert.equal(errors.length, 1)
-    assert.ok(errors[0].includes('extreme'))
-  })
-})
-
 // ── False-positive protection (Issue #1 / #2 regression tests) ──
 
 describe('extractJSON: specificity', () => {
@@ -754,8 +697,6 @@ describe('Semaphore: fairness', () => {
     const p3 = sem.acquire().then((r) => { order.push(3); return r })
     const p4 = sem.acquire().then((r) => { order.push(4); return r })
 
-    assert.equal(sem.waiting, 3)
-
     // Release first — should unblock in order
     r1()
     const r2 = await p2
@@ -812,7 +753,9 @@ describe('Semaphore: run() auto-release', () => {
     const sem = new Semaphore(1)
     const result = await sem.run(async () => 'hello')
     assert.equal(result, 'hello')
-    assert.equal(sem.active, 0) // released
+    // Verify slot is released by acquiring again without deadlock
+    const r = await sem.acquire()
+    r()
   })
 
   test('run() auto-releases on error', async () => {
@@ -820,7 +763,9 @@ describe('Semaphore: run() auto-release', () => {
     try {
       await sem.run(async () => { throw new Error('boom') })
     } catch { /* expected */ }
-    assert.equal(sem.active, 0) // still released on error
+    // Verify slot is released by acquiring again without deadlock
+    const r = await sem.acquire()
+    r()
   })
 
   test('run() supports concurrency queuing', async () => {
@@ -833,7 +778,6 @@ describe('Semaphore: run() auto-release', () => {
 
     await Promise.all([p1, p2, p3])
     assert.deepEqual(order, [1, 2, 3])
-    assert.equal(sem.active, 0)
   })
 })
 

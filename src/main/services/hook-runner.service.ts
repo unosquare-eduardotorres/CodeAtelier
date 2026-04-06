@@ -76,30 +76,6 @@ class HookRunnerService {
   }
 
   /**
-   * Returns CLI args to append to a `claude` spawn call for hook integration.
-   * Only includes flags for hooks that are found on disk.
-   * Only applies hooks in build mode (auto permissions) where they matter most.
-   */
-  getHookArgs(mode: 'plan' | 'build'): string[] {
-    // Hooks are most valuable in build mode where tools can modify files
-    if (mode !== 'build') return []
-
-    const args: string[] = []
-
-    const preHook = this.getPreToolUseHookPath()
-    if (preHook) {
-      args.push('--pre-tool-use-hook', preHook)
-    }
-
-    const postHook = this.getPostToolUseHookPath()
-    if (postHook) {
-      args.push('--post-tool-use-hook', postHook)
-    }
-
-    return args
-  }
-
-  /**
    * Clears cached paths — useful if hooks are added/removed at runtime.
    */
   clearCache(): void {

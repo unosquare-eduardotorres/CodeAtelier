@@ -295,19 +295,6 @@ export class SkillSummaryService {
     return skill.summaryHash !== this.contentHash(currentContent)
   }
 
-  /** Get the appropriate pre-computed summary for a budget tier */
-  getSummaryForTier(skill: Skill, tier: BudgetTier): string | null {
-    switch (tier) {
-      case 'full':
-        return skill.summaryFull
-      case 'standard':
-        return skill.summaryStandard
-      case 'minimal':
-        return skill.summaryMinimal
-      default:
-        return null
-    }
-  }
 }
 
 export const skillSummaryService = new SkillSummaryService()

@@ -38,6 +38,7 @@ import { registerOllamaIpc } from './ollama.ipc'
 import { registerIndexingIpc } from './indexing.ipc'
 import { registerCodeGraphIpc } from './code-graph.ipc'
 import { registerCodeChangesIpc } from './code-changes.ipc'
+import { registerSchedulingIpc } from './scheduling.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -79,4 +80,5 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerIndexingIpc(mainWindow)
   registerCodeGraphIpc(mainWindow)
   registerCodeChangesIpc()
+  registerSchedulingIpc()
 }

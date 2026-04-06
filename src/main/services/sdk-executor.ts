@@ -7,11 +7,8 @@ import log from 'electron-log/main'
 
 const sdkLog = log.scope('SDKExecutor')
 
-/**
- * Lightweight API request lifecycle telemetry.
- * Tracks start time, completion, errors, and retries for SDK calls.
- */
-export interface ApiRequestTelemetry {
+/** Internal telemetry tracking for SDK request lifecycle logging */
+interface TelemetryEntry {
   requestId: string
   startedAt: number
   completedAt?: number
@@ -25,47 +22,9 @@ export interface ApiRequestTelemetry {
     cacheReadInputTokens: number
     cacheCreationInputTokens: number
   }
-  turnCount?: number
 }
 
-/** In-memory telemetry buffer — last 100 requests for dashboard / debugging */
-const telemetryBuffer: ApiRequestTelemetry[] = []
-const MAX_TELEMETRY_BUFFER = 100
 let requestCounter = 0
-
-function recordTelemetry(entry: ApiRequestTelemetry): void {
-  telemetryBuffer.push(entry)
-  if (telemetryBuffer.length > MAX_TELEMETRY_BUFFER) {
-    telemetryBuffer.shift()
-  }
-}
-
-/** Get recent API request telemetry entries */
-export function getRecentTelemetry(limit: number = 50): ApiRequestTelemetry[] {
-  return telemetryBuffer.slice(-limit)
-}
-
-/** Get aggregate telemetry stats */
-export function getTelemetryStats(): {
-  totalRequests: number
-  successCount: number
-  failureCount: number
-  avgDurationMs: number
-  p95DurationMs: number
-} {
-  const completed = telemetryBuffer.filter((t) => t.status !== 'started')
-  const durations = completed.filter((t) => t.durationMs != null).map((t) => t.durationMs!)
-  durations.sort((a, b) => a - b)
-
-  return {
-    totalRequests: telemetryBuffer.length,
-    successCount: completed.filter((t) => t.status === 'succeeded').length,
-    failureCount: completed.filter((t) => t.status === 'failed').length,
-    avgDurationMs:
-      durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0,
-    p95DurationMs: durations.length > 0 ? durations[Math.floor(durations.length * 0.95)] : 0
-  }
-}
 
 export interface SDKAgentDefinition {
   description: string
@@ -142,13 +101,12 @@ export class SDKExecutor {
 
     // API lifecycle telemetry
     const requestId = `sdk-${++requestCounter}-${Date.now()}`
-    const telemetryEntry: ApiRequestTelemetry = {
+    const telemetryEntry: TelemetryEntry = {
       requestId,
       startedAt: Date.now(),
       model: options.model,
       status: 'started'
     }
-    recordTelemetry(telemetryEntry)
     sdkLog.info(`[TELEMETRY:request-started] id=${requestId} model=${options.model}`)
 
     // Heartbeat / stall detection

@@ -6,7 +6,7 @@ import type { DecomposedTask, TaskExecutionProgress } from '../../shared/types'
 
 const checkpointLogger = log.scope('Checkpoint')
 
-export interface CheckpointState {
+interface CheckpointState {
   /** Active task IDs at time of checkpoint */
   activeTaskIds: string[]
   /** Completed task IDs at time of checkpoint */
@@ -130,35 +130,6 @@ class CheckpointService {
       }
     } catch {
       checkpointLogger.error(`Failed to parse checkpoint state: ${checkpointId}`)
-      return null
-    }
-  }
-
-  /**
-   * Gets the latest checkpoint for a conversation.
-   */
-  getLatestCheckpoint(conversationId: string): {
-    id: string
-    label: string
-    state: CheckpointState
-    gitBranch?: string
-    gitCommitSha?: string
-    createdAt: string
-  } | null {
-    const record = checkpointRepository.findLatest(conversationId)
-    if (!record) return null
-
-    try {
-      const state = JSON.parse(record.stateJson) as CheckpointState
-      return {
-        id: record.id,
-        label: record.label,
-        state,
-        gitBranch: record.gitBranch ?? undefined,
-        gitCommitSha: record.gitCommitSha ?? undefined,
-        createdAt: record.createdAt
-      }
-    } catch {
       return null
     }
   }

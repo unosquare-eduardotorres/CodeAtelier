@@ -273,8 +273,6 @@ export const IPC_CHANNELS = {
   // Agent events (new from audit)
   AGENT_ABANDONMENT_DETECTED: 'agent:abandonmentDetected',
   AGENT_GATE_FAILURE: 'agent:gateFailure',
-  AGENT_MODEL_ESCALATED: 'agent:modelEscalated',
-  AGENT_HEARTBEAT: 'agent:heartbeat',
 
   // Tool approval
   TOOL_APPROVAL_REQUEST: 'tool:approvalRequest',
@@ -310,14 +308,22 @@ export const IPC_CHANNELS = {
   INDEXING_GET_STATUS: 'indexing:getStatus',
   INDEXING_LOAD_PERSISTED: 'indexing:loadPersisted',
 
-  // Semantic Search
-  SEMANTIC_SEARCH_QUERY: 'semanticSearch:query',
-
   // Code Graph (persisted repomap)
   CODE_GRAPH_INDEX_START: 'codeGraph:indexStart',
   CODE_GRAPH_GET_STATUS: 'codeGraph:getStatus',
   CODE_GRAPH_HAS_INDEX: 'codeGraph:hasIndex',
-  CODE_GRAPH_PROGRESS: 'codeGraph:progress'
+  CODE_GRAPH_PROGRESS: 'codeGraph:progress',
+
+  // Scheduling Strategy
+  SCHEDULING_GET_WEIGHTS: 'scheduling:getWeights',
+  SCHEDULING_SET_WEIGHTS: 'scheduling:setWeights',
+
+  // Conversation reordering
+  CONVERSATION_REORDER: 'conversation:reorder',
+
+  // Context usage
+  CONVERSATION_GET_CONTEXT_USAGE: 'conversation:getContextUsage',
+
 } as const
 
 export const CONVERSATION_MODES = {

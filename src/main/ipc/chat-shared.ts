@@ -8,6 +8,55 @@ import { chatIpcLogger } from '../logger'
 const log = chatIpcLogger
 
 /**
+ * Extracts a brief human-readable result summary from a tool result.
+ * Used to populate ToolActivity.result for inline display in ToolActivityBlock.
+ */
+function extractResultSummary(toolName: string, content: string | undefined): string | undefined {
+  if (!content) return undefined
+  try {
+    // For Write/Edit tools, the result is typically a confirmation
+    if (toolName === 'Write' || toolName === 'Edit') {
+      return 'Done'
+    }
+    // For Bash tool, extract exit code or first meaningful line
+    if (toolName === 'Bash') {
+      const lines = content.split('\n').filter((l) => l.trim())
+      if (lines.length === 0) return 'No output'
+      if (content.includes('exit code')) {
+        const exitMatch = content.match(/exit code[:\s]*(\d+)/i)
+        if (exitMatch) {
+          return exitMatch[1] === '0' ? 'Success (exit 0)' : `Failed (exit ${exitMatch[1]})`
+        }
+      }
+      // Return first meaningful line, truncated
+      const firstLine = lines[0].trim()
+      return firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine
+    }
+    // For Read tool — report line count
+    if (toolName === 'Read') {
+      const lineCount = content.split('\n').length
+      return `${lineCount} line${lineCount !== 1 ? 's' : ''} read`
+    }
+    // For Grep — report match count
+    if (toolName === 'Grep') {
+      const matchCount = content.split('\n').filter((l) => l.trim()).length
+      return `${matchCount} match${matchCount !== 1 ? 'es' : ''}`
+    }
+    // For Glob — report file count
+    if (toolName === 'Glob') {
+      const fileCount = content.split('\n').filter((l) => l.trim()).length
+      return `${fileCount} file${fileCount !== 1 ? 's' : ''} found`
+    }
+    // Default: first line truncated
+    const firstLine = content.split('\n')[0]?.trim()
+    if (!firstLine) return undefined
+    return firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Shared helper to forward a StreamChunk to the renderer.
  * Eliminates duplicated chunk-handling logic between generalist and specialist paths.
  */
@@ -85,6 +134,7 @@ export function forwardChunkToRenderer(
         toolInputSummary = chunk.content.slice(0, 120)
       }
     }
+    const resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
     const toolActivity: Record<string, unknown> = {
       id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       toolName: chunk.toolName ?? 'Unknown',
@@ -94,6 +144,9 @@ export function forwardChunkToRenderer(
     // Only include input if we have a real summary — don't overwrite existing input with undefined
     if (toolInputSummary) {
       toolActivity.input = toolInputSummary
+    }
+    if (resultSummary) {
+      toolActivity.result = resultSummary
     }
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId,

@@ -22,20 +22,45 @@ Keep independent tasks parallel. Add dependsOn when tasks touch same files/share
 Investigation mode: if summary indicates investigate/diagnose, emit exactly one task per specialist. Each description must end with "Produce a structured investigation report." Plan mode is read-only — no fix/rebuild/deploy.
 Required JSON shape: {"tasks":[{id,specialist,description,dependsOn,verificationCommand}]}`
 
+const SPECIALIST_MCP_TOOL_GUIDANCE = `
+
+## Code Intelligence Tools (MANDATORY — use before Read/Grep/Glob)
+
+You have these MCP tools available. Use them FIRST for all code exploration:
+
+- **mcp__code-graph__search_identifiers**: Find classes, functions, types, interfaces by name. ALWAYS use instead of Grep/Glob for symbol lookups.
+- **mcp__code-graph__repo_map**: Ranked overview of important files via PageRank. Use to understand codebase structure instead of directory scanning.
+- **mcp__semantic-search__semantic_search**: Natural language code search. Use for concept-based queries ("error handling", "authentication flow").
+- **mcp__git-context__git_log**: Recent commit history. Use to understand recent changes.
+- **mcp__git-context__git_diff**: View staged/unstaged/commit diffs.
+- **mcp__git-context__git_blame**: Line-by-line authorship for a file.
+- **mcp__code-graph__find_dead_code**: Find unused code definitions with no references. Use when cleaning up after changes, or when asked to find dead/orphaned code. Scope with a path prefix for targeted results.
+
+**Tool priority (ALWAYS follow this order):**
+1. mcp__code-graph__search_identifiers → for finding any named symbol
+2. mcp__semantic-search__semantic_search → for conceptual/meaning-based search
+3. mcp__code-graph__repo_map → for understanding overall structure
+4. mcp__code-graph__find_dead_code → for finding unused/orphaned symbols
+5. Grep → ONLY for exact string literals, regex, config values
+6. Glob → ONLY for file-extension searches when no symbol name is known
+7. Read → ONLY after you've identified the right file via tools above`
+
 const SPECIALIST_TASK_SYSTEM_PROMPT = `You are a specialist agent. Complete ONLY your assigned task — do not expand scope.
 
 - Blockers outside your task: describe clearly, do not attempt.
-- Investigation: be surgical — read ONLY files related to the error. Target ≤10 tool calls. Start with mentioned files.
+- Investigation: be surgical — use code intelligence tools to find relevant files. Target ≤10 tool calls. Start with mentioned files.
 - Verification: if a command is provided, run it. Fix and retry up to 2×.
 - When done: list files changed, 1-2 sentence summary, verification result, blockers.
-- Investigation reports: max 1,500 characters. Focus on: root cause (1 sentence), affected files (list), proposed fix (1-2 sentences). Skip background context the user already knows. Emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.`
+- Investigation reports: max 1,500 characters. Focus on: root cause (1 sentence), affected files (list), proposed fix (1-2 sentences). Skip background context the user already knows. Emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.
+${SPECIALIST_MCP_TOOL_GUIDANCE}`
 
 /**
  * Micro specialist prompt for simple/haiku-tier tasks (complexity 0-4).
  * Saves ~400 tokens vs the full SPECIALIST_TASK_SYSTEM_PROMPT.
  */
 const SPECIALIST_MICRO_PROMPT = `Complete your assigned task. Be surgical — ≤10 tool calls. When done: files changed + 1 sentence summary.
-Investigation reports: emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.`
+Investigation reports: emit \`\`\`investigation-report\`\`\` JSON with: problem, rootCause, proposedFix, filesAffected [{path, reason}], impact, impactReason.
+${SPECIALIST_MCP_TOOL_GUIDANCE}`
 
 /**
  * Self-critique appendix for Opus-tier tasks (budgetTier === 'full').
@@ -54,9 +79,9 @@ If you find issues, fix them before finishing.`
 
 // ── Prompt Builder Types ──
 
-export type PromptRole = 'generalist' | 'specialist'
+type PromptRole = 'generalist' | 'specialist'
 
-export interface PromptBuildOptions {
+interface PromptBuildOptions {
   /** Which agent role is this prompt for */
   role: PromptRole
   /** Conversation mode (plan or build) */

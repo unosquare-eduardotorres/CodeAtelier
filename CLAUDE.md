@@ -6,7 +6,7 @@ Agent Studio is an Electron desktop application that provides an AI-powered team
 coordinated by a generalist that spawns specialist SubAgents, running locally on the developer's machine.
 It leverages the Claude Max subscription through Claude CLI, requiring no API keys or proxy servers.
 
-See `Agent-Studio-Project-Plan.md` for full project architecture, milestones, and specs.
+Architecture details are documented in `CLAUDE.md` sections below and agent YAMLs in `.claude/agents/`.
 
 ## Tech stack
 

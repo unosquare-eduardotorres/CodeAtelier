@@ -109,11 +109,6 @@ export class TokenBucketRateLimiter {
     }
   }
 
-  /** Current available permits (for diagnostics) */
-  get available(): number {
-    this.refill()
-    return Math.floor(this.permits)
-  }
 }
 
 /** Singleton rate limiter for specialist SDK calls */

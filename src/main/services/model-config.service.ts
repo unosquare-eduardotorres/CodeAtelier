@@ -40,32 +40,6 @@ class ModelConfigService {
     return overrides[action] ?? DEFAULT_MODEL_CONFIG[action]
   }
 
-  /**
-   * Check if an action's model has been overridden from its default.
-   */
-  isOverridden(workspaceId: string, action: ModelAction): boolean {
-    const settings = workspaceRepository.getSettings(workspaceId)
-    const overrides = (settings?.modelOverrides ?? {}) as ModelOverrides
-    return action in overrides && overrides[action] !== DEFAULT_MODEL_CONFIG[action]
-  }
-
-  /**
-   * Reset a single action to its default model.
-   */
-  resetAction(workspaceId: string, action: ModelAction): void {
-    const settings = workspaceRepository.getSettings(workspaceId)
-    const overrides = { ...((settings?.modelOverrides ?? {}) as ModelOverrides) }
-    delete overrides[action]
-    workspaceRepository.updateSettings(workspaceId, { ...settings, modelOverrides: overrides })
-  }
-
-  /**
-   * Reset ALL model overrides to defaults.
-   */
-  resetAll(workspaceId: string): void {
-    const settings = workspaceRepository.getSettings(workspaceId)
-    workspaceRepository.updateSettings(workspaceId, { ...settings, modelOverrides: {} })
-  }
 }
 
 export const modelConfigService = new ModelConfigService()

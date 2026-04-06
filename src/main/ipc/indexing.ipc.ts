@@ -138,28 +138,4 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
     }
   )
 
-  ipcMain.handle(
-    IPC_CHANNELS.SEMANTIC_SEARCH_QUERY,
-    async (
-      event,
-      args: {
-        workspaceId: string
-        query: string
-        language?: string
-        directory?: string
-        nResults?: number
-      }
-    ) => {
-      validateSender(event)
-
-      const where: Record<string, unknown> = {}
-      if (args.language) where.language = args.language
-      if (args.directory) where.directory = args.directory
-
-      return vectorSearchService.search(args.workspaceId, args.query, {
-        nResults: Math.min(args.nResults ?? 5, 20),
-        where: Object.keys(where).length > 0 ? where : undefined
-      })
-    }
-  )
 }

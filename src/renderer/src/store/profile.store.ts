@@ -4,16 +4,12 @@ import type { UserProfile, CoreAgentPrompt } from '../../../shared/types'
 
 interface ProfileState {
   profile: UserProfile | null
-  /** @deprecated Use specialist store for alias/avatar data. Kept for backward compat. */
-  coreAgentAliases: Array<{ agentRole: string; alias: string | null; avatarKey: string | null }>
   coreAgentPrompts: CoreAgentPrompt[]
   isLoading: boolean
   hasCompletedWelcome: boolean
 
   loadProfile: () => Promise<void>
   saveProfile: (displayName: string, avatarKey: string) => Promise<void>
-  /** @deprecated Use specialist store lookups instead. */
-  getCoreAgentAlias: (role: 'generalist' | 'coordinator') => { agentRole: string; alias: string | null; avatarKey: string | null } | undefined
 
   // Core Agent Prompts
   loadCoreAgentPrompts: () => Promise<void>
@@ -34,7 +30,6 @@ interface ProfileState {
 
 export const useProfileStore = create<ProfileState>((set, get) => ({
   profile: null,
-  coreAgentAliases: [],
   coreAgentPrompts: [],
   isLoading: true,
   hasCompletedWelcome: false,
@@ -97,11 +92,6 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       rendererLog.error('Failed to save user profile:', error)
       throw error
     }
-  },
-
-  /** @deprecated Use specialist store lookups instead. */
-  getCoreAgentAlias: () => {
-    return undefined
   },
 
   // ── Core Agent Prompts ──

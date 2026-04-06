@@ -94,13 +94,6 @@ class IdleService {
     }
   }
 
-  /**
-   * Enable/disable idle dream triggers.
-   */
-  setEnabled(enabled: boolean): void {
-    this.enabled = enabled
-    log.info(`Idle service ${enabled ? 'enabled' : 'disabled'}`)
-  }
 }
 
 export const idleService = new IdleService()

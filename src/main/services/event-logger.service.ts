@@ -22,11 +22,6 @@ class EventLoggerService {
     return current + 1
   }
 
-  /** Reset sequence counter for a session (e.g. when session ends) */
-  resetSequence(sessionId: string): void {
-    this.sequenceCounters.delete(sessionId)
-  }
-
   private log(
     eventType: string,
     category: EventCategory,
@@ -64,20 +59,6 @@ class EventLoggerService {
     model?: string
   }): void {
     this.log('session.started', 'session', `Agent ${opts.agentId} session started`, opts)
-  }
-
-  logSessionCompleted(opts: {
-    sessionId?: string
-    conversationId?: string
-    workspaceId?: string
-    agentId: string
-    tokenUsage?: number
-    durationMs?: number
-  }): void {
-    this.log('session.completed', 'session', `Agent ${opts.agentId} session completed`, {
-      ...opts,
-      data: { tokenUsage: opts.tokenUsage, durationMs: opts.durationMs }
-    })
   }
 
   logSessionFailed(opts: {
@@ -276,24 +257,6 @@ class EventLoggerService {
       ...opts,
       data: { checkpointId: opts.checkpointId, label: opts.label }
     })
-  }
-
-  // ── Hook Events ──
-
-  logHookBlocked(opts: {
-    conversationId?: string
-    workspaceId?: string
-    agentId?: string
-    hookType: 'pre-tool-use' | 'post-tool-use'
-    toolName: string
-    reason: string
-  }): void {
-    this.log(
-      `hook.${opts.hookType}.blocked`,
-      'hook',
-      `Hook blocked ${opts.toolName}: ${opts.reason}`,
-      { ...opts, data: { hookType: opts.hookType, toolName: opts.toolName, reason: opts.reason } }
-    )
   }
 
   // ── Budget Events ──

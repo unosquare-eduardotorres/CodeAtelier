@@ -7,7 +7,8 @@ import {
   AttachmentDropzone,
   ModeToggle,
   RepoWarningBanner,
-  NewConversationModal
+  NewConversationModal,
+  ContextBadge
 } from '@renderer/components/chat'
 import ChatTabButton from './ChatTabButton'
 import SpecialistsTable from './SpecialistsTable'
@@ -23,8 +24,11 @@ interface ChatPanelProps {
 
 export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, agentStatus } = useWorkspaceStore()
-  const { createConversation, updateMode, sendMessage } = useChatActions()
+  const { createConversation, updateMode, sendMessage, loadContextUsage } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
+  const contextUsage = useChatStore(
+    (s) => (activeConversation ? s.contextUsages[activeConversation.id] : undefined)
+  )
   const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -73,6 +77,13 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
   useEffect(() => {
     setActiveTab('chat')
   }, [activeConversation?.id])
+
+  // Load context usage when conversation changes or streaming ends
+  useEffect(() => {
+    if (activeConversation?.id) {
+      void loadContextUsage(activeConversation.id)
+    }
+  }, [activeConversation?.id, isStreaming, loadContextUsage])
 
   const handleCreateChat = async (data: {
     title: string
@@ -170,6 +181,12 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
         )}
         {activeTab === 'chat' && (
           <div className="flex items-center gap-2">
+            {contextUsage && contextUsage.percentage > 0 && (
+              <ContextBadge
+                percentage={contextUsage.percentage}
+                level={contextUsage.level}
+              />
+            )}
             <ModeToggle
               mode={activeConversation.mode}
               onChange={(mode) => updateMode(mode)}

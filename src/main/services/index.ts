@@ -28,7 +28,6 @@ export {
   validateComplexityScore,
   getTierFromScore,
   resolveModel,
-  getModelId,
   enrichTasksWithComplexity
 } from './complexity-scorer.service'
 export { GitHubService, githubService } from './github.service'

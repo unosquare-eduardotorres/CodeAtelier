@@ -54,7 +54,7 @@ export function estimateCostFromTotal(totalTokens: number, modelId?: string): nu
   return estimateCostCents(inputTokens, outputTokens, modelId)
 }
 
-export interface CostSummary {
+interface CostSummary {
   totalCostCents: number
   totalTokens: number
   sessionCount: number
@@ -70,7 +70,7 @@ export interface CostSummary {
   }[]
 }
 
-export interface BudgetStatus {
+interface BudgetStatus {
   /** Current estimated cost in cents */
   currentCostCents: number
   /** Configured daily budget in cents (0 = unlimited) */

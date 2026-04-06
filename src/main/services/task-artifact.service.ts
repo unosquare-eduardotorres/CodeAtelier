@@ -13,7 +13,7 @@ const ARTIFACT_DIR = '.agentstudio'
 /**
  * Execution state persisted to disk for crash recovery.
  */
-export interface PlanExecutionState {
+interface PlanExecutionState {
   conversationId: string
   mode: ConversationMode
   startedAt: string
@@ -31,7 +31,7 @@ export interface PlanExecutionState {
 /**
  * Per-task artifact written to disk.
  */
-export interface TaskArtifact {
+interface TaskArtifact {
   taskId: string
   specialist: string
   description: string
@@ -250,27 +250,6 @@ class TaskArtifactService {
     } catch {
       return null
     }
-  }
-
-  /**
-   * Get dependency output map from artifact files.
-   * Returns full outputs (not truncated) for all completed dependencies.
-   */
-  async getDependencyOutputs(
-    workspacePath: string,
-    conversationId: string,
-    dependsOn: string[]
-  ): Promise<Map<string, string>> {
-    const outputs = new Map<string, string>()
-
-    for (const depId of dependsOn) {
-      const output = await this.readTaskOutput(workspacePath, conversationId, depId)
-      if (output) {
-        outputs.set(depId, output)
-      }
-    }
-
-    return outputs
   }
 
   // ── Private Helpers ──

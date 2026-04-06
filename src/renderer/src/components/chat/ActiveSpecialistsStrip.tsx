@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react'
-import { Loader2, Settings2, Users } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Loader2, Settings2, Users, Zap } from 'lucide-react'
 import {
   useConversationSpecialistActions,
   useConversationSpecialists,
@@ -10,6 +10,7 @@ import {
 import { PixelSpriteAvatar, Avatar } from '@renderer/components/common'
 import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
 import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
+import SkillQuickToggle from './SkillQuickToggle'
 
 interface ActiveSpecialistsStripProps {
   conversationId: string
@@ -51,6 +52,8 @@ export default function ActiveSpecialistsStrip({
     () => new Map(tokenEstimates.map((estimate) => [estimate.specialistId, estimate])),
     [tokenEstimates]
   )
+
+  const [skillPopoverSpecialistId, setSkillPopoverSpecialistId] = useState<string | null>(null)
 
   const activeSpecialists = useMemo(() => {
     const coreIds = new Set(
@@ -99,31 +102,56 @@ export default function ActiveSpecialistsStrip({
               const icon = specialist?.icon ?? '🤖'
               const estimate = estimateMap.get(entry.specialistId)
 
+              const hasSkills = specialist && (specialist.skills ?? []).length > 0
+              const isSkillPopoverOpen = skillPopoverSpecialistId === entry.specialistId
+
               return (
-                <span
-                  key={entry.id}
-                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-surface-float border border-border-default text-[11px] text-text-body whitespace-nowrap"
-                  title={estimate ? `${label} · ~${estimate.estimatedTokens} tokens` : label}
-                >
+                <div key={entry.id} className="relative inline-flex">
                   <span
-                    className="inline-flex items-center justify-center w-5 h-5 rounded-full overflow-hidden"
-                    style={{ backgroundColor: `${color}22`, color }}
+                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-surface-float border border-border-default text-[11px] text-text-body whitespace-nowrap"
+                    title={estimate ? `${label} · ~${estimate.estimatedTokens} tokens` : label}
                   >
-                    {specialist?.usePixelForChat && (specialist?.pixelSpriteId || (specialist?.agentId && getSpriteAssignment(specialist.agentId).pixelSpriteId)) ? (
-                      <PixelSpriteAvatar
-                        spriteId={specialist?.pixelSpriteId ?? getSpriteAssignment(specialist!.agentId).pixelSpriteId!}
-                        size={16}
-                      />
-                    ) : specialist?.avatarUrl ? (
-                      <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={color} />
-                    ) : specialist?.agentId && AGENT_ICON_MAP[specialist.agentId] ? (
-                      <AgentIcon agentType={specialist.agentId} size={14} />
-                    ) : (
-                      <span className="text-[10px] leading-none">{icon}</span>
+                    <span
+                      className="inline-flex items-center justify-center w-5 h-5 rounded-full overflow-hidden"
+                      style={{ backgroundColor: `${color}22`, color }}
+                    >
+                      {specialist?.usePixelForChat && (specialist?.pixelSpriteId || (specialist?.agentId && getSpriteAssignment(specialist.agentId).pixelSpriteId)) ? (
+                        <PixelSpriteAvatar
+                          spriteId={specialist?.pixelSpriteId ?? getSpriteAssignment(specialist!.agentId).pixelSpriteId!}
+                          size={16}
+                        />
+                      ) : specialist?.avatarUrl ? (
+                        <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={color} />
+                      ) : specialist?.agentId && AGENT_ICON_MAP[specialist.agentId] ? (
+                        <AgentIcon agentType={specialist.agentId} size={14} />
+                      ) : (
+                        <span className="text-[10px] leading-none">{icon}</span>
+                      )}
+                    </span>
+                    <span className="max-w-28 truncate">{label}</span>
+                    {hasSkills && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSkillPopoverSpecialistId(isSkillPopoverOpen ? null : entry.specialistId)
+                        }}
+                        className="inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-surface-overlay text-text-muted hover:text-primary-text transition-colors"
+                        title="Toggle skills"
+                      >
+                        <Zap size={10} />
+                      </button>
                     )}
                   </span>
-                  <span className="max-w-28 truncate">{label}</span>
-                </span>
+
+                  {isSkillPopoverOpen && specialist && (
+                    <SkillQuickToggle
+                      specialist={specialist}
+                      conversationId={conversationId}
+                      onClose={() => setSkillPopoverSpecialistId(null)}
+                    />
+                  )}
+                </div>
               )
             })}
           </div>

@@ -90,13 +90,6 @@ export function resolveModel(
 }
 
 /**
- * Returns the full model ID string for a given tier.
- */
-export function getModelId(tier: ModelTier): string {
-  return MODEL_TIER_IDS[tier]
-}
-
-/**
  * Enriches decomposed tasks with validated complexity scores and resolved models.
  */
 export function enrichTasksWithComplexity(

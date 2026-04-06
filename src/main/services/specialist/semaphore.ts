@@ -47,21 +47,6 @@ export class Semaphore {
     }
   }
 
-  /** Number of currently active slots */
-  get active(): number {
-    return this.current
-  }
-
-  /** Number of waiters queued for a slot */
-  get waiting(): number {
-    return this.queue.length
-  }
-
-  /** Whether any slots are available without waiting */
-  get available(): boolean {
-    return this.current < this.maxConcurrency
-  }
-
   /**
    * Run `fn` while holding one slot. Automatically releases on success,
    * error, or abort — eliminates manual release() tracking.

@@ -3,6 +3,7 @@
  * Tests noise filtering, chunk headers, metadata building, overlap handling, and scope enrichment.
  */
 import assert from 'node:assert/strict'
+import { test, describe } from './test-harness'
 import {
   shouldSkipFile,
   buildChunkHeader,
@@ -15,26 +16,6 @@ import {
   type RawChunk,
   type ProcessedChunk
 } from '../preprocessing.service'
-
-let passed = 0
-let failed = 0
-
-function test(name: string, fn: () => void): void {
-  try {
-    fn()
-    console.log(`  \u2713 ${name}`)
-    passed++
-  } catch (err) {
-    console.error(`  \u2717 ${name}`)
-    console.error(`    ${(err as Error).message}`)
-    failed++
-  }
-}
-
-function describe(name: string, fn: () => void): void {
-  console.log(`\n${name}`)
-  fn()
-}
 
 // Helper to create a minimal RawChunk
 function makeChunk(overrides: Partial<RawChunk> = {}): RawChunk {
@@ -435,10 +416,4 @@ describe('buildScopeHeader', () => {
 
 // ── Summary ──
 
-console.log(`\n──────────────────────────────────`)
-console.log(`Preprocessing tests: ${passed} passed, ${failed} failed`)
-console.log(`──────────────────────────────────\n`)
-
-if (failed > 0) {
-  process.exit(1)
-}
+// Report handled by test runner

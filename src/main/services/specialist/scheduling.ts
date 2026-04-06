@@ -20,7 +20,7 @@ import type { DecomposedTask } from '../../../shared/types'
 
 // ── Strategy Types ──
 
-export type SchedulingStrategyName =
+type SchedulingStrategyName =
   | 'round-robin'
   | 'least-busy'
   | 'capability-match'
@@ -47,7 +47,7 @@ export interface SchedulingContext {
   agents: AgentCapability[]
 }
 
-export interface TaskPriority {
+interface TaskPriority {
   task: DecomposedTask
   /** Priority score — higher = should run sooner */
   score: number

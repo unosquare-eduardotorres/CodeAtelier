@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { extname, join } from 'node:path'
+import { extname, join, resolve, relative } from 'node:path'
 import simpleGit from 'simple-git'
 import type { RepoInfo } from '../../shared/types'
 import log from 'electron-log'
@@ -42,6 +42,20 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
   '.rb': 'ruby',
   '.swift': 'swift',
   '.kt': 'kotlin'
+}
+
+/**
+ * Ensure filePath resolves within repoPath — prevents path traversal attacks.
+ * Throws if the resolved path escapes the repo root (e.g. ../../etc/passwd).
+ */
+export function assertWithinRepo(repoPath: string, filePath: string): string {
+  const absoluteRepo = resolve(repoPath)
+  const absoluteFile = resolve(repoPath, filePath)
+  const rel = relative(absoluteRepo, absoluteFile)
+  if (rel.startsWith('..') || rel.startsWith('/')) {
+    throw new Error(`Path traversal denied: ${filePath}`)
+  }
+  return absoluteFile
 }
 
 function detectLanguage(filePath: string): string {
@@ -222,6 +236,7 @@ export class RepoService {
    * For new files: oldContent = ''. For deleted files: newContent = ''.
    */
   async getFileDiff(repoPath: string, filePath: string): Promise<FileDiffResult> {
+    assertWithinRepo(repoPath, filePath)
     const git = simpleGit(repoPath)
     const language = detectLanguage(filePath)
     const absolutePath = join(repoPath, filePath)
@@ -258,6 +273,7 @@ export class RepoService {
   ): Promise<{ commitHash: string }> {
     if (filePaths.length === 0) throw new Error('No files to commit')
     if (!message.trim()) throw new Error('Commit message is required')
+    filePaths.forEach((fp) => assertWithinRepo(repoPath, fp))
 
     const git = simpleGit(repoPath)
     await git.add(filePaths)

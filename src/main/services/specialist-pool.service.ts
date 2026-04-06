@@ -1,11 +1,13 @@
 import { EventEmitter } from 'node:events'
 import type {
+  AgentStatus,
   BudgetTier,
   ConversationMode,
   DecomposedTask,
   HandoffBrief,
   InvestigationDepth,
   ModelTier,
+  SchedulingWeights,
   TaskExecutionProgress
 } from '../../shared/types'
 import { THINKING_BUDGETS } from '../../shared/constants'
@@ -15,7 +17,8 @@ import {
   worktreeRepository,
   agentSessionRepository,
   workspaceRepository,
-  conversationSpecialistRepository
+  conversationSpecialistRepository,
+  appPreferenceRepository
 } from '../db/repositories'
 import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
@@ -35,7 +38,6 @@ import type { SDKExecuteResult } from './sdk-executor'
 import {
   topologicalSort as topologicalSortFn,
   detectConclusivePattern as detectConclusivePatternFn,
-  getConclusivePatterns
 } from './specialist/task-scheduler'
 import { Semaphore } from './specialist/semaphore'
 import { executionTracer } from './specialist/trace'
@@ -67,8 +69,6 @@ const RETRY_CONFIG = {
   rateLimitDelayMs: 10000 // Longer delay for rate-limited retries
 }
 
-/** Maximum time (ms) a specialist process can run before being killed — 10 minutes */
-const SPECIALIST_TIMEOUT_MS = 10 * 60 * 1000
 /** Circuit breaker threshold — consecutive spawn failures before stopping all tasks */
 const CIRCUIT_BREAKER_THRESHOLD = 5
 /** Maximum number of specialist processes running simultaneously — prevents resource exhaustion */
@@ -168,21 +168,27 @@ function summarizeToolInput(toolName: string, toolInput: string): string {
   }
 }
 
-/** Investigation task keyword list */
-const INVESTIGATION_KEYWORDS = [
-  'investigation report',
-  'investigate',
-  'analyze',
-  'diagnose',
-  'audit',
-  'review'
-]
+import { isInvestigationIntent } from './specialist'
+
+/** Map TaskExecutionProgress status → AgentStatus status */
+function mapToAgentStatus(
+  status: TaskExecutionProgress['status']
+): AgentStatus['status'] {
+  switch (status) {
+    case 'running': return 'thinking'
+    case 'completed': return 'completed'
+    case 'failed': return 'failed'
+    case 'pending': return 'idle'
+    default: return 'idle'
+  }
+}
 
 /**
  * Manages parallel and sequential execution of decomposed specialist tasks.
  *
  * Events emitted:
  * - `taskProgress`: TaskExecutionProgress — per-task status updates
+ * - `agentStatus`: AgentStatus — per-specialist status for Agent Monitor
  * - `taskChunk`: { taskId, specialist, chunk } — streaming output per task
  * - `allComplete`: void — all tasks finished
  */
@@ -211,6 +217,31 @@ export class SpecialistPoolService extends EventEmitter {
   // S9: Conclusive patterns moved to specialist/task-scheduler.ts
   // Use getConclusivePatterns() for pattern access
 
+  /**
+   * Creates a CompositeScheduler from persisted preferences or defaults.
+   * Called at construction and can be re-called to refresh weights.
+   */
+  private static createSchedulingStrategy(): CompositeScheduler {
+    try {
+      const raw = appPreferenceRepository.get('scheduling.weights')
+      if (raw) {
+        const weights = JSON.parse(raw) as SchedulingWeights
+        return new CompositeScheduler([
+          { name: 'dependency-first', weight: weights.dependencyFirst },
+          { name: 'capability-match', weight: weights.capabilityMatch },
+          { name: 'least-busy', weight: weights.leastBusy }
+        ])
+      }
+    } catch {
+      // Fall through to default
+    }
+    return new CompositeScheduler([
+      { name: 'dependency-first', weight: 0.6 },
+      { name: 'capability-match', weight: 0.3 },
+      { name: 'least-busy', weight: 0.1 }
+    ])
+  }
+
   private readonly log = specialistPoolLogger
   private readonly slog = createStructuredLogger(specialistPoolLogger)
   private workspacePath: string | null = null
@@ -230,12 +261,8 @@ export class SpecialistPoolService extends EventEmitter {
   private investigationDepth: InvestigationDepth = 'standard'
   /** Async semaphore for concurrency control (replaces manual counting) */
   private readonly semaphore = new Semaphore(MAX_CONCURRENT_SPECIALISTS)
-  /** Pluggable scheduling strategy — dependency-first is the natural default */
-  private readonly schedulingStrategy: SchedulingStrategy = new CompositeScheduler([
-    { name: 'dependency-first', weight: 0.6 },
-    { name: 'capability-match', weight: 0.3 },
-    { name: 'least-busy', weight: 0.1 }
-  ])
+  /** Pluggable scheduling strategy — reads weights from preferences, falls back to defaults */
+  private schedulingStrategy: SchedulingStrategy = SpecialistPoolService.createSchedulingStrategy()
   /** Current trace run ID for structured tracing correlation */
   private currentRunId: string | null = null
 
@@ -368,6 +395,18 @@ export class SpecialistPoolService extends EventEmitter {
       runId: this.currentRunId ?? undefined
     })
 
+    // Subscribe to all bus messages for execution tracing
+    const parallelRunId = this.currentRunId
+    const unsubBusTrace = messageBus.subscribeAll((msg) => {
+      if (parallelRunId) {
+        executionTracer.traceEvent(parallelRunId, 'bus_message', {
+          agentId: msg.from,
+          message: `[${msg.type}] ${msg.from} → ${msg.to ?? 'broadcast'}`,
+          metadata: { messageId: msg.id, taskId: msg.taskId }
+        })
+      }
+    })
+
     // Check budget before execution
     if (this.workspacePath) {
       try {
@@ -456,6 +495,7 @@ export class SpecialistPoolService extends EventEmitter {
             this.startTask(task, mode, () => {
               // On task completion, check if more tasks can start
               if (pending.size === 0 && this.activeProcesses.size === 0) {
+                unsubBusTrace()
                 if (this.currentRunId) {
                   executionTracer.endRun(this.currentRunId, {
                     tasksCompleted: this.completedTasks.size
@@ -482,6 +522,7 @@ export class SpecialistPoolService extends EventEmitter {
 
         // If nothing is running and nothing is pending, we're done
         if (pending.size === 0 && this.activeProcesses.size === 0) {
+          unsubBusTrace()
           if (this.currentRunId) {
             executionTracer.endRun(this.currentRunId, { tasksCompleted: this.completedTasks.size })
             this.currentRunId = null
@@ -537,9 +578,405 @@ export class SpecialistPoolService extends EventEmitter {
     this.createWorktreeAndSpawn(task, mode, onDone)
   }
 
+  // ── P2: createWorktreeAndSpawn sub-methods ──
+
+  /**
+   * Resolves or creates a worktree for specialist isolation.
+   * Reuses existing worktree for task loop retries, otherwise creates a new one.
+   */
+  private async resolveWorktree(
+    task: DecomposedTask,
+    mode: ConversationMode,
+    existingWorktreeId?: string
+  ): Promise<string | undefined> {
+    if (existingWorktreeId) {
+      this.log.info(
+        `Reusing worktree ${existingWorktreeId} for ${task.specialist}/${task.id} (task loop iteration)`
+      )
+      return existingWorktreeId
+    }
+
+    if (mode === 'build' && this.workspacePath && this.conversationId) {
+      try {
+        const worktreePath = await gitWorktreeService.create(
+          this.workspacePath,
+          task.specialist,
+          task.id,
+          this.conversationId
+        )
+        const worktreeRecord = worktreeRepository.findByTaskId(task.id)
+        this.log.info(`Worktree created for ${task.specialist}/${task.id}: ${worktreePath}`)
+        return worktreeRecord?.id
+      } catch (error) {
+        this.log.warn(
+          `Failed to create worktree for ${task.specialist}/${task.id}, falling back to shared cwd:`,
+          error
+        )
+      }
+    }
+    return undefined
+  }
+
+  /**
+   * Initializes trace span, DB session, and SpecialistProcessInfo for a specialist execution.
+   */
+  private initSpecialistExecution(
+    task: DecomposedTask,
+    mode: ConversationMode,
+    worktreeId: string | undefined,
+    attempt: number
+  ): { traceSpan: TraceSpan | undefined; info: SpecialistProcessInfo } {
+    this.log.info(`Running ${task.specialist}/${task.id} via SDK`)
+
+    let traceSpan: TraceSpan | undefined
+    if (this.currentRunId) {
+      traceSpan = executionTracer.startSpan(this.currentRunId, 'specialist_start', {
+        agentId: task.specialist,
+        taskId: task.id,
+        message: `Starting ${task.specialist} for task ${task.id}`,
+        metadata: { mode, attempt, model: task.model, conversationId: this.conversationId }
+      })
+    }
+
+    let dbSessionId: string | undefined
+    try {
+      const sessionAction = task.model ? tierToModelAction(task.model) : 'specialist:moderate'
+      const sessionModelId = modelConfigService.getModel(
+        this.workspacePath ?? undefined,
+        sessionAction
+      )
+      const session = agentSessionRepository.create(task.specialist, {
+        taskId: task.id,
+        pid: undefined,
+        conversationId: this.conversationId ?? undefined,
+        workspaceId: undefined,
+        complexityScore: task.complexity?.total,
+        modelUsed: sessionModelId,
+        complexityTier: task.complexity?.tier
+      })
+      dbSessionId = session.id
+    } catch (err) {
+      this.log.error('Failed to create DB session for specialist (SDK):', err)
+    }
+
+    const info: SpecialistProcessInfo = {
+      task,
+      output: '',
+      status: 'running',
+      worktreeId,
+      dbSessionId,
+      attempt,
+      tokenUsage: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      escalations: [],
+      toolCallCount: 0,
+      startedAt: Date.now()
+    }
+
+    return { traceSpan, info }
+  }
+
+  /**
+   * Handles specialist success path: trace span, structured logging, hooks, DB session,
+   * post-completion analysis, message bus broadcast, artifact write, quality gates.
+   */
+  private async handleSpecialistSuccess(
+    task: DecomposedTask,
+    info: SpecialistProcessInfo,
+    mode: ConversationMode,
+    traceSpan: TraceSpan | undefined,
+    onDone: () => void
+  ): Promise<void> {
+    // End trace span on success — capture durationMs for afterRun consistency
+    let spanDurationMs = 0
+    if (traceSpan) {
+      spanDurationMs = executionTracer.endSpan(traceSpan, {
+        tokenUsage: {
+          input: info.inputTokens,
+          output: info.outputTokens,
+          cacheRead: info.cacheReadTokens,
+          cacheCreation: info.cacheCreationTokens
+        },
+        message: `Completed ${task.specialist}/${task.id}`
+      })
+    }
+
+    // Structured log: specialist completed successfully
+    this.slog.specialistCompleted({
+      taskId: task.id,
+      agentId: task.specialist,
+      model: task.model ?? 'sonnet',
+      durationMs: spanDurationMs,
+      tokenUsage: {
+        input: info.inputTokens,
+        output: info.outputTokens,
+        cacheRead: info.cacheReadTokens,
+        cacheCreation: info.cacheCreationTokens,
+        total: info.tokenUsage
+      }
+    })
+
+    // Run afterRun hooks (observation only — errors caught internally)
+    await specialistHookRunner.runAfterRun(task.specialist, {
+      task,
+      output: info.output,
+      success: true,
+      tokenUsage: {
+        input: info.inputTokens,
+        output: info.outputTokens,
+        cacheRead: info.cacheReadTokens,
+        cacheCreation: info.cacheCreationTokens
+      },
+      durationMs: spanDurationMs,
+      toolCallCount: info.toolCallCount,
+      attempt: info.attempt
+    })
+
+    // Persist agent context — extract summary for future specialist context injection
+    if (this.conversationId && info.output.length > 0) {
+      const summary = agentContextService.extractSummaryFromOutput(info.output)
+      if (summary) {
+        agentContextService.persistSummary(this.conversationId, task.specialist, summary, task.id)
+      }
+    }
+
+    // Success path — cleanup and state updates
+    this.activeProcesses.delete(task.id)
+    this.completedTasks.add(task.id)
+    this.taskResults.set(task.id, info.output)
+    this.consecutiveSpawnFailures = 0
+
+    // Complete DB session with granular token breakdown
+    if (info.dbSessionId) {
+      try {
+        agentSessionRepository.completeWithBreakdown(info.dbSessionId, 'completed', {
+          total: info.tokenUsage,
+          input: info.inputTokens,
+          output: info.outputTokens,
+          cacheRead: info.cacheReadTokens,
+          cacheCreation: info.cacheCreationTokens
+        })
+      } catch (err) {
+        this.log.error('Failed to complete DB session:', err)
+      }
+    }
+
+    // Post-completion analysis
+    this.runPostCompletionAnalysis(task, info)
+
+    // Broadcast task result to the message bus for downstream specialists
+    messageBus.broadcast({
+      from: task.specialist,
+      type: 'dependency',
+      content:
+        info.output.length > 2000
+          ? info.output.substring(0, 2000) + '\n... (truncated)'
+          : info.output,
+      taskId: task.id,
+      metadata: { status: 'completed', tokenUsage: info.tokenUsage }
+    })
+
+    // Write output artifact
+    if (this.workspacePath && this.conversationId) {
+      taskArtifactService
+        .writeTaskOutput(
+          this.workspacePath,
+          this.conversationId,
+          task.id,
+          info.output,
+          'completed'
+        )
+        .catch((err) => this.log.warn('Failed to write task output artifact:', err))
+    }
+
+    // Run quality gates
+    const gateCwd = info.worktreeId
+      ? (worktreeRepository.findById(info.worktreeId)?.worktreePath ?? this.workspacePath!)
+      : this.workspacePath!
+
+    await this.runTaskLoopGates(task, info, mode, gateCwd, onDone).catch((err) => {
+      this.log.error(`Task loop gate evaluation failed for ${task.id}:`, err)
+      this.finalizeTaskCompletion(task, info)
+      onDone()
+    })
+  }
+
+  /**
+   * Handles specialist failure path: error emit, trace span, structured logging, hooks,
+   * DB session error, retry logic with exponential backoff, circuit breaker.
+   */
+  private async handleSpecialistFailure(
+    task: DecomposedTask,
+    info: SpecialistProcessInfo,
+    mode: ConversationMode,
+    error: Error,
+    traceSpan: TraceSpan | undefined,
+    onDone: () => void
+  ): Promise<void> {
+    // Emit error as visible chat chunk so user sees what happened
+    this.emit('taskChunk', {
+      taskId: task.id,
+      specialist: task.specialist,
+      chunk: `\n\n❌ **Error:** ${error.message}\n`
+    })
+
+    // End trace span on error — capture durationMs for afterRun consistency
+    let errorSpanDurationMs = 0
+    if (traceSpan) {
+      errorSpanDurationMs = executionTracer.endSpan(traceSpan, {
+        error: error.message,
+        tokenUsage: {
+          input: info.inputTokens,
+          output: info.outputTokens,
+          cacheRead: info.cacheReadTokens,
+          cacheCreation: info.cacheCreationTokens
+        }
+      })
+    }
+
+    // Structured log: specialist failed
+    this.slog.specialistFailed({
+      taskId: task.id,
+      agentId: task.specialist,
+      model: task.model ?? 'sonnet',
+      attempt: info.attempt,
+      error: error.message,
+      durationMs: errorSpanDurationMs,
+      tokenUsage: {
+        input: info.inputTokens,
+        output: info.outputTokens,
+        cacheRead: info.cacheReadTokens,
+        cacheCreation: info.cacheCreationTokens,
+        total: info.tokenUsage
+      }
+    })
+
+    // Run afterRun hooks on failure
+    await specialistHookRunner.runAfterRun(task.specialist, {
+      task,
+      output: info.output,
+      success: false,
+      error: error.message,
+      tokenUsage: {
+        input: info.inputTokens,
+        output: info.outputTokens,
+        cacheRead: info.cacheReadTokens,
+        cacheCreation: info.cacheCreationTokens
+      },
+      durationMs: errorSpanDurationMs,
+      toolCallCount: info.toolCallCount,
+      attempt: info.attempt
+    })
+
+    // Error path — handle retry/circuit-breaker
+    this.activeProcesses.delete(task.id)
+    info.status = 'failed'
+    this.taskStatuses.set(task.id, 'failed')
+
+    // Complete DB session with error (granular token breakdown)
+    if (info.dbSessionId) {
+      try {
+        agentSessionRepository.completeWithBreakdown(info.dbSessionId, 'failed', {
+          total: info.tokenUsage,
+          input: info.inputTokens,
+          output: info.outputTokens,
+          cacheRead: info.cacheReadTokens,
+          cacheCreation: info.cacheCreationTokens
+        })
+      } catch (dbErr) {
+        this.log.error('Failed to complete DB session on error:', dbErr)
+      }
+    }
+
+    // Check if retryable — circuit breaker errors should NOT retry (retrying a loop just loops again)
+    const isCircuitBreakerError =
+      error.message.includes('exceeded') &&
+      error.message.includes('tool calls')
+    const isRetryable =
+      !this.aborted && !isCircuitBreakerError && info.attempt < RETRY_CONFIG.maxRetries
+    if (isRetryable) {
+      const delay = Math.min(
+        RETRY_CONFIG.baseDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, info.attempt),
+        RETRY_CONFIG.maxDelayMs
+      )
+
+      this.slog.taskRetried({
+        taskId: task.id,
+        agentId: task.specialist,
+        model: task.model,
+        attempt: info.attempt + 1,
+        maxRetries: RETRY_CONFIG.maxRetries,
+        reason: `SDK execution failed: ${error.message}`,
+        durationMs: delay
+      })
+      // Trace retry event — bridge auto-logs to EventLogger
+      if (this.currentRunId) {
+        executionTracer.traceEvent(this.currentRunId, 'task_retry', {
+          agentId: task.specialist,
+          taskId: task.id,
+          message: `Retry ${info.attempt + 1}/${RETRY_CONFIG.maxRetries} in ${delay}ms`,
+          metadata: {
+            delay,
+            attempt: info.attempt + 1,
+            error: error.message,
+            conversationId: this.conversationId
+          }
+        })
+      }
+
+      // Clean up worktree before retry
+      if (info.worktreeId) {
+        gitWorktreeService.remove(info.worktreeId, true).catch((err) => {
+          this.log.warn(`Failed to remove worktree before retry: ${err}`)
+        })
+      }
+
+      this.completedTasks.delete(task.id)
+      this.taskResults.delete(task.id)
+
+      // Semaphore auto-released by sem.run() — next attempt will re-acquire
+      setTimeout(() => {
+        this.createWorktreeAndSpawn(task, mode, onDone, info.attempt + 1)
+      }, delay)
+      return
+    }
+
+    // Retries exhausted — task settled as failed (not a crash, just a result)
+    // Agent failure already logged by trace-bridge via specialist_end span
+    this.consecutiveSpawnFailures++
+    this.log.info(`Task ${task.id} settled as failed — continuing parallel execution`)
+    this.emitProgress(task, 'failed', undefined, error.message)
+
+    if (this.consecutiveSpawnFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+      this.log.error(
+        `Circuit breaker tripped: ${this.consecutiveSpawnFailures} consecutive failures`
+      )
+      eventLoggerService.logCircuitBreakerTripped({
+        conversationId: this.conversationId ?? undefined,
+        failures: this.consecutiveSpawnFailures
+      })
+      this.emit('circuitBreakerTripped', { failures: this.consecutiveSpawnFailures })
+      this.stopAll()
+      return
+    }
+
+    if (info.worktreeId) {
+      worktreeRepository.updateStatus(info.worktreeId, 'abandoned')
+    }
+
+    // Semaphore auto-released by sem.run() — continue parallel execution
+    onDone()
+  }
+
   /**
    * Creates a worktree (if in build mode) and spawns the specialist process.
    * If `existingWorktreeId` is provided, reuses that worktree (for task loop retries).
+   *
+   * Orchestrates sub-methods: resolveWorktree → initSpecialistExecution →
+   * runSpecialistViaSDK → handleSpecialistSuccess / handleSpecialistFailure.
    */
   private async createWorktreeAndSpawn(
     task: DecomposedTask,
@@ -549,385 +986,36 @@ export class SpecialistPoolService extends EventEmitter {
     existingWorktreeId?: string
   ): Promise<void> {
     await this.semaphore.run(async () => {
-      let worktreeId: string | undefined = existingWorktreeId
+      const worktreeId = await this.resolveWorktree(task, mode, existingWorktreeId)
+      const { traceSpan, info } = this.initSpecialistExecution(task, mode, worktreeId, attempt)
+      this.activeProcesses.set(task.id, info)
 
-      // Reuse existing worktree for task loop retries, otherwise create a new one
-      if (worktreeId) {
-        this.log.info(
-          `Reusing worktree ${worktreeId} for ${task.specialist}/${task.id} (task loop iteration)`
-        )
-      } else if (mode === 'build' && this.workspacePath && this.conversationId) {
-        try {
-          const worktreePath = await gitWorktreeService.create(
-            this.workspacePath,
-            task.specialist,
-            task.id,
-            this.conversationId
-          )
-          const worktreeRecord = worktreeRepository.findByTaskId(task.id)
-          worktreeId = worktreeRecord?.id
-          this.log.info(`Worktree created for ${task.specialist}/${task.id}: ${worktreePath}`)
-        } catch (error) {
-          this.log.warn(
-            `Failed to create worktree for ${task.specialist}/${task.id}, falling back to shared cwd:`,
-            error
-          )
-        }
-      }
-
-      // ── SDK execution path — no ChildProcess needed ──
-      {
-        this.log.info(`Running ${task.specialist}/${task.id} via SDK`)
-        // Start trace span for this specialist execution
-        let traceSpan: TraceSpan | undefined
-        if (this.currentRunId) {
-          traceSpan = executionTracer.startSpan(this.currentRunId, 'specialist_start', {
-            agentId: task.specialist,
-            taskId: task.id,
-            message: `Starting ${task.specialist} for task ${task.id}`,
-            metadata: { mode, attempt, model: task.model, conversationId: this.conversationId }
-          })
-        }
-        // Create DB session for token tracking (SDK path)
-        let dbSessionId: string | undefined
-        try {
-          const sessionAction = task.model ? tierToModelAction(task.model) : 'specialist:moderate'
-          const sessionModelId = modelConfigService.getModel(
-            this.workspacePath ?? undefined,
-            sessionAction
-          )
-          const session = agentSessionRepository.create(task.specialist, {
-            taskId: task.id,
-            pid: undefined,
-            conversationId: this.conversationId ?? undefined,
-            workspaceId: undefined,
-            complexityScore: task.complexity?.total,
-            modelUsed: sessionModelId,
-            complexityTier: task.complexity?.tier
-          })
-          dbSessionId = session.id
-        } catch (err) {
-          this.log.error('Failed to create DB session for specialist (SDK):', err)
-        }
-
-        const info: SpecialistProcessInfo = {
-          task,
-          output: '',
-          status: 'running',
-          worktreeId,
-          dbSessionId,
-          attempt,
-          tokenUsage: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheCreationTokens: 0,
-          escalations: [],
-          toolCallCount: 0,
-          startedAt: Date.now()
-        }
-
-        // Agent started event now handled by trace-bridge via specialist_start span
-        this.activeProcesses.set(task.id, info)
-
-        try {
-          await this.runSpecialistViaSDK(task, mode, info, worktreeId)
-
-          // End trace span on success — capture durationMs for afterRun consistency
-          let spanDurationMs = 0
-          if (traceSpan) {
-            spanDurationMs = executionTracer.endSpan(traceSpan, {
-              tokenUsage: {
-                input: info.inputTokens,
-                output: info.outputTokens,
-                cacheRead: info.cacheReadTokens,
-                cacheCreation: info.cacheCreationTokens
-              },
-              message: `Completed ${task.specialist}/${task.id}`
-            })
-          }
-
-          // Structured log: specialist completed successfully
-          this.slog.specialistCompleted({
-            taskId: task.id,
-            agentId: task.specialist,
-            model: task.model ?? 'sonnet',
-            durationMs: spanDurationMs,
-            tokenUsage: {
-              input: info.inputTokens,
-              output: info.outputTokens,
-              cacheRead: info.cacheReadTokens,
-              cacheCreation: info.cacheCreationTokens,
-              total: info.tokenUsage
-            }
-          })
-
-          // Run afterRun hooks (observation only — errors caught internally)
-          await specialistHookRunner.runAfterRun(task.specialist, {
-            task,
-            output: info.output,
-            success: true,
-            tokenUsage: {
-              input: info.inputTokens,
-              output: info.outputTokens,
-              cacheRead: info.cacheReadTokens,
-              cacheCreation: info.cacheCreationTokens
-            },
-            durationMs: spanDurationMs,
-            toolCallCount: info.toolCallCount,
-            attempt
-          })
-
-          // Persist agent context — extract summary for future specialist context injection
-          if (this.conversationId && info.output.length > 0) {
-            const summary = agentContextService.extractSummaryFromOutput(info.output)
-            if (summary) {
-              agentContextService.persistSummary(this.conversationId, task.specialist, summary, task.id)
-            }
-          }
-
-          // Success path — reuse existing completion logic
-          this.activeProcesses.delete(task.id)
-          this.completedTasks.add(task.id)
-          this.taskResults.set(task.id, info.output)
-          this.consecutiveSpawnFailures = 0
-
-          // Complete DB session with granular token breakdown
-          if (info.dbSessionId) {
-            try {
-              agentSessionRepository.completeWithBreakdown(info.dbSessionId, 'completed', {
-                total: info.tokenUsage,
-                input: info.inputTokens,
-                output: info.outputTokens,
-                cacheRead: info.cacheReadTokens,
-                cacheCreation: info.cacheCreationTokens
-              })
-            } catch (err) {
-              this.log.error('Failed to complete DB session:', err)
-            }
-          }
-
-          // Post-completion analysis
-          this.runPostCompletionAnalysis(task, info)
-
-          // Broadcast task result to the message bus for downstream specialists
-          messageBus.broadcast({
-            from: task.specialist,
-            type: 'dependency',
-            content:
-              info.output.length > 2000
-                ? info.output.substring(0, 2000) + '\n... (truncated)'
-                : info.output,
-            taskId: task.id,
-            metadata: { status: 'completed', tokenUsage: info.tokenUsage }
-          })
-
-          // Write output artifact
-          if (this.workspacePath && this.conversationId) {
-            taskArtifactService
-              .writeTaskOutput(
-                this.workspacePath,
-                this.conversationId,
-                task.id,
-                info.output,
-                'completed'
-              )
-              .catch((err) => this.log.warn('Failed to write task output artifact:', err))
-          }
-
-          // Run quality gates
-          const gateCwd = info.worktreeId
-            ? (worktreeRepository.findById(info.worktreeId)?.worktreePath ?? this.workspacePath!)
-            : this.workspacePath!
-
-          await this.runTaskLoopGates(task, info, mode, gateCwd, onDone).catch((err) => {
-            this.log.error(`Task loop gate evaluation failed for ${task.id}:`, err)
-            this.finalizeTaskCompletion(task, info)
-            onDone()
-          })
-          return
-        } catch (error) {
-          // Emit error as visible chat chunk so user sees what happened
-          this.emit('taskChunk', {
-            taskId: task.id,
-            specialist: task.specialist,
-            chunk: `\n\n❌ **Error:** ${(error as Error).message}\n`
-          })
-
-          // End trace span on error — capture durationMs for afterRun consistency
-          let errorSpanDurationMs = 0
-          if (traceSpan) {
-            errorSpanDurationMs = executionTracer.endSpan(traceSpan, {
-              error: (error as Error).message,
-              tokenUsage: {
-                input: info.inputTokens,
-                output: info.outputTokens,
-                cacheRead: info.cacheReadTokens,
-                cacheCreation: info.cacheCreationTokens
-              }
-            })
-          }
-
-          // Structured log: specialist failed
-          this.slog.specialistFailed({
-            taskId: task.id,
-            agentId: task.specialist,
-            model: task.model ?? 'sonnet',
-            attempt,
-            error: (error as Error).message,
-            durationMs: errorSpanDurationMs,
-            tokenUsage: {
-              input: info.inputTokens,
-              output: info.outputTokens,
-              cacheRead: info.cacheReadTokens,
-              cacheCreation: info.cacheCreationTokens,
-              total: info.tokenUsage
-            }
-          })
-
-          // Run afterRun hooks on failure
-          await specialistHookRunner.runAfterRun(task.specialist, {
-            task,
-            output: info.output,
-            success: false,
-            error: (error as Error).message,
-            tokenUsage: {
-              input: info.inputTokens,
-              output: info.outputTokens,
-              cacheRead: info.cacheReadTokens,
-              cacheCreation: info.cacheCreationTokens
-            },
-            durationMs: errorSpanDurationMs,
-            toolCallCount: info.toolCallCount,
-            attempt
-          })
-
-          // Error path — handle retry/circuit-breaker
-          this.activeProcesses.delete(task.id)
-          info.status = 'failed'
-          this.taskStatuses.set(task.id, 'failed')
-
-          // Complete DB session with error (granular token breakdown)
-          if (info.dbSessionId) {
-            try {
-              agentSessionRepository.completeWithBreakdown(info.dbSessionId, 'failed', {
-                total: info.tokenUsage,
-                input: info.inputTokens,
-                output: info.outputTokens,
-                cacheRead: info.cacheReadTokens,
-                cacheCreation: info.cacheCreationTokens
-              })
-            } catch (dbErr) {
-              this.log.error('Failed to complete DB session on error:', dbErr)
-            }
-          }
-
-          // Check if retryable — circuit breaker errors should NOT retry (retrying a loop just loops again)
-          const isCircuitBreakerError =
-            (error as Error).message.includes('exceeded') &&
-            (error as Error).message.includes('tool calls')
-          const isRetryable =
-            !this.aborted && !isCircuitBreakerError && info.attempt < RETRY_CONFIG.maxRetries
-          if (isRetryable) {
-            const delay = Math.min(
-              RETRY_CONFIG.baseDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, info.attempt),
-              RETRY_CONFIG.maxDelayMs
-            )
-
-            this.slog.taskRetried({
-              taskId: task.id,
-              agentId: task.specialist,
-              model: task.model,
-              attempt: info.attempt + 1,
-              maxRetries: RETRY_CONFIG.maxRetries,
-              reason: `SDK execution failed: ${(error as Error).message}`,
-              durationMs: delay
-            })
-            // Trace retry event — bridge auto-logs to EventLogger
-            if (this.currentRunId) {
-              executionTracer.traceEvent(this.currentRunId, 'task_retry', {
-                agentId: task.specialist,
-                taskId: task.id,
-                message: `Retry ${info.attempt + 1}/${RETRY_CONFIG.maxRetries} in ${delay}ms`,
-                metadata: {
-                  delay,
-                  attempt: info.attempt + 1,
-                  error: (error as Error).message,
-                  conversationId: this.conversationId
-                }
-              })
-            }
-
-            // Clean up worktree before retry
-            if (info.worktreeId) {
-              gitWorktreeService.remove(info.worktreeId, true).catch((err) => {
-                this.log.warn(`Failed to remove worktree before retry: ${err}`)
-              })
-            }
-
-            this.completedTasks.delete(task.id)
-            this.taskResults.delete(task.id)
-
-            // Semaphore auto-released by sem.run() — next attempt will re-acquire
-            setTimeout(() => {
-              this.createWorktreeAndSpawn(task, mode, onDone, info.attempt + 1)
-            }, delay)
-            return
-          }
-
-          // Retries exhausted — task settled as failed (not a crash, just a result)
-          // Agent failure already logged by trace-bridge via specialist_end span
-          this.consecutiveSpawnFailures++
-          this.log.info(`Task ${task.id} settled as failed — continuing parallel execution`)
-          this.emitProgress(task, 'failed', undefined, (error as Error).message)
-
-          if (this.consecutiveSpawnFailures >= CIRCUIT_BREAKER_THRESHOLD) {
-            this.log.error(
-              `Circuit breaker tripped: ${this.consecutiveSpawnFailures} consecutive failures`
-            )
-            eventLoggerService.logCircuitBreakerTripped({
-              conversationId: this.conversationId ?? undefined,
-              failures: this.consecutiveSpawnFailures
-            })
-            this.emit('circuitBreakerTripped', { failures: this.consecutiveSpawnFailures })
-            this.stopAll()
-            return
-          }
-
-          if (info.worktreeId) {
-            worktreeRepository.updateStatus(info.worktreeId, 'abandoned')
-          }
-
-          // Semaphore auto-released by sem.run() — continue parallel execution
-          onDone()
-          return
-        }
+      try {
+        await this.runSpecialistViaSDK(task, mode, info, worktreeId)
+        await this.handleSpecialistSuccess(task, info, mode, traceSpan, onDone)
+      } catch (error) {
+        await this.handleSpecialistFailure(task, info, mode, error as Error, traceSpan, onDone)
       }
     }) // end semaphore.run()
   }
 
-  /**
-   * Builds the specialist context (system prompt, full prompt, cwd, model).
-   * Used by the SDK execution path.
-   */
-  private async buildSpecialistContext(
-    task: DecomposedTask,
-    mode: ConversationMode,
-    worktreeId?: string
-  ): Promise<{
-    systemPrompt: string
-    fullPrompt: string
-    cwd: string
-    modelId: string
-    thinkingBudget: string
-  }> {
-    // Resolve specialist prompt from DB
-    const specialist = specialistRepository.findByAgentId(task.specialist)
+  // ── P1: buildSpecialistContext sub-methods ──
 
-    // Resolve skills from DB (specialist_skills junction table)
+  /**
+   * Resolves specialist configuration from DB: specialist record, skills, overrides, feedback, budget.
+   */
+  private resolveSpecialistConfig(task: DecomposedTask): {
+    specialist: ReturnType<typeof specialistRepository.findByAgentId>
+    assignedSkills: ReturnType<typeof specialistRepository.getSkills>
+    skillsEnabled: boolean | undefined
+    skillOverrides: string[] | undefined
+    feedbackContext: string | undefined
+    budgetTier: BudgetTier
+    model: string
+  } {
+    const specialist = specialistRepository.findByAgentId(task.specialist)
     const assignedSkills = specialist ? specialistRepository.getSkills(specialist.id) : []
 
-    // Resolve per-conversation specialist overrides (skills enabled + skill subset)
     let skillsEnabled: boolean | undefined
     let skillOverrides: string[] | undefined
     if (this.conversationId && specialist?.id) {
@@ -941,7 +1029,6 @@ export class SpecialistPoolService extends EventEmitter {
       }
     }
 
-    // Resolve feedback memories
     let feedbackContext: string | undefined
     try {
       if (this.workspacePath) {
@@ -956,19 +1043,27 @@ export class SpecialistPoolService extends EventEmitter {
       // Feedback memories unavailable — not critical
     }
 
-    // Model-aware prompt budgeting
     const model = task.model ?? 'sonnet'
     const budgetTier: BudgetTier =
       model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
 
-    // Build system prompt via centralized PromptBuilder
-    const effectiveSkillsEnabled = skillsEnabled !== undefined
-      ? skillsEnabled
+    return { specialist, assignedSkills, skillsEnabled, skillOverrides, feedbackContext, budgetTier, model }
+  }
+
+  /**
+   * Builds or retrieves cached system prompt for a specialist task.
+   * Cache key includes all factors that affect system prompt content (Strategy λ).
+   */
+  private buildOrCacheSystemPrompt(
+    task: DecomposedTask,
+    mode: ConversationMode,
+    config: ReturnType<SpecialistPoolService['resolveSpecialistConfig']>
+  ): string {
+    const effectiveSkillsEnabled = config.skillsEnabled !== undefined
+      ? config.skillsEnabled
       : (task.complexity?.total ?? 5) >= 5 && (task.complexity?.filesAffected ?? 1) > 1
 
-    // Strategy λ: Check specialist prompt cache before rebuilding.
-    // Cache key includes all factors that affect system prompt content.
-    const cacheKey = `${task.specialist}:${mode}:${budgetTier}:${effectiveSkillsEnabled}:${skillOverrides?.join(',') ?? ''}`
+    const cacheKey = `${task.specialist}:${mode}:${config.budgetTier}:${effectiveSkillsEnabled}:${config.skillOverrides?.join(',') ?? ''}`
     let systemPrompt = this.specialistPromptCache.get(cacheKey)
 
     if (!systemPrompt) {
@@ -979,27 +1074,26 @@ export class SpecialistPoolService extends EventEmitter {
         role: 'specialist',
         mode,
         specialistId: task.specialist,
-        specialistPrompt: specialist?.prompt || undefined,
-        assignedSkills,
+        specialistPrompt: config.specialist?.prompt || undefined,
+        assignedSkills: config.assignedSkills,
         workspacePath: this.workspacePath!,
         brief: this.conversationBrief || undefined,
-        feedbackContext,
-        budgetTier,
+        feedbackContext: config.feedbackContext,
+        budgetTier: config.budgetTier,
         // S2: Only load skills for moderate+ complexity tasks (complexity >= 5)
         // Strategy D: Also skip skills for single-file changes — skills are implementation guides
         // for multi-file architectural work, not needed for simple one-file fixes.
         // This saves 400-1,140 tokens per specialist call for simple tasks.
         skillsEnabled: effectiveSkillsEnabled
       }
-      if (skillsEnabled !== undefined) {
-        promptOptions.skillsEnabled = skillsEnabled
+      if (config.skillsEnabled !== undefined) {
+        promptOptions.skillsEnabled = config.skillsEnabled
       }
-      if (skillOverrides) {
-        promptOptions.skillOverrides = skillOverrides
+      if (config.skillOverrides) {
+        promptOptions.skillOverrides = config.skillOverrides
       }
       systemPrompt = promptBuilder.build(promptOptions)
 
-      // Cache for reuse on subsequent calls with the same specialist
       this.specialistPromptCache.set(cacheKey, systemPrompt)
       this.log.info(
         `[PIPELINE:specialist-prompt-cache] MISS — built and cached prompt for ${cacheKey} (${systemPrompt.length} chars)`
@@ -1010,7 +1104,16 @@ export class SpecialistPoolService extends EventEmitter {
       )
     }
 
-    // Build context from completed dependency outputs
+    return systemPrompt
+  }
+
+  /**
+   * Gathers dependency outputs from artifacts/in-memory and writes task input artifact.
+   */
+  private async buildDependencyContext(
+    task: DecomposedTask,
+    budgetTier: BudgetTier
+  ): Promise<string> {
     let dependencyContext = ''
     for (const depId of task.dependsOn) {
       let depOutput: string | null = null
@@ -1049,7 +1152,17 @@ export class SpecialistPoolService extends EventEmitter {
         .catch((err) => this.log.warn('Failed to write task input artifact:', err))
     }
 
-    // Append verification command
+    return dependencyContext
+  }
+
+  /**
+   * Assembles the full user prompt from task description, context parts, and injections.
+   */
+  private buildPromptWithContext(
+    task: DecomposedTask,
+    config: ReturnType<SpecialistPoolService['resolveSpecialistConfig']>,
+    dependencyContext: string
+  ): string {
     const verificationSuffix = task.verificationCommand
       ? `\n\nVerification command (run before finishing): \`${task.verificationCommand}\``
       : ''
@@ -1069,8 +1182,8 @@ export class SpecialistPoolService extends EventEmitter {
     const dynamicContext = promptBuilder.buildDynamicContext({
       role: 'specialist',
       brief: this.conversationBrief || undefined,
-      feedbackContext,
-      budgetTier
+      feedbackContext: config.feedbackContext,
+      budgetTier: config.budgetTier
     })
 
     // Strategy K: Depth-aware investigation instructions.
@@ -1087,7 +1200,7 @@ export class SpecialistPoolService extends EventEmitter {
     // Strategy 5: Ultra-minimal haiku prompt — skip scope constraint and dependency context
     // for minimal-budget tasks. Haiku tasks are single-file, don't need extra guidance (~340 tokens saved).
     let fullPrompt =
-      budgetTier === 'minimal'
+      config.budgetTier === 'minimal'
         ? task.description
         : `${depthPrefix}${dynamicContext}${task.description}${scopeConstraint}${verificationSuffix}${dependencyContext}`
 
@@ -1108,8 +1221,34 @@ export class SpecialistPoolService extends EventEmitter {
       }
     }
 
+    return fullPrompt
+  }
+
+  /**
+   * Builds the specialist context (system prompt, full prompt, cwd, model).
+   * Used by the SDK execution path.
+   *
+   * Orchestrates sub-methods: resolveSpecialistConfig → buildOrCacheSystemPrompt →
+   * buildDependencyContext → buildPromptWithContext → resolve model/cwd.
+   */
+  private async buildSpecialistContext(
+    task: DecomposedTask,
+    mode: ConversationMode,
+    worktreeId?: string
+  ): Promise<{
+    systemPrompt: string
+    fullPrompt: string
+    cwd: string
+    modelId: string
+    thinkingBudget: string
+  }> {
+    const config = this.resolveSpecialistConfig(task)
+    const systemPrompt = this.buildOrCacheSystemPrompt(task, mode, config)
+    const dependencyContext = await this.buildDependencyContext(task, config.budgetTier)
+    const fullPrompt = this.buildPromptWithContext(task, config, dependencyContext)
+
     // Prompt size estimation
-    const promptCheck = PromptBuilder.checkPromptSize(systemPrompt, fullPrompt, model)
+    const promptCheck = PromptBuilder.checkPromptSize(systemPrompt, fullPrompt, config.model)
     if (promptCheck.warning) {
       this.log.warn(`[${task.specialist}/${task.id}] ${promptCheck.warning}`)
     }
@@ -1120,7 +1259,7 @@ export class SpecialistPoolService extends EventEmitter {
 
     // Thinking budget
     const thinkingBudget =
-      THINKING_BUDGETS[model as keyof typeof THINKING_BUDGETS] ?? THINKING_BUDGETS.sonnet
+      THINKING_BUDGETS[config.model as keyof typeof THINKING_BUDGETS] ?? THINKING_BUDGETS.sonnet
 
     // Resolve cwd
     let cwd = this.workspacePath!
@@ -1131,7 +1270,25 @@ export class SpecialistPoolService extends EventEmitter {
       }
     }
 
-    return { systemPrompt, fullPrompt, cwd, modelId, thinkingBudget }
+    // Append code intelligence strategy guidance to help specialists work efficiently
+    const codeIntelligenceGuidance = `
+
+## Code Intelligence Strategy (MANDATORY)
+1. FIRST: Use mcp__semantic-search__semantic_search to find relevant code by concept
+2. SECOND: Use mcp__code-graph__search_identifiers to find specific symbols (classes, functions, types)
+3. THIRD: Use mcp__code-graph__repo_map to understand file importance and relationships
+4. FOURTH: Read ONLY the specific files identified — do NOT scan directories
+5. For API errors (4xx/5xx): Check the API endpoint handler FIRST, then trace the error path
+6. Do NOT re-read files you have already read — your context window already contains the file content from earlier Read calls
+
+## Efficiency Rules
+- Maximum 3 reads of any single file per session
+- Target resolution in ≤10 tool calls for moderate tasks
+- If stuck after 15 tool calls, summarize findings and stop`
+
+    const enhancedFullPrompt = fullPrompt + codeIntelligenceGuidance
+
+    return { systemPrompt, fullPrompt: enhancedFullPrompt, cwd, modelId, thinkingBudget }
   }
 
   /**
@@ -1244,8 +1401,7 @@ export class SpecialistPoolService extends EventEmitter {
     info.abortController = abortController
 
     const isPlanModeSpecialist = mode === 'plan'
-    const descLower = task.description.toLowerCase()
-    const isInvestigationTask = INVESTIGATION_KEYWORDS.some((kw) => descLower.includes(kw))
+    const isInvestigationTask = isInvestigationIntent(task.description)
 
     const depthBudget = SpecialistPoolService.DEPTH_BUDGETS[this.investigationDepth]
     const maxToolCalls = isPlanModeSpecialist
@@ -1657,6 +1813,25 @@ export class SpecialistPoolService extends EventEmitter {
       ...extras
     }
     this.emit('taskProgress', progress)
+
+    // Emit agent status for Agent Monitor — uses specialist agent ID (not task ID)
+    // so one card per specialist in the monitor panel.
+    const info = this.activeProcesses.get(task.id)
+    const agentStatus: AgentStatus = {
+      agentId: task.specialist,
+      agentType: 'specialist',
+      status: mapToAgentStatus(status),
+      currentTask: task.description,
+      elapsedMs: extras?.startedAt
+        ? Date.now() - extras.startedAt
+        : info?.startedAt
+          ? Date.now() - info.startedAt
+          : 0,
+      tokenUsage: info?.tokenUsage ?? 0,
+      model: task.model,
+      complexityTier: task.complexity?.tier
+    }
+    this.emit('agentStatus', agentStatus)
   }
 
   /**
@@ -1746,6 +1921,16 @@ export class SpecialistPoolService extends EventEmitter {
           reason: `Stuck detection — same gates failing for ${loopResult.iterations} iterations`,
           attempt: info.attempt + 1
         })
+
+        // Persist escalation decision for cross-agent context
+        if (this.conversationId) {
+          agentContextService.persistDecision(
+            this.conversationId,
+            task.specialist,
+            `Model escalated from ${previousModel} to ${escalatedModel}: stuck detection — same gates failing for ${loopResult.iterations} iterations`,
+            task.id
+          )
+        }
       }
     }
 
@@ -2017,23 +2202,11 @@ export class SpecialistPoolService extends EventEmitter {
     taskLoopService.reset()
     // Strategy λ: Clear specialist prompt cache on reset (new conversation = new context)
     this.specialistPromptCache.clear()
+    // Refresh scheduling strategy from preferences (may have changed in settings)
+    this.schedulingStrategy = SpecialistPoolService.createSchedulingStrategy()
     // Note: workspacePath and conversationId are preserved across resets
   }
 
-  /** Expose tracer for external consumers (e.g., IPC handlers for UI trace display) */
-  get tracer(): typeof executionTracer {
-    return executionTracer
-  }
-
-  /** Expose message bus for external consumers */
-  get bus(): typeof messageBus {
-    return messageBus
-  }
-
-  /** Expose hook runner for external registration */
-  get hooks(): typeof specialistHookRunner {
-    return specialistHookRunner
-  }
 }
 
 export const specialistPoolService = new SpecialistPoolService()

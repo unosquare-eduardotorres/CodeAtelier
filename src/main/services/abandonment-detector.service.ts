@@ -41,7 +41,7 @@ const FALSE_POSITIVE_GUARDS: RegExp[] = [
   /here['']s what I did/i
 ]
 
-export interface AbandonmentResult {
+interface AbandonmentResult {
   detected: boolean
   pattern?: string
   /** Last N characters of output where pattern was found */

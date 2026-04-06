@@ -15,7 +15,7 @@ import type { LogFunctions } from 'electron-log'
 
 // ── Structured Field Types ──
 
-export interface SpecialistLogFields {
+interface SpecialistLogFields {
   /** Task ID for correlation */
   taskId: string
   /** Specialist agent ID */

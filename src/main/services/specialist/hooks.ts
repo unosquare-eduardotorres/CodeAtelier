@@ -73,7 +73,7 @@ export interface AfterRunResult {
 }
 
 /** Tool call observation hook context */
-export interface ToolCallContext {
+interface ToolCallContext {
   task: DecomposedTask
   toolName: string
   toolInput?: string
@@ -81,7 +81,7 @@ export interface ToolCallContext {
 }
 
 /** Tool result observation hook context */
-export interface ToolResultContext {
+interface ToolResultContext {
   task: DecomposedTask
   toolName: string
   result?: string
@@ -90,7 +90,7 @@ export interface ToolResultContext {
 
 // ── Hook Definitions ──
 
-export interface SpecialistHooks {
+interface SpecialistHooks {
   /**
    * Called before a specialist starts execution.
    * Can modify the context (prompt, model, etc.).
@@ -220,11 +220,6 @@ export class SpecialistHookRunner {
   clear(): void {
     this.perAgent.clear()
     this.globalHooks.length = 0
-  }
-
-  /** Check if any hooks are registered for a specialist. */
-  hasHooks(agentId: string): boolean {
-    return this.globalHooks.length > 0 || (this.perAgent.get(agentId)?.length ?? 0) > 0
   }
 
   private getHooksForAgent(agentId: string): SpecialistHooks[] {

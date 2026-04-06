@@ -32,20 +32,6 @@ export interface TaskLoopState {
   outcome: 'passed' | 'failed' | 'max_iterations' | 'pending'
 }
 
-/** Result of a single task loop run */
-export interface TaskLoopResult {
-  /** Whether the task ultimately passed all gates */
-  passed: boolean
-  /** Total iterations executed */
-  iterations: number
-  /** State object with full history */
-  state: TaskLoopState
-  /** Fix context for the next iteration (empty if passed) */
-  fixContext: string
-  /** Whether model escalation is recommended */
-  shouldEscalate: boolean
-}
-
 /**
  * Task Loop Service — wraps specialist execution in iterative fix cycles.
  *
@@ -276,13 +262,6 @@ class TaskLoopService {
    */
   getState(taskId: string): TaskLoopState | undefined {
     return this.loopStates.get(taskId)
-  }
-
-  /**
-   * Check if a task has an active loop.
-   */
-  hasLoop(taskId: string): boolean {
-    return this.loopStates.has(taskId)
   }
 
   /**

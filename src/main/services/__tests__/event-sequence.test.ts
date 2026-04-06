@@ -1,32 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-
-let passed = 0
-let failed = 0
-let skipped = 0
-
-function test(name: string, fn: () => void, options?: { skipReason?: string }) {
-  if (options?.skipReason) {
-    console.log(`  - ${name} (skipped: ${options.skipReason})`)
-    skipped++
-    return
-  }
-
-  try {
-    fn()
-    console.log(`  ✓ ${name}`)
-    passed++
-  } catch (err) {
-    console.error(`  ✗ ${name}`)
-    console.error(`    ${(err as Error).message}`)
-    failed++
-  }
-}
-
-function describe(name: string, fn: () => void) {
-  console.log(`\n${name}`)
-  fn()
-}
+import { test, describe } from './test-harness'
 
 describe('Suite 9: Event sequence', () => {
   test('handoff event carries correct HandoffBrief shape', () => {
@@ -133,5 +107,4 @@ describe('Suite 10: Listener lifecycle', () => {
   })
 })
 
-console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`)
-if (failed > 0) process.exit(1)
+// Report handled by test runner

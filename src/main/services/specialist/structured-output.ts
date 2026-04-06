@@ -10,14 +10,14 @@ import type { InvestigationReport } from '../../../shared/types'
 
 // ── Validation Result Types ──
 
-export interface ValidationSuccess<T> {
+interface ValidationSuccess<T> {
   success: true
   data: T
   /** Which extraction strategy succeeded */
   strategy: ExtractionStrategy
 }
 
-export interface ValidationFailure {
+interface ValidationFailure {
   success: false
   errors: string[]
   /** Raw text that was attempted to parse */
@@ -26,7 +26,7 @@ export interface ValidationFailure {
 
 export type ValidationResult<T> = ValidationSuccess<T> | ValidationFailure
 
-export type ExtractionStrategy =
+type ExtractionStrategy =
   | 'code-fence'       // ```json or ```investigation-report blocks
   | 'bracket-match'    // First { to last } or first [ to last ]
   | 'direct-parse'     // Try JSON.parse on the entire input
@@ -177,71 +177,6 @@ export function validateWithSchema<T>(
 }
 
 // ── Generic Schema Validator ──
-
-/**
- * Schema definition for generic structured output validation.
- * @deprecated Use Zod schemas with `validateWithSchema()` instead.
- */
-export interface FieldSchema {
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object'
-  required?: boolean
-  enum?: readonly string[]
-  /** For array items */
-  items?: Record<string, FieldSchema>
-}
-
-/**
- * Validate a parsed JSON object against a field schema.
- * Returns an array of error messages (empty = valid).
- * @deprecated Use `validateWithSchema()` with Zod schemas instead.
- */
-export function validateSchema(
-  data: Record<string, unknown>,
-  schema: Record<string, FieldSchema>
-): string[] {
-  const errors: string[] = []
-
-  for (const [field, def] of Object.entries(schema)) {
-    const value = data[field]
-
-    if (value === undefined || value === null) {
-      if (def.required !== false) {
-        errors.push(`Missing required field: ${field}`)
-      }
-      continue
-    }
-
-    // Type check
-    if (def.type === 'array') {
-      if (!Array.isArray(value)) {
-        errors.push(`${field}: expected array, got ${typeof value}`)
-        continue
-      }
-      // Validate array items if schema provided
-      if (def.items) {
-        for (let i = 0; i < (value as unknown[]).length; i++) {
-          const item = (value as unknown[])[i] as Record<string, unknown>
-          if (typeof item !== 'object' || item === null) {
-            errors.push(`${field}[${i}]: expected object`)
-            continue
-          }
-          const itemErrors = validateSchema(item, def.items)
-          errors.push(...itemErrors.map((e) => `${field}[${i}].${e}`))
-        }
-      }
-    } else if (typeof value !== def.type) {
-      errors.push(`${field}: expected ${def.type}, got ${typeof value}`)
-      continue
-    }
-
-    // Enum check
-    if (def.enum && !def.enum.includes(value as string)) {
-      errors.push(`${field}: invalid value "${String(value)}". Must be one of: ${def.enum.join(', ')}`)
-    }
-  }
-
-  return errors
-}
 
 // ── Fallback Report Builder ──
 

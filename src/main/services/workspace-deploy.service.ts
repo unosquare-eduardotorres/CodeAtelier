@@ -203,15 +203,6 @@ export class WorkspaceDeployService {
   }
 
   /**
-   * Scan Agent Studio's master .claude/agents/ directory.
-   * @deprecated Master agent YAMLs have been removed — DB is the source of truth.
-   * Returns empty array. Kept for API compatibility.
-   */
-  scanMasterAgents(): DiscoveredAgent[] {
-    return []
-  }
-
-  /**
    * Scan Agent Studio's master .claude/skills/ directory.
    * Skills still live as files in .claude/skills/ — this remains functional.
    */
@@ -378,16 +369,6 @@ export class WorkspaceDeployService {
 
   // ── Deployment ──
 
-  /**
-   * Deploy agent YAML to workspace.
-   * @deprecated Master agent YAMLs have been removed — activation is DB-only.
-   * This is now a no-op. Kept for API compatibility.
-   */
-  deployAgent(_workspacePath: string, _agentFilename: string): void {
-    // No-op: master agent YAMLs have been removed.
-    // Activation is handled via DB is_active flag.
-  }
-
   /** Remove a single agent YAML from workspace */
   undeployAgent(workspacePath: string, agentFilename: string): void {
     const targetPath = join(workspacePath, '.claude', 'agents', agentFilename)
@@ -453,12 +434,9 @@ export class WorkspaceDeployService {
     deployLogger.info(`Deleted agent from workspace: ${filename} in ${workspacePath}`)
   }
 
-  /** Sync a single agent to workspace: copy YAML from master, update CLAUDE.md, upsert DB record */
+  /** Sync a single agent to workspace: update CLAUDE.md, upsert DB record */
   syncAgentToWorkspace(workspacePath: string, filename: string): void {
-    // 1. Copy agent YAML from master to workspace
-    this.deployAgent(workspacePath, filename)
-
-    // 2. Add agent reference to workspace CLAUDE.md
+    // 1. Add agent reference to workspace CLAUDE.md
     const agentName = filename.replace(/\.ya?ml$/, '')
     this.addToClaudeMd(workspacePath, 'agent', agentName)
 

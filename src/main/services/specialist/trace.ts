@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto'
 
 // ── Trace Event Types ──
 
-export type TraceEventType =
+type TraceEventType =
   | 'run_start'
   | 'run_end'
   | 'specialist_start'
@@ -31,9 +31,10 @@ export type TraceEventType =
   | 'task_retry'
   | 'gate_evaluation'
   | 'dependency_resolved'
+  | 'bus_message'
   | 'error'
 
-export interface TraceTokenUsage {
+interface TraceTokenUsage {
   input: number
   output: number
   cacheRead?: number
@@ -73,7 +74,7 @@ export interface TraceSpan {
   metadata?: Record<string, unknown>
 }
 
-export type TraceListener = (event: TraceEvent) => void
+type TraceListener = (event: TraceEvent) => void
 
 /** Valid end types for paired span events — guards against incorrect type derivation */
 const VALID_TRACE_END_TYPES = new Set<TraceEventType>([
@@ -250,16 +251,6 @@ export class ExecutionTracer {
       tokenUsage: options.tokenUsage,
       metadata: options.metadata
     })
-  }
-
-  /** Get all events for a run (for post-hoc analysis). Returns empty array if run is unknown. */
-  getRunEvents(runId: string): readonly TraceEvent[] {
-    return this.activeRuns.get(runId)?.events ?? []
-  }
-
-  /** Check if any listeners are attached (for zero-overhead guard). */
-  get hasListeners(): boolean {
-    return this.listeners.length > 0
   }
 
   /** Clean up all active spans and runs (for reset/abort). */

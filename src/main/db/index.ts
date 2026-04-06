@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 50
+const CURRENT_SCHEMA_VERSION = 51
 
 interface Migration {
   version: number
@@ -1118,6 +1118,21 @@ const migrations: Migration[] = [
         `
         ).run(alias)
       }
+    }
+  },
+  {
+    version: 51,
+    name: 'add-conversation-sort-order',
+    up: (db) => {
+      db.exec(`ALTER TABLE conversations ADD COLUMN sort_order INTEGER DEFAULT 0`)
+      // Initialize sort_order based on created_at (newest = lowest number = top)
+      db.exec(`
+        UPDATE conversations SET sort_order = (
+          SELECT COUNT(*) FROM conversations c2
+          WHERE c2.workspace_id = conversations.workspace_id
+          AND c2.created_at > conversations.created_at
+        )
+      `)
     }
   }
 ]

@@ -19,6 +19,7 @@ import type {
   TaskPlan
 } from '../../shared/types'
 import { memoryService } from '../services/memory.service'
+import { isInvestigationIntent } from '../services/specialist'
 import { chatIpcLogger } from '../logger'
 import { eventLoggerService } from '../services/event-logger.service'
 import { validateSender } from './validate-sender'
@@ -371,13 +372,19 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
             role: 'generalist'
           })
 
-          // Respect the conversation's current mode as source of truth.
-          // When the user clicks "Build This", the renderer already set mode='build' before
-          // sending the message. Only override to 'plan' if the conversation isn't already in build.
+          // Detect task intent from the handoff summary.
+          // Investigation/review requests should always show the plan card for user review,
+          // even when the conversation is in build mode. Implementation requests in build mode
+          // auto-execute. The generalist prompt always sets mode="plan" in handoffs, so we
+          // use keyword detection to distinguish investigation from implementation intent.
           const conversation = conversationRepository.findById(conversationId)
-          const effectiveMode: ConversationMode = conversation?.mode === 'build' ? 'build' : brief.mode
+          const isInvestigation = isInvestigationIntent(brief.summary)
+          const effectiveMode: ConversationMode =
+            conversation?.mode === 'build' && !isInvestigation ? 'build' : 'plan'
           if (effectiveMode !== brief.mode) {
-            log.info(`[PIPELINE:mode-respect] Conversation mode=${effectiveMode} overrides brief.mode=${brief.mode}`)
+            log.info(
+              `[PIPELINE:mode-resolve] effectiveMode=${effectiveMode} (conversation=${conversation?.mode}, investigation=${isInvestigation}, brief=${brief.mode})`
+            )
             brief.mode = effectiveMode
           }
           try {

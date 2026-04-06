@@ -397,6 +397,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                 <div className="pb-4">
                   <MessageBubble
                     message={msg}
+                    toolActivities={msg.toolActivities}
                     searchHighlight={searchQuery}
                     actions={bubbleActions}
                     suppressInlineGrillCard={

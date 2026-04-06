@@ -21,7 +21,6 @@ export function createMockMainWindow(): MockMainWindow {
 
 export interface MockGeneralistService extends EventEmitter {
   decompose: (...args: unknown[]) => Promise<unknown>
-  executeWithSubAgents: (...args: unknown[]) => Promise<void>
   switchMode: (mode: string) => void
   getWorkspacePath: () => string
   getMode: () => string
@@ -32,7 +31,6 @@ export interface MockGeneralistService extends EventEmitter {
 export function createMockGeneralistService(): MockGeneralistService {
   const emitter = new EventEmitter() as MockGeneralistService
   emitter.decompose = async () => ({ conversationId: '', summary: '', mode: 'plan', tasks: [] })
-  emitter.executeWithSubAgents = async () => {}
   emitter.switchMode = () => {}
   emitter.getWorkspacePath = () => '/test/workspace'
   emitter.getMode = () => 'plan'

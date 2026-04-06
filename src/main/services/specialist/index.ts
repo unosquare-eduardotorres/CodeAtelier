@@ -20,10 +20,7 @@ export {
   ExecutionTracer,
   executionTracer,
   type TraceEvent,
-  type TraceEventType,
-  type TraceSpan,
-  type TraceTokenUsage,
-  type TraceListener
+  type TraceSpan
 } from './trace'
 
 // ── Trace Bridge ──
@@ -33,11 +30,8 @@ export { bridgeTracerToEventLogger } from './trace-bridge'
 export {
   SpecialistHookRunner,
   specialistHookRunner,
-  type SpecialistHooks,
   type BeforeRunContext,
-  type AfterRunResult,
-  type ToolCallContext,
-  type ToolResultContext
+  type AfterRunResult
 } from './hooks'
 
 // ── Messaging ──
@@ -46,7 +40,6 @@ export {
   messageBus,
   type AgentMessage,
   type MessageType,
-  type MessageSubscriber,
   type MessagePersistenceAdapter
 } from './message-bus'
 
@@ -58,10 +51,8 @@ export {
   createScheduler,
   CompositeScheduler,
   type SchedulingStrategy,
-  type SchedulingStrategyName,
   type AgentCapability,
-  type SchedulingContext,
-  type TaskPriority
+  type SchedulingContext
 } from './scheduling'
 
 // ── Structured Output ──
@@ -71,17 +62,11 @@ export {
   validateWithSchema,
   InvestigationReportSchema,
   buildFallbackReport,
-  type ValidationResult,
-  type ValidationSuccess,
-  type ValidationFailure,
-  type ExtractionStrategy,
-  // @deprecated — use validateWithSchema() with Zod schemas instead
-  validateSchema,
-  type FieldSchema
+  type ValidationResult
 } from './structured-output'
 
 // ── Structured Logging ──
-export { createStructuredLogger, type SpecialistLogFields } from './structured-log'
+export { createStructuredLogger } from './structured-log'
 
 // ── Agent Context Persistence ──
 export { agentContextService } from '../agent-context.service'
@@ -89,6 +74,8 @@ export { agentContextService } from '../agent-context.service'
 // ── Task Scheduler (existing) ──
 export {
   topologicalSort,
-  detectConclusivePattern,
-  getConclusivePatterns
+  detectConclusivePattern
 } from './task-scheduler'
+
+// ── Investigation Detection ──
+export { isInvestigationIntent } from './investigation-detect'
