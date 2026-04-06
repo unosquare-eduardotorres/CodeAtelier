@@ -111,11 +111,13 @@ When NOT to use: reading file contents (use Read), searching code (use Grep/sear
 export const TASK_CONTEXT_GUIDANCE_PROMPT = `## Task Context Tools (list_tasks + get_task_output)
 You have access to task plan inspection tools:
 
-- **list_tasks**: Get the current task plan state — task IDs, specialist assignments, statuses, and dependencies.
-- **get_task_output**: Read the output artifact from a completed specialist task (capped at 4K chars).
+- **mcp__task-context__list_tasks**: Get the current task plan state — task IDs, specialist assignments, statuses, and dependencies.
+- **mcp__task-context__get_task_output**: Read the output artifact from a completed specialist task (capped at 4K chars).
 
 When to use: checking execution progress, reviewing specialist results, understanding task dependencies.
-When NOT to use: during initial planning (the plan hasn't been created yet), for tasks you're currently executing.`
+When NOT to use: during initial planning (the plan hasn't been created yet), for tasks you're currently executing.
+
+**IMPORTANT:** Use these tools DIRECTLY by name — do NOT use ToolSearch to discover them. After reading task output, ALWAYS summarize the findings for the user.`
 
 export const CHECKPOINT_CONTEXT_GUIDANCE_PROMPT = `## Checkpoint Tools (list_checkpoints + get_checkpoint)
 You have access to checkpoint inspection tools:
@@ -241,6 +243,12 @@ Do not execute in plan mode. Respond with EXACTLY:
 - After EACH tool call, summarize what you found in ≤2 lines.
 - NEVER run tools silently — the user cannot see tool inputs/outputs directly.
 
+### Final Summary Rule (CRITICAL)
+- After your LAST tool call in any response, you MUST produce a text summary for the user.
+- NEVER end your response with only tool usage — the user cannot see tool results directly.
+- If you used list_tasks or get_task_output, summarize the specialist's findings in plain language.
+- Pattern: tools → read results → write summary. Never: tools → silence.
+
 ### Plan Generation — Direct Response
 For "create a plan"/"design an approach"/implementation-plan requests:
 - Do not emit handoff for planning-only asks
@@ -290,6 +298,12 @@ Docs/config only: README/CHANGELOG, docs, .env, .gitignore, package scripts, mar
   Example: "Build completed successfully in 12.3s. No errors."
 - For multi-step operations, number your steps: "Step 1/3: Installing dependencies..."
 - NEVER run tools silently — the user cannot see tool inputs/outputs directly.
+
+### Final Summary Rule (CRITICAL)
+- After your LAST tool call in any response, you MUST produce a text summary for the user.
+- NEVER end your response with only tool usage — the user cannot see tool results directly.
+- If you used list_tasks or get_task_output, summarize the specialist's findings in plain language.
+- Pattern: tools → read results → write summary. Never: tools → silence.
 
 ### Code Exploration Strategy (MANDATORY)
 1. ALWAYS use **search_identifiers** or **semantic_search** as your FIRST tool — do NOT start with Read/Grep/Glob

@@ -100,7 +100,6 @@ function formatTokens(count: number): string {
 export default function AgentStatusCard({ status, isSubagent }: AgentStatusCardProps): React.JSX.Element {
   const [elapsed, setElapsed] = useState(status.elapsedMs)
   const [isExpanded, setIsExpanded] = useState(false)
-  const [unreadCount, setUnreadCount] = useState(0)
   const outputRef = useRef<HTMLDivElement>(null)
   const config = STATUS_CONFIG[status.status] || STATUS_CONFIG.idle
   const { specialists } = useSpecialistStore()
@@ -111,15 +110,6 @@ export default function AgentStatusCard({ status, isSubagent }: AgentStatusCardP
   // Look up metadata from DB-backed specialists
   const meta = getAgentMeta(status.agentType, specialists)
   const specialist = specialists.find((s) => s.agentId === status.agentType)
-
-  // Fetch unread message count and refresh on bus messages
-  useEffect(() => {
-    window.api.getUnreadCount(status.agentType).then(setUnreadCount).catch(() => {/* ignore */})
-    const unsub = window.api.onBusMessage(() => {
-      window.api.getUnreadCount(status.agentType).then(setUnreadCount).catch(() => {/* ignore */})
-    })
-    return unsub
-  }, [status.agentType])
 
   const isActive =
     status.status === 'thinking' || status.status === 'writing' || status.status === 'reviewing'
@@ -186,14 +176,6 @@ export default function AgentStatusCard({ status, isSubagent }: AgentStatusCardP
                     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
                     .join(' ')}
               </span>
-              {unreadCount > 0 && (
-                <span
-                  className="flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-info text-[9px] font-semibold text-surface-base"
-                  title={`${unreadCount} unread message${unreadCount > 1 ? 's' : ''}`}
-                >
-                  {unreadCount}
-                </span>
-              )}
             </div>
             {isSubagent && (
               <span className="text-[10px] text-text-muted leading-tight">Sub-agent</span>

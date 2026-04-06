@@ -541,8 +541,10 @@ export class GeneralistService extends AgentBaseService {
                 : [])
             ],
         // Plan mode: block write tools AND SDK built-in tools that conflict with our ````plan UI
+        // Build mode = plan protections + more permissions (Write/Edit allowed).
+        // Both modes block ToolSearch (wastes turns) and ExitPlanMode (conflicts with UI).
         disallowedTools: isBuildMode
-          ? ['Agent'] // Force handoff protocol — all code work goes through specialist-pool
+          ? ['Agent', 'ToolSearch', 'ExitPlanMode'] // Handoff protocol + no tool discovery + no plan UI conflict
           : ['Write', 'Edit', 'ExitPlanMode', 'ToolSearch'],
         maxTurns: isBuildMode ? 50 : 25,
         resume: sessionId,
@@ -747,21 +749,65 @@ export class GeneralistService extends AgentBaseService {
       )
 
       // Guardrail: if tools were used but model didn't produce follow-up text,
-      // inject a synthetic feedback message so the user isn't left without feedback.
+      // attempt a one-shot recovery nudge before falling back to a dead-end message.
       // Skip if handoff was detected (handoff responses don't need post-tool text).
       if (this.toolCallCount > 0 && !hasTextAfterLastTool && !handoffDetectedInStream) {
-        const fallbackMessage =
-          this.toolCallCount === 1
-            ? '\n\n_I read a file but my response was cut short. Could you repeat your question?_'
-            : `\n\n_I used ${this.toolCallCount} tools but didn't produce a summary. Try rephrasing or asking what I found._`
         this.log.warn(
-          `[PIPELINE:silent-tool-completion] conversationId=${conversationId} toolCalls=${this.toolCallCount} — injecting fallback message`
+          `[PIPELINE:silent-tool-completion] conversationId=${conversationId} toolCalls=${this.toolCallCount} — attempting recovery nudge`
         )
-        this.accumulatedText += fallbackMessage
-        this.emit('chunk', {
-          type: 'text',
-          content: fallbackMessage
-        } as StreamChunk)
+
+        let recovered = false
+        try {
+          for await (const chunk of this.sdkExecutor.execute({
+            prompt:
+              '[System: Your previous response ended after tool calls without providing a summary to the user. Please summarize what you found in 2-5 sentences. Do NOT use any tools — just summarize from what you already read.]',
+            systemPrompt: this.fullSystemPrompt,
+            model: modelConfigService.getModel(this.workspacePath!, 'generalist'),
+            cwd: this.workspacePath!,
+            permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
+            allowedTools: [], // No tools — text summary only
+            disallowedTools: ['Agent', 'ToolSearch', 'ExitPlanMode'],
+            maxTurns: 1,
+            resume: this.sessionMap.get(conversationId),
+            agentId: AGENT_IDS.GENERALIST
+          })) {
+            if ('_meta' in chunk && chunk._meta) {
+              const meta = chunk._meta as SDKExecuteResult
+              if (meta.sessionId && conversationId) {
+                this.sessionMap.set(conversationId, meta.sessionId)
+                try {
+                  conversationRepository.updateSessionId(conversationId, meta.sessionId)
+                } catch {
+                  /* ignore */
+                }
+              }
+              this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
+            } else if (chunk.type === 'text' && chunk.content) {
+              recovered = true
+              this.accumulatedText += chunk.content
+              this.emit('chunk', chunk)
+            }
+          }
+          if (recovered) {
+            this.log.info(
+              `[PIPELINE:silent-tool-recovery] Successfully recovered summary for conversationId=${conversationId}`
+            )
+          }
+        } catch (err) {
+          this.log.error('[PIPELINE:recovery-nudge-failed]', err)
+        }
+
+        if (!recovered) {
+          const fallbackMessage =
+            this.toolCallCount === 1
+              ? '\n\n_I read a file but my response was cut short. Could you repeat your question?_'
+              : `\n\n_I used ${this.toolCallCount} tools but didn't produce a summary. Try asking "what did you find?" and I'll summarize._`
+          this.accumulatedText += fallbackMessage
+          this.emit('chunk', {
+            type: 'text',
+            content: fallbackMessage
+          } as StreamChunk)
+        }
       }
 
       // Detect control blocks in accumulated text. Handoff is detected in-stream to reduce latency.

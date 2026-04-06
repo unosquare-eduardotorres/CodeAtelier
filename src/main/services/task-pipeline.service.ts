@@ -532,7 +532,7 @@ export class TaskPipelineService {
           `[PIPELINE:context-injection-dedup] Extracted investigation report (${contextToInject.length} chars vs ${rawOutput.length} raw)`
         )
       } else {
-        contextToInject = rawOutput.substring(0, 1000)
+        contextToInject = rawOutput.substring(0, 3000)
       }
 
       if (contextToInject.trim()) {
