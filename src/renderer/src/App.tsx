@@ -190,7 +190,8 @@ function App(): React.JSX.Element {
         elapsedMs: data.elapsedMs,
         tokenUsage: data.tokenUsage,
         model: data.model,
-        complexityTier: data.complexityTier
+        complexityTier: data.complexityTier,
+        activeMcpTools: data.activeMcpTools
       })
     })
 

@@ -15,10 +15,10 @@ import type {
 } from '../../shared/types'
 
 /**
- * AgentSyncService — bridges workspace YAML files with the SQLite runtime cache.
+ * AgentSyncService — bridges workspace YAML files with the SQLite database.
  *
- * YAMLs are the portable source of truth (git-committed).
- * SQLite is Agent Studio's local runtime cache.
+ * The DB is the primary source of truth for specialist definitions.
+ * Workspace YAMLs (if present) are synced into the DB on workspace open.
  * Sync is workspace-scoped — triggered on workspace open or via Settings UI.
  */
 export class AgentSyncService {
@@ -255,7 +255,7 @@ export class AgentSyncService {
 
   // ── Private Helpers ──
 
-  /** Get only deployed workspace agents (not master-only ones) */
+  /** Get deployed workspace agents */
   private getDeployedWorkspaceAgents(workspacePath: string): DiscoveredAgent[] {
     const allAgents = workspaceDeployService.scanWorkspaceAgents(workspacePath)
     return allAgents.filter((a) => a.isDeployed)

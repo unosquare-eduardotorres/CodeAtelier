@@ -81,7 +81,7 @@ export interface SDKExecuteOptions {
   systemPrompt: string
   model: string
   cwd: string
-  permissionMode: 'plan' | 'bypassPermissions' | 'acceptEdits'
+  permissionMode: 'default' | 'plan' | 'bypassPermissions' | 'acceptEdits'
   allowedTools?: string[]
   /** Tools to completely remove from model context (cannot be used at all) */
   disallowedTools?: string[]
@@ -164,6 +164,8 @@ export class SDKExecutor {
     let hasStreamedText = false
     const processedToolIds = new Set<string>()
     const exitPlanModeToolIds = new Set<string>() // Track ExitPlanMode tool IDs to suppress their tool_result
+    let planExtracted = false // Track ExitPlanMode → abort after plan yield
+    let planDetectedInStream = false // Suppress parallel tool_use events after ExitPlanMode in stream
 
     // Start heartbeat timer — sets a flag that the generator checks on each iteration
     if (heartbeatInterval > 0) {
@@ -317,13 +319,17 @@ export class SDKExecutor {
                   typeof toolInput.plan === 'string'
                 ) {
                   sdkLog.info(
-                    'Intercepted ExitPlanMode — injecting plan content as ````plan block'
+                    'Intercepted ExitPlanMode — injecting plan content and aborting session'
                   )
                   yield {
                     type: 'text',
                     content: `\n\n\`\`\`\`plan\n${toolInput.plan}\n\`\`\`\`\n`
                   }
-                  continue
+                  planExtracted = true
+                  // Abort the SDK session to prevent the agent from continuing after plan submission.
+                  // The catch block below handles this gracefully when planExtracted is true.
+                  options.abortController?.abort('plan-submitted')
+                  break // Exit inner block loop — outer loop will hit AbortError on next iteration
                 }
 
                 const toolId = block.id as string | undefined
@@ -364,6 +370,12 @@ export class SDKExecutor {
               // Suppress ExitPlanMode tool_use — plan content extracted in assistant message handler
               if (toolName === 'ExitPlanMode') {
                 if (toolId) exitPlanModeToolIds.add(toolId)
+                planDetectedInStream = true // Flag to suppress parallel tools in same turn
+                continue
+              }
+              // If ExitPlanMode was detected in this turn, suppress all other tool_use events
+              // to prevent the UI from showing Bash/Agent/etc. as "running"
+              if (planDetectedInStream) {
                 continue
               }
               const toolInput = cb.input as Record<string, unknown> | undefined
@@ -444,18 +456,28 @@ export class SDKExecutor {
         }
       }
     } catch (error) {
-      sdkLog.error('SDK execution error:', error)
-      // Telemetry: record failure
-      telemetryEntry.status = 'failed'
-      telemetryEntry.completedAt = Date.now()
-      telemetryEntry.durationMs = telemetryEntry.completedAt - telemetryEntry.startedAt
-      telemetryEntry.error = (error as Error).message
-      sdkLog.info(
-        `[TELEMETRY:request-failed] id=${requestId} duration=${telemetryEntry.durationMs}ms error=${telemetryEntry.error}`
-      )
-      yield {
-        type: 'error',
-        error: `SDK execution failed: ${(error as Error).message}`
+      if (planExtracted) {
+        // Expected abort after plan extraction — not an error
+        sdkLog.info(
+          `[TELEMETRY:plan-abort] id=${requestId} — SDK aborted after plan extraction (expected)`
+        )
+        telemetryEntry.status = 'succeeded'
+        telemetryEntry.completedAt = Date.now()
+        telemetryEntry.durationMs = telemetryEntry.completedAt - telemetryEntry.startedAt
+      } else {
+        sdkLog.error('SDK execution error:', error)
+        // Telemetry: record failure
+        telemetryEntry.status = 'failed'
+        telemetryEntry.completedAt = Date.now()
+        telemetryEntry.durationMs = telemetryEntry.completedAt - telemetryEntry.startedAt
+        telemetryEntry.error = (error as Error).message
+        sdkLog.info(
+          `[TELEMETRY:request-failed] id=${requestId} duration=${telemetryEntry.durationMs}ms error=${telemetryEntry.error}`
+        )
+        yield {
+          type: 'error',
+          error: `SDK execution failed: ${(error as Error).message}`
+        }
       }
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer)

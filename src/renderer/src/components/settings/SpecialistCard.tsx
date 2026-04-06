@@ -7,9 +7,9 @@ import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapp
 
 interface SpecialistCardProps {
   specialist: MarketplaceSpecialist
-  isDeploying: boolean
-  onDeploy: () => void
-  onUndeploy: () => void
+  isActivating: boolean
+  onActivate: () => void
+  onDeactivate: () => void
   onConfigure: () => void
 }
 
@@ -33,9 +33,9 @@ const MODEL_BADGES: Record<string, { label: string; icon: React.ReactNode; class
 
 export default function SpecialistCard({
   specialist,
-  isDeploying,
-  onDeploy,
-  onUndeploy,
+  isActivating,
+  onActivate,
+  onDeactivate,
   onConfigure
 }: SpecialistCardProps): React.JSX.Element {
   const [isHovered, setIsHovered] = useState(false)
@@ -61,7 +61,7 @@ export default function SpecialistCard({
         if (e.key === 'Enter') onConfigure()
         if (e.key === ' ') {
           e.preventDefault()
-          isActive ? onUndeploy() : onDeploy()
+          isActive ? onDeactivate() : onActivate()
         }
       }}
     >
@@ -80,7 +80,7 @@ export default function SpecialistCard({
         </button>
         <div
           className={`w-2.5 h-2.5 rounded-full ${isActive ? 'bg-success shadow-[0_0_6px_rgba(52,211,153,0.5)]' : 'bg-neutral-500'}`}
-          title={isActive ? 'Active & Deployed' : 'Available'}
+          title={isActive ? 'Active' : 'Available'}
         />
       </div>
 
@@ -141,7 +141,7 @@ export default function SpecialistCard({
         )}
       </div>
 
-      {/* Deploy/Undeploy button */}
+      {/* Activate/Deactivate button */}
       <div className="mt-auto">
         {specialist.isCore ? (
           <div className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
@@ -151,23 +151,23 @@ export default function SpecialistCard({
           </div>
         ) : isActive ? (
           <button
-            onClick={onUndeploy}
-            disabled={isDeploying}
+            onClick={onDeactivate}
+            disabled={isActivating}
             className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
               text-danger border border-danger/30 hover:bg-danger-muted
               disabled:opacity-50 disabled:cursor-not-allowed transition-colors min-h-[36px]"
           >
-            {isDeploying ? <Loader2 size={12} className="animate-spin" /> : 'Undeploy'}
+            {isActivating ? <Loader2 size={12} className="animate-spin" /> : 'Deactivate'}
           </button>
         ) : (
           <button
-            onClick={onDeploy}
-            disabled={isDeploying}
+            onClick={onActivate}
+            disabled={isActivating}
             className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
               text-success border border-success/30 hover:bg-success-muted
               disabled:opacity-50 disabled:cursor-not-allowed transition-colors min-h-[36px]"
           >
-            {isDeploying ? <Loader2 size={12} className="animate-spin" /> : 'Deploy'}
+            {isActivating ? <Loader2 size={12} className="animate-spin" /> : 'Activate'}
           </button>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Users, UserRound, ArrowRight, CheckCircle2, Clock, Loader2, XCircle, X } from 'lucide-react'
 import type {
   DecomposedTask,
@@ -305,6 +305,27 @@ export default function TaskPlanCard({
         onCancel={handleWarningCancel}
       />
     </div>
+  )
+}
+
+/** Small component that ticks every second showing live elapsed time */
+function ElapsedTimer({ startedAt }: { startedAt: number }): React.JSX.Element {
+  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - startedAt) / 1000))
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000))
+    }, 1000)
+    return (): void => clearInterval(interval)
+  }, [startedAt])
+
+  const mins = Math.floor(elapsed / 60)
+  const secs = elapsed % 60
+
+  return (
+    <span className="text-[10px] text-text-muted tabular-nums">
+      {mins > 0 ? `${mins}m ${secs}s` : `${secs}s`}
+    </span>
   )
 }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, X, Bot, MessageSquarePlus } from 'lucide-react'
-import { useChatStore, useChatActions, useWorkspaceStore, useProfileStore, useConversationSpecialists, useSpecialistStore, useCodeChangesStore } from '@renderer/store'
+import { Search, X, Bot, MessageSquarePlus, Braces, SearchCode } from 'lucide-react'
+import { useChatStore, useChatActions, useWorkspaceStore, useProfileStore, useConversationSpecialists, useSpecialistStore, useCodeChangesStore, useAgentStore } from '@renderer/store'
 import {
   MessageList,
   MessageInput,
@@ -47,6 +47,12 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
 
   // Code changes count for tab badge
   const pendingChangesCount = useCodeChangesStore((s) => s.files.length)
+
+  // Active MCP tools from generalist status
+  const activeMcpTools = useAgentStore((s) => {
+    const generalist = s.statuses.find((st) => st.agentType === 'generalist')
+    return generalist?.activeMcpTools
+  })
 
   // Load code changes when conversation changes
   const loadFiles = useCodeChangesStore((s) => s.loadFiles)
@@ -148,6 +154,20 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
             Code Changes
           </ChatTabButton>
         </div>
+        {activeTab === 'chat' && activeMcpTools && activeMcpTools.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            {activeMcpTools.includes('code-graph') && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full">
+                <Braces size={10} /> Code Graph
+              </span>
+            )}
+            {activeMcpTools.includes('semantic-search') && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-sky-400 bg-sky-500/10 border border-sky-500/20 px-1.5 py-0.5 rounded-full">
+                <SearchCode size={10} /> Semantic
+              </span>
+            )}
+          </div>
+        )}
         {activeTab === 'chat' && (
           <div className="flex items-center gap-2">
             <ModeToggle

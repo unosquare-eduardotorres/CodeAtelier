@@ -830,6 +830,7 @@ const api = {
       status: string
       elapsedMs: number
       tokenUsage: number
+      activeMcpTools?: string[]
     }) => void
   ): (() => void) => {
     const handler = (
@@ -840,6 +841,7 @@ const api = {
         status: string
         elapsedMs: number
         tokenUsage: number
+        activeMcpTools?: string[]
       }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.AGENT_STATUS_UPDATE, handler)

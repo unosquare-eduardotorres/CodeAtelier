@@ -20,6 +20,98 @@ import type { CodeGraphIndexingState } from '../../shared/types'
  * - Incremental re-indexing via file mtime comparison
  * - Progress events streamed to renderer via IPC
  */
+/** Edge in the code graph: a reference from one file to a definition in another. */
+export interface GraphEdge {
+  from: string
+  to: string
+  name: string
+}
+
+/**
+ * Build edge list from defines/references tag maps.
+ * Pure function: takes tags, returns edge list.
+ * An edge is created from each reference file to each definition file for the same symbol,
+ * excluding self-references (ref and def in same file).
+ */
+export function buildEdgesFromTags(tags: RepomapTag[]): GraphEdge[] {
+  const defines = new Map<string, Set<string>>()
+  const references = new Map<string, Set<string>>()
+  for (const tag of tags) {
+    const map = tag.kind === 'def' ? defines : references
+    let set = map.get(tag.name)
+    if (!set) {
+      set = new Set()
+      map.set(tag.name, set)
+    }
+    set.add(tag.relFname)
+  }
+
+  const edges: GraphEdge[] = []
+  for (const [name, refFiles] of references) {
+    const defFiles = defines.get(name)
+    if (!defFiles) continue
+    for (const refFile of refFiles) {
+      for (const defFile of defFiles) {
+        if (refFile !== defFile) edges.push({ from: refFile, to: defFile, name })
+      }
+    }
+  }
+  return edges
+}
+
+/**
+ * Apply focus/priority boosts to pre-computed PageRank scores.
+ * Pure function: takes ranks + boost config, returns new boosted Map.
+ *
+ * Boost multipliers:
+ * - Focus files: 20x
+ * - Priority files: 5x
+ * - Files containing priority identifiers: 3x (matched case-insensitively against tag names)
+ */
+export function applyRankBoosts(
+  ranks: Map<string, number>,
+  focusFiles: string[],
+  priorityFiles: string[],
+  priorityIdentifiers: string[],
+  tags: RepomapTag[]
+): Map<string, number> {
+  const boostedRanks = new Map(ranks)
+
+  for (const file of focusFiles) {
+    const current = boostedRanks.get(file) ?? 0
+    boostedRanks.set(file, current * 20)
+  }
+  for (const file of priorityFiles) {
+    const current = boostedRanks.get(file) ?? 0
+    boostedRanks.set(file, current * 5)
+  }
+
+  if (priorityIdentifiers.length > 0) {
+    const identifierSet = new Set(priorityIdentifiers.map((id) => id.toLowerCase()))
+    for (const tag of tags) {
+      if (identifierSet.has(tag.name.toLowerCase())) {
+        const current = boostedRanks.get(tag.relFname) ?? 0
+        boostedRanks.set(tag.relFname, current * 3)
+      }
+    }
+  }
+
+  return boostedRanks
+}
+
+/**
+ * Filter and sort files by boosted rank descending.
+ * When excludeUnranked is true, files with rank === 0 are removed.
+ */
+export function sortAndFilterByRank(
+  boostedRanks: Map<string, number>,
+  excludeUnranked: boolean
+): Array<[string, number]> {
+  return [...boostedRanks.entries()]
+    .filter(([, rank]) => !excludeUnranked || rank > 0)
+    .sort((a, b) => b[1] - a[1])
+}
+
 class CodeGraphService extends EventEmitter {
   private indexingStates = new Map<string, CodeGraphIndexingState>()
 
@@ -126,30 +218,8 @@ class CodeGraphService extends EventEmitter {
     const { pagerank } =
       (await import('repomap-mcp/dist/pagerank.js')) as typeof import('repomap-mcp/dist/pagerank.js')
 
-    // Build defines/references maps
-    const defines = new Map<string, Set<string>>()
-    const references = new Map<string, Set<string>>()
-    for (const tag of allTags) {
-      const map = tag.kind === 'def' ? defines : references
-      let set = map.get(tag.name)
-      if (!set) {
-        set = new Set()
-        map.set(tag.name, set)
-      }
-      set.add(tag.relFname)
-    }
-
-    // Build edges
-    const edges: Array<{ from: string; to: string; name: string }> = []
-    for (const [name, refFiles] of references) {
-      const defFiles = defines.get(name)
-      if (!defFiles) continue
-      for (const refFile of refFiles) {
-        for (const defFile of defFiles) {
-          if (refFile !== defFile) edges.push({ from: refFile, to: defFile, name })
-        }
-      }
-    }
+    // Build edges using extracted pure function
+    const edges = buildEdgesFromTags(allTags)
 
     // PageRank — use provided nodes or derive from tags
     const nodes = allNodes ?? new Set(allTags.map((t) => t.relFname))
@@ -248,32 +318,11 @@ class CodeGraphService extends EventEmitter {
     const ranks = codeGraphRankRepository.findByWorkspace(workspaceId)
     const tags = codeGraphTagRepository.findDefsByWorkspace(workspaceId)
 
-    // Apply focus/priority boosts to pre-computed ranks
-    const boostedRanks = new Map(ranks)
-    for (const file of focusFiles) {
-      const current = boostedRanks.get(file) ?? 0
-      boostedRanks.set(file, current * 20)
-    }
-    for (const file of priorityFiles) {
-      const current = boostedRanks.get(file) ?? 0
-      boostedRanks.set(file, current * 5)
-    }
+    // Apply focus/priority boosts using extracted pure function
+    const boostedRanks = applyRankBoosts(ranks, focusFiles, priorityFiles, priorityIdentifiers, tags)
 
-    // Boost files containing priority identifiers
-    if (priorityIdentifiers.length > 0) {
-      const identifierSet = new Set(priorityIdentifiers.map((id) => id.toLowerCase()))
-      for (const tag of tags) {
-        if (identifierSet.has(tag.name.toLowerCase())) {
-          const current = boostedRanks.get(tag.relFname) ?? 0
-          boostedRanks.set(tag.relFname, current * 3)
-        }
-      }
-    }
-
-    // Sort files by boosted rank
-    const rankedFiles = [...boostedRanks.entries()]
-      .filter(([, rank]) => !options.excludeUnranked || rank > 0)
-      .sort((a, b) => b[1] - a[1])
+    // Sort and filter using extracted pure function
+    const rankedFiles = sortAndFilterByRank(boostedRanks, options.excludeUnranked ?? false)
 
     // Group definition tags by file
     const tagsByFile = new Map<string, RepomapTag[]>()

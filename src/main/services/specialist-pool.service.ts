@@ -123,6 +123,8 @@ interface SpecialistProcessInfo {
   abortController?: AbortController
   /** Number of tool calls made during execution */
   toolCallCount: number
+  /** Timestamp when task started running */
+  startedAt?: number
 }
 
 /** Configuration for a single SDK execution run, shared across sub-methods */
@@ -139,6 +141,31 @@ interface SDKExecutionState {
   abortedAfterReportDetection: boolean
   reportRegex: RegExp
   releasePermit: () => void
+}
+
+/** Summarize tool input into a short human-readable description */
+function summarizeToolInput(toolName: string, toolInput: string): string {
+  try {
+    const parsed = typeof toolInput === 'string' ? JSON.parse(toolInput) : toolInput
+    switch (toolName) {
+      case 'Read':
+        return parsed.file_path ? `reading ${parsed.file_path.split('/').pop()}` : 'reading file'
+      case 'Edit':
+        return parsed.file_path ? `editing ${parsed.file_path.split('/').pop()}` : 'editing file'
+      case 'Write':
+        return parsed.file_path ? `writing ${parsed.file_path.split('/').pop()}` : 'writing file'
+      case 'Grep':
+        return parsed.pattern ? `searching "${parsed.pattern}"` : 'searching'
+      case 'Glob':
+        return parsed.pattern ? `finding ${parsed.pattern}` : 'finding files'
+      case 'Bash':
+        return parsed.command ? `running ${parsed.command.substring(0, 40)}` : 'running command'
+      default:
+        return ''
+    }
+  } catch {
+    return ''
+  }
 }
 
 /** Investigation task keyword list */
@@ -294,14 +321,21 @@ export class SpecialistPoolService extends EventEmitter {
     for (const task of ordered) {
       if (this.aborted) break
 
-      this.emitProgress(task, 'running')
+      const taskStartedAt = Date.now()
+      this.emitProgress(task, 'running', undefined, undefined, { startedAt: taskStartedAt })
       try {
         const output = await this.runSpecialistTask(task, mode)
         this.taskResults.set(task.id, output)
         this.completedTasks.add(task.id)
-        this.emitProgress(task, 'completed', output)
+        this.emitProgress(task, 'completed', output, undefined, {
+          startedAt: taskStartedAt,
+          completedAt: Date.now()
+        })
       } catch (error) {
-        this.emitProgress(task, 'failed', undefined, (error as Error).message)
+        this.emitProgress(task, 'failed', undefined, (error as Error).message, {
+          startedAt: taskStartedAt,
+          completedAt: Date.now()
+        })
         // Continue with remaining tasks — downstream dependents will still run
         // but without the output context from this failed task
       }
@@ -496,7 +530,8 @@ export class SpecialistPoolService extends EventEmitter {
       }
     }
 
-    this.emitProgress(task, 'running')
+    const startedAt = Date.now()
+    this.emitProgress(task, 'running', undefined, undefined, { startedAt })
 
     // Create worktree for isolation, then spawn the specialist
     this.createWorktreeAndSpawn(task, mode, onDone)
@@ -588,7 +623,8 @@ export class SpecialistPoolService extends EventEmitter {
           cacheReadTokens: 0,
           cacheCreationTokens: 0,
           escalations: [],
-          toolCallCount: 0
+          toolCallCount: 0,
+          startedAt: Date.now()
         }
 
         // Agent started event now handled by trace-bridge via specialist_start span
@@ -1133,7 +1169,7 @@ export class SpecialistPoolService extends EventEmitter {
         systemPrompt,
         model: modelId,
         cwd,
-        permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
+        permissionMode: mode === 'build' ? 'bypassPermissions' : 'default',
         maxThinkingTokens: parseInt(thinkingBudget) || undefined,
         maxTurns: execState.maxTurns,
         abortController: execState.abortController,
@@ -1374,6 +1410,14 @@ export class SpecialistPoolService extends EventEmitter {
         input: chunk.toolInput ?? ''
       }
     })
+
+    // Emit enriched progress with live tool activity
+    this.emitProgress(task, 'running', undefined, undefined, {
+      currentTool: chunk.toolName ?? 'Unknown',
+      currentToolSummary: summarizeToolInput(chunk.toolName ?? '', chunk.toolInput ?? ''),
+      toolCallCount: state.toolCallCount,
+      startedAt: info.startedAt
+    })
   }
 
   /** Handle tool_result chunk — fire observation hooks */
@@ -1599,7 +1643,8 @@ export class SpecialistPoolService extends EventEmitter {
     task: DecomposedTask,
     status: TaskExecutionProgress['status'],
     output?: string,
-    error?: string
+    error?: string,
+    extras?: Partial<Pick<TaskExecutionProgress, 'currentTool' | 'currentToolSummary' | 'toolCallCount' | 'startedAt' | 'completedAt'>>
   ): void {
     const progress: TaskExecutionProgress = {
       taskId: task.id,
@@ -1608,7 +1653,8 @@ export class SpecialistPoolService extends EventEmitter {
       output,
       error,
       model: task.model,
-      complexityTier: task.complexity?.tier
+      complexityTier: task.complexity?.tier,
+      ...extras
     }
     this.emit('taskProgress', progress)
   }
@@ -1765,7 +1811,10 @@ export class SpecialistPoolService extends EventEmitter {
 
     info.status = 'completed'
     this.taskStatuses.set(task.id, 'completed')
-    this.emitProgress(task, 'completed', info.output)
+    this.emitProgress(task, 'completed', info.output, undefined, {
+      startedAt: info.startedAt,
+      completedAt: Date.now()
+    })
 
     // Clean up task loop state
     taskLoopService.cleanup(task.id)

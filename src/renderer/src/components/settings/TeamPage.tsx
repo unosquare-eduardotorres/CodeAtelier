@@ -4,7 +4,6 @@ import {
   RefreshCw,
   Trash2,
   Loader2,
-  Rocket,
   Save,
   Power,
   PowerOff,
@@ -240,7 +239,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
     setHasEditorChanges(value !== initialContent)
   }
 
-  const handleDeployAll = async (): Promise<void> => {
+  const handleAutoActivate = async (): Promise<void> => {
     setIsDeploying(true)
     try {
       await deployAll(workspacePath)
@@ -322,28 +321,28 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
         <div className="max-w-4xl mx-auto px-6 py-10">
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-16 h-16 rounded-2xl bg-primary-muted flex items-center justify-center mb-4">
-              <Rocket size={28} className="text-primary-text" />
+              <Sparkles size={28} className="text-primary-text" />
             </div>
             <h3 className="text-base font-semibold text-text-primary mb-2">Get Started</h3>
             <p className="text-sm text-text-secondary max-w-md mb-6">
-              Deploy specialist agents and skills to this workspace. Each starts inactive —
-              activate the ones you need for your project.
+              Activate specialist agents for this workspace. Each can be individually
+              activated or deactivated as needed for your project.
             </p>
             <button
-              onClick={handleDeployAll}
+              onClick={handleAutoActivate}
               disabled={isDeploying}
               className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-primary/50"
-              aria-label="Deploy specialist agents and skills"
+              aria-label="Auto-activate specialist agents"
             >
               {isDeploying ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  Deploying...
+                  Activating...
                 </>
               ) : (
                 <>
-                  <Rocket size={16} />
-                  Deploy Team
+                  <Sparkles size={16} />
+                  Auto-Activate Team
                 </>
               )}
             </button>

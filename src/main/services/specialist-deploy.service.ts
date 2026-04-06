@@ -18,60 +18,52 @@ class SpecialistDeployService {
   private readonly CORE_AGENT_IDS = new Set(['generalist', 'generalist-agent'])
 
   /**
-   * Deploy a specialist to the workspace:
-   * 1. Copy agent YAML from master to workspace
-   * 2. Symlink each attached skill
-   * 3. Set is_active = true in DB
-   * 4. Regenerate CLAUDE.md
+   * Activate a specialist for the workspace:
+   * 1. Set is_active = true in DB
+   * 2. Optionally deploy attached skills (skipped by default during bulk activate)
+   * 3. Regenerate CLAUDE.md
    */
-  deploySpecialist(workspacePath: string, specialistId: string): void {
+  deploySpecialist(
+    workspacePath: string,
+    specialistId: string,
+    options?: { skipSkills?: boolean }
+  ): void {
     const specialist = specialistRepository.findById(specialistId)
     if (!specialist) {
       throw new Error(`Specialist not found: ${specialistId}`)
     }
     if (this.CORE_AGENT_IDS.has(specialist.agentId)) {
-      throw new Error(`Cannot deploy/undeploy core agent: ${specialist.agentId}`)
+      throw new Error(`Cannot activate/deactivate core agent: ${specialist.agentId}`)
     }
 
-    const skills = specialistRepository.getAllSkills(specialistId)
-    const agentFilename = `${specialist.agentId}.yml`
+    // 1. Set active in DB
+    specialistRepository.update(specialistId, { isActive: true })
 
-    // 1. Deploy agent YAML
-    try {
-      workspaceDeployService.deployAgent(workspacePath, agentFilename)
-    } catch (error) {
-      deployLogger.warn(
-        `Agent YAML not found for ${specialist.agentId}, skipping file deploy: ${(error as Error).message}`
-      )
-    }
-
-    // 2. Deploy each attached skill
-    for (const skill of skills) {
-      const skillName = this.extractSkillName(skill)
-      try {
-        workspaceDeployService.deploySkill(workspacePath, skillName)
-      } catch (error) {
-        deployLogger.warn(`Skill deploy failed for ${skillName}: ${(error as Error).message}`)
+    // 2. Optionally deploy each attached skill (skipped during bulk activate)
+    if (!options?.skipSkills) {
+      const skills = specialistRepository.getAllSkills(specialistId)
+      for (const skill of skills) {
+        const skillName = this.extractSkillName(skill)
+        try {
+          workspaceDeployService.deploySkill(workspacePath, skillName)
+        } catch (error) {
+          deployLogger.warn(`Skill deploy failed for ${skillName}: ${(error as Error).message}`)
+        }
       }
     }
 
-    // 3. Set active in DB
-    specialistRepository.update(specialistId, { isActive: true })
-
-    // 4. Regenerate CLAUDE.md
+    // 3. Regenerate CLAUDE.md
     this.regenerateClaudeMd(workspacePath)
 
     deployLogger.info(
-      `Deployed specialist "${specialist.displayName}" (${specialist.agentId}) to ${workspacePath}`
+      `Activated specialist "${specialist.displayName}" (${specialist.agentId}) for ${workspacePath}`
     )
   }
 
   /**
-   * Undeploy a specialist from the workspace:
-   * 1. Remove agent YAML from workspace
-   * 2. Remove orphan skills (not used by other active specialists)
-   * 3. Set is_active = false in DB
-   * 4. Regenerate CLAUDE.md
+   * Deactivate a specialist from the workspace:
+   * 1. Set is_active = false in DB
+   * 2. Regenerate CLAUDE.md
    */
   undeploySpecialist(workspacePath: string, specialistId: string): void {
     const specialist = specialistRepository.findById(specialistId)
@@ -79,33 +71,17 @@ class SpecialistDeployService {
       throw new Error(`Specialist not found: ${specialistId}`)
     }
     if (this.CORE_AGENT_IDS.has(specialist.agentId)) {
-      throw new Error(`Cannot undeploy core agent: ${specialist.agentId}`)
+      throw new Error(`Cannot deactivate core agent: ${specialist.agentId}`)
     }
 
-    const skills = specialistRepository.getAllSkills(specialistId)
-    const agentFilename = `${specialist.agentId}.yml`
-
-    // 1. Remove agent YAML
-    workspaceDeployService.undeployAgent(workspacePath, agentFilename)
-
-    // 2. Find and remove orphan skills
-    for (const skill of skills) {
-      const skillName = this.extractSkillName(skill)
-      // Check if any OTHER active specialist uses this skill
-      const usedByOthers = this.isSkillUsedByOtherActiveSpecialists(skill.id, specialistId)
-      if (!usedByOthers) {
-        workspaceDeployService.undeploySkill(workspacePath, skillName)
-      }
-    }
-
-    // 3. Set inactive in DB
+    // 1. Set inactive in DB
     specialistRepository.update(specialistId, { isActive: false })
 
-    // 4. Regenerate CLAUDE.md
+    // 2. Regenerate CLAUDE.md
     this.regenerateClaudeMd(workspacePath)
 
     deployLogger.info(
-      `Undeployed specialist "${specialist.displayName}" (${specialist.agentId}) from ${workspacePath}`
+      `Deactivated specialist "${specialist.displayName}" (${specialist.agentId}) from ${workspacePath}`
     )
   }
 
@@ -163,16 +139,18 @@ class SpecialistDeployService {
   }
 
   /**
-   * Deploy all specialists to workspace at once.
+   * Activate all specialists for the workspace at once (skills are skipped).
    */
   deployAll(workspacePath: string): void {
     const specialists = specialistRepository.findAll()
     for (const specialist of specialists) {
       if (!specialist.isActive) {
         try {
-          this.deploySpecialist(workspacePath, specialist.id)
+          this.deploySpecialist(workspacePath, specialist.id, { skipSkills: true })
         } catch (error) {
-          deployLogger.warn(`Failed to deploy ${specialist.agentId}: ${(error as Error).message}`)
+          deployLogger.warn(
+            `Failed to activate ${specialist.agentId}: ${(error as Error).message}`
+          )
         }
       }
     }
@@ -191,17 +169,6 @@ class SpecialistDeployService {
     if (match) return match[1]
     // Fallback: strip extension from filename
     return skill.filename.replace(/\.md$/, '')
-  }
-
-  /**
-   * Check if a skill is used by any other ACTIVE specialist (excluding the given one).
-   */
-  private isSkillUsedByOtherActiveSpecialists(
-    skillId: string,
-    excludeSpecialistId: string
-  ): boolean {
-    const specialists = specialistRepository.findSpecialistsForSkill(skillId)
-    return specialists.some((s) => s.id !== excludeSpecialistId && s.isActive)
   }
 
   /**
@@ -309,7 +276,7 @@ ${skillRows}`)
     const result = {
       model: 'sonnet',
       tools: [] as string[],
-      description: specialist.prompt || `${specialist.displayName} specialist agent`
+      description: specialist.description || specialist.prompt || `${specialist.displayName} specialist`
     }
 
     if (!specialist.sourceYaml) return result

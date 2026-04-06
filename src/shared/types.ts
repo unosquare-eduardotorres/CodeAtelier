@@ -88,6 +88,8 @@ export interface AgentStatus {
   // Complexity scoring — populated when running as a specialist
   model?: ModelTier
   complexityTier?: ComplexityTier
+  // Active MCP tool servers — populated by generalist to indicate which intelligence tools are enabled
+  activeMcpTools?: string[]
 }
 
 // ── Typed Stream Events (discriminated union for compile-time exhaustiveness) ──
@@ -475,6 +477,17 @@ export interface TaskExecutionProgress {
   // Complexity scoring
   model?: ModelTier
   complexityTier?: ComplexityTier
+  // Live execution visibility
+  /** Currently running tool name (e.g., "Read", "Edit", "Grep") */
+  currentTool?: string
+  /** Human-readable description of what the tool is doing */
+  currentToolSummary?: string
+  /** Number of tool calls made so far */
+  toolCallCount?: number
+  /** Timestamp when task started running */
+  startedAt?: number
+  /** Timestamp when task completed/failed */
+  completedAt?: number
 }
 
 // ── Git Worktree Models ──

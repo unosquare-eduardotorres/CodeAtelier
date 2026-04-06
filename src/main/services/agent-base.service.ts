@@ -79,7 +79,51 @@ export function summarizeToolInput(
       return 'Task management'
     case 'TaskOutput':
       return `Reading output of task ${(input.id as string)?.slice(0, 7) ?? ''}…`
+
+    // ── MCP tools: Code Graph ──
+    case 'mcp__code-graph__repo_map':
+      return `repo_map${input.focusFiles ? ` (focus: ${(input.focusFiles as string[]).length} files)` : ''}`
+    case 'mcp__code-graph__search_identifiers':
+      return `search: ${(input.query as string) || ''}`
+
+    // ── MCP tools: Semantic Search ──
+    case 'mcp__semantic-search__semantic_search':
+      return `semantic: ${(input.query as string) || ''}`
+
+    // ── MCP tools: Git Context ──
+    case 'mcp__git-context__git_log':
+      return `git log${input.path ? ` ${toRelativePath(input.path as string, workspacePath)}` : ''}`
+    case 'mcp__git-context__git_diff':
+      return `git diff${input.path ? ` ${toRelativePath(input.path as string, workspacePath)}` : ''}`
+    case 'mcp__git-context__git_blame':
+      return `git blame ${toRelativePath((input.path as string) || '', workspacePath)}`
+
+    // ── MCP tools: Task Context ──
+    case 'mcp__task-context__list_tasks':
+      return 'list tasks'
+    case 'mcp__task-context__get_task_output':
+      return `task output ${(input.taskId as string)?.slice(0, 7) ?? ''}…`
+
+    // ── MCP tools: Checkpoint Context ──
+    case 'mcp__checkpoint-context__list_checkpoints':
+      return 'list checkpoints'
+    case 'mcp__checkpoint-context__get_checkpoint':
+      return `checkpoint ${(input.checkpointId as string)?.slice(0, 7) ?? ''}…`
+
+    // ── MCP tools: GitHub Context ──
+    case 'mcp__github-context__get_pr_status':
+      return `PR #${(input.prNumber as string) || ''}`
+    case 'mcp__github-context__list_pr_comments':
+      return `PR #${(input.prNumber as string) || ''} comments`
+    case 'mcp__github-context__list_issues':
+      return 'list issues'
+
     default:
+      // Generic MCP tool fallback — extract server + tool name for any unhandled MCP tools
+      if (toolName.startsWith('mcp__')) {
+        const parts = toolName.split('__')
+        return parts.length >= 3 ? `${parts[1]}/${parts[2]}` : toolName
+      }
       return ''
   }
 }

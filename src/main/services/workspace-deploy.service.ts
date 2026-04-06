@@ -202,49 +202,19 @@ export class WorkspaceDeployService {
     }
   }
 
-  /** Scan Agent Studio's master .claude/agents/ directory */
+  /**
+   * Scan Agent Studio's master .claude/agents/ directory.
+   * @deprecated Master agent YAMLs have been removed — DB is the source of truth.
+   * Returns empty array. Kept for API compatibility.
+   */
   scanMasterAgents(): DiscoveredAgent[] {
-    const agentsDir = join(this.getMasterClaudeDir(), 'agents')
-    if (!existsSync(agentsDir)) return []
-
-    const agents: DiscoveredAgent[] = []
-    try {
-      const files = readdirSync(agentsDir)
-      for (const f of files) {
-        if (!f.endsWith('.yml') && !f.endsWith('.yaml')) continue
-
-        const filePath = join(agentsDir, f)
-        try {
-          const content = readFileSync(filePath, 'utf-8')
-          const { frontmatter, body } = parseAgentYaml(content)
-
-          agents.push({
-            filename: f,
-            filePath,
-            parsed: {
-              name: (frontmatter.name as string) ?? f.replace(/\.ya?ml$/, ''),
-              description: (frontmatter.description as string) ?? '',
-              model: (frontmatter.model as string) ?? 'sonnet',
-              tools: Array.isArray(frontmatter.tools) ? (frontmatter.tools as string[]) : [],
-              skills: Array.isArray(frontmatter.skills) ? (frontmatter.skills as string[]) : []
-            },
-            bodyContent: body,
-            isActive: true,
-            isDeployed: false,
-            source: 'master'
-          })
-        } catch {
-          /* skip unreadable files */
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-
-    return agents
+    return []
   }
 
-  /** Scan Agent Studio's master .claude/skills/ directory */
+  /**
+   * Scan Agent Studio's master .claude/skills/ directory.
+   * Skills still live as files in .claude/skills/ — this remains functional.
+   */
   scanMasterSkills(): DiscoveredSkill[] {
     const skillsDir = join(this.getMasterClaudeDir(), 'skills')
     if (!existsSync(skillsDir)) return []
@@ -256,10 +226,6 @@ export class WorkspaceDeployService {
   scanWorkspaceAgents(workspacePath: string): DiscoveredAgent[] {
     const agentsDir = join(workspacePath, '.claude', 'agents')
     if (!existsSync(agentsDir)) return []
-
-    // Get master agents for comparison
-    const masterAgents = this.scanMasterAgents()
-    const masterFilenames = new Set(masterAgents.map((a) => a.filename))
 
     const agents: DiscoveredAgent[] = []
     try {
@@ -285,7 +251,7 @@ export class WorkspaceDeployService {
             bodyContent: body,
             isActive: true,
             isDeployed: true,
-            source: masterFilenames.has(f) ? 'master' : 'workspace'
+            source: 'workspace'
           })
         } catch {
           /* skip */
@@ -293,17 +259,6 @@ export class WorkspaceDeployService {
       }
     } catch {
       /* ignore */
-    }
-
-    // Also include master agents that are NOT deployed (for the full list view)
-    const deployedFilenames = new Set(agents.map((a) => a.filename))
-    for (const master of masterAgents) {
-      if (!deployedFilenames.has(master.filename)) {
-        agents.push({
-          ...master,
-          isDeployed: false
-        })
-      }
     }
 
     // Enrich with DB specialist info (accurate isActive + specialistId)
@@ -423,18 +378,14 @@ export class WorkspaceDeployService {
 
   // ── Deployment ──
 
-  /** Copy a single agent YAML to workspace */
-  deployAgent(workspacePath: string, agentFilename: string): void {
-    const masterPath = join(this.getMasterClaudeDir(), 'agents', agentFilename)
-    const targetDir = join(workspacePath, '.claude', 'agents')
-    const targetPath = join(targetDir, agentFilename)
-
-    if (!existsSync(masterPath)) {
-      throw new Error(`Agent file not found in master: ${agentFilename}`)
-    }
-
-    mkdirSync(targetDir, { recursive: true })
-    copyFileSync(masterPath, targetPath)
+  /**
+   * Deploy agent YAML to workspace.
+   * @deprecated Master agent YAMLs have been removed — activation is DB-only.
+   * This is now a no-op. Kept for API compatibility.
+   */
+  deployAgent(_workspacePath: string, _agentFilename: string): void {
+    // No-op: master agent YAMLs have been removed.
+    // Activation is handled via DB is_active flag.
   }
 
   /** Remove a single agent YAML from workspace */
@@ -660,7 +611,10 @@ export class WorkspaceDeployService {
 
   // ── Activation Flow ──
 
-  /** Full activation: Opus analyzes project, selects agents, copies files, merges CLAUDE.md */
+  /**
+   * Full activation: activate all DB specialists, sync workspace, generate CLAUDE.md.
+   * Skills are NOT deployed during activation — users opt-in later.
+   */
   async activateAgents(
     workspacePath: string,
     onProgress?: (event: ActivationProgressEvent) => void
@@ -669,49 +623,14 @@ export class WorkspaceDeployService {
       onProgress?.({ type, message, timestamp: Date.now() })
     }
 
-    // ── STEP 1: Deploy all agents & skills (deterministic, no LLM) ──
-    emit('status', 'Scanning master agents and skills...')
-    const masterAgents = this.scanMasterAgents()
-    const masterSkills = this.scanMasterSkills()
-
-    // Create directories
+    // Ensure .claude/ directories exist
     const agentsDir = join(workspacePath, '.claude', 'agents')
     const skillsDir = join(workspacePath, '.claude', 'skills')
     mkdirSync(agentsDir, { recursive: true })
     mkdirSync(skillsDir, { recursive: true })
 
-    // Deploy ALL agent YAMLs
-    emit('status', `Deploying ${masterAgents.length} agents...`)
-    const deployedAgents: string[] = []
-    for (const agent of masterAgents) {
-      try {
-        this.deployAgent(workspacePath, agent.filename)
-        deployedAgents.push(agent.filename)
-      } catch (e) {
-        deployLogger.warn(`Failed to deploy agent ${agent.filename}:`, e)
-      }
-    }
-
-    // Collect all skills referenced by agents + deploy them
-    const referencedSkills = new Set<string>()
-    for (const agent of masterAgents) {
-      for (const skillRef of agent.parsed.skills) {
-        referencedSkills.add(skillRef)
-      }
-    }
-
-    emit('status', `Deploying ${referencedSkills.size} skills...`)
-    const deployedSkills: string[] = []
-    for (const skillName of referencedSkills) {
-      try {
-        this.deploySkill(workspacePath, skillName)
-        deployedSkills.push(skillName)
-      } catch {
-        /* skill may not exist in master */
-      }
-    }
-
-    // ── STEP 1.5: Auto-sync deployed agents/skills into DB ──
+    // ── STEP 1: Auto-sync workspace entries into DB ──
+    emit('status', 'Syncing workspace entries...')
     try {
       const { agentSyncService } = await import('./agent-sync.service')
       const syncResult = agentSyncService.autoSyncNewEntries(workspacePath)
@@ -723,6 +642,18 @@ export class WorkspaceDeployService {
       }
     } catch (e) {
       deployLogger.warn('Auto-sync after activation failed:', e)
+    }
+
+    // Scan workspace agents/skills for CLAUDE.md generation
+    const workspaceAgents = this.scanWorkspaceAgents(workspacePath)
+    const masterSkills = this.scanMasterSkills()
+
+    // Collect referenced skills from workspace agents
+    const referencedSkills = new Set<string>()
+    for (const agent of workspaceAgents) {
+      for (const skillRef of agent.parsed.skills) {
+        referencedSkills.add(skillRef)
+      }
     }
 
     // ── STEP 2: Generate merged CLAUDE.md deterministically (no LLM call) ──
@@ -739,7 +670,7 @@ export class WorkspaceDeployService {
 
     const mergedClaudeMd = this.generateClaudeMdDeterministic(
       existingClaudeMd,
-      masterAgents,
+      workspaceAgents,
       masterSkills,
       referencedSkills
     )
@@ -747,8 +678,8 @@ export class WorkspaceDeployService {
     emit('status', 'Activation complete!')
     return {
       success: true,
-      selectedAgents: deployedAgents,
-      selectedSkills: deployedSkills,
+      selectedAgents: workspaceAgents.map((a) => a.filename),
+      selectedSkills: [],
       existingClaudeMd,
       proposedClaudeMd: mergedClaudeMd,
       claudeMdWritten: false
@@ -879,50 +810,28 @@ ${skillRows}`)
     deployLogger.info(`Deleted all skills from workspace: ${workspacePath}`)
   }
 
-  /** Deploy all master agents & skills to workspace with inactive DB records */
+  /**
+   * Activate all specialists in the DB for a workspace.
+   * Skills are NOT deployed during bulk activation — users opt-in to skills later.
+   * Agent YAMLs are no longer copied (DB is source of truth).
+   */
   async deployAllInactive(workspacePath: string): Promise<{ agents: number; skills: number }> {
-    const masterAgents = this.scanMasterAgents()
-    const masterSkills = this.scanMasterSkills()
-
-    // Create directories
+    // Ensure .claude/ directories exist for workspace compatibility
     mkdirSync(join(workspacePath, '.claude', 'agents'), { recursive: true })
     mkdirSync(join(workspacePath, '.claude', 'skills'), { recursive: true })
 
-    // Deploy all agent YAMLs
-    let agentCount = 0
-    for (const agent of masterAgents) {
-      try {
-        this.deployAgent(workspacePath, agent.filename)
-        agentCount++
-      } catch {
-        /* skip */
-      }
-    }
-
-    // Deploy all skills referenced by agents
-    let skillCount = 0
-    const referencedSkills = new Set<string>()
-    for (const agent of masterAgents) {
-      for (const ref of agent.parsed.skills) referencedSkills.add(ref)
-    }
-    // Also include any standalone master skills
-    for (const skill of masterSkills) {
-      referencedSkills.add(skill.name)
-    }
-    for (const skillName of referencedSkills) {
-      try {
-        this.deploySkill(workspacePath, skillName)
-        skillCount++
-      } catch {
-        /* skip */
-      }
-    }
-
-    // Auto-sync to DB (creates DB records, all inactive due to new default)
+    // Auto-sync any new entries from workspace to DB
     const { agentSyncService } = await import('./agent-sync.service')
     agentSyncService.autoSyncNewEntries(workspacePath)
 
-    return { agents: agentCount, skills: skillCount }
+    // Count activated agents from DB (actual activation is handled by specialist-deploy.service)
+    const { specialistRepository: specRepo } = await import(
+      '../db/repositories/specialist.repository'
+    )
+    const allSpecialists = specRepo.findAll()
+    const agentCount = allSpecialists.filter((s) => !s.isActive).length
+
+    return { agents: agentCount, skills: 0 }
   }
 
   /** Shutdown — no-op (activation is now deterministic, no background process to cancel) */

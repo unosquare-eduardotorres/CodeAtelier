@@ -49,6 +49,32 @@ function shortenPath(fullPath: string): string {
   return '…/' + segments.slice(-2).join('/')
 }
 
+/** Maps raw MCP tool names (mcp__server__tool) to human-readable display names. */
+function getToolDisplayName(toolName: string): string {
+  const MCP_DISPLAY_NAMES: Record<string, string> = {
+    'mcp__code-graph__repo_map': 'Code Graph · repo_map',
+    'mcp__code-graph__search_identifiers': 'Code Graph · search_identifiers',
+    'mcp__semantic-search__semantic_search': 'Semantic Search',
+    'mcp__git-context__git_log': 'Git · log',
+    'mcp__git-context__git_diff': 'Git · diff',
+    'mcp__git-context__git_blame': 'Git · blame',
+    'mcp__task-context__list_tasks': 'Tasks · list',
+    'mcp__task-context__get_task_output': 'Tasks · output',
+    'mcp__checkpoint-context__list_checkpoints': 'Checkpoints · list',
+    'mcp__checkpoint-context__get_checkpoint': 'Checkpoints · get',
+    'mcp__github-context__get_pr_status': 'GitHub · PR status',
+    'mcp__github-context__list_pr_comments': 'GitHub · PR comments',
+    'mcp__github-context__list_issues': 'GitHub · issues'
+  }
+  if (MCP_DISPLAY_NAMES[toolName]) return MCP_DISPLAY_NAMES[toolName]
+  // Generic MCP fallback — e.g. "mcp__server__tool" → "server · tool"
+  if (toolName.startsWith('mcp__')) {
+    const parts = toolName.split('__')
+    return parts.length >= 3 ? `${parts[1]} · ${parts[2]}` : toolName
+  }
+  return toolName
+}
+
 interface ToolActivityBlockProps {
   activities: ToolActivity[]
 }
@@ -85,7 +111,7 @@ export default function ToolActivityBlock({
           {runningActivities.map((activity) => (
             <div key={activity.id} className="flex items-center gap-2 text-xs">
               <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
-              <span className="font-mono text-text-body">{activity.toolName}</span>
+              <span className="font-mono text-text-body">{getToolDisplayName(activity.toolName)}</span>
               {activity.input && (
                 <span className="text-text-muted truncate max-w-[300px]" title={activity.input}>
                   {shortenInput(activity.input)}
@@ -110,7 +136,7 @@ export default function ToolActivityBlock({
                       : 'bg-danger'
                 }`}
               />
-              <span className="font-mono text-text-body">{activity.toolName}</span>
+              <span className="font-mono text-text-body">{getToolDisplayName(activity.toolName)}</span>
               {activity.input && (
                 <span className="text-text-muted truncate max-w-[300px]" title={activity.input}>
                   {shortenInput(activity.input)}

@@ -20,6 +20,7 @@ export function parseHandoffBlock(text: string): HandoffBrief | null {
       constraints?: unknown
       filesDiscussed?: unknown
       specialists?: unknown
+      mode?: string
     }
 
     if (parsed.action !== 'handoff' || !parsed.summary) {
@@ -33,10 +34,10 @@ export function parseHandoffBlock(text: string): HandoffBrief | null {
       filesDiscussed: Array.isArray(parsed.filesDiscussed) ? parsed.filesDiscussed : [],
       recentMessages: [],
       specialists: Array.isArray(parsed.specialists) ? parsed.specialists : [],
-      mode: 'plan'
+      mode: parsed.mode === 'build' ? 'build' : 'plan'
     }
 
-    if (ACTION_VERB_PREFIX.test(brief.summary)) {
+    if (brief.mode === 'plan' && ACTION_VERB_PREFIX.test(brief.summary)) {
       brief.summary = brief.summary.replace(ACTION_VERB_PREFIX, 'Investigate')
     }
 
@@ -126,10 +127,26 @@ export function buildSubAgentDefinitions(
         ? 'sonnet'
         : 'haiku'
 
+    // Build MCP tool names from active server names so the SDK exposes them to SubAgents
+    const mcpToolNames: string[] = []
+    if (mcpServerNames?.includes('code-graph')) {
+      mcpToolNames.push('mcp__code-graph__repo_map', 'mcp__code-graph__search_identifiers')
+    }
+    if (mcpServerNames?.includes('semantic-search')) {
+      mcpToolNames.push('mcp__semantic-search__semantic_search')
+    }
+    if (mcpServerNames?.includes('git-context')) {
+      mcpToolNames.push(
+        'mcp__git-context__git_log',
+        'mcp__git-context__git_diff',
+        'mcp__git-context__git_blame'
+      )
+    }
+
     const tools =
       mode === 'build'
-        ? ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch']
-        : ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch']
+        ? ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch', ...mcpToolNames]
+        : ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', ...mcpToolNames]
 
     const { systemPrompt, description } = buildAgentConfig(specialistId, specialistTasks, mode)
 

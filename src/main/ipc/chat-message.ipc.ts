@@ -371,14 +371,19 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
             role: 'generalist'
           })
 
-          // Update conversation mode to match the handoff (always plan for investigations).
-          // The system auto-switches back to build when the user executes a fix.
-          if (brief.mode) {
-            try {
-              conversationRepository.updateMode(conversationId, brief.mode)
-            } catch (error) {
-              log.error('Failed to update conversation mode:', error)
-            }
+          // Respect the conversation's current mode as source of truth.
+          // When the user clicks "Build This", the renderer already set mode='build' before
+          // sending the message. Only override to 'plan' if the conversation isn't already in build.
+          const conversation = conversationRepository.findById(conversationId)
+          const effectiveMode: ConversationMode = conversation?.mode === 'build' ? 'build' : brief.mode
+          if (effectiveMode !== brief.mode) {
+            log.info(`[PIPELINE:mode-respect] Conversation mode=${effectiveMode} overrides brief.mode=${brief.mode}`)
+            brief.mode = effectiveMode
+          }
+          try {
+            conversationRepository.updateMode(conversationId, effectiveMode)
+          } catch (error) {
+            log.error('Failed to update conversation mode:', error)
           }
 
           // Strategy E: Unified decomposition — always route through generalist.decompose()

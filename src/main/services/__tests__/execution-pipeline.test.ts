@@ -62,10 +62,10 @@ describe('Suite 1: parseHandoffBlock', () => {
     assert.equal(result.mode, 'plan')
   })
 
-  test('forces mode to plan even when handoff says build', () => {
+  test('respects mode=build from handoff block', () => {
     const result = parseHandoffBlock(HANDOFF_WITH_BUILD_MODE)
     assert.ok(result)
-    assert.equal(result.mode, 'plan')
+    assert.equal(result.mode, 'build')
   })
 
   test('rewrites action verb summaries to Investigate', () => {
@@ -81,6 +81,15 @@ describe('Suite 1: parseHandoffBlock', () => {
     const result = parseHandoffBlock(HANDOFF_WITH_REVIEW_VERB)
     assert.ok(result)
     assert.equal(result.summary, 'Review the code quality')
+  })
+
+  test('does not rewrite action verbs when mode is build', () => {
+    // Build mode handoff with an action verb — should preserve the original verb
+    const buildHandoff = '```handoff\n{\n  "action": "handoff",\n  "summary": "Implement the new API",\n  "specialists": ["api-specialist"],\n  "mode": "build"\n}\n```'
+    const result = parseHandoffBlock(buildHandoff)
+    assert.ok(result)
+    assert.equal(result.mode, 'build')
+    assert.equal(result.summary, 'Implement the new API')
   })
 
   test('handles malformed JSON gracefully — returns null', () => {

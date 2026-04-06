@@ -525,7 +525,7 @@ export class GeneralistService extends AgentBaseService {
         systemPrompt: this.fullSystemPrompt,
         model: modelConfigService.getModel(this.workspacePath, 'generalist'),
         cwd: this.workspacePath,
-        permissionMode: isBuildMode ? 'bypassPermissions' : 'plan',
+        permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
         allowedTools: isBuildMode
           ? undefined
           : [
@@ -913,6 +913,7 @@ export class GeneralistService extends AgentBaseService {
       this.systemPromptSnapshotConversationId === this.currentConversationId &&
       turnCount > 1 // Always rebuild on turn 1 to pick up latest settings
 
+    const budgetTier = promptBuilder.getGeneralistBudgetTierForTurn(turnCount)
     let promptWithMcpGuidance: string
     if (canReuseSnapshot) {
       promptWithMcpGuidance = this.systemPromptSnapshot!
@@ -920,7 +921,6 @@ export class GeneralistService extends AgentBaseService {
         `[PIPELINE:prompt-snapshot] Reusing cached system prompt (turn ${turnCount}, mode=${this.currentMode})`
       )
     } else {
-      const budgetTier = promptBuilder.getGeneralistBudgetTierForTurn(turnCount)
       const basePrompt = promptBuilder.build({
         role: 'generalist',
         mode: this.currentMode,
@@ -1208,9 +1208,9 @@ export class GeneralistService extends AgentBaseService {
     const brief = parseHandoffBlock(this.accumulatedText)
     if (!brief) return false
 
-    // Log if Da Vinci tried to use build mode (prompt violation)
+    // Log when Da Vinci sends mode=build — conversation DB mode is the source of truth
     if (handoffData.mode === 'build') {
-      this.log.warn('[PIPELINE:mode-override] Da Vinci sent mode=build — forcing plan')
+      this.log.info('[PIPELINE:mode-detected] Da Vinci sent mode=build — will use conversation mode as source of truth')
     }
 
     // Log summary rewrite safety net
@@ -1703,6 +1703,11 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
     activeMcpNames.push('git-context')
     // NOTE: task-context, checkpoint-context, github-context are generalist-only — NOT passed to SubAgents
 
+    // Diagnostic: Log MCP tools being passed to SubAgents
+    this.log.info(
+      `[PIPELINE:subagent-mcp] activeMcpNames=[${activeMcpNames.join(', ')}] for ${taskPlan.tasks.length} tasks`
+    )
+
     const agents = this.buildSubAgentDefinitions(
       taskPlan.tasks,
       mode,
@@ -1749,7 +1754,7 @@ Rules:
         systemPrompt: SUBAGENT_ORCHESTRATION_SYSTEM_PROMPT,
         model: modelConfigService.getModel(this.workspacePath, 'generalist'),
         cwd: this.workspacePath,
-        permissionMode: mode === 'build' ? 'bypassPermissions' : 'plan',
+        permissionMode: mode === 'build' ? 'bypassPermissions' : 'default',
         agents,
         resume: sessionId,
         abortController,
@@ -1918,7 +1923,7 @@ Rules:
         const skillsEnabled = override?.skillsEnabled ?? true
         const skillOverrides = override?.skillOverrides ?? undefined
 
-        const systemPrompt = promptBuilder.build({
+        let systemPrompt = promptBuilder.build({
           role: 'specialist',
           mode: specialistMode,
           specialistId,
@@ -1930,6 +1935,22 @@ Rules:
           brief: this.currentBrief || undefined,
           budgetTier
         })
+
+        // Inject MCP tool guidance into specialist prompts when corresponding servers are active.
+        // Without this guidance, specialists don't know the tools exist and never call them.
+        const mcpGuidanceSections: string[] = []
+        if (mcpServerNames?.includes('code-graph')) {
+          mcpGuidanceSections.push(REPOMAP_GUIDANCE_PROMPT)
+        }
+        if (mcpServerNames?.includes('semantic-search')) {
+          mcpGuidanceSections.push(SEMANTIC_SEARCH_GUIDANCE_PROMPT)
+        }
+        if (mcpServerNames?.includes('git-context')) {
+          mcpGuidanceSections.push(GIT_CONTEXT_GUIDANCE_PROMPT)
+        }
+        if (mcpGuidanceSections.length > 0) {
+          systemPrompt += `\n\n---\n\n${mcpGuidanceSections.join('\n\n---\n\n')}`
+        }
 
         return {
           systemPrompt,
@@ -1975,12 +1996,17 @@ Rules:
       this.currentStatus === 'writing' ||
       this.currentStatus === 'reviewing'
 
+    const activeMcpTools: string[] = []
+    if (this.repomapEnabled) activeMcpTools.push('code-graph')
+    if (this.semanticSearchEnabled) activeMcpTools.push('semantic-search')
+
     return {
       agentId: AGENT_IDS.GENERALIST,
       agentType: 'generalist',
       status: this.currentStatus,
       elapsedMs: isActive && this.messageStartedAt ? Date.now() - this.messageStartedAt : 0,
-      tokenUsage: this.tokenUsage
+      tokenUsage: this.tokenUsage,
+      activeMcpTools: activeMcpTools.length > 0 ? activeMcpTools : undefined
     }
   }
 

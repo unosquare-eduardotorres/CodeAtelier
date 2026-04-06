@@ -445,6 +445,7 @@ interface Api {
       tokenUsage: number
       model?: 'haiku' | 'sonnet' | 'opus'
       complexityTier?: 'simple' | 'moderate' | 'complex'
+      activeMcpTools?: string[]
     }) => void
   ) => () => void
 

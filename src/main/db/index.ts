@@ -1076,6 +1076,49 @@ const migrations: Migration[] = [
       `
       ).run(newPlanPrompt, newPlanPrompt)
     }
+  },
+  {
+    version: 50,
+    name: 'specialist-overhaul-v2',
+    up: (db) => {
+      // 1. Remove "Agent Studio" references from specialist prompts (project-agnostic)
+      db.exec(`
+        UPDATE specialists
+        SET prompt = REPLACE(prompt, 'for Agent Studio', 'for the current project')
+        WHERE prompt LIKE '%for Agent Studio%'
+      `)
+      db.exec(`
+        UPDATE specialists
+        SET prompt = REPLACE(prompt, 'Agent Studio', 'the current project')
+        WHERE prompt LIKE '%Agent Studio%'
+      `)
+
+      // 2. Mark docs-diagrams-specialist as core (internal utility, not user-facing)
+      db.exec("UPDATE specialists SET is_core = 1 WHERE agent_id = 'docs-diagrams-specialist'")
+
+      // 3. Fix user specialist: display_name → "User", description → helpful text, preserve alias
+      const userSpec = db
+        .prepare("SELECT id, display_name FROM specialists WHERE agent_id = 'user'")
+        .get() as { id: string; display_name: string } | undefined
+
+      if (userSpec) {
+        const currentName = userSpec.display_name
+        const alias =
+          currentName && currentName !== 'Developer' && currentName !== 'User'
+            ? currentName
+            : null
+
+        db.prepare(
+          `
+          UPDATE specialists
+          SET display_name = 'User',
+              description = 'This is the user interacting in the chat',
+              alias = COALESCE(?, alias)
+          WHERE agent_id = 'user'
+        `
+        ).run(alias)
+      }
+    }
   }
 ]
 
@@ -1160,6 +1203,18 @@ export function closeDatabase(): void {
     db.close()
     db = null
   }
+}
+
+/**
+ * @internal Test-only: override the database instance for unit/integration tests.
+ * Allows tests to inject an in-memory DB without requiring Electron's app.getPath().
+ * Guarded by NODE_ENV to prevent accidental use in production.
+ */
+export function _setDatabaseForTesting(testDb: Database.Database): void {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('_setDatabaseForTesting is only available in test mode')
+  }
+  db = testDb
 }
 
 function seedDefaultSpecialists(database: Database.Database): void {

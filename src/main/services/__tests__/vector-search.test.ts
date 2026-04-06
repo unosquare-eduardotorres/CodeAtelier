@@ -213,6 +213,55 @@ describe('InMemoryCollection.size', () => {
   })
 })
 
+// ── Search edge cases ──
+
+describe('InMemoryCollection.query edge cases', () => {
+  test('empty collection returns empty results', () => {
+    const collection = new InMemoryCollection()
+    const results = collection.query([1, 0, 0], 10)
+    assert.equal(results.length, 0)
+  })
+
+  test('caps nResults to available entries', () => {
+    const collection = new InMemoryCollection()
+    const chunk = makeProcessedChunk()
+    collection.upsert(['only-one'], [[1, 0, 0]], [chunk])
+
+    // Ask for 100 results but only 1 exists
+    const results = collection.query([1, 0, 0], 100)
+    assert.equal(results.length, 1)
+  })
+
+  test('nResults=0 returns empty array', () => {
+    const collection = new InMemoryCollection()
+    const chunk = makeProcessedChunk()
+    collection.upsert(['id-1'], [[1, 0, 0]], [chunk])
+
+    const results = collection.query([1, 0, 0], 0)
+    assert.equal(results.length, 0)
+  })
+
+  test('query with all-zero embedding returns results (sorted by default)', () => {
+    const collection = new InMemoryCollection()
+    const chunk = makeProcessedChunk()
+    collection.upsert(['id-1'], [[1, 0, 0]], [chunk])
+
+    // Zero query vector → cosine similarity = 0 for all entries, but should not throw
+    const results = collection.query([0, 0, 0], 10)
+    assert.equal(results.length, 1)
+  })
+
+  test('getEntries returns all stored entries', () => {
+    const collection = new InMemoryCollection()
+    const chunkA = makeProcessedChunk({ symbolName: 'first' })
+    const chunkB = makeProcessedChunk({ symbolName: 'second' })
+    collection.upsert(['a', 'b'], [[1, 0, 0], [0, 1, 0]], [chunkA, chunkB])
+
+    const entries = collection.getEntries()
+    assert.equal(entries.length, 2)
+  })
+})
+
 // ── Summary ──
 
 console.log(`\n${'─'.repeat(40)}`)

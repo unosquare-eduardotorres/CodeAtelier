@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
-import { Loader2, Search, Rocket, Store } from 'lucide-react'
+import { Loader2, Search, Sparkles, Store } from 'lucide-react'
 import { useMarketplaceStore } from '@renderer/store'
 import SpecialistCard from './SpecialistCard'
 import SpecialistEditPage from './SpecialistEditPage'
@@ -28,12 +28,12 @@ export default function SpecialistMarketplace({
     filter,
     searchQuery,
     isLoading,
-    deployingIds,
+    activatingIds,
     error,
     loadMarketplace,
-    deploySpecialist,
-    undeploySpecialist,
-    deployAll,
+    activateSpecialist,
+    deactivateSpecialist,
+    activateAll,
     setFilter,
     setSearchQuery
   } = useMarketplaceStore()
@@ -43,7 +43,7 @@ export default function SpecialistMarketplace({
   const [configuringSpecialist, setConfiguringSpecialist] = useState<MarketplaceSpecialist | null>(
     null
   )
-  const [isDeployingAll, setIsDeployingAll] = useState(false)
+  const [isActivatingAll, setIsActivatingAll] = useState(false)
 
   useEffect(() => {
     loadMarketplace(workspacePath)
@@ -76,16 +76,16 @@ export default function SpecialistMarketplace({
     return result
   }, [specialists, filter, searchQuery])
 
-  const deployableSpecialists = specialists.filter((s) => !s.isCore)
-  const activeCount = deployableSpecialists.filter((s) => s.isActive && s.isDeployed).length
-  const totalCount = deployableSpecialists.length
+  const activatableSpecialists = specialists.filter((s) => !s.isCore)
+  const activeCount = activatableSpecialists.filter((s) => s.isActive && s.isDeployed).length
+  const totalCount = activatableSpecialists.length
 
-  const handleDeployAll = async (): Promise<void> => {
-    setIsDeployingAll(true)
+  const handleAutoActivate = async (): Promise<void> => {
+    setIsActivatingAll(true)
     try {
-      await deployAll(workspacePath)
+      await activateAll(workspacePath)
     } finally {
-      setIsDeployingAll(false)
+      setIsActivatingAll(false)
     }
   }
 
@@ -139,19 +139,19 @@ export default function SpecialistMarketplace({
           <div>
             <h2 className="text-base font-semibold text-text-primary">Specialist Marketplace</h2>
             <p className="text-xs text-text-secondary">
-              {activeCount} of {totalCount} specialists deployed
+              {activeCount} of {totalCount} specialists active
             </p>
           </div>
         </div>
         <button
-          onClick={handleDeployAll}
-          disabled={isDeployingAll || activeCount === totalCount}
+          onClick={handleAutoActivate}
+          disabled={isActivatingAll || activeCount === totalCount}
           className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
             bg-primary text-white hover:bg-primary-hover
             disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {isDeployingAll ? <Loader2 size={12} className="animate-spin" /> : <Rocket size={12} />}
-          Deploy All
+          {isActivatingAll ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+          Auto-Activate
         </button>
       </div>
 
@@ -213,9 +213,9 @@ export default function SpecialistMarketplace({
             <SpecialistCard
               key={specialist.id}
               specialist={specialist}
-              isDeploying={deployingIds.has(specialist.id)}
-              onDeploy={() => deploySpecialist(workspacePath, specialist.id)}
-              onUndeploy={() => undeploySpecialist(workspacePath, specialist.id)}
+              isActivating={activatingIds.has(specialist.id)}
+              onActivate={() => activateSpecialist(workspacePath, specialist.id)}
+              onDeactivate={() => deactivateSpecialist(workspacePath, specialist.id)}
               onConfigure={() => setConfiguringSpecialist(specialist)}
             />
           ))}
