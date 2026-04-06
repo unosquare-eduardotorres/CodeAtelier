@@ -3,23 +3,20 @@ import { extname } from 'node:path'
 import {
   conversationRepository,
   messageRepository,
-  workspaceRepository,
-  specialistRepository
+  workspaceRepository
 } from '../db/repositories'
 import { generalistService, specialistPoolService, fileService } from '../services'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
-  ExecutionStrategy,
   GrillEvaluation,
   GrillQuestion,
   HandoffBrief,
-  ImageAttachment,
-  TaskPlan
+  ImageAttachment
 } from '../../shared/types'
 import { memoryService } from '../services/memory.service'
-import { isInvestigationIntent } from '../services/specialist'
+import { taskPipeline } from '../services/task-pipeline.service'
 import { chatIpcLogger } from '../logger'
 import { eventLoggerService } from '../services/event-logger.service'
 import { validateSender } from './validate-sender'
@@ -314,130 +311,14 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
         const doHandoff = async (): Promise<void> => {
           log.info('Handoff received from generalist:', brief.summary)
 
-          // ── Event: handoff detected ──
-          eventLoggerService.logHandoffDetected({
+          await taskPipeline.prepare({
             conversationId,
-            summary: brief.summary,
-            specialists: brief.specialists,
-            mode: brief.mode
-          })
-
-          // ── Enrich with recent conversation messages ──
-          // Strategy F: Only load recentMessages when decomposition will actually use them.
-          // For single-specialist handoffs (which skip decomposition), these messages are
-          // loaded from the DB and attached to the brief but never appear in any prompt — pure waste.
-          // Saves DB I/O + ~5,700 tokens of unused data loading for single-specialist handoffs.
-          if (brief.specialists.length > 1) {
-            try {
-              const allMessages = messageRepository.findByConversation(conversationId)
-              brief.recentMessages = allMessages
-                .slice(-10) // Last 10 messages (5 user + 5 assistant turns)
-                .map((m) => ({ role: m.role, content: m.contentMd.substring(0, 2000) }))
-              log.info(`Enriched handoff with ${brief.recentMessages.length} recent messages`)
-            } catch (error) {
-              log.warn('Failed to enrich handoff with recent messages:', error)
+            brief,
+            uiNotifications: {
+              handoffIndicator: true,
+              delegationMessage: true
             }
-          } else {
-            log.info(
-              '[PIPELINE:skip-recent-messages] Single-specialist handoff — skipping recentMessages enrichment (Strategy F)'
-            )
-          }
-
-          // Send visual handoff indicator to the renderer
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
-            conversationId,
-            summary: brief.summary,
-            specialists: brief.specialists,
-            mode: brief.mode
           })
-          log.info(`[PIPELINE:handoff-sent-to-renderer] conversationId=${conversationId}`)
-
-          // Switch streaming identity to generalist during decomposition
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-            conversationId,
-            chunk: '',
-            role: 'generalist'
-          })
-
-          // Emit generalist confirmation — "Delegating to .NET Architect for review."
-          const specialistNames = brief.specialists
-            .map((id) => {
-              const spec = specialistRepository.findByAgentId(id)
-              return spec?.displayName ?? id
-            })
-            .join(', ')
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-            conversationId,
-            chunk: `Delegating to **${specialistNames}** for ${brief.mode === 'plan' ? 'review' : 'implementation'}.\n\n`,
-            role: 'generalist'
-          })
-
-          // Detect task intent from the handoff summary.
-          // Investigation/review requests should always show the plan card for user review,
-          // even when the conversation is in build mode. Implementation requests in build mode
-          // auto-execute. The generalist prompt always sets mode="plan" in handoffs, so we
-          // use keyword detection to distinguish investigation from implementation intent.
-          const conversation = conversationRepository.findById(conversationId)
-          const isInvestigation = isInvestigationIntent(brief.summary)
-          const effectiveMode: ConversationMode =
-            conversation?.mode === 'build' && !isInvestigation ? 'build' : 'plan'
-          if (effectiveMode !== brief.mode) {
-            log.info(
-              `[PIPELINE:mode-resolve] effectiveMode=${effectiveMode} (conversation=${conversation?.mode}, investigation=${isInvestigation}, brief=${brief.mode})`
-            )
-            brief.mode = effectiveMode
-          }
-          try {
-            conversationRepository.updateMode(conversationId, effectiveMode)
-          } catch (error) {
-            log.error('Failed to update conversation mode:', error)
-          }
-
-          // Strategy E: Unified decomposition — always route through generalist.decompose()
-          // which has cost-preference-aware model selection via enrichTasksWithComplexity().
-          // Previously, single-specialist handoffs were dispatched directly here with hardcoded
-          // 'sonnet' model, bypassing economy-mode haiku selection (6× token overhead bug).
-          // The decompose() method already has a fast path for single-specialist handoffs
-          // that skips the LLM call — so this consolidation costs nothing extra.
-          try {
-            log.info(`[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`)
-            const taskPlan = await generalistService.decompose(brief, conversationId, brief.mode)
-
-            log.info(`[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`)
-
-            // Send the task plan to the renderer — auto-execute in build mode
-            if (taskPlan.mode === 'build') {
-              mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, {
-                ...taskPlan,
-                autoExecute: 'sequential' as ExecutionStrategy
-              })
-            } else {
-              mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, taskPlan)
-            }
-            log.info(`[PIPELINE:task-plan-sent-to-renderer] taskCount=${taskPlan.tasks.length} autoExecute=${taskPlan.mode === 'build'}`)
-          } catch (error) {
-            log.error('Task decomposition failed:', error)
-            eventLoggerService.logDecompositionFailed({
-              conversationId,
-              error: (error as Error).message,
-              fallback: 'none'
-            })
-            // Surface error directly to user — no generalist fallback
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-              conversationId,
-              chunk: `\n\n**Error:** Task decomposition failed. ${(error as Error).message}`,
-              role: 'generalist'
-            })
-            const savedMsg = messageRepository.create(
-              conversationId,
-              'generalist',
-              `**Error:** Task decomposition failed.\n\n${(error as Error).message}`
-            )
-            mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-              conversationId,
-              messageId: savedMsg.id
-            })
-          }
 
           // Clean up handoff listener (one-shot)
           generalistService.removeListener('handoff', onHandoff)

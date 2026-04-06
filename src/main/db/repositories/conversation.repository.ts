@@ -13,6 +13,7 @@ interface ConversationRow {
   pr_number: number | null
   pr_url: string | null
   branch_name: string | null
+  sort_order: number | null
 }
 
 function mapRow(row: ConversationRow): Conversation {
@@ -27,7 +28,8 @@ function mapRow(row: ConversationRow): Conversation {
     claudeSessionId: row.claude_session_id ?? undefined,
     prNumber: row.pr_number ?? undefined,
     prUrl: row.pr_url ?? undefined,
-    branchName: row.branch_name ?? undefined
+    branchName: row.branch_name ?? undefined,
+    sortOrder: row.sort_order ?? undefined
   }
 }
 
@@ -50,7 +52,7 @@ export class ConversationRepository {
   findByWorkspace(workspaceId: string): Conversation[] {
     const db = getDatabase()
     const stmt = db.prepare(
-      'SELECT * FROM conversations WHERE workspace_id = ? ORDER BY created_at DESC'
+      'SELECT * FROM conversations WHERE workspace_id = ? ORDER BY sort_order ASC, created_at DESC'
     )
     const rows = stmt.all(workspaceId) as ConversationRow[]
     return rows.map(mapRow)
@@ -117,6 +119,15 @@ export class ConversationRepository {
     db.prepare(
       'UPDATE conversations SET pr_url = ?, pr_number = ?, branch_name = ? WHERE id = ?'
     ).run(prUrl, prNumber, branchName, id)
+  }
+
+  reorderConversations(orderedIds: string[]): void {
+    const db = getDatabase()
+    const stmt = db.prepare('UPDATE conversations SET sort_order = ? WHERE id = ?')
+    const tx = db.transaction(() => {
+      orderedIds.forEach((id, i) => stmt.run(i, id))
+    })
+    tx()
   }
 }
 

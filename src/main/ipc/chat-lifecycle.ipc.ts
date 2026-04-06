@@ -8,7 +8,8 @@ import {
   messageRepository,
   fileChangeRepository,
   workspaceRepository,
-  turnUsageRepository
+  turnUsageRepository,
+  specialistRepository
 } from '../db/repositories'
 import {
   generalistService,
@@ -57,6 +58,26 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
 
       const conversation = conversationRepository.create(args.workspaceId, args.title, args.mode)
       conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
+
+      // Auto-activate specialists based on detected tech stack
+      try {
+        const workspace = workspaceRepository.findById(args.workspaceId)
+        if (workspace?.repoPath) {
+          const { detectTechStack } = await import('../services/tech-stack-detector.service')
+          const techResult = detectTechStack(workspace.repoPath)
+          for (const agentId of techResult.recommendedSpecialists) {
+            const specialist = specialistRepository.findByAgentId(agentId)
+            if (specialist) {
+              conversationSpecialistRepository.upsert(conversation.id, specialist.id, {
+                isActive: true
+              })
+            }
+          }
+        }
+      } catch (e) {
+        log.warn('Tech-stack auto-activation failed:', e)
+      }
+
       return conversation
     }
   )

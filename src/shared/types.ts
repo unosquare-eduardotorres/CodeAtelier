@@ -386,6 +386,9 @@ export interface ActivationResult {
   existingClaudeMd: string | null
   proposedClaudeMd: string | null
   claudeMdWritten: boolean
+  // Tech-stack detection results
+  detectedTechs?: string[]
+  recommendedSpecialists?: string[]
 }
 
 /** Progress event during Opus activation */

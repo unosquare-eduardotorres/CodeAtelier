@@ -48,3 +48,7 @@ export { authProvider } from './auth-provider'
 export type { AuthMode, AuthProvider } from './auth-provider'
 export { sdkExecutor, SDKExecutor } from './sdk-executor'
 export type { SDKExecuteOptions, SDKExecuteResult } from './sdk-executor'
+
+// Task pipeline — consolidated prepare/execute for handoff, plan execution, investigation fix
+export { taskPipeline, initTaskPipeline, TaskPipelineService } from './task-pipeline.service'
+export type { PrepareOptions, ExecuteOptions } from './task-pipeline.service'

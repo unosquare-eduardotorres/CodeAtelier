@@ -39,8 +39,12 @@ import { registerIndexingIpc } from './indexing.ipc'
 import { registerCodeGraphIpc } from './code-graph.ipc'
 import { registerCodeChangesIpc } from './code-changes.ipc'
 import { registerSchedulingIpc } from './scheduling.ipc'
+import { initTaskPipeline } from '../services/task-pipeline.service'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
+  // Initialize TaskPipeline before registering handlers that depend on it
+  initTaskPipeline(mainWindow)
+
   registerWorkspaceIpc()
   registerChatIpc(mainWindow)
   registerAgentIpc(mainWindow)

@@ -653,6 +653,22 @@ export class WorkspaceDeployService {
       referencedSkills
     )
 
+    // ── STEP 3: Detect tech stack and recommend specialists ──
+    emit('status', 'Detecting tech stack...')
+    let detectedTechs: string[] | undefined
+    let recommendedSpecialists: string[] | undefined
+    try {
+      const { detectTechStack } = await import('./tech-stack-detector.service')
+      const techResult = detectTechStack(workspacePath)
+      detectedTechs = techResult.detectedTechs
+      recommendedSpecialists = techResult.recommendedSpecialists
+      if (detectedTechs.length > 0) {
+        emit('status', `Detected: ${detectedTechs.join(', ')}`)
+      }
+    } catch (e) {
+      deployLogger.warn('Tech-stack detection failed:', e)
+    }
+
     emit('status', 'Activation complete!')
     return {
       success: true,
@@ -660,7 +676,9 @@ export class WorkspaceDeployService {
       selectedSkills: [],
       existingClaudeMd,
       proposedClaudeMd: mergedClaudeMd,
-      claudeMdWritten: false
+      claudeMdWritten: false,
+      detectedTechs,
+      recommendedSpecialists
     }
   }
 

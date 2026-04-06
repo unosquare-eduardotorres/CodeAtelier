@@ -1,6 +1,31 @@
 import { Sparkles, Loader2, AlertCircle, RotateCcw } from 'lucide-react'
 import { useSettingsStore } from '@renderer/store/settings.store'
 
+const TECH_ICONS: Record<string, string> = {
+  react: '⚛️',
+  vue: '💚',
+  angular: '🅰️',
+  svelte: '🔥',
+  typescript: '📘',
+  'node-backend': '🟢',
+  tailwind: '🎨',
+  electron: '⚡',
+  dotnet: '🟣',
+  python: '🐍',
+  'python-web': '🌐',
+  rust: '🦀',
+  go: '🐹',
+  java: '☕',
+  ruby: '💎',
+  php: '🐘',
+  sqlite: '🗃️',
+  database: '🗄️',
+  supabase: '⚡',
+  docker: '🐳',
+  terraform: '🏗️',
+  testing: '🧪'
+}
+
 interface ActivationBannerProps {
   workspacePath: string
 }
@@ -8,7 +33,7 @@ interface ActivationBannerProps {
 export default function ActivationBanner({
   workspacePath
 }: ActivationBannerProps): React.JSX.Element {
-  const { isActivating, activationError, deployAll } = useSettingsStore()
+  const { isActivating, activationError, deployAll, detectedTechs } = useSettingsStore()
 
   const handleActivate = (): void => {
     deployAll(workspacePath)
@@ -38,6 +63,24 @@ export default function ActivationBanner({
               </li>
             </ul>
           </div>
+
+          {/* Detected tech stack badges */}
+          {detectedTechs && detectedTechs.length > 0 && (
+            <div className="mt-3">
+              <p className="text-xs text-text-secondary font-medium mb-1.5">Detected Tech Stack:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {detectedTechs.map((tech) => (
+                  <span
+                    key={tech}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-overlay border border-border-default text-[11px] text-text-body"
+                  >
+                    <span>{TECH_ICONS[tech] ?? '📦'}</span>
+                    {tech}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Error display */}
           {activationError && (
