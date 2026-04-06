@@ -299,22 +299,6 @@ export class SDKExecutor {
               const toolId = cb.id as string | undefined
               if (toolId) processedToolIds.add(toolId)
               const toolName = cb.name as string
-              // Suppress AskUserQuestion tool_use in stream — content extracted in assistant message handler
-              if (toolName === 'AskUserQuestion') {
-                if (toolId) askQuestionToolIds.add(toolId)
-                continue
-              }
-              // Suppress ExitPlanMode tool_use — plan content extracted in assistant message handler
-              if (toolName === 'ExitPlanMode') {
-                if (toolId) exitPlanModeToolIds.add(toolId)
-                planDetectedInStream = true // Flag to suppress parallel tools in same turn
-                continue
-              }
-              // If ExitPlanMode was detected in this turn, suppress all other tool_use events
-              // to prevent the UI from showing Bash/Agent/etc. as "running"
-              if (planDetectedInStream) {
-                continue
-              }
               const toolInput = cb.input as Record<string, unknown> | undefined
               yield {
                 type: 'tool_use',
@@ -350,10 +334,6 @@ export class SDKExecutor {
           if (userMsg?.content && Array.isArray(userMsg.content)) {
             for (const block of userMsg.content as Record<string, unknown>[]) {
               if (block.type === 'tool_result') {
-                // Suppress tool_result for ExitPlanMode — no orphan "completed" tool activity
-                const toolUseId = block.tool_use_id as string | undefined
-                if (toolUseId && exitPlanModeToolIds.has(toolUseId)) continue
-                if (toolUseId && askQuestionToolIds.has(toolUseId)) continue
                 yield { type: 'tool_result', toolName: 'tool' }
               }
             }
