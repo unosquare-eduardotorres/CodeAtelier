@@ -56,59 +56,6 @@ export class AgentMessageRepository {
     )
   }
 
-  /** Bulk-persist messages (batch insert in a transaction) */
-  createMany(
-    messages: AgentMessage[],
-    opts?: { conversationId?: string; runId?: string }
-  ): void {
-    if (messages.length === 0) return
-    const db = getDatabase()
-    const insert = db.prepare(
-      `INSERT OR IGNORE INTO agent_messages (id, conversation_id, run_id, from_agent, to_agent, type, content, task_id, metadata_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    const tx = db.transaction(() => {
-      for (const msg of messages) {
-        insert.run(
-          msg.id,
-          opts?.conversationId ?? null,
-          opts?.runId ?? null,
-          msg.from,
-          msg.to ?? null,
-          msg.type,
-          msg.content,
-          msg.taskId ?? null,
-          msg.metadata ? JSON.stringify(msg.metadata) : '{}',
-          msg.timestamp
-        )
-      }
-    })
-    tx()
-  }
-
-  /** Get all messages for a run (execution session) */
-  findByRunId(runId: string): AgentMessage[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `SELECT * FROM agent_messages WHERE run_id = ? ORDER BY created_at ASC`
-      )
-      .all(runId) as AgentMessageRow[]
-    return rows.map(toModel)
-  }
-
-  /** Get all messages for a conversation */
-  findByConversationId(conversationId: string, limit = 500): AgentMessage[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `SELECT * FROM agent_messages WHERE conversation_id = ?
-         ORDER BY created_at ASC LIMIT ?`
-      )
-      .all(conversationId, limit) as AgentMessageRow[]
-    return rows.map(toModel)
-  }
-
   /** Get all messages for a specific task */
   findByTaskId(taskId: string): AgentMessage[] {
     const db = getDatabase()

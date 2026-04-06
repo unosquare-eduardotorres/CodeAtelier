@@ -263,17 +263,6 @@ class DescriptionCacheService {
   }
 
   /**
-   * Get the count of cached descriptions for a specific workspace.
-   */
-  getCountForWorkspace(workspaceId: string): number {
-    const db = getDatabase()
-    const row = db
-      .prepare('SELECT COUNT(*) as count FROM chunk_descriptions WHERE workspace_id = ?')
-      .get(workspaceId) as { count: number }
-    return row.count
-  }
-
-  /**
    * Clean up — no-op since we use the shared main database.
    */
   dispose(): void {

@@ -251,21 +251,6 @@ class OllamaManagerService extends EventEmitter {
     }
   }
 
-  /**
-   * Check if a specific model is available locally.
-   */
-  async isModelAvailable(model: string): Promise<boolean> {
-    try {
-      const status = await this.checkStatus()
-      if (!status.running) return false
-      // Normalize: Ollama may return "model:latest" vs "model"
-      return status.models.some(
-        (m) => m === model || m === `${model}:latest` || m.startsWith(`${model}:`)
-      )
-    } catch {
-      return false
-    }
-  }
 }
 
 export const ollamaManager = new OllamaManagerService()

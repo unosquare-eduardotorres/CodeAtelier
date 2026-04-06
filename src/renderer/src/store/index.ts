@@ -23,7 +23,6 @@ export {
 export {
   useAppPreferenceStore,
   useAppPreferenceActions,
-  useAppPreferences,
   useSpecialistWarningPreferences,
   useAppPreferenceStatus
 } from './app-preference.store'

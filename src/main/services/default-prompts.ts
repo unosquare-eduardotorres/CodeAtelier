@@ -12,7 +12,7 @@
  * for non-customized rows).
  */
 
-export const PLAN_BLOCK_FORMAT_PROMPT = `Use a \`\`\`\`plan fence with JSON keys: "title", "summary", optional "sections", "steps", "files", and "risks".
+const PLAN_BLOCK_FORMAT_PROMPT = `Use a \`\`\`\`plan fence with JSON keys: "title", "summary", optional "sections", "steps", "files", and "risks".
 For "sections", use { heading, icon, content, optional mermaid }; for "steps", use { number, title, description, file, complexity }.
 CRITICAL: Always output plan blocks directly in chat — NEVER use Write to save plans to files. The UI cannot render file-based plans.`
 

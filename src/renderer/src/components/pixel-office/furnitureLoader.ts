@@ -50,6 +50,24 @@ interface ManifestAsset {
   animationGroup?: string
 }
 
+/** Any manifest member — can be a leaf asset OR a nested group with sub-members */
+interface ManifestMember {
+  type?: string // "asset" | "group" | undefined (legacy)
+  groupType?: string // "rotation" | "state" | "animation"
+  id?: string
+  file?: string
+  width?: number
+  height?: number
+  footprintW?: number
+  footprintH?: number
+  orientation?: string
+  state?: string
+  frame?: number
+  mirrorSide?: boolean
+  animationGroup?: string
+  members?: ManifestMember[]
+}
+
 interface ManifestGroup {
   id: string
   name: string
@@ -61,7 +79,7 @@ interface ManifestGroup {
   canPlaceOnSurfaces?: boolean
   backgroundTiles?: number
   mirrorSide?: boolean
-  members?: ManifestAsset[]
+  members?: ManifestMember[]
   // Single-asset manifests have these at root level
   file?: string
   width?: number
@@ -69,6 +87,45 @@ interface ManifestGroup {
   footprintW?: number
   footprintH?: number
   isDesk?: boolean
+}
+
+/**
+ * Recursively flatten nested manifest members into leaf assets.
+ * Propagates orientation/state from parent groups to child assets.
+ *
+ * PC manifests use nested groups (rotation → state → animation) where
+ * intermediate "group" members contain sub-members. This walks the full
+ * tree to extract all leaf assets with inherited orientation/state.
+ */
+function flattenMembers(
+  members: ManifestMember[],
+  inherited: { orientation?: string; state?: string } = {}
+): ManifestAsset[] {
+  const result: ManifestAsset[] = []
+  for (const member of members) {
+    if (member.type === 'group' && member.members) {
+      // Nested group — inherit orientation/state and recurse
+      const childInherited = {
+        orientation: member.orientation ?? inherited.orientation,
+        state: member.state ?? inherited.state
+      }
+      result.push(...flattenMembers(member.members, childInherited))
+    } else if (member.id && member.file) {
+      // Leaf asset — apply inherited fields (member's own values take precedence)
+      result.push({
+        id: member.id,
+        file: member.file,
+        width: member.width!,
+        height: member.height!,
+        footprintW: member.footprintW!,
+        footprintH: member.footprintH!,
+        orientation: member.orientation ?? inherited.orientation,
+        state: member.state ?? inherited.state,
+        animationGroup: member.animationGroup
+      })
+    }
+  }
+  return result
 }
 
 /** Catalog entry compatible with FURNITURE_CATALOG format (internal) */
@@ -106,8 +163,9 @@ export function buildFurnitureCatalog(): FurnitureCatalogRaw[] {
     const m = manifest as unknown as ManifestGroup
 
     if (m.members && m.members.length > 0) {
-      // Group manifest — flatten each member into a catalog entry
-      for (const member of m.members) {
+      // Group manifest — recursively flatten nested groups into leaf assets
+      const flatMembers = flattenMembers(m.members)
+      for (const member of flatMembers) {
         catalog.push({
           id: member.id,
           name: m.name,

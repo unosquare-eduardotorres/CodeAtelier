@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron'
-import { fileChangeRepository, workspaceRepository } from '../db/repositories'
+import { fileChangeRepository } from '../db/repositories'
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -176,29 +176,5 @@ export function forwardChunkToRenderer(
       role,
       ...specialistMeta
     })
-  }
-}
-
-/** Check if memory writes are enabled for the given workspace path */
-export function isMemoryEnabled(workspacePath: string): boolean {
-  const workspace = workspaceRepository.findAll().find((w) => w.repoPath === workspacePath)
-  if (!workspace) return true // default enabled
-  try {
-    const settings = JSON.parse(workspace.settingsJson || '{}')
-    return settings.memoryEnabled !== false
-  } catch {
-    return true
-  }
-}
-
-/** Check if post-specialist code review is enabled for the given workspace path */
-export function isPostReviewEnabled(workspacePath: string): boolean {
-  const workspace = workspaceRepository.findAll().find((w) => w.repoPath === workspacePath)
-  if (!workspace) return false // default disabled — opt-in feature
-  try {
-    const settings = JSON.parse(workspace.settingsJson || '{}')
-    return settings.postReviewEnabled === true
-  } catch {
-    return false
   }
 }

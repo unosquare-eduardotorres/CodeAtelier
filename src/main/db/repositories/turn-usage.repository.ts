@@ -85,18 +85,6 @@ export class TurnUsageRepository {
     return rows.map(toModel)
   }
 
-  /** Get all turn usage records for a session, ordered by turn */
-  findBySession(sessionId: string): TurnUsage[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `SELECT * FROM turn_usage WHERE session_id = ?
-         ORDER BY turn_number ASC`
-      )
-      .all(sessionId) as TurnUsageRow[]
-    return rows.map(toModel)
-  }
-
   /** Get the most recent turn's usage for a conversation (for growth rate analysis) */
   getLastTurn(conversationId: string): TurnUsage | null {
     const db = getDatabase()
@@ -107,20 +95,6 @@ export class TurnUsageRepository {
       )
       .get(conversationId) as TurnUsageRow | undefined
     return row ? toModel(row) : null
-  }
-
-  /** Get turn-over-turn token growth rate for a conversation */
-  getTokenGrowthRate(conversationId: string): { turnNumber: number; inputTokens: number; growthRate: number }[] {
-    const turns = this.findByConversation(conversationId)
-    return turns.map((turn, i) => {
-      const prev = i > 0 ? turns[i - 1].inputTokens : 0
-      const growthRate = prev > 0 ? (turn.inputTokens - prev) / prev : 0
-      return {
-        turnNumber: turn.turnNumber,
-        inputTokens: turn.inputTokens,
-        growthRate
-      }
-    })
   }
 
   /** Prune old turn usage records to prevent unbounded growth */

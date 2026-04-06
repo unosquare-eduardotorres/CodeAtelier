@@ -83,32 +83,6 @@ export class GateResultRepository {
   }
 
   /** Get gate results for a specific task */
-  findByTask(taskId: string): GateResultRecord[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `SELECT * FROM gate_results WHERE task_id = ?
-         ORDER BY created_at DESC`
-      )
-      .all(taskId) as GateResultRow[]
-    return rows.map(toModel)
-  }
-
-  /** Get summary stats for a conversation: how many gates passed vs failed */
-  getConversationSummary(
-    conversationId: string
-  ): { gateType: string; passed: number; failed: number }[] {
-    const db = getDatabase()
-    return db
-      .prepare(
-        `SELECT gate_type as gateType,
-                SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) as passed,
-                SUM(CASE WHEN passed = 0 THEN 1 ELSE 0 END) as failed
-         FROM gate_results WHERE conversation_id = ?
-         GROUP BY gate_type`
-      )
-      .all(conversationId) as { gateType: string; passed: number; failed: number }[]
-  }
 }
 
 export const gateResultRepository = new GateResultRepository()

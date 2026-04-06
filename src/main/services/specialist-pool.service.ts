@@ -51,7 +51,7 @@ import type {
   SchedulingContext,
   AgentCapability
 } from './specialist/scheduling'
-import { validateInvestigationReport, buildFallbackReport } from './specialist/structured-output'
+import { validateInvestigationReport, buildFallbackReport, validateTaskOutput } from './specialist/structured-output'
 import { specialistRateLimiter } from './specialist/rate-limiter'
 import { createStructuredLogger } from './specialist/structured-log'
 import { codeGraphMcpService } from './code-graph.tool'
@@ -71,6 +71,8 @@ const RETRY_CONFIG = {
 
 /** Circuit breaker threshold — consecutive spawn failures before stopping all tasks */
 const CIRCUIT_BREAKER_THRESHOLD = 5
+/** R2: Max consecutive identical tool calls before aborting (loop detection) */
+const MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS = 3
 /** Maximum number of specialist processes running simultaneously — prevents resource exhaustion */
 const MAX_CONCURRENT_SPECIALISTS = 4
 
@@ -141,6 +143,9 @@ interface SDKExecutionState {
   abortedAfterReportDetection: boolean
   reportRegex: RegExp
   releasePermit: () => void
+  /** R2: Inline loop detection — tracks consecutive identical tool call signatures */
+  lastToolSignature: string | null
+  consecutiveIdenticalToolCalls: number
 }
 
 /** Summarize tool input into a short human-readable description */
@@ -252,6 +257,10 @@ export class SpecialistPoolService extends EventEmitter {
   private taskResults: Map<string, string> = new Map()
   /** Track final status per task for runSpecialistTask result checking */
   private taskStatuses: Map<string, TaskExecutionProgress['status']> = new Map()
+  /** R1: Tasks skipped due to dependency failure cascade */
+  private skippedTasks: Set<string> = new Set()
+  /** R1: Reference to all tasks in current execution (for cascade lookups) */
+  private allTasks: DecomposedTask[] = []
   private aborted: boolean = false
   /** Enriched handoff context from the generalist, injected into specialist prompts */
   private conversationBrief: HandoffBrief | null = null
@@ -457,6 +466,9 @@ export class SpecialistPoolService extends EventEmitter {
       taskLoopService.initLoop(task.id, task.specialist)
     }
 
+    // R1: Store all tasks for cascade failure lookups
+    this.allTasks = tasks
+
     const pending = new Map<string, DecomposedTask>()
     for (const task of tasks) {
       pending.set(task.id, task)
@@ -479,6 +491,14 @@ export class SpecialistPoolService extends EventEmitter {
         let startedInRound = 0
         for (const { task } of ranked) {
           if (this.aborted) break
+
+          // R1: Cascade skip — if any dependency failed or was skipped, skip this task
+          if (this.shouldCascadeSkip(task)) {
+            pending.delete(task.id)
+            this.cascadeSkipTask(task, 'dependency-failed')
+            continue
+          }
+
           if (!this.semaphore.available) {
             this.slog.concurrencyEvent({
               event: 'limit_reached',
@@ -576,6 +596,62 @@ export class SpecialistPoolService extends EventEmitter {
 
     // Create worktree for isolation, then spawn the specialist
     this.createWorktreeAndSpawn(task, mode, onDone)
+  }
+
+  // ── R1: Failure Cascade ──
+
+  /**
+   * R1: Check if a task should be skipped because one or more of its
+   * dependencies failed or were themselves skipped (transitive cascade).
+   */
+  private shouldCascadeSkip(task: DecomposedTask): boolean {
+    for (const depId of task.dependsOn) {
+      const depStatus = this.taskStatuses.get(depId)
+      if (depStatus === 'failed' || this.skippedTasks.has(depId)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * R1: Mark a task as skipped due to dependency failure and cascade
+   * the skip to all transitive dependents.
+   */
+  private cascadeSkipTask(task: DecomposedTask, reason: string): void {
+    this.skippedTasks.add(task.id)
+    this.taskStatuses.set(task.id, 'skipped')
+    this.completedTasks.add(task.id) // Treat as "settled" so downstream checks work
+
+    const failedDeps = task.dependsOn.filter(
+      (depId) => this.taskStatuses.get(depId) === 'failed' || this.skippedTasks.has(depId)
+    )
+
+    this.log.info(
+      `[CASCADE:skip] Task ${task.id} (${task.specialist}) skipped — ` +
+      `reason: ${reason}, failed dependencies: [${failedDeps.join(', ')}]`
+    )
+
+    this.emitProgress(task, 'skipped', undefined, `Skipped: dependency ${failedDeps.join(', ')} failed`)
+
+    // Trace the cascade event
+    if (this.currentRunId) {
+      executionTracer.traceEvent(this.currentRunId, 'dependency_resolved', {
+        taskId: task.id,
+        agentId: task.specialist,
+        message: `Task skipped due to cascade failure from [${failedDeps.join(', ')}]`,
+        metadata: { reason, failedDeps }
+      })
+    }
+
+    // Broadcast skip to message bus so other agents know
+    messageBus.broadcast({
+      from: task.specialist,
+      type: 'dependency',
+      content: `Task ${task.id} skipped due to dependency failure`,
+      taskId: task.id,
+      metadata: { status: 'skipped', reason, failedDeps }
+    })
   }
 
   // ── P2: createWorktreeAndSpawn sub-methods ──
@@ -734,6 +810,54 @@ export class SpecialistPoolService extends EventEmitter {
       toolCallCount: info.toolCallCount,
       attempt: info.attempt
     })
+
+    // R3: Structured output validation — if task has outputSchema, validate before accepting
+    if (task.outputSchema && info.output.length > 0) {
+      const validation = validateTaskOutput(info.output, task.outputSchema)
+      if (!validation.success) {
+        // Auto-retry once with validation error injected into context
+        if (info.attempt < 1) {
+          this.log.warn(
+            `[SCHEMA:validation-failed] ${task.specialist}/${task.id} schema="${task.outputSchema}" — retrying`,
+            validation.errors
+          )
+          this.emit('taskChunk', {
+            taskId: task.id,
+            specialist: task.specialist,
+            chunk: `\n\n⚠️ **Output validation failed** (auto-retrying):\n${validation.errors.join('\n')}\n`
+          })
+
+          // Clean up and retry with error context
+          this.activeProcesses.delete(task.id)
+          if (info.worktreeId) {
+            gitWorktreeService.remove(info.worktreeId, true).catch((err) => {
+              this.log.warn(`Failed to remove worktree before schema retry: ${err}`)
+            })
+          }
+
+          // Inject validation errors into task description for retry
+          const originalDesc = task.description
+          task.description = `${originalDesc}\n\n` +
+            `IMPORTANT: Your previous output failed schema validation ("${task.outputSchema}").\n` +
+            `Errors:\n${validation.errors.join('\n')}\n` +
+            `Please fix your output to match the required schema.`
+
+          setTimeout(() => {
+            this.createWorktreeAndSpawn(task, mode, onDone, info.attempt + 1)
+            task.description = originalDesc // Restore for potential further retries
+          }, 1000)
+          return
+        }
+        // Second attempt also failed — accept output with warning
+        this.log.error(
+          `[SCHEMA:validation-exhausted] ${task.specialist}/${task.id} — accepting invalid output after retry`
+        )
+      } else {
+        this.log.info(
+          `[SCHEMA:validated] ${task.specialist}/${task.id} schema="${task.outputSchema}" strategy=${validation.strategy}`
+        )
+      }
+    }
 
     // Persist agent context — extract summary for future specialist context injection
     if (this.conversationId && info.output.length > 0) {
@@ -1425,7 +1549,10 @@ export class SpecialistPoolService extends EventEmitter {
       shouldEarlyExitOnReport: isInvestigationTask,
       abortedAfterReportDetection: false,
       reportRegex: /```investigation-report\s*\n([\s\S]*?)```/,
-      releasePermit
+      releasePermit,
+      // R2: Inline loop detection
+      lastToolSignature: null,
+      consecutiveIdenticalToolCalls: 0
     }
 
     return { systemPrompt, fullPrompt, cwd, modelId, thinkingBudget, execState }
@@ -1525,7 +1652,7 @@ export class SpecialistPoolService extends EventEmitter {
     return false
   }
 
-  /** Handle tool_use chunk — fire hooks, enforce circuit breaker */
+  /** Handle tool_use chunk — fire hooks, enforce circuit breaker + inline loop detection (R2) */
   private handleToolUseChunk(
     chunk: { toolName?: string; toolId?: string; toolInput?: string },
     state: SDKExecutionState
@@ -1540,6 +1667,34 @@ export class SpecialistPoolService extends EventEmitter {
       toolInput: chunk.toolInput ?? undefined,
       toolCallIndex: state.toolCallCount
     })
+
+    // R2: Inline loop detection — track consecutive identical tool+input pairs
+    const toolSignature = `${chunk.toolName ?? ''}:${chunk.toolInput ?? ''}`
+    if (toolSignature === state.lastToolSignature) {
+      state.consecutiveIdenticalToolCalls++
+    } else {
+      state.lastToolSignature = toolSignature
+      state.consecutiveIdenticalToolCalls = 1
+    }
+
+    if (state.consecutiveIdenticalToolCalls >= MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS) {
+      this.log.warn(
+        `[LOOP:detected] ${task.specialist}/${task.id} — ` +
+        `${state.consecutiveIdenticalToolCalls} consecutive identical tool calls: ${chunk.toolName}`
+      )
+      this.slog.toolCallLimitReached({
+        taskId: task.id,
+        agentId: task.specialist,
+        model: task.model ?? 'sonnet',
+        toolCallCount: state.toolCallCount,
+        maxToolCalls: state.maxToolCalls
+      })
+      state.abortController.abort()
+      throw new Error(
+        `Specialist ${task.specialist} stuck in loop — ${state.consecutiveIdenticalToolCalls} identical ` +
+        `${chunk.toolName} calls with same input`
+      )
+    }
 
     if (state.toolCallCount >= state.maxToolCalls) {
       this.slog.toolCallLimitReached({
@@ -2192,6 +2347,8 @@ export class SpecialistPoolService extends EventEmitter {
     this.completedTasks.clear()
     this.taskResults.clear()
     this.taskStatuses.clear()
+    this.skippedTasks.clear()
+    this.allTasks = []
     this.activeProcesses.clear()
     this.aborted = false
     this.conversationBrief = null

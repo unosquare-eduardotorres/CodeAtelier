@@ -127,9 +127,6 @@ export const useAppPreferenceActions = (): Pick<
     }))
   )
 
-export const useAppPreferences = (): AppPreferences =>
-  useAppPreferenceStore((state) => state.preferences)
-
 export const useSpecialistWarningPreferences = (): Pick<
   AppPreferences,
   'specialistWarningBuild' | 'specialistWarningPlan' | 'specialistWarningAlways'

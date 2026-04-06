@@ -21,7 +21,7 @@ import type { CodeGraphIndexingState } from '../../shared/types'
  * - Progress events streamed to renderer via IPC
  */
 /** Edge in the code graph: a reference from one file to a definition in another. */
-export interface GraphEdge {
+interface GraphEdge {
   from: string
   to: string
   name: string

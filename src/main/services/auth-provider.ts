@@ -1,7 +1,7 @@
 import log from 'electron-log/main'
 import { workspaceRepository } from '../db/repositories'
 
-export type AuthMode = 'claude-max' | 'api-key'
+type AuthMode = 'claude-max' | 'api-key'
 
 export interface AuthProvider {
   mode: AuthMode

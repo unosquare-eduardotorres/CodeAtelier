@@ -4,7 +4,7 @@ import {
   fileChangeRepository,
   messageRepository
 } from '../db/repositories'
-import { generalistService, costTrackerService } from '../services'
+import { costTrackerService } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   DecomposedTask,
@@ -59,36 +59,12 @@ export function registerChatPlanIpc(mainWindow: BrowserWindow): void {
       args: { conversationId: string; strategy: ExecutionStrategy; report: InvestigationReport }
     ) => {
       validateSender(event)
-      const { conversationId, strategy, report } = args
-
-      // Auto-switch to build mode
-      const conversation = conversationRepository.findById(conversationId)
-      if (conversation?.mode === 'plan') {
-        conversationRepository.updateMode(conversationId, 'build')
-        generalistService.switchMode('build')
-        log.info('Auto-switched to build mode for investigation fix')
-      }
-
-      // Build fix-oriented HandoffBrief
-      const fixBrief: HandoffBrief = {
-        summary: `Fix: ${report.proposedFix}`,
-        decisions: [],
-        constraints: [],
-        filesDiscussed: report.filesAffected.map((f) => f.path),
-        recentMessages: [],
-        specialists: [],
-        mode: 'build'
-      }
 
       await taskPipeline.prepare({
-        conversationId,
-        brief: fixBrief,
-        skipMessageEnrichment: true,
-        forceMode: 'build',
-        forceAutoExecute: strategy,
-        uiNotifications: {
-          modeSwitchMessage: true
-        }
+        type: 'investigationFix',
+        conversationId: args.conversationId,
+        report: args.report,
+        autoExecuteStrategy: args.strategy
       })
     }
   )

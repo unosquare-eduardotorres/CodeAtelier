@@ -89,18 +89,6 @@ export class CheckpointRepository {
     return row ? toModel(row) : null
   }
 
-  /** Get the most recent checkpoint for a conversation */
-  findLatest(conversationId: string): CheckpointRecord | null {
-    const db = getDatabase()
-    const row = db
-      .prepare(
-        `SELECT * FROM checkpoints WHERE conversation_id = ?
-         ORDER BY created_at DESC LIMIT 1`
-      )
-      .get(conversationId) as CheckpointRow | undefined
-    return row ? toModel(row) : null
-  }
-
   /** Delete old checkpoints, keeping only the N most recent per conversation */
   pruneKeepRecent(conversationId: string, keep: number = 5): number {
     const db = getDatabase()

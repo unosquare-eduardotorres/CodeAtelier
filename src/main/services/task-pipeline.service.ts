@@ -6,6 +6,7 @@ import type {
   ExecutionStrategy,
   HandoffBrief,
   InvestigationDepth,
+  InvestigationReport,
   TaskExecutionProgress
 } from '../../shared/types'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -47,24 +48,24 @@ function attachPoolListeners(
   }
 }
 
-// ── Pipeline Options ──
+// ── Pipeline Options (discriminated union) ──
 
-export interface PrepareOptions {
+/** Normal handoff from generalist → specialist delegation */
+export interface HandoffPrepare {
+  type: 'handoff'
   conversationId: string
   brief: HandoffBrief
-  /** Skip loading recent messages (investigation fix doesn't need them) */
-  skipMessageEnrichment?: boolean
-  /** Override mode resolution — force a specific mode */
-  forceMode?: ConversationMode
-  /** Auto-execute after presenting plan card */
-  forceAutoExecute?: ExecutionStrategy
-  /** Which UI notifications to send before decomposition */
-  uiNotifications?: {
-    handoffIndicator?: boolean
-    delegationMessage?: boolean
-    modeSwitchMessage?: boolean
-  }
 }
+
+/** Investigation fix — auto-switch to build mode and execute fix */
+export interface InvestigationFixPrepare {
+  type: 'investigationFix'
+  conversationId: string
+  report: InvestigationReport
+  autoExecuteStrategy: ExecutionStrategy
+}
+
+export type PrepareOptions = HandoffPrepare | InvestigationFixPrepare
 
 export interface ExecuteOptions {
   conversationId: string
@@ -83,26 +84,89 @@ export class TaskPipelineService {
   }
 
   /**
-   * Phase 1: Prepare a task plan from a brief.
+   * Phase 1: Prepare a task plan.
    *
-   * Steps (conditional based on options):
-   * 1. Log handoff event
-   * 2. Enrich brief with recent messages (if multi-specialist)
-   * 3. Send UI notifications (handoff indicator, delegation message, mode switch)
-   * 4. Resolve effective mode (investigation detection or forced)
-   * 5. Persist mode to DB
-   * 6. Decompose via generalist
-   * 7. Send CHAT_TASK_PLAN to renderer (with or without autoExecute)
+   * Uses derive-then-run pattern:
+   * 1. Switch on variant type to derive all config values
+   * 2. Run linear step pipeline with derived config
+   *
+   * Steps: logEvent → enrichMessages → sendNotifications → persistMode → decompose → sendTaskPlan
    */
   async prepare(options: PrepareOptions): Promise<void> {
-    const {
-      conversationId,
-      brief,
-      skipMessageEnrichment = false,
-      forceMode,
-      forceAutoExecute,
-      uiNotifications = {}
-    } = options
+    const { conversationId } = options
+
+    // ── Derive config from variant type ──
+    type NotificationType = 'handoff' | 'delegation' | 'modeSwitch'
+
+    interface PrepareConfig {
+      brief: HandoffBrief
+      effectiveMode: ConversationMode
+      autoExecuteStrategy?: ExecutionStrategy
+      enrichMessages: boolean
+      notifications: NotificationType[]
+    }
+
+    let config: PrepareConfig
+
+    switch (options.type) {
+      case 'handoff': {
+        const { brief } = options
+        const conversation = conversationRepository.findById(conversationId)
+        const isInvestigation = isInvestigationIntent(brief.summary)
+        const effectiveMode: ConversationMode =
+          conversation?.mode === 'build' && !isInvestigation ? 'build' : 'plan'
+
+        if (effectiveMode !== brief.mode) {
+          log.info(
+            `[PIPELINE:mode-resolve] effectiveMode=${effectiveMode} (conversation=${conversation?.mode}, investigation=${isInvestigation}, brief=${brief.mode})`
+          )
+        }
+        brief.mode = effectiveMode
+
+        config = {
+          brief,
+          effectiveMode,
+          autoExecuteStrategy: effectiveMode === 'build' ? 'sequential' : undefined,
+          enrichMessages: brief.specialists.length > 1,
+          notifications: ['handoff', 'delegation']
+        }
+        break
+      }
+
+      case 'investigationFix': {
+        const { report, autoExecuteStrategy } = options
+
+        // Auto-switch generalist to build mode
+        const conversation = conversationRepository.findById(conversationId)
+        if (conversation?.mode === 'plan') {
+          conversationRepository.updateMode(conversationId, 'build')
+          generalistService.switchMode('build')
+          log.info('Auto-switched to build mode for investigation fix')
+        }
+
+        // Build fix-oriented HandoffBrief from investigation report
+        const fixBrief: HandoffBrief = {
+          summary: `Fix: ${report.proposedFix}`,
+          decisions: [],
+          constraints: [],
+          filesDiscussed: report.filesAffected.map((f) => f.path),
+          recentMessages: [],
+          specialists: [],
+          mode: 'build'
+        }
+
+        config = {
+          brief: fixBrief,
+          effectiveMode: 'build',
+          autoExecuteStrategy,
+          enrichMessages: false,
+          notifications: ['modeSwitch']
+        }
+        break
+      }
+    }
+
+    const { brief, effectiveMode, autoExecuteStrategy, enrichMessages, notifications } = config
 
     // ── Step 1: Event logging ──
     eventLoggerService.logHandoffDetected({
@@ -112,8 +176,8 @@ export class TaskPipelineService {
       mode: brief.mode
     })
 
-    // ── Step 2: Enrich with recent messages (conditional) ──
-    if (!skipMessageEnrichment && brief.specialists.length > 1) {
+    // ── Step 2: Enrich with recent messages ──
+    if (enrichMessages) {
       try {
         const allMessages = messageRepository.findByConversation(conversationId)
         brief.recentMessages = allMessages
@@ -123,84 +187,72 @@ export class TaskPipelineService {
       } catch (error) {
         log.warn('Failed to enrich handoff with recent messages:', error)
       }
-    } else if (!skipMessageEnrichment) {
+    } else if (brief.specialists.length <= 1 && options.type === 'handoff') {
       log.info(
         '[PIPELINE:skip-recent-messages] Single-specialist handoff — skipping recentMessages enrichment (Strategy F)'
       )
     }
 
-    // ── Step 3: UI notifications (conditional) ──
-    if (uiNotifications.handoffIndicator) {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
-        conversationId,
-        summary: brief.summary,
-        specialists: brief.specialists,
-        mode: brief.mode
-      })
-      log.info(`[PIPELINE:handoff-sent-to-renderer] conversationId=${conversationId}`)
-      // Switch streaming identity to generalist during decomposition
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        chunk: '',
-        role: 'generalist'
-      })
-    }
+    // ── Step 3: Send UI notifications ──
+    for (const notification of notifications) {
+      switch (notification) {
+        case 'handoff':
+          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
+            conversationId,
+            summary: brief.summary,
+            specialists: brief.specialists,
+            mode: brief.mode
+          })
+          log.info(`[PIPELINE:handoff-sent-to-renderer] conversationId=${conversationId}`)
+          // Switch streaming identity to generalist during decomposition
+          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: '',
+            role: 'generalist'
+          })
+          break
 
-    if (uiNotifications.delegationMessage) {
-      const specialistNames = brief.specialists
-        .map((id) => {
-          const spec = specialistRepository.findByAgentId(id)
-          return spec?.displayName ?? id
-        })
-        .join(', ')
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        chunk: `Delegating to **${specialistNames}** for ${brief.mode === 'plan' ? 'review' : 'implementation'}.\n\n`,
-        role: 'generalist'
-      })
-    }
+        case 'delegation': {
+          const specialistNames = brief.specialists
+            .map((id) => {
+              const spec = specialistRepository.findByAgentId(id)
+              return spec?.displayName ?? id
+            })
+            .join(', ')
+          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: `Delegating to **${specialistNames}** for ${brief.mode === 'plan' ? 'review' : 'implementation'}.\n\n`,
+            role: 'generalist'
+          })
+          break
+        }
 
-    if (uiNotifications.modeSwitchMessage) {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        chunk: '\n> **Mode switched to Build** — executing fix plan.\n\n',
-        role: 'generalist'
-      })
-    }
-
-    // ── Step 4: Resolve effective mode ──
-    let effectiveMode: ConversationMode
-    if (forceMode) {
-      effectiveMode = forceMode
-    } else {
-      const conversation = conversationRepository.findById(conversationId)
-      const isInvestigation = isInvestigationIntent(brief.summary)
-      effectiveMode =
-        conversation?.mode === 'build' && !isInvestigation ? 'build' : 'plan'
-      if (effectiveMode !== brief.mode) {
-        log.info(
-          `[PIPELINE:mode-resolve] effectiveMode=${effectiveMode} (conversation=${conversation?.mode}, investigation=${isInvestigation}, brief=${brief.mode})`
-        )
+        case 'modeSwitch':
+          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+            conversationId,
+            chunk: '\n> **Mode switched to Build** — executing fix plan.\n\n',
+            role: 'generalist'
+          })
+          break
       }
     }
-    brief.mode = effectiveMode
 
-    // ── Step 5: Persist mode to DB ──
+    // ── Step 4: Persist mode to DB ──
     try {
       conversationRepository.updateMode(conversationId, effectiveMode)
     } catch (error) {
       log.error('Failed to update conversation mode:', error)
     }
 
-    // ── Step 6: Decompose ──
+    // ── Step 5: Decompose ──
     try {
       log.info(`[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`)
       const taskPlan = await generalistService.decompose(brief, conversationId, effectiveMode)
       log.info(`[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`)
 
-      // ── Step 7: Present to renderer ──
+      // ── Step 6: Present to renderer ──
       const autoExecute =
-        forceAutoExecute ?? (taskPlan.mode === 'build' ? ('sequential' as ExecutionStrategy) : undefined)
+        autoExecuteStrategy ?? (taskPlan.mode === 'build' ? ('sequential' as ExecutionStrategy) : undefined)
       if (autoExecute) {
         this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PLAN, {
           ...taskPlan,

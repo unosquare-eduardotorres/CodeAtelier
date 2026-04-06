@@ -752,6 +752,5 @@ export const promptBuilder = new PromptBuilder()
 // Generalist prompts now come from default-prompts.ts (DB-editable).
 
 export {
-  DECOMPOSITION_SYSTEM_PROMPT,
-  SPECIALIST_TASK_SYSTEM_PROMPT
+  DECOMPOSITION_SYSTEM_PROMPT
 }

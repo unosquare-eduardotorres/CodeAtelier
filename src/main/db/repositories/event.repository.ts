@@ -107,18 +107,6 @@ export class EventRepository {
     return rows.map(toModel)
   }
 
-  /** Get events by category, ordered by most recent first */
-  findByCategory(category: EventCategory, limit: number = 100): EventRecord[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `SELECT * FROM events WHERE category = ?
-         ORDER BY created_at DESC LIMIT ?`
-      )
-      .all(category, limit) as EventRow[]
-    return rows.map(toModel)
-  }
-
   /** Get recent events across all categories */
   getRecent(limit: number = 200): EventRecord[] {
     const db = getDatabase()
@@ -126,18 +114,6 @@ export class EventRepository {
       .prepare('SELECT * FROM events ORDER BY created_at DESC LIMIT ?')
       .all(limit) as EventRow[]
     return rows.map(toModel)
-  }
-
-  /** Count events by category for a workspace (for analytics) */
-  countByCategory(workspaceId: string): { category: string; count: number }[] {
-    const db = getDatabase()
-    return db
-      .prepare(
-        `SELECT category, COUNT(*) as count FROM events
-         WHERE workspace_id = ?
-         GROUP BY category ORDER BY count DESC`
-      )
-      .all(workspaceId) as { category: string; count: number }[]
   }
 
   /** Prune old events to prevent unbounded DB growth */

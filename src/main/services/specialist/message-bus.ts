@@ -174,20 +174,6 @@ export class MessageBus {
   }
 
   /**
-   * Get all messages for a specific task.
-   */
-  getTaskMessages(taskId: string): AgentMessage[] {
-    return this.messages.filter((msg) => msg.taskId === taskId)
-  }
-
-  /**
-   * Get all messages from a specific agent.
-   */
-  getFromAgent(agentId: string): AgentMessage[] {
-    return this.messages.filter((msg) => msg.from === agentId)
-  }
-
-  /**
    * Subscribe to messages for a specific agent (direct + broadcast).
    * Returns an unsubscribe function.
    */
@@ -215,19 +201,6 @@ export class MessageBus {
       const idx = this.globalSubscribers.indexOf(callback)
       if (idx >= 0) this.globalSubscribers.splice(idx, 1)
     }
-  }
-
-  /**
-   * Get unread count for an agent.
-   */
-  getUnreadCount(agentId: string): number {
-    const readSet = this.readState.get(agentId) ?? new Set()
-    return this.messages.filter(
-      (msg) =>
-        !readSet.has(msg.id) &&
-        msg.from !== agentId &&
-        (msg.to === agentId || msg.to === undefined)
-    ).length
   }
 
   /**

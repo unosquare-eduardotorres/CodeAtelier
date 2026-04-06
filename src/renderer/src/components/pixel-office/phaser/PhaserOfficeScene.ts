@@ -125,11 +125,18 @@ export class PhaserOfficeScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
+    try {
     // Load existing assets using the same pipeline as old engine
     await loadAllAssets()
 
+    // Guard: scene may have been destroyed during asset loading
+    if (!this.sys?.game?.renderer) return
+
     // Create character textures from loaded PNGs
     await createCharacterTextures(this)
+
+    // Guard: scene may have been destroyed during character texture creation
+    if (!this.sys?.game?.renderer) return
 
     // Create bubble textures
     createBubbleTextures(this)
@@ -227,6 +234,11 @@ export class PhaserOfficeScene extends Phaser.Scene {
     // PhaserOfficeCanvas listens for this instead of the Phaser 'create' event, which
     // fires before this async method completes.
     this.events.emit('office-ready')
+    } catch (err) {
+      // Swallow errors from destroyed scenes — not actionable
+      if (!this.sys?.game?.renderer) return
+      console.error('[PixelOffice] Scene creation failed:', err)
+    }
   }
 
   update(_time: number, deltaMs: number): void {

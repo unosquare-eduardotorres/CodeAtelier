@@ -19,7 +19,7 @@ export interface RawChunk {
   language: string
 }
 
-export interface ScopeContext {
+interface ScopeContext {
   className: string
   classKind: 'class' | 'interface' | 'abstract class' | 'record'
   classSignature: string
@@ -586,7 +586,7 @@ const DESCRIPTION_BATCH_SIZE = 8
 /** Number of concurrent CLI calls for batch description generation. */
 const DESCRIPTION_CONCURRENCY = 3
 
-export interface DescriptionProgressUpdate {
+interface DescriptionProgressUpdate {
   descriptionsProcessed: number
   descriptionsTotal: number
   descriptionsCached: number

@@ -24,16 +24,6 @@ export class AppPreferenceRepository {
     ).run(key, value)
   }
 
-  getAll(): Record<string, string> {
-    const db = getDatabase()
-    const rows = db.prepare('SELECT key, value FROM app_preferences').all() as AppPreferenceRow[]
-    const result: Record<string, string> = {}
-    for (const row of rows) {
-      result[row.key] = row.value
-    }
-    return result
-  }
-
   getBool(key: string, defaultVal = false): boolean {
     const value = this.get(key)
     if (value === null) return defaultVal

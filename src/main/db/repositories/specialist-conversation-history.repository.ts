@@ -84,24 +84,6 @@ export class SpecialistConversationHistoryRepository {
     return rows.map(mapRow)
   }
 
-  findLatestAction(
-    conversationId: string,
-    specialistId: string
-  ): SpecialistConversationHistoryRecord | undefined {
-    const db = getDatabase()
-    const row = db
-      .prepare(
-        `
-        SELECT * FROM specialist_conversation_history
-        WHERE conversation_id = ? AND specialist_id = ?
-        ORDER BY created_at DESC
-        LIMIT 1
-      `
-      )
-      .get(conversationId, specialistId) as SpecialistConversationHistoryRow | undefined
-    return row ? mapRow(row) : undefined
-  }
-
   clearByConversation(conversationId: string): void {
     const db = getDatabase()
     db.prepare('DELETE FROM specialist_conversation_history WHERE conversation_id = ?').run(

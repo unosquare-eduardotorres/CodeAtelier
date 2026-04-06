@@ -176,7 +176,93 @@ export function validateWithSchema<T>(
   }
 }
 
-// ── Generic Schema Validator ──
+// ── R3: Task Output Schema Registry ──
+
+/**
+ * Registry of named Zod schemas for task output validation.
+ * The generalist can specify `outputSchema: "schemaName"` on a DecomposedTask
+ * to enable structured output validation with auto-retry.
+ */
+const schemaRegistry = new Map<string, z.ZodType<unknown>>()
+
+/** Register a named schema for task output validation */
+export function registerOutputSchema(name: string, schema: z.ZodType<unknown>): void {
+  schemaRegistry.set(name, schema)
+}
+
+/** Get a registered schema by name */
+export function getOutputSchema(name: string): z.ZodType<unknown> | undefined {
+  return schemaRegistry.get(name)
+}
+
+/** List all registered schema names */
+export function listOutputSchemas(): string[] {
+  return [...schemaRegistry.keys()]
+}
+
+/**
+ * R3: Validate specialist output against a named schema.
+ * Extracts JSON from the output (using multi-strategy extraction),
+ * then validates against the registered Zod schema.
+ *
+ * Returns a discriminated union:
+ * - success: typed data + extraction strategy
+ * - failure: field-level error messages + raw text for retry injection
+ */
+export function validateTaskOutput(
+  output: string,
+  schemaName: string
+): ValidationResult<unknown> {
+  const schema = schemaRegistry.get(schemaName)
+  if (!schema) {
+    return {
+      success: false,
+      errors: [`No schema registered with name "${schemaName}". Available: [${listOutputSchemas().join(', ')}]`]
+    }
+  }
+
+  const extracted = extractJSON(output)
+  if (!extracted) {
+    return {
+      success: false,
+      errors: [
+        'No valid JSON found in specialist output.',
+        `Expected output matching schema "${schemaName}".`,
+        'Please emit your result as a JSON object inside a ```json code fence.'
+      ],
+      rawText: output.substring(0, 500)
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(extracted.json)
+    const result = schema.safeParse(parsed)
+
+    if (result.success) {
+      return { success: true, data: result.data, strategy: extracted.strategy }
+    }
+
+    return {
+      success: false,
+      errors: [
+        `Output JSON does not match schema "${schemaName}":`,
+        ...(result as { success: false; error: z.ZodError }).error.issues.map(
+          (i) => `  ${i.path.join('.')}: ${i.message}`
+        )
+      ],
+      rawText: extracted.json.substring(0, 500)
+    }
+  } catch (error) {
+    return {
+      success: false,
+      errors: [`JSON parse error: ${(error as Error).message}`],
+      rawText: extracted.json.substring(0, 500)
+    }
+  }
+}
+
+// Register built-in schemas
+registerOutputSchema('investigation-report', InvestigationReportSchema)
 
 // ── Fallback Report Builder ──
 

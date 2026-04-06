@@ -312,12 +312,9 @@ export function registerChatMessageIpc(mainWindow: BrowserWindow): void {
           log.info('Handoff received from generalist:', brief.summary)
 
           await taskPipeline.prepare({
+            type: 'handoff',
             conversationId,
-            brief,
-            uiNotifications: {
-              handoffIndicator: true,
-              delegationMessage: true
-            }
+            brief
           })
 
           // Clean up handoff listener (one-shot)

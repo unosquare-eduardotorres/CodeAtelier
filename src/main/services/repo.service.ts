@@ -65,19 +65,19 @@ function detectLanguage(filePath: string): string {
   return EXT_TO_LANGUAGE[ext] ?? 'text'
 }
 
-export interface FileDetailEntry {
+interface FileDetailEntry {
   filePath: string
   changeType: 'created' | 'modified' | 'deleted'
   staged: boolean
 }
 
-export interface FileDiffResult {
+interface FileDiffResult {
   oldContent: string
   newContent: string
   language: string
 }
 
-export interface PushStatusResult {
+interface PushStatusResult {
   branch: string
   commitsAhead: number
   hasRemote: boolean

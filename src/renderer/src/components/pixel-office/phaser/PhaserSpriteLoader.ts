@@ -96,7 +96,19 @@ export async function createCharacterTextures(scene: Phaser.Scene): Promise<void
   ctx.imageSmoothingEnabled = false
 
   for (let charIdx = 0; charIdx < CHAR_URLS.length; charIdx++) {
+    // Guard: bail if scene was destroyed during async loading
+    if (!scene.sys?.game?.renderer) {
+      console.warn('[PixelOffice] Scene destroyed during character texture loading — aborting')
+      break
+    }
+
     const img = await loadImage(CHAR_URLS[charIdx])
+
+    // Guard again after async loadImage — scene may have been destroyed while waiting
+    if (!scene.sys?.game?.renderer) {
+      console.warn('[PixelOffice] Scene destroyed during character texture loading — aborting')
+      break
+    }
 
     const charData: CharacterDirectionFrames = { down: [], up: [], right: [] }
     const directions: ['down', 'up', 'right'] = ['down', 'up', 'right']

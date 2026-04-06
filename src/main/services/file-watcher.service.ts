@@ -103,25 +103,6 @@ class FileWatcherService extends EventEmitter {
     log.info(`[FileWatcher] Stopped watching workspace ${workspaceId}`)
   }
 
-  /**
-   * Update feature flags for an active watcher.
-   * If both flags are OFF, stops the watcher entirely.
-   */
-  updateFlags(
-    workspaceId: string,
-    flags: {
-      codeGraphEnabled?: boolean
-      semanticSearchEnabled?: boolean
-    }
-  ): void {
-    const state = this.watchers.get(workspaceId)
-    if (!state) return
-    if (flags.codeGraphEnabled !== undefined) state.codeGraphEnabled = flags.codeGraphEnabled
-    if (flags.semanticSearchEnabled !== undefined)
-      state.semanticSearchEnabled = flags.semanticSearchEnabled
-    if (!state.codeGraphEnabled && !state.semanticSearchEnabled) this.stop(workspaceId)
-  }
-
   private handleFileEvent(workspaceId: string, filename: string): void {
     // Skip ignored directories
     const parts = filename.split('/')

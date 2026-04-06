@@ -468,6 +468,8 @@ export interface DecomposedTask {
   model?: ModelTier
   /** Optional verification command to run after task completion (e.g. "npm run lint", "npm test") */
   verificationCommand?: string
+  /** Optional Zod schema name for structured output validation (R3: open-multi-agent pattern) */
+  outputSchema?: string
 }
 
 /** The full task plan returned by the generalist decomposition step */
@@ -488,7 +490,7 @@ export interface TaskPlan {
 export interface TaskExecutionProgress {
   taskId: string
   specialist: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
   output?: string
   error?: string
   // Complexity scoring

@@ -56,22 +56,6 @@ export class ConversationSpecialistRepository {
     return row ? mapRow(row) : null
   }
 
-  /** Get specialist IDs that are active for a conversation */
-  findActiveSpecialistIds(conversationId: string): string[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `
-        SELECT cs.specialist_id FROM conversation_specialists cs
-        INNER JOIN specialists s ON s.id = cs.specialist_id
-        WHERE cs.conversation_id = ? AND cs.is_active = 1
-        ORDER BY s.priority ASC
-      `
-      )
-      .all(conversationId) as { specialist_id: string }[]
-    return rows.map((row) => row.specialist_id)
-  }
-
   /** Upsert a specialist override for a conversation */
   upsert(
     conversationId: string,

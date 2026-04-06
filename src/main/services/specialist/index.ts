@@ -60,7 +60,6 @@ export {
   extractJSON,
   validateInvestigationReport,
   validateWithSchema,
-  InvestigationReportSchema,
   buildFallbackReport,
   type ValidationResult
 } from './structured-output'
