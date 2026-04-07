@@ -11,13 +11,11 @@ import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store
 import {
   ChatItem,
   UnsavedChangesDialog,
-  CompleteDialog,
-  NewConversationModal
+  CompleteDialog
 } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
 import { SETTINGS_MENU } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
-import type { ConversationMode } from '../../../../shared/types'
 
 type SidebarTab = 'chats' | 'settings'
 
@@ -28,6 +26,7 @@ interface UnifiedSidebarProps {
   activeSettingsTab: SettingsTab
   onSettingsTabChange: (tab: SettingsTab) => void
   onViewChange: (view: 'chat' | 'settings') => void
+  onNewChat?: () => void
 }
 
 export default function UnifiedSidebar({
@@ -36,17 +35,16 @@ export default function UnifiedSidebar({
   onCreateIdea,
   activeSettingsTab,
   onSettingsTabChange,
-  onViewChange
+  onViewChange,
+  onNewChat
 }: UnifiedSidebarProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<SidebarTab>('chats')
   const { activeWorkspace } = useWorkspaceStore()
   const {
     loadConversations,
-    createConversation,
     selectConversation,
     closeConversation,
-    renameConversation,
-    sendMessage
+    renameConversation
   } = useChatActions()
   const conversations = useChatStore((s) => s.conversations)
   const activeConversation = useChatStore((s) => s.activeConversation)
@@ -59,7 +57,7 @@ export default function UnifiedSidebar({
     fileCount: number
   } | null>(null)
   const [completeFromUnsaved, setCompleteFromUnsaved] = useState<string | null>(null)
-  const [showNewChatModal, setShowNewChatModal] = useState(false)
+  // showNewChatModal state removed — new chat is now handled inline via onNewChat prop
   const isCollapsed = externalCollapsed ?? internalCollapsed
   const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c))
 
@@ -77,29 +75,10 @@ export default function UnifiedSidebar({
   }, [activeWorkspace, loadConversations])
 
   const handleNewChat = (): void => {
-    setShowNewChatModal(true)
-  }
-
-  const handleCreateChat = async (data: {
-    title: string
-    description?: string
-    mode: ConversationMode
-    attachments?: string[]
-    useIsolatedBranch?: boolean
-  }): Promise<void> => {
-    if (!activeWorkspace) return
-    await createConversation(activeWorkspace.id, data.mode, data.title)
-    setShowNewChatModal(false)
-    // Ensure we're on the chats tab when a chat is created
+    // Clear active conversation so ChatPanel renders NewChatPage inline
+    useChatStore.setState({ activeConversation: null, messages: [] })
+    onNewChat?.()
     handleTabChange('chats')
-    if (data.useIsolatedBranch) {
-      console.info(
-        '[NewConversationModal] Isolated branch requested — worktree integration pending'
-      )
-    }
-    if (data.description) {
-      sendMessage(data.description, data.attachments)
-    }
   }
 
   const sortedConversations = [...conversations]
@@ -392,12 +371,6 @@ export default function UnifiedSidebar({
         onCancel={() => setCompleteFromUnsaved(null)}
       />
 
-      <NewConversationModal
-        isOpen={showNewChatModal}
-        onClose={() => setShowNewChatModal(false)}
-        onSubmit={handleCreateChat}
-        onCreateIdea={onCreateIdea}
-      />
     </>
   )
 }

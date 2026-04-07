@@ -29,17 +29,54 @@ export interface StreamChunk {
     | 'text'
     | 'tool_use'
     | 'tool_result'
+    | 'tool_progress'
     | 'error'
     | 'status'
     | 'turn_boundary'
     | 'subagent_start'
     | 'subagent_progress'
     | 'subagent_complete'
+    | 'rate_limit'
+    | 'compact_boundary'
+    | 'api_retry'
+    | 'prompt_suggestion'
+    | 'files_persisted'
+    | 'hook_lifecycle'
+    | 'session_state'
+    | 'auth_status'
+    | 'tool_use_summary'
   content?: string
   toolName?: string
   toolInput?: string
   toolId?: string
   error?: string
+  /** Elapsed time in seconds for tool_progress */
+  elapsedSeconds?: number
+  /** Rate limit info for rate_limit type */
+  rateLimit?: {
+    status: 'allowed' | 'allowed_warning' | 'rejected'
+    utilization?: number
+    resetsAt?: number
+    rateLimitType?: string
+  }
+  /** API retry info */
+  retryInfo?: {
+    attempt: number
+    maxRetries: number
+    retryDelayMs: number
+    errorStatus: number | null
+  }
+  /** Files persisted list */
+  persistedFiles?: Array<{ filename: string; fileId: string }>
+  /** Hook lifecycle info */
+  hookInfo?: {
+    hookId: string
+    hookName: string
+    hookEvent: string
+    phase: 'started' | 'progress' | 'response'
+    output?: string
+    outcome?: 'success' | 'error' | 'cancelled'
+  }
 }
 
 /** Strip workspace prefix from an absolute path to produce a relative display path. */
@@ -184,6 +221,19 @@ export abstract class AgentBaseService extends EventEmitter {
       this.dbSessionId = session.id
     } catch (err) {
       this.log.error('Failed to create DB session:', err)
+    }
+  }
+
+  /**
+   * Links the DB session to a conversation after the conversation ID becomes known.
+   * Use for long-lived agents (e.g. generalist) where conversationId is not available at start().
+   */
+  protected updateDbSessionConversation(conversationId: string): void {
+    if (!this.dbSessionId) return
+    try {
+      agentSessionRepository.updateConversationId(this.dbSessionId, conversationId)
+    } catch (err) {
+      this.log.error('Failed to update DB session conversationId:', err)
     }
   }
 

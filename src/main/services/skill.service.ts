@@ -299,6 +299,15 @@ export class SkillService {
     const skillFilePath = join(skillsDir, skill.filename)
 
     try {
+      // Re-parse tiers from disk content (may have changed since initial import)
+      try {
+        const content = readFileSync(skillFilePath, 'utf-8')
+        const tiers = parseSkillTiers(skill.name, skill.description ?? '', content)
+        skillRepository.updateTiers(id, tiers.tier1Json, tiers.tier2Instructions)
+      } catch (tierErr) {
+        skillLogger.warn(`Failed to re-parse tiers for skill ${id}:`, tierErr)
+      }
+
       // Update DB first
       const updated = skillRepository.setActive(id, true)
 

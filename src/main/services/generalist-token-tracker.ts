@@ -130,17 +130,68 @@ export class GeneralistTokenTracker {
   /**
    * Strategy M: Returns prompt cache efficiency metrics for dashboard display.
    * Tracks cumulative cache read/creation across all turns for this session.
+   * Falls back to DB-persisted turn_usage data when in-memory stats are empty (e.g. after restart).
    */
-  getCacheEfficiency(): CacheEfficiencyReport {
-    const totalWithCache =
-      this.cacheStats.totalInput + this.cacheStats.cacheRead + this.cacheStats.cacheCreation
-    const hitRate = totalWithCache > 0 ? (this.cacheStats.cacheRead / totalWithCache) * 100 : 0
+  getCacheEfficiency(conversationId?: string | null): CacheEfficiencyReport {
+    // If in-memory stats are available, use them (hot path during active session)
+    if (this.cacheStats.turns > 0) {
+      const totalWithCache =
+        this.cacheStats.totalInput + this.cacheStats.cacheRead + this.cacheStats.cacheCreation
+      const hitRate = totalWithCache > 0 ? (this.cacheStats.cacheRead / totalWithCache) * 100 : 0
+      return {
+        hitRate,
+        savedTokens: this.cacheStats.cacheRead,
+        totalInput: this.cacheStats.totalInput,
+        turns: this.cacheStats.turns,
+        turnBreakdown: this.turnBreakdown
+      }
+    }
+
+    // Fall back to DB-persisted turn_usage data (cold path after app restart)
+    if (conversationId) {
+      try {
+        const dbTurns = turnUsageRepository.findByConversation(conversationId)
+        if (dbTurns.length > 0) {
+          let totalInput = 0
+          let totalCacheRead = 0
+          let totalCacheCreation = 0
+          const turnBreakdown: TurnBreakdownEntry[] = dbTurns.map((t) => {
+            totalInput += t.inputTokens
+            totalCacheRead += t.cacheReadTokens
+            totalCacheCreation += t.cacheCreationTokens
+            const totalForRate = t.inputTokens + t.cacheReadTokens + t.cacheCreationTokens
+            return {
+              turn: t.turnNumber,
+              inputTokens: t.inputTokens,
+              outputTokens: t.outputTokens,
+              cacheReadTokens: t.cacheReadTokens,
+              cacheCreationTokens: t.cacheCreationTokens,
+              cacheHitRate: totalForRate > 0 ? (t.cacheReadTokens / totalForRate) * 100 : 0,
+              timestamp: new Date(t.createdAt).getTime()
+            }
+          })
+          const totalWithCache = totalInput + totalCacheRead + totalCacheCreation
+          const hitRate = totalWithCache > 0 ? (totalCacheRead / totalWithCache) * 100 : 0
+          return {
+            hitRate,
+            savedTokens: totalCacheRead,
+            totalInput,
+            turns: dbTurns.length,
+            turnBreakdown
+          }
+        }
+      } catch (err) {
+        this.log.error('Failed to load turn usage from DB for cache efficiency:', err)
+      }
+    }
+
+    // No data available
     return {
-      hitRate,
-      savedTokens: this.cacheStats.cacheRead,
-      totalInput: this.cacheStats.totalInput,
-      turns: this.cacheStats.turns,
-      turnBreakdown: this.turnBreakdown
+      hitRate: 0,
+      savedTokens: 0,
+      totalInput: 0,
+      turns: 0,
+      turnBreakdown: []
     }
   }
 

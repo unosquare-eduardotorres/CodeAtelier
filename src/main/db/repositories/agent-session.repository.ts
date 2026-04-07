@@ -147,6 +147,15 @@ export class AgentSessionRepository {
     )
   }
 
+  /** Link a session to a conversation after the conversation ID becomes known */
+  updateConversationId(id: string, conversationId: string): void {
+    const db = getDatabase()
+    db.prepare(`UPDATE agent_sessions SET conversation_id = ? WHERE id = ?`).run(
+      conversationId,
+      id
+    )
+  }
+
   /** Update token usage on a running session (periodic flush without completing) */
   updateTokenUsage(id: string, tokenUsage: number): void {
     const db = getDatabase()

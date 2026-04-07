@@ -1,7 +1,7 @@
 import { useEffect, useCallback } from 'react'
 import { AppLayout } from '@renderer/components/layout'
 import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
-import { WelcomeModal, ToolApprovalModal, CheckpointApprovalModal } from '@renderer/components/common'
+import { WelcomeModal, ToolApprovalModal, CheckpointApprovalModal, RateLimitBanner } from '@renderer/components/common'
 import {
   useWorkspaceStore,
   useChatActions,
@@ -99,7 +99,14 @@ function App(): React.JSX.Element {
         )
       }
       if (data.toolActivity) {
-        if (data.toolActivity.status === 'running') {
+        if (data.toolActivity.elapsedSeconds !== undefined && data.toolActivity.status === 'running') {
+          // Progress update — update elapsed time without changing status
+          updateToolActivity({
+            id: data.toolActivity.id,
+            toolName: data.toolActivity.toolName,
+            elapsedSeconds: data.toolActivity.elapsedSeconds
+          })
+        } else if (data.toolActivity.status === 'running') {
           addToolActivity({
             id: data.toolActivity.id,
             toolName: data.toolActivity.toolName,
@@ -298,6 +305,7 @@ function App(): React.JSX.Element {
 
   return (
     <>
+      <RateLimitBanner />
       <AppLayout />
       <ToolApprovalModal />
       <CheckpointApprovalModal />

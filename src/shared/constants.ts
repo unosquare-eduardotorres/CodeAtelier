@@ -340,6 +340,32 @@ export const IPC_CHANNELS = {
   BUG_COUNCIL_GET_SESSION: 'bugCouncil:getSession',
   BUG_COUNCIL_LIST_SESSIONS: 'bugCouncil:listSessions',
 
+  // SDK Events — new message types from Agent SDK
+  SDK_RATE_LIMIT: 'sdk:rateLimit',
+  SDK_TOOL_PROGRESS: 'sdk:toolProgress',
+  SDK_API_RETRY: 'sdk:apiRetry',
+  SDK_COMPACT_BOUNDARY: 'sdk:compactBoundary',
+  SDK_PROMPT_SUGGESTION: 'sdk:promptSuggestion',
+  SDK_FILES_PERSISTED: 'sdk:filesPersisted',
+  SDK_HOOK_LIFECYCLE: 'sdk:hookLifecycle',
+  SDK_SESSION_STATE: 'sdk:sessionState',
+  SDK_AUTH_STATUS: 'sdk:authStatus',
+
+  // SDK Control — Query instance methods
+  SDK_GET_CONTEXT_USAGE: 'sdk:getContextUsage',
+  SDK_STOP_TASK: 'sdk:stopTask',
+  SDK_INTERRUPT: 'sdk:interrupt',
+  SDK_ACCOUNT_INFO: 'sdk:accountInfo',
+  SDK_SUPPORTED_MODELS: 'sdk:supportedModels',
+  SDK_MCP_SERVER_STATUS: 'sdk:mcpServerStatus',
+  SDK_SET_MODEL: 'sdk:setModel',
+  SDK_SET_PERMISSION_MODE: 'sdk:setPermissionMode',
+  SDK_APPLY_FLAG_SETTINGS: 'sdk:applyFlagSettings',
+  SDK_SET_MCP_SERVERS: 'sdk:setMcpServers',
+  SDK_REWIND_FILES: 'sdk:rewindFiles',
+  SDK_RECONNECT_MCP: 'sdk:reconnectMcp',
+  SDK_SUPPORTED_AGENTS: 'sdk:supportedAgents',
+
 } as const
 
 export const CONVERSATION_MODES = {

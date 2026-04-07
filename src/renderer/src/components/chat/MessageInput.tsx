@@ -97,6 +97,7 @@ export default function MessageInput({
   const draftText = useChatStore((s) => s.draftTexts[currentConversationId] ?? '')
   const { setDraftText, clearDraftText } = useChatActions()
   const [text, setText] = useState(draftText)
+  const [promptSuggestion, setPromptSuggestion] = useState<string | null>(null)
   const [showStopConfirm, setShowStopConfirm] = useState(false)
   const [showCompleteDialog, setShowCompleteDialog] = useState(false)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
@@ -208,6 +209,21 @@ export default function MessageInput({
     setText(useChatStore.getState().draftTexts[currentConversationId] ?? '')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentConversationId])
+
+  // Listen for prompt suggestions from SDK
+  useEffect(() => {
+    const cleanup = window.api.onPromptSuggestion((data) => {
+      if (data.conversationId === currentConversationId) {
+        setPromptSuggestion(data.suggestion)
+      }
+    })
+    return cleanup
+  }, [currentConversationId])
+
+  // Clear suggestion when user starts typing or conversation changes
+  useEffect(() => {
+    if (text) setPromptSuggestion(null)
+  }, [text])
 
   // Slash command filtering
   const filteredCommands = useMemo(() => {
@@ -526,6 +542,22 @@ export default function MessageInput({
           <Send size={18} />
         </button>
       </div>
+
+      {/* Prompt suggestion chip — from SDK promptSuggestions */}
+      {promptSuggestion && !isStreaming && (
+        <div className="mt-1.5">
+          <button
+            onClick={() => {
+              sendMessage(promptSuggestion)
+              setPromptSuggestion(null)
+            }}
+            className="text-xs text-primary-text bg-primary/10 px-3 py-1 rounded-full hover:bg-primary/20 transition-colors"
+            title={promptSuggestion}
+          >
+            💡 {promptSuggestion.length > 80 ? promptSuggestion.slice(0, 77) + '...' : promptSuggestion}
+          </button>
+        </div>
+      )}
 
       <ConfirmDialog
         isOpen={showStopConfirm}

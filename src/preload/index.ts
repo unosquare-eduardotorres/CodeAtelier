@@ -54,7 +54,10 @@ import type {
   CodeGraphIndexingState,
   SchedulingWeights,
   ContextUsage,
-  StructuredPlan
+  StructuredPlan,
+  BugCouncilResult,
+  BugCouncilActivatedEvent,
+  BugCouncilCompleteEvent
 } from '../shared/types'
 
 const api = {
@@ -603,6 +606,7 @@ const api = {
         input?: string
         startedAt?: number
         completedAt?: number
+        elapsedSeconds?: number
       }
       compactNeeded?: {
         level: string
@@ -626,6 +630,7 @@ const api = {
           status: 'running' | 'completed' | 'error'
           startedAt?: number
           completedAt?: number
+          elapsedSeconds?: number
         }
         compactNeeded?: {
           level: string
@@ -1489,6 +1494,134 @@ const api = {
   // ── Conversation Reorder ──
   reorderConversations: (args: { orderedIds: string[] }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_REORDER, args),
+
+  // ── Bug Council ──
+  getBugCouncilSession: (args: { sessionId: string }): Promise<BugCouncilResult | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_COUNCIL_GET_SESSION, args),
+
+  listBugCouncilSessions: (args: { conversationId: string }): Promise<BugCouncilResult[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_COUNCIL_LIST_SESSIONS, args),
+
+  onBugCouncilActivated: (callback: (data: BugCouncilActivatedEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: BugCouncilActivatedEvent): void =>
+      callback(data)
+    ipcRenderer.on(IPC_CHANNELS.BUG_COUNCIL_ACTIVATED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.BUG_COUNCIL_ACTIVATED, handler)
+    }
+  },
+
+  onBugCouncilComplete: (callback: (data: BugCouncilCompleteEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: BugCouncilCompleteEvent): void =>
+      callback(data)
+    ipcRenderer.on(IPC_CHANNELS.BUG_COUNCIL_COMPLETE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.BUG_COUNCIL_COMPLETE, handler)
+    }
+  },
+
+  // ── SDK Events ──
+  onRateLimitEvent: (
+    callback: (data: {
+      status: string
+      utilization?: number
+      resetsAt?: number
+      rateLimitType?: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { status: string; utilization?: number; resetsAt?: number; rateLimitType?: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_RATE_LIMIT, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_RATE_LIMIT, handler)
+    }
+  },
+
+  onPromptSuggestion: (
+    callback: (data: { conversationId: string; suggestion: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; suggestion: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_PROMPT_SUGGESTION, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_PROMPT_SUGGESTION, handler)
+    }
+  },
+
+  onApiRetry: (
+    callback: (data: {
+      attempt: number
+      maxRetries: number
+      retryDelayMs: number
+      errorStatus: number | null
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { attempt: number; maxRetries: number; retryDelayMs: number; errorStatus: number | null }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_API_RETRY, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_API_RETRY, handler)
+    }
+  },
+
+  onSessionState: (
+    callback: (data: { state: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { state: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_SESSION_STATE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_SESSION_STATE, handler)
+    }
+  },
+
+  // ── SDK Control — Query instance methods ──
+  sdkGetContextUsage: (): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_GET_CONTEXT_USAGE),
+
+  sdkStopTask: (args: { taskId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_STOP_TASK, args),
+
+  sdkInterrupt: (): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_INTERRUPT),
+
+  sdkAccountInfo: (): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_ACCOUNT_INFO),
+
+  sdkSupportedModels: (): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_MODELS),
+
+  sdkMcpServerStatus: (): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_MCP_SERVER_STATUS),
+
+  sdkSetModel: (args: { model?: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_SET_MODEL, args),
+
+  sdkSetPermissionMode: (args: { mode: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_SET_PERMISSION_MODE, args),
+
+  sdkApplyFlagSettings: (args: { settings: Record<string, unknown> }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_APPLY_FLAG_SETTINGS, args),
+
+  sdkSetMcpServers: (args: { servers: Record<string, unknown> }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_SET_MCP_SERVERS, args),
+
+  sdkRewindFiles: (args: { userMessageId: string; dryRun?: boolean }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_REWIND_FILES, args),
+
+  sdkReconnectMcp: (args: { serverName: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_RECONNECT_MCP, args),
+
+  sdkSupportedAgents: (): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_AGENTS),
 
 } as const
 

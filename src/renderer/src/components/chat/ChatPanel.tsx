@@ -21,9 +21,11 @@ type ChatTab = 'chat' | 'specialists' | 'code-changes'
 interface ChatPanelProps {
   onCreateIdea?: (data: { title: string; description?: string }) => void
   onStartGrillMe?: () => Promise<void>
+  showNewChat?: boolean
+  onNewChatDismiss?: () => void
 }
 
-export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelProps): React.JSX.Element {
+export default function ChatPanel({ onCreateIdea, onStartGrillMe, showNewChat, onNewChatDismiss }: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, agentStatus } = useWorkspaceStore()
   const { createConversation, updateMode, sendMessage, loadContextUsage } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
@@ -94,7 +96,7 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(activeWorkspace.id, data.mode, data.title, data.personaSpecialistId)
-    setShowNewChatModal(false)
+    onNewChatDismiss?.()
     if (data.useIsolatedBranch) {
       console.info(
         '[NewConversationModal] Isolated branch requested — worktree integration pending'
@@ -105,13 +107,23 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
     }
   }
 
-  // Workspace selected but no active conversation — full-page new chat
+  // Workspace selected but no active conversation
   if (!activeConversation) {
+    if (showNewChat) {
+      return (
+        <NewChatPage
+          onCreateChat={handleCreateChat}
+          onCreateIdea={onCreateIdea}
+        />
+      )
+    }
+    // Empty state — no auto-show of NewChatPage
     return (
-      <NewChatPage
-        onCreateChat={handleCreateChat}
-        onCreateIdea={onCreateIdea}
-      />
+      <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
+        <p className="text-sm text-text-secondary">
+          Select a conversation from the sidebar or start a new one.
+        </p>
+      </div>
     )
   }
 

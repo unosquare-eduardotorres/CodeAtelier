@@ -204,14 +204,6 @@ export class SkillRepository {
     ).run(tier1Json, tier2Instructions, skillId)
   }
 
-  /** Get all active skills' tier1 metadata for fast keyword matching */
-  getActiveTier1Data(): Array<{ id: string; name: string; tier1Json: string | null }> {
-    const db = getDatabase()
-    return db
-      .prepare('SELECT id, name, tier1_json as tier1Json FROM skills WHERE is_active = 1')
-      .all() as Array<{ id: string; name: string; tier1Json: string | null }>
-  }
-
   /** Get pre-computed summary for a specific budget tier */
   getSummary(skillId: string, tier: BudgetTier): string | null {
     const col =

@@ -205,6 +205,8 @@ export interface ToolActivity {
   result?: string
   startedAt: number
   completedAt?: number
+  /** Updated by tool_progress events — elapsed time in seconds */
+  elapsedSeconds?: number
 }
 
 // ── Specialist & Skill Models ──
@@ -1431,6 +1433,25 @@ export interface IpcChannels {
   'codeGraph:indexStart': { args: { workspaceId: string }; return: void }
   'codeGraph:getStatus': { args: { workspaceId: string }; return: CodeGraphIndexingState }
   'codeGraph:hasIndex': { args: { workspaceId: string }; return: boolean }
+
+  // Bug Council
+  'bugCouncil:getSession': { args: { sessionId: string }; return: BugCouncilResult | null }
+  'bugCouncil:listSessions': { args: { conversationId: string }; return: BugCouncilResult[] }
+
+  // SDK Control — Query instance methods
+  'sdk:getContextUsage': { args: void; return: unknown }
+  'sdk:stopTask': { args: { taskId: string }; return: unknown }
+  'sdk:interrupt': { args: void; return: unknown }
+  'sdk:accountInfo': { args: void; return: unknown }
+  'sdk:supportedModels': { args: void; return: unknown }
+  'sdk:mcpServerStatus': { args: void; return: unknown }
+  'sdk:setModel': { args: { model?: string }; return: unknown }
+  'sdk:setPermissionMode': { args: { mode: string }; return: unknown }
+  'sdk:applyFlagSettings': { args: { settings: Record<string, unknown> }; return: unknown }
+  'sdk:setMcpServers': { args: { servers: Record<string, unknown> }; return: unknown }
+  'sdk:rewindFiles': { args: { userMessageId: string; dryRun?: boolean }; return: unknown }
+  'sdk:reconnectMcp': { args: { serverName: string }; return: unknown }
+  'sdk:supportedAgents': { args: void; return: unknown }
 }
 
 // ── IPC Event Channels (main → renderer streaming) ──
@@ -1479,4 +1500,39 @@ export interface IpcEvents {
   'ollama:pullProgress': PullProgress
   'ollama:pullComplete': string
   'ollama:pullError': string
+
+  // Bug Council
+  'bugCouncil:activated': BugCouncilActivatedEvent
+  'bugCouncil:complete': BugCouncilCompleteEvent
+
+  // SDK Events
+  'sdk:rateLimit': {
+    status: string
+    utilization?: number
+    resetsAt?: number
+    rateLimitType?: string
+  }
+  'sdk:toolProgress': { toolId: string; toolName: string; elapsedSeconds: number }
+  'sdk:apiRetry': {
+    attempt: number
+    maxRetries: number
+    retryDelayMs: number
+    errorStatus: number | null
+  }
+  'sdk:compactBoundary': { trigger: string; preTokens: number }
+  'sdk:promptSuggestion': { conversationId: string; suggestion: string }
+  'sdk:filesPersisted': {
+    conversationId: string
+    files: Array<{ filename: string; fileId: string }>
+  }
+  'sdk:hookLifecycle': {
+    hookId: string
+    hookName: string
+    hookEvent: string
+    phase: string
+    output?: string
+    outcome?: string
+  }
+  'sdk:sessionState': { state: string }
+  'sdk:authStatus': { message: string }
 }

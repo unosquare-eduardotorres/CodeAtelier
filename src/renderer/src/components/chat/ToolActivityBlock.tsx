@@ -103,6 +103,11 @@ export default function ToolActivityBlock({
                   {shortenInput(activity.input)}
                 </span>
               )}
+              {activity.elapsedSeconds !== undefined && (
+                <span className="text-xs text-text-muted ml-1">
+                  {activity.elapsedSeconds}s
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -126,6 +131,11 @@ export default function ToolActivityBlock({
               {activity.input && (
                 <span className="text-text-muted truncate max-w-[300px]" title={activity.input}>
                   {shortenInput(activity.input)}
+                </span>
+              )}
+              {activity.status === 'running' && activity.elapsedSeconds !== undefined && (
+                <span className="text-xs text-text-muted ml-1">
+                  {activity.elapsedSeconds}s
                 </span>
               )}
               {activity.status === 'completed' && activity.result && (

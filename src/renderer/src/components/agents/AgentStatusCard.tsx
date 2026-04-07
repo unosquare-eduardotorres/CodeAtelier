@@ -7,7 +7,8 @@ import {
   XCircle,
   Pause,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Square
 } from 'lucide-react'
 import type { AgentStatus, ModelTier, ComplexityTier } from '../../../../shared/types'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
@@ -225,6 +226,22 @@ export default function AgentStatusCard({ status, isSubagent }: AgentStatusCardP
         <span>{formatElapsed(elapsed)}</span>
         <span>·</span>
         <span>{formatTokens(status.tokenUsage)} tokens</span>
+        {/* Per-agent Stop button — uses SDK stopTask */}
+        {isActive && isSubagent && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              window.api.sdkStopTask({ taskId: status.agentId }).catch(() => {
+                // Silently handle — query may have ended
+              })
+            }}
+            className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-danger bg-danger-muted hover:bg-danger/20 transition-colors"
+            title={`Stop ${meta?.displayName ?? status.agentType}`}
+          >
+            <Square size={10} />
+            <span>Stop</span>
+          </button>
+        )}
       </div>
 
       {/* Gate results badges */}

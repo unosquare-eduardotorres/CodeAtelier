@@ -334,6 +334,8 @@ export class GeneralistService extends AgentBaseService {
     this.messageStartedAt = Date.now()
     this.processedToolIds.clear()
     this.currentConversationId = conversationId
+    // Link DB session to conversation so per-conversation cost queries find generalist sessions
+    this.updateDbSessionConversation(conversationId)
     this.accumulatedText = ''
     this.circuitBreaker.reset()
     this.controlToolState = { plan: false, handoff: false, askUser: false, memory: false }
@@ -544,10 +546,13 @@ export class GeneralistService extends AgentBaseService {
       let messageStopReceived = false
       let hasTextAfterLastTool = true
 
+      // Resolve the main model before execute — needed to conditionally set fallbackModel
+      const resolvedModel = modelConfigService.getModel(this.workspacePath!, 'generalist')
+
       for await (const chunk of this.sdkExecutor.execute({
         prompt: sdkPrompt,
         systemPrompt,
-        model: modelConfigService.getModel(this.workspacePath!, 'generalist'),
+        model: resolvedModel,
         cwd: this.workspacePath!,
         permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
         allowedTools,
@@ -560,6 +565,14 @@ export class GeneralistService extends AgentBaseService {
         thinking: { type: 'adaptive' },
         effort: 'high',
         maxBudgetUsd: GENERALIST_BUDGET_CAP,
+        // New SDK options — prompt suggestions (nearly free, uses prompt cache)
+        promptSuggestions: true,
+        // Native file checkpointing for rewindFiles() support
+        enableFileCheckpointing: true,
+        // Fallback to Sonnet if Opus is rate-limited (omit when main model is already Sonnet)
+        ...(resolvedModel !== 'claude-sonnet-4-6'
+          ? { fallbackModel: 'claude-sonnet-4-6' }
+          : {}),
         ...(mcpServers ? { mcpServers } : {})
       })) {
         if (this.circuitBreaker.isBroken) break
@@ -632,6 +645,14 @@ export class GeneralistService extends AgentBaseService {
 
             this.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
           }
+          // Forward prompt suggestions to renderer
+          if (chunk.type === 'prompt_suggestion' && chunk.content) {
+            this.emit('promptSuggestion', {
+              conversationId,
+              suggestion: chunk.content
+            })
+          }
+
           // Update status based on chunk type
           if (chunk.type === 'text') this.currentStatus = 'writing'
           if (chunk.type === 'tool_use') this.currentStatus = 'reviewing'
@@ -929,6 +950,11 @@ export class GeneralistService extends AgentBaseService {
     return this.workspacePath !== null
   }
 
+  /** Get the active SDK Query reference for instance method calls */
+  getActiveQuery(): import('@anthropic-ai/claude-agent-sdk').Query | null {
+    return this.sdkExecutor.getActiveQuery()
+  }
+
   getWorkspacePath(): string | null {
     return this.workspacePath
   }
@@ -988,7 +1014,7 @@ export class GeneralistService extends AgentBaseService {
    * Delegates to GeneralistTokenTracker.
    */
   getCacheEfficiency(): CacheEfficiencyReport {
-    return this.tokenTracker.getCacheEfficiency()
+    return this.tokenTracker.getCacheEfficiency(this.currentConversationId)
   }
 
   /**

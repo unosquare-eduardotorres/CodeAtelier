@@ -56,7 +56,10 @@ import type {
   CodeGraphIndexingState,
   SchedulingWeights,
   ContextUsage,
-  StructuredPlan
+  StructuredPlan,
+  BugCouncilResult,
+  BugCouncilActivatedEvent,
+  BugCouncilCompleteEvent
 } from '../shared/types'
 
 interface Api {
@@ -383,6 +386,7 @@ interface Api {
         input?: string
         startedAt?: number
         completedAt?: number
+        elapsedSeconds?: number
       }
       compactNeeded?: {
         level: string
@@ -782,6 +786,49 @@ interface Api {
 
   // Conversation Reorder
   reorderConversations: (args: { orderedIds: string[] }) => Promise<void>
+
+  // Bug Council
+  getBugCouncilSession: (args: { sessionId: string }) => Promise<BugCouncilResult | null>
+  listBugCouncilSessions: (args: { conversationId: string }) => Promise<BugCouncilResult[]>
+  onBugCouncilActivated: (callback: (data: BugCouncilActivatedEvent) => void) => () => void
+  onBugCouncilComplete: (callback: (data: BugCouncilCompleteEvent) => void) => () => void
+
+  // SDK Events
+  onRateLimitEvent: (
+    callback: (data: {
+      status: string
+      utilization?: number
+      resetsAt?: number
+      rateLimitType?: string
+    }) => void
+  ) => () => void
+  onPromptSuggestion: (
+    callback: (data: { conversationId: string; suggestion: string }) => void
+  ) => () => void
+  onApiRetry: (
+    callback: (data: {
+      attempt: number
+      maxRetries: number
+      retryDelayMs: number
+      errorStatus: number | null
+    }) => void
+  ) => () => void
+  onSessionState: (callback: (data: { state: string }) => void) => () => void
+
+  // SDK Control — Query instance methods
+  sdkGetContextUsage: () => Promise<unknown>
+  sdkStopTask: (args: { taskId: string }) => Promise<unknown>
+  sdkInterrupt: () => Promise<unknown>
+  sdkAccountInfo: () => Promise<unknown>
+  sdkSupportedModels: () => Promise<unknown>
+  sdkMcpServerStatus: () => Promise<unknown>
+  sdkSetModel: (args: { model?: string }) => Promise<unknown>
+  sdkSetPermissionMode: (args: { mode: string }) => Promise<unknown>
+  sdkApplyFlagSettings: (args: { settings: Record<string, unknown> }) => Promise<unknown>
+  sdkSetMcpServers: (args: { servers: Record<string, unknown> }) => Promise<unknown>
+  sdkRewindFiles: (args: { userMessageId: string; dryRun?: boolean }) => Promise<unknown>
+  sdkReconnectMcp: (args: { serverName: string }) => Promise<unknown>
+  sdkSupportedAgents: () => Promise<unknown>
 
 }
 

@@ -1,8 +1,17 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
+import type { Query } from '@anthropic-ai/claude-agent-sdk'
 import type { StreamChunk } from './agent-base.service'
 import { summarizeToolInput } from './agent-base.service'
 import { authProvider } from './auth-provider'
-import { createScopeGuard, createCodeGraphFirstHook } from './sdk-hooks'
+import {
+  createScopeGuard,
+  createCodeGraphFirstHook,
+  createPostToolUseHook,
+  createPostToolUseFailureHook,
+  createNotificationHook,
+  createSessionEndHook,
+  createFileChangedHook
+} from './sdk-hooks'
 import log from 'electron-log/main'
 
 const sdkLog = log.scope('SDKExecutor')
@@ -68,6 +77,20 @@ export interface SDKExecuteOptions {
    * Used to control specialist output verbosity based on investigation depth.
    */
   maxOutputTokens?: number
+  /** Enable native SDK file checkpointing for rewindFiles() */
+  enableFileCheckpointing?: boolean
+  /** Enable follow-up prompt suggestions (nearly free — uses prompt cache) */
+  promptSuggestions?: boolean
+  /** Beta features — e.g. ['context-1m-2025-08-07'] for 1M context */
+  betas?: string[]
+  /** Fallback model when primary is unavailable/rate-limited */
+  fallbackModel?: string
+  /** Custom permission handler — richer than PreToolUse hooks */
+  canUseTool?: unknown
+  /** Callback when session ends (for cleanup) */
+  onSessionEnd?: () => void
+  /** Callback when a file is changed by the agent */
+  onFileChanged?: (filePath: string, changeType: string) => void
   /**
    * Structured output format. Forces the model to return JSON matching this schema.
    * SDK guarantees valid JSON — no regex extraction needed.
@@ -105,6 +128,13 @@ export interface SDKExecuteResult {
 }
 
 export class SDKExecutor {
+  private activeQuery: Query | null = null
+
+  /** Get the active Query reference for instance method calls */
+  getActiveQuery(): Query | null {
+    return this.activeQuery
+  }
+
   /**
    * Execute a query via the Agent SDK.
    * Returns an async generator of StreamChunks — same interface as CLI-based agents.
@@ -187,7 +217,23 @@ export class SDKExecutor {
         preToolUseHooks.push(createToolApprovalHook(options.agentId ?? 'unknown', options.taskId))
       }
 
-      const q = query({
+      // Build hooks config — PreToolUse + optional PostToolUse, Notification, etc.
+      const hooksConfig: Record<string, unknown> = {
+        PreToolUse: [{ hooks: preToolUseHooks }],
+        PostToolUse: [{ hooks: [createPostToolUseHook(options.agentId ?? 'unknown')] }],
+        PostToolUseFailure: [
+          { hooks: [createPostToolUseFailureHook(options.agentId ?? 'unknown')] }
+        ],
+        Notification: [{ hooks: [createNotificationHook()] }],
+        ...(options.onSessionEnd
+          ? { SessionEnd: [{ hooks: [createSessionEndHook(options.onSessionEnd)] }] }
+          : {}),
+        ...(options.onFileChanged
+          ? { FileChanged: [{ hooks: [createFileChangedHook(options.onFileChanged)] }] }
+          : {})
+      }
+
+      this.activeQuery = query({
         prompt: options.prompt,
         options: {
           model: options.model,
@@ -229,10 +275,8 @@ export class SDKExecutor {
           ...(options.outputFormat ? { outputFormat: options.outputFormat } : {}),
           // Required safety flag when using bypassPermissions
           allowDangerouslySkipPermissions: options.permissionMode === 'bypassPermissions',
-          // Wire scope guard hooks for file-scope and dangerous-command protection
-          hooks: {
-            PreToolUse: [{ hooks: preToolUseHooks }]
-          },
+          // Wire scope guard + PostToolUse + Notification + lifecycle hooks
+          hooks: hooksConfig,
           // Cap agentic turns at the SDK level (defense-in-depth alongside circuit breaker)
           ...(options.maxTurns ? { maxTurns: options.maxTurns } : {}),
           // Pass AbortController for cancellation support
@@ -242,11 +286,18 @@ export class SDKExecutor {
           // Wire in-process MCP servers (e.g. repomap code graph)
           ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
           // Strategy η: Hard cap on output tokens — model stops generating after this limit
-          ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {})
+          ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+          // New SDK options
+          ...(options.enableFileCheckpointing ? { enableFileCheckpointing: true } : {}),
+          ...(options.promptSuggestions ? { promptSuggestions: true } : {}),
+          ...(options.betas?.length ? { betas: options.betas } : {}),
+          ...(options.fallbackModel ? { fallbackModel: options.fallbackModel } : {}),
+          ...(options.canUseTool ? { canUseTool: options.canUseTool } : {})
         }
       })
 
-      for await (const message of q) {
+      try {
+      for await (const message of this.activeQuery) {
         lastActivityAt = Date.now()
 
         // Emit pending heartbeat if timer fired between iterations
@@ -469,6 +520,138 @@ export class SDKExecutor {
           }
         }
 
+        // ── tool_progress — elapsed time updates for running tools ──
+        if (msg.type === 'tool_progress') {
+          const toolMsg = msg as Record<string, unknown>
+          yield {
+            type: 'tool_progress',
+            toolId: toolMsg.tool_use_id as string,
+            toolName: toolMsg.tool_name as string,
+            elapsedSeconds: toolMsg.elapsed_time_seconds as number,
+            content: `${toolMsg.elapsed_time_seconds}s`
+          }
+        }
+
+        // ── rate_limit_event — subscription rate limit warnings/rejections ──
+        if (msg.type === 'rate_limit_event') {
+          const rateMsg = msg as Record<string, unknown>
+          const info = rateMsg.rate_limit_info as Record<string, unknown>
+          if (info) {
+            yield {
+              type: 'rate_limit',
+              rateLimit: {
+                status: info.status as 'allowed' | 'allowed_warning' | 'rejected',
+                utilization: info.utilization as number | undefined,
+                resetsAt: info.resetsAt as number | undefined,
+                rateLimitType: info.rateLimitType as string | undefined
+              }
+            }
+          }
+        }
+
+        // ── system/api_retry — API retry events ──
+        if (msg.type === 'system' && msg.subtype === 'api_retry') {
+          const retryMsg = msg as Record<string, unknown>
+          yield {
+            type: 'api_retry',
+            retryInfo: {
+              attempt: retryMsg.attempt as number,
+              maxRetries: retryMsg.max_retries as number,
+              retryDelayMs: retryMsg.retry_delay_ms as number,
+              errorStatus: retryMsg.error_status as number | null
+            }
+          }
+        }
+
+        // ── system/compact_boundary — context compaction ──
+        if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+          const meta = (msg as Record<string, unknown>).compact_metadata as
+            | Record<string, unknown>
+            | undefined
+          yield {
+            type: 'compact_boundary',
+            content: `Context compacted (trigger: ${meta?.trigger ?? 'auto'}, pre-tokens: ${meta?.pre_tokens ?? '?'})`
+          }
+        }
+
+        // ── system/status — compacting status ──
+        if (msg.type === 'system' && msg.subtype === 'status') {
+          const status = (msg as Record<string, unknown>).status as string | null
+          yield { type: 'session_state', content: status ?? 'idle' }
+        }
+
+        // ── prompt_suggestion — follow-up prompt suggestions ──
+        if (msg.type === 'prompt_suggestion') {
+          yield {
+            type: 'prompt_suggestion',
+            content: (msg as Record<string, unknown>).suggestion as string
+          }
+        }
+
+        // ── system/files_persisted — track file changes ──
+        if (msg.type === 'system' && msg.subtype === 'files_persisted') {
+          const filesMsg = msg as Record<string, unknown>
+          yield {
+            type: 'files_persisted',
+            persistedFiles: (
+              filesMsg.files as Array<{ filename: string; file_id: string }> | undefined
+            )?.map((f) => ({
+              filename: f.filename,
+              fileId: f.file_id
+            }))
+          }
+        }
+
+        // ── tool_use_summary — batch tool summaries ──
+        if (msg.type === 'tool_use_summary') {
+          yield {
+            type: 'tool_use_summary',
+            content: (msg as Record<string, unknown>).summary as string
+          }
+        }
+
+        // ── system/hook_started, hook_progress, hook_response ──
+        if (
+          msg.type === 'system' &&
+          ['hook_started', 'hook_progress', 'hook_response'].includes(msg.subtype as string)
+        ) {
+          const hookMsg = msg as Record<string, unknown>
+          yield {
+            type: 'hook_lifecycle',
+            hookInfo: {
+              hookId: hookMsg.hook_id as string,
+              hookName: hookMsg.hook_name as string,
+              hookEvent: hookMsg.hook_event as string,
+              phase: (
+                msg.subtype === 'hook_started'
+                  ? 'started'
+                  : msg.subtype === 'hook_progress'
+                    ? 'progress'
+                    : 'response'
+              ) as 'started' | 'progress' | 'response',
+              output: hookMsg.output as string | undefined,
+              outcome: hookMsg.outcome as 'success' | 'error' | 'cancelled' | undefined
+            }
+          }
+        }
+
+        // ── system/session_state_changed ──
+        if (msg.type === 'system' && msg.subtype === 'session_state_changed') {
+          yield {
+            type: 'session_state',
+            content: (msg as Record<string, unknown>).state as string
+          }
+        }
+
+        // ── auth_status ──
+        if (msg.type === 'auth_status') {
+          const authMsg = msg as Record<string, unknown>
+          yield {
+            type: 'auth_status',
+            content: authMsg.error ? `Auth error: ${authMsg.error}` : 'Authenticating...'
+          }
+        }
+
         // Accumulate token usage from all event types
         const usage = msg.usage as Record<string, number> | undefined
         if (usage && msg.type !== 'result') {
@@ -477,6 +660,9 @@ export class SDKExecutor {
           totalUsage.cacheReadInputTokens += usage.cache_read_input_tokens ?? 0
           totalUsage.cacheCreationInputTokens += usage.cache_creation_input_tokens ?? 0
         }
+      }
+      } finally {
+        this.activeQuery = null
       }
     } catch (error) {
       sdkLog.error('SDK execution error:', error)

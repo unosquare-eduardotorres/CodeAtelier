@@ -140,6 +140,56 @@ export function createCodeGraphFirstHook(mode: 'warn' | 'block' = 'warn'): HookC
   }
 }
 
+/** PostToolUse hook — tracks tool success for analytics */
+export function createPostToolUseHook(agentId: string): HookCallback {
+  return async (input) => {
+    const toolName = (input as Record<string, unknown>).tool_name as string
+    const durationMs = (input as Record<string, unknown>).duration_ms as number | undefined
+    hookLog.info(`[PostToolUse] ${agentId}/${toolName} completed in ${durationMs ?? '?'}ms`)
+    return {}
+  }
+}
+
+/** PostToolUseFailure hook — detects systematic failures */
+export function createPostToolUseFailureHook(agentId: string): HookCallback {
+  return async (input) => {
+    const toolName = (input as Record<string, unknown>).tool_name as string
+    const error = (input as Record<string, unknown>).error as string | undefined
+    hookLog.warn(`[PostToolUseFailure] ${agentId}/${toolName}: ${error}`)
+    return {}
+  }
+}
+
+/** Notification hook — logs SDK notifications */
+export function createNotificationHook(): HookCallback {
+  return async (input) => {
+    const msg = (input as Record<string, unknown>).message as string
+    hookLog.info(`[SDK Notification] ${msg}`)
+    return {}
+  }
+}
+
+/** SessionEnd hook — cleanup resources when session ends */
+export function createSessionEndHook(onEnd: () => void): HookCallback {
+  return async () => {
+    hookLog.info('[SessionEnd] Cleaning up resources')
+    onEnd()
+    return {}
+  }
+}
+
+/** FileChanged hook — real-time file tracking */
+export function createFileChangedHook(
+  onFileChanged: (filePath: string, changeType: string) => void
+): HookCallback {
+  return async (input) => {
+    const filePath = (input as Record<string, unknown>).file_path as string
+    const changeType = (input as Record<string, unknown>).change_type as string
+    onFileChanged(filePath, changeType)
+    return {}
+  }
+}
+
 /**
  * Creates a PreToolUse hook that requests user approval for dangerous tools.
  * Auto-approves safe tools (Read, Grep, etc.) and caches decisions for 30s.

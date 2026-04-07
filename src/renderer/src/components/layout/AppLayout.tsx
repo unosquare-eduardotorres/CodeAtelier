@@ -30,7 +30,6 @@ import {
   BudgetWarningBanner,
   ErrorBoundary
 } from '@renderer/components/common'
-import { NewConversationModal } from '@renderer/components/chat'
 import {
   useWorkspaceStore,
   useAgentStore,
@@ -78,7 +77,7 @@ export default function AppLayout(): React.JSX.Element {
   const { hydrateConversationSpecialists } = useConversationSpecialistActions()
   const conversationSpecialists = useConversationSpecialists(activeConversation?.id)
   const isStreaming = useChatStore((s) => s.isStreaming)
-  const [showNewChatModal, setShowNewChatModal] = useState(false)
+  const [showNewChat, setShowNewChat] = useState(false)
   const { isVisible: showPixelOffice, isOfficeCentered, setOfficeCentered } = usePixelOfficeStore()
   const { createIdea, startGrill } = useIdeaStore()
   const [zoomFactor, setZoomFactor] = useState(1.0)
@@ -89,6 +88,13 @@ export default function AppLayout(): React.JSX.Element {
     ideaDescription?: string
     isNewSession?: boolean
   } | null>(null)
+
+  // Auto-reset showNewChat when a conversation is selected
+  useEffect(() => {
+    if (activeConversation) {
+      setShowNewChat(false)
+    }
+  }, [activeConversation])
 
   // Load initial zoom and subscribe to changes
   useEffect(() => {
@@ -203,7 +209,9 @@ export default function AppLayout(): React.JSX.Element {
       if (isMeta && e.key === 'n') {
         e.preventDefault()
         if (activeWorkspace) {
-          setShowNewChatModal(true)
+          // Clear active conversation so ChatPanel shows NewChatPage inline
+          useChatStore.setState({ activeConversation: null, messages: [] })
+          setShowNewChat(true)
         }
       }
 
@@ -317,7 +325,7 @@ export default function AppLayout(): React.JSX.Element {
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(activeWorkspace.id, data.mode, data.title)
-    setShowNewChatModal(false)
+    setShowNewChat(false)
     if (data.useIsolatedBranch) {
       // TODO: integrate worktree IPC — creates a git worktree for this conversation
       console.info(
@@ -356,7 +364,14 @@ export default function AppLayout(): React.JSX.Element {
     }
 
     // Default: chat
-    return <ChatPanel onCreateIdea={handleCreateIdea} onStartGrillMe={handleStartGrillMe} />
+    return (
+      <ChatPanel
+        onCreateIdea={handleCreateIdea}
+        onStartGrillMe={handleStartGrillMe}
+        showNewChat={showNewChat}
+        onNewChatDismiss={() => setShowNewChat(false)}
+      />
+    )
   }
 
   // Determine if sidebar should show (chat view or workspace settings view)
@@ -427,6 +442,7 @@ export default function AppLayout(): React.JSX.Element {
               activeSettingsTab={workspaceSettingsTab}
               onSettingsTabChange={setWorkspaceSettingsTab}
               onViewChange={setSidebarView}
+              onNewChat={() => setShowNewChat(true)}
             />
           </Sidebar>
         )}
@@ -482,7 +498,12 @@ export default function AppLayout(): React.JSX.Element {
               {/* Chat — fills remaining space */}
               <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                 <ErrorBoundary>
-                  <ChatPanel onCreateIdea={handleCreateIdea} onStartGrillMe={handleStartGrillMe} />
+                  <ChatPanel
+                    onCreateIdea={handleCreateIdea}
+                    onStartGrillMe={handleStartGrillMe}
+                    showNewChat={showNewChat}
+                    onNewChatDismiss={() => setShowNewChat(false)}
+                  />
                 </ErrorBoundary>
               </div>
 
@@ -654,13 +675,6 @@ export default function AppLayout(): React.JSX.Element {
         </div>
       </div>
 
-      {/* New conversation modal (triggered by Cmd+N) */}
-      <NewConversationModal
-        isOpen={showNewChatModal}
-        onClose={() => setShowNewChatModal(false)}
-        onSubmit={handleCreateChat}
-        onCreateIdea={handleCreateIdea}
-      />
     </div>
   )
 }

@@ -193,5 +193,49 @@ export function forwardChunkToRenderer(
       role,
       ...specialistMeta
     })
+  } else if (chunk.type === 'tool_progress') {
+    // Update running tool with elapsed time
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: '',
+      role,
+      ...specialistMeta,
+      toolActivity: {
+        id: chunk.toolId ?? `tool-${Date.now()}`,
+        toolName: chunk.toolName ?? 'Unknown',
+        status: 'running',
+        elapsedSeconds: chunk.elapsedSeconds
+      }
+    })
+  } else if (chunk.type === 'rate_limit') {
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_RATE_LIMIT, chunk.rateLimit)
+  } else if (chunk.type === 'api_retry') {
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_API_RETRY, chunk.retryInfo)
+  } else if (chunk.type === 'compact_boundary') {
+    // Show compaction as system message in chat
+    const compactText = `\n\n_⚡ ${chunk.content}_\n\n`
+    contentAccumulator.value += compactText
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: compactText,
+      role,
+      ...specialistMeta
+    })
+  } else if (chunk.type === 'prompt_suggestion') {
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_PROMPT_SUGGESTION, {
+      conversationId,
+      suggestion: chunk.content
+    })
+  } else if (chunk.type === 'files_persisted') {
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_FILES_PERSISTED, {
+      conversationId,
+      files: chunk.persistedFiles
+    })
+  } else if (chunk.type === 'hook_lifecycle') {
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_HOOK_LIFECYCLE, chunk.hookInfo)
+  } else if (chunk.type === 'session_state') {
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_SESSION_STATE, { state: chunk.content })
+  } else if (chunk.type === 'auth_status') {
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_AUTH_STATUS, { message: chunk.content })
   }
 }

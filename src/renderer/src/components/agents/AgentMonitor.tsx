@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Monitor, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, OctagonX, RotateCcw } from 'lucide-react'
 import { useAgentStore, useSpecialistStore, useChatStore } from '@renderer/store'
-import { AgentStatusCard } from '@renderer/components/agents'
+import { AgentStatusCard, BugCouncilPanel } from '@renderer/components/agents'
+import type { BugCouncilResult } from '../../../../shared/types'
 
 function formatTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
@@ -35,6 +36,7 @@ export default function AgentMonitor({
     { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
   >([])
   const [showCheckpoints, setShowCheckpoints] = useState(false)
+  const [bugCouncilResults, setBugCouncilResults] = useState<BugCouncilResult[]>([])
 
   // Load specialists on mount so AgentStatusCard can read metadata from DB
   useEffect(() => {
@@ -72,6 +74,14 @@ export default function AgentMonitor({
     })
     return cleanup
   }, [markAbandonment])
+
+  // Listen for Bug Council completion events
+  useEffect(() => {
+    const cleanup = window.api.onBugCouncilComplete((data) => {
+      setBugCouncilResults((prev) => [data.result, ...prev])
+    })
+    return cleanup
+  }, [])
 
   // Fetch checkpoints when conversation changes or all agents complete
   const allComplete =
@@ -226,6 +236,15 @@ export default function AgentMonitor({
           ))
         )}
       </div>
+
+      {/* Bug Council results */}
+      {bugCouncilResults.length > 0 && (
+        <div className="px-3 py-2 space-y-2 border-t border-border-subtle">
+          {bugCouncilResults.map((result) => (
+            <BugCouncilPanel key={result.sessionId} result={result} />
+          ))}
+        </div>
+      )}
 
       {/* Checkpoints section */}
       {checkpoints.length > 0 && (

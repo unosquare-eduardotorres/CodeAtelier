@@ -738,7 +738,7 @@ export class SpecialistPoolService extends EventEmitter {
         taskId: task.id,
         pid: undefined,
         conversationId: this.conversationId ?? undefined,
-        workspaceId: undefined,
+        workspaceId: this.workspaceId ?? undefined,
         complexityScore: task.complexity?.total,
         modelUsed: sessionModelId,
         complexityTier: task.complexity?.tier
@@ -1482,6 +1482,9 @@ export class SpecialistPoolService extends EventEmitter {
         (task.complexity?.tier ?? 'moderate') as keyof typeof SPECIALIST_BUDGET_CAPS
       ]
 
+      // Enable 1M context beta for Sonnet models
+      const isSonnet = modelId.includes('sonnet')
+
       for await (const chunk of executor.execute({
         prompt: fullPrompt,
         systemPrompt,
@@ -1502,6 +1505,8 @@ export class SpecialistPoolService extends EventEmitter {
         maxBudgetUsd: budgetCap,
         maxTurns: execState.maxTurns,
         abortController: execState.abortController,
+        // Enable 1M context window for Sonnet specialists
+        ...(isSonnet ? { betas: ['context-1m-2025-08-07'] } : {}),
         ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
         ...(maxOutputTokens ? { maxOutputTokens } : {})
       })) {

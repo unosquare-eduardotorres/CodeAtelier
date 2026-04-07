@@ -451,7 +451,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...activity,
             // Preserve existing input if update doesn't provide one
             input: activity.input ?? activities[i].input,
-            status: activity.status ?? 'completed'
+            // If elapsedSeconds is provided but no explicit status change, keep current status
+            status: activity.status ?? (activity.elapsedSeconds !== undefined ? activities[i].status : 'completed'),
+            // Preserve elapsedSeconds for progress display
+            elapsedSeconds: activity.elapsedSeconds ?? activities[i].elapsedSeconds
           }
           break
         }
