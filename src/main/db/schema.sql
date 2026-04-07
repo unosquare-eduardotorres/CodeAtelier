@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS messages (
   agent_id TEXT,
   content_md TEXT NOT NULL,
   attachments_json TEXT DEFAULT '[]',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  parent_message_id TEXT REFERENCES messages(id)
 );
 
 -- Attachments: context files uploaded by user
@@ -154,6 +155,7 @@ CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
 
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);

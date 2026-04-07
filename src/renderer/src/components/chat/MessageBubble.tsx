@@ -23,7 +23,7 @@ import GrillEvaluationCard from './GrillEvaluationCard'
 import GrillResultCard from './GrillResultCard'
 import GrillQuestionCard from './GrillQuestionCard'
 import ToolActivityBlock from './ToolActivityBlock'
-import { useSpecialistStore } from '@renderer/store'
+import { useSpecialistStore, useChatStore } from '@renderer/store'
 import {
   MermaidDiagram,
   Avatar,
@@ -307,6 +307,7 @@ function useMessageIdentity(message: Message): {
   pixelSpriteId: string | null
 } {
   const specialists = useSpecialistStore((s) => s.specialists)
+  const activeConversation = useChatStore((s) => s.activeConversation)
 
   return useMemo(() => {
     // For user messages — find the 'user' specialist
@@ -331,6 +332,26 @@ function useMessageIdentity(message: Message): {
           : null
 
     if (coreRole) {
+      // Persona override — when conversation has a persona, generalist messages
+      // show that persona's identity (full visual swap)
+      const personaId = activeConversation?.personaSpecialistId
+      if (personaId) {
+        const persona = specialists.find((s) => s.id === personaId)
+        if (persona) {
+          return {
+            displayName: persona.alias ?? persona.displayName,
+            subtitle: persona.alias ? persona.displayName : null,
+            avatarKey: persona.avatarUrl ?? getDefaultAvatarForRole(persona.agentId),
+            accentColor: persona.color ?? '#F59E0B',
+            pixelSpriteId:
+              persona.pixelSpriteId ??
+              getSpriteAssignment(persona.agentId).pixelSpriteId ??
+              null
+          }
+        }
+      }
+
+      // Default Da Vinci identity
       const coreSpec = specialists.find((s) => s.agentId === coreRole)
       const defaults = CORE_AGENT_DEFAULTS[coreRole]
       return {
@@ -368,7 +389,7 @@ function useMessageIdentity(message: Message): {
       accentColor: '#6366F1',
       pixelSpriteId: null
     }
-  }, [message.role, message.agentId, specialists])
+  }, [message.role, message.agentId, specialists, activeConversation?.personaSpecialistId])
 }
 
 /** Renders a single image attachment inside a message bubble using data URIs */

@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 57
+const CURRENT_SCHEMA_VERSION = 62
 
 interface Migration {
   version: number
@@ -1291,6 +1291,104 @@ const migrations: Migration[] = [
       `
       ).run(newBuildPrompt, newBuildPrompt)
     }
+  },
+  {
+    version: 58,
+    name: 'add-parent-message-id-for-turn-bubbles',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE messages ADD COLUMN parent_message_id TEXT REFERENCES messages(id);
+        CREATE INDEX idx_messages_parent ON messages(parent_message_id);
+      `)
+    }
+  },
+  {
+    version: 59,
+    name: 'add-skill-tier-columns',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE skills ADD COLUMN tier1_json TEXT;
+        ALTER TABLE skills ADD COLUMN tier2_instructions TEXT;
+      `)
+    }
+  },
+  {
+    version: 60,
+    name: 'backfill-skill-tiers',
+    up: (db) => {
+      // Backfill tier1_json and tier2_instructions for existing skills
+      // tier1_json: JSON with name, description, and activation keywords
+      // tier2_instructions: extracted from summaries or description
+      const rows = db
+        .prepare('SELECT id, name, description, summary_standard, summary_minimal FROM skills')
+        .all() as Array<{
+        id: string
+        name: string
+        description: string | null
+        summary_standard: string | null
+        summary_minimal: string | null
+      }>
+
+      const updateStmt = db.prepare(
+        'UPDATE skills SET tier1_json = ?, tier2_instructions = ? WHERE id = ?'
+      )
+
+      for (const row of rows) {
+        // Derive keywords from name: split on spaces/hyphens, filter short words
+        const keywords = (row.name || '')
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, '')
+          .split(/[\s-]+/)
+          .filter((w: string) => w.length > 2)
+
+        const tier1 = JSON.stringify({
+          name: row.name,
+          description: (row.description || '').substring(0, 200),
+          keywords
+        })
+
+        // Prefer summary_standard as tier2, fallback to summary_minimal or description
+        const tier2 = row.summary_standard || row.summary_minimal || row.description || ''
+
+        updateStmt.run(tier1, tier2, row.id)
+      }
+    }
+  },
+  {
+    version: 61,
+    name: 'add-bug-council-sessions-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS bug_council_sessions (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          task_description TEXT NOT NULL,
+          failure_history_json TEXT NOT NULL DEFAULT '[]',
+          perspectives_json TEXT NOT NULL DEFAULT '[]',
+          synthesized_solution TEXT,
+          risk_assessment TEXT,
+          final_attempt_succeeded INTEGER,
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'analyzing', 'synthesizing', 'complete', 'failed')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_bug_council_conversation ON bug_council_sessions(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_bug_council_task ON bug_council_sessions(task_id);
+      `)
+    }
+  },
+  {
+    version: 62,
+    name: 'add-persona-specialist-id-to-conversations',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE conversations
+        ADD COLUMN persona_specialist_id TEXT DEFAULT NULL
+        REFERENCES specialists(id) ON DELETE SET NULL
+      `)
+    }
   }
 ]
 
@@ -1615,6 +1713,8 @@ CREATE TABLE IF NOT EXISTS skills (
   file_path TEXT NOT NULL,
   is_active INTEGER NOT NULL DEFAULT 1,
   last_updated_date TEXT,
+  tier1_json TEXT,
+  tier2_instructions TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1647,6 +1747,25 @@ CREATE TABLE IF NOT EXISTS agent_worktrees (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   merged_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS bug_council_sessions (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  task_description TEXT NOT NULL,
+  failure_history_json TEXT NOT NULL DEFAULT '[]',
+  perspectives_json TEXT NOT NULL DEFAULT '[]',
+  synthesized_solution TEXT,
+  risk_assessment TEXT,
+  final_attempt_succeeded INTEGER,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'analyzing', 'synthesizing', 'complete', 'failed')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_bug_council_conversation ON bug_council_sessions(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_bug_council_task ON bug_council_sessions(task_id);
 
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);

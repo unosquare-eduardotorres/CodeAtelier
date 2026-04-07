@@ -1,15 +1,16 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, X, Bot, MessageSquarePlus, Braces, SearchCode } from 'lucide-react'
-import { useChatStore, useChatActions, useWorkspaceStore, useProfileStore, useConversationSpecialists, useSpecialistStore, useCodeChangesStore, useAgentStore } from '@renderer/store'
+import { Search, X, Bot, Braces, SearchCode } from 'lucide-react'
+import { useChatStore, useChatActions, useWorkspaceStore, useConversationSpecialists, useSpecialistStore, useCodeChangesStore, useAgentStore } from '@renderer/store'
 import {
   MessageList,
   MessageInput,
   AttachmentDropzone,
   ModeToggle,
   RepoWarningBanner,
-  NewConversationModal,
   ContextBadge
 } from '@renderer/components/chat'
+import NewChatPage from './NewChatPage'
+import PersonaSelector from './PersonaSelector'
 import ChatTabButton from './ChatTabButton'
 import SpecialistsTable from './SpecialistsTable'
 import CodeChangesPanel from './CodeChangesPanel'
@@ -29,13 +30,11 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
   const contextUsage = useChatStore(
     (s) => (activeConversation ? s.contextUsages[activeConversation.id] : undefined)
   )
-  const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const [attachments, setAttachments] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
-  const [showNewChatModal, setShowNewChatModal] = useState(false)
   const [activeTab, setActiveTab] = useState<ChatTab>('chat')
   const searchInputRef = useRef<HTMLInputElement>(null)
 
@@ -89,11 +88,12 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
     title: string
     description?: string
     mode: ConversationMode
+    personaSpecialistId?: string
     attachments?: string[]
     useIsolatedBranch?: boolean
   }): Promise<void> => {
     if (!activeWorkspace) return
-    await createConversation(activeWorkspace.id, data.mode, data.title)
+    await createConversation(activeWorkspace.id, data.mode, data.title, data.personaSpecialistId)
     setShowNewChatModal(false)
     if (data.useIsolatedBranch) {
       console.info(
@@ -105,35 +105,13 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
     }
   }
 
-  // Workspace selected but no active conversation — ready placeholder
+  // Workspace selected but no active conversation — full-page new chat
   if (!activeConversation) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-surface-raised text-center px-8">
-        <div className="w-16 h-16 rounded-2xl bg-primary-muted border border-primary/20 flex items-center justify-center mb-4">
-          <Bot size={32} className="text-primary-text/60" />
-        </div>
-        <h2 className="text-lg font-semibold text-text-primary mb-1">
-          {userName ? `Hey ${userName}, ready to build?` : 'Ready to work'}
-        </h2>
-        <p className="text-sm text-text-secondary mb-6">
-          {userName
-            ? 'Kick off a new conversation — brainstorm, plan, or jump straight into code.'
-            : 'Start a conversation with your AI development partner'}
-        </p>
-        <button
-          onClick={() => setShowNewChatModal(true)}
-          className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 press-scale"
-        >
-          <MessageSquarePlus size={16} />
-          Start a conversation
-        </button>
-        <NewConversationModal
-          isOpen={showNewChatModal}
-          onClose={() => setShowNewChatModal(false)}
-          onSubmit={handleCreateChat}
-          onCreateIdea={onCreateIdea}
-        />
-      </div>
+      <NewChatPage
+        onCreateChat={handleCreateChat}
+        onCreateIdea={onCreateIdea}
+      />
     )
   }
 
@@ -181,6 +159,7 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe }: ChatPanelPro
         )}
         {activeTab === 'chat' && (
           <div className="flex items-center gap-2">
+            <PersonaSelector conversation={activeConversation} />
             {contextUsage && contextUsage.percentage > 0 && (
               <ContextBadge
                 percentage={contextUsage.percentage}

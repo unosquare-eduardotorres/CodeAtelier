@@ -161,6 +161,17 @@ export function forwardChunkToRenderer(
       ...specialistMeta,
       toolActivity
     })
+  } else if (chunk.type === 'turn_boundary') {
+    // Emit a mid-stream boundary signal — renderer finalizes current bubble
+    // and starts accumulating into a new one
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: '',
+      role,
+      ...specialistMeta,
+      turnBoundary: true,
+      turnId: chunk.content
+    })
   } else if (chunk.type === 'error') {
     contentAccumulator.value += `\n\n**Error:** ${chunk.error}`
     mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {

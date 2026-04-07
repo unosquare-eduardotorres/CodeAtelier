@@ -67,11 +67,12 @@ export default function ChatSidebar({
     title: string
     description?: string
     mode: ConversationMode
+    personaSpecialistId?: string
     attachments?: string[]
     useIsolatedBranch?: boolean
   }): Promise<void> => {
     if (!activeWorkspace) return
-    await createConversation(activeWorkspace.id, data.mode, data.title)
+    await createConversation(activeWorkspace.id, data.mode, data.title, data.personaSpecialistId)
     setShowNewChatModal(false)
     if (data.useIsolatedBranch) {
       // TODO: integrate worktree IPC — creates a git worktree for this conversation

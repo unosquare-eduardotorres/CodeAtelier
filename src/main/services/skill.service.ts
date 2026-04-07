@@ -22,6 +22,131 @@ interface QueueItem {
   reject: (err: Error) => void
 }
 
+/**
+ * Tier 1/2/3 structure for progressive skill loading.
+ * - Tier 1: ~50 tokens — name, description, activation keywords (JSON)
+ * - Tier 2: ~500 tokens — core instructions, decision rules, approach guidance
+ * - Tier 3: Full content — stored as-is in the skill file
+ */
+export interface SkillTiers {
+  /** JSON-serialized: { name, description, keywords } */
+  tier1Json: string
+  /** Core instructions extracted from first meaningful section */
+  tier2Instructions: string
+}
+
+/**
+ * Parses a SKILL.md file into 3 tiers for progressive loading.
+ *
+ * Tier 1 (metadata): name + description + activation keywords (~50 tokens)
+ * Tier 2 (core instructions): first section after the title (~500 tokens)
+ * Tier 3 (full content): the entire file (stored on disk, not duplicated in DB)
+ *
+ * Keywords are extracted from:
+ * 1. Explicit "Keywords:" or "Trigger terms:" lines in the file
+ * 2. Heading text (## sections)
+ * 3. Bold terms in the first section
+ */
+export function parseSkillTiers(name: string, description: string, content: string): SkillTiers {
+  // ── Extract keywords ──
+  const keywords = new Set<string>()
+
+  // From explicit keyword/trigger lines
+  const keywordLineMatch = content.match(
+    /(?:keywords?|trigger\s*terms?|activation\s*(?:keywords?|terms?)):\s*([^\n]+)/i
+  )
+  if (keywordLineMatch) {
+    keywordLineMatch[1]
+      .split(/[,;]+/)
+      .map((k) => k.trim().toLowerCase())
+      .filter((k) => k.length > 2)
+      .forEach((k) => keywords.add(k))
+  }
+
+  // From name (split on spaces/hyphens)
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .split(/[\s-]+/)
+    .filter((w) => w.length > 2)
+    .forEach((w) => keywords.add(w))
+
+  // From ## headings
+  const headings = content.match(/^## .+$/gm) || []
+  for (const heading of headings) {
+    heading
+      .replace(/^## /, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .split(/[\s-]+/)
+      .filter((w) => w.length > 2 && !['the', 'and', 'for', 'not', 'with', 'how', 'what', 'when'].includes(w))
+      .forEach((w) => keywords.add(w))
+  }
+
+  // From **bold** terms in first 2000 chars
+  const boldMatches = content.substring(0, 2000).match(/\*\*([^*]+)\*\*/g) || []
+  for (const bold of boldMatches) {
+    bold
+      .replace(/\*\*/g, '')
+      .toLowerCase()
+      .split(/[\s-]+/)
+      .filter((w) => w.length > 2)
+      .forEach((w) => keywords.add(w))
+  }
+
+  const tier1 = JSON.stringify({
+    name,
+    description: description.substring(0, 200),
+    keywords: Array.from(keywords).slice(0, 30) // cap at 30 keywords
+  })
+
+  // ── Extract Tier 2: core instructions ──
+  // Strategy: Take content between the title/preamble and the second ## heading,
+  // capped at ~2000 chars. This captures the "core instructions" section.
+  const lines = content.split('\n')
+  let tier2Start = 0
+  let tier2End = lines.length
+  let foundFirstHeading = false
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.startsWith('# ') && !foundFirstHeading) {
+      tier2Start = i + 1
+      foundFirstHeading = true
+      continue
+    }
+    if (line.startsWith('## ') && foundFirstHeading) {
+      // Include content up to the SECOND ## heading (first real section)
+      // Find the NEXT ## heading after this one
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].startsWith('## ')) {
+          tier2End = j
+          break
+        }
+      }
+      // If we found a section, include up to the next heading
+      if (tier2End === lines.length) {
+        tier2End = Math.min(lines.length, i + 40) // cap at ~40 lines for the section
+      }
+      break
+    }
+  }
+
+  let tier2 = lines.slice(tier2Start, tier2End).join('\n').trim()
+
+  // Cap Tier 2 at ~2000 chars
+  if (tier2.length > 2000) {
+    tier2 = tier2.substring(0, 2000) + '\n\n[... see full skill for details]'
+  }
+
+  // If tier2 is empty, use description
+  if (!tier2) {
+    tier2 = description
+  }
+
+  return { tier1Json: tier1, tier2Instructions: tier2 }
+}
+
 export class SkillService {
   private queue: QueueItem[] = []
   private processing = false
@@ -115,6 +240,9 @@ export class SkillService {
     const descriptionMatch = content.match(/^#[^\n]*\n+([^\n#]+)/)
     const description = descriptionMatch ? descriptionMatch[1].trim().substring(0, 200) : ''
 
+    // Parse skill into tiers for progressive loading
+    const tiers = parseSkillTiers(name, description, content)
+
     let skill: Skill | null = null
     let fileCopied = false
 
@@ -123,14 +251,16 @@ export class SkillService {
       copyFileSync(sourcePath, targetPath)
       fileCopied = true
 
-      // 2. Create DB record (active by default)
+      // 2. Create DB record (active by default) with tier data
       skill = skillRepository.create({
         name,
         description,
         filename,
         filePath: relPath,
         isActive: true,
-        lastUpdatedDate: validation.lastUpdated
+        lastUpdatedDate: validation.lastUpdated,
+        tier1Json: tiers.tier1Json,
+        tier2Instructions: tiers.tier2Instructions
       })
 
       // 3. Trigger Opus CLAUDE.md update for activation

@@ -40,7 +40,7 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_CREATE_CONVERSATION,
-    async (event, args: { workspaceId: string; title?: string; mode?: ConversationMode }) => {
+    async (event, args: { workspaceId: string; title?: string; mode?: ConversationMode; personaSpecialistId?: string }) => {
       validateSender(event)
 
       if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
@@ -56,7 +56,13 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
         throw new Error('Invalid mode: must be "plan" or "build"')
       }
 
-      const conversation = conversationRepository.create(args.workspaceId, args.title, args.mode)
+      // Validate persona specialist if provided
+      if (args.personaSpecialistId) {
+        const specialist = specialistRepository.findById(args.personaSpecialistId)
+        if (!specialist) throw new Error('Invalid persona specialist ID')
+      }
+
+      const conversation = conversationRepository.create(args.workspaceId, args.title, args.mode, args.personaSpecialistId)
       conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 
       // Auto-activate specialists based on detected tech stack
@@ -141,6 +147,29 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
       // Mode is persisted to DB — CLI restart is deferred until next message send
       log.info(`Mode updated to "${args.mode}" in DB (CLI restart deferred until next send)`)
 
+      return updated
+    }
+  )
+
+  // ── Update generalist persona (mid-conversation persona switch) ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_UPDATE_PERSONA,
+    async (event, args: { conversationId: string; personaSpecialistId: string | null }) => {
+      validateSender(event)
+      if (!args || typeof args.conversationId !== 'string') {
+        throw new Error('Invalid conversation ID')
+      }
+      if (args.personaSpecialistId) {
+        const specialist = specialistRepository.findById(args.personaSpecialistId)
+        if (!specialist) throw new Error('Invalid persona specialist ID')
+      }
+      const updated = conversationRepository.updatePersona(
+        args.conversationId, args.personaSpecialistId
+      )
+      if (!updated) throw new Error('Conversation not found')
+
+      await generalistService.switchPersona(args.personaSpecialistId, args.conversationId)
+      log.info(`Persona → "${args.personaSpecialistId ?? 'Da Vinci'}" for ${args.conversationId}`)
       return updated
     }
   )

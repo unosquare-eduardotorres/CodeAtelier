@@ -4,6 +4,7 @@ import type { GateRunResult } from './quality-gate-runner.service'
 import type { QualityGateResult } from './abandonment-detector.service'
 import { eventLoggerService } from './event-logger.service'
 import { gateResultRepository } from '../db/repositories/gate-result.repository'
+import { hookEngine } from './hook-engine.service'
 
 const loopLog = log.scope('TaskLoop')
 
@@ -130,6 +131,17 @@ class TaskLoopService {
       loopLog.info(
         `All gates passed for ${state.agentId}/${taskId} on iteration ${state.iteration}`
       )
+
+      // Fire task_loop_complete hook (non-blocking)
+      hookEngine
+        .executeHooks('task_loop_complete', {
+          taskId,
+          agentId: state.agentId,
+          outcome: 'passed',
+          iterations: state.iteration
+        })
+        .catch((err) => loopLog.warn('Hook error (task_loop_complete):', err))
+
       return {
         passed: true,
         iterations: state.iteration,
@@ -145,6 +157,17 @@ class TaskLoopService {
       loopLog.warn(
         `Max iterations (${state.maxIterations}) reached for ${state.agentId}/${taskId} — giving up`
       )
+
+      // Fire task_loop_complete hook (non-blocking)
+      hookEngine
+        .executeHooks('task_loop_complete', {
+          taskId,
+          agentId: state.agentId,
+          outcome: 'max_iterations',
+          iterations: state.iteration
+        })
+        .catch((err) => loopLog.warn('Hook error (task_loop_complete):', err))
+
       return {
         passed: false,
         iterations: state.iteration,

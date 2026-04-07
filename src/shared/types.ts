@@ -57,6 +57,8 @@ export interface Conversation {
   branchName?: string
   /** User-defined sort order for sidebar reordering */
   sortOrder?: number
+  /** Specialist ID used as generalist persona (null = Da Vinci default) */
+  personaSpecialistId?: string | null
 }
 
 export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
@@ -78,6 +80,8 @@ export interface Message {
   attachmentsJson: string
   createdAt: string
   toolActivities?: ToolActivity[]
+  /** For turn bubbles: references the parent message ID that this bubble belongs to */
+  parentMessageId?: string
 }
 
 export interface Attachment {
@@ -244,6 +248,10 @@ export interface Skill {
   summaryMinimal: string | null
   /** SHA-256 hash of SKILL.md content for staleness detection */
   summaryHash: string | null
+  /** Tier 1: JSON metadata — name, description, activation keywords (~50 tokens) */
+  tier1Json: string | null
+  /** Tier 2: Core instructions extracted from first section (~500 tokens) */
+  tier2Instructions: string | null
 }
 
 export interface CreateSpecialistInput {
@@ -981,6 +989,62 @@ export interface SchedulingWeights {
   leastBusy: number // 0-1, default 0.1
 }
 
+// ── Bug Council (Phase 10B) ──
+
+/** Perspective from a single diagnostic agent in the Bug Council */
+export interface BugCouncilPerspective {
+  /** Agent role identifier */
+  role: 'root-cause-analyst' | 'code-archaeologist' | 'pattern-matcher' | 'systems-thinker' | 'adversarial-tester'
+  /** Human-readable agent name */
+  displayName: string
+  /** Icon for UI display */
+  icon: string
+  /** The diagnostic finding from this agent */
+  finding: string
+  /** Confidence level (0-1) */
+  confidence: number
+}
+
+/** Result from a Bug Council session */
+export interface BugCouncilResult {
+  /** Unique session ID */
+  sessionId: string
+  /** The task that triggered the council */
+  taskId: string
+  /** The specialist that was failing */
+  agentId: string
+  /** Original task description */
+  taskDescription: string
+  /** History of failures that triggered the council */
+  failureHistory: string[]
+  /** Individual perspective findings from 5 diagnostic agents */
+  perspectives: BugCouncilPerspective[]
+  /** Synthesized actionable solution from all perspectives */
+  synthesizedSolution: string
+  /** Risk assessment of the proposed solution */
+  riskAssessment: string
+  /** Whether the final attempt (with council guidance) succeeded */
+  finalAttemptSucceeded: boolean | null
+  /** Council session status */
+  status: 'active' | 'analyzing' | 'synthesizing' | 'complete' | 'failed'
+  /** Timestamp */
+  createdAt: string
+  completedAt: string | null
+}
+
+/** Event emitted when Bug Council is activated */
+export interface BugCouncilActivatedEvent {
+  sessionId: string
+  taskId: string
+  agentId: string
+  taskDescription: string
+}
+
+/** Event emitted when Bug Council analysis is complete */
+export interface BugCouncilCompleteEvent {
+  result: BugCouncilResult
+}
+
 // ── IPC Channel Map (type-safe) ──
 export interface IpcChannels {
   'workspace:list': { args: void; return: Workspace[] }
@@ -998,7 +1062,11 @@ export interface IpcChannels {
   }
   'chat:getConversations': { args: { workspaceId: string }; return: Conversation[] }
   'chat:createConversation': {
-    args: { workspaceId: string; title?: string; mode?: ConversationMode }
+    args: { workspaceId: string; title?: string; mode?: ConversationMode; personaSpecialistId?: string }
+    return: Conversation
+  }
+  'chat:updatePersona': {
+    args: { conversationId: string; personaSpecialistId: string | null }
     return: Conversation
   }
   'chat:getMessages': { args: { conversationId: string }; return: Message[] }

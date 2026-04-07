@@ -364,8 +364,16 @@ export class SDKExecutor {
             }
           }
 
-          // Token usage from message_start
+          // Token usage from message_start + turn boundary detection
           if (streamEvent.type === 'message_start') {
+            // Turn boundary — signal renderer to finalize current bubble and start a new one
+            // Only emit when there's been prior content (text or tools) to avoid empty bubbles
+            if (hasStreamedText || processedToolIds.size > 0) {
+              yield { type: 'turn_boundary' as const, content: `turn-${Date.now()}` }
+            }
+            // Reset per-turn text dedup so new turn can stream fresh text
+            hasStreamedText = false
+
             const startMsg = streamEvent.message as Record<string, unknown> | undefined
             const startUsage = startMsg?.usage as Record<string, number> | undefined
             if (startUsage) {

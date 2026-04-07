@@ -31,6 +31,12 @@ interface SkillRow {
   last_updated_date: string | null
   created_at: string
   updated_at: string
+  summary_full: string | null
+  summary_standard: string | null
+  summary_minimal: string | null
+  summary_hash: string | null
+  tier1_json: string | null
+  tier2_instructions: string | null
 }
 
 function mapRow(row: SpecialistRow): Specialist {
@@ -65,7 +71,13 @@ function mapSkillRow(row: SkillRow): Skill {
     isActive: row.is_active === 1,
     lastUpdatedDate: row.last_updated_date,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    summaryFull: row.summary_full ?? null,
+    summaryStandard: row.summary_standard ?? null,
+    summaryMinimal: row.summary_minimal ?? null,
+    summaryHash: row.summary_hash ?? null,
+    tier1Json: row.tier1_json ?? null,
+    tier2Instructions: row.tier2_instructions ?? null
   }
 }
 

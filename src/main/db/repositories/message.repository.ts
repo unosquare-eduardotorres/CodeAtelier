@@ -9,6 +9,7 @@ interface MessageRow {
   content_md: string
   attachments_json: string
   created_at: string
+  parent_message_id: string | null
 }
 
 function mapRow(row: MessageRow): Message {
@@ -19,7 +20,8 @@ function mapRow(row: MessageRow): Message {
     agentId: row.agent_id ?? undefined,
     contentMd: row.content_md,
     attachmentsJson: row.attachments_json,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    parentMessageId: row.parent_message_id ?? undefined
   }
 }
 
@@ -54,6 +56,32 @@ export class MessageRepository {
     )
     const rows = stmt.all(conversationId) as MessageRow[]
     return rows.map(mapRow)
+  }
+
+  /** Save a turn bubble as a child message with a parent reference */
+  createTurnBubble(
+    conversationId: string,
+    parentMessageId: string,
+    role: 'user' | 'coordinator' | 'specialist' | 'generalist',
+    contentMd: string,
+    agentId?: string,
+    attachmentsJson?: string
+  ): Message {
+    const db = getDatabase()
+    const stmt = db.prepare(`
+      INSERT INTO messages (conversation_id, role, content_md, agent_id, attachments_json, parent_message_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+      RETURNING *
+    `)
+    const row = stmt.get(
+      conversationId,
+      role,
+      contentMd,
+      agentId ?? null,
+      attachmentsJson ?? '[]',
+      parentMessageId
+    ) as MessageRow
+    return mapRow(row)
   }
 
   findById(id: string): Message | undefined {

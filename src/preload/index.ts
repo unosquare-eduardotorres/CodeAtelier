@@ -107,7 +107,13 @@ const api = {
     workspaceId: string
     title?: string
     mode?: ConversationMode
+    personaSpecialistId?: string
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
+
+  updatePersona: (args: {
+    conversationId: string
+    personaSpecialistId: string | null
+  }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_PERSONA, args),
 
   getMessages: (args: { conversationId: string }): Promise<Message[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES, args),
@@ -602,6 +608,8 @@ const api = {
         level: string
         inputTokens: number
       }
+      turnBoundary?: boolean
+      turnId?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -623,6 +631,8 @@ const api = {
           level: string
           inputTokens: number
         }
+        turnBoundary?: boolean
+        turnId?: string
       }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, handler)

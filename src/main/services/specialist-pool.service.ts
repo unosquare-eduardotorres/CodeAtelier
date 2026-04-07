@@ -32,6 +32,7 @@ import { detectAbandonment, detectQualityGates, getReEngagementPrompt } from './
 import { gateResultRepository } from '../db/repositories/gate-result.repository'
 import { costTrackerService } from './cost-tracker.service'
 import { taskLoopService } from './task-loop.service'
+import { bugCouncilService } from './bug-council.service'
 import { taskArtifactService } from './task-artifact.service'
 import { PromptBuilder } from './prompt-builder'
 import { SDKExecutor } from './sdk-executor'
@@ -938,9 +939,9 @@ export class SpecialistPoolService extends EventEmitter {
       ? (worktreeRepository.findById(info.worktreeId)?.worktreePath ?? this.workspacePath!)
       : this.workspacePath!
 
-    await this.runTaskLoopGates(task, info, mode, gateCwd, onDone).catch((err) => {
+    await this.runTaskLoopGates(task, info, mode, gateCwd, onDone).catch(async (err) => {
       this.log.error(`Task loop gate evaluation failed for ${task.id}:`, err)
-      this.finalizeTaskCompletion(task, info)
+      await this.finalizeTaskCompletion(task, info)
       onDone()
     })
   }
@@ -2163,7 +2164,7 @@ export class SpecialistPoolService extends EventEmitter {
   ): Promise<void> {
     // Only run task loop in build mode — plan mode doesn't produce code to validate
     if (mode !== 'build') {
-      this.finalizeTaskCompletion(task, info)
+      await this.finalizeTaskCompletion(task, info)
       onDone()
       return
     }
@@ -2193,13 +2194,122 @@ export class SpecialistPoolService extends EventEmitter {
       hookEngine
         .executeHooks('gate_passed', { taskId: task.id, agentId: task.specialist })
         .catch((err) => this.log.warn('Hook error (gate_passed):', err))
-      this.finalizeTaskCompletion(task, info)
+
+      // Phase 10B: Record council success if this was a council-guided retry
+      const councilSessionId = (task.metadata as Record<string, unknown>)?.bugCouncilSessionId
+      if (councilSessionId) {
+        bugCouncilService.updateFinalAttemptResult(councilSessionId as string, true)
+        this.emit('taskChunk', {
+          taskId: task.id,
+          specialist: task.specialist,
+          chunk: `\n\n✅ Bug Council guidance resolved the issue!`
+        })
+      }
+
+      await this.finalizeTaskCompletion(task, info)
       onDone()
       return
     }
 
     if (loopResult.iterations >= loopResult.state.maxIterations) {
-      // Max iterations reached — complete with warning
+      // Phase 10B: Bug Council — if max iterations exhausted AND model is already Opus,
+      // convene the Bug Council for diagnostic analysis before giving up.
+      const currentModel = task.model ?? 'sonnet'
+      const isOpus = currentModel === 'opus'
+      const hasCouncilAlready = (task.metadata as Record<string, unknown>)?.bugCouncilSessionId
+
+      if (isOpus && !hasCouncilAlready) {
+        this.log.info(
+          `Task ${task.id} exhausted ${loopResult.iterations} iterations at Opus — convening Bug Council`
+        )
+
+        this.emit('taskChunk', {
+          taskId: task.id,
+          specialist: task.specialist,
+          chunk: `\n\n🏛️ Bug Council activated — 5 diagnostic agents analyzing the recurring failure...`
+        })
+
+        // Emit Bug Council activated event for UI
+        this.emit('bugCouncilActivated', {
+          sessionId: '', // will be filled after convene
+          taskId: task.id,
+          agentId: task.specialist,
+          taskDescription: task.description.substring(0, 500)
+        })
+
+        try {
+          // Collect failure history from gate results
+          const gateHistory = loopResult.state.gateHistory as Array<{
+            iteration: number
+            gates: Array<{ type: string; passed: boolean; summary: string }>
+            allPassed: boolean
+          }>
+          const failureHistory = gateHistory
+            .filter((h) => !h.allPassed)
+            .map((h) =>
+              h.gates
+                .filter((g) => !g.passed)
+                .map((g) => `[${g.type}] ${g.summary}`)
+                .join('\n')
+            )
+
+          const councilResult = await bugCouncilService.convene({
+            taskId: task.id,
+            agentId: task.specialist,
+            taskDescription: task.description.substring(0, 2000),
+            failureHistory,
+            conversationId: this.conversationId ?? undefined,
+            cwd: gateCwd
+          })
+
+          if (councilResult.status === 'complete' && councilResult.synthesizedSolution) {
+            // Inject council guidance into task and retry one final time
+            this.emit('taskChunk', {
+              taskId: task.id,
+              specialist: task.specialist,
+              chunk: `\n\n🏛️ Bug Council solution ready — attempting final fix with council guidance...`
+            })
+
+            // Emit Bug Council complete event for UI
+            this.emit('bugCouncilComplete', { result: councilResult })
+
+            // Mark that we've used the council for this task (prevent infinite loop)
+            if (!task.metadata) task.metadata = {}
+            ;(task.metadata as Record<string, unknown>).bugCouncilSessionId =
+              councilResult.sessionId
+
+            // Append council guidance to task description
+            task.description =
+              task.description +
+              `\n\n--- BUG COUNCIL GUIDANCE ---\n` +
+              `The following solution was synthesized by 5 diagnostic agents analyzing your recurring failure:\n\n` +
+              councilResult.synthesizedSolution +
+              `\n\nRisk assessment: ${councilResult.riskAssessment}` +
+              `\n--- END COUNCIL GUIDANCE ---`
+
+            // Reset loop for one final attempt
+            taskLoopService.cleanup(task.id)
+            taskLoopService.initLoop(task.id, task.specialist)
+
+            // Remove from completed to allow re-start
+            this.completedTasks.delete(task.id)
+            this.taskResults.delete(task.id)
+
+            // Re-spawn with council guidance
+            this.createWorktreeAndSpawn(task, mode, onDone, info.attempt, info.worktreeId)
+            return
+          }
+        } catch (councilError) {
+          this.log.error('Bug Council failed:', councilError)
+          this.emit('taskChunk', {
+            taskId: task.id,
+            specialist: task.specialist,
+            chunk: `\n\n⚠️ Bug Council analysis failed — completing with known issues.`
+          })
+        }
+      }
+
+      // Max iterations reached (or council already tried) — complete with warning
       this.log.warn(
         `Task ${task.id} failed quality gates after ${loopResult.iterations} iterations — completing anyway`
       )
@@ -2208,7 +2318,13 @@ export class SpecialistPoolService extends EventEmitter {
         specialist: task.specialist,
         chunk: `\n\n⚠️ Quality gates still failing after ${loopResult.iterations} fix attempts. Completing with known issues.`
       })
-      this.finalizeTaskCompletion(task, info)
+
+      // Update council session with final result if applicable
+      if (hasCouncilAlready) {
+        bugCouncilService.updateFinalAttemptResult(hasCouncilAlready as string, false)
+      }
+
+      await this.finalizeTaskCompletion(task, info)
       onDone()
       return
     }

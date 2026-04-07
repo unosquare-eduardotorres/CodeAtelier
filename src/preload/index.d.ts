@@ -90,6 +90,11 @@ interface Api {
     workspaceId: string
     title?: string
     mode?: ConversationMode
+    personaSpecialistId?: string
+  }) => Promise<Conversation>
+  updatePersona: (args: {
+    conversationId: string
+    personaSpecialistId: string | null
   }) => Promise<Conversation>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
   deleteConversation: (args: { conversationId: string }) => Promise<void>
@@ -383,6 +388,8 @@ interface Api {
         level: string
         inputTokens: number
       }
+      turnBoundary?: boolean
+      turnId?: string
     }) => void
   ) => () => void
   onMessageComplete: (

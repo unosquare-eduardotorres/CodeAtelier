@@ -7,6 +7,7 @@ import type {
   HandoffBrief,
   ImageAttachment,
   PlanDetectedEvent,
+  Specialist,
   TaskPlan
 } from '../../shared/types'
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
@@ -22,7 +23,7 @@ import { semanticSearchMcpService } from './semantic-search.tool'
 import { codeGraphMcpService } from './code-graph.tool'
 import { githubService } from './github.service'
 import { memoryService } from './memory.service'
-import { conversationRepository, memoryRepository, workspaceRepository } from '../db/repositories'
+import { conversationRepository, memoryRepository, specialistRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
 import type { ControlActionCallbacks } from './control-actions.tool'
@@ -56,6 +57,11 @@ export class GeneralistService extends AgentBaseService {
   /** Maps conversationId → SDK session_id for resume support */
   private sessionMap: Map<string, string> = new Map()
 
+  /** Active persona specialist ID (null = Da Vinci default) */
+  private currentPersonaSpecialistId: string | null = null
+  /** Cached persona specialist data for prompt building */
+  private currentPersonaData: Specialist | null = null
+
   /**
    * Token thresholds for context compaction — configurable via workspace settings.
    * Strategy 2: Lowered from 80K/150K to 50K/100K.
@@ -65,10 +71,10 @@ export class GeneralistService extends AgentBaseService {
    * These defaults can be overridden per-workspace via settings:
    *   compactSuggestThreshold, compactAutoThreshold
    */
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 35_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 70_000
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 25_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 50_000
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 120_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 160_000
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 80_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 120_000
   /** Workspace-specific compaction thresholds (loaded from settings, fallback to defaults) */
   private compactSuggestThreshold: number = GeneralistService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
   private compactAutoThreshold: number = GeneralistService.DEFAULT_COMPACT_AUTO_THRESHOLD
@@ -205,6 +211,15 @@ export class GeneralistService extends AgentBaseService {
       this.semanticSearchEnabled = !!settings.semanticSearchEnabled
     } catch {
       // Memory context unavailable — not critical
+    }
+
+    // Load persona from conversation if set
+    if (this.currentConversationId) {
+      const conv = conversationRepository.findById(this.currentConversationId)
+      if (conv?.personaSpecialistId) {
+        this.currentPersonaSpecialistId = conv.personaSpecialistId
+        this.currentPersonaData = specialistRepository.findById(conv.personaSpecialistId) ?? null
+      }
     }
 
     // S17: prompt is rebuilt per turn in send() so turn-aware shrinking can apply.
@@ -364,7 +379,9 @@ export class GeneralistService extends AgentBaseService {
         githubConfigured: this.githubConfigured
       },
       costPreference: this.costPreference,
-      investigationModeEnabled: this.investigationModeEnabled
+      investigationModeEnabled: this.investigationModeEnabled,
+      personaSpecialistId: this.currentPersonaSpecialistId,
+      personaData: this.currentPersonaData
     })
 
     const effectiveMessage = this.promptAssembler.buildEffectiveMessage({
@@ -568,7 +585,11 @@ export class GeneralistService extends AgentBaseService {
             workspacePath: this.workspacePath!
           })
           this.tokenUsage += totalTokens
-          this.checkCompaction(meta.tokenUsage.input)
+          // Total context = non-cached + cache read + cache creation
+          const totalContextTokens = meta.tokenUsage.input
+            + meta.tokenUsage.cacheReadInputTokens
+            + meta.tokenUsage.cacheCreationInputTokens
+          this.checkCompaction(totalContextTokens)
         } else {
           // Accumulate text for handoff/grill detection
           if (chunk.type === 'text' && chunk.content) {
@@ -923,6 +944,43 @@ export class GeneralistService extends AgentBaseService {
 
   getMode(): ConversationMode {
     return this.currentMode
+  }
+
+  getPersonaSpecialistId(): string | null {
+    return this.currentPersonaSpecialistId
+  }
+
+  /**
+   * Switches the generalist persona (mid-conversation).
+   * Updates persona state, invalidates the system prompt snapshot,
+   * and queues compaction so prior context is summarized before the persona change.
+   */
+  async switchPersona(personaSpecialistId: string | null, conversationId: string): Promise<void> {
+    if (personaSpecialistId === this.currentPersonaSpecialistId) return
+    if (!this.workspacePath) return
+
+    this.log.info(
+      `[PIPELINE:persona-switch] ${this.currentPersonaSpecialistId ?? 'Da Vinci'} → ${personaSpecialistId ?? 'Da Vinci'}`
+    )
+
+    this.currentPersonaSpecialistId = personaSpecialistId
+    this.currentPersonaData = personaSpecialistId
+      ? specialistRepository.findById(personaSpecialistId) ?? null
+      : null
+
+    // Invalidate system prompt snapshot — forces full rebuild on next turn
+    this.promptAssembler.invalidateSnapshot()
+
+    // Flag pending persona switch for user message prefix
+    this.promptAssembler.setPendingPersonaSwitch(personaSpecialistId)
+
+    // Queue compaction to summarize prior context before persona change
+    if (this.isRunning()) {
+      this.promptAssembler.setPendingCompaction(
+        conversationId,
+        'Summarize the conversation so far — a persona change is about to happen.'
+      )
+    }
   }
 
   /**

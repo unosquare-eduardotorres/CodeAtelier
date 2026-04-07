@@ -1,4 +1,4 @@
-import type { ConversationMode, CostPreference } from '../../shared/types'
+import type { ConversationMode, CostPreference, Specialist } from '../../shared/types'
 import { generalistLogger } from '../logger'
 import { PromptBuilder, promptBuilder } from './prompt-builder'
 import {
@@ -35,6 +35,10 @@ export interface BuildSystemPromptOptions {
   featureFlags: PromptFeatureFlags
   costPreference: CostPreference
   investigationModeEnabled: boolean
+  /** Persona specialist ID for generalist impersonation (null = Da Vinci default) */
+  personaSpecialistId?: string | null
+  /** Cached persona specialist data for prompt building */
+  personaData?: Specialist | null
 }
 
 /** Options for building the effective user message */
@@ -99,6 +103,9 @@ export class GeneralistPromptAssembler {
    * Maps conversationId → compaction prompt.
    */
   private pendingCompaction: Map<string, string> = new Map()
+
+  /** Pending persona switch — when set, the next buildEffectiveMessage() prefixes the message with persona-change context */
+  private pendingPersonaSwitch: { specialistId: string | null } | null = null
 
   // ── Turn Count ──
 
@@ -176,7 +183,16 @@ export class GeneralistPromptAssembler {
         workspacePath: opts.workspacePath,
         // Strategy C: memoryContext is NO LONGER passed here — it goes into the user prompt
         // via the effectiveMessage prefix in send(). The system prompt stays stable for caching.
-        budgetTier
+        budgetTier,
+        // Persona fields — Layer 0 injection when generalist is impersonating a specialist
+        personaSpecialistId: opts.personaSpecialistId,
+        personaPrompt: opts.personaData?.prompt,
+        personaSkills: opts.personaData
+          ? specialistRepository.getSkills(opts.personaData.id)
+          : undefined,
+        personaSkillOverrides: this.getPersonaSkillOverrides(
+          opts.conversationId, opts.personaSpecialistId
+        )
       })
 
       // Strategy δ: MCP tool guidance sections on turn 1 only.
@@ -260,6 +276,16 @@ export class GeneralistPromptAssembler {
       this.pendingModeSwitch = null
     }
 
+    // Persona switch context — prefix the user's message so the agent
+    // knows its identity changed without clearing the session.
+    if (this.pendingPersonaSwitch) {
+      const name = this.pendingPersonaSwitch.specialistId
+        ? specialistRepository.findById(this.pendingPersonaSwitch.specialistId)?.displayName ?? 'specialist'
+        : 'Da Vinci'
+      effectiveMessage = `[PERSONA SWITCH] You are now operating as ${name}. Your domain expertise and identity have been updated in the system prompt. Continue the conversation with this new perspective.\n\n---\n\n${effectiveMessage}`
+      this.pendingPersonaSwitch = null
+    }
+
     // Mode indicator for resumed sessions.
     if (opts.sessionId) {
       effectiveMessage = `[Current mode: ${opts.mode.toUpperCase()}]\n\n${effectiveMessage}`
@@ -327,6 +353,11 @@ export class GeneralistPromptAssembler {
     this.pendingModeSwitch = { from, to }
   }
 
+  /** Set pending persona switch — next buildEffectiveMessage() will prefix the user message */
+  setPendingPersonaSwitch(specialistId: string | null): void {
+    this.pendingPersonaSwitch = { specialistId }
+  }
+
   /** Set memory context (called during start()) */
   setMemoryContext(ctx: string | undefined): void {
     this.memoryContext = ctx
@@ -341,6 +372,7 @@ export class GeneralistPromptAssembler {
     this.systemPromptSnapshotConversationId = null
     this.turnCountMap.clear()
     this.pendingModeSwitch = null
+    this.pendingPersonaSwitch = null
     this.pendingContextInjection.clear()
     this.pendingCompaction.clear()
   }
@@ -351,6 +383,20 @@ export class GeneralistPromptAssembler {
   }
 
   // ── Private Helpers ──
+
+  /**
+   * Resolve per-conversation skill overrides for the persona specialist.
+   * Uses the same conversation-specialist skill toggle system as regular specialists.
+   */
+  private getPersonaSkillOverrides(
+    conversationId: string | null,
+    personaSpecialistId?: string | null
+  ): string[] | undefined {
+    if (!personaSpecialistId || !conversationId) return undefined
+    const overrides = conversationSpecialistRepository.findByConversation(conversationId)
+    const match = overrides.find(o => o.specialistId === personaSpecialistId)
+    return match?.skillOverrides ?? undefined
+  }
 
   /**
    * Scale memory budget by turn count.

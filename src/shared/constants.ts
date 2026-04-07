@@ -19,6 +19,7 @@ export const IPC_CHANNELS = {
   CHAT_MESSAGE_COMPLETE: 'chat:messageComplete',
   CHAT_DELETE_CONVERSATION: 'chat:deleteConversation',
   CHAT_UPDATE_MODE: 'chat:updateMode',
+  CHAT_UPDATE_PERSONA: 'chat:updatePersona',
   CHAT_RENAME: 'chat:renameConversation',
   CHAT_STOP: 'chat:stop',
   CHAT_COMPACT: 'chat:compact',
@@ -332,6 +333,12 @@ export const IPC_CHANNELS = {
 
   // Context usage
   CONVERSATION_GET_CONTEXT_USAGE: 'conversation:getContextUsage',
+
+  // Bug Council (Phase 10B)
+  BUG_COUNCIL_ACTIVATED: 'bugCouncil:activated',
+  BUG_COUNCIL_COMPLETE: 'bugCouncil:complete',
+  BUG_COUNCIL_GET_SESSION: 'bugCouncil:getSession',
+  BUG_COUNCIL_LIST_SESSIONS: 'bugCouncil:listSessions',
 
 } as const
 

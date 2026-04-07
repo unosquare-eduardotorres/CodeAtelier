@@ -8,6 +8,7 @@ import {
   buildDecompositionPrompt,
   buildSpecialistMcpGuidance,
   DEFAULT_PROMPTS,
+  getDeepPersona,
   OPUS_SPECIALIST_APPENDIX,
   SPECIALIST_MICRO_PROMPT,
   SPECIALIST_TASK_SYSTEM_PROMPT
@@ -52,6 +53,14 @@ interface PromptBuildOptions {
   budgetTier?: BudgetTier
   /** Which MCP servers are active — controls conditional tool guidance injection */
   enabledMcpServers?: SpecialistMcpFlags
+  /** Persona specialist ID for generalist impersonation (null = no persona) */
+  personaSpecialistId?: string | null
+  /** Persona specialist prompt content (from specialist.prompt field) */
+  personaPrompt?: string
+  /** Skills assigned to the persona specialist */
+  personaSkills?: Skill[]
+  /** Per-conversation skill overrides for the persona specialist */
+  personaSkillOverrides?: string[]
 }
 
 export interface GeneralistConditionalSections {
@@ -148,6 +157,28 @@ export class PromptBuilder {
     const layers: string[] = []
     const budgetTier = options.budgetTier ?? 'standard'
 
+    // ── Layer 0: Persona specialist identity + skills ──
+    // Injected BEFORE the generalist role prompt so the LLM sees itself
+    // as the specialist first, with orchestration/delegation powers second.
+    if (options.role === 'generalist' && options.personaSpecialistId && options.personaPrompt) {
+      layers.push(
+        `## Your Specialized Identity\n\n` +
+        `You are operating with the following domain expertise. ` +
+        `Apply it to all conversations and analyses.\n\n` +
+        options.personaPrompt
+      )
+      if (options.personaSkills && options.personaSkills.length > 0) {
+        const filtered = this.filterAssignedSkills(
+          options.personaSkills,
+          options.personaSkillOverrides
+        )
+        if (filtered.length > 0) {
+          const content = this.buildSkillContent(filtered, budgetTier)
+          if (content) layers.push(`## Domain Skills\n\n${content}`)
+        }
+      }
+    }
+
     // Layer 1: Base role prompt (micro prompt for minimal-budget specialists)
     // Specialist MCP guidance is conditionally assembled based on enabledMcpServers flags
     layers.push(this.getRolePrompt(options.role, options.mode, budgetTier, options.enabledMcpServers))
@@ -162,6 +193,15 @@ export class PromptBuilder {
     // full SKILL.md implementation guide. Skipped for minimal-budget haiku tasks.
     if (options.role === 'specialist' && options.specialistPrompt && budgetTier !== 'minimal') {
       layers.push(`## Role\n\n${options.specialistPrompt}`)
+    }
+
+    // Layer 2b2: Deep persona enrichment (Phase 10A) — war stories, red flags, philosophy.
+    // Adds ~300 tokens of experienced-sounding judgment. Only for standard/full budgets.
+    if (options.role === 'specialist' && options.specialistId && budgetTier !== 'minimal') {
+      const persona = getDeepPersona(options.specialistId)
+      if (persona) {
+        layers.push(persona)
+      }
     }
 
     // Layer 2c: Self-critique appendix for Opus-tier BUILD tasks (not needed for investigations)
@@ -348,18 +388,44 @@ export class PromptBuilder {
       const budget = isPrimary ? baseBudget : Math.min(200, baseBudget)
 
       try {
-        // Try pre-computed semantic summary first (token-optimized, ~50-60% savings)
-        const summaryTier = isPrimary ? budgetTier : 'minimal'
-        const summary = skillRepository.getSummary(skill.id, summaryTier)
+        // Phase 7: Progressive skill loading — use tier data when available
+        // For minimal budget: inject tier2_instructions only (~500 tokens)
+        // For standard budget: inject tier2 + pre-computed summary
+        // For full budget: inject full content (tier3)
 
-        let selected: string
-        if (summary) {
-          selected = summary
+        let selected: string | null = null
+
+        // Try tier2_instructions for minimal/standard budgets (fast path, no disk I/O)
+        if (skill.tier2Instructions && budgetTier === 'minimal') {
+          selected = skill.tier2Instructions.substring(0, budget)
           log.info(
-            `Skill "${skill.name}" using pre-computed ${summaryTier} summary (${summary.length} chars)`
+            `Skill "${skill.name}" using tier2 instructions (${selected.length} chars, budget: minimal)`
           )
-        } else {
-          // Fallback: read from disk if summaries not yet generated
+        }
+
+        // Try pre-computed semantic summary (token-optimized, ~50-60% savings)
+        if (!selected) {
+          const summaryTier = isPrimary ? budgetTier : 'minimal'
+          const summary = skillRepository.getSummary(skill.id, summaryTier)
+
+          if (summary) {
+            selected = summary
+            log.info(
+              `Skill "${skill.name}" using pre-computed ${summaryTier} summary (${summary.length} chars)`
+            )
+          }
+        }
+
+        // For standard budget with tier2: use tier2 + summary blend
+        if (!selected && skill.tier2Instructions && budgetTier === 'standard') {
+          selected = skill.tier2Instructions.substring(0, budget)
+          log.info(
+            `Skill "${skill.name}" using tier2 instructions (${selected.length} chars, budget: standard)`
+          )
+        }
+
+        // Fallback: read from disk if no pre-computed data available
+        if (!selected) {
           const content = this.readSkillFile(skill.filePath)
 
           if (content.length <= budget) {
@@ -445,14 +511,30 @@ export class PromptBuilder {
 
   /**
    * Scores a skill's relevance to the given task context by keyword matching.
-   * Returns a count of how many words from the skill name/description appear in the context.
+   * Phase 7: Uses Tier 1 keywords (from structured tier1_json) for fast matching.
+   * Falls back to name-based keywords when tier1_json is not available.
+   * Returns a count of how many keywords appear in the context.
    */
   private skillRelevanceScore(skill: Skill, contextLower: string): number {
-    const keywords = skill.name
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .split(/[\s-]+/)
-      .filter((w) => w.length > 2) // skip tiny words like "a", "of"
+    let keywords: string[]
+
+    // Prefer Tier 1 structured keywords (richer, includes heading terms + bold terms)
+    if (skill.tier1Json) {
+      try {
+        const tier1 = JSON.parse(skill.tier1Json) as { keywords?: string[] }
+        keywords = tier1.keywords ?? []
+      } catch {
+        keywords = []
+      }
+    } else {
+      // Fallback: derive from name only
+      keywords = skill.name
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .split(/[\s-]+/)
+        .filter((w) => w.length > 2)
+    }
+
     return keywords.reduce((score, kw) => score + (contextLower.includes(kw) ? 1 : 0), 0)
   }
 

@@ -25,6 +25,7 @@ import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
 import { chatIpcLogger } from '../logger'
 import { decompositionService } from './decomposition.service'
+import { hookEngine } from './hook-engine.service'
 
 const log = chatIpcLogger
 
@@ -342,6 +343,14 @@ export class TaskPipelineService {
       })
       log.info(`[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`)
 
+      // Fire plan_created hook (non-blocking)
+      hookEngine
+        .executeHooks('plan_created', {
+          taskCount: taskPlan.tasks.length,
+          mode: taskPlan.mode
+        })
+        .catch((err) => log.warn('Hook error (plan_created):', err))
+
       // ── Step 6: Auto-execute directly — no floating card ──
       // In plan mode, specialist will produce a ```plan block → inline card in MessageBubble
       // In build mode, specialist executes changes directly
@@ -541,6 +550,14 @@ export class TaskPipelineService {
 
       gateFailure: (data: any): void => {
         this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_GATE_FAILURE, data)
+      },
+
+      bugCouncilActivated: (data: any): void => {
+        this.mainWindow.webContents.send(IPC_CHANNELS.BUG_COUNCIL_ACTIVATED, data)
+      },
+
+      bugCouncilComplete: (data: any): void => {
+        this.mainWindow.webContents.send(IPC_CHANNELS.BUG_COUNCIL_COMPLETE, data)
       }
     }
     /* eslint-enable @typescript-eslint/no-explicit-any */

@@ -28,6 +28,7 @@ function App(): React.JSX.Element {
     appendStreamChunk,
     updateStreamingIdentity,
     finalizeStream,
+    finalizeTurnBubble,
     setHandoff,
     addToolActivity,
     updateToolActivity,
@@ -75,6 +76,11 @@ function App(): React.JSX.Element {
 
     // Set up IPC event listeners for streaming
     const unsubChunk = window.api.onMessageChunk((data) => {
+      // Handle turn boundaries — finalize current bubble and start a new one
+      if (data.turnBoundary && data.turnId) {
+        finalizeTurnBubble(data.turnId)
+        return
+      }
       if (data.chunk) {
         appendStreamChunk(
           data.chunk,

@@ -31,6 +31,7 @@ export interface StreamChunk {
     | 'tool_result'
     | 'error'
     | 'status'
+    | 'turn_boundary'
     | 'subagent_start'
     | 'subagent_progress'
     | 'subagent_complete'

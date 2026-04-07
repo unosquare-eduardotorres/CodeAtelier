@@ -91,8 +91,10 @@ interface ChatState {
   createConversation: (
     workspaceId: string,
     mode?: ConversationMode,
-    title?: string
+    title?: string,
+    personaSpecialistId?: string
   ) => Promise<void>
+  switchPersona: (personaSpecialistId: string | null) => Promise<void>
   selectConversation: (id: string) => Promise<void>
   deleteConversation: (id: string) => Promise<void>
   updateMode: (mode: ConversationMode) => Promise<void>
@@ -102,6 +104,7 @@ interface ChatState {
   appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator' | 'specialist', taskId?: string, specialist?: string) => void
   updateStreamingIdentity: (role: 'generalist' | 'coordinator' | 'specialist', taskId?: string, specialist?: string) => void
   finalizeStream: (messageId: string, taskId?: string) => void
+  finalizeTurnBubble: (turnId: string) => void
   addToolActivity: (activity: ToolActivity) => void
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => void
   setHandoff: (handoff: HandoffState) => void
@@ -201,14 +204,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  createConversation: async (workspaceId: string, mode?: ConversationMode, title?: string) => {
-    const conversation = await window.api.createConversation({ workspaceId, mode, title })
+  createConversation: async (workspaceId: string, mode?: ConversationMode, title?: string, personaSpecialistId?: string) => {
+    const conversation = await window.api.createConversation({ workspaceId, mode, title, personaSpecialistId })
     set((state) => ({
       conversations: [conversation, ...state.conversations],
       activeConversation: conversation,
       messages: [],
       streamingContent: '',
       isStreaming: false
+    }))
+  },
+
+  switchPersona: async (personaSpecialistId: string | null) => {
+    const { activeConversation } = get()
+    if (!activeConversation) return
+    const updated = await window.api.updatePersona({
+      conversationId: activeConversation.id,
+      personaSpecialistId
+    })
+    set((state) => ({
+      activeConversation: updated,
+      conversations: state.conversations.map(c => c.id === updated.id ? updated : c)
     }))
   },
 
@@ -510,6 +526,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })
     } else {
       set({ streamingContent: '', isStreaming: false, toolActivities: [], streamingTaskId: null, activeHandoff: null })
+    }
+  },
+
+  finalizeTurnBubble: (turnId: string) => {
+    const {
+      streamingContent, streamingRole, streamingSpecialist,
+      activeConversation, toolActivities
+    } = get()
+
+    // Nothing to finalize — agent went straight to tools without text
+    if (!streamingContent && toolActivities.length === 0) return
+
+    if (activeConversation) {
+      const turnMessage: Message = {
+        id: turnId,
+        conversationId: activeConversation.id,
+        role: streamingRole,
+        ...(streamingRole === 'specialist' && streamingSpecialist
+          ? { agentId: streamingSpecialist }
+          : {}),
+        contentMd: streamingContent,
+        attachmentsJson: '[]',
+        createdAt: new Date().toISOString(),
+        // Snapshot current tool activities into this bubble
+        toolActivities: toolActivities.length > 0
+          ? toolActivities.map((a) => ({
+              ...a,
+              status: a.status === 'running' ? ('completed' as const) : a.status
+            }))
+          : undefined
+      }
+
+      set((state) => ({
+        messages: [...state.messages, turnMessage],
+        streamingContent: '',     // Reset for next turn
+        toolActivities: [],       // Reset tools for next turn
+        isStreaming: true          // Stay in streaming mode
+      }))
     }
   },
 
@@ -874,6 +928,7 @@ export const useChatActions = (): Pick<
   | 'completeConversation'
   | 'closeConversation'
   | 'createConversation'
+  | 'switchPersona'
   | 'selectConversation'
   | 'deleteConversation'
   | 'updateMode'
@@ -891,6 +946,7 @@ export const useChatActions = (): Pick<
   | 'appendStreamChunk'
   | 'updateStreamingIdentity'
   | 'finalizeStream'
+  | 'finalizeTurnBubble'
   | 'addToolActivity'
   | 'updateToolActivity'
   | 'setHandoff'
@@ -915,6 +971,7 @@ export const useChatActions = (): Pick<
       completeConversation: s.completeConversation,
       closeConversation: s.closeConversation,
       createConversation: s.createConversation,
+      switchPersona: s.switchPersona,
       selectConversation: s.selectConversation,
       deleteConversation: s.deleteConversation,
       updateMode: s.updateMode,
@@ -933,6 +990,7 @@ export const useChatActions = (): Pick<
       appendStreamChunk: s.appendStreamChunk,
       updateStreamingIdentity: s.updateStreamingIdentity,
       finalizeStream: s.finalizeStream,
+      finalizeTurnBubble: s.finalizeTurnBubble,
       addToolActivity: s.addToolActivity,
       updateToolActivity: s.updateToolActivity,
       setHandoff: s.setHandoff,
