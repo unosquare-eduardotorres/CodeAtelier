@@ -92,7 +92,19 @@ export default function BuildProgressCard({
                 <p className="text-xs text-text-secondary truncate">{task.description}</p>
               </div>
               {status === 'completed' && <span className="text-[10px] text-emerald-400">done</span>}
-              {status === 'failed' && <span className="text-[10px] text-red-400">failed</span>}
+              {status === 'failed' && (
+                <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                  <span className="text-[10px] text-red-400">failed</span>
+                  {progress?.error && (
+                    <span
+                      className="text-[10px] text-red-400/70 max-w-[300px] text-right truncate"
+                      title={progress.error}
+                    >
+                      {progress.error}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )
         })}

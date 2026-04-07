@@ -22,6 +22,9 @@ import type {
   DecomposedTask,
   ModelTier
 } from '../../../shared/types'
+import log from 'electron-log/main'
+
+const hooksLog = log.scope('SpecialistHooks')
 
 // ── Hook Context Types ──
 
@@ -230,3 +233,35 @@ export class SpecialistHookRunner {
 
 /** Singleton hook runner for the specialist pipeline */
 export const specialistHookRunner = new SpecialistHookRunner()
+
+// ── Code Graph-First Telemetry Hook ──
+// Tracks whether specialists use Code Graph / Semantic Search tools before
+// falling back to Read/Grep/Glob. Logs violations and compliance for
+// observability — never blocks or mutates anything.
+
+const GRAPH_TOOL_FRAGMENTS = ['graph_map', 'search_identifiers', 'find_dead_code', 'semantic_search']
+const EXPLORATION_TOOL_NAMES = new Set(['Read', 'Grep', 'Glob'])
+
+/** Global telemetry hook: logs Code Graph-first compliance per specialist */
+const graphFirstTelemetryHook: SpecialistHooks = {
+  onToolCall: (context: ToolCallContext): void => {
+    const isGraphTool = GRAPH_TOOL_FRAGMENTS.some((t) => context.toolName.includes(t))
+    const isExplorationTool = EXPLORATION_TOOL_NAMES.has(context.toolName)
+
+    if (isExplorationTool && context.toolCallIndex < 3) {
+      hooksLog.warn(
+        `[GraphFirst:violation] Specialist ${context.task.specialist} used ${context.toolName} ` +
+          `as tool call #${context.toolCallIndex + 1} (before graph tools) — task: ${context.task.id}`
+      )
+    }
+    if (isGraphTool) {
+      hooksLog.info(
+        `[GraphFirst:compliant] Specialist ${context.task.specialist} used ${context.toolName} ` +
+          `at position #${context.toolCallIndex + 1}`
+      )
+    }
+  }
+}
+
+// Auto-register the telemetry hook globally
+specialistHookRunner.registerGlobal(graphFirstTelemetryHook)

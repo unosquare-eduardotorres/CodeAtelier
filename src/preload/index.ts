@@ -1297,6 +1297,72 @@ const api = {
   respondToolApproval: (requestId: string, approved: boolean): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_RESPONSE, requestId, approved),
 
+  // ── Checkpoint Approval ──
+  onCheckpointApprovalRequest: (
+    callback: (data: {
+      id: string
+      type: 'phase_gate' | 'merge_approval' | 'destructive_action'
+      title: string
+      summary: string
+      details: {
+        what: string
+        why: string
+        risk: string
+        changedFiles?: string[]
+        testResults?: string
+      }
+      createdAt: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        id: string
+        type: 'phase_gate' | 'merge_approval' | 'destructive_action'
+        title: string
+        summary: string
+        details: {
+          what: string
+          why: string
+          risk: string
+          changedFiles?: string[]
+          testResults?: string
+        }
+        createdAt: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHECKPOINT_APPROVAL_REQUEST, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHECKPOINT_APPROVAL_REQUEST, handler)
+    }
+  },
+
+  respondCheckpointApproval: (checkpointId: string, approved: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_APPROVAL_RESPONSE, { checkpointId, approved }),
+
+  // ── Hooks ──
+  listHooks: (): Promise<
+    Array<{
+      event: string
+      name: string
+      command: string
+      blocking: boolean
+      condition?: { mode?: string; model?: string; agent?: string }
+      timeout?: number
+    }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.HOOKS_LIST),
+
+  reloadHooks: (args: { workspacePath: string }): Promise<
+    Array<{
+      event: string
+      name: string
+      command: string
+      blocking: boolean
+      condition?: { mode?: string; model?: string; agent?: string }
+      timeout?: number
+    }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.HOOKS_RELOAD, args),
+
   // ── AI Subscriptions ──
   validateSubscriptions: (): Promise<SubscriptionCheckResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_VALIDATE_ALL),

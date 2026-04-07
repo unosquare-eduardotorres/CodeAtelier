@@ -1,10 +1,32 @@
 import { execSync } from 'node:child_process'
+import { BrowserWindow } from 'electron'
 import log from 'electron-log/main'
 import { checkpointRepository } from '../db/repositories/checkpoint.repository'
 import { eventLoggerService } from './event-logger.service'
+import { IPC_CHANNELS } from '../../shared/constants'
 import type { DecomposedTask, TaskExecutionProgress } from '../../shared/types'
 
 const checkpointLogger = log.scope('Checkpoint')
+
+export interface CheckpointApprovalRequest {
+  id: string
+  type: 'phase_gate' | 'merge_approval' | 'destructive_action'
+  title: string
+  summary: string
+  details: {
+    what: string
+    why: string
+    risk: string
+    changedFiles?: string[]
+    testResults?: string
+  }
+  createdAt: string
+}
+
+interface PendingCheckpointApproval {
+  resolve: (approved: boolean) => void
+  checkpoint: CheckpointApprovalRequest
+}
 
 interface CheckpointState {
   /** Active task IDs at time of checkpoint */
@@ -28,6 +50,72 @@ interface CheckpointState {
  * Saves: git state (branch + commit SHA), task progress, and task plan.
  */
 class CheckpointService {
+  private pendingApprovals = new Map<string, PendingCheckpointApproval>()
+
+  /**
+   * Requests user approval before proceeding with a critical operation.
+   * Pauses execution and sends a request to the renderer; resolves when the user responds.
+   * Auto-approves after 5 minutes to prevent indefinite blocking.
+   */
+  async requestApproval(
+    request: Omit<CheckpointApprovalRequest, 'id' | 'createdAt'>
+  ): Promise<boolean> {
+    const id = `chk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const checkpoint: CheckpointApprovalRequest = {
+      ...request,
+      id,
+      createdAt: new Date().toISOString()
+    }
+
+    return new Promise<boolean>((resolve) => {
+      this.pendingApprovals.set(id, { resolve, checkpoint })
+
+      // Send to renderer via focused window
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      if (win) {
+        win.webContents.send(IPC_CHANNELS.CHECKPOINT_APPROVAL_REQUEST, checkpoint)
+      } else {
+        // No window — auto-approve to avoid blocking
+        this.pendingApprovals.delete(id)
+        resolve(true)
+      }
+
+      // Safety timeout — auto-approve after 5 minutes
+      setTimeout(() => {
+        if (this.pendingApprovals.has(id)) {
+          checkpointLogger.warn(`Checkpoint approval timed out — auto-approving: ${id}`)
+          this.resolveApproval(id, true)
+        }
+      }, 5 * 60 * 1000)
+    })
+  }
+
+  /**
+   * Resolves a pending approval — called from the IPC handler when the user responds.
+   * Also fires the appropriate declarative hook (checkpoint_approved/rejected).
+   */
+  resolveApproval(checkpointId: string, approved: boolean): void {
+    const pending = this.pendingApprovals.get(checkpointId)
+    if (!pending) return
+    this.pendingApprovals.delete(checkpointId)
+    checkpointLogger.info(
+      `Checkpoint ${approved ? 'approved' : 'rejected'}: ${checkpointId} (${pending.checkpoint.type})`
+    )
+
+    // Fire declarative hook
+    import('./hook-engine.service').then(({ hookEngine }) => {
+      const event = approved ? 'checkpoint_approved' : 'checkpoint_rejected'
+      hookEngine
+        .executeHooks(event as import('./hook-engine.service').HookEvent, {
+          checkpointId,
+          type: pending.checkpoint.type
+        })
+        .catch((err) => checkpointLogger.warn(`Hook error (${event}):`, err))
+    }).catch(() => { /* hook engine not available */ })
+
+    pending.resolve(approved)
+  }
+
   /**
    * Creates a checkpoint before execution begins.
    * Captures git state and task plan for potential rollback.

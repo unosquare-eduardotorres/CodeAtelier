@@ -2,6 +2,7 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import { extname } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { generalistStreamService } from '../services/generalist-stream.service'
+import { specialistPoolService } from '../services/specialist-pool.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 
@@ -83,5 +84,11 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.CHAT_STOP, async (event) => {
     validateSender(event)
     await generalistStreamService.stop()
+    // Also stop any running specialist pool execution
+    try {
+      await specialistPoolService.stopAll()
+    } catch (error) {
+      log.warn('Failed to stop specialist pool:', error)
+    }
   })
 }

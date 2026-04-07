@@ -28,4 +28,13 @@ export function registerCheckpointIpc(): void {
       return checkpointService.restoreGitState(args.checkpointId, workspacePath)
     }
   )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHECKPOINT_APPROVAL_RESPONSE,
+    (event, args: { checkpointId: string; approved: boolean }) => {
+      validateSender(event)
+      if (!args?.checkpointId) throw new Error('checkpointId is required')
+      checkpointService.resolveApproval(args.checkpointId, args.approved)
+    }
+  )
 }

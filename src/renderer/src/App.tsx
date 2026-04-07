@@ -1,7 +1,7 @@
 import { useEffect, useCallback } from 'react'
 import { AppLayout } from '@renderer/components/layout'
 import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
-import { WelcomeModal, ToolApprovalModal } from '@renderer/components/common'
+import { WelcomeModal, ToolApprovalModal, CheckpointApprovalModal } from '@renderer/components/common'
 import {
   useWorkspaceStore,
   useChatActions,
@@ -294,6 +294,7 @@ function App(): React.JSX.Element {
     <>
       <AppLayout />
       <ToolApprovalModal />
+      <CheckpointApprovalModal />
     </>
   )
 }

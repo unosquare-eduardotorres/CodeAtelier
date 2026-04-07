@@ -257,6 +257,12 @@ export const IPC_CHANNELS = {
   // Checkpoints
   CHECKPOINT_LIST: 'checkpoint:list',
   CHECKPOINT_RESTORE: 'checkpoint:restore',
+  CHECKPOINT_APPROVAL_REQUEST: 'checkpoint:approvalRequest',
+  CHECKPOINT_APPROVAL_RESPONSE: 'checkpoint:approvalResponse',
+
+  // Hooks
+  HOOKS_LIST: 'hooks:list',
+  HOOKS_RELOAD: 'hooks:reload',
 
   // Cost tracking
   COST_GET_WORKSPACE_SUMMARY: 'cost:getWorkspaceSummary',

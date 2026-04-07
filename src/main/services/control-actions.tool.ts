@@ -201,16 +201,26 @@ export function createControlActionsMcpServer(
         'For simple questions, answer directly without handing off.',
       inputSchema: handoffSchema.shape as unknown as Record<string, z.ZodType>,
       handler: async (args) => {
-        const brief = handoffSchema.parse(args)
+        const parsed = handoffSchema.parse(args)
         controlLog.info(
-          `[control:request_handoff] specialist="${brief.specialist}" summary="${brief.summary.substring(0, 80)}"`
+          `[control:request_handoff] specialist="${parsed.specialist}" summary="${parsed.summary.substring(0, 80)}"`
         )
-        callbacks.onHandoff(brief as HandoffBrief)
+        // Map singular schema fields to HandoffBrief array fields
+        const brief: HandoffBrief = {
+          summary: parsed.summary,
+          specialists: [parsed.specialist],
+          mode: parsed.mode ?? (mode as 'plan' | 'build'),
+          decisions: parsed.decisions ?? [],
+          constraints: parsed.constraints ?? [],
+          filesDiscussed: parsed.filesDiscussed ?? [],
+          recentMessages: []
+        }
+        callbacks.onHandoff(brief)
         return {
           content: [
             {
               type: 'text' as const,
-              text: `Handoff to ${brief.specialist} initiated.`
+              text: `Handoff to ${parsed.specialist} initiated.`
             }
           ]
         }

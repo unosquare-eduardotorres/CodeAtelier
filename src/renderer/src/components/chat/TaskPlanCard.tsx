@@ -261,19 +261,19 @@ export default function TaskPlanCard({
                 <GitBranch size={14} className="text-sky-400" />
                 Decisions
               </div>
-              <div className="prose prose-sm prose-invert max-w-none prose-table:border-collapse prose-th:border prose-th:border-border-subtle prose-th:bg-surface-raised prose-th:px-3 prose-th:py-1.5 prose-td:border prose-td:border-border-subtle prose-td:px-3 prose-td:py-1.5">
-                <table>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse table-fixed">
                   <thead>
-                    <tr>
-                      <th>What</th>
-                      <th>Why</th>
+                    <tr className="bg-surface-raised">
+                      <th className="border border-border-subtle px-3 py-1.5 text-left font-medium text-text-primary w-[35%]">What</th>
+                      <th className="border border-border-subtle px-3 py-1.5 text-left font-medium text-text-primary w-[65%]">Why</th>
                     </tr>
                   </thead>
                   <tbody>
                     {structuredPlan.decisions.map((decision, index) => (
                       <tr key={`decision-${index}`}>
-                        <td>{decision.what}</td>
-                        <td>{decision.why}</td>
+                        <td className="border border-border-subtle px-3 py-1.5 text-text-secondary align-top">{decision.what}</td>
+                        <td className="border border-border-subtle px-3 py-1.5 text-text-secondary break-words">{decision.why}</td>
                       </tr>
                     ))}
                   </tbody>

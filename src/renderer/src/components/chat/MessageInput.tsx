@@ -118,6 +118,7 @@ export default function MessageInput({
     closeConversation
   } = useChatActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
+  const isExecutingPlan = useChatStore((s) => s.isExecutingPlan)
   const conversationId = activeConversation?.id
   const conversationSpecialists = useConversationSpecialists(conversationId)
   const conversationTokenEstimates = useConversationTokenEstimates(conversationId)
@@ -465,7 +466,7 @@ export default function MessageInput({
         />
 
         {/* Stop button — visible when streaming */}
-        {isStreaming && (
+        {(isStreaming || isExecutingPlan) && (
           <button
             onClick={() => setShowStopConfirm(true)}
             className="flex-shrink-0 p-2 rounded-lg bg-danger text-white hover:brightness-110 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
@@ -528,8 +529,12 @@ export default function MessageInput({
 
       <ConfirmDialog
         isOpen={showStopConfirm}
-        title="Stop Generation"
-        message="Are you sure you want to stop the current response? The AI will stop generating immediately."
+        title={isExecutingPlan ? 'Stop Build' : 'Stop Generation'}
+        message={
+          isExecutingPlan
+            ? 'Are you sure you want to stop the build? All running specialists will be terminated.'
+            : 'Are you sure you want to stop the current response? The AI will stop generating immediately.'
+        }
         confirmLabel="Stop"
         cancelLabel="Continue"
         variant="danger"

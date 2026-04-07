@@ -64,8 +64,9 @@ export class RecoveryNudgeService {
 
     try {
       for await (const chunk of opts.sdkExecutor.execute({
-        prompt:
-          '[System: Your previous response ended after tool calls without providing a summary to the user. Please summarize what you found in 2-5 sentences. Do NOT use any tools — just summarize from what you already read.]',
+        prompt: opts.isBuildMode
+          ? '[System: Your previous response ended after tool calls without providing a summary to the user. Please summarize what you found or executed in 2-5 sentences. Do NOT use any tools — just summarize from what you already read or ran.]'
+          : '[System: Your previous response ended after tool calls without providing a summary to the user. Please summarize what you found in 2-5 sentences. Do NOT use any tools — just summarize from what you already read.]',
         systemPrompt: opts.systemPrompt,
         model: opts.model,
         cwd: opts.workspacePath,

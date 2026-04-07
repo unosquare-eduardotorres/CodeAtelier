@@ -215,6 +215,12 @@ export class GeneralistService extends AgentBaseService {
       this.sessionMap.set(this.currentConversationId, resumeSessionId)
     }
 
+    // Load declarative hooks from workspace config (.agentstudio/hooks.json)
+    const { hookEngine } = await import('./hook-engine.service')
+    hookEngine.loadHooks(workspacePath).catch((err) => {
+      this.log.warn('Failed to load workspace hooks:', err)
+    })
+
     // Load auth settings for SDK
     authProvider.loadFromWorkspace(workspacePath)
 
@@ -242,6 +248,13 @@ export class GeneralistService extends AgentBaseService {
     this.resetForNewMessage(conversationId)
 
     const sessionId = this.resolveSession(conversationId)
+
+    // Resumed sessions already have turn-1 context in history — seed the turn
+    // count so we don't re-inject specialist roster, MCP guidance, etc.
+    if (sessionId) {
+      this.promptAssembler.seedTurnCountForResume(conversationId)
+    }
+
     const hasImages = (images?.length ?? 0) > 0
     const turnCount = this.promptAssembler.incrementTurnCount(conversationId)
 

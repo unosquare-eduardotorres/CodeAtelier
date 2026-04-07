@@ -179,15 +179,10 @@ export class GeneralistStreamService {
       }
 
       const finalize = async (): Promise<void> => {
-        if (handoffPromise) {
-          log.info('[PIPELINE:complete] Waiting for handoff to finish before saving message')
-          try {
-            await handoffPromise
-          } catch (err) {
-            log.warn('[PIPELINE:complete] Handoff promise failed, continuing:', err)
-          }
-        }
-
+        // ── Save generalist message FIRST — before waiting for handoff ──
+        // This prevents specialist chunks from overwriting generalist content
+        // in the renderer's streaming state (fixes B3: specialist replaces bubble,
+        // B7: final message shows wrong agent).
         try {
           log.info('Generalist complete — saving to DB:', {
             contentLen: streamedContent.value.length
@@ -205,49 +200,47 @@ export class GeneralistStreamService {
               conversationId,
               messageId: `handoff-only-${Date.now()}`
             })
-            cleanupListeners()
-            return
-          }
-
-          if (!cleanedContent) {
-            log.warn('Generalist completed with no content — possible silent failure')
-          }
-
-          const savedMessage = messageRepository.create(
-            conversationId,
-            'generalist',
-            cleanedContent ||
-              '_No response received. The agent may have encountered an issue while processing. Try sending your message again._'
-          )
-          log.info('Generalist message saved, id:', savedMessage.id)
-
-          // Process memory blocks
-          try {
-            const wpPath = generalistService.getWorkspacePath()
-            const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
-            const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
-            if (workspace) {
-              const memoriesCreated = memoryService.processMemoryBlocks(
-                streamedContent.value,
-                conversationId,
-                'generalist',
-                workspace.id
-              )
-              if (memoriesCreated > 0) {
-                log.info(`Created ${memoriesCreated} memories from generalist response`)
-              }
+          } else {
+            if (!cleanedContent) {
+              log.warn('Generalist completed with no content — possible silent failure')
             }
-          } catch (memErr) {
-            log.warn('Memory block processing failed:', memErr)
-          }
 
-          log.info(
-            `[PIPELINE:generalist-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`
-          )
-          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-            conversationId,
-            messageId: savedMessage.id
-          })
+            const savedMessage = messageRepository.create(
+              conversationId,
+              'generalist',
+              cleanedContent ||
+                '_No response received. The agent may have encountered an issue while processing. Try sending your message again._'
+            )
+            log.info('Generalist message saved, id:', savedMessage.id)
+
+            // Process memory blocks
+            try {
+              const wpPath = generalistService.getWorkspacePath()
+              const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
+              const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
+              if (workspace) {
+                const memoriesCreated = memoryService.processMemoryBlocks(
+                  streamedContent.value,
+                  conversationId,
+                  'generalist',
+                  workspace.id
+                )
+                if (memoriesCreated > 0) {
+                  log.info(`Created ${memoriesCreated} memories from generalist response`)
+                }
+              }
+            } catch (memErr) {
+              log.warn('Memory block processing failed:', memErr)
+            }
+
+            log.info(
+              `[PIPELINE:generalist-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`
+            )
+            this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
+              conversationId,
+              messageId: savedMessage.id
+            })
+          }
         } catch (error) {
           log.error('Failed to save generalist message:', error)
           this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
@@ -259,6 +252,19 @@ export class GeneralistStreamService {
             conversationId,
             messageId: `error-${Date.now()}`
           })
+        }
+
+        // ── Now wait for handoff pipeline to complete ──
+        // Specialist chunks stream to the renderer with their own identity
+        // while we wait here. The pipeline sends its own CHAT_MESSAGE_COMPLETE
+        // when specialist execution finishes.
+        if (handoffPromise) {
+          log.info('[PIPELINE:complete] Waiting for handoff pipeline to finish')
+          try {
+            await handoffPromise
+          } catch (err) {
+            log.warn('[PIPELINE:complete] Handoff promise failed:', err)
+          }
         }
 
         cleanupListeners()
@@ -289,11 +295,27 @@ export class GeneralistStreamService {
       }
     }
 
+    // Plan event handler — injects ```plan``` block into streamed content so it's
+    // persisted to DB and the renderer's regex renders the TaskPlanCard.
+    // Must ALSO send the block as a chunk so the renderer's streamingContent includes it
+    // (finalizeStream builds contentMd from renderer-side streamingContent, not the DB).
+    const onPlanEvent = (data: PlanDetectedEvent): void => {
+      const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
+      streamedContent.value += planBlock
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+        conversationId,
+        chunk: planBlock,
+        role: 'generalist'
+      })
+      log.info('[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer')
+    }
+
     const cleanupListeners = (): void => {
       generalistService.removeListener('chunk', onChunk)
       generalistService.removeListener('complete', onComplete)
       generalistService.removeListener('handoff', onHandoff)
       generalistService.removeListener('intent', onIntent)
+      generalistService.removeListener('plan', onPlanEvent)
     }
 
     // ── Step 3 + 5: Mode switch + send ──
@@ -308,6 +330,7 @@ export class GeneralistStreamService {
       generalistService.on('complete', onComplete)
       generalistService.on('handoff', onHandoff)
       generalistService.on('intent', onIntent)
+      generalistService.on('plan', onPlanEvent)
       await generalistService.send(
         fullContent,
         conversationId,

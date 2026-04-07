@@ -190,15 +190,23 @@ export class TaskPipelineService {
           log.info('[PIPELINE:plan-execution] Switched to build mode for direct plan execution')
         }
 
-        // Resolve specialists from conversation overrides or plan context
+        // Resolve specialists from conversation overrides, or let decomposition LLM choose.
+        // conversation_specialists stores UUIDs (specialist.id), but downstream code
+        // (decomposition, delegation, handoff) expects agentId slugs (e.g. "react-architect").
         const overrides = conversationSpecialistRepository.findByConversation(conversationId)
         let specialists: string[]
         if (overrides.length > 0) {
-          specialists = overrides.map((o) => o.specialistId)
+          specialists = overrides
+            .filter((o) => o.isActive)
+            .map((o) => {
+              const spec = specialistRepository.findById(o.specialistId)
+              return spec?.agentId ?? o.specialistId
+            })
+            .filter(Boolean) as string[]
         } else {
-          // Fallback: use all active specialists — decompose will select the right ones
-          const activeSpecs = specialistRepository.findActive()
-          specialists = activeSpecs.map((s) => s.agentId)
+          // No conversation overrides — let decomposition LLM choose from active roster
+          specialists = []
+          log.info('[PIPELINE:plan-execution] No conversation overrides — decomposition LLM will select specialists')
         }
 
         // Collect files from plan steps and filesChanged
@@ -289,7 +297,7 @@ export class TaskPipelineService {
         case 'delegation': {
           const specialistNames = brief.specialists
             .map((id) => {
-              const spec = specialistRepository.findByAgentId(id)
+              const spec = specialistRepository.findByAgentId(id) ?? specialistRepository.findById(id)
               return spec?.displayName ?? id
             })
             .join(', ')
@@ -525,6 +533,14 @@ export class TaskPipelineService {
           IPC_CHANNELS.AGENT_STATUS_UPDATE,
           agentStatus as AgentStatus
         )
+      },
+
+      abandonmentDetected: (data: any): void => {
+        this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_ABANDONMENT_DETECTED, data)
+      },
+
+      gateFailure: (data: any): void => {
+        this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_GATE_FAILURE, data)
       }
     }
     /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -606,17 +622,22 @@ export class TaskPipelineService {
     const summaryJson = JSON.stringify(buildSummary)
     const summaryBlock = `\`\`\`build-summary\n${summaryJson}\n\`\`\``
 
+    // Determine primary specialist for attribution (last task's specialist, or first)
+    const primarySpecialist = tasks.length > 0 ? tasks[tasks.length - 1].specialist : undefined
+
     this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
       conversationId,
       chunk: `\n\n${summaryBlock}\n`,
-      role: 'generalist'
+      role: 'specialist',
+      specialist: primarySpecialist
     })
     accumulatedContent.value += `\n\n${summaryBlock}\n`
 
     const savedMsg = messageRepository.create(
       conversationId,
-      'generalist',
-      accumulatedContent.value || '_No response from specialist execution._'
+      'specialist',
+      accumulatedContent.value || '_No response from specialist execution._',
+      primarySpecialist
     )
     this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
       conversationId,

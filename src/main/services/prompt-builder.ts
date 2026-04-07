@@ -5,9 +5,9 @@ import { promptBuilderLogger } from '../logger'
 import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.repository'
 import { skillRepository } from '../db/repositories/skill.repository'
 import {
+  buildDecompositionPrompt,
   buildSpecialistMcpGuidance,
   DEFAULT_PROMPTS,
-  DECOMPOSITION_SYSTEM_PROMPT,
   OPUS_SPECIALIST_APPENDIX,
   SPECIALIST_MICRO_PROMPT,
   SPECIALIST_TASK_SYSTEM_PROMPT
@@ -118,17 +118,19 @@ export class PromptBuilder {
       )
 
     // Strategy 3: Direct Answer Boost — classify simple questions that don't need specialist handoff.
-    // Simple questions are short, use interrogative verbs, and DON'T request code changes.
+    // Simple questions are short, use interrogative verbs, and DON'T request code mutations.
+    // Analysis verbs (investigate, diagnose, audit, review) do NOT suppress the boost —
+    // they're questions the generalist can often answer directly from context.
     const isQuestionPattern =
       /\b(what|why|how|where|which|explain|show me|list|describe|tell me|is there)\b/i.test(
         normalized
       )
-    const isChangeRequest =
-      /\b(fix|implement|build|create|add|refactor|update|change|modify|delete|remove|write|migrate|deploy|scaffold|generate|design|architect|propose|draft|investigate|diagnose|audit|review)\b/i.test(
+    const isMutationRequest =
+      /\b(fix|implement|build|create|add|refactor|update|change|modify|delete|remove|write|migrate|deploy|scaffold|generate)\b/i.test(
         normalized
       )
     const includeDirectAnswerBoost =
-      isQuestionPattern && !isChangeRequest && message.length < 300
+      isQuestionPattern && !isMutationRequest && message.length < 300
 
     return {
       includeAskQuestionPrompt,
@@ -261,9 +263,11 @@ export class PromptBuilder {
   /**
    * Get the decomposition system prompt (used by generalist.decompose()).
    * This is a standalone prompt, not composed with layers.
+   * Mode-aware: plan-mode decomposition produces investigation tasks,
+   * build-mode produces implementation tasks.
    */
-  getDecompositionPrompt(): string {
-    return DECOMPOSITION_SYSTEM_PROMPT
+  getDecompositionPrompt(mode: ConversationMode = 'build'): string {
+    return buildDecompositionPrompt(mode)
   }
 
   // ── Private layer builders ──
@@ -513,13 +517,12 @@ export class PromptBuilder {
     mode: ConversationMode = 'build',
     budgetTier: BudgetTier = 'standard'
   ): string {
-    const INLINE_SPECIALIST_CONTEXT = `Tech: Electron 40, React 19, TypeScript 5.9 strict, Tailwind CSS 4, better-sqlite3 (raw SQL, no ORM), Zustand 5.
-Conventions: ES modules with type-only imports, @renderer/ alias, kebab-case.service.ts for services, PascalCase.tsx for components.
-IPC: ipcRenderer.invoke/ipcMain.handle only. Channels defined in src/shared/constants.ts (IPC_CHANNELS). Never use sendSync or expose raw ipcRenderer.
-DB: Repository pattern in src/main/db/repositories/. Raw SQL via better-sqlite3. No ORM.
-Errors: throw in IPC handlers (propagates to renderer). try-catch + log.error() in services.
-Never: require() in renderer, disable contextIsolation, use remote module, string-concat SQL.`
-    if (role === 'specialist') return INLINE_SPECIALIST_CONTEXT
+    // Dynamic specialist CLAUDE.md extraction: try reading CLAUDE.md for the workspace
+    // and extracting the sections most relevant to specialists. Falls back to a hardcoded
+    // inline summary if CLAUDE.md is unavailable.
+    if (role === 'specialist') {
+      return this.extractSpecialistClaudeMd(workspacePath)
+    }
 
     // Strategy 5: Minimal-budget generalist (turn 5+) already has CLAUDE.md in history —
     // send a micro-summary instead of re-extracting sections (~600 tokens saved per turn)
@@ -597,6 +600,79 @@ Never: require() in renderer, disable contextIsolation, use remote module, strin
     const profile = mode === 'plan' ? 'generalist-plan (ultra-light)' : 'generalist-build (slim)'
     log.info(`CLAUDE.md progressive injection: ${content.length} → ${extracted.length} chars for ${profile}`)
     return extracted
+  }
+
+  /**
+   * Extracts a specialist-focused CLAUDE.md slice.
+   * Specialists need conventions, error handling, and key commands — not project overview
+   * or architecture notes (those are covered by the specialist persona + skills).
+   * Falls back to a hardcoded inline summary if CLAUDE.md is unavailable.
+   */
+  private extractSpecialistClaudeMd(workspacePath: string): string {
+    const INLINE_FALLBACK = `Tech: Electron 40, React 19, TypeScript 5.9 strict, Tailwind CSS 4, better-sqlite3 (raw SQL, no ORM), Zustand 5.
+Conventions: ES modules with type-only imports, @renderer/ alias, kebab-case.service.ts for services, PascalCase.tsx for components.
+IPC: ipcRenderer.invoke/ipcMain.handle only. Channels defined in src/shared/constants.ts (IPC_CHANNELS). Never use sendSync or expose raw ipcRenderer.
+DB: Repository pattern in src/main/db/repositories/. Raw SQL via better-sqlite3. No ORM.
+Errors: throw in IPC handlers (propagates to renderer). try-catch + log.error() in services.
+Never: require() in renderer, disable contextIsolation, use remote module, string-concat SQL.`
+
+    try {
+      const claudeMdPath = join(workspacePath, 'CLAUDE.md')
+
+      // Reuse mtime cache from generalist extraction
+      const cached = this.claudeMdCache.get(claudeMdPath)
+      let content: string
+
+      try {
+        const stat = statSync(claudeMdPath)
+        if (cached && cached.mtimeMs === stat.mtimeMs) {
+          content = cached.content
+        } else {
+          content = readFileSync(claudeMdPath, 'utf-8')
+          this.claudeMdCache.set(claudeMdPath, { content, mtimeMs: stat.mtimeMs })
+        }
+      } catch {
+        content = readFileSync(claudeMdPath, 'utf-8')
+      }
+
+      const specialistHeadings = [
+        'tech stack',
+        'conventions',
+        'key commands',
+        'what not to do',
+        'error handling'
+      ]
+      const specialistSkipHeadings = [
+        'overview',
+        'skills',
+        'available skills',
+        'electron skill trigger',
+        'deprecation notes',
+        'electron documentation',
+        'architecture notes',
+        'agents',
+        'design system',
+        'project structure'
+      ]
+
+      const extracted = this.extractClaudeMdSections(
+        content,
+        specialistHeadings,
+        specialistSkipHeadings,
+        false
+      )
+
+      if (extracted.length > 100) {
+        log.info(
+          `CLAUDE.md specialist extraction: ${content.length} → ${extracted.length} chars`
+        )
+        return extracted
+      }
+    } catch {
+      // CLAUDE.md not found or unreadable — fall back
+    }
+
+    return INLINE_FALLBACK
   }
 
   /**

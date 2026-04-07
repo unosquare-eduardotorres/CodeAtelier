@@ -109,6 +109,25 @@ export class GeneralistPromptAssembler {
     return nextTurn
   }
 
+  /**
+   * Pre-seed the turn count for a resumed session so that the next
+   * `incrementTurnCount` call returns 2+ instead of 1.
+   *
+   * On app restart the in-memory turnCountMap is empty, but the SDK session
+   * is resumed via `resume: sessionId`.  Without seeding, turn-1-only
+   * injections (specialist roster, MCP guidance, full memory budget) fire
+   * again — duplicating content already in the resumed session's history
+   * and confusing the model.
+   */
+  seedTurnCountForResume(conversationId: string): void {
+    if (!this.turnCountMap.has(conversationId)) {
+      this.turnCountMap.set(conversationId, 1) // next increment → 2
+      this.log.info(
+        `[PIPELINE:turn-count-seeded] conversationId=${conversationId} — resumed session, seeded to 1 (next turn=2)`
+      )
+    }
+  }
+
   // ── System Prompt ──
 
   /**
@@ -382,7 +401,7 @@ export class GeneralistPromptAssembler {
     // In plan mode, ALWAYS remind about emit_plan — every plan-mode response should use it.
     // In build mode, only remind when message explicitly requests a plan.
     const isPlanGenerationRequest =
-      /\b(create a plan|draft a plan|propose a plan|make a plan|write a plan|design a plan|plan for|plan to (implement|build|add|create|fix|refactor)|how (would|should|can) (I|we|you)|what('s| is) the (best|right) (way|approach))\b/i.test(
+      /\b(create a plan|draft a plan|propose a plan|make a plan|write a plan|design a plan|plan for|plan to (implement|build|add|create|fix|refactor)|how (would|should|can) (I|we|you)|what('s| is) the (best|right) (way|approach)|investigate|diagnose|audit|analyze|what.*(wrong|broken|failing|issue)|assess|evaluate)\b/i.test(
         message
       )
     const planReminderInjected = mode === 'plan' || isPlanGenerationRequest
@@ -395,13 +414,17 @@ export class GeneralistPromptAssembler {
 
     // Strategy γ: When investigation mode is OFF, inject NO HANDOFF directive.
     // The generalist must answer everything directly — no specialist delegation.
+    // This explicitly grants Write/Edit permission, overriding the system-prompt
+    // "What Requires Handoff" section that assumes specialists are available.
     if (!investigationModeEnabled) {
       sections.push(
         `## NO HANDOFF MODE (Investigation Mode OFF)\n\n` +
-          `Do NOT hand off to specialists. Answer everything directly using your own tool access.\n` +
-          `If you need to read files, do it yourself. Target ≤5 tool calls.\n` +
-          `If you genuinely cannot answer after reading 3-5 files, tell the user:\n` +
-          `"I couldn't fully answer this — enable Investigation Mode in settings for a deeper specialist analysis."`
+          `Do NOT hand off to specialists — none are active. You are the sole agent.\n` +
+          `You CAN and SHOULD write source code directly when the user asks for changes.\n` +
+          `The "What Requires Handoff" section does NOT apply — you handle everything:\n` +
+          `source files (.ts/.tsx/.js/.jsx/.css/.sql), tests, configs, docs, and commands.\n` +
+          `Target ≤10 tool calls per request. For tasks affecting 20+ files, suggest the user\n` +
+          `enable Investigation Mode for parallel specialist execution.`
       )
     }
 

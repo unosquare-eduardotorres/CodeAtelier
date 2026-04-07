@@ -690,6 +690,47 @@ interface Api {
   ) => () => void
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
 
+  // Checkpoint approval
+  onCheckpointApprovalRequest: (
+    callback: (data: {
+      id: string
+      type: 'phase_gate' | 'merge_approval' | 'destructive_action'
+      title: string
+      summary: string
+      details: {
+        what: string
+        why: string
+        risk: string
+        changedFiles?: string[]
+        testResults?: string
+      }
+      createdAt: string
+    }) => void
+  ) => () => void
+  respondCheckpointApproval: (checkpointId: string, approved: boolean) => Promise<void>
+
+  // Hooks
+  listHooks: () => Promise<
+    Array<{
+      event: string
+      name: string
+      command: string
+      blocking: boolean
+      condition?: { mode?: string; model?: string; agent?: string }
+      timeout?: number
+    }>
+  >
+  reloadHooks: (args: { workspacePath: string }) => Promise<
+    Array<{
+      event: string
+      name: string
+      command: string
+      blocking: boolean
+      condition?: { mode?: string; model?: string; agent?: string }
+      timeout?: number
+    }>
+  >
+
   // AI Subscriptions
   validateSubscriptions: () => Promise<SubscriptionCheckResult>
   checkClaudeCli: () => Promise<{

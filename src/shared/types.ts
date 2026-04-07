@@ -470,6 +470,8 @@ export interface DecomposedTask {
   verificationCommand?: string
   /** Optional Zod schema name for structured output validation (R3: open-multi-agent pattern) */
   outputSchema?: string
+  /** Runtime metadata for task loop state (re-engagement, abandonment tracking, etc.) */
+  metadata?: Record<string, unknown>
 }
 
 /** The full task plan returned by the generalist decomposition step */

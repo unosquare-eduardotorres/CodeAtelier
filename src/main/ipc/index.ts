@@ -39,6 +39,7 @@ import { registerIndexingIpc } from './indexing.ipc'
 import { registerCodeGraphIpc } from './code-graph.ipc'
 import { registerCodeChangesIpc } from './code-changes.ipc'
 import { registerSchedulingIpc } from './scheduling.ipc'
+import { registerHooksIpc } from './hooks.ipc'
 import { initTaskPipeline } from '../services/task-pipeline.service'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
@@ -85,4 +86,5 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerCodeGraphIpc(mainWindow)
   registerCodeChangesIpc()
   registerSchedulingIpc()
+  registerHooksIpc()
 }

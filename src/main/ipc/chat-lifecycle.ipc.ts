@@ -450,7 +450,12 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
       if (!args?.conversationId) throw new Error('Invalid conversation ID')
 
       const lastTurn = turnUsageRepository.getLastTurn(args.conversationId)
-      const inputTokens = lastTurn?.inputTokens ?? 0
+      // Total context = non-cached input + cache read + cache creation tokens
+      // The SDK reports inputTokens as only the non-cached portion, but the full
+      // context window consumption includes all cached tokens too
+      const inputTokens = (lastTurn?.inputTokens ?? 0)
+        + (lastTurn?.cacheReadTokens ?? 0)
+        + (lastTurn?.cacheCreationTokens ?? 0)
       const contextWindowSize = 200_000
       const percentage = Math.round((inputTokens / contextWindowSize) * 100)
       const level =

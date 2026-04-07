@@ -28,7 +28,7 @@ import type { MergeResult } from './git-worktree.service'
 import { modelConfigService } from './model-config.service'
 import { checkpointService } from './checkpoint.service'
 import { eventLoggerService } from './event-logger.service'
-import { detectAbandonment, detectQualityGates } from './abandonment-detector.service'
+import { detectAbandonment, detectQualityGates, getReEngagementPrompt } from './abandonment-detector.service'
 import { gateResultRepository } from '../db/repositories/gate-result.repository'
 import { costTrackerService } from './cost-tracker.service'
 import { taskLoopService } from './task-loop.service'
@@ -61,6 +61,7 @@ import { gitContextMcpService } from './git-context.tool'
 import { gitHubContextMcpService } from './github-context.tool'
 import { githubService } from './github.service'
 import { agentContextService } from './agent-context.service'
+import { hookEngine } from './hook-engine.service'
 import { createSpecialistControlMcpServer } from './specialist-control-actions.tool'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 
@@ -710,6 +711,11 @@ export class SpecialistPoolService extends EventEmitter {
   ): { traceSpan: TraceSpan | undefined; info: SpecialistProcessInfo } {
     this.log.info(`Running ${task.specialist}/${task.id} via SDK`)
 
+    // Fire declarative hook (non-blocking)
+    hookEngine
+      .executeHooks('specialist_start', { taskId: task.id, agentId: task.specialist })
+      .catch((err) => this.log.warn('Hook error (specialist_start):', err))
+
     let traceSpan: TraceSpan | undefined
     if (this.currentRunId) {
       traceSpan = executionTracer.startSpan(this.currentRunId, 'specialist_start', {
@@ -816,6 +822,11 @@ export class SpecialistPoolService extends EventEmitter {
       toolCallCount: info.toolCallCount,
       attempt: info.attempt
     })
+
+    // Fire declarative hook (specialist_complete)
+    hookEngine
+      .executeHooks('specialist_complete', { taskId: task.id, agentId: task.specialist })
+      .catch((err) => this.log.warn('Hook error (specialist_complete):', err))
 
     // R3: Structured output validation — if task has outputSchema, validate before accepting
     if (task.outputSchema && info.output.length > 0) {
@@ -946,12 +957,7 @@ export class SpecialistPoolService extends EventEmitter {
     traceSpan: TraceSpan | undefined,
     onDone: () => void
   ): Promise<void> {
-    // Emit error as visible chat chunk so user sees what happened
-    this.emit('taskChunk', {
-      taskId: task.id,
-      specialist: task.specialist,
-      chunk: `\n\n❌ **Error:** ${error.message}\n`
-    })
+    // Error is surfaced via emitProgress('failed') → BuildProgressCard, not chat stream
 
     // End trace span on error — capture durationMs for afterRun consistency
     let errorSpanDurationMs = 0
@@ -1000,6 +1006,11 @@ export class SpecialistPoolService extends EventEmitter {
       toolCallCount: info.toolCallCount,
       attempt: info.attempt
     })
+
+    // Fire declarative hook (specialist_failed)
+    hookEngine
+      .executeHooks('specialist_failed', { taskId: task.id, agentId: task.specialist })
+      .catch((err) => this.log.warn('Hook error (specialist_failed):', err))
 
     // Error path — handle retry/circuit-breaker
     this.activeProcesses.delete(task.id)
@@ -1233,6 +1244,14 @@ export class SpecialistPoolService extends EventEmitter {
         promptOptions.skillOverrides = config.skillOverrides
       }
       systemPrompt = promptBuilder.build(promptOptions)
+
+      // Strategy: Plan-mode specialists should not attempt file writes —
+      // SDK permission enforcement catches it, but wasted tool-call attempts
+      // burn tokens. Telling them explicitly avoids the round-trip.
+      if (mode === 'plan') {
+        systemPrompt +=
+          '\n\n## Mode: Plan (read-only)\nProduce analysis and recommendations only. Do NOT write files or run commands.'
+      }
 
       this.specialistPromptCache.set(cacheKey, systemPrompt)
       this.log.info(
@@ -1468,6 +1487,10 @@ export class SpecialistPoolService extends EventEmitter {
         model: modelId,
         cwd,
         permissionMode: mode === 'build' ? 'bypassPermissions' : 'default',
+        // Enable tool approval in build mode for destructive operations
+        enableToolApproval: mode === 'build',
+        agentId: task.specialist,
+        taskId: task.id,
         // Modern thinking: adaptive for opus, budget-based for others
         thinking: modelId.includes('opus')
           ? { type: 'adaptive' as const }
@@ -1859,11 +1882,7 @@ export class SpecialistPoolService extends EventEmitter {
       )
       return true // break the stream loop
     }
-    this.emit('taskChunk', {
-      taskId: task.id,
-      specialist: task.specialist,
-      chunk: `\n⚠️ ${chunk.error}\n`
-    })
+    // Error will surface via emitProgress('failed') in BuildProgressCard, not chat stream
     throw new Error(chunk.error)
   }
 
@@ -2171,6 +2190,9 @@ export class SpecialistPoolService extends EventEmitter {
     if (loopResult.passed) {
       // All gates passed — finalize normally
       this.log.info(`Task ${task.id} passed quality gates on iteration ${loopResult.iterations}`)
+      hookEngine
+        .executeHooks('gate_passed', { taskId: task.id, agentId: task.specialist })
+        .catch((err) => this.log.warn('Hook error (gate_passed):', err))
       this.finalizeTaskCompletion(task, info)
       onDone()
       return
@@ -2192,12 +2214,22 @@ export class SpecialistPoolService extends EventEmitter {
     }
 
     // Gates failed, iterations remaining — re-spawn with fix context
+    hookEngine
+      .executeHooks('gate_failed', { taskId: task.id, agentId: task.specialist })
+      .catch((err) => this.log.warn('Hook error (gate_failed):', err))
     this.log.info(
       `Task ${task.id} failed quality gates (iteration ${loopResult.iterations}) — re-spawning with fix context`
     )
 
     // Model escalation on stuck detection
     if (loopResult.shouldEscalate) {
+      hookEngine
+        .executeHooks('escalation', {
+          taskId: task.id,
+          agentId: task.specialist,
+          from: task.model ?? 'sonnet'
+        })
+        .catch((err) => this.log.warn('Hook error (escalation):', err))
       const currentModel = task.model ?? 'sonnet'
       const escalatedModel = MODEL_ESCALATION_CHAIN[currentModel]
       if (escalatedModel) {
@@ -2232,6 +2264,14 @@ export class SpecialistPoolService extends EventEmitter {
 
     // Append fix context to task description for retry
     task.description = task.description + loopResult.fixContext
+
+    // Inject re-engagement prompt if abandonment was detected during post-completion analysis
+    const reEngagement = ((task.metadata as Record<string, unknown>)?.reEngagementPrompt as string) ?? ''
+    if (reEngagement) {
+      task.description = task.description + '\n\n' + reEngagement
+      // Clear after injection to avoid stacking on subsequent retries
+      delete (task.metadata as Record<string, unknown>).reEngagementPrompt
+    }
 
     // Determine escalation info for this retry (last escalation if it just happened)
     const lastEscalation =
@@ -2282,7 +2322,7 @@ export class SpecialistPoolService extends EventEmitter {
   /**
    * Finalize task completion — mark as completed, merge worktree, clean up task loop.
    */
-  private finalizeTaskCompletion(task: DecomposedTask, info: SpecialistProcessInfo): void {
+  private async finalizeTaskCompletion(task: DecomposedTask, info: SpecialistProcessInfo): Promise<void> {
     // Guard against duplicate completion — can happen if both runTaskLoopGates
     // and its catch handler call finalizeTaskCompletion for the same task.
     if (this.taskStatuses.get(task.id) === 'completed') {
@@ -2302,34 +2342,76 @@ export class SpecialistPoolService extends EventEmitter {
 
     // Attempt to merge worktree if one was created
     if (info.worktreeId) {
-      gitWorktreeService
-        .merge(info.worktreeId)
-        .then((mergeResult: MergeResult) => {
-          if (!mergeResult.success) {
-            this.log.warn(
-              `Merge conflict for ${task.specialist}/${task.id}:`,
-              mergeResult.conflictedFiles
-            )
-            this.emit('mergeConflict', {
-              agentId: task.specialist,
-              taskId: task.id,
-              conflictedFiles: mergeResult.conflictedFiles ?? []
-            })
-          } else {
-            // Clean up worktree after successful merge
-            gitWorktreeService.remove(info.worktreeId!, true).catch((err) => {
-              this.log.warn(`Failed to remove worktree after merge: ${err}`)
-            })
-          }
-        })
-        .catch((err) => {
-          this.log.error(`Failed to merge worktree for ${task.specialist}/${task.id}:`, err)
+      // Checkpoint approval — pause for user confirmation before irreversible merge
+      const approved = await checkpointService.requestApproval({
+        type: 'merge_approval',
+        title: `Merge ${task.specialist} Work`,
+        summary: `Merge worktree for task "${task.id}" into main branch`,
+        details: {
+          what: `Git merge of ${task.specialist}'s isolated work into the main workspace`,
+          why: 'Merging changes is irreversible without manual git intervention',
+          risk: 'Potential merge conflicts with other specialists or manual changes'
+        }
+      })
+
+      if (!approved) {
+        this.log.info(`Merge rejected for ${task.specialist}/${task.id}`)
+        worktreeRepository.updateStatus(info.worktreeId, 'abandoned')
+
+        // Fire checkpoint_rejected hook
+        hookEngine
+          .executeHooks('checkpoint_rejected', { taskId: task.id, agentId: task.specialist })
+          .catch((err) => this.log.warn('Hook error (checkpoint_rejected):', err))
+        return // skip merge, keep worktree
+      }
+
+      // Fire checkpoint_approved hook
+      hookEngine
+        .executeHooks('checkpoint_approved', { taskId: task.id, agentId: task.specialist })
+        .catch((err) => this.log.warn('Hook error (checkpoint_approved):', err))
+
+      // Run pre_merge hooks — allow blocking
+      const preHookResults = await hookEngine.executeHooks('pre_merge', {
+        taskId: task.id,
+        agentId: task.specialist
+      })
+      const blocked = preHookResults.some((r) => r.exitCode !== 0 && r.exitCode !== null)
+      if (blocked) {
+        this.log.warn(`Pre-merge hook blocked merge for ${task.specialist}/${task.id}`)
+        return
+      }
+
+      try {
+        const mergeResult: MergeResult = await gitWorktreeService.merge(info.worktreeId)
+        if (!mergeResult.success) {
+          this.log.warn(
+            `Merge conflict for ${task.specialist}/${task.id}:`,
+            mergeResult.conflictedFiles
+          )
           this.emit('mergeConflict', {
             agentId: task.specialist,
             taskId: task.id,
-            conflictedFiles: []
+            conflictedFiles: mergeResult.conflictedFiles ?? []
           })
+        } else {
+          // Fire post_merge hook (non-blocking)
+          hookEngine
+            .executeHooks('post_merge', { taskId: task.id, agentId: task.specialist })
+            .catch((err) => this.log.warn('Hook error (post_merge):', err))
+
+          // Clean up worktree after successful merge
+          gitWorktreeService.remove(info.worktreeId!, true).catch((err) => {
+            this.log.warn(`Failed to remove worktree after merge: ${err}`)
+          })
+        }
+      } catch (err) {
+        this.log.error(`Failed to merge worktree for ${task.specialist}/${task.id}:`, err)
+        this.emit('mergeConflict', {
+          agentId: task.specialist,
+          taskId: task.id,
+          conflictedFiles: []
         })
+      }
     }
   }
 
@@ -2341,7 +2423,7 @@ export class SpecialistPoolService extends EventEmitter {
    */
   private runPostCompletionAnalysis(task: DecomposedTask, info: SpecialistProcessInfo): void {
     try {
-      // Abandonment detection
+      // Abandonment detection with re-engagement loop
       const abandonment = detectAbandonment(info.output)
       if (abandonment.detected) {
         this.log.warn(
@@ -2359,6 +2441,34 @@ export class SpecialistPoolService extends EventEmitter {
           specialist: task.specialist,
           pattern: abandonment.pattern
         })
+
+        // Fire abandonment hook
+        hookEngine
+          .executeHooks('abandonment_detected', {
+            taskId: task.id,
+            agentId: task.specialist,
+            pattern: abandonment.pattern ?? 'unknown'
+          })
+          .catch((err) => this.log.warn('Hook error (abandonment_detected):', err))
+
+        // Re-engagement: inject motivational prompt for next retry (max 2 attempts)
+        const meta = (task.metadata ?? {}) as Record<string, unknown>
+        const abandonmentCount = ((meta.abandonmentCount as number) ?? 0) + 1
+        meta.abandonmentCount = abandonmentCount
+        task.metadata = meta
+
+        if (abandonmentCount <= 2) {
+          const reEngagement = getReEngagementPrompt(abandonment)
+          meta.reEngagementPrompt = reEngagement
+          this.log.info(
+            `Re-engaging ${task.specialist} on task ${task.id} (attempt ${abandonmentCount})`
+          )
+          this.emit('taskChunk', {
+            taskId: task.id,
+            specialist: task.specialist,
+            chunk: `\n\n⚡ Agent attempted to give up — re-engaging with alternative approach (attempt ${abandonmentCount}/2)\n`
+          })
+        }
       }
 
       // Quality gate detection

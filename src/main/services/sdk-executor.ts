@@ -2,7 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 import type { StreamChunk } from './agent-base.service'
 import { summarizeToolInput } from './agent-base.service'
 import { authProvider } from './auth-provider'
-import { createScopeGuard } from './sdk-hooks'
+import { createScopeGuard, createCodeGraphFirstHook } from './sdk-hooks'
 import log from 'electron-log/main'
 
 const sdkLog = log.scope('SDKExecutor')
@@ -173,6 +173,14 @@ export class SDKExecutor {
       const scopeGuard = createScopeGuard(options.cwd)
       const preToolUseHooks = [scopeGuard]
 
+      // Add Code Graph-first enforcement when code-graph MCP server is active (warn mode — logs but doesn't block)
+      if (
+        options.mcpServers &&
+        Object.keys(options.mcpServers).some((k) => k.includes('code-graph'))
+      ) {
+        preToolUseHooks.push(createCodeGraphFirstHook('warn'))
+      }
+
       // Add per-tool approval hook if enabled
       if (options.enableToolApproval) {
         const { createToolApprovalHook } = await import('./sdk-hooks')
@@ -329,6 +337,11 @@ export class SDKExecutor {
               hasStreamedText = true
               yield { type: 'text', content: delta.text as string }
             }
+            // Structured output may stream as json_delta
+            if (delta?.type === 'json_delta' && delta.json) {
+              hasStreamedText = true
+              yield { type: 'text', content: delta.json as string }
+            }
           }
 
           // Tool use start — track ID for dedup against assistant replay
@@ -415,6 +428,18 @@ export class SDKExecutor {
           }
 
           resultText = msg.result as string | undefined
+
+          // For structured output (json_schema), the JSON is in structured_output, not result
+          if (!resultText) {
+            const structuredOutput = (msg as Record<string, unknown>).structured_output
+            if (structuredOutput) {
+              resultText =
+                typeof structuredOutput === 'string'
+                  ? structuredOutput
+                  : JSON.stringify(structuredOutput)
+            }
+          }
+
           if (resultText && !hasStreamedText) {
             yield { type: 'text', content: resultText }
           }
@@ -503,6 +528,11 @@ export class SDKExecutor {
         sessionId = meta.sessionId
         totalUsage.input = meta.tokenUsage.input
         totalUsage.output = meta.tokenUsage.output
+        // Fallback: if no text was streamed, use the result from SDK metadata
+        // This handles structured output (json_schema) which may arrive as tool_use blocks
+        if (!result && meta.result) {
+          result = typeof meta.result === 'string' ? meta.result : JSON.stringify(meta.result)
+        }
       }
     }
 

@@ -303,6 +303,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       rendererLog.error('Failed to stop generation:', error)
     }
 
+    // Clear build execution state so progress card dismisses
+    set({ isExecutingPlan: false })
+
     // Preserve partial streaming content as a message with a "stopped" suffix
     if (streamingContent && activeConversation) {
       const stoppedMessage: Message = {
@@ -391,6 +394,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // If taskId changed, a new specialist is streaming — start fresh content
       const isNewTask = taskId != null && taskId !== state.streamingTaskId
       return {
+        isStreaming: true, // Ensure streaming bubble renders for specialist chunks
         streamingContent: isNewTask ? chunk : state.streamingContent + chunk,
         streamingRole: role ?? state.streamingRole,
         streamingSpecialist: specialist ?? state.streamingSpecialist,
@@ -478,7 +482,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isStreaming: !!taskId,
         toolActivities: taskId ? state.toolActivities : [],
         streamingTaskId: null,
-        streamingSpecialist: taskId ? state.streamingSpecialist : null
+        streamingSpecialist: taskId ? state.streamingSpecialist : null,
+        // Clear handoff indicator on final complete (B8 fix)
+        activeHandoff: taskId ? state.activeHandoff : null
       }))
     } else if (taskId) {
       // Per-task complete with no accumulated content — just reset task tracking
@@ -494,15 +500,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             isStreaming: false,
             toolActivities: [],
-            streamingTaskId: null
+            streamingTaskId: null,
+            activeHandoff: null
           })
         })
         .catch((error) => {
           rendererLog.error('Failed to reload messages after stream finalize:', error)
-          set({ streamingContent: '', isStreaming: false, toolActivities: [], streamingTaskId: null })
+          set({ streamingContent: '', isStreaming: false, toolActivities: [], streamingTaskId: null, activeHandoff: null })
         })
     } else {
-      set({ streamingContent: '', isStreaming: false, toolActivities: [], streamingTaskId: null })
+      set({ streamingContent: '', isStreaming: false, toolActivities: [], streamingTaskId: null, activeHandoff: null })
     }
   },
 

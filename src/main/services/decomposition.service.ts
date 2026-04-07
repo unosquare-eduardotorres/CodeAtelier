@@ -204,7 +204,7 @@ export class DecompositionService {
     try {
       const { result } = await executor.executeAndCollect({
         prompt,
-        systemPrompt: promptBuilder.getDecompositionPrompt(),
+        systemPrompt: promptBuilder.getDecompositionPrompt(mode),
         model: modelConfigService.getModel(workspacePath, 'generalist'),
         cwd: workspacePath,
         permissionMode: 'plan',
@@ -269,7 +269,9 @@ export class DecompositionService {
 
     const relevantSpecialists =
       brief.specialists.length > 0
-        ? activeSpecialists.filter((s) => brief.specialists.includes(s.agentId))
+        ? activeSpecialists.filter(
+            (s) => brief.specialists.includes(s.agentId) || brief.specialists.includes(s.id)
+          )
         : activeSpecialists
 
     const specialistList = relevantSpecialists
