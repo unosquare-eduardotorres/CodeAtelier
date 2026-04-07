@@ -41,3 +41,15 @@ export type { HandoffPrepare, InvestigationFixPrepare, PrepareOptions, ExecuteOp
 // Generalist streaming lifecycle — owns stream/stop/compact + event forwarding
 export { generalistStreamService, initGeneralistStream, GeneralistStreamService } from './generalist-stream.service'
 export type { PipelineCallbacks } from './generalist-stream.service'
+
+// Intent detection + routing — replaces scattered detect*() methods and EventEmitter forwarders
+export { IntentDetector, intentDetector } from './intent-detector'
+export { IntentRouter } from './intent-router'
+
+// Extracted generalist sub-services (Phase 5-9 decomposition)
+export { GeneralistTokenTracker } from './generalist-token-tracker'
+export type { TurnBreakdownEntry, CacheEfficiencyReport } from './generalist-token-tracker'
+export { GeneralistCircuitBreaker } from './generalist-circuit-breaker'
+export { GeneralistMcpConfig } from './generalist-mcp-config'
+export type { McpFeatureFlags, McpConfigResult } from './generalist-mcp-config'
+export { DecompositionService, decompositionService } from './decomposition.service'

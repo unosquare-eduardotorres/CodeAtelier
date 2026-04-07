@@ -131,3 +131,22 @@ Project brain stored as `.brain/*.md` files in the workspace repo. Append-friend
 Applied 14 fixes from 3-specialist audit. Critical: validateSender() added to 37 IPC handlers. Path validation on file read/write. React perf fixes for streaming.
 
 ---
+
+### [DEFERRED] Message-Intent Classifier (Gap 3: 8→10)
+
+> 2026-04-06
+
+Replace the plan reminder regex in `intent-detector.ts` with a lightweight NLU classifier. Currently at Gap 3 score 8/10 — the regex-based plan detection works but occasionally misses nuanced phrasing.
+
+**Scope:** ~4h. Touches `intent-detector.ts` (main change), `generalist-prompt-assembler.ts` (plan reminder injection), and tests.
+
+**Approach options:**
+1. Heuristic keyword classifier (zero-cost, fast, ~80% coverage improvement)
+2. Small local model via Ollama (high accuracy, adds latency + dependency)
+3. Claude Haiku one-shot classification (high accuracy, costs tokens per turn)
+
+**Why deferred:** Lower priority than the fence→tool migrations (items 1–3). The regex fallback works well enough at 8/10. Revisit after stabilizing the MCP tool protocol.
+
+**Prerequisite:** Telemetry from `[PIPELINE:plan-path]` logs confirming how often `regex=true tool=false` fires (i.e., how often the LLM misses the `emit_plan` tool and falls back to fence detection).
+
+---

@@ -24,6 +24,7 @@ import { specialistPoolService } from './specialist-pool.service'
 import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
 import { chatIpcLogger } from '../logger'
+import { decompositionService } from './decomposition.service'
 
 const log = chatIpcLogger
 
@@ -317,10 +318,20 @@ export class TaskPipelineService {
       log.error('Failed to update conversation mode:', error)
     }
 
-    // ── Step 5: Decompose ──
+    // ── Step 5: Decompose (via extracted DecompositionService) ──
     try {
       log.info(`[PIPELINE:decompose-starting] specialists=${brief.specialists.join(',')}`)
-      const taskPlan = await generalistService.decompose(brief, conversationId, effectiveMode)
+      const workspacePath = generalistService.getWorkspacePath()
+      if (!workspacePath) throw new Error('Generalist not started — no workspace path set')
+      const workspace = workspaceRepository.findAll().find((w) => w.repoPath === workspacePath)
+      const workspaceId = workspace?.id ?? null
+      const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
+      const taskPlan = await decompositionService.decompose(brief, conversationId, effectiveMode, {
+        workspacePath,
+        workspaceId,
+        repomapEnabled: !!settings.repomapEnabled,
+        semanticSearchEnabled: !!settings.semanticSearchEnabled
+      })
       log.info(`[PIPELINE:decompose-complete] taskCount=${taskPlan.tasks.length}`)
 
       // ── Step 6: Auto-execute directly — no floating card ──

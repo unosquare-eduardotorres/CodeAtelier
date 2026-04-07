@@ -4,6 +4,7 @@ import type { ConversationMode, HandoffBrief, TaskPlan } from '../../../shared/t
 import { IPC_CHANNELS } from '../../../shared/constants'
 import {
   HANDOFF_REGEX,
+  PLAN_REGEX,
   buildSubAgentDefinitions,
   parseDecompositionResult,
   parseHandoffBlock
@@ -277,6 +278,44 @@ describe('Suite 8: Investigation fix flow', () => {
     // Pipeline now auto-executes directly — no CHAT_TASK_PLAN emission
     assert.ok(taskPlan.tasks.length > 0)
     assert.equal(taskPlan.mode, 'build')
+  })
+})
+
+describe('Suite 9: PLAN_REGEX', () => {
+  test('matches ````plan fenced block', () => {
+    const text = 'Some text\n````plan\n{"title":"Test"}\n````\nMore text'
+    const match = text.match(PLAN_REGEX)
+    assert.ok(match)
+    assert.ok(match[1].includes('"title":"Test"'))
+  })
+
+  test('matches ```plan fenced block', () => {
+    const text = '```plan\n{"title":"Test"}\n```'
+    const match = text.match(PLAN_REGEX)
+    assert.ok(match)
+  })
+
+  test('does not match plain text', () => {
+    const text = 'Here is my plan for the implementation'
+    const match = text.match(PLAN_REGEX)
+    assert.equal(match, null)
+  })
+
+  test('extracts JSON content between fences', () => {
+    const json = '{"title":"Refactor auth","summary":"Extract auth logic","steps":[]}'
+    const text = `Here is my plan:\n\`\`\`\`plan\n${json}\n\`\`\`\`\n\nLet me know what you think.`
+    const match = text.match(PLAN_REGEX)
+    assert.ok(match)
+    assert.equal(match[1].trim(), json)
+  })
+
+  test('captures multiline plan content', () => {
+    const text = '````plan\n{\n  "title": "Test",\n  "summary": "A test plan"\n}\n````'
+    const match = text.match(PLAN_REGEX)
+    assert.ok(match)
+    const parsed = JSON.parse(match[1])
+    assert.equal(parsed.title, 'Test')
+    assert.equal(parsed.summary, 'A test plan')
   })
 })
 

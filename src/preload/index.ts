@@ -714,6 +714,31 @@ const api = {
     }
   },
 
+  onPlan: (
+    callback: (data: {
+      conversationId: string
+      rawContent: string
+      structuredPlan: StructuredPlan | null
+      beforePlan: string
+      afterPlan: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        conversationId: string
+        rawContent: string
+        structuredPlan: StructuredPlan | null
+        beforePlan: string
+        afterPlan: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_PLAN, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_PLAN, handler)
+    }
+  },
+
   onGrillEvaluation: (
     callback: (data: {
       conversationId: string

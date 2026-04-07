@@ -2,6 +2,7 @@ import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import log from 'electron-log/main'
+import { MCP_TOOLS } from '../../shared/constants'
 import { githubService } from './github.service'
 
 const ghLog = log.scope('GitHubContext')
@@ -25,11 +26,11 @@ class GitHubContextMcpService {
     if (config) return { 'github-context': config }
 
     config = createSdkMcpServer({
-      name: 'github-context',
+      name: MCP_TOOLS.GITHUB_CONTEXT._SERVER,
       version: '1.0.0',
       tools: [
         {
-          name: 'get_pr_status',
+          name: MCP_TOOLS.GITHUB_CONTEXT.GET_PR_STATUS.tool,
           description:
             'Get the status of a pull request (open, closed, merged). ' +
             'Returns PR state, title, author, and basic metadata. ' +
@@ -61,7 +62,7 @@ class GitHubContextMcpService {
           }
         },
         {
-          name: 'list_pr_comments',
+          name: MCP_TOOLS.GITHUB_CONTEXT.LIST_PR_COMMENTS.tool,
           description:
             'List review comments on a pull request. Returns up to 10 most recent ' +
             'comments with author, body, file path, and creation date.',
@@ -99,7 +100,7 @@ class GitHubContextMcpService {
           }
         },
         {
-          name: 'list_issues',
+          name: MCP_TOOLS.GITHUB_CONTEXT.LIST_ISSUES.tool,
           description:
             'List open issues for the repository. Returns up to 10 most recent ' +
             'issues with title, author, labels, and creation date.',

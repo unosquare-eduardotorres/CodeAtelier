@@ -29,17 +29,6 @@ export function createScopeGuard(allowedCwd: string): HookCallback {
     const toolName = (input as Record<string, unknown>).tool_name as string
     const toolInput = (input as Record<string, unknown>).tool_input as Record<string, unknown>
 
-    // ExitPlanMode intercepted — plan content was already extracted by the executor.
-    // Return a success-like block so the agent stops instead of retrying.
-    if (toolName === 'ExitPlanMode') {
-      hookLog.info('ExitPlanMode intercepted — plan rendered in UI, signaling agent to stop')
-      return {
-        decision: 'block',
-        reason:
-          'Plan submitted successfully. The plan is now displayed to the user in the Agent Studio UI. STOP — do not call any more tools, do not write files, do not create directories. Your task is complete.'
-      }
-    }
-
     // File scope check for Write/Edit
     if (toolName === 'Write' || toolName === 'Edit') {
       const filePath = toolInput?.file_path as string

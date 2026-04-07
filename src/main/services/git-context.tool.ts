@@ -2,6 +2,7 @@ import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import log from 'electron-log/main'
+import { MCP_TOOLS } from '../../shared/constants'
 import { execSync } from 'node:child_process'
 
 const gitLog = log.scope('GitContext')
@@ -24,11 +25,11 @@ class GitContextMcpService {
     if (config) return { 'git-context': config }
 
     config = createSdkMcpServer({
-      name: 'git-context',
+      name: MCP_TOOLS.GIT_CONTEXT._SERVER,
       version: '1.0.0',
       tools: [
         {
-          name: 'git_log',
+          name: MCP_TOOLS.GIT_CONTEXT.GIT_LOG.tool,
           description:
             'Get recent git commit history. Returns commit hash, author, date, and message. ' +
             'Use to understand what changed recently or find relevant commits.',
@@ -94,7 +95,7 @@ class GitContextMcpService {
           }
         },
         {
-          name: 'git_diff',
+          name: MCP_TOOLS.GIT_CONTEXT.GIT_DIFF.tool,
           description:
             'Show git diff for staged, unstaged, or between commits. ' +
             'Use to understand what code changed and review modifications.',
@@ -166,7 +167,7 @@ class GitContextMcpService {
           }
         },
         {
-          name: 'git_blame',
+          name: MCP_TOOLS.GIT_CONTEXT.GIT_BLAME.tool,
           description:
             'Show git blame for a file - who last modified each line. ' +
             'Use to understand code ownership and when changes were made.',

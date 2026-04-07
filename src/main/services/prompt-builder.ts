@@ -124,7 +124,7 @@ export class PromptBuilder {
         normalized
       )
     const isChangeRequest =
-      /\b(fix|implement|build|create|add|refactor|update|change|modify|delete|remove|write|migrate|deploy|scaffold|generate|plan|design|architect|propose|draft|investigate|diagnose|check|audit|review)\b/i.test(
+      /\b(fix|implement|build|create|add|refactor|update|change|modify|delete|remove|write|migrate|deploy|scaffold|generate|design|architect|propose|draft|investigate|diagnose|audit|review)\b/i.test(
         normalized
       )
     const includeDirectAnswerBoost =
@@ -513,7 +513,12 @@ export class PromptBuilder {
     mode: ConversationMode = 'build',
     budgetTier: BudgetTier = 'standard'
   ): string {
-    const INLINE_SPECIALIST_CONTEXT = `Tech: Electron 40, React 19, TypeScript 5.9 strict, Tailwind CSS 4, better-sqlite3, Zustand 5.\nConventions: ES modules, @renderer/ alias, kebab-case files, PascalCase components. Never require() in renderer, never disable contextIsolation.`
+    const INLINE_SPECIALIST_CONTEXT = `Tech: Electron 40, React 19, TypeScript 5.9 strict, Tailwind CSS 4, better-sqlite3 (raw SQL, no ORM), Zustand 5.
+Conventions: ES modules with type-only imports, @renderer/ alias, kebab-case.service.ts for services, PascalCase.tsx for components.
+IPC: ipcRenderer.invoke/ipcMain.handle only. Channels defined in src/shared/constants.ts (IPC_CHANNELS). Never use sendSync or expose raw ipcRenderer.
+DB: Repository pattern in src/main/db/repositories/. Raw SQL via better-sqlite3. No ORM.
+Errors: throw in IPC handlers (propagates to renderer). try-catch + log.error() in services.
+Never: require() in renderer, disable contextIsolation, use remote module, string-concat SQL.`
     if (role === 'specialist') return INLINE_SPECIALIST_CONTEXT
 
     // Strategy 5: Minimal-budget generalist (turn 5+) already has CLAUDE.md in history —

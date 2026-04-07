@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 55
+const CURRENT_SCHEMA_VERSION = 57
 
 interface Migration {
   version: number
@@ -1232,6 +1232,55 @@ const migrations: Migration[] = [
       ).run(newPlanPrompt, newPlanPrompt)
 
       // Update build mode prompt
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'build'
+      `
+      ).run(newBuildPrompt, newBuildPrompt)
+    }
+  },
+  {
+    version: 56,
+    name: 'simplify-plan-build-prompts',
+    up: (db) => {
+      // Deduplicate plan enforcement: trimmed GENERALIST_PLAN_MODE_SECTION,
+      // removed redundant anti-handoff line from base prompt. ~295 tokens saved per turn.
+      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'plan'
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
+    }
+  },
+  {
+    version: 57,
+    name: 'control-tools-prompt-update',
+    up: (db) => {
+      // Updated prompts: plan format instructions replaced with control tool guidance,
+      // anti-handoff prompts removed (tool availability enforces mode constraints).
+      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+      const newBuildPrompt = DEFAULT_PROMPTS.generalist.build
+
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'generalist' AND mode = 'plan'
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
+
       db.prepare(
         `
         UPDATE core_agent_prompts

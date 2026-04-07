@@ -6,11 +6,12 @@ import type {
   DecomposedTask,
   HandoffBrief,
   InvestigationDepth,
+  InvestigationReport,
   ModelTier,
   SchedulingWeights,
   TaskExecutionProgress
 } from '../../shared/types'
-import { THINKING_BUDGETS } from '../../shared/constants'
+import { THINKING_BUDGETS, COMPLEXITY_TO_EFFORT, SPECIALIST_BUDGET_CAPS } from '../../shared/constants'
 import { specialistPoolLogger } from '../logger'
 import {
   specialistRepository,
@@ -60,6 +61,7 @@ import { gitContextMcpService } from './git-context.tool'
 import { gitHubContextMcpService } from './github-context.tool'
 import { githubService } from './github.service'
 import { agentContextService } from './agent-context.service'
+import { createSpecialistControlMcpServer } from './specialist-control-actions.tool'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 
 /** Retry configuration for specialist tasks */
@@ -148,6 +150,8 @@ interface SDKExecutionState {
   /** R2: Inline loop detection — tracks consecutive identical tool call signatures */
   lastToolSignature: string | null
   consecutiveIdenticalToolCalls: number
+  /** Tool-emitted investigation report (set by specialist-control MCP callback) */
+  toolEmittedReport?: InvestigationReport
 }
 
 /** Summarize tool input into a short human-readable description */
@@ -1021,8 +1025,12 @@ export class SpecialistPoolService extends EventEmitter {
     const isCircuitBreakerError =
       error.message.includes('exceeded') &&
       error.message.includes('tool calls')
+    // Budget-exceeded errors should NOT retry — escalating model would hit cap faster
+    const isBudgetExceeded = error.message.includes('error_max_budget_usd')
+      || error.message.includes('budget cap exceeded')
     const isRetryable =
-      !this.aborted && !isCircuitBreakerError && info.attempt < RETRY_CONFIG.maxRetries
+      !this.aborted && !isCircuitBreakerError && !isBudgetExceeded
+      && info.attempt < RETRY_CONFIG.maxRetries
     if (isRetryable) {
       const delay = Math.min(
         RETRY_CONFIG.baseDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, info.attempt),
@@ -1435,7 +1443,7 @@ export class SpecialistPoolService extends EventEmitter {
     const { systemPrompt, fullPrompt, cwd, modelId, thinkingBudget, execState } =
       await this.prepareSDKExecution(task, mode, info, worktreeId)
 
-    const mcpServers = this.buildMcpServersConfig()
+    const mcpServers = this.buildMcpServersConfig(execState)
 
     const executor = new SDKExecutor()
     try {
@@ -1445,13 +1453,29 @@ export class SpecialistPoolService extends EventEmitter {
       const depthBudget = SpecialistPoolService.DEPTH_BUDGETS[this.investigationDepth]
       const maxOutputTokens = execState.isInvestigationTask ? depthBudget.maxOutputTokens : undefined
 
+      // Compute effort from complexity tier
+      const effortLevel = task.complexity?.tier
+        ? COMPLEXITY_TO_EFFORT[task.complexity.tier as keyof typeof COMPLEXITY_TO_EFFORT]
+        : 'medium'
+      // Compute budget cap from complexity tier
+      const budgetCap = SPECIALIST_BUDGET_CAPS[
+        (task.complexity?.tier ?? 'moderate') as keyof typeof SPECIALIST_BUDGET_CAPS
+      ]
+
       for await (const chunk of executor.execute({
         prompt: fullPrompt,
         systemPrompt,
         model: modelId,
         cwd,
         permissionMode: mode === 'build' ? 'bypassPermissions' : 'default',
-        maxThinkingTokens: parseInt(thinkingBudget) || undefined,
+        // Modern thinking: adaptive for opus, budget-based for others
+        thinking: modelId.includes('opus')
+          ? { type: 'adaptive' as const }
+          : parseInt(thinkingBudget)
+            ? { type: 'enabled' as const, budgetTokens: parseInt(thinkingBudget) }
+            : undefined,
+        effort: effortLevel,
+        maxBudgetUsd: budgetCap,
         maxTurns: execState.maxTurns,
         abortController: execState.abortController,
         ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
@@ -1470,7 +1494,7 @@ export class SpecialistPoolService extends EventEmitter {
     execState.releasePermit()
 
     if (execState.isInvestigationTask) {
-      this.handleInvestigationReport(task, info, execState.reportRegex)
+      this.handleInvestigationReport(task, info, execState.reportRegex, execState.toolEmittedReport)
     }
   }
 
@@ -1589,9 +1613,9 @@ export class SpecialistPoolService extends EventEmitter {
 
   /**
    * Builds MCP server configs for specialist access to code graph,
-   * semantic search, and git context.
+   * semantic search, git context, and (for investigation tasks) specialist control actions.
    */
-  private buildMcpServersConfig(): Record<string, McpServerConfig> {
+  private buildMcpServersConfig(execState?: SDKExecutionState): Record<string, McpServerConfig> {
     const mcpServers: Record<string, McpServerConfig> = {}
     if (this.workspaceId && this.workspacePath) {
       Object.assign(
@@ -1608,6 +1632,17 @@ export class SpecialistPoolService extends EventEmitter {
       Object.assign(
         mcpServers,
         gitHubContextMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath)
+      )
+    }
+    // Specialist control actions — emit_investigation_report (investigation tasks only)
+    if (execState?.isInvestigationTask) {
+      Object.assign(
+        mcpServers,
+        createSpecialistControlMcpServer({
+          onInvestigationReport: (report) => {
+            execState.toolEmittedReport = report
+          }
+        })
       )
     }
     return mcpServers
@@ -1643,8 +1678,7 @@ export class SpecialistPoolService extends EventEmitter {
     }
 
     if (chunk.type === 'tool_result') {
-      this.handleToolResultChunk(chunk, state)
-      return false
+      return this.handleToolResultChunk(chunk, state)
     }
 
     if (chunk.type === 'error') {
@@ -1767,11 +1801,11 @@ export class SpecialistPoolService extends EventEmitter {
     })
   }
 
-  /** Handle tool_result chunk — fire observation hooks */
+  /** Handle tool_result chunk — fire observation hooks. Returns true to break (early exit). */
   private handleToolResultChunk(
     chunk: { toolName?: string; toolId?: string; content?: string },
     state: SDKExecutionState
-  ): void {
+  ): boolean {
     const { task } = state
     specialistHookRunner.fireToolResult(task.specialist, {
       task,
@@ -1791,6 +1825,22 @@ export class SpecialistPoolService extends EventEmitter {
         input: chunk.content ?? undefined
       }
     })
+
+    // Early exit after tool-emitted investigation report
+    if (
+      state.toolEmittedReport &&
+      state.shouldEarlyExitOnReport &&
+      !state.abortedAfterReportDetection
+    ) {
+      this.log.info(
+        `[PIPELINE:investigation-report-tool-early-exit] ${task.specialist}/${task.id} — aborting after tool-emitted report`
+      )
+      state.abortedAfterReportDetection = true
+      state.abortController.abort()
+      return true // break stream loop
+    }
+
+    return false
   }
 
   /** Handle error chunk — distinguish intentional abort from real errors. Returns true to break. */
@@ -1842,8 +1892,63 @@ export class SpecialistPoolService extends EventEmitter {
   private handleInvestigationReport(
     task: DecomposedTask,
     info: SpecialistProcessInfo,
-    reportRegex: RegExp
+    reportRegex: RegExp,
+    toolEmittedReport?: InvestigationReport
   ): void {
+    // Prefer tool-emitted report — already validated by Zod schema
+    if (toolEmittedReport) {
+      const report = toolEmittedReport
+      this.log.info(
+        `[PIPELINE:investigation-report-detected] ${task.specialist}/${task.id} strategy=tool`,
+        {
+          problem: report.problem?.substring(0, 80),
+          impact: report.impact,
+          filesAffected: report.filesAffected?.length ?? 0
+        }
+      )
+      eventLoggerService.logInvestigationReportDetected({
+        conversationId: this.conversationId ?? undefined,
+        agentId: task.specialist,
+        taskId: task.id,
+        impact: report.impact,
+        filesAffected: report.filesAffected?.length ?? 0
+      })
+      this.emit('investigationReport', {
+        taskId: task.id,
+        specialist: task.specialist,
+        report
+      })
+
+      // Persist as agent context
+      if (this.conversationId) {
+        const findingSummary = [
+          report.problem ? `Problem: ${report.problem}` : '',
+          report.impact ? `Impact: ${report.impact}` : '',
+          report.rootCause ? `Root cause: ${report.rootCause}` : ''
+        ]
+          .filter(Boolean)
+          .join('. ')
+        if (findingSummary) {
+          agentContextService.persistFinding(
+            this.conversationId,
+            task.specialist,
+            findingSummary,
+            task.id
+          )
+        }
+      }
+
+      messageBus.broadcast({
+        from: task.specialist,
+        type: 'finding',
+        content: JSON.stringify(report),
+        taskId: task.id,
+        metadata: { reportType: 'investigation', impact: report.impact }
+      })
+      return // Tool path handled — skip fence fallback
+    }
+
+    // Fallback: fence-based detection (existing code)
     const validationResult = validateInvestigationReport(info.output)
     if (validationResult.success) {
       const report = validationResult.data

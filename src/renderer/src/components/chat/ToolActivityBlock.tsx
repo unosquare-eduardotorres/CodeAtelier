@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Wrench } from 'lucide-react'
 import type { ToolActivity } from '../../../../shared/types'
+import { MCP_DISPLAY_NAMES } from '../../../../shared/constants'
 
 /**
  * Shortens long absolute paths to show `…/parentFolder/file.ext`.
@@ -51,21 +52,6 @@ function shortenPath(fullPath: string): string {
 
 /** Maps raw MCP tool names (mcp__server__tool) to human-readable display names. */
 function getToolDisplayName(toolName: string): string {
-  const MCP_DISPLAY_NAMES: Record<string, string> = {
-    'mcp__code-graph__repo_map': 'Code Graph · repo_map',
-    'mcp__code-graph__search_identifiers': 'Code Graph · search_identifiers',
-    'mcp__semantic-search__semantic_search': 'Semantic Search',
-    'mcp__git-context__git_log': 'Git · log',
-    'mcp__git-context__git_diff': 'Git · diff',
-    'mcp__git-context__git_blame': 'Git · blame',
-    'mcp__task-context__list_tasks': 'Tasks · list',
-    'mcp__task-context__get_task_output': 'Tasks · output',
-    'mcp__checkpoint-context__list_checkpoints': 'Checkpoints · list',
-    'mcp__checkpoint-context__get_checkpoint': 'Checkpoints · get',
-    'mcp__github-context__get_pr_status': 'GitHub · PR status',
-    'mcp__github-context__list_pr_comments': 'GitHub · PR comments',
-    'mcp__github-context__list_issues': 'GitHub · issues'
-  }
   if (MCP_DISPLAY_NAMES[toolName]) return MCP_DISPLAY_NAMES[toolName]
   // Generic MCP fallback — e.g. "mcp__server__tool" → "server · tool"
   if (toolName.startsWith('mcp__')) {

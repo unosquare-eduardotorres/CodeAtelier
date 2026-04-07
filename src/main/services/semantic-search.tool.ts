@@ -2,6 +2,7 @@ import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import log from 'electron-log/main'
+import { MCP_TOOLS } from '../../shared/constants'
 import { vectorSearchService } from './vector-search.service'
 
 /**
@@ -23,11 +24,11 @@ class SemanticSearchMcpService {
     }
 
     config = createSdkMcpServer({
-      name: 'semantic-search',
+      name: MCP_TOOLS.SEMANTIC_SEARCH._SERVER,
       version: '1.0.0',
       tools: [
         {
-          name: 'semantic_search',
+          name: MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.tool,
           description:
             'Search the codebase using natural language queries. Returns relevant code ' +
             'chunks with file paths, symbol names, code bodies, and relevance scores. ' +

@@ -1,87 +1,41 @@
 import type {
   AgentStatus,
-  BudgetTier,
   ConversationMode,
+  ControlToolState,
   CostPreference,
-  DecomposedTask,
-  GrillQuestion,
+  GeneralistIntent,
   HandoffBrief,
   ImageAttachment,
-  InvestigationDepth,
+  PlanDetectedEvent,
   TaskPlan
 } from '../../shared/types'
-import type { SDKUserMessage, McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
-import { AGENT_IDS, DEFAULT_COST_PREFERENCE } from '../../shared/constants'
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { AGENT_IDS, MCP_TOOLS, GENERALIST_BUDGET_CAP } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
 import { SDKExecutor } from './sdk-executor'
 import type { SDKExecuteResult } from './sdk-executor'
 import { authProvider } from './auth-provider'
-import { PromptBuilder, promptBuilder, type GeneralistConditionalSections } from './prompt-builder'
-import {
-  ASK_QUESTION_PROMPT,
-  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
-  DIRECT_ANSWER_BOOST_PROMPT,
-  GIT_CONTEXT_GUIDANCE_PROMPT,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT,
-  IMAGE_ATTACHMENTS_PROMPT,
-  MEMORY_PROTOCOL_PROMPT,
-  REPOMAP_GUIDANCE_PROMPT,
-  SEMANTIC_SEARCH_GUIDANCE_PROMPT,
-  TASK_CONTEXT_GUIDANCE_PROMPT
-} from './default-prompts'
 import { vectorSearchService } from './vector-search.service'
 import { semanticSearchMcpService } from './semantic-search.tool'
-import { gitContextMcpService } from './git-context.tool'
-import { taskContextMcpService } from './task-context.tool'
-import { checkpointContextMcpService } from './checkpoint-context.tool'
-import { gitHubContextMcpService } from './github-context.tool'
+import { codeGraphMcpService } from './code-graph.tool'
 import { githubService } from './github.service'
 import { memoryService } from './memory.service'
-import {
-  conversationRepository,
-  conversationSpecialistRepository,
-  specialistRepository,
-  workspaceRepository,
-  turnUsageRepository
-} from '../db/repositories'
+import { conversationRepository, memoryRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
-import { enrichTasksWithComplexity } from './complexity-scorer.service'
-import { enrichFilesDiscussed } from './mcp-server.service'
-import { codeGraphMcpService } from './code-graph.tool'
-import { codeGraphService } from './code-graph.service'
-import {
-  HANDOFF_REGEX,
-  parseDecompositionResult as parseDecompositionResultUtil,
-  parseHandoffBlock
-} from './generalist-utils'
+import type { ControlActionCallbacks } from './control-actions.tool'
+import { intentDetector } from './intent-detector'
+import { GeneralistTokenTracker } from './generalist-token-tracker'
+import type { CacheEfficiencyReport } from './generalist-token-tracker'
+import { GeneralistCircuitBreaker } from './generalist-circuit-breaker'
+import { GeneralistMcpConfig } from './generalist-mcp-config'
+import { decompositionService } from './decomposition.service'
+import { RecoveryNudgeService } from './generalist-recovery-nudge'
+import { GeneralistPromptAssembler } from './generalist-prompt-assembler'
 
-/** Regex to detect grill-summary blocks emitted by the generalist. */
-const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
-
-/** Regex to detect grill-question blocks emitted by the generalist. */
-const GRILL_QUESTION_REGEX = /```grill-question\n([\s\S]*?)```/g
-
-/** Regex to detect ask-question blocks emitted by the generalist (general chat questions). */
-const ASK_QUESTION_REGEX = /```ask-question\n([\s\S]*?)```/g
-
-/** Regex to detect grill-evaluation blocks (new structured format with score + questions). */
-const GRILL_EVAL_REGEX = /```grill-evaluation\n([\s\S]*?)```/g
-
-interface GrillCompleteEvent {
-  summary: string
-  proposedTasks: Array<{ title: string; description: string }>
-}
-
-interface GrillQuestionEvent {
-  questions: GrillQuestion[]
-}
-
-interface AskQuestionEvent {
-  questions: GrillQuestion[]
-}
+// Grill regex constants and local event interfaces moved to IntentDetector (intent-detector.ts)
 
 /**
  * Manages the generalist agent via the Agent SDK.
@@ -99,11 +53,8 @@ export class GeneralistService extends AgentBaseService {
   private currentConversationId: string | null = null
   private accumulatedText: string = ''
   private currentMode: ConversationMode = 'plan'
-  private currentBrief: HandoffBrief | null = null
   /** Maps conversationId → SDK session_id for resume support */
   private sessionMap: Map<string, string> = new Map()
-  /** Tracks per-conversation turn count for adaptive prompt budgets. */
-  private turnCountMap: Map<string, number> = new Map()
 
   /**
    * Token thresholds for context compaction — configurable via workspace settings.
@@ -127,10 +78,6 @@ export class GeneralistService extends AgentBaseService {
   /** Cost preference from workspace settings — affects compaction aggressiveness */
   private costPreference: CostPreference = 'balanced'
 
-  /** Tool call limits — plan mode needs room for file reads + searches */
-  private static readonly MAX_PLAN_TOOL_CALLS = 50
-  private static readonly MAX_BUILD_TOOL_CALLS = 80
-
   /** Absolute cap per interaction — aborts SDK query if exceeded (replaces old CLI MAX_INTERACTION_TIMEOUT_MS) */
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
 
@@ -139,47 +86,15 @@ export class GeneralistService extends AgentBaseService {
   /** Reusable SDK executor instance */
   private sdkExecutor: SDKExecutor = new SDKExecutor()
 
+  /** Extracted services for token tracking, circuit breaking, and MCP config */
+  private tokenTracker = new GeneralistTokenTracker()
+  private circuitBreaker = new GeneralistCircuitBreaker()
+  private mcpConfig = new GeneralistMcpConfig()
+  private recoveryNudge = new RecoveryNudgeService()
+  private promptAssembler = new GeneralistPromptAssembler()
+
   /** Full system prompt — rebuilt per turn in send(). */
   private fullSystemPrompt: string = ''
-  /** Memory context string, cached for switchMode() rebuilds */
-  private memoryContext: string | undefined
-  /** Pending mode switch — when set, the next send() prefixes the message with mode-change context */
-  private pendingModeSwitch: { from: ConversationMode; to: ConversationMode } | null = null
-
-  /**
-   * Strategy A: Pending context injection — stored here and prepended to the next send() call.
-   * Eliminates the expensive injectContext() SDK call that replays the entire session (30-50K tokens).
-   * Maps conversationId → context string to inject.
-   */
-  private pendingContextInjection: Map<string, string> = new Map()
-
-  /**
-   * Strategy B: Pending compaction flag — when set, the next send() prefixes with /compact.
-   * Eliminates the expensive compact() SDK call that replays the entire session (30-50K tokens).
-   * Maps conversationId → compaction prompt.
-   */
-  private pendingCompaction: Map<string, string> = new Map()
-
-  /**
-   * Strategy M: Aggregate prompt cache statistics for dashboard.
-   * Tracks cache read/creation across all turns for cache efficiency analysis.
-   */
-  private cacheStats = { totalInput: 0, cacheRead: 0, cacheCreation: 0, turns: 0 }
-
-  /**
-   * Strategy θ: Per-turn cost breakdown for diagnostics.
-   * Tracks input/output/cache tokens per turn to identify cost hot spots.
-   * Exposed via getCacheEfficiency() for the renderer cost waterfall chart.
-   */
-  private turnBreakdown: Array<{
-    turn: number
-    inputTokens: number
-    outputTokens: number
-    cacheReadTokens: number
-    cacheCreationTokens: number
-    cacheHitRate: number
-    timestamp: number
-  }> = []
 
   /** Whether repomap code graph is enabled for this workspace */
   private repomapEnabled: boolean = false
@@ -194,20 +109,13 @@ export class GeneralistService extends AgentBaseService {
    */
   private investigationModeEnabled: boolean = true
 
-  /**
-   * Strategy β: Specialist roster string, built once per turn by buildPromptForTurn()
-   * and injected into the user message on turn 1 only. Removed from system prompt entirely.
-   */
-  private specialistRoster: string | null = null
-
-  /**
-   * Strategy ζ: Cached system prompt snapshot. Rebuilt only when mode changes,
-   * conversation changes, or workspace settings update. Eliminates redundant DB queries
-   * + disk I/O (stat calls) on every turn.
-   */
-  private systemPromptSnapshot: string | null = null
-  private systemPromptSnapshotMode: ConversationMode | null = null
-  private systemPromptSnapshotConversationId: string | null = null
+  /** Tracks which control tools fired and their intents during the current turn */
+  private controlToolState: ControlToolState = {
+    plan: false,
+    handoff: false,
+    askUser: false,
+    memory: false
+  }
 
   /**
    * Refresh feature flags from workspace settings.
@@ -257,9 +165,10 @@ export class GeneralistService extends AgentBaseService {
     this.accumulatedText = ''
     this.compactCount = 0
     this.compactSuggested = false
+    this.tokenTracker.resetSession()
 
     // Build system prompt via centralized PromptBuilder
-    this.memoryContext = undefined
+    this.promptAssembler.resetSession()
     try {
       const allWorkspaces = workspaceRepository.findAll()
       const workspace = allWorkspaces.find((w) => w.repoPath === workspacePath)
@@ -270,7 +179,7 @@ export class GeneralistService extends AgentBaseService {
         // Strategy 7: Economy mode uses shorter memory context to save tokens
         const memoryBudget = settings.costPreference === 'economy' ? 5000 : 10000
         const ctx = memoryService.getContextForPrompt(workspace.id, memoryBudget)
-        if (ctx) this.memoryContext = ctx
+        if (ctx) this.promptAssembler.setMemoryContext(ctx)
       }
 
       // Strategy 7: Load cost preference to adjust compaction thresholds
@@ -300,12 +209,6 @@ export class GeneralistService extends AgentBaseService {
 
     // S17: prompt is rebuilt per turn in send() so turn-aware shrinking can apply.
     this.fullSystemPrompt = ''
-    this.turnCountMap.clear()
-
-    // Strategy ζ: Invalidate system prompt snapshot on start
-    this.systemPromptSnapshot = null
-    this.systemPromptSnapshotMode = null
-    this.systemPromptSnapshotConversationId = null
 
     // If a resume session ID was passed, pre-populate the session map
     if (resumeSessionId && this.currentConversationId) {
@@ -335,17 +238,65 @@ export class GeneralistService extends AgentBaseService {
    * Each call resumes the existing session (if available) for conversation continuity.
    */
   async send(message: string, conversationId: string, images?: ImageAttachment[]): Promise<void> {
+    this.validateStarted()
+    this.resetForNewMessage(conversationId)
+
+    const sessionId = this.resolveSession(conversationId)
+    const hasImages = (images?.length ?? 0) > 0
+    const turnCount = this.promptAssembler.incrementTurnCount(conversationId)
+
+    const { systemPrompt, effectiveMessage } = this.preparePrompts(
+      message,
+      conversationId,
+      hasImages,
+      turnCount,
+      sessionId
+    )
+    this.fullSystemPrompt = systemPrompt
+
+    const sdkPrompt = this.buildSdkPrompt(effectiveMessage, images)
+    const controlCallbacks = this.buildControlCallbacks()
+    const mcpResult = this.mcpConfig.build({
+      mode: this.currentMode,
+      workspacePath: this.workspacePath!,
+      workspaceId: this.workspaceId,
+      conversationId: this.currentConversationId,
+      featureFlags: {
+        repomapEnabled: this.repomapEnabled,
+        semanticSearchEnabled: this.semanticSearchEnabled,
+        githubConfigured: this.githubConfigured
+      },
+      controlCallbacks,
+      investigationModeEnabled: this.investigationModeEnabled
+    })
+
+    await this.executeStream({
+      sdkPrompt,
+      systemPrompt,
+      sessionId,
+      conversationId,
+      turnCount,
+      isBuildMode: this.currentMode === 'build',
+      mcpResult
+    })
+  }
+
+  // ── send() decomposition: private helper methods ──
+
+  /** Validate the generalist is started before sending. */
+  private validateStarted(): void {
     if (!this.workspacePath) {
       throw new Error('Generalist not started — call start() first')
     }
+  }
 
-    // Refresh feature flags so settings changes take effect immediately
+  /** Reset per-message state and emit initial status. */
+  private resetForNewMessage(conversationId: string): void {
     this.refreshFeatureFlags()
     this.log.info(
       `[PIPELINE:feature-flags] repomap=${this.repomapEnabled} semanticSearch=${this.semanticSearchEnabled}`
     )
 
-    // Conversation switch: log it (SDK handles session resume seamlessly)
     if (this.currentConversationId && this.currentConversationId !== conversationId) {
       this.log.info(`Conversation switch: ${this.currentConversationId} → ${conversationId}`)
     }
@@ -356,54 +307,13 @@ export class GeneralistService extends AgentBaseService {
     this.processedToolIds.clear()
     this.currentConversationId = conversationId
     this.accumulatedText = ''
-    this.toolCallCount = 0
-    this.circuitBroken = false
-    let hasTextAfterLastTool = true
-    let textLenBeforeLastTool = 0
+    this.circuitBreaker.reset()
+    this.controlToolState = { plan: false, handoff: false, askUser: false, memory: false }
     this.emit('statusUpdate', this.getStatus())
+  }
 
-    // ── Strategy A: Prepend any pending context injection ──
-    // This replaces the old injectContext() SDK call that replayed the entire session.
-    // The context piggybacks on this send() call at zero additional cost.
-    let effectiveMessage = message
-    const pendingContext = this.pendingContextInjection.get(conversationId)
-    if (pendingContext) {
-      effectiveMessage = `[Context from prior specialist execution — use this to answer follow-up questions without re-delegating]\n\n${pendingContext}\n\n---\n\n${effectiveMessage}`
-      this.pendingContextInjection.delete(conversationId)
-      this.log.info(
-        `[PIPELINE:lazy-inject] Prepended ${pendingContext.length} chars of specialist context to user message (saves ~30-50K tokens vs SDK replay)`
-      )
-    }
-
-    // ── Strategy B: Prepend any pending compaction ──
-    // This replaces the old compact() SDK call that replayed the entire session.
-    const pendingCompact = this.pendingCompaction.get(conversationId)
-    if (pendingCompact) {
-      effectiveMessage = `${pendingCompact}\n\n---\n\n${effectiveMessage}`
-      this.pendingCompaction.delete(conversationId)
-      this.log.info(
-        '[PIPELINE:lazy-compact] Prepended compaction instruction to user message (saves ~30-50K tokens vs SDK replay)'
-      )
-    }
-
-    // If a mode switch is pending, prefix the user's message with context so the agent
-    // knows its permissions changed — without clearing the session (preserves history).
-    if (this.pendingModeSwitch) {
-      const { from, to } = this.pendingModeSwitch
-      const modeLabel = to === 'build' ? 'Build (read + execute)' : 'Plan (read-only)'
-      const permissions =
-        to === 'build'
-          ? 'You now have full permissions to execute commands, run apps, install dependencies, and perform all operational tasks. You can also hand off code changes to specialists.'
-          : 'You are now in read-only mode. You can read files, search the codebase, and provide guidance, but you cannot run commands or write files.'
-      const planReinforcement = to === 'plan'
-        ? ' Always produce ````plan blocks for planning and diagnostic requests — never text summaries.'
-        : ''
-      effectiveMessage = `[Mode switched from ${from} to ${to}. Mode: ${modeLabel}. ${permissions}${planReinforcement} The conversation history above is still valid — continue from where we left off.]\n\n${message}`
-      this.log.info(`Mode switch context injected: ${from} → ${to}`)
-      this.pendingModeSwitch = null
-    }
-
-    // Look up session for resume (in-memory first, then DB)
+  /** Look up session for resume (in-memory first, then DB). */
+  private resolveSession(conversationId: string): string | undefined {
     let sessionId = this.sessionMap.get(conversationId)
     if (!sessionId) {
       try {
@@ -416,183 +326,213 @@ export class GeneralistService extends AgentBaseService {
         this.log.error('Failed to load session:', err)
       }
     }
+    return sessionId
+  }
 
-    // For resumed sessions, inject a mode indicator prefix.
-    if (sessionId) {
-      effectiveMessage = `[Current mode: ${this.currentMode.toUpperCase()}]\n\n${effectiveMessage}`
-      this.log.info('Rules reminder injected for resumed session:', sessionId)
+  /** Build system prompt and effective user message via PromptAssembler. */
+  private preparePrompts(
+    message: string,
+    conversationId: string,
+    hasImages: boolean,
+    turnCount: number,
+    sessionId: string | undefined
+  ): { systemPrompt: string; effectiveMessage: string } {
+    const systemPrompt = this.promptAssembler.buildSystemPromptForTurn({
+      message,
+      hasImages,
+      turnCount,
+      workspacePath: this.workspacePath!,
+      workspaceId: this.workspaceId,
+      conversationId: this.currentConversationId,
+      mode: this.currentMode,
+      featureFlags: {
+        repomapEnabled: this.repomapEnabled,
+        semanticSearchEnabled: this.semanticSearchEnabled,
+        githubConfigured: this.githubConfigured
+      },
+      costPreference: this.costPreference,
+      investigationModeEnabled: this.investigationModeEnabled
+    })
+
+    const effectiveMessage = this.promptAssembler.buildEffectiveMessage({
+      message,
+      conversationId,
+      hasImages,
+      turnCount,
+      sessionId,
+      mode: this.currentMode,
+      investigationModeEnabled: this.investigationModeEnabled
+    })
+
+    return { systemPrompt, effectiveMessage }
+  }
+
+  /** Build SDK-native prompt, converting to vision format when images are present. */
+  private buildSdkPrompt(
+    effectiveMessage: string,
+    images?: ImageAttachment[]
+  ): string | AsyncIterable<SDKUserMessage> {
+    if (!images || images.length === 0) return effectiveMessage
+
+    const contentBlocks = [
+      ...images.map((img) => ({
+        type: 'image' as const,
+        source: {
+          type: 'base64' as const,
+          media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+          data: img.base64
+        }
+      })),
+      { type: 'text' as const, text: effectiveMessage }
+    ]
+
+    async function* singleMessage(): AsyncIterable<SDKUserMessage> {
+      yield {
+        type: 'user' as const,
+        message: { role: 'user' as const, content: contentBlocks },
+        parent_tool_use_id: null
+      } as SDKUserMessage
     }
 
-    // S17: rebuild prompt on every turn, using adaptive budget by turn count.
-    const hasImages = (images?.length ?? 0) > 0
-    const turnCount = this.incrementTurnCount(conversationId)
-    this.fullSystemPrompt = this.buildPromptForTurn(message, hasImages, turnCount)
+    this.log.info(`Built SDK vision prompt with ${images.length} image(s)`)
+    return singleMessage()
+  }
 
-    // Strategy α: Move ALL conditional sections to user prompt prefix.
-    // This makes the system prompt 100% deterministic per mode — every turn after the first
-    // gets a 90% cache discount (~630-900 tokens saved). The conditionals (ASK_QUESTION,
-    // MEMORY_PROTOCOL, IMAGE_ATTACHMENTS, DIRECT_ANSWER_BOOST) now live in the user message
-    // where they can toggle freely without breaking the system prompt cache.
-    const conditionalPrefix = this.buildConditionalPrefix(message, hasImages)
-    if (conditionalPrefix) {
-      effectiveMessage = `${conditionalPrefix}\n\n---\n\n${effectiveMessage}`
+  /** Wire control action callbacks that populate ControlToolState during streaming. */
+  private buildControlCallbacks(): ControlActionCallbacks {
+    return {
+      onPlan: (plan) => {
+        this.controlToolState.plan = true
+        const planEvent: PlanDetectedEvent = {
+          rawContent: JSON.stringify(plan),
+          structuredPlan: plan,
+          beforePlan: this.accumulatedText,
+          afterPlan: ''
+        }
+        this.controlToolState.planIntent = { type: 'plan', plan: planEvent }
+        this.log.info(`[PIPELINE:control-tool:plan] "${plan.title}" — tool-based emission`)
+        this.emit('plan', planEvent)
+      },
+      onHandoff: (brief) => {
+        this.controlToolState.handoff = true
+        this.controlToolState.handoffIntent = { type: 'handoff', brief }
+        this.log.info(
+          `[PIPELINE:control-tool:handoff] specialists="${brief.specialists}" — tool-based emission`
+        )
+        this.emit('handoff', brief)
+      },
+      onAskUser: (questions) => {
+        this.controlToolState.askUser = true
+        this.controlToolState.askUserIntent = { type: 'askUser', questions }
+        this.log.info(
+          `[PIPELINE:control-tool:ask-user] ${questions.length} questions — tool-based emission`
+        )
+        this.emit('askQuestion', { questions })
+      },
+      onMemory: (memory) => {
+        this.controlToolState.memory = true
+        this.log.info(
+          `[PIPELINE:control-tool:memory] type="${memory.type}" title="${memory.title}" — tool-based emission`
+        )
+        // Persist immediately — no need to wait for stream finalize
+        try {
+          const wpPath = this.getWorkspacePath()
+          const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
+          const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
+          const memWorkspaceId =
+            memory.type === 'user' || memory.type === 'feedback'
+              ? null
+              : workspace?.id ?? null
+          const conversationId = this.currentConversationId
+          const mem = memoryRepository.createIfNotDuplicate({
+            workspaceId: memWorkspaceId,
+            type: memory.type,
+            title: memory.title,
+            content: memory.content,
+            tags: [],
+            sourceConversationId: conversationId ?? undefined,
+            sourceAgentId: 'generalist',
+            importance: 5
+          })
+          if (mem) {
+            this.log.info(`Memory created via tool: [${memory.type}] ${memory.title}`)
+          } else {
+            this.log.info(`Memory skipped (duplicate): [${memory.type}] ${memory.title}`)
+          }
+        } catch (err) {
+          this.log.warn('Failed to persist tool-emitted memory:', err)
+        }
+      }
     }
+  }
 
-    // Strategy β: Inject specialist roster on turn 1 only — already in history on turns 2+.
-    // This removes ~400 tokens of static overhead from the system prompt on every turn.
-    if (turnCount <= 1 && this.specialistRoster) {
-      effectiveMessage = `${this.specialistRoster}\n\n---\n\n${effectiveMessage}`
+  /** Core stream loop + post-stream processing (recovery, intent detection, compaction). */
+  private async executeStream(opts: {
+    sdkPrompt: string | AsyncIterable<SDKUserMessage>
+    systemPrompt: string
+    sessionId: string | undefined
+    conversationId: string
+    turnCount: number
+    isBuildMode: boolean
+    mcpResult: {
+      mcpServers?: Record<string, unknown>
+      allowedTools?: string[]
+      disallowedTools?: string[]
     }
-
-    // Strategy C: Inject memory context into user prompt (not system prompt).
-    // buildPromptForTurn() refreshes this.memoryContext but no longer puts it in the system prompt.
-    // This keeps the system prompt stable across turns for prompt cache hits (~90% discount).
-    if (this.memoryContext) {
-      effectiveMessage = `## Auto Memory\n\n${this.memoryContext}\n\n---\n\n${effectiveMessage}`
-    }
-
-    const isBuildMode = this.currentMode === 'build'
+  }): Promise<void> {
+    const {
+      sdkPrompt,
+      systemPrompt,
+      sessionId,
+      conversationId,
+      turnCount,
+      isBuildMode,
+      mcpResult
+    } = opts
+    const { mcpServers, allowedTools, disallowedTools } = mcpResult
     const abortController = new AbortController()
     this.sdkAbortController = abortController
 
-    // Start absolute interaction timeout — aborts SDK query after 10 minutes
+    // Start absolute interaction timeout
     let timedOut = false
     const interactionTimer = setTimeout(() => {
       timedOut = true
       this.log.error(
-        `Interaction timeout after ${GeneralistService.MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes — ${this.toolCallCount} tool calls made`
+        `Interaction timeout after ${GeneralistService.MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes — ${this.circuitBreaker.count} tool calls made`
       )
       eventLoggerService.logAgentTimeout({
         agentId: 'generalist',
         conversationId,
         elapsedMs: GeneralistService.MAX_INTERACTION_TIMEOUT_MS,
-        toolCallCount: this.toolCallCount
+        toolCallCount: this.circuitBreaker.count
       })
       abortController.abort()
     }, GeneralistService.MAX_INTERACTION_TIMEOUT_MS)
 
     try {
-      // Build SDK-native prompt with image content blocks when images are present
-      let sdkPrompt: string | AsyncIterable<SDKUserMessage> = effectiveMessage
-
-      if (images && images.length > 0) {
-        const contentBlocks = [
-          ...images.map((img) => ({
-            type: 'image' as const,
-            source: {
-              type: 'base64' as const,
-              media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
-              data: img.base64
-            }
-          })),
-          { type: 'text' as const, text: effectiveMessage }
-        ]
-
-        async function* singleMessage(): AsyncIterable<SDKUserMessage> {
-          yield {
-            type: 'user' as const,
-            message: { role: 'user' as const, content: contentBlocks },
-            parent_tool_use_id: null
-          } as SDKUserMessage
-        }
-        sdkPrompt = singleMessage()
-        this.log.info(`Built SDK vision prompt with ${images.length} image(s)`)
-      }
-
       let handoffDetectedInStream = false
-      /** Stream termination validation — tracks whether the SDK emitted a proper completion signal */
       let messageStopReceived = false
+      let hasTextAfterLastTool = true
+
       for await (const chunk of this.sdkExecutor.execute({
         prompt: sdkPrompt,
-        // Always send system prompt — ensures prompt updates propagate to resumed sessions
-        systemPrompt: this.fullSystemPrompt,
-        model: modelConfigService.getModel(this.workspacePath, 'generalist'),
-        cwd: this.workspacePath,
+        systemPrompt,
+        model: modelConfigService.getModel(this.workspacePath!, 'generalist'),
+        cwd: this.workspacePath!,
         permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
-        allowedTools: isBuildMode
-          ? undefined
-          : [
-              'Read',
-              'Glob',
-              'Grep',
-              'WebSearch',
-              'WebFetch',
-              // Existing MCP tools
-              ...(this.repomapEnabled && this.workspaceId
-                ? ['mcp__code-graph__repo_map', 'mcp__code-graph__search_identifiers']
-                : []),
-              ...(this.semanticSearchEnabled && this.workspaceId
-                ? ['mcp__semantic-search__semantic_search']
-                : []),
-              // Git context (always available)
-              'mcp__git-context__git_log',
-              'mcp__git-context__git_diff',
-              'mcp__git-context__git_blame',
-              // Task context (always available — no-ops gracefully if no active plan)
-              'mcp__task-context__list_tasks',
-              'mcp__task-context__get_task_output',
-              // Checkpoint context
-              'mcp__checkpoint-context__list_checkpoints',
-              'mcp__checkpoint-context__get_checkpoint',
-              // GitHub context (conditional on token)
-              ...(this.githubConfigured
-                ? [
-                    'mcp__github-context__get_pr_status',
-                    'mcp__github-context__list_pr_comments',
-                    'mcp__github-context__list_issues'
-                  ]
-                : [])
-            ],
-        // Block SDK built-in tools that conflict with our code-fence UI paradigm.
-        // We use code fences (````plan, ```ask-question, ```handoff) detected via regex
-        // instead of SDK tools — single paradigm, single code path, easy to debug.
-        // Both modes block: ExitPlanMode (use ````plan fence), AskUserQuestion (use ```ask-question fence),
-        // ToolSearch (wastes turns). Build mode additionally blocks Agent (handoff protocol).
-        disallowedTools: isBuildMode
-          ? ['Agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion']
-          : ['Write', 'Edit', 'ExitPlanMode', 'AskUserQuestion', 'ToolSearch'],
+        allowedTools,
+        disallowedTools,
         maxTurns: isBuildMode ? 50 : 25,
         resume: sessionId,
         abortController,
         agentId: AGENT_IDS.GENERALIST,
-        // MCP tools: expose all configured servers to the generalist
-        ...(() => {
-          const servers: Record<string, McpServerConfig> = {}
-          // Existing: code graph + semantic search (conditional)
-          if (this.repomapEnabled && this.workspaceId)
-            Object.assign(
-              servers,
-              codeGraphMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath!)
-            )
-          if (this.semanticSearchEnabled && this.workspaceId)
-            Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(this.workspaceId))
-          // Git context: always on
-          Object.assign(servers, gitContextMcpService.getMcpServersConfig(this.workspacePath!))
-          // Task + checkpoint context: conversation-scoped
-          if (this.currentConversationId) {
-            Object.assign(
-              servers,
-              taskContextMcpService.getMcpServersConfig(
-                this.currentConversationId,
-                this.workspacePath!
-              )
-            )
-            Object.assign(
-              servers,
-              checkpointContextMcpService.getMcpServersConfig(this.currentConversationId)
-            )
-          }
-          // GitHub context: conditional on token
-          if (this.githubConfigured && this.workspaceId)
-            Object.assign(
-              servers,
-              gitHubContextMcpService.getMcpServersConfig(this.workspaceId, this.workspacePath!)
-            )
-          return Object.keys(servers).length > 0 ? { mcpServers: servers } : {}
-        })()
+        // Generalist: adaptive thinking + high effort (coordinator needs deep reasoning)
+        thinking: { type: 'adaptive' },
+        effort: 'high',
+        maxBudgetUsd: GENERALIST_BUDGET_CAP,
+        ...(mcpServers ? { mcpServers } : {})
       })) {
-        // Circuit breaker check
-        if (this.circuitBroken) break
+        if (this.circuitBreaker.isBroken) break
 
         if ('_meta' in chunk && chunk._meta) {
           messageStopReceived = true
@@ -607,133 +547,56 @@ export class GeneralistService extends AgentBaseService {
               this.log.error('Failed to persist session ID:', err)
             }
           }
-          // Track token usage + compaction logic
-          this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
-          // S8 + Strategy M: Log and aggregate prompt cache effectiveness
-          const { cacheReadInputTokens, cacheCreationInputTokens } = meta.tokenUsage
-          if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
-            const totalInput =
-              meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
-            const cacheHitRate = totalInput > 0 ? (cacheReadInputTokens / totalInput) * 100 : 0
-            this.log.info(
-              `[PIPELINE:prompt-cache] read=${cacheReadInputTokens} creation=${cacheCreationInputTokens} hitRate=${cacheHitRate.toFixed(1)}%`
-            )
-          }
-          // Strategy M: Accumulate cache stats for dashboard
-          this.cacheStats.totalInput += meta.tokenUsage.input
-          this.cacheStats.cacheRead += cacheReadInputTokens
-          this.cacheStats.cacheCreation += cacheCreationInputTokens
-          this.cacheStats.turns++
-
-          // Strategy θ: Per-turn cost breakdown for diagnostics
-          const totalInputForRate =
-            meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
-          this.turnBreakdown.push({
-            turn: turnCount,
-            inputTokens: meta.tokenUsage.input,
-            outputTokens: meta.tokenUsage.output,
-            cacheReadTokens: cacheReadInputTokens,
-            cacheCreationTokens: cacheCreationInputTokens,
-            cacheHitRate:
-              totalInputForRate > 0 ? (cacheReadInputTokens / totalInputForRate) * 100 : 0,
-            timestamp: Date.now()
+          // Track token usage
+          const { totalTokens } = this.tokenTracker.recordTurn(meta, {
+            turnCount,
+            conversationId,
+            dbSessionId: this.dbSessionId,
+            workspacePath: this.workspacePath!
           })
-
-          // Per-turn token breakdown storage — enables cost debugging and cache rate trends
-          if (this.dbSessionId && conversationId) {
-            try {
-              const previousTurn = turnUsageRepository.getLastTurn(conversationId)
-              turnUsageRepository.record({
-                sessionId: this.dbSessionId,
-                conversationId,
-                turnNumber: turnCount,
-                inputTokens: meta.tokenUsage.input,
-                outputTokens: meta.tokenUsage.output,
-                cacheReadTokens: cacheReadInputTokens,
-                cacheCreationTokens: cacheCreationInputTokens,
-                model: modelConfigService.getModel(this.workspacePath!, 'generalist')
-              })
-              // Token growth rate alert — warn if input tokens spiked >30%
-              if (previousTurn && previousTurn.inputTokens > 0) {
-                const growthRate =
-                  (meta.tokenUsage.input - previousTurn.inputTokens) / previousTurn.inputTokens
-                if (growthRate > 0.3) {
-                  this.log.warn(
-                    `[PIPELINE:token-spike] ${(growthRate * 100).toFixed(0)}% input growth (${previousTurn.inputTokens} → ${meta.tokenUsage.input}) — possible context explosion`
-                  )
-                }
-              }
-            } catch (err) {
-              this.log.error('Failed to record turn usage:', err)
-            }
-          }
-
+          this.tokenUsage += totalTokens
           this.checkCompaction(meta.tokenUsage.input)
         } else {
           // Accumulate text for handoff/grill detection
           if (chunk.type === 'text' && chunk.content) {
             this.accumulatedText += chunk.content
             hasTextAfterLastTool = true
-            if (this.detectHandoff()) {
+            if (
+              intentDetector.hasHandoff(
+                this.accumulatedText,
+                this.currentMode,
+                this.investigationModeEnabled
+              )
+            ) {
               handoffDetectedInStream = true
             }
           }
           // Tool call counting + circuit breaker
           if (chunk.type === 'tool_use') {
-            textLenBeforeLastTool = this.accumulatedText.length
+            const isControlTool = chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)
+            if (isControlTool) {
+              this.log.debug(`[PIPELINE:control-tool-use] ${chunk.toolName}`)
+              continue
+            }
+
             hasTextAfterLastTool = false
-            this.toolCallCount++
+            const cbResult = this.circuitBreaker.onToolUse({
+              isBuildMode,
+              accumulatedTextLength: this.accumulatedText.length,
+              conversationId
+            })
 
-            // Gratuitous tool detection — if model already wrote a substantial answer
-            // (500+ chars) and is now making its FIRST tool call, it's a post-answer
-            // verification pattern. Soft-stop via circuit breaker to prevent further turns.
-            if (this.toolCallCount === 1 && textLenBeforeLastTool >= 500) {
-              this.log.warn(
-                `[PIPELINE:gratuitous-tool-soft-stop] conversationId=${conversationId} textLen=${textLenBeforeLastTool} — already answered, stopping after this tool`
-              )
-              this.circuitBroken = true
-            }
-
-            // Soft warning at 5 tool calls — approaching prompt-stated target
-            if (this.toolCallCount === 5 && isBuildMode) {
-              this.log.warn(
-                `[PIPELINE:tool-limit-warning] conversationId=${conversationId} — 5 tool calls reached, approaching limit`
-              )
-            }
-            // Hard limit warning at 8 — prompt-stated HARD LIMIT exceeded
-            if (this.toolCallCount === 8 && isBuildMode) {
-              this.log.warn(
-                `[PIPELINE:tool-limit-reached] conversationId=${conversationId} — 8 tool calls, prompt hard limit exceeded`
-              )
-            }
-
-            const toolCallLimit = isBuildMode
-              ? GeneralistService.MAX_BUILD_TOOL_CALLS
-              : GeneralistService.MAX_PLAN_TOOL_CALLS
-            if (this.toolCallCount >= toolCallLimit) {
-              this.circuitBroken = true
-              this.log.error(
-                `Generalist circuit breaker: ${this.toolCallCount} tool calls exceeded ${isBuildMode ? 'build' : 'plan'} limit of ${toolCallLimit}`
-              )
+            if (cbResult.broken) {
               this.currentStatus = 'failed'
               this.emit('statusUpdate', this.getStatus())
-              const errorMessage = isBuildMode
-                ? `I made ${this.toolCallCount} tool calls, which suggests I got stuck. Try breaking your request into smaller steps (e.g., "run npm install" then "run npm start").`
-                : `I made ${this.toolCallCount} tool calls trying to help, which is more than expected for plan mode. If you need me to run commands, switch to **Build mode** using the toggle in the chat header.`
-              this.emit('chunk', {
-                type: 'error',
-                error: errorMessage
-              } as StreamChunk)
+              if (cbResult.errorChunk) {
+                this.emit('chunk', cbResult.errorChunk)
+              }
               this.emit('complete')
               return
             }
-            // Log tool call to event log
-            eventLoggerService.logAgentToolCall({
-              agentId: 'generalist',
-              conversationId,
-              toolName: chunk.toolName ?? 'unknown',
-              toolCallNumber: this.toolCallCount
-            })
+
+            this.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
           }
           // Update status based on chunk type
           if (chunk.type === 'text') this.currentStatus = 'writing'
@@ -753,8 +616,8 @@ export class GeneralistService extends AgentBaseService {
       clearTimeout(interactionTimer)
       this.sdkAbortController = null
 
-      // Stream termination validation — warn if stream ended without proper completion
-      if (!messageStopReceived && !this.circuitBroken && !timedOut) {
+      // Stream termination validation
+      if (!messageStopReceived && !this.circuitBreaker.isBroken && !timedOut) {
         this.log.warn(
           `[PIPELINE:stream-incomplete] Stream ended without MessageStop event for conversationId=${conversationId}`
         )
@@ -764,76 +627,28 @@ export class GeneralistService extends AgentBaseService {
         `[PIPELINE:generalist-response-complete] conversationId=${conversationId} textLen=${this.accumulatedText.length}`
       )
 
-      // Guardrail: if tools were used but model didn't produce follow-up text,
-      // attempt a one-shot recovery nudge before falling back to a dead-end message.
-      // Skip if handoff was detected (handoff responses don't need post-tool text).
-      if (this.toolCallCount > 0 && !hasTextAfterLastTool && !handoffDetectedInStream) {
-        this.log.warn(
-          `[PIPELINE:silent-tool-completion] conversationId=${conversationId} toolCalls=${this.toolCallCount} — attempting recovery nudge`
-        )
-
-        let recovered = false
-        try {
-          for await (const chunk of this.sdkExecutor.execute({
-            prompt:
-              '[System: Your previous response ended after tool calls without providing a summary to the user. Please summarize what you found in 2-5 sentences. Do NOT use any tools — just summarize from what you already read.]',
-            systemPrompt: this.fullSystemPrompt,
-            model: modelConfigService.getModel(this.workspacePath!, 'generalist'),
-            cwd: this.workspacePath!,
-            permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
-            allowedTools: [], // No tools — text summary only
-            disallowedTools: ['Agent', 'ToolSearch', 'ExitPlanMode'],
-            maxTurns: 1,
-            resume: this.sessionMap.get(conversationId),
-            agentId: AGENT_IDS.GENERALIST
-          })) {
-            if ('_meta' in chunk && chunk._meta) {
-              const meta = chunk._meta as SDKExecuteResult
-              if (meta.sessionId && conversationId) {
-                this.sessionMap.set(conversationId, meta.sessionId)
-                try {
-                  conversationRepository.updateSessionId(conversationId, meta.sessionId)
-                } catch {
-                  /* ignore */
-                }
-              }
-              this.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
-            } else if (chunk.type === 'text' && chunk.content) {
-              recovered = true
-              this.accumulatedText += chunk.content
-              this.emit('chunk', chunk)
-            }
+      // Recovery nudge for silent tool completion
+      if (this.circuitBreaker.count > 0 && !hasTextAfterLastTool && !handoffDetectedInStream) {
+        const recoveryResult = await this.recoveryNudge.attemptRecovery({
+          sdkExecutor: this.sdkExecutor,
+          systemPrompt,
+          workspacePath: this.workspacePath!,
+          model: modelConfigService.getModel(this.workspacePath!, 'generalist'),
+          isBuildMode,
+          sessionId: this.sessionMap.get(conversationId),
+          conversationId,
+          toolCallCount: this.circuitBreaker.count,
+          onSessionCapture: (sid) => this.sessionMap.set(conversationId, sid),
+          onChunk: (chunk) => this.emit('chunk', chunk),
+          onTokens: (tokens) => {
+            this.tokenUsage += tokens
           }
-          if (recovered) {
-            this.log.info(
-              `[PIPELINE:silent-tool-recovery] Successfully recovered summary for conversationId=${conversationId}`
-            )
-          }
-        } catch (err) {
-          this.log.error('[PIPELINE:recovery-nudge-failed]', err)
-        }
-
-        if (!recovered) {
-          const fallbackMessage =
-            this.toolCallCount === 1
-              ? '\n\n_I read a file but my response was cut short. Could you repeat your question?_'
-              : `\n\n_I used ${this.toolCallCount} tools but didn't produce a summary. Try asking "what did you find?" and I'll summarize._`
-          this.accumulatedText += fallbackMessage
-          this.emit('chunk', {
-            type: 'text',
-            content: fallbackMessage
-          } as StreamChunk)
-        }
+        })
+        this.accumulatedText += recoveryResult.text
       }
 
-      // Detect control blocks in accumulated text. Handoff is detected in-stream to reduce latency.
-      if (!handoffDetectedInStream) {
-        this.detectHandoff()
-      }
-      this.detectGrillSummary()
-      this.detectGrillEvaluation()
-      this.detectGrillQuestion()
-      this.detectAskQuestion()
+      // ── Intent detection + emission ──
+      this.emitDetectedIntents(conversationId, handoffDetectedInStream)
 
       this.currentStatus = 'idle'
       this.flushTokenUsage()
@@ -842,290 +657,76 @@ export class GeneralistService extends AgentBaseService {
       this.emit('complete')
     } catch (error) {
       clearTimeout(interactionTimer)
-      this.sdkAbortController = null
-      if ((error as Error).name === 'AbortError') {
-        if (timedOut) {
-          this.log.error('SDK query timed out')
-          this.emit('chunk', {
-            type: 'error',
-            error: `Response exceeded maximum time (${GeneralistService.MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes) after ${this.toolCallCount} tool calls. The agent may be stuck. Try simplifying your request.`
-          } as StreamChunk)
-        } else {
-          this.log.info('SDK query cancelled by user')
-        }
-      } else {
-        this.log.error('SDK send failed:', error)
+      this.handleStreamError(error as Error, timedOut)
+    }
+  }
+
+  /** Detect and emit intents from accumulated text and control tool state. */
+  private emitDetectedIntents(conversationId: string, handoffDetectedInStream: boolean): void {
+    const detectionState: ControlToolState = handoffDetectedInStream
+      ? { ...this.controlToolState, handoff: true }
+      : this.controlToolState
+    const detectedIntents = intentDetector.detectAll(
+      this.accumulatedText,
+      detectionState,
+      this.currentMode,
+      this.investigationModeEnabled
+    )
+
+    for (const intent of detectedIntents) {
+      this.emit('intent', intent)
+    }
+
+    if (detectedIntents.length === 0) {
+      this.log.info(`[PIPELINE:response-path] no-action textLen=${this.accumulatedText.length}`)
+      this.emit('intent', { type: 'response', content: this.accumulatedText } as GeneralistIntent)
+    }
+
+    // Dual-mode telemetry
+    intentDetector.logDetectionPaths(
+      this.accumulatedText,
+      this.controlToolState,
+      handoffDetectedInStream
+    )
+
+    // Post-handoff auto-compact
+    const hasHandoffIntent =
+      detectedIntents.some((i) => i.type === 'handoff') || handoffDetectedInStream
+    if (hasHandoffIntent && this.tokenUsage > 30_000 && this.compactCount < 5) {
+      this.log.info(
+        `Post-handoff auto-compact scheduled (tokens: ${this.tokenUsage}, compacts: ${this.compactCount}) — delayed 120s for result injection`
+      )
+      setTimeout(() => this.compact(), 120_000)
+    }
+  }
+
+  /** Handle errors from the stream execution — timeout, abort, or SDK failure. */
+  private handleStreamError(error: Error, timedOut: boolean): void {
+    this.sdkAbortController = null
+    if (error.name === 'AbortError') {
+      if (timedOut) {
+        this.log.error('SDK query timed out')
         this.emit('chunk', {
           type: 'error',
-          error: `Generalist SDK error: ${(error as Error).message}`
+          error: `Response exceeded maximum time (${GeneralistService.MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes) after ${this.circuitBreaker.count} tool calls. The agent may be stuck. Try simplifying your request.`
         } as StreamChunk)
+      } else {
+        this.log.info('SDK query cancelled by user')
       }
-      this.currentStatus = 'failed'
-      this.flushTokenUsage()
-      this.emit('statusUpdate', this.getStatus())
-      this.emit('complete')
-    }
-  }
-
-  private incrementTurnCount(conversationId: string): number {
-    const nextTurn = (this.turnCountMap.get(conversationId) ?? 0) + 1
-    this.turnCountMap.set(conversationId, nextTurn)
-    return nextTurn
-  }
-
-  /**
-   * Scale memory budget by turn count.
-   * Turn 1: full budget (memory is fresh context). Turn 3+: reduced (already in history). Turn 6+: zero.
-   * Strategy S3: saves ~429 tokens on late turns.
-   */
-  private getMemoryBudgetForTurn(turnCount: number): number {
-    if (this.costPreference === 'economy') {
-      return turnCount <= 1 ? 3000 : turnCount <= 3 ? 1000 : 0
-    }
-    return turnCount <= 1 ? 5000 : turnCount <= 3 ? 2000 : 0
-  }
-
-  /**
-   * Builds the generalist system prompt for the current turn using:
-   * 1) DB-backed base prompt via PromptBuilder
-   * 2) adaptive budget tier by turn count
-   * 3) optional conditional sections appended after base prompt resolution
-   */
-  private buildPromptForTurn(message: string, hasImages: boolean, turnCount: number): string {
-    if (!this.workspacePath) return this.fullSystemPrompt
-
-    // Strategy C: Memory context is now injected into the user prompt (not system prompt).
-    // This keeps the system prompt identical across turns → Claude prompt caching gives
-    // a 90% discount on the entire system prompt after the first turn (~1,350 tokens/turn saved).
-    // Memory is still refreshed per turn — it just lives in a different location.
-    if (this.workspaceId) {
-      const memoryBudget = this.getMemoryBudgetForTurn(turnCount)
-      try {
-        const memoryContextForTurn = memoryService.getContextForPrompt(
-          this.workspaceId,
-          memoryBudget,
-          message
-        )
-        this.memoryContext = memoryContextForTurn || undefined
-      } catch (error) {
-        this.log.warn('Failed to refresh filtered memory context; using cached context', error)
-      }
-    }
-
-    // Strategy ζ: System prompt snapshot — reuse cached prompt when mode + conversation
-    // haven't changed. Eliminates DB queries + disk I/O on every turn.
-    // The snapshot is invalidated on mode switches and conversation changes.
-    const canReuseSnapshot =
-      this.systemPromptSnapshot &&
-      this.systemPromptSnapshotMode === this.currentMode &&
-      this.systemPromptSnapshotConversationId === this.currentConversationId &&
-      turnCount > 1 // Always rebuild on turn 1 to pick up latest settings
-
-    const budgetTier = promptBuilder.getGeneralistBudgetTierForTurn(turnCount)
-    let promptWithMcpGuidance: string
-    if (canReuseSnapshot) {
-      promptWithMcpGuidance = this.systemPromptSnapshot!
-      this.log.info(
-        `[PIPELINE:prompt-snapshot] Reusing cached system prompt (turn ${turnCount}, mode=${this.currentMode})`
-      )
     } else {
-      const basePrompt = promptBuilder.build({
-        role: 'generalist',
-        mode: this.currentMode,
-        workspacePath: this.workspacePath,
-        // Strategy C: memoryContext is NO LONGER passed here — it goes into the user prompt
-        // via the effectiveMessage prefix in send(). The system prompt stays stable for caching.
-        budgetTier
-      })
-
-      // Strategy α: Conditional sections (ASK_QUESTION, MEMORY_PROTOCOL, IMAGE_ATTACHMENTS,
-      // DIRECT_ANSWER_BOOST) are NO LONGER appended to the system prompt. They are now injected
-      // into the user message prefix via buildConditionalPrefix() in send().
-      // This makes the system prompt deterministic per mode → 90% cache discount on every turn.
-      //
-      // MCP tool guidance sections are still appended here on turn 1 only (Strategy δ),
-      // since they are workspace-stable and don't toggle between turns.
-      promptWithMcpGuidance = this.appendMcpToolGuidance(basePrompt, turnCount)
-
-      // Cache the snapshot for reuse on subsequent turns
-      this.systemPromptSnapshot = promptWithMcpGuidance
-      this.systemPromptSnapshotMode = this.currentMode
-      this.systemPromptSnapshotConversationId = this.currentConversationId
+      this.log.error('SDK send failed:', error)
+      this.emit('chunk', {
+        type: 'error',
+        error: `Generalist SDK error: ${error.message}`
+      } as StreamChunk)
     }
-
-    // Strategy β: Specialist roster is now injected into the user prompt on turn 1 only.
-    // On turn 2+, the roster is already in conversation history. This removes ~400 tokens
-    // of static overhead from the system prompt on every turn.
-    // The roster is built and stored in this.specialistRoster for the user prefix in send().
-    this.specialistRoster = this.buildSpecialistRoster()
-
-    this.log.info(
-      `[PIPELINE:prompt-adaptive] conversationId=${this.currentConversationId} turn=${turnCount} budget=${budgetTier} rosterSize=${this.specialistRoster ? this.specialistRoster.split('\n').length : 0}`
-    )
-
-    // S8: Prompt size check — warn if approaching model context limits
-    // TODO: Wire up actual model tier resolution from modelConfigService instead of defaulting to 'sonnet'
-    const sizeCheck = PromptBuilder.checkPromptSize(promptWithMcpGuidance, message, 'sonnet')
-    if (sizeCheck.warning) {
-      this.log.warn(
-        `[PIPELINE:prompt-size] conversationId=${this.currentConversationId} turn=${turnCount} ${sizeCheck.warning}`
-      )
-    }
-
-    return promptWithMcpGuidance
+    this.currentStatus = 'failed'
+    this.flushTokenUsage()
+    this.emit('statusUpdate', this.getStatus())
+    this.emit('complete')
   }
 
-  /**
-   * Strategy α: Build a conditional prefix for the user message.
-   * These sections (ASK_QUESTION, MEMORY_PROTOCOL, IMAGE_ATTACHMENTS, DIRECT_ANSWER_BOOST)
-   * toggle based on the user's message content. Moving them to the user prompt prefix
-   * makes the system prompt 100% deterministic per mode → 90% cache discount on every turn.
-   */
-  private buildConditionalPrefix(message: string, hasImages: boolean): string {
-    const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages)
-    const sections: string[] = []
-
-    if (conditionalSections.includeAskQuestionPrompt) {
-      sections.push(ASK_QUESTION_PROMPT)
-    }
-
-    if (conditionalSections.includeMemoryProtocolPrompt) {
-      sections.push(MEMORY_PROTOCOL_PROMPT)
-    }
-
-    if (conditionalSections.includeImageAttachmentsPrompt) {
-      sections.push(IMAGE_ATTACHMENTS_PROMPT)
-    }
-
-    // Strategy N: Direct Answer Boost — nudge generalist to answer directly for simple questions
-    if (conditionalSections.includeDirectAnswerBoost) {
-      sections.push(DIRECT_ANSWER_BOOST_PROMPT)
-    }
-
-    // Strategy ζ: Plan Output Reinforcement — inject a plan-format reminder closest to the
-    // user message (strongest positional influence). This prevents the LLM from emitting plain
-    // text summaries instead of the ````plan JSON blocks the UI requires to render cards.
-    //
-    // In plan mode: fires for any plan/investigate/diagnose/audit/review keyword.
-    // In build mode: fires only for explicit plan-generation intent (plan/design/architect/propose)
-    //   — action keywords like "fix" should trigger handoff, not a plan card.
-    const isPlanGenerationRequest =
-      /\b(plan|design|architect|propose|draft a plan|create a plan)\b/i.test(message)
-    const isPlanModeInvestigation =
-      this.currentMode === 'plan' &&
-      /\b(plan|investigate|diagnose|audit|review|check|improve|fix|design|architect|analyze|analyse)\b/i.test(
-        message
-      )
-    const planReminderInjected = isPlanModeInvestigation || isPlanGenerationRequest
-
-    if (planReminderInjected) {
-      const antiHandoff =
-        this.currentMode === 'plan'
-          ? `\nDo NOT emit a \`\`\`handoff block. You are the plan author — read files yourself and produce the plan directly.`
-          : ''
-      sections.push(
-        `## Plan Output Reminder\n` +
-          `Your response MUST include a \`\`\`\`plan code fence with valid JSON. ` +
-          `The UI renders this as an interactive card with Build Now / Refine buttons. ` +
-          `Plain text summaries are NOT visible as actionable plans — only \`\`\`\`plan blocks are.` +
-          antiHandoff +
-          `\n` +
-          `If you investigated files and have findings, wrap them in the plan JSON structure.`
-      )
-    }
-
-    // Strategy γ: When investigation mode is OFF, inject NO HANDOFF directive.
-    // The generalist must answer everything directly — no specialist delegation.
-    // Saves 5-12K tokens per question that would otherwise trigger a handoff.
-    if (!this.investigationModeEnabled) {
-      sections.push(
-        `## NO HANDOFF MODE (Investigation Mode OFF)\n\n` +
-        `Do NOT hand off to specialists. Answer everything directly using your own tool access.\n` +
-        `If you need to read files, do it yourself. Target ≤5 tool calls.\n` +
-        `If you genuinely cannot answer after reading 3-5 files, tell the user:\n` +
-        `"I couldn't fully answer this — enable Investigation Mode in settings for a deeper specialist analysis."`
-      )
-    }
-
-    this.log.info(
-      `[PIPELINE:conditional-prefix] ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost} investigationMode=${this.investigationModeEnabled} planReminder=${planReminderInjected}`
-    )
-
-    return sections.length > 0 ? `[Contextual guidelines for this message]\n\n${sections.join('\n\n')}` : ''
-  }
-
-  /**
-   * Strategy δ: Append MCP tool guidance sections to system prompt — turn 1 only.
-   * These are workspace-stable (don't toggle between turns) so they are safe in the system prompt.
-   * On turns 2+, the guidance is already in conversation history from turn 1.
-   */
-  private appendMcpToolGuidance(basePrompt: string, turnCount: number): string {
-    // Strategy δ: Only inject MCP guidance on turn 1. On turns 2+, guidance is in history.
-    if (turnCount > 1) return basePrompt
-
-    const appendSections: string[] = []
-
-    // Code graph: inject repomap tool guidance when enabled
-    if (this.repomapEnabled && !basePrompt.includes('## Code Graph Tools')) {
-      appendSections.push(REPOMAP_GUIDANCE_PROMPT)
-    }
-
-    // Semantic search: inject tool guidance when enabled
-    if (this.semanticSearchEnabled && !basePrompt.includes('## Semantic Search')) {
-      appendSections.push(SEMANTIC_SEARCH_GUIDANCE_PROMPT)
-    }
-
-    // Git context: always inject guidance
-    if (!basePrompt.includes('## Git Context Tools')) {
-      appendSections.push(GIT_CONTEXT_GUIDANCE_PROMPT)
-    }
-
-    // Task context: inject when in multi-task plan
-    if (this.currentConversationId && !basePrompt.includes('## Task Context Tools')) {
-      appendSections.push(TASK_CONTEXT_GUIDANCE_PROMPT)
-    }
-
-    // Checkpoint context: inject guidance
-    if (!basePrompt.includes('## Checkpoint Tools')) {
-      appendSections.push(CHECKPOINT_CONTEXT_GUIDANCE_PROMPT)
-    }
-
-    // GitHub context: conditional on token
-    if (this.githubConfigured && !basePrompt.includes('## GitHub Tools')) {
-      appendSections.push(GITHUB_CONTEXT_GUIDANCE_PROMPT)
-    }
-
-    if (appendSections.length === 0) return basePrompt
-    return `${basePrompt}\n\n---\n\n${appendSections.join('\n\n---\n\n')}`
-  }
-
-  /**
-   * Strategy β: Build specialist roster string for user prompt injection.
-   * Returns the roster with compressed format (IDs only), or null if no specialists.
-   */
-  private buildSpecialistRoster(): string | null {
-    let activeSpecialists = specialistRepository.findActive()
-
-    if (this.currentConversationId) {
-      const overrides = conversationSpecialistRepository.findByConversation(this.currentConversationId)
-      if (overrides.length > 0) {
-        const activeSpecialistIds = new Set(
-          overrides.filter((o) => o.isActive).map((o) => o.specialistId)
-        )
-        activeSpecialists = activeSpecialists.filter((s) => activeSpecialistIds.has(s.id))
-      }
-    }
-
-    const nonCoreSpecialists = activeSpecialists.filter(
-      (s) => !['generalist', 'generalist-agent', 'user'].includes(s.agentId)
-    )
-
-    if (nonCoreSpecialists.length === 0) return null
-
-    // Compressed format: IDs only — saves ~200 tokens vs full descriptions.
-    // The generalist already knows specialist capabilities from CLAUDE.md.
-    return `Available specialists: ${nonCoreSpecialists.map((s) => s.agentId).join(', ')}`
-  }
+  // ── Prompt methods moved to GeneralistPromptAssembler (generalist-prompt-assembler.ts) ──
 
   /**
    * Strategy A: Lazy context injection — stores context to be prepended to the next send() call.
@@ -1134,9 +735,6 @@ export class GeneralistService extends AgentBaseService {
    * entire conversation history (30-50K tokens on long conversations). Now we simply store
    * the context and piggyback it on the next user message at zero additional cost — the
    * session resume is already happening for the user's message.
-   *
-   * The context is prepended as a clearly-delimited block so the generalist can distinguish
-   * it from the user's actual message.
    */
   async injectContext(context: string, conversationId: string): Promise<void> {
     if (!this.workspacePath) {
@@ -1144,16 +742,14 @@ export class GeneralistService extends AgentBaseService {
       return
     }
 
-    // Accumulate multiple injections (e.g. multi-specialist results) — they'll all
-    // be prepended together on the next send().
-    const existing = this.pendingContextInjection.get(conversationId)
-    if (existing) {
-      this.pendingContextInjection.set(conversationId, `${existing}\n\n${context}`)
+    // Accumulate multiple injections via the assembler
+    const existingSize = this.promptAssembler.getPendingContextSize(conversationId)
+    this.promptAssembler.addPendingContext(conversationId, context)
+    if (existingSize > 0) {
       this.log.info(
-        `Appended to pending context injection for conversation ${conversationId} (${context.length} chars added, total: ${existing.length + context.length + 2} chars)`
+        `Appended to pending context injection for conversation ${conversationId} (${context.length} chars added, total: ${existingSize + context.length + 2} chars)`
       )
     } else {
-      this.pendingContextInjection.set(conversationId, context)
       this.log.info(
         `Stored pending context injection for conversation ${conversationId} (${context.length} chars — will prepend to next send())`
       )
@@ -1222,185 +818,13 @@ export class GeneralistService extends AgentBaseService {
     }
   }
 
-  /**
-   * Checks the accumulated response text for a handoff block and emits a `handoff` event if found.
-   * Parses the enriched HandoffBrief format with decisions, constraints, and files discussed.
-   * Falls back gracefully if only the legacy { summary, specialists, mode } fields are present.
-   */
-  private detectHandoff(): boolean {
-    // Strategy γ: When investigation mode is OFF, ignore handoff blocks entirely.
-    // The generalist should answer directly — any handoff blocks are stale LLM behavior.
-    if (!this.investigationModeEnabled) {
-      return false
-    }
-
-    // Strategy ζ-guard: In plan mode, handoffs are NEVER allowed.
-    // The generalist must produce plans directly. The only exception is
-    // when the user explicitly requested a specialist by name.
-    if (this.currentMode === 'plan') {
-      const match = this.accumulatedText.match(HANDOFF_REGEX)
-      if (match) {
-        this.log.warn(
-          `[PIPELINE:handoff-suppressed] Plan-mode handoff blocked — generalist must produce plan directly. ` +
-            `Accumulated text contains handoff block but mode=plan.`
-        )
-      }
-      return false
-    }
-
-    const match = this.accumulatedText.match(HANDOFF_REGEX)
-    if (!match) return false
-
-    let handoffData: { mode?: unknown; summary?: unknown } | null = null
-    try {
-      handoffData = JSON.parse(match[1].trim()) as { mode?: unknown; summary?: unknown }
-    } catch (error) {
-      this.log.error('Failed to parse handoff block:', error)
-      return false
-    }
-
-    const brief = parseHandoffBlock(this.accumulatedText)
-    if (!brief) return false
-
-    // Log when Da Vinci sends mode=build — conversation DB mode is the source of truth
-    if (handoffData.mode === 'build') {
-      this.log.info('[PIPELINE:mode-detected] Da Vinci sent mode=build — will use conversation mode as source of truth')
-    }
-
-    // Log summary rewrite safety net
-    if (typeof handoffData.summary === 'string' && handoffData.summary !== brief.summary) {
-      this.log.warn(`[PIPELINE:summary-rewrite] "${handoffData.summary}" → "${brief.summary}"`)
-    }
-
-    this.log.info('Handoff detected:', {
-      summary: brief.summary,
-      decisions: brief.decisions.length,
-      constraints: brief.constraints.length,
-      filesDiscussed: brief.filesDiscussed.length,
-      specialists: brief.specialists
-    })
-    this.log.info(
-      `[PIPELINE:handoff-detected] specialists=${brief.specialists.join(',')} mode=${brief.mode}`
-    )
-    this.emit('handoff', brief)
-    this.log.info(`[PIPELINE:handoff-emitted] conversationId=${this.currentConversationId}`)
-
-    // Strategy 2: Post-handoff auto-compact — delay until specialist results
-    // have been injected back. The specialist execution takes at minimum 30s,
-    // so 120s gives enough buffer for context injection before compaction.
-    if (this.tokenUsage > 30_000 && this.compactCount < 5) {
-      this.log.info(
-        `Post-handoff auto-compact scheduled (tokens: ${this.tokenUsage}, compacts: ${this.compactCount}) — delayed 120s for result injection`
-      )
-      setTimeout(() => this.compact(), 120_000)
-    }
-
-    return true
-  }
+  // ── Detection methods moved to IntentDetector (intent-detector.ts) ──
+  // ── Decomposition moved to DecompositionService (decomposition.service.ts) ──
 
   /**
-   * Checks the accumulated response text for a grill-summary block and emits a `grillComplete` event if found.
+   * @deprecated Use decompositionService.decompose() directly.
+   * Preserved as a delegation wrapper for backward compatibility during migration.
    */
-  private detectGrillSummary(): void {
-    const match = this.accumulatedText.match(GRILL_SUMMARY_REGEX)
-    if (!match) return
-
-    try {
-      const data = JSON.parse(match[1].trim())
-      if (data.summary) {
-        const grillEvent: GrillCompleteEvent = {
-          summary: data.summary,
-          proposedTasks: Array.isArray(data.proposedTasks) ? data.proposedTasks : []
-        }
-        this.log.info('Grill summary detected:', grillEvent)
-        this.emit('grillComplete', grillEvent)
-      }
-    } catch (error) {
-      this.log.error('Failed to parse grill-summary block:', error)
-    }
-  }
-
-  /**
-   * Checks the accumulated response text for grill-question blocks and emits a `grillQuestion` event if found.
-   */
-  private detectGrillQuestion(): void {
-    const matches = [...this.accumulatedText.matchAll(GRILL_QUESTION_REGEX)]
-    if (matches.length === 0) return
-
-    const allQuestions: GrillQuestion[] = []
-    for (const match of matches) {
-      try {
-        const data = JSON.parse(match[1].trim())
-        if (data.questions && Array.isArray(data.questions)) {
-          allQuestions.push(...data.questions)
-        }
-      } catch (error) {
-        this.log.error('Failed to parse grill-question block:', error)
-      }
-    }
-
-    if (allQuestions.length > 0) {
-      this.log.info(`Grill questions detected: ${allQuestions.length} questions`)
-      this.emit('grillQuestion', { questions: allQuestions } as GrillQuestionEvent)
-    }
-  }
-
-  /**
-   * Checks the accumulated response text for ask-question blocks and emits an `askQuestion` event if found.
-   * Used for general chat clarifying questions (outside of Grill sessions).
-   */
-  private detectAskQuestion(): void {
-    const matches = [...this.accumulatedText.matchAll(ASK_QUESTION_REGEX)]
-    if (matches.length === 0) return
-
-    const allQuestions: GrillQuestion[] = []
-    for (const match of matches) {
-      try {
-        const data = JSON.parse(match[1].trim())
-        if (data.questions && Array.isArray(data.questions)) {
-          allQuestions.push(...data.questions)
-        }
-      } catch (error) {
-        this.log.error('Failed to parse ask-question block:', error)
-      }
-    }
-
-    if (allQuestions.length > 0) {
-      this.log.info(`Ask-question detected: ${allQuestions.length} questions`)
-      this.emit('askQuestion', { questions: allQuestions } as AskQuestionEvent)
-    }
-  }
-
-  /**
-   * Checks the accumulated response text for grill-evaluation blocks (new structured format)
-   * and emits a `grillEvaluation` event if found. Contains score + feedback + questions.
-   */
-  private detectGrillEvaluation(): void {
-    const matches = [...this.accumulatedText.matchAll(GRILL_EVAL_REGEX)]
-    if (matches.length === 0) return
-
-    for (const match of matches) {
-      try {
-        const data = JSON.parse(match[1].trim())
-        if (typeof data.score === 'number' && Array.isArray(data.questions)) {
-          this.log.info(
-            `Grill evaluation detected: score=${data.score}, questions=${data.questions.length}`
-          )
-          this.emit('grillEvaluation', {
-            trackId: data.trackId ?? undefined,
-            score: data.score,
-            scoreLabel: data.scoreLabel ?? '',
-            feedback: data.feedback ?? '',
-            questions: data.questions,
-            suggestedNextTrack: data.suggestedNextTrack ?? undefined
-          })
-        }
-      } catch (error) {
-        this.log.error('Failed to parse grill-evaluation block:', error)
-      }
-    }
-  }
-
   async decompose(
     brief: HandoffBrief,
     conversationId: string,
@@ -1409,322 +833,14 @@ export class GeneralistService extends AgentBaseService {
     if (!this.workspacePath) {
       throw new Error('Generalist not started — no workspace path set')
     }
-
-    // Refresh feature flags so settings changes take effect immediately
     this.refreshFeatureFlags()
-
-    // ── Code Graph + Semantic Search: enrich filesDiscussed ──
-    if (this.repomapEnabled || this.semanticSearchEnabled) {
-      try {
-        const sources: { source: string; files: string[]; priority: number }[] = [
-          { source: 'generalist', files: brief.filesDiscussed, priority: 0 }
-        ]
-
-        if (this.repomapEnabled && this.workspaceId) {
-          const repomapFiles = await codeGraphService.getTopRankedFiles(
-            this.workspaceId,
-            brief.filesDiscussed,
-            50
-          )
-          if (repomapFiles.length > 0) {
-            sources.push({ source: 'repomap', files: repomapFiles, priority: 1 })
-          }
-        }
-
-        if (this.semanticSearchEnabled && this.workspaceId) {
-          try {
-            const semanticResults = await vectorSearchService.search(
-              this.workspaceId,
-              brief.summary,
-              { nResults: 10 }
-            )
-            if (semanticResults.length > 0) {
-              const semanticFiles = semanticResults.map((r) => r.filePath)
-              sources.push({ source: 'semantic', files: semanticFiles, priority: 2 })
-            }
-          } catch (semanticError) {
-            this.log.warn(
-              '[PIPELINE:semantic-enrich] Failed — skipping semantic enrichment:',
-              semanticError
-            )
-          }
-        }
-
-        if (sources.length > 1) {
-          const originalCount = brief.filesDiscussed.length
-          const { files, contributions } = enrichFilesDiscussed(sources)
-          brief.filesDiscussed = files
-          const contribStr = Object.entries(contributions)
-            .map(([k, v]) => `${k}: ${v}`)
-            .join(', ')
-          this.log.info(
-            `[PIPELINE:file-enrich] ${originalCount} → ${files.length} files (${contribStr})`
-          )
-        }
-      } catch (error) {
-        this.log.warn('[PIPELINE:file-enrich] Failed — using original filesDiscussed:', error)
-      }
-    }
-
-    // ── FAST PATH: single specialist → skip decomposition LLM call entirely ──
-    // When the handoff names exactly 1 specialist, decomposition is a no-op
-    // (it would just return 1 task). Save ~2K tokens + 3-5s latency.
-    if (brief.specialists.length === 1) {
-      this.log.info(
-        `Single-specialist fast path: skipping decomposition for ${brief.specialists[0]}`
-      )
-
-      const description = brief.summary
-
-      const syntheticTask: DecomposedTask = {
-        id: 't1',
-        specialist: brief.specialists[0],
-        description,
-        dependsOn: [],
-        verificationCommand: 'npm run typecheck'
-      }
-
-      // Enrich with complexity scoring (same as full path)
-      const settings = this.workspacePath
-        ? workspaceRepository.getSettingsByPath(this.workspacePath)
-        : {}
-      const costPreference = (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
-      const enrichedTasks = enrichTasksWithComplexity([syntheticTask], costPreference)
-
-      eventLoggerService.logDecompositionStarted({
-        conversationId,
-        summary: brief.summary,
-        specialists: brief.specialists
-      })
-      eventLoggerService.logDecompositionCompleted({
-        conversationId,
-        taskCount: 1,
-        tasks: enrichedTasks.map((t) => ({
-          id: t.id,
-          specialist: t.specialist,
-          model: t.model
-        }))
-      })
-
-      this.log.info(
-        `  ${enrichedTasks[0].id}: ${enrichedTasks[0].complexity?.tier}/${enrichedTasks[0].model} (score: ${enrichedTasks[0].complexity?.total}) [fast-path]`
-      )
-
-      // Strategy 13: Pre-select investigation depth based on question complexity.
-      // Quick mode (3 turns, 5 tools) saves 1,500-3,500 tokens for simple questions.
-      const filesCount = brief.filesDiscussed?.length ?? 0
-      const summaryLower = brief.summary.toLowerCase()
-      const needsDeepInvestigation =
-        summaryLower.includes('audit') ||
-        summaryLower.includes('comprehensive') ||
-        summaryLower.includes('all files') ||
-        summaryLower.includes('across the codebase') ||
-        filesCount > 3
-      const suggestedDepth = needsDeepInvestigation ? 'standard' : 'quick'
-      this.log.info(`[PIPELINE:depth-preselect] files=${filesCount} suggested=${suggestedDepth}`)
-
-      return {
-        conversationId,
-        summary: brief.summary,
-        mode,
-        tasks: enrichedTasks,
-        brief,
-        investigationDepth: suggestedDepth as InvestigationDepth
-      }
-    }
-
-    // ── FULL PATH: multi-specialist → decompose via LLM ──
-    const { prompt } = this.buildDecompositionInputs(brief, mode, conversationId)
-
-    this.log.info('Decomposing task for specialists:', brief.specialists.join(', '))
-
-    eventLoggerService.logDecompositionStarted({
-      conversationId,
-      summary: brief.summary,
-      specialists: brief.specialists
+    return decompositionService.decompose(brief, conversationId, mode, {
+      workspacePath: this.workspacePath,
+      workspaceId: this.workspaceId,
+      repomapEnabled: this.repomapEnabled,
+      semanticSearchEnabled: this.semanticSearchEnabled
     })
-
-    const executor = new SDKExecutor()
-    try {
-      const { result } = await executor.executeAndCollect({
-        prompt,
-        systemPrompt: promptBuilder.getDecompositionPrompt(),
-        model: modelConfigService.getModel(this.workspacePath, 'generalist'),
-        cwd: this.workspacePath,
-        permissionMode: 'plan',
-        allowedTools: []
-      })
-
-      return this.parseDecompositionResult(result, conversationId, brief, mode)
-    } catch (error) {
-      eventLoggerService.logDecompositionFailed({
-        conversationId,
-        error: (error as Error).message,
-        fallback: 'none'
-      })
-      throw error
-    }
   }
-
-  private buildDecompositionInputs(
-    brief: HandoffBrief,
-    mode?: ConversationMode,
-    conversationId?: string
-  ): { prompt: string; specialistList: string } {
-    const globallyActiveSpecialists = specialistRepository.findActive()
-    let activeSpecialists = globallyActiveSpecialists
-
-    if (conversationId) {
-      const overrides = conversationSpecialistRepository.findByConversation(conversationId)
-      if (overrides.length > 0) {
-        const activeSpecialistIds = new Set(
-          overrides.filter((override) => override.isActive).map((override) => override.specialistId)
-        )
-        activeSpecialists = globallyActiveSpecialists.filter((specialist) =>
-          activeSpecialistIds.has(specialist.id)
-        )
-      }
-    }
-
-    const relevantSpecialists =
-      brief.specialists.length > 0
-        ? activeSpecialists.filter((s) => brief.specialists.includes(s.agentId))
-        : activeSpecialists
-
-    const specialistList = relevantSpecialists
-      .map(
-        (s) =>
-          `- "${s.agentId}" — ${s.displayName}: ${s.prompt?.substring(0, 150) || 'General specialist'}`
-      )
-      .join('\n')
-
-    // ── Build rich context for decomposition ──
-    const decisionsBlock =
-      brief.decisions.length > 0
-        ? `\nKey decisions already made:\n${brief.decisions.map((d) => `- ${d}`).join('\n')}`
-        : ''
-
-    const constraintsBlock =
-      brief.constraints.length > 0
-        ? `\nConstraints to respect:\n${brief.constraints.map((c) => `- ${c}`).join('\n')}`
-        : ''
-
-    const filesBlock =
-      brief.filesDiscussed.length > 0
-        ? `\nFiles discussed/planned:\n${brief.filesDiscussed.map((f) => `- ${f}`).join('\n')}`
-        : ''
-
-    // Strategy 5: Truncate recentMessages to prevent unbounded context in decomposition.
-    const MAX_CONVERSATION_CHARS = 3000
-    const rawConversation =
-      brief.recentMessages.length > 0
-        ? brief.recentMessages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n')
-        : ''
-    const conversationBlock = rawConversation
-      ? `\nRecent conversation context:\n${rawConversation.length > MAX_CONVERSATION_CHARS ? rawConversation.substring(rawConversation.length - MAX_CONVERSATION_CHARS) + '\n[... earlier messages truncated]' : rawConversation}`
-      : ''
-
-    const modeInstruction =
-      mode === 'plan'
-        ? '\n\nIMPORTANT: This is a PLAN-MODE decomposition. Create ONLY investigation/analysis tasks. Every task MUST end with "Produce a structured investigation report." Do NOT create fix, implementation, rebuild, or test tasks.'
-        : '\n\nIMPORTANT: This is a BUILD-MODE decomposition. Create IMPLEMENTATION tasks that write code, modify files, and make changes. Use action verbs: implement, fix, create, refactor, update, add. Do NOT create investigation-only tasks — the user wants code changes, not reports. Include verificationCommand for each task (e.g., "npm run typecheck").'
-
-    const prompt = `Think step by step about the dependencies and potential file conflicts before decomposing.
-
-Task to decompose: "${brief.summary}"
-${modeInstruction}
-${decisionsBlock}
-${constraintsBlock}
-${filesBlock}
-${conversationBlock}
-
-Available specialists:
-${specialistList}
-
-Decompose this task into sub-tasks and respond with ONLY valid JSON.`
-
-    return { prompt, specialistList }
-  }
-
-  private parseDecompositionResult(
-    result: string,
-    conversationId: string,
-    brief: HandoffBrief,
-    mode: ConversationMode
-  ): TaskPlan {
-    // Keep parsed JSON preview for parity with existing parse-error logging.
-    let jsonPreview = result
-    const previewFenceMatch = jsonPreview.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (previewFenceMatch) {
-      jsonPreview = previewFenceMatch[1].trim()
-    }
-
-    try {
-      const taskPlan = parseDecompositionResultUtil(
-        result,
-        conversationId,
-        brief,
-        mode,
-        (tasks: DecomposedTask[]) => {
-          // Preserve previous behavior: ignore any model field from raw LLM JSON.
-          const normalizedTasks = tasks.map((task) => ({
-            ...task,
-            model: undefined
-          }))
-
-          // Read workspace cost preference and enrich tasks with validated complexity scores
-          const settings = this.workspacePath
-            ? workspaceRepository.getSettingsByPath(this.workspacePath)
-            : {}
-          const costPreference =
-            (settings.costPreference as CostPreference) || DEFAULT_COST_PREFERENCE
-
-          const enrichedTasks = enrichTasksWithComplexity(normalizedTasks, costPreference)
-
-          this.log.info(`Decomposed into ${enrichedTasks.length} tasks (cost: ${costPreference})`)
-          for (const t of enrichedTasks) {
-            this.log.info(
-              `  ${t.id}: ${t.complexity?.tier}/${t.model} (score: ${t.complexity?.total})`
-            )
-          }
-
-          return enrichedTasks
-        }
-      )
-
-      // ── Event: decomposition completed ──
-      eventLoggerService.logDecompositionCompleted({
-        conversationId,
-        taskCount: taskPlan.tasks.length,
-        tasks: taskPlan.tasks.map((t) => ({
-          id: t.id,
-          specialist: t.specialist,
-          model: t.model
-        }))
-      })
-
-      return taskPlan
-    } catch (error) {
-      const originalError =
-        error instanceof Error ? error.message : 'Task decomposition returned no tasks'
-      const normalizedError =
-        originalError === 'Task decomposition response missing tasks array'
-          ? 'Task decomposition returned no tasks'
-          : originalError
-
-      if (normalizedError === 'Failed to parse task decomposition — LLM returned invalid JSON') {
-        this.log.error('Failed to parse decomposition JSON:', jsonPreview.substring(0, 500))
-      }
-
-      eventLoggerService.logDecompositionFailed({
-        conversationId,
-        error: normalizedError,
-        fallback: 'none'
-      })
-      throw new Error(normalizedError)
-    }
-  }
-
 
   /**
    * Stops the generalist — cancels any in-flight SDK query and resets state.
@@ -1749,7 +865,7 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
     this.currentStatus = 'idle'
     this.currentConversationId = null
     this.accumulatedText = ''
-    this.turnCountMap.clear()
+    this.promptAssembler.resetSession()
     // NOTE: Do NOT clear sessionMap — sessions persist so we can resume them
     this.emit('statusUpdate', this.getStatus())
   }
@@ -1798,34 +914,10 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
 
   /**
    * Strategy M: Returns prompt cache efficiency metrics for dashboard display.
-   * Tracks cumulative cache read/creation across all turns for this session.
+   * Delegates to GeneralistTokenTracker.
    */
-  getCacheEfficiency(): {
-    hitRate: number
-    savedTokens: number
-    totalInput: number
-    turns: number
-    /** Strategy θ: Per-turn cost breakdown for cost waterfall chart */
-    turnBreakdown: Array<{
-      turn: number
-      inputTokens: number
-      outputTokens: number
-      cacheReadTokens: number
-      cacheCreationTokens: number
-      cacheHitRate: number
-      timestamp: number
-    }>
-  } {
-    const totalWithCache =
-      this.cacheStats.totalInput + this.cacheStats.cacheRead + this.cacheStats.cacheCreation
-    const hitRate = totalWithCache > 0 ? (this.cacheStats.cacheRead / totalWithCache) * 100 : 0
-    return {
-      hitRate,
-      savedTokens: this.cacheStats.cacheRead,
-      totalInput: this.cacheStats.totalInput,
-      turns: this.cacheStats.turns,
-      turnBreakdown: this.turnBreakdown
-    }
+  getCacheEfficiency(): CacheEfficiencyReport {
+    return this.tokenTracker.getCacheEfficiency()
   }
 
   /**
@@ -1869,7 +961,7 @@ Decompose this task into sub-tasks and respond with ONLY valid JSON.`
     // Strategy μ: Smarter compaction — compress only the oldest conversation context,
     // keeping recent specialist findings and current task context verbatim.
     // This preserves recent context quality while still reducing total size.
-    this.pendingCompaction.set(
+    this.promptAssembler.setPendingCompaction(
       this.currentConversationId,
       `/compact — Before answering the user's message below, compress our conversation context:
 
@@ -1897,7 +989,7 @@ Then continue using this summary as your working context and answer the user's m
   /** Removes session tracking for a conversation (e.g. on delete). */
   clearSession(conversationId: string): void {
     this.sessionMap.delete(conversationId)
-    this.turnCountMap.delete(conversationId)
+    this.promptAssembler.clearConversation(conversationId)
   }
 
   /**
@@ -1910,16 +1002,16 @@ Then continue using this summary as your working context and answer the user's m
     if (!this.workspacePath) return
 
     const previousMode = this.currentMode
-    this.log.info(`Switching mode: ${previousMode} → ${mode}`)
+    this.log.info(`[PIPELINE:mode-switch] ${previousMode} → ${mode} conversationId=${this.currentConversationId}`)
     this.currentMode = mode
 
     // Strategy ζ: Invalidate system prompt snapshot on mode switch
-    this.systemPromptSnapshot = null
+    this.promptAssembler.invalidateSnapshot()
 
     // Flag the mode switch — the next send() will prefix the user's message with
     // mode-change context so the agent knows its permissions changed, while
     // preserving the full conversation history (session is NOT cleared).
-    this.pendingModeSwitch = { from: previousMode, to: mode }
+    this.promptAssembler.setPendingModeSwitch(previousMode, mode)
 
     // Prompt is rebuilt on each send() turn; mode change only updates pending switch context.
   }

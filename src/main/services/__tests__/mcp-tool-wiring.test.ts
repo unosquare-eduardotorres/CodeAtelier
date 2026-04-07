@@ -9,6 +9,7 @@
  * - github-context.tool.ts: ❌ requires Electron safeStorage — skipped
  */
 import assert from 'node:assert/strict'
+import { ALL_MCP_TOOL_NAMES, MCP_TOOLS } from '../../../shared/constants'
 
 let passed = 0
 let failed = 0
@@ -70,32 +71,24 @@ describe('git-context MCP wiring', () => {
 
 // ── MCP tool name convention ──
 
-describe('MCP tool name convention', () => {
-  const EXPECTED_MCP_TOOLS = [
-    'mcp__code-graph__repo_map',
-    'mcp__code-graph__search_identifiers',
-    'mcp__semantic-search__semantic_search',
-    'mcp__git-context__git_log',
-    'mcp__git-context__git_diff',
-    'mcp__git-context__git_blame',
-    'mcp__task-context__list_tasks',
-    'mcp__task-context__get_task_output',
-    'mcp__checkpoint-context__list_checkpoints',
-    'mcp__checkpoint-context__get_checkpoint',
-    'mcp__github-context__get_pr_status',
-    'mcp__github-context__list_pr_comments',
-    'mcp__github-context__list_issues'
-  ]
+describe('MCP tool name convention (from MCP_TOOLS registry)', () => {
+  // Exclude control-actions from the "expected tools" list — they're internal-only
+  // and not exposed to specialists. ALL_MCP_TOOL_NAMES includes all tools from the registry.
+  const EXPECTED_MCP_TOOLS = ALL_MCP_TOOL_NAMES.filter(
+    (name) =>
+      !name.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX) &&
+      !name.startsWith(MCP_TOOLS.SPECIALIST_CONTROL._PREFIX)
+  )
 
   test('all MCP tool names follow mcp__{server}__{tool} convention', () => {
-    for (const name of EXPECTED_MCP_TOOLS) {
+    for (const name of ALL_MCP_TOOL_NAMES) {
       assert.match(name, /^mcp__[a-z-]+__[a-z_]+$/, `Invalid MCP tool name: ${name}`)
     }
   })
 
   test('no duplicate tool names', () => {
-    const unique = new Set(EXPECTED_MCP_TOOLS)
-    assert.equal(unique.size, EXPECTED_MCP_TOOLS.length, 'Duplicate tool names detected')
+    const unique = new Set(ALL_MCP_TOOL_NAMES)
+    assert.equal(unique.size, ALL_MCP_TOOL_NAMES.length, 'Duplicate tool names detected')
   })
 
   test('each server has at least one tool', () => {
@@ -116,6 +109,11 @@ describe('MCP tool name convention', () => {
     const servers = new Set(EXPECTED_MCP_TOOLS.map((n) => n.split('__')[1]))
     // code-graph, semantic-search, git-context, task-context, checkpoint-context, github-context
     assert.equal(servers.size, 6, `Expected 6 MCP servers, got ${servers.size}`)
+  })
+
+  test('registry includes all 8 MCP servers (including control-actions + specialist-control)', () => {
+    const allServers = new Set(ALL_MCP_TOOL_NAMES.map((n) => n.split('__')[1]))
+    assert.equal(allServers.size, 8, `Expected 8 MCP servers, got ${allServers.size}`)
   })
 })
 

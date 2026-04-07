@@ -27,6 +27,7 @@ export const IPC_CHANNELS = {
   CHAT_GRILL_QUESTION: 'chat:grillQuestion',
   CHAT_GRILL_EVALUATION: 'chat:grillEvaluation',
   CHAT_ASK_QUESTION: 'chat:askQuestion',
+  CHAT_PLAN: 'chat:plan',
   CHAT_EXECUTE_PLAN: 'chat:executePlan',
   CHAT_TASK_PROGRESS: 'chat:taskProgress',
   CHAT_BUILD_TASKS: 'chat:buildTasks',
@@ -474,6 +475,29 @@ export const THINKING_BUDGETS = {
   opus: '31999'
 } as const
 
+/**
+ * Maps complexity tiers to SDK effort levels.
+ * Controls how much reasoning Claude applies per task.
+ */
+export const COMPLEXITY_TO_EFFORT = {
+  simple: 'low',
+  moderate: 'medium',
+  complex: 'high'
+} as const satisfies Record<string, 'low' | 'medium' | 'high' | 'max'>
+
+/**
+ * Default USD budget caps per specialist execution.
+ * SDK returns error_max_budget_usd when exceeded — clean exit, no crash.
+ */
+export const SPECIALIST_BUDGET_CAPS = {
+  simple: 0.10,
+  moderate: 0.50,
+  complex: 2.00
+} as const satisfies Record<string, number>
+
+/** Generalist per-turn budget — higher because coordinator handles full conversations */
+export const GENERALIST_BUDGET_CAP = 1.50
+
 /** Maximum skill file size in bytes (500 KB) */
 export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const // 500 * 1024
 
@@ -611,3 +635,98 @@ export const GRILL_TRACKS: Record<GrillTrackId, GrillTrack> = {
     ]
   }
 } as const
+
+// ── MCP Tool Name Registry ──────────────────────────────────────────────────
+// Single source of truth for all MCP tool names used across the codebase.
+// SDK convention: tool full name = `mcp__{server}__{tool}`
+//
+// Usage:
+//   MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name   → 'mcp__code-graph__graph_map'
+//   MCP_TOOLS.CODE_GRAPH._SERVER          → 'code-graph'
+//   MCP_TOOLS.CODE_GRAPH._PREFIX          → 'mcp__code-graph__'
+//   MCP_TOOLS.CONTROL_ACTIONS._ALL_NAMES  → ['mcp__control-actions__emit_plan', ...]
+
+function mcpTool(server: string, tool: string, displayName: string) {
+  return {
+    /** Full SDK tool name: mcp__{server}__{tool} */
+    name: `mcp__${server}__${tool}` as const,
+    /** Short tool name as registered in createSdkMcpServer */
+    tool,
+    /** MCP server name */
+    server,
+    /** Human-readable display label for the UI */
+    displayName
+  }
+}
+
+function mcpServer<T extends Record<string, ReturnType<typeof mcpTool>>>(
+  server: string,
+  tools: T
+) {
+  return {
+    /** MCP server name */
+    _SERVER: server,
+    /** Prefix for startsWith() checks: `mcp__{server}__` */
+    _PREFIX: `mcp__${server}__` as const,
+    /** All tool full names as an array (for allowedTools lists) */
+    _ALL_NAMES: Object.values(tools).map((t) => t.name),
+    ...tools
+  } as const
+}
+
+export const MCP_TOOLS = {
+  CODE_GRAPH: mcpServer('code-graph', {
+    GRAPH_MAP: mcpTool('code-graph', 'graph_map', 'Code Graph · graph_map'),
+    SEARCH_IDENTIFIERS: mcpTool('code-graph', 'search_identifiers', 'Code Graph · search_identifiers'),
+    FIND_DEAD_CODE: mcpTool('code-graph', 'find_dead_code', 'Code Graph · find_dead_code')
+  }),
+  SEMANTIC_SEARCH: mcpServer('semantic-search', {
+    SEMANTIC_SEARCH: mcpTool('semantic-search', 'semantic_search', 'Semantic Search')
+  }),
+  GIT_CONTEXT: mcpServer('git-context', {
+    GIT_LOG: mcpTool('git-context', 'git_log', 'Git · log'),
+    GIT_DIFF: mcpTool('git-context', 'git_diff', 'Git · diff'),
+    GIT_BLAME: mcpTool('git-context', 'git_blame', 'Git · blame')
+  }),
+  TASK_CONTEXT: mcpServer('task-context', {
+    LIST_TASKS: mcpTool('task-context', 'list_tasks', 'Tasks · list'),
+    GET_TASK_OUTPUT: mcpTool('task-context', 'get_task_output', 'Tasks · output')
+  }),
+  CHECKPOINT_CONTEXT: mcpServer('checkpoint-context', {
+    LIST_CHECKPOINTS: mcpTool('checkpoint-context', 'list_checkpoints', 'Checkpoints · list'),
+    GET_CHECKPOINT: mcpTool('checkpoint-context', 'get_checkpoint', 'Checkpoints · get')
+  }),
+  GITHUB_CONTEXT: mcpServer('github-context', {
+    GET_PR_STATUS: mcpTool('github-context', 'get_pr_status', 'GitHub · PR status'),
+    LIST_PR_COMMENTS: mcpTool('github-context', 'list_pr_comments', 'GitHub · PR comments'),
+    LIST_ISSUES: mcpTool('github-context', 'list_issues', 'GitHub · issues')
+  }),
+  CONTROL_ACTIONS: mcpServer('control-actions', {
+    EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
+    REQUEST_HANDOFF: mcpTool('control-actions', 'request_handoff', 'Control · request_handoff'),
+    ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user'),
+    EMIT_MEMORY: mcpTool('control-actions', 'emit_memory', 'Control · emit_memory')
+  }),
+  SPECIALIST_CONTROL: mcpServer('specialist-control', {
+    EMIT_INVESTIGATION_REPORT: mcpTool(
+      'specialist-control',
+      'emit_investigation_report',
+      'Specialist · report'
+    )
+  })
+} as const
+
+/** All MCP tool full names — for test assertions and validation */
+export const ALL_MCP_TOOL_NAMES = Object.values(MCP_TOOLS).flatMap((server) => server._ALL_NAMES)
+
+/** Full name → display name map — for renderer ToolActivityBlock */
+export const MCP_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
+  Object.values(MCP_TOOLS).flatMap((server) =>
+    Object.entries(server)
+      .filter(([k]) => !k.startsWith('_'))
+      .map(([, t]) => [
+        (t as ReturnType<typeof mcpTool>).name,
+        (t as ReturnType<typeof mcpTool>).displayName
+      ])
+  )
+)

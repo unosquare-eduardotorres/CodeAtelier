@@ -2,6 +2,7 @@ import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import log from 'electron-log/main'
+import { MCP_TOOLS } from '../../shared/constants'
 import { taskArtifactService } from './task-artifact.service'
 
 const taskLog = log.scope('TaskContext')
@@ -29,11 +30,11 @@ class TaskContextMcpService {
     if (config) return { 'task-context': config }
 
     config = createSdkMcpServer({
-      name: 'task-context',
+      name: MCP_TOOLS.TASK_CONTEXT._SERVER,
       version: '1.0.0',
       tools: [
         {
-          name: 'list_tasks',
+          name: MCP_TOOLS.TASK_CONTEXT.LIST_TASKS.tool,
           description:
             'Get the current task plan state for this conversation. Returns task IDs, ' +
             'specialist assignments, statuses (pending/running/completed/failed), and dependencies. ' +
@@ -70,7 +71,7 @@ class TaskContextMcpService {
           }
         },
         {
-          name: 'get_task_output',
+          name: MCP_TOOLS.TASK_CONTEXT.GET_TASK_OUTPUT.tool,
           description:
             'Read the output artifact from a completed specialist task. Returns the ' +
             'specialist result (capped at 4,000 characters). Use to review what a ' +

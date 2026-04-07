@@ -82,7 +82,7 @@ class AgentContextService {
   extractSummaryFromOutput(output: string): string {
     if (!output || output.length === 0) return ''
 
-    // Prefer investigation report block if present
+    // Prefer investigation report block if present (fence format)
     const reportMatch = output.match(/```investigation-report\s*\n([\s\S]*?)```/)
     if (reportMatch) {
       try {
@@ -92,6 +92,43 @@ class AgentContextService {
         if (parsed.impact) parts.push(`Impact: ${parsed.impact}`)
         if (parsed.rootCause) parts.push(`Root cause: ${parsed.rootCause}`)
         if (parts.length > 0) return parts.join('. ').substring(0, MAX_ENTRY_LENGTH)
+      } catch {
+        // Fall through to generic extraction
+      }
+    }
+
+    // Check for tool-result investigation report (JSON with investigation fields)
+    const toolResultMatch = output.match(
+      /"problem"\s*:\s*"[^"]+"\s*,\s*"rootCause"\s*:\s*"[^"]+"/s
+    )
+    if (toolResultMatch) {
+      try {
+        // Try to extract a JSON object containing investigation report fields
+        const jsonStart = output.lastIndexOf('{', toolResultMatch.index ?? 0)
+        if (jsonStart !== -1) {
+          // Find matching closing brace
+          let depth = 0
+          let jsonEnd = jsonStart
+          for (let i = jsonStart; i < output.length; i++) {
+            if (output[i] === '{') depth++
+            else if (output[i] === '}') {
+              depth--
+              if (depth === 0) {
+                jsonEnd = i + 1
+                break
+              }
+            }
+          }
+          const candidate = output.substring(jsonStart, jsonEnd)
+          const parsed = JSON.parse(candidate)
+          if (parsed.problem && parsed.rootCause) {
+            const parts: string[] = []
+            if (parsed.problem) parts.push(`Problem: ${parsed.problem}`)
+            if (parsed.impact) parts.push(`Impact: ${parsed.impact}`)
+            if (parsed.rootCause) parts.push(`Root cause: ${parsed.rootCause}`)
+            if (parts.length > 0) return parts.join('. ').substring(0, MAX_ENTRY_LENGTH)
+          }
+        }
       } catch {
         // Fall through to generic extraction
       }

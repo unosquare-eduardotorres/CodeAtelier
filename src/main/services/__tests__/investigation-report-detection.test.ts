@@ -74,3 +74,47 @@ describe('Investigation report detection', () => {
     expect(isInvestigation).toBe(false)
   })
 })
+
+describe('Tool-emitted investigation report', () => {
+  test('InvestigationReportSchema validates valid report', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { InvestigationReportSchema } = require('../../services/specialist/structured-output')
+    const report = InvestigationReportSchema.parse({
+      problem: 'NullRef in TokenService',
+      rootCause: 'user.Role is null when session expires',
+      proposedFix: 'Add null check before accessing Role property',
+      filesAffected: [{ path: 'src/TokenService.cs', reason: 'Missing null guard' }],
+      impact: 'high',
+      impactReason: 'Causes 500 error on every auth request'
+    })
+    expect(report.problem).toBe('NullRef in TokenService')
+    expect(report.impact).toBe('high')
+    expect(report.filesAffected).toHaveLength(1)
+  })
+
+  test('InvestigationReportSchema rejects invalid impact level', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { InvestigationReportSchema } = require('../../services/specialist/structured-output')
+    expect(() =>
+      InvestigationReportSchema.parse({
+        problem: 'test',
+        rootCause: 'test',
+        proposedFix: 'test',
+        filesAffected: [],
+        impact: 'invalid',
+        impactReason: 'test'
+      })
+    ).toThrow()
+  })
+
+  test('InvestigationReportSchema rejects missing required fields', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { InvestigationReportSchema } = require('../../services/specialist/structured-output')
+    expect(() =>
+      InvestigationReportSchema.parse({
+        problem: 'test'
+        // missing rootCause, proposedFix, filesAffected, impact, impactReason
+      })
+    ).toThrow()
+  })
+})

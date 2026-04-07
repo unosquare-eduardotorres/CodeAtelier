@@ -77,7 +77,7 @@ interface ChatState {
   // Grill session state
   grillSession: GrillSessionState | null
 
-  // General chat pending questions (ask-question blocks)
+  // General chat pending questions (ask_user tool)
   pendingQuestions: GrillQuestion[] | null
 
   // Investigation report state
@@ -450,7 +450,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { streamingContent, streamingRole, streamingSpecialist, activeConversation } = get()
 
     if (streamingContent && activeConversation) {
-      const currentToolActivities = get().toolActivities
+      // Safety net: force-complete any tools still marked as "running" — ensures
+      // no tool dots stay yellow/running after the stream ends, even if a tool_result was lost.
+      const currentToolActivities = get().toolActivities.map((a) =>
+        a.status === 'running'
+          ? { ...a, status: 'completed' as const, completedAt: Date.now() }
+          : a
+      )
       const finalMessage: Message = {
         id: messageId,
         conversationId: activeConversation.id,
@@ -727,7 +733,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ grillSession: null })
   },
 
-  // General chat question actions (ask-question blocks)
+  // General chat question actions (ask_user tool)
   setPendingQuestions: (questions) => {
     set({ pendingQuestions: questions })
   },

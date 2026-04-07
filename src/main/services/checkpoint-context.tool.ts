@@ -2,6 +2,7 @@ import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import log from 'electron-log/main'
+import { MCP_TOOLS } from '../../shared/constants'
 import { checkpointService } from './checkpoint.service'
 
 const cpLog = log.scope('CheckpointContext')
@@ -26,11 +27,11 @@ class CheckpointContextMcpService {
     if (config) return { 'checkpoint-context': config }
 
     config = createSdkMcpServer({
-      name: 'checkpoint-context',
+      name: MCP_TOOLS.CHECKPOINT_CONTEXT._SERVER,
       version: '1.0.0',
       tools: [
         {
-          name: 'list_checkpoints',
+          name: MCP_TOOLS.CHECKPOINT_CONTEXT.LIST_CHECKPOINTS.tool,
           description:
             'List all checkpoints for this conversation. Returns checkpoint IDs, labels, ' +
             'git branch/SHA, and timestamps. Use to see available rollback points.',
@@ -76,7 +77,7 @@ class CheckpointContextMcpService {
           }
         },
         {
-          name: 'get_checkpoint',
+          name: MCP_TOOLS.CHECKPOINT_CONTEXT.GET_CHECKPOINT.tool,
           description:
             'Get the full state of a checkpoint — task statuses, git state, and metadata. ' +
             'Use to inspect what the system state was at a specific point. ' +

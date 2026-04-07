@@ -103,6 +103,7 @@ function App(): React.JSX.Element {
           })
         } else {
           updateToolActivity({
+            id: data.toolActivity.id,
             toolName: data.toolActivity.toolName,
             status: data.toolActivity.status,
             input: data.toolActivity.input,

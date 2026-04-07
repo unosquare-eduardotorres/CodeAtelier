@@ -2,6 +2,7 @@ import { type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type { LogFunctions } from 'electron-log'
 import type { AgentStatus } from '../../shared/types'
+import { MCP_TOOLS } from '../../shared/constants'
 import { buildEnvWithPath } from './env-utils'
 import { agentSessionRepository } from '../db/repositories'
 
@@ -81,41 +82,41 @@ export function summarizeToolInput(
       return `Reading output of task ${(input.id as string)?.slice(0, 7) ?? ''}…`
 
     // ── MCP tools: Code Graph ──
-    case 'mcp__code-graph__repo_map':
-      return `repo_map${input.focusFiles ? ` (focus: ${(input.focusFiles as string[]).length} files)` : ''}`
-    case 'mcp__code-graph__search_identifiers':
+    case MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name:
+      return `graph_map${input.focusFiles ? ` (focus: ${(input.focusFiles as string[]).length} files)` : ''}`
+    case MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name:
       return `search: ${(input.query as string) || ''}`
 
     // ── MCP tools: Semantic Search ──
-    case 'mcp__semantic-search__semantic_search':
+    case MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name:
       return `semantic: ${(input.query as string) || ''}`
 
     // ── MCP tools: Git Context ──
-    case 'mcp__git-context__git_log':
+    case MCP_TOOLS.GIT_CONTEXT.GIT_LOG.name:
       return `git log${input.path ? ` ${toRelativePath(input.path as string, workspacePath)}` : ''}`
-    case 'mcp__git-context__git_diff':
+    case MCP_TOOLS.GIT_CONTEXT.GIT_DIFF.name:
       return `git diff${input.path ? ` ${toRelativePath(input.path as string, workspacePath)}` : ''}`
-    case 'mcp__git-context__git_blame':
+    case MCP_TOOLS.GIT_CONTEXT.GIT_BLAME.name:
       return `git blame ${toRelativePath((input.path as string) || '', workspacePath)}`
 
     // ── MCP tools: Task Context ──
-    case 'mcp__task-context__list_tasks':
+    case MCP_TOOLS.TASK_CONTEXT.LIST_TASKS.name:
       return 'list tasks'
-    case 'mcp__task-context__get_task_output':
+    case MCP_TOOLS.TASK_CONTEXT.GET_TASK_OUTPUT.name:
       return `task output ${(input.taskId as string)?.slice(0, 7) ?? ''}…`
 
     // ── MCP tools: Checkpoint Context ──
-    case 'mcp__checkpoint-context__list_checkpoints':
+    case MCP_TOOLS.CHECKPOINT_CONTEXT.LIST_CHECKPOINTS.name:
       return 'list checkpoints'
-    case 'mcp__checkpoint-context__get_checkpoint':
+    case MCP_TOOLS.CHECKPOINT_CONTEXT.GET_CHECKPOINT.name:
       return `checkpoint ${(input.checkpointId as string)?.slice(0, 7) ?? ''}…`
 
     // ── MCP tools: GitHub Context ──
-    case 'mcp__github-context__get_pr_status':
+    case MCP_TOOLS.GITHUB_CONTEXT.GET_PR_STATUS.name:
       return `PR #${(input.prNumber as string) || ''}`
-    case 'mcp__github-context__list_pr_comments':
+    case MCP_TOOLS.GITHUB_CONTEXT.LIST_PR_COMMENTS.name:
       return `PR #${(input.prNumber as string) || ''} comments`
-    case 'mcp__github-context__list_issues':
+    case MCP_TOOLS.GITHUB_CONTEXT.LIST_ISSUES.name:
       return 'list issues'
 
     default:

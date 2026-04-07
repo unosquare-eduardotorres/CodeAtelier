@@ -68,6 +68,29 @@ export interface SDKExecuteOptions {
    * Used to control specialist output verbosity based on investigation depth.
    */
   maxOutputTokens?: number
+  /**
+   * Structured output format. Forces the model to return JSON matching this schema.
+   * SDK guarantees valid JSON — no regex extraction needed.
+   * On schema violation, SDK retries up to 3x (error_max_structured_output_retries on exhaustion).
+   */
+  outputFormat?: {
+    type: 'json_schema'
+    schema: Record<string, unknown>
+  }
+  /**
+   * Modern thinking config — replaces deprecated maxThinkingTokens.
+   * - { type: 'adaptive' } — Claude decides thinking depth (Opus 4.6+)
+   * - { type: 'enabled', budgetTokens: N } — Fixed budget
+   * - { type: 'disabled' } — No extended thinking
+   */
+  thinking?: { type: 'adaptive' } | { type: 'enabled'; budgetTokens: number } | { type: 'disabled' }
+  /**
+   * Effort level — controls reasoning depth independently of thinking budget.
+   * Mapped from complexity tier: simple→low, moderate→medium, complex→high.
+   */
+  effort?: 'low' | 'medium' | 'high' | 'max'
+  /** Hard USD budget cap. SDK returns error_max_budget_usd when exceeded. */
+  maxBudgetUsd?: number
 }
 
 export interface SDKExecuteResult {
@@ -121,6 +144,8 @@ export class SDKExecutor {
     // complete content as a replay. Without dedup, every text/tool block gets yielded twice.
     let hasStreamedText = false
     const processedToolIds = new Set<string>()
+    const toolIdToName = new Map<string, string>()
+
     // Start heartbeat timer — sets a flag that the generator checks on each iteration
     if (heartbeatInterval > 0) {
       heartbeatTimer = setInterval(() => {
@@ -184,7 +209,16 @@ export class SDKExecutor {
             ? { disallowedTools: options.disallowedTools }
             : {}),
           resume: options.resume,
-          maxThinkingTokens: options.maxThinkingTokens,
+          // Modern thinking config takes precedence over deprecated maxThinkingTokens
+          ...(options.thinking
+            ? { thinking: options.thinking }
+            : options.maxThinkingTokens
+              ? { maxThinkingTokens: options.maxThinkingTokens }
+              : {}),
+          ...(options.effort ? { effort: options.effort } : {}),
+          ...(options.maxBudgetUsd ? { maxBudgetUsd: options.maxBudgetUsd } : {}),
+          // Structured output — forces model to return schema-valid JSON
+          ...(options.outputFormat ? { outputFormat: options.outputFormat } : {}),
           // Required safety flag when using bypassPermissions
           allowDangerouslySkipPermissions: options.permissionMode === 'bypassPermissions',
           // Wire scope guard hooks for file-scope and dangerous-command protection
@@ -266,9 +300,14 @@ export class SDKExecutor {
 
                 const toolId = block.id as string | undefined
                 if (toolId && processedToolIds.has(toolId)) continue
+                if (toolId) {
+                  processedToolIds.add(toolId)
+                  toolIdToName.set(toolId, toolName)
+                }
                 yield {
                   type: 'tool_use',
                   toolName,
+                  toolId,
                   toolInput: toolInput
                     ? summarizeToolInput(toolName, toolInput, options.cwd)
                     : undefined
@@ -297,12 +336,16 @@ export class SDKExecutor {
             const cb = streamEvent.content_block as Record<string, unknown> | undefined
             if (cb?.type === 'tool_use') {
               const toolId = cb.id as string | undefined
-              if (toolId) processedToolIds.add(toolId)
               const toolName = cb.name as string
+              if (toolId) {
+                processedToolIds.add(toolId)
+                toolIdToName.set(toolId, toolName)
+              }
               const toolInput = cb.input as Record<string, unknown> | undefined
               yield {
                 type: 'tool_use',
                 toolName,
+                toolId,
                 toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
               }
             }
@@ -334,7 +377,16 @@ export class SDKExecutor {
           if (userMsg?.content && Array.isArray(userMsg.content)) {
             for (const block of userMsg.content as Record<string, unknown>[]) {
               if (block.type === 'tool_result') {
-                yield { type: 'tool_result', toolName: 'tool' }
+                const toolUseId = block.tool_use_id as string | undefined
+                const toolName = (toolUseId && toolIdToName.get(toolUseId)) ?? 'Unknown'
+                if (toolUseId) {
+                  toolIdToName.delete(toolUseId)
+                }
+                yield {
+                  type: 'tool_result',
+                  toolName,
+                  toolId: toolUseId
+                }
               }
             }
           }
@@ -342,6 +394,26 @@ export class SDKExecutor {
 
         // Capture result text
         if (msg.type === 'result') {
+          const subtype = (msg as Record<string, unknown>).subtype as string | undefined
+          const isError = (msg as Record<string, unknown>).is_error as boolean | undefined
+
+          // Detect SDK-level execution errors (budget exceeded, max turns, schema validation)
+          if (isError && subtype && subtype !== 'success') {
+            const errorDetail =
+              subtype === 'error_max_budget_usd'
+                ? 'budget cap exceeded'
+                : subtype === 'error_max_turns'
+                  ? 'max turns reached'
+                  : subtype === 'error_max_structured_output_retries'
+                    ? 'structured output schema validation failed after retries'
+                    : subtype
+            sdkLog.warn(`[TELEMETRY:sdk-result-error] subtype=${subtype} detail=${errorDetail}`)
+            yield {
+              type: 'error',
+              error: `SDK execution stopped: ${errorDetail}`
+            }
+          }
+
           resultText = msg.result as string | undefined
           if (resultText && !hasStreamedText) {
             yield { type: 'text', content: resultText }
@@ -374,28 +446,17 @@ export class SDKExecutor {
         }
       }
     } catch (error) {
-      if (planExtracted) {
-        // Expected abort after plan extraction — not an error
-        sdkLog.info(
-          `[TELEMETRY:plan-abort] id=${requestId} — SDK aborted after plan extraction (expected)`
-        )
-        telemetryEntry.status = 'succeeded'
-        telemetryEntry.completedAt = Date.now()
-        telemetryEntry.durationMs = telemetryEntry.completedAt - telemetryEntry.startedAt
-      } else {
-        sdkLog.error('SDK execution error:', error)
-        // Telemetry: record failure
-        telemetryEntry.status = 'failed'
-        telemetryEntry.completedAt = Date.now()
-        telemetryEntry.durationMs = telemetryEntry.completedAt - telemetryEntry.startedAt
-        telemetryEntry.error = (error as Error).message
-        sdkLog.info(
-          `[TELEMETRY:request-failed] id=${requestId} duration=${telemetryEntry.durationMs}ms error=${telemetryEntry.error}`
-        )
-        yield {
-          type: 'error',
-          error: `SDK execution failed: ${(error as Error).message}`
-        }
+      sdkLog.error('SDK execution error:', error)
+      telemetryEntry.status = 'failed'
+      telemetryEntry.completedAt = Date.now()
+      telemetryEntry.durationMs = telemetryEntry.completedAt - telemetryEntry.startedAt
+      telemetryEntry.error = (error as Error).message
+      sdkLog.info(
+        `[TELEMETRY:request-failed] id=${requestId} duration=${telemetryEntry.durationMs}ms error=${telemetryEntry.error}`
+      )
+      yield {
+        type: 'error',
+        error: `SDK execution failed: ${(error as Error).message}`
       }
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer)

@@ -672,6 +672,49 @@ export interface StructuredPlan {
   diagrams?: Array<{ title: string; mermaid: string }>
 }
 
+export interface PlanDetectedEvent {
+  rawContent: string
+  structuredPlan: StructuredPlan | null
+  beforePlan: string
+  afterPlan: string
+}
+
+// ── Generalist Intent System ──
+
+/**
+ * Tracks which control-actions MCP tools fired during the current turn.
+ * Used by IntentDetector to prioritize MCP-based detection over regex fallback.
+ */
+export interface ControlToolState {
+  plan: boolean
+  handoff: boolean
+  askUser: boolean
+  memory: boolean
+  /** MCP-emitted plan intent (set by onPlan callback) */
+  planIntent?: GeneralistIntent & { type: 'plan' }
+  /** MCP-emitted handoff intent (set by onHandoff callback) */
+  handoffIntent?: GeneralistIntent & { type: 'handoff' }
+  /** MCP-emitted askUser intent (set by onAskUser callback) */
+  askUserIntent?: GeneralistIntent & { type: 'askUser' }
+}
+
+/**
+ * The generalist's decision after processing a user message.
+ *
+ * Discriminated union that collapses the previously fragmented event system
+ * (5 string-based emit() calls, 3 detect*() methods, 3 MCP callbacks) into
+ * a single typed output. Each variant maps to one UI action.
+ */
+export type GeneralistIntent =
+  | { type: 'response'; content: string }
+  | { type: 'plan'; plan: PlanDetectedEvent }
+  | { type: 'handoff'; brief: HandoffBrief }
+  | { type: 'askUser'; questions: GrillQuestion[] }
+  | { type: 'grillQuestion'; questions: GrillQuestion[] }
+  | { type: 'grillComplete'; summary: string; proposedTasks: Array<{ title: string; description: string }> }
+  | { type: 'grillEvaluation'; evaluation: GrillEvaluation }
+  | { type: 'error'; message: string }
+
 // ── Build Summary Type ──
 export interface BuildSummary {
   tasks: Array<{

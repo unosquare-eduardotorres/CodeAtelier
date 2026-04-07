@@ -3,7 +3,7 @@ import { getDatabase } from '../index'
 /**
  * Repository for the `code_graph_ranks` table.
  * Stores pre-computed PageRank scores per file for instant lookups
- * during repo_map generation and decompose() file ranking.
+ * during graph_map generation and decompose() file ranking.
  */
 export class CodeGraphRankRepository {
   /**

@@ -2,7 +2,7 @@ import type { BrowserWindow } from 'electron'
 import { fileChangeRepository } from '../db/repositories'
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
-import { IPC_CHANNELS } from '../../shared/constants'
+import { IPC_CHANNELS, MCP_TOOLS } from '../../shared/constants'
 import { chatIpcLogger } from '../logger'
 
 const log = chatIpcLogger
@@ -78,6 +78,9 @@ export function forwardChunkToRenderer(
       ...specialistMeta
     })
   } else if (chunk.type === 'tool_use') {
+    // Control tools are internal — don't show as tool activity in the UI
+    if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
+
     // Track file changes for Write/Edit tools
     if ((chunk.toolName === 'Write' || chunk.toolName === 'Edit') && chunk.toolInput) {
       try {
@@ -96,7 +99,7 @@ export function forwardChunkToRenderer(
       role,
       ...specialistMeta,
       toolActivity: {
-        id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         toolName: chunk.toolName ?? 'Unknown',
         status: 'running',
         input: chunk.toolInput,
@@ -104,6 +107,9 @@ export function forwardChunkToRenderer(
       }
     })
   } else if (chunk.type === 'tool_result') {
+    // Control tool results are internal
+    if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
+
     let toolInputSummary: string | undefined
     if (chunk.content) {
       try {
@@ -136,7 +142,7 @@ export function forwardChunkToRenderer(
     }
     const resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
     const toolActivity: Record<string, unknown> = {
-      id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       toolName: chunk.toolName ?? 'Unknown',
       status: 'completed',
       completedAt: Date.now()

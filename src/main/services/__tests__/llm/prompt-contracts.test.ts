@@ -77,8 +77,8 @@ function baseOptions(ac?: AbortController): SDKExecuteOptions {
     // Tests verify prompt adherence, not SDK permission behavior.
     permissionMode: 'default' as const,
     allowedTools: [] as string[],
-    // Keep disallowedTools as defense-in-depth in case SDK changes behavior
-    disallowedTools: ['ExitPlanMode', 'ToolSearch'],
+    // Block SDK built-in tools that conflict with our code-fence paradigm
+    disallowedTools: ['ExitPlanMode', 'AskUserQuestion', 'ToolSearch'],
     maxTurns: 1,
     prompt: '', // overridden by caller
     systemPrompt: '', // overridden by caller

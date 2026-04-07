@@ -391,6 +391,29 @@ class EventLoggerService {
     )
   }
 
+  logPlanDetected(opts: {
+    conversationId: string
+    workspaceId?: string
+    detectionPath: 'tool' | 'regex'
+    structured: boolean
+    contentLength: number
+  }): void {
+    this.log(
+      'plan.detected',
+      'agent',
+      `Plan detected via ${opts.detectionPath} (structured=${opts.structured}, ${opts.contentLength} chars)`,
+      {
+        ...opts,
+        agentId: 'generalist',
+        data: {
+          detectionPath: opts.detectionPath,
+          structured: opts.structured,
+          contentLength: opts.contentLength
+        }
+      }
+    )
+  }
+
   logPlanExecutionStarted(opts: {
     conversationId: string
     workspaceId?: string

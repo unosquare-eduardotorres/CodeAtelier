@@ -2,22 +2,22 @@ import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import log from 'electron-log/main'
+import { MCP_TOOLS } from '../../shared/constants'
 import { codeGraphService } from './code-graph.service'
 
 /**
- * Manages per-workspace MCP servers that expose `repo_map` and `search_identifiers`
+ * Manages per-workspace MCP servers that expose `graph_map` and `search_identifiers`
  * tools to the Claude Agent SDK. Reads from the persisted SQLite code graph —
  * no filesystem walk or PageRank recomputation on each tool call.
  *
  * Replaces the `repomap-mcp` createServer() with our DB-backed implementation.
- * Tool names match the original so the generalist's REPOMAP_GUIDANCE_PROMPT works unchanged.
  */
 class CodeGraphMcpService {
   private servers = new Map<string, McpServerConfig>()
 
   /**
    * Get or create an MCP server config for the given workspace.
-   * Exposes `repo_map` and `search_identifiers` tools backed by SQLite.
+   * Exposes `graph_map` and `search_identifiers` tools backed by SQLite.
    */
   getMcpServersConfig(
     workspaceId: string,
@@ -29,11 +29,11 @@ class CodeGraphMcpService {
     }
 
     config = createSdkMcpServer({
-      name: 'code-graph',
+      name: MCP_TOOLS.CODE_GRAPH._SERVER,
       version: '1.0.0',
       tools: [
         {
-          name: 'repo_map',
+          name: MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.tool,
           description:
             'Generate a ranked repository map of code definitions ' +
             'via PageRank over cross-file reference graphs. ' +
@@ -55,7 +55,7 @@ class CodeGraphMcpService {
             priorityIdentifiers: z.array(z.string()).optional()
           },
           handler: async (args) => {
-            log.info(`[CodeGraph] MCP repo_map query (workspace: ${workspaceId})`)
+            log.info(`[CodeGraph] MCP graph_map query (workspace: ${workspaceId})`)
             const result = await codeGraphService.getRepoMap(workspaceId, workspacePath, {
               focusFiles: args.focusFiles as string[] | undefined,
               mapTokens: args.tokenLimit as number | undefined,
@@ -69,7 +69,7 @@ class CodeGraphMcpService {
           }
         },
         {
-          name: 'search_identifiers',
+          name: MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.tool,
           description:
             'Search for code identifiers (functions, classes, variables) across the repository ' +
             'via Tree-sitter AST analysis. Returns matching definitions and references with code context.',
@@ -102,7 +102,7 @@ class CodeGraphMcpService {
           }
         },
         {
-          name: 'find_dead_code',
+          name: MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.tool,
           description:
             'Find potentially unused code definitions (functions, classes, variables) ' +
             'that have no cross-file references in the codebase. ' +

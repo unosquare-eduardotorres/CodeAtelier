@@ -516,7 +516,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           </div>
         )}
 
-        {/* General chat ask-question card — reuses GrillQuestionCard */}
+        {/* General chat ask_user card — reuses GrillQuestionCard */}
         {hasPendingQuestions && pendingQuestions && (
           <div className="flex justify-start px-4">
             <div className="max-w-[85%]">

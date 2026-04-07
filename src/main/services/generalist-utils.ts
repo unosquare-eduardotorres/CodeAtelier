@@ -1,7 +1,10 @@
 import type { ConversationMode, DecomposedTask, HandoffBrief, TaskPlan } from '../../shared/types'
+import { MCP_TOOLS } from '../../shared/constants'
 import type { SDKAgentDefinition } from './sdk-executor'
 
 export const HANDOFF_REGEX = /```handoff\n([\s\S]*?)```/
+
+export const PLAN_REGEX = /`{3,4}plan\n([\s\S]*?)`{3,4}/
 
 const ACTION_VERB_PREFIX =
   /^(Fix|Implement|Create|Build|Rebuild|Deploy|Migrate|Refactor|Add|Update|Remove|Delete)\b/i
@@ -129,41 +132,26 @@ export function buildSubAgentDefinitions(
 
     // Build MCP tool names from active server names so the SDK exposes them to SubAgents
     const mcpToolNames: string[] = []
-    if (mcpServerNames?.includes('code-graph')) {
-      mcpToolNames.push(
-        'mcp__code-graph__repo_map',
-        'mcp__code-graph__search_identifiers',
-        'mcp__code-graph__find_dead_code'
-      )
+    if (mcpServerNames?.includes(MCP_TOOLS.CODE_GRAPH._SERVER)) {
+      mcpToolNames.push(...MCP_TOOLS.CODE_GRAPH._ALL_NAMES)
     }
-    if (mcpServerNames?.includes('semantic-search')) {
-      mcpToolNames.push('mcp__semantic-search__semantic_search')
+    if (mcpServerNames?.includes(MCP_TOOLS.SEMANTIC_SEARCH._SERVER)) {
+      mcpToolNames.push(...MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES)
     }
-    if (mcpServerNames?.includes('git-context')) {
-      mcpToolNames.push(
-        'mcp__git-context__git_log',
-        'mcp__git-context__git_diff',
-        'mcp__git-context__git_blame'
-      )
+    if (mcpServerNames?.includes(MCP_TOOLS.GIT_CONTEXT._SERVER)) {
+      mcpToolNames.push(...MCP_TOOLS.GIT_CONTEXT._ALL_NAMES)
     }
     // Task context: allows specialists to inspect sibling task outputs
-    if (mcpServerNames?.includes('task-context')) {
-      mcpToolNames.push('mcp__task-context__list_tasks', 'mcp__task-context__get_task_output')
+    if (mcpServerNames?.includes(MCP_TOOLS.TASK_CONTEXT._SERVER)) {
+      mcpToolNames.push(...MCP_TOOLS.TASK_CONTEXT._ALL_NAMES)
     }
     // Checkpoint context: allows specialists to inspect conversation checkpoints
-    if (mcpServerNames?.includes('checkpoint-context')) {
-      mcpToolNames.push(
-        'mcp__checkpoint-context__list_checkpoints',
-        'mcp__checkpoint-context__get_checkpoint'
-      )
+    if (mcpServerNames?.includes(MCP_TOOLS.CHECKPOINT_CONTEXT._SERVER)) {
+      mcpToolNames.push(...MCP_TOOLS.CHECKPOINT_CONTEXT._ALL_NAMES)
     }
     // GitHub context: allows specialists to check PR status and issues
-    if (mcpServerNames?.includes('github-context')) {
-      mcpToolNames.push(
-        'mcp__github-context__get_pr_status',
-        'mcp__github-context__list_pr_comments',
-        'mcp__github-context__list_issues'
-      )
+    if (mcpServerNames?.includes(MCP_TOOLS.GITHUB_CONTEXT._SERVER)) {
+      mcpToolNames.push(...MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES)
     }
 
     const tools =

@@ -76,8 +76,8 @@ function baseOptions(ac?: AbortController): SDKExecuteOptions {
     // Tests verify prompt adherence, not SDK permission behavior.
     permissionMode: 'default' as const,
     allowedTools: [] as string[],
-    // Keep disallowedTools as defense-in-depth in case SDK changes behavior
-    disallowedTools: ['ExitPlanMode', 'ToolSearch'],
+    // Block SDK built-in tools that conflict with our code-fence paradigm
+    disallowedTools: ['ExitPlanMode', 'AskUserQuestion', 'ToolSearch'],
     maxTurns: 1,
     prompt: '', // overridden by caller
     systemPrompt: '', // overridden by caller
@@ -162,8 +162,8 @@ async function run(): Promise<void> {
       withRetry(async () => {
         const { result } = await executor.executeAndCollect({
           ...baseOptions(ac),
-          // Block write tools + SDK plan tools — mirrors generalist.service.ts
-          disallowedTools: ['Write', 'Edit', 'ExitPlanMode', 'ToolSearch'],
+          // Block write tools + SDK built-in tools — mirrors generalist.service.ts code-fence paradigm
+          disallowedTools: ['Write', 'Edit', 'ExitPlanMode', 'AskUserQuestion', 'ToolSearch'],
           prompt:
             'Create an implementation plan for adding a user settings page with dark mode toggle and notification preferences.',
           systemPrompt: GENERALIST_BASE_PROMPT + '\n' + GENERALIST_PLAN_MODE_SECTION

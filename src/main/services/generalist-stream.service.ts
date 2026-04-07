@@ -9,15 +9,18 @@ import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
+  GeneralistIntent,
   GrillEvaluation,
   GrillQuestion,
   HandoffBrief,
-  ImageAttachment
+  ImageAttachment,
+  PlanDetectedEvent
 } from '../../shared/types'
 import { memoryService } from './memory.service'
 import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
 import { chatIpcLogger } from '../logger'
+import { IntentRouter } from './intent-router'
 
 const log = chatIpcLogger
 
@@ -33,6 +36,7 @@ export interface PipelineCallbacks {
 export class GeneralistStreamService {
   private mainWindow: BrowserWindow
   private callbacks: PipelineCallbacks
+  private intentRouter: IntentRouter
 
   /** Instance-level flag to prevent duplicate message saves when stop is called mid-stream */
   private isStopped = false
@@ -40,6 +44,7 @@ export class GeneralistStreamService {
   constructor(mainWindow: BrowserWindow, callbacks: PipelineCallbacks) {
     this.mainWindow = mainWindow
     this.callbacks = callbacks
+    this.intentRouter = new IntentRouter(mainWindow)
     this.registerEventForwarders()
   }
 
@@ -47,9 +52,17 @@ export class GeneralistStreamService {
 
   /**
    * Register once-at-startup event forwarders from generalist → renderer.
-   * These fire during any active stream but are independent of per-message lifecycle.
+   *
+   * The typed 'intent' event handles all control actions (plan, handoff, askUser,
+   * grill events) via IntentRouter. Legacy events (plan, grillQuestion,
+   * grillComplete, grillEvaluation) are still emitted by the MCP control callbacks
+   * for backward compat — their forwarders remain to handle the immediate MCP path.
+   *
+   * The IntentRouter handles post-stream regex-fallback intents + grill events
+   * (which have no MCP tool equivalent and are always regex-detected).
    */
   private registerEventForwarders(): void {
+    // compactNeeded is not an intent — keep as direct forwarder
     generalistService.on('compactNeeded', (data: { level: string; inputTokens: number }) => {
       this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId: generalistService.getCurrentConversationId() || '',
@@ -59,13 +72,8 @@ export class GeneralistStreamService {
       })
     })
 
-    generalistService.on('grillQuestion', (data: { questions: GrillQuestion[] }) => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_QUESTION, {
-        conversationId: generalistService.getCurrentConversationId() || '',
-        questions: data.questions
-      })
-    })
-
+    // Legacy forwarders for MCP-triggered events (fire during streaming)
+    // These handle the immediate path when control tools fire via MCP callbacks.
     generalistService.on('askQuestion', (data: { questions: GrillQuestion[] }) => {
       this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
         conversationId: generalistService.getCurrentConversationId() || '',
@@ -73,23 +81,24 @@ export class GeneralistStreamService {
       })
     })
 
-    generalistService.on('grillEvaluation', (data: GrillEvaluation) => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_EVALUATION, {
+    generalistService.on('plan', (data: PlanDetectedEvent) => {
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_PLAN, {
         conversationId: generalistService.getCurrentConversationId() || '',
         ...data
       })
     })
 
-    generalistService.on(
-      'grillComplete',
-      (data: { summary: string; proposedTasks: Array<{ title: string; description: string }> }) => {
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_COMPLETE, {
-          conversationId: generalistService.getCurrentConversationId() || '',
-          summary: data.summary,
-          proposedTasks: data.proposedTasks
-        })
-      }
-    )
+    // Typed intent handler — routes post-stream intents (regex fallback + grill events)
+    // via IntentRouter. Skips plan/askUser/handoff if they were already sent by MCP forwarders above.
+    generalistService.on('intent', (intent: GeneralistIntent) => {
+      const conversationId = generalistService.getCurrentConversationId() || ''
+
+      // Skip types that were already forwarded by MCP legacy listeners
+      // (plan, askUser, handoff are emitted both by MCP callbacks and post-stream detection,
+      // but IntentDetector.detectAll() already filters out MCP-fired types, so these
+      // intents only arrive here when they're regex-fallback detected)
+      this.intentRouter.route(conversationId, intent)
+    })
   }
 
   // ── Stream Lifecycle ──
@@ -272,10 +281,19 @@ export class GeneralistStreamService {
       await handoffPromise
     }
 
+    // Intent-based handoff handler — catches regex-fallback handoffs
+    // that come through the typed 'intent' event (MCP handoffs still use legacy 'handoff' event)
+    const onIntent = async (intent: GeneralistIntent): Promise<void> => {
+      if (intent.type === 'handoff' && !handoffPromise) {
+        await onHandoff(intent.brief)
+      }
+    }
+
     const cleanupListeners = (): void => {
       generalistService.removeListener('chunk', onChunk)
       generalistService.removeListener('complete', onComplete)
       generalistService.removeListener('handoff', onHandoff)
+      generalistService.removeListener('intent', onIntent)
     }
 
     // ── Step 3 + 5: Mode switch + send ──
@@ -289,6 +307,7 @@ export class GeneralistStreamService {
       generalistService.on('chunk', onChunk)
       generalistService.on('complete', onComplete)
       generalistService.on('handoff', onHandoff)
+      generalistService.on('intent', onIntent)
       await generalistService.send(
         fullContent,
         conversationId,
