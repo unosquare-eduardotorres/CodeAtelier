@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { extname, join, resolve, relative } from 'node:path'
+import { extname, resolve, relative } from 'node:path'
 import simpleGit from 'simple-git'
 import type { RepoInfo } from '../../shared/types'
 import log from 'electron-log'
@@ -239,22 +239,30 @@ export class RepoService {
     assertWithinRepo(repoPath, filePath)
     const git = simpleGit(repoPath)
     const language = detectLanguage(filePath)
-    const absolutePath = join(repoPath, filePath)
+
+    // Normalize: resolve handles both absolute and relative paths correctly.
+    // join('/a/b', '/c/d') = '/a/b/c/d' (wrong for absolute paths)
+    // resolve('/a/b', '/c/d') = '/c/d' (correct — uses last absolute path)
+    const absoluteRepo = resolve(repoPath)
+    const absoluteFile = resolve(repoPath, filePath)
+    // Always produce a relative path for git show — absolute paths break git.show
+    const normalizedPath = relative(absoluteRepo, absoluteFile)
 
     let oldContent = ''
     let newContent = ''
 
-    // Get old content from HEAD
+    // Get old content from HEAD using normalized relative path
     try {
-      oldContent = await git.show([`HEAD:${filePath}`])
-    } catch {
-      // File is new (untracked) — no HEAD version
+      oldContent = await git.show([`HEAD:${normalizedPath}`])
+    } catch (e) {
+      // File is new (untracked) — no HEAD version. Log for debugging path issues.
+      logger.debug(`git show HEAD:${normalizedPath} failed (file may be new):`, e)
       oldContent = ''
     }
 
     // Get new content from working tree
     try {
-      newContent = await readFile(absolutePath, 'utf-8')
+      newContent = await readFile(absoluteFile, 'utf-8')
     } catch {
       // File was deleted
       newContent = ''

@@ -75,10 +75,14 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
   )
 
   // ── Compact conversation context ──
-  ipcMain.handle(IPC_CHANNELS.CHAT_COMPACT, async (event) => {
-    validateSender(event)
-    await generalistStreamService.compact()
-  })
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_COMPACT,
+    async (event, args?: { extractNuance?: boolean }) => {
+      validateSender(event)
+      const extractNuance = args?.extractNuance ?? false
+      await generalistStreamService.compact(extractNuance)
+    }
+  )
 
   // ── Stop generation ──
   ipcMain.handle(IPC_CHANNELS.CHAT_STOP, async (event) => {

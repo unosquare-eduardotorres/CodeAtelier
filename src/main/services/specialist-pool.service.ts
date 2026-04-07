@@ -19,7 +19,8 @@ import {
   agentSessionRepository,
   workspaceRepository,
   conversationSpecialistRepository,
-  appPreferenceRepository
+  appPreferenceRepository,
+  fileChangeRepository
 } from '../db/repositories'
 import { promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
@@ -1505,6 +1506,25 @@ export class SpecialistPoolService extends EventEmitter {
         maxBudgetUsd: budgetCap,
         maxTurns: execState.maxTurns,
         abortController: execState.abortController,
+        // Defense-in-depth: track file changes via SDK FileChanged hook.
+        // This fires AFTER each file write/edit with the actual path and change type,
+        // providing a reliable source of truth independent of streaming event ordering.
+        onFileChanged: (absoluteFilePath: string, changeType: string) => {
+          if (this.conversationId) {
+            try {
+              const relativePath = this.workspacePath && absoluteFilePath.startsWith(this.workspacePath)
+                ? absoluteFilePath.slice(this.workspacePath.length).replace(/^\//, '')
+                : absoluteFilePath
+              fileChangeRepository.track(
+                this.conversationId,
+                relativePath,
+                changeType === 'create' ? 'created' : changeType === 'delete' ? 'deleted' : 'modified'
+              )
+            } catch (e) {
+              this.log.warn('FileChanged hook: failed to track file change:', e)
+            }
+          }
+        },
         // Enable 1M context window for Sonnet specialists
         ...(isSonnet ? { betas: ['context-1m-2025-08-07'] } : {}),
         ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),

@@ -401,16 +401,27 @@ export class SDKExecutor {
             if (cb?.type === 'tool_use') {
               const toolId = cb.id as string | undefined
               const toolName = cb.name as string
-              if (toolId) {
-                processedToolIds.add(toolId)
-                toolIdToName.set(toolId, toolName)
-              }
               const toolInput = cb.input as Record<string, unknown> | undefined
+              const hasInput = toolInput && Object.keys(toolInput).length > 0
+
+              if (toolId) {
+                toolIdToName.set(toolId, toolName)
+                // Only mark as processed if we have actual input — the API streams
+                // tool input via input_json_delta so content_block_start often has
+                // empty input {}. Deferring dedup lets the assistant message replay
+                // (which has the full input + cwd) handle file tracking correctly.
+                if (hasInput) {
+                  processedToolIds.add(toolId)
+                }
+              }
+
               yield {
                 type: 'tool_use',
                 toolName,
                 toolId,
-                toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
+                toolInput: hasInput
+                  ? summarizeToolInput(toolName, toolInput, options.cwd)
+                  : undefined
               }
             }
           }

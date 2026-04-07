@@ -81,6 +81,38 @@ const remarkEmojiSpan: Plugin<[], Root> = () => {
   }
 }
 
+/**
+ * Remark plugin: wraps the last paragraph ending with '?' in a styled
+ * <div class="agent-question"> so questions stand out visually in chat.
+ */
+const remarkHighlightQuestions: Plugin<[], Root> = () => {
+  return (tree) => {
+    let lastQuestionIndex: number | null = null
+
+    tree.children.forEach((node, index) => {
+      if (node.type !== 'paragraph') return
+      const textContent = (node as { children: Array<{ value?: string }> }).children
+        .map((c) => c.value ?? '')
+        .join('')
+        .trim()
+      if (textContent.endsWith('?')) {
+        lastQuestionIndex = index
+      }
+    })
+
+    if (lastQuestionIndex !== null) {
+      const node = tree.children[lastQuestionIndex]
+      tree.children.splice(
+        lastQuestionIndex,
+        1,
+        { type: 'html', value: '<div class="agent-question">' } as any,
+        node,
+        { type: 'html', value: '</div>' } as any
+      )
+    }
+  }
+}
+
 /** Chat actions needed by MessageBubble — passed as props to avoid N×useShallow subscriptions */
 export interface MessageBubbleActions {
   updateMode: (mode: ConversationMode) => Promise<void>
@@ -137,7 +169,7 @@ function shortenFilePath(filePath: string): string {
 }
 
 // Module-level constants — stable references, never recreated on render
-const REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkEmojiSpan]
+const REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkEmojiSpan, remarkHighlightQuestions]
 const REHYPE_PLUGINS = [rehypeRaw]
 
 function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Element {
@@ -217,6 +249,12 @@ function stripStrayBackticks(children: React.ReactNode): React.ReactNode[] | nul
       const stripped = child.replace(/`/g, '')
       return stripped || null
     }
+    if (React.isValidElement(child) && child.props?.children) {
+      return React.cloneElement(child, {
+        ...child.props,
+        children: stripStrayBackticks(child.props.children)
+      })
+    }
     return child
   })
 }
@@ -225,6 +263,8 @@ function stripStrayBackticks(children: React.ReactNode): React.ReactNode[] | nul
 const markdownComponents = {
   p: ({ children }: { children?: React.ReactNode }) => <p>{stripStrayBackticks(children)}</p>,
   li: ({ children }: { children?: React.ReactNode }) => <li>{stripStrayBackticks(children)}</li>,
+  strong: ({ children }: { children?: React.ReactNode }) => <strong>{stripStrayBackticks(children)}</strong>,
+  em: ({ children }: { children?: React.ReactNode }) => <em>{stripStrayBackticks(children)}</em>,
   pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
     const isBlock = className?.includes('language-')
@@ -251,25 +291,28 @@ const markdownComponents = {
       )
     }
 
-    const isFilePath = /^[\/~][\w.\-\/@ ]+\.\w{1,10}$/.test(text) || /^[A-Z]:\\/.test(text)
+    const isFilePath =
+      /^[\/~][\w.\-\/@ ]+\.\w{1,10}$/.test(text) ||
+      /^[A-Z]:\\/.test(text) ||
+      /^[\w@][\w.\-\/@ ]*\/[\w.\-\/@ ]*\.\w{1,10}$/.test(text)
     if (isFilePath) {
       const shortenedPath = shortenFilePath(text)
       return (
-        <code
+        <span
           role="button"
           aria-label={`Reveal ${text} in file manager`}
-          className="flex items-center gap-1.5 w-fit bg-primary-muted px-2.5 py-1 rounded-md text-sm font-medium text-primary-text hover:bg-primary/25 cursor-pointer transition-colors my-1"
+          className="inline-flex items-center gap-1 text-sm font-medium text-info hover:text-info/80 underline decoration-info/40 cursor-pointer transition-colors"
           title={`Reveal in file manager: ${text}`}
           onClick={() => window.api.showItemInFolder(text)}
         >
           <FileText size={13} className="shrink-0" />
           {shortenedPath}
-        </code>
+        </span>
       )
     }
 
     return (
-      <code className="bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-primary-text">
+      <code className="bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-text-body font-semibold">
         {text}
       </code>
     )

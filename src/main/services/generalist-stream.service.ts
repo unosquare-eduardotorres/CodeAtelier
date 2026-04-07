@@ -397,9 +397,9 @@ export class GeneralistStreamService {
 
   // ── Compact ──
 
-  async compact(): Promise<void> {
-    log.info('Compact requested')
-    await generalistService.compact()
+  async compact(extractNuance = false): Promise<void> {
+    log.info(`Compact requested (nuance=${extractNuance})`)
+    await generalistService.compact(extractNuance)
   }
 }
 

@@ -840,20 +840,9 @@ export class GeneralistService extends AgentBaseService {
     const warningThreshold = Math.floor(suggestThreshold * 0.8)
 
     if (inputTokens >= autoThreshold) {
-      this.log.warn(`Context very large (${inputTokens} input tokens) — auto-compacting`)
+      this.log.warn(`Context very large (${inputTokens} input tokens) — prompting user to compact`)
       this.emit('compactNeeded', { level: 'critical', inputTokens })
-      // Auto-trigger compaction at critical threshold. Max 5 compactions per session.
-      // Strategy 7: Delay slightly to allow specialist results to be injected first.
-      if (this.compactCount < 5) {
-        setTimeout(() => {
-          // Only compact when idle — don't interrupt active queries
-          if (this.currentStatus === 'idle') {
-            this.compact().catch((err) => this.log.error('Auto-compaction failed:', err))
-          } else {
-            this.log.info('Deferring compaction — generalist is busy')
-          }
-        }, 2000)
-      }
+      // No auto-compact — user will choose via CompactContextModal
     } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
       this.compactSuggested = true
       this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
@@ -1039,7 +1028,7 @@ export class GeneralistService extends AgentBaseService {
    * instruction and piggyback it on the next user message — the compaction happens as part
    * of the normal message flow at zero additional cost.
    */
-  async compact(): Promise<void> {
+  async compact(extractNuance = false): Promise<void> {
     if (!this.workspacePath || !this.currentConversationId) {
       throw new Error('Generalist not running — nothing to compact')
     }
@@ -1050,17 +1039,40 @@ export class GeneralistService extends AgentBaseService {
     }
 
     this.log.info(
-      `Scheduling lazy compaction (compact #${this.compactCount + 1}) — will execute on next send()`
+      `Scheduling lazy compaction (compact #${this.compactCount + 1}, nuance=${extractNuance}) — will execute on next send()`
     )
     this.compactCount++
     this.compactSuggested = false
 
-    // Strategy μ: Smarter compaction — compress only the oldest conversation context,
-    // keeping recent specialist findings and current task context verbatim.
-    // This preserves recent context quality while still reducing total size.
-    this.promptAssembler.setPendingCompaction(
-      this.currentConversationId,
-      `/compact — Before answering the user's message below, compress our conversation context:
+    if (extractNuance) {
+      // Extract Nuance mode — preserves critical details, preferences, and decisions verbatim
+      this.promptAssembler.setPendingCompaction(
+        this.currentConversationId,
+        `/compact — Before answering the user's message below, compress our conversation context:
+
+**Instructions (Extract Nuance mode):**
+1. First, extract and preserve ALL important nuances, decisions, preferences, and key details from the full conversation.
+2. Then compress the conversation, keeping extracted nuances verbatim at the top.
+3. Preserve ALL file paths, specialist reports, architecture decisions, and user preferences.
+4. Keep the MOST RECENT 3-4 turns VERBATIM — do not summarize recent work.
+
+**Summary format (preserve nuances first, then terse bullet points):**
+- **Nuances & Preferences:** User preferences, tone, style choices, constraints mentioned
+- **Decisions:** Architecture choices, approach selections, trade-offs made
+- **Current Task:** What we're actively working on
+- **Files:** Important file paths referenced or modified
+- **Pending:** Unresolved items or next steps
+- **Specialist Findings:** Key results from investigations (preserve report data)
+
+Then continue using this summary as your working context and answer the user's message that follows.`
+      )
+    } else {
+      // Quick Compact mode — summarizes older messages for speed
+      // Strategy μ: Smarter compaction — compress only the oldest conversation context,
+      // keeping recent specialist findings and current task context verbatim.
+      this.promptAssembler.setPendingCompaction(
+        this.currentConversationId,
+        `/compact — Before answering the user's message below, compress our conversation context:
 
 **Instructions:**
 1. Summarize ONLY the OLDER parts of our conversation (first ~50% of messages) into bullet points.
@@ -1075,7 +1087,8 @@ export class GeneralistService extends AgentBaseService {
 - **Specialist Findings:** Key results from investigations (preserve report data)
 
 Then continue using this summary as your working context and answer the user's message that follows.`
-    )
+      )
+    }
   }
 
   /** Returns the session ID for a given conversation, if captured. */
