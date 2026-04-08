@@ -10,18 +10,18 @@ A specialist is an AI agent with a focused skillset. Each specialist has been co
 
 Think of specialists like departments in a software company:
 
-| Specialist | Expertise | Example Tasks |
-|-----------|-----------|---------------|
-| **React Architect** | Frontend UI development | Build components, fix styling, implement forms |
-| **Electron Architect** | Desktop app development | Window management, IPC, native features |
-| **Database Architect** | Data modeling and SQL | Create tables, write queries, optimize performance |
-| **Agentic Architect** | AI agent systems | Agent configuration, orchestration, prompts |
-| **Testing Specialist** | Automated testing | Write unit tests, integration tests, E2E tests |
-| **Git/GitHub Specialist** | Version control | Branching, merging, pull requests, conflict resolution |
-| **UX/UI Specialist** | Design and user experience | Layout, accessibility, design systems |
-| **Docs/Diagrams Specialist** | Documentation | Architecture diagrams, API docs, README files |
-| **CI/CD & DevOps** | Build and deployment | Pipelines, Docker, deployment configuration |
-| **.NET Architect** | C# and .NET development | Backend services, APIs, .NET patterns |
+| Specialist                   | Expertise                  | Example Tasks                                          |
+| ---------------------------- | -------------------------- | ------------------------------------------------------ |
+| **React Architect**          | Frontend UI development    | Build components, fix styling, implement forms         |
+| **Electron Architect**       | Desktop app development    | Window management, IPC, native features                |
+| **Database Architect**       | Data modeling and SQL      | Create tables, write queries, optimize performance     |
+| **Agentic Architect**        | AI agent systems           | Agent configuration, orchestration, prompts            |
+| **Testing Specialist**       | Automated testing          | Write unit tests, integration tests, E2E tests         |
+| **Git/GitHub Specialist**    | Version control            | Branching, merging, pull requests, conflict resolution |
+| **UX/UI Specialist**         | Design and user experience | Layout, accessibility, design systems                  |
+| **Docs/Diagrams Specialist** | Documentation              | Architecture diagrams, API docs, README files          |
+| **CI/CD & DevOps**           | Build and deployment       | Pipelines, Docker, deployment configuration            |
+| **.NET Architect**           | C# and .NET development    | Backend services, APIs, .NET patterns                  |
 
 ---
 
@@ -48,7 +48,7 @@ sequenceDiagram
   end
 ```
 
-> **Example:** You say *"Redesign the settings page with better accessibility."* The Generalist might assign the **UX/UI Specialist** for the design and the **React Architect** for the implementation.
+> **Example:** You say _"Redesign the settings page with better accessibility."_ The Generalist might assign the **UX/UI Specialist** for the design and the **React Architect** for the implementation.
 
 ---
 
@@ -68,16 +68,20 @@ You can see specialists in action through:
 From the Workspace Settings, you can customize how specialists work:
 
 ### Enabling/Disabling Specialists
+
 If your project doesn't need certain specialists (e.g., you don't use .NET), you can disable them to streamline the Generalist's delegation decisions.
 
 ### Viewing Specialist Definitions
+
 Each specialist is defined by a YAML configuration file that specifies:
+
 - **Name and role** — What the specialist is called and what it does
 - **Instructions** — Detailed guidance for how the specialist should work
 - **Skills** — Which skill files the specialist has access to
 - **Permissions** — What the specialist is allowed to do (read files, write files, run commands)
 
 ### Agent YAML Files
+
 Specialist configurations are stored as `.yml` files in your workspace's `.claude/agents/` directory. You can view these files through the settings panel to understand exactly how each specialist is configured.
 
 ---

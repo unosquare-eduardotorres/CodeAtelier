@@ -28,13 +28,14 @@ export default function ToolApprovalModal(): React.JSX.Element | null {
       timerRefs.current.set(data.requestId, timer)
     })
 
+    const timers = timerRefs.current
     return () => {
       cleanup()
       // Clear all auto-dismiss timers
-      for (const timer of timerRefs.current.values()) {
+      for (const timer of timers.values()) {
         clearTimeout(timer)
       }
-      timerRefs.current.clear()
+      timers.clear()
     }
   }, [])
 

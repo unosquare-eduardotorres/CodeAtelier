@@ -54,7 +54,10 @@ export default function ConfirmDialog({
       aria-describedby="confirm-dialog-message"
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-[rgba(15,21,23,0.85)] backdrop-blur-sm" onClick={onCancel} />
+      <div
+        className="absolute inset-0 bg-[rgba(15,21,23,0.85)] backdrop-blur-sm"
+        onClick={onCancel}
+      />
 
       {/* Dialog */}
       <div className="relative bg-surface-float border border-border-default rounded shadow-2xl p-6 max-w-sm w-full mx-4 animate-in fade-in zoom-in-95">

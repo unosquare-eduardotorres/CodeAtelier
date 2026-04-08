@@ -12,6 +12,7 @@ import { setFloorSprites } from './floorTiles'
 import { setWallSprites } from './wallTiles'
 import { setCharacterTemplates } from './sprites/spriteData'
 import { loadImage, imageToSpriteData, fullImageToSpriteData } from './sprites/imageUtils'
+import type { SpriteData } from './engine/types'
 import { buildDynamicCatalog } from './layout/furnitureCatalog'
 import { FURNITURE_PNG_MAP, FURNITURE_CATALOG } from './furnitureLoader'
 
@@ -196,8 +197,7 @@ export async function loadAllAssets(): Promise<void> {
     if (loadedSpriteCount > 0) {
       // Convert catalog to the format buildDynamicCatalog expects
       // Cast to strip 'as const' narrowing — the engine expects mutable objects
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const catalogForEngine = JSON.parse(JSON.stringify(furniture.catalog))
       buildDynamicCatalog({ catalog: catalogForEngine, sprites: furniture.sprites })
       console.log(

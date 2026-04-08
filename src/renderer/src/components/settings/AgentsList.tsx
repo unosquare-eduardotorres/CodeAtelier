@@ -168,12 +168,10 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <Bot size={32} className="text-border-default mb-3" />
-        <h4 className="text-sm font-medium text-text-secondary mb-2">
-          No specialists active yet
-        </h4>
+        <h4 className="text-sm font-medium text-text-secondary mb-2">No specialists active yet</h4>
         <p className="text-xs text-text-muted max-w-sm mb-4">
-          Activate specialist agents for this workspace. Each agent can be individually
-          activated or deactivated as needed for your project.
+          Activate specialist agents for this workspace. Each agent can be individually activated or
+          deactivated as needed for your project.
         </p>
         <button
           onClick={handleAutoActivate}

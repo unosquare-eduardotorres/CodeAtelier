@@ -17,13 +17,14 @@ import {
   registerCharacterAnimations,
   getAnimKey
 } from './PhaserSpriteLoader'
-import {
-  CHARACTER_SITTING_OFFSET_PX,
-  WALK_SPEED_PX_PER_SEC,
-  BUBBLE_VERTICAL_OFFSET_PX
-} from '../constants'
+import { CHARACTER_SITTING_OFFSET_PX } from '../constants'
 import { createAgentLabels, updateAgentLabels, updateAgentDisplayName } from './AgentLabelRenderer'
-import { showAgentBubble, clearAgentBubble, showAgentThoughtBubble, hideAgentThoughtBubble } from './AgentBubbleRenderer'
+import {
+  showAgentBubble,
+  clearAgentBubble,
+  showAgentThoughtBubble,
+  hideAgentThoughtBubble
+} from './AgentBubbleRenderer'
 import { showAgentStatusDot } from './AgentStatusDotRenderer'
 
 // ── Types ──
@@ -89,7 +90,8 @@ export class PhaserAgentManager {
     rpgTextureKey?: string
   ): AgentVisual {
     // Get or create texture — prefer RPG texture key when provided
-    const textureKey = rpgTextureKey ?? createHueShiftedCharTexture(this.scene, spriteIndex, hueShift)
+    const textureKey =
+      rpgTextureKey ?? createHueShiftedCharTexture(this.scene, spriteIndex, hueShift)
     registerCharacterAnimations(this.scene, textureKey)
 
     // Create sprite
@@ -228,7 +230,11 @@ export class PhaserAgentManager {
   /**
    * Play the correct animation based on character state and direction.
    */
-  playAnimation(numericId: number, state: 'walk' | 'type' | 'read' | 'idle', direction: number): void {
+  playAnimation(
+    numericId: number,
+    state: 'walk' | 'type' | 'read' | 'idle',
+    direction: number
+  ): void {
     const visual = this.agents.get(numericId)
     if (!visual) return
 
@@ -345,9 +351,12 @@ export class PhaserAgentManager {
       updateAgentLabels(visual, ch.isActive, ch.state)
 
       if (ch.isActive) {
-        const dotStatus = ch.state === CharacterState.TYPE
-          ? (isReadingTool(ch.currentTool) ? 'reading' : 'working')
-          : 'thinking'
+        const dotStatus =
+          ch.state === CharacterState.TYPE
+            ? isReadingTool(ch.currentTool)
+              ? 'reading'
+              : 'working'
+            : 'thinking'
         showAgentStatusDot(this.scene, visual, dotStatus)
       } else {
         showAgentStatusDot(this.scene, visual, 'idle')

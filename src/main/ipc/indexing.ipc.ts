@@ -137,5 +137,4 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
       return { loaded: false, status: 'idle' }
     }
   )
-
 }

@@ -4,7 +4,7 @@ import { useMarketplaceStore } from '@renderer/store'
 import SpecialistCard from './SpecialistCard'
 import SpecialistEditPage from './SpecialistEditPage'
 import SkillsLibrary from './SkillsLibrary'
-import type { MarketplaceSpecialist, Skill } from '../../../../shared/types'
+import type { DiscoveredSkill, MarketplaceSpecialist, Skill } from '../../../../shared/types'
 import { useSettingsStore } from '@renderer/store/settings.store'
 
 interface SpecialistMarketplaceProps {
@@ -101,8 +101,10 @@ export default function SpecialistMarketplace({
         name: skill.name,
         description: skill.description
       },
-      lastUpdated: skill.lastUpdatedDate
-    })
+      lastUpdated: skill.lastUpdatedDate,
+      isActive: true,
+      source: 'workspace'
+    } as DiscoveredSkill)
   }
 
   if (isLoading && specialists.length === 0) {
@@ -150,7 +152,11 @@ export default function SpecialistMarketplace({
             bg-primary text-white hover:bg-primary-hover
             disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {isActivatingAll ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+          {isActivatingAll ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <Sparkles size={12} />
+          )}
           Auto-Activate
         </button>
       </div>
@@ -224,7 +230,6 @@ export default function SpecialistMarketplace({
 
       {/* Skills Library */}
       <SkillsLibrary skills={skills} specialists={specialists} onSkillClick={handleSkillClick} />
-
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import type { ComplexityScore, CostPreference, DecomposedTask, ModelTier } from '../../shared/types'
-import { MODEL_TIER_IDS, DEFAULT_COST_PREFERENCE } from '../../shared/constants'
+import { DEFAULT_COST_PREFERENCE } from '../../shared/constants'
 
 /**
  * Clamps a number to the given range.

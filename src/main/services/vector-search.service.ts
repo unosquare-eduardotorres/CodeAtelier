@@ -466,7 +466,9 @@ class VectorSearchService extends EventEmitter {
         try {
           // Build file mtime map from fileContents keys
           const fileMtimes = new Map<string, number>()
+          // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import for persistence
           const { statSync } = require('node:fs') as typeof import('node:fs')
+          // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import for persistence
           const { join } = require('node:path') as typeof import('node:path')
           for (const relPath of fileContents.keys()) {
             try {

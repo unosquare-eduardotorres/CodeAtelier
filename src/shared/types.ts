@@ -5,8 +5,10 @@ export interface UserProfile {
   id: string
   displayName: string
   avatarKey: string
-  pixelSpriteId: string | null
-  usePixelForChat: boolean
+  /** Optional — only present when pixel sprite is configured for this user */
+  pixelSpriteId?: string | null
+  /** Optional — only present when pixel chat mode is configured */
+  usePixelForChat?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -69,6 +71,7 @@ export interface ContextUsage {
   contextWindowSize: number
   percentage: number
   level: ContextUsageLevel
+  qualityLevel?: 'excellent' | 'good' | 'moderate' | 'low'
 }
 
 export interface Message {
@@ -186,9 +189,7 @@ export function agentErrorMessage(error: AgentError): string {
     case 'budget_exceeded':
       return `Budget exceeded: $${(error.currentCents / 100).toFixed(2)} > $${(error.limitCents / 100).toFixed(2)}`
     case 'abort':
-      return error.reason === 'user'
-        ? 'Request cancelled.'
-        : `Request aborted: ${error.reason}`
+      return error.reason === 'user' ? 'Request cancelled.' : `Request aborted: ${error.reason}`
     case 'stream_incomplete':
       return `Stream ended unexpectedly (last event: ${error.lastEventType}). The response may be incomplete.`
     case 'parse_error':
@@ -461,6 +462,7 @@ export type ModelAction =
   | 'dream'
   | 'memoryFeed'
   | 'activation'
+  | 'haiku'
 
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
@@ -723,7 +725,11 @@ export type GeneralistIntent =
   | { type: 'handoff'; brief: HandoffBrief }
   | { type: 'askUser'; questions: GrillQuestion[] }
   | { type: 'grillQuestion'; questions: GrillQuestion[] }
-  | { type: 'grillComplete'; summary: string; proposedTasks: Array<{ title: string; description: string }> }
+  | {
+      type: 'grillComplete'
+      summary: string
+      proposedTasks: Array<{ title: string; description: string }>
+    }
   | { type: 'grillEvaluation'; evaluation: GrillEvaluation }
   | { type: 'error'; message: string }
 
@@ -817,16 +823,16 @@ export interface DreamProgress {
 }
 
 export interface MemoryFeedProgress {
-  type: 'status' | 'error' | 'complete'
+  status: 'running' | 'done' | 'error'
   message: string
   source: 'claude-md' | 'codebase' | 'document'
-  timestamp: number
+  timestamp?: number
 }
 
 export interface WorkspaceFeedTimestamps {
   'claude-md'?: string
-  'codebase'?: string
-  'document'?: string
+  codebase?: string
+  document?: string
 }
 
 export interface MemoryFeedResult {
@@ -996,7 +1002,12 @@ export interface SchedulingWeights {
 /** Perspective from a single diagnostic agent in the Bug Council */
 export interface BugCouncilPerspective {
   /** Agent role identifier */
-  role: 'root-cause-analyst' | 'code-archaeologist' | 'pattern-matcher' | 'systems-thinker' | 'adversarial-tester'
+  role:
+    | 'root-cause-analyst'
+    | 'code-archaeologist'
+    | 'pattern-matcher'
+    | 'systems-thinker'
+    | 'adversarial-tester'
   /** Human-readable agent name */
   displayName: string
   /** Icon for UI display */
@@ -1064,7 +1075,12 @@ export interface IpcChannels {
   }
   'chat:getConversations': { args: { workspaceId: string }; return: Conversation[] }
   'chat:createConversation': {
-    args: { workspaceId: string; title?: string; mode?: ConversationMode; personaSpecialistId?: string }
+    args: {
+      workspaceId: string
+      title?: string
+      mode?: ConversationMode
+      personaSpecialistId?: string
+    }
     return: Conversation
   }
   'chat:updatePersona': {
@@ -1238,7 +1254,12 @@ export interface IpcChannels {
 
   // Task Execution
   'chat:executePlan': {
-    args: { conversationId: string; strategy: ExecutionStrategy; tasks: DecomposedTask[]; investigationDepth?: InvestigationDepth }
+    args: {
+      conversationId: string
+      strategy: ExecutionStrategy
+      tasks: DecomposedTask[]
+      investigationDepth?: InvestigationDepth
+    }
     return: void
   }
   'chat:executeInvestigationFix': {
@@ -1380,7 +1401,11 @@ export interface IpcChannels {
   // Core Agent Aliases
   'coreAgent:list': { args: void; return: CoreAgentAlias[] }
   'coreAgent:upsert': {
-    args: { agentRole: 'generalist' | 'coordinator'; alias: string | null; avatarKey: string | null }
+    args: {
+      agentRole: 'generalist' | 'coordinator'
+      alias: string | null
+      avatarKey: string | null
+    }
     return: CoreAgentAlias
   }
 
@@ -1425,7 +1450,13 @@ export interface IpcChannels {
     return: { loaded: boolean; status: string; symbolCount?: number }
   }
   'semanticSearch:query': {
-    args: { workspaceId: string; query: string; language?: string; directory?: string; nResults?: number }
+    args: {
+      workspaceId: string
+      query: string
+      language?: string
+      directory?: string
+      nResults?: number
+    }
     return: SemanticSearchResult[]
   }
 

@@ -31,8 +31,9 @@ export class AgentSyncService {
    */
   computeDiff(workspacePath: string): SyncDiff {
     // 1. Scan workspace YAMLs (only deployed agents in the workspace, excluding core agents)
-    const yamlAgents = this.getDeployedWorkspaceAgents(workspacePath)
-      .filter((a) => !this.CORE_AGENT_IDS.has(a.parsed.name))
+    const yamlAgents = this.getDeployedWorkspaceAgents(workspacePath).filter(
+      (a) => !this.CORE_AGENT_IDS.has(a.parsed.name)
+    )
     const yamlSkills = this.getDeployedWorkspaceSkills(workspacePath)
 
     // 2. Load all specialists from DB
@@ -370,7 +371,9 @@ export class AgentSyncService {
           `(full: ${summaries.full.length}, standard: ${summaries.standard.length}, minimal: ${summaries.minimal.length} chars)`
       )
     } catch (e) {
-      dbLogger.warn(`Could not generate summaries for skill "${skill.name}": ${(e as Error).message}`)
+      dbLogger.warn(
+        `Could not generate summaries for skill "${skill.name}": ${(e as Error).message}`
+      )
     }
   }
 

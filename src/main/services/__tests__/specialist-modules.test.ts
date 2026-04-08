@@ -13,7 +13,7 @@ import { Semaphore } from '../specialist/semaphore'
 import { ExecutionTracer } from '../specialist/trace'
 import type { TraceEvent } from '../specialist/trace'
 import { SpecialistHookRunner } from '../specialist/hooks'
-import type { BeforeRunContext, AfterRunResult } from '../specialist/hooks'
+import type { BeforeRunContext } from '../specialist/hooks'
 import { MessageBus } from '../specialist/message-bus'
 import { createScheduler, CompositeScheduler } from '../specialist/scheduling'
 import type { AgentCapability, SchedulingContext } from '../specialist/scheduling'
@@ -378,8 +378,18 @@ describe('Scheduling: capability-match', () => {
 
     const task = makeTask('t1', 'developer', 'Build React frontend component')
     const agents: AgentCapability[] = [
-      { agentId: 'developer', keywords: ['react', 'frontend', 'component'], activeTaskCount: 0, maxConcurrent: 2 },
-      { agentId: 'architect', keywords: ['api', 'design', 'architecture'], activeTaskCount: 0, maxConcurrent: 2 }
+      {
+        agentId: 'developer',
+        keywords: ['react', 'frontend', 'component'],
+        activeTaskCount: 0,
+        maxConcurrent: 2
+      },
+      {
+        agentId: 'architect',
+        keywords: ['api', 'design', 'architecture'],
+        activeTaskCount: 0,
+        maxConcurrent: 2
+      }
     ]
 
     const selected = scheduler.selectAgent(task, agents)
@@ -566,7 +576,8 @@ describe('extractJSON: specificity', () => {
   })
 
   test('investigation-report fence works standalone', () => {
-    const text = '```investigation-report\n{"problem":"test","rootCause":"x","proposedFix":"y","filesAffected":[],"impact":"high","impactReason":"z"}\n```'
+    const text =
+      '```investigation-report\n{"problem":"test","rootCause":"x","proposedFix":"y","filesAffected":[],"impact":"high","impactReason":"z"}\n```'
     const result = extractJSON(text)
     assert.ok(result)
     assert.equal(result.strategy, 'code-fence')
@@ -576,7 +587,8 @@ describe('extractJSON: specificity', () => {
 describe('validateInvestigationReport: false-positive protection', () => {
   test('does not false-positive on random JSON with matching field names', () => {
     // A build-mode specialist emits JSON that happens to have investigation-like fields
-    const output = '```json\n{"problem":"x","rootCause":"y","proposedFix":"z","filesAffected":[],"impact":"high","impactReason":"w"}\n```'
+    const output =
+      '```json\n{"problem":"x","rootCause":"y","proposedFix":"z","filesAffected":[],"impact":"high","impactReason":"w"}\n```'
     // Validation should succeed (it's valid JSON with all required fields) — but in context,
     // the isInvestigationTask guard in specialist-pool.service.ts prevents this from running.
     // This test documents that extractJSON does NOT distinguish investigation from generic JSON.
@@ -693,9 +705,18 @@ describe('Semaphore: fairness', () => {
     const r1 = await sem.acquire()
 
     // Queue three waiters — they should resolve in FIFO order
-    const p2 = sem.acquire().then((r) => { order.push(2); return r })
-    const p3 = sem.acquire().then((r) => { order.push(3); return r })
-    const p4 = sem.acquire().then((r) => { order.push(4); return r })
+    const p2 = sem.acquire().then((r) => {
+      order.push(2)
+      return r
+    })
+    const p3 = sem.acquire().then((r) => {
+      order.push(3)
+      return r
+    })
+    const p4 = sem.acquire().then((r) => {
+      order.push(4)
+      return r
+    })
 
     // Release first — should unblock in order
     r1()
@@ -735,8 +756,12 @@ describe('SpecialistHookRunner: tool hooks', () => {
   test('tool hooks errors are swallowed (never crash pipeline)', () => {
     const runner = new SpecialistHookRunner()
     runner.register('dev', {
-      onToolCall: () => { throw new Error('crash') },
-      onToolResult: () => { throw new Error('crash') }
+      onToolCall: () => {
+        throw new Error('crash')
+      },
+      onToolResult: () => {
+        throw new Error('crash')
+      }
     })
 
     const task = makeTask('t1', 'dev', 'Build feature')
@@ -761,8 +786,12 @@ describe('Semaphore: run() auto-release', () => {
   test('run() auto-releases on error', async () => {
     const sem = new Semaphore(1)
     try {
-      await sem.run(async () => { throw new Error('boom') })
-    } catch { /* expected */ }
+      await sem.run(async () => {
+        throw new Error('boom')
+      })
+    } catch {
+      /* expected */
+    }
     // Verify slot is released by acquiring again without deadlock
     const r = await sem.acquire()
     r()
@@ -772,9 +801,15 @@ describe('Semaphore: run() auto-release', () => {
     const sem = new Semaphore(1)
     const order: number[] = []
 
-    const p1 = sem.run(async () => { order.push(1) })
-    const p2 = sem.run(async () => { order.push(2) })
-    const p3 = sem.run(async () => { order.push(3) })
+    const p1 = sem.run(async () => {
+      order.push(1)
+    })
+    const p2 = sem.run(async () => {
+      order.push(2)
+    })
+    const p3 = sem.run(async () => {
+      order.push(3)
+    })
 
     await Promise.all([p1, p2, p3])
     assert.deepEqual(order, [1, 2, 3])
@@ -850,8 +885,8 @@ describe('validateWithSchema (generic Zod validator)', () => {
     assert.equal(result.success, false)
     if (!result.success) {
       assert.ok(result.errors.length >= 2)
-      assert.ok(result.errors.some(e => e.includes('name')))
-      assert.ok(result.errors.some(e => e.includes('count')))
+      assert.ok(result.errors.some((e) => e.includes('name')))
+      assert.ok(result.errors.some((e) => e.includes('count')))
     }
   })
 })
@@ -880,7 +915,7 @@ describe('Scheduling: dependency-first respects completedTasks', () => {
     const ranked = scheduler.rankTasks(context)
     // child1 and child2 should be ready (their dependency 'root' is completed)
     assert.equal(ranked.length, 2)
-    const readyIds = ranked.map(r => r.task.id).sort()
+    const readyIds = ranked.map((r) => r.task.id).sort()
     assert.deepEqual(readyIds, ['child1', 'child2'])
   })
 
@@ -971,14 +1006,14 @@ describe('Trace bridge: event mapping', () => {
     tracer.endRun(runId)
 
     // Verify specialist_start event has metadata for bridge
-    const startEvent = events.find(e => e.type === 'specialist_start')
+    const startEvent = events.find((e) => e.type === 'specialist_start')
     assert.ok(startEvent)
     assert.equal(startEvent?.metadata?.conversationId, 'conv-123')
     assert.equal(startEvent?.metadata?.model, 'sonnet')
     assert.equal(startEvent?.agentId, 'frontend-architect')
 
     // Verify specialist_end event has token usage for bridge
-    const endEvent = events.find(e => e.type === 'specialist_end')
+    const endEvent = events.find((e) => e.type === 'specialist_end')
     assert.ok(endEvent)
     assert.equal(endEvent?.tokenUsage?.input, 1000)
     assert.equal(endEvent?.tokenUsage?.output, 500)
@@ -1003,7 +1038,7 @@ describe('Trace bridge: event mapping', () => {
     })
     tracer.endRun(runId)
 
-    const endEvent = events.find(e => e.type === 'specialist_end')
+    const endEvent = events.find((e) => e.type === 'specialist_end')
     assert.ok(endEvent)
     assert.equal(endEvent?.metadata?.error, 'SDK timeout after 10 minutes')
   })
@@ -1022,7 +1057,7 @@ describe('Trace bridge: event mapping', () => {
     })
     tracer.endRun(runId)
 
-    const retryEvent = events.find(e => e.type === 'task_retry')
+    const retryEvent = events.find((e) => e.type === 'task_retry')
     assert.ok(retryEvent)
     assert.equal(retryEvent?.metadata?.attempt, 1)
     assert.equal(retryEvent?.metadata?.error, 'Rate limited')

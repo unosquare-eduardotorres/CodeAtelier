@@ -22,10 +22,7 @@ import {
   setupScrollHandler,
   tryStartCameraPan
 } from './CameraPanHandler'
-import {
-  handlePaintPointerDown,
-  handlePaintDrag
-} from './TilePaintInput'
+import { handlePaintPointerDown, handlePaintDrag } from './TilePaintInput'
 import {
   type FurnitureDragState,
   createFurnitureDragState,
@@ -38,7 +35,10 @@ interface InputHandlerDeps {
   scene: Phaser.Scene
   getEditorState: () => EditorState | null
   getCallbacks: () => EditorInputCallbacks
-  findFurnitureAtTile: (col: number, row: number) => { uid: string; col: number; row: number } | null
+  findFurnitureAtTile: (
+    col: number,
+    row: number
+  ) => { uid: string; col: number; row: number } | null
   updateCursor: () => void
   setIsDragging: (dragging: boolean) => void
   getIsDragging: () => boolean
@@ -91,8 +91,14 @@ export function setupEditorInput(deps: InputHandlerDeps): void {
     if (pointer.leftButtonDown()) {
       if (editorState.activeTool === EditTool.SELECT) {
         const handled = handleSelectPointerDown(
-          editorState, col, row, pointer, furnitureDrag,
-          findFurnitureAtTile, scene.input.manager.canvas, callbacks
+          editorState,
+          col,
+          row,
+          pointer,
+          furnitureDrag,
+          findFurnitureAtTile,
+          scene.input.manager.canvas,
+          callbacks
         )
         if (!handled) {
           // No furniture hit → start camera pan

@@ -1,7 +1,11 @@
 import { useEffect, useCallback } from 'react'
 import { AppLayout } from '@renderer/components/layout'
 import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
-import { WelcomeModal, ToolApprovalModal, CheckpointApprovalModal, RateLimitBanner } from '@renderer/components/common'
+import {
+  WelcomeModal,
+  ToolApprovalModal,
+  CheckpointApprovalModal
+} from '@renderer/components/common'
 import {
   useWorkspaceStore,
   useChatActions,
@@ -99,7 +103,10 @@ function App(): React.JSX.Element {
         )
       }
       if (data.toolActivity) {
-        if (data.toolActivity.elapsedSeconds !== undefined && data.toolActivity.status === 'running') {
+        if (
+          data.toolActivity.elapsedSeconds !== undefined &&
+          data.toolActivity.status === 'running'
+        ) {
           // Progress update — update elapsed time without changing status
           updateToolActivity({
             id: data.toolActivity.id,
@@ -161,9 +168,7 @@ function App(): React.JSX.Element {
 
     const unsubTaskProgress = window.api.onTaskProgress((data) => {
       if (data.status === 'completed' || data.status === 'failed') {
-        rendererLog.info(
-          `[PIPELINE:renderer:task-${data.status}] taskId=${data.taskId}`
-        )
+        rendererLog.info(`[PIPELINE:renderer:task-${data.status}] taskId=${data.taskId}`)
       }
       updateTaskProgress(data)
     })
@@ -273,7 +278,9 @@ function App(): React.JSX.Element {
     setProgress,
     setError,
     onMemoryFeedProgress,
-    onDreamProgress
+    onDreamProgress,
+    finalizeTurnBubble,
+    setDecomposedTasks
   ])
 
   // Pop-out mode: render only the Pixel Office fullscreen
@@ -305,7 +312,6 @@ function App(): React.JSX.Element {
 
   return (
     <>
-      <RateLimitBanner />
       <AppLayout />
       <ToolApprovalModal />
       <CheckpointApprovalModal />

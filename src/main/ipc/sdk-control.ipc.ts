@@ -111,15 +111,12 @@ export function registerSdkControlIpc(): void {
   )
 
   // reconnectMcpServer — recover from MCP crashes
-  ipcMain.handle(
-    IPC_CHANNELS.SDK_RECONNECT_MCP,
-    async (event, args: { serverName: string }) => {
-      validateSender(event)
-      const query = generalistService.getActiveQuery()
-      if (!query) throw new Error('No active query')
-      return query.reconnectMcpServer(args.serverName)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.SDK_RECONNECT_MCP, async (event, args: { serverName: string }) => {
+    validateSender(event)
+    const query = generalistService.getActiveQuery()
+    if (!query) throw new Error('No active query')
+    return query.reconnectMcpServer(args.serverName)
+  })
 
   // supportedAgents — list runtime SubAgents
   ipcMain.handle(IPC_CHANNELS.SDK_SUPPORTED_AGENTS, async (event) => {

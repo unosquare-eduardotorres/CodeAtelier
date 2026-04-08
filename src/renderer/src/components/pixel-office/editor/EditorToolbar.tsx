@@ -59,7 +59,7 @@ export default function EditorToolbar({
   onSave,
   onReset,
   onToggleGrid
-}: EditorToolbarProps) {
+}: EditorToolbarProps): React.JSX.Element {
   return (
     <div className="flex items-center gap-1 px-3 py-2 border-b border-border-subtle bg-surface-base">
       {/* Tool buttons */}

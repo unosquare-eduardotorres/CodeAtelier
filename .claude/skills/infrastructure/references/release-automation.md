@@ -3,11 +3,13 @@
 ## Semantic Versioning
 
 Follow [semver.org](https://semver.org):
+
 - **MAJOR** (1.0.0 → 2.0.0): Breaking changes — incompatible API changes
 - **MINOR** (1.0.0 → 1.1.0): New features — backward compatible additions
 - **PATCH** (1.0.0 → 1.0.1): Bug fixes — backward compatible fixes
 
 ### Pre-release Versions
+
 - Alpha: `1.2.0-alpha.1` — internal testing
 - Beta: `1.2.0-beta.1` — external beta testers
 - RC: `1.2.0-rc.1` — release candidate, final testing
@@ -16,19 +18,20 @@ Follow [semver.org](https://semver.org):
 
 Format: `<type>(<scope>): <description>`
 
-| Type | Triggers | Description |
-|------|----------|-------------|
-| `feat` | MINOR bump | New feature |
-| `fix` | PATCH bump | Bug fix |
-| `perf` | PATCH bump | Performance improvement |
-| `refactor` | — | Code refactoring (no behavior change) |
-| `docs` | — | Documentation only |
-| `style` | — | Formatting, no code change |
-| `test` | — | Adding/updating tests |
-| `chore` | — | Build, CI, tooling changes |
-| `BREAKING CHANGE` | MAJOR bump | Footer or `!` after type |
+| Type              | Triggers   | Description                           |
+| ----------------- | ---------- | ------------------------------------- |
+| `feat`            | MINOR bump | New feature                           |
+| `fix`             | PATCH bump | Bug fix                               |
+| `perf`            | PATCH bump | Performance improvement               |
+| `refactor`        | —          | Code refactoring (no behavior change) |
+| `docs`            | —          | Documentation only                    |
+| `style`           | —          | Formatting, no code change            |
+| `test`            | —          | Adding/updating tests                 |
+| `chore`           | —          | Build, CI, tooling changes            |
+| `BREAKING CHANGE` | MAJOR bump | Footer or `!` after type              |
 
 ### Examples
+
 ```
 feat(grill): add domain-specific track selection
 fix(ipc): validate sender in grill evaluation handler
@@ -38,6 +41,7 @@ feat(radar)!: replace single score with multi-track radar chart
 ## Changelog Generation
 
 ### Auto-generated from Conventional Commits
+
 ```
 ## [1.5.0] - 2026-03-28
 
@@ -53,6 +57,7 @@ feat(radar)!: replace single score with multi-track radar chart
 ```
 
 ### Tools
+
 - `conventional-changelog-cli` — Generate changelogs from git history
 - `standard-version` — Bump version + generate changelog + git tag
 - `semantic-release` — Fully automated (analyze commits → bump → changelog → publish)
@@ -60,22 +65,25 @@ feat(radar)!: replace single score with multi-track radar chart
 ## Electron Release Channels
 
 ### Channel Strategy
+
 ```
 main branch → beta channel → auto-update to beta users
 release tag → stable channel → auto-update to all users
 ```
 
 ### electron-updater Configuration
+
 ```yaml
 # electron-builder.yml
 publish:
   - provider: github
     owner: your-org
     repo: agent-studio
-    releaseType: release  # or 'prerelease' for beta
+    releaseType: release # or 'prerelease' for beta
 ```
 
 ### Update Flow
+
 1. CI builds and signs the app
 2. CI uploads to GitHub Release (draft)
 3. Maintainer reviews and publishes release

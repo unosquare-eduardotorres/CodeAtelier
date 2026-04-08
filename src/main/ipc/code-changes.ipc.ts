@@ -99,16 +99,13 @@ export function registerCodeChangesIpc(): void {
   )
 
   // Push current branch to origin
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_PUSH,
-    async (event, args: { conversationId: string }) => {
-      validateSender(event)
-      if (!args?.conversationId) throw new Error('Missing conversationId')
+  ipcMain.handle(IPC_CHANNELS.REPO_PUSH, async (event, args: { conversationId: string }) => {
+    validateSender(event)
+    if (!args?.conversationId) throw new Error('Missing conversationId')
 
-      const { repoPath } = resolveRepoPath(args.conversationId)
-      return repoService.push(repoPath)
-    }
-  )
+    const { repoPath } = resolveRepoPath(args.conversationId)
+    return repoService.push(repoPath)
+  })
 
   // Get push status (commits ahead, branch, hasRemote)
   ipcMain.handle(
@@ -191,7 +188,11 @@ Respond with ONLY the commit message, no preamble or explanation.`
         // Fallback: generate a simple message from file paths
         const fileNames = selectedFiles.map((fc) => fc.filePath.split('/').pop()).join(', ')
         return {
-          message: `update ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}: ${fileNames}`.slice(0, 72)
+          message:
+            `update ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}: ${fileNames}`.slice(
+              0,
+              72
+            )
         }
       }
     }
@@ -218,7 +219,9 @@ Respond with ONLY the commit message, no preamble or explanation.`
       const { repoPath, workspaceId } = resolveRepoPath(args.conversationId)
 
       if (!githubService.isConfigured(workspaceId)) {
-        throw new Error('GitHub is not configured for this workspace. Please add a GitHub token in workspace settings.')
+        throw new Error(
+          'GitHub is not configured for this workspace. Please add a GitHub token in workspace settings.'
+        )
       }
 
       const result = await githubService.createPullRequest({

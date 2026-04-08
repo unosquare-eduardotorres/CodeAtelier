@@ -108,7 +108,11 @@ class CostTrackerService extends EventEmitter {
       // Use actual input/output breakdown when available (v37+), fallback to estimate for legacy sessions
       const cost =
         session.inputTokens > 0 || session.outputTokens > 0
-          ? estimateCostCents(session.inputTokens, session.outputTokens, session.modelUsed ?? undefined)
+          ? estimateCostCents(
+              session.inputTokens,
+              session.outputTokens,
+              session.modelUsed ?? undefined
+            )
           : estimateCostFromTotal(session.tokenUsage, session.modelUsed ?? undefined)
       totalCostCents += cost
 
@@ -123,9 +127,7 @@ class CostTrackerService extends EventEmitter {
     const totalCacheTokens =
       summary.totalCacheReadTokens + summary.totalCacheCreationTokens + summary.totalInputTokens
     const cacheHitRate =
-      totalCacheTokens > 0
-        ? (summary.totalCacheReadTokens / totalCacheTokens) * 100
-        : 0
+      totalCacheTokens > 0 ? (summary.totalCacheReadTokens / totalCacheTokens) * 100 : 0
 
     return {
       totalCostCents,

@@ -4,14 +4,28 @@ import type { HookCallback } from '@anthropic-ai/claude-agent-sdk'
 const hookLog = log.scope('SDKHooks')
 
 const DANGEROUS_PATTERNS = [
-  'rm -rf /', 'rm -rf /*', 'rm -rf ~', 'rm -rf $HOME',
-  'git push --force main', 'git push --force master',
-  'git push --force origin main', 'git push --force origin master',
-  'git push -f origin main', 'git push -f origin master',
-  'sudo ', 'mkfs.', 'dd if=', ':(){:|:&};:',
-  'chmod -R 777 /', 'chmod -R 777 /*',
-  'DROP DATABASE', 'DROP TABLE', 'TRUNCATE TABLE',
-  '| bash', '| sh', 'npm publish'
+  'rm -rf /',
+  'rm -rf /*',
+  'rm -rf ~',
+  'rm -rf $HOME',
+  'git push --force main',
+  'git push --force master',
+  'git push --force origin main',
+  'git push --force origin master',
+  'git push -f origin main',
+  'git push -f origin master',
+  'sudo ',
+  'mkfs.',
+  'dd if=',
+  ':(){:|:&};:',
+  'chmod -R 777 /',
+  'chmod -R 777 /*',
+  'DROP DATABASE',
+  'DROP TABLE',
+  'TRUNCATE TABLE',
+  '| bash',
+  '| sh',
+  'npm publish'
 ]
 
 export function isDangerousCommand(command: string): boolean {
@@ -127,7 +141,9 @@ export function createCodeGraphFirstHook(mode: 'warn' | 'block' = 'warn'): HookC
 
       const reason = `Code Graph Protocol: Use search_identifiers or graph_map BEFORE ${toolName} for code exploration. This saves tool calls and improves accuracy.`
 
-      hookLog.warn(`[CodeGraphFirst] ${toolName} called before any graph tool (call #${toolCallCount})`)
+      hookLog.warn(
+        `[CodeGraphFirst] ${toolName} called before any graph tool (call #${toolCallCount})`
+      )
 
       if (mode === 'block') {
         return { decision: 'block', reason }
@@ -201,12 +217,7 @@ export function createToolApprovalHook(agentId: string, taskId?: string): HookCa
 
     const { toolApprovalService } = await import('./tool-approval.service')
 
-    const approved = await toolApprovalService.requestApproval(
-      toolName,
-      toolInput,
-      agentId,
-      taskId
-    )
+    const approved = await toolApprovalService.requestApproval(toolName, toolInput, agentId, taskId)
 
     if (!approved) {
       hookLog.info(`Tool ${toolName} blocked by user for agent ${agentId}`)

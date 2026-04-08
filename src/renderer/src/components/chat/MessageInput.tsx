@@ -103,7 +103,8 @@ export default function MessageInput({
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [showIdeaPopover, setShowIdeaPopover] = useState(false)
   const [showSpecialistWarning, setShowSpecialistWarning] = useState(false)
-  const [specialistWarningType, setSpecialistWarningType] = useState<SpecialistWarningType>('always')
+  const [specialistWarningType, setSpecialistWarningType] =
+    useState<SpecialistWarningType>('always')
   const [pendingSend, setPendingSend] = useState<{
     content: string
     attachments?: string[]
@@ -142,7 +143,8 @@ export default function MessageInput({
     [conversationSpecialists, coreSpecialistIds]
   )
   const estimatedSpecialistTokens = useMemo(
-    () => conversationTokenEstimates.reduce((total, estimate) => total + estimate.estimatedTokens, 0),
+    () =>
+      conversationTokenEstimates.reduce((total, estimate) => total + estimate.estimatedTokens, 0),
     [conversationTokenEstimates]
   )
 
@@ -206,8 +208,8 @@ export default function MessageInput({
 
   // Restore draft when conversation changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on conversation switch
     setText(useChatStore.getState().draftTexts[currentConversationId] ?? '')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentConversationId])
 
   // Listen for prompt suggestions from SDK
@@ -222,6 +224,7 @@ export default function MessageInput({
 
   // Clear suggestion when user starts typing or conversation changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state clear when input changes
     if (text) setPromptSuggestion(null)
   }, [text])
 
@@ -554,7 +557,10 @@ export default function MessageInput({
             className="text-xs text-primary-text bg-primary/10 px-3 py-1 rounded-full hover:bg-primary/20 transition-colors"
             title={promptSuggestion}
           >
-            💡 {promptSuggestion.length > 80 ? promptSuggestion.slice(0, 77) + '...' : promptSuggestion}
+            💡{' '}
+            {promptSuggestion.length > 80
+              ? promptSuggestion.slice(0, 77) + '...'
+              : promptSuggestion}
           </button>
         </div>
       )}

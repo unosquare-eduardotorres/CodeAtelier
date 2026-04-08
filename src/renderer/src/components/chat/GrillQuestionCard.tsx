@@ -170,9 +170,7 @@ export function QuestionItem({
             <div
               data-option-index={question.options.length}
               className={`flex items-start gap-3 px-4 py-3 transition-colors duration-150 ${
-                state.otherSelected
-                  ? 'bg-primary/10'
-                  : 'hover:bg-surface-hover'
+                state.otherSelected ? 'bg-primary/10' : 'hover:bg-surface-hover'
               }`}
               tabIndex={-1}
               onKeyDown={(e) => handleKeyDown(e, question.options.length)}
@@ -264,7 +262,12 @@ export default function GrillQuestionCard({
     for (const q of questions) {
       // Pre-select recommended options
       const recommended = q.options.filter((o) => o.recommended).map((o) => o.label)
-      initial[q.id] = { selectedOptions: recommended, otherText: '', otherSelected: false, skipped: false }
+      initial[q.id] = {
+        selectedOptions: recommended,
+        otherText: '',
+        otherSelected: false,
+        skipped: false
+      }
     }
     return initial
   })
@@ -282,18 +285,30 @@ export default function GrillQuestionCard({
     const state = questionStates[q.id]
     if (!state) return false
     if (state.skipped) return true
-    return state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
+    return (
+      state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
+    )
   })
 
   const answeredCount = questions.filter((q) => {
     const state = questionStates[q.id]
     if (!state) return false
-    return state.skipped || state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
+    return (
+      state.skipped ||
+      state.selectedOptions.length > 0 ||
+      state.otherSelected ||
+      state.otherText.trim().length > 0
+    )
   }).length
 
   const handleSubmit = (): void => {
     const answers: GrillAnswerPayload[] = questions.map((q) => {
-      const state = questionStates[q.id] ?? { selectedOptions: [], otherText: '', otherSelected: false, skipped: true }
+      const state = questionStates[q.id] ?? {
+        selectedOptions: [],
+        otherText: '',
+        otherSelected: false,
+        skipped: true
+      }
       return {
         questionId: q.id,
         selectedOptions: state.selectedOptions,

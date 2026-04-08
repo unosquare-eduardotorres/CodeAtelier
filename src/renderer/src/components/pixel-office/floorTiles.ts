@@ -49,7 +49,6 @@ export function getFloorPatternCount(): number {
   return floorSprites.length > 0 ? floorSprites.length : 1
 }
 
-
 /**
  * Get a colorized version of a floor sprite.
  * Uses Photoshop-style Colorize: grayscale -> HSL with given hue/saturation,

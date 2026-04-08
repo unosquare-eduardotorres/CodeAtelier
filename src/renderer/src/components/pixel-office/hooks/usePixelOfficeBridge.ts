@@ -10,10 +10,16 @@
 
 import type { RefObject } from 'react'
 import { useAgentSync, useToolActivitySync } from './bridge'
+import type { PixelOfficeEngine } from './bridge'
 
 // Re-export the engine interface and helpers
 export type { PixelOfficeEngine } from './bridge'
-export { agentIdToNumeric, resolveDisplayName, findAgentTypeForId, KNOWN_AGENT_TYPES } from './bridge'
+export {
+  agentIdToNumeric,
+  resolveDisplayName,
+  findAgentTypeForId,
+  KNOWN_AGENT_TYPES
+} from './bridge'
 
 /**
  * Hook that bridges Zustand stores to the pixel office engine.

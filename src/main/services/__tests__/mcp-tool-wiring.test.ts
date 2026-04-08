@@ -34,7 +34,6 @@ function describe(name: string, fn: () => void): void {
 // ── git-context MCP wiring ──
 
 describe('git-context MCP wiring', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { gitContextMcpService } = require('../git-context.tool')
 
   test('getMcpServersConfig returns config keyed "git-context"', () => {
@@ -120,10 +119,12 @@ describe('MCP tool name convention (from MCP_TOOLS registry)', () => {
 // ── task-context MCP wiring (may fail if DB deps aren't available) ──
 
 describe('task-context MCP wiring', () => {
-  let taskContextMcpService: { getMcpServersConfig: (cid: string, wp: string) => Record<string, unknown>; dispose: (cid: string, wp: string) => void } | null = null
+  let taskContextMcpService: {
+    getMcpServersConfig: (cid: string, wp: string) => Record<string, unknown>
+    dispose: (cid: string, wp: string) => void
+  } | null = null
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     taskContextMcpService = require('../task-context.tool').taskContextMcpService
   } catch {
     // DB dependency not available in test env — skip these tests
@@ -161,10 +162,12 @@ describe('task-context MCP wiring', () => {
 // ── checkpoint-context MCP wiring (may fail if DB deps aren't available) ──
 
 describe('checkpoint-context MCP wiring', () => {
-  let checkpointContextMcpService: { getMcpServersConfig: (cid: string) => Record<string, unknown>; dispose: (cid: string) => void } | null = null
+  let checkpointContextMcpService: {
+    getMcpServersConfig: (cid: string) => Record<string, unknown>
+    dispose: (cid: string) => void
+  } | null = null
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     checkpointContextMcpService = require('../checkpoint-context.tool').checkpointContextMcpService
   } catch {
     // DB dependency not available in test env — skip these tests

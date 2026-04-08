@@ -1,3 +1,13 @@
+// Stub types for test fixture
+interface Database {
+  query(sql: string, params: string[]): Promise<User>
+  execute(sql: string, params: string[]): Promise<void>
+}
+interface User {
+  id: string
+  name: string
+}
+
 export class UserService {
   private db: Database
 

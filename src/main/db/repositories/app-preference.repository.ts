@@ -10,9 +10,9 @@ interface AppPreferenceRow {
 export class AppPreferenceRepository {
   get(key: string): string | null {
     const db = getDatabase()
-    const row = db
-      .prepare('SELECT value FROM app_preferences WHERE key = ?')
-      .get(key) as AppPreferenceRow | undefined
+    const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get(key) as
+      | AppPreferenceRow
+      | undefined
     return row ? row.value : null
   }
 

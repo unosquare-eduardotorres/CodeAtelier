@@ -1,8 +1,5 @@
 import log from 'electron-log/main'
-import type {
-  BugCouncilPerspective,
-  BugCouncilResult
-} from '../../shared/types'
+import type { BugCouncilPerspective, BugCouncilResult } from '../../shared/types'
 import { getDatabase } from '../db/index'
 import { SDKExecutor } from './sdk-executor'
 import { modelConfigService } from './model-config.service'
@@ -176,11 +173,7 @@ export class BugCouncilService {
     this.updateSessionStatus(sessionId, 'analyzing')
 
     // Build the shared context that all diagnostic agents will analyze
-    const diagnosticContext = this.buildDiagnosticContext(
-      taskDescription,
-      failureHistory,
-      files
-    )
+    const diagnosticContext = this.buildDiagnosticContext(taskDescription, failureHistory, files)
 
     // Run 5 diagnostic agents in parallel (using Haiku for cost efficiency)
     const haikuModel = modelConfigService.getModel(undefined, 'specialist:simple') // Haiku-tier
@@ -296,7 +289,8 @@ export class BugCouncilService {
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]) as { finding?: string; confidence?: number }
         finding = parsed.finding || responseText
-        confidence = typeof parsed.confidence === 'number' ? Math.min(1, Math.max(0, parsed.confidence)) : 0.5
+        confidence =
+          typeof parsed.confidence === 'number' ? Math.min(1, Math.max(0, parsed.confidence)) : 0.5
       } else {
         finding = responseText
       }
@@ -380,9 +374,7 @@ export class BugCouncilService {
     parts.push(`## Task Description\n${taskDescription}`)
     parts.push(
       `## Failure History (${failureHistory.length} consecutive failures)\n` +
-        failureHistory
-          .map((f, i) => `### Attempt ${i + 1}\n${f.substring(0, 2000)}`)
-          .join('\n\n')
+        failureHistory.map((f, i) => `### Attempt ${i + 1}\n${f.substring(0, 2000)}`).join('\n\n')
     )
 
     if (files && files.length > 0) {
@@ -416,9 +408,9 @@ export class BugCouncilService {
   getSession(sessionId: string): BugCouncilResult | null {
     try {
       const db = getDatabase()
-      const row = db
-        .prepare('SELECT * FROM bug_council_sessions WHERE id = ?')
-        .get(sessionId) as BugCouncilSessionRow | undefined
+      const row = db.prepare('SELECT * FROM bug_council_sessions WHERE id = ?').get(sessionId) as
+        | BugCouncilSessionRow
+        | undefined
       return row ? this.mapRow(row) : null
     } catch (err) {
       councilLog.warn('Failed to get council session:', err)
@@ -486,11 +478,7 @@ export class BugCouncilService {
     )
   }
 
-  private updateSessionComplete(
-    sessionId: string,
-    solution: string,
-    riskAssessment: string
-  ): void {
+  private updateSessionComplete(sessionId: string, solution: string, riskAssessment: string): void {
     const db = getDatabase()
     db.prepare(
       `UPDATE bug_council_sessions SET

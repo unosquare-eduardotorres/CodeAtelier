@@ -57,30 +57,30 @@ src/
 
 ### Available skills
 
-| Skill                | Path                                             | Used by agents                                     |
-| -------------------- | ------------------------------------------------ | -------------------------------------------------- |
-| `electron-pro`       | `.claude/skills/electron-pro/SKILL.md`           | platform-architect, platform-engineer, frontend-architect |
-| `dotnet-architect`   | `.claude/skills/dotnet-architect/SKILL.md`       | dotnet-architect                                   |
-| `claude-code-cli`    | `.claude/skills/claude-cli/SKILL.md`             | platform-architect, generalist-agent               |
-| `claude-architect`   | `.claude/skills/claude-architect/SKILL.md`       | platform-architect                                 |
-| `agent-sdk-patterns` | `.claude/skills/agent-sdk-patterns/SKILL.md`     | platform-architect                                 |
-| `sqlite-patterns`    | `.claude/skills/sqlite-patterns/SKILL.md`        | data-architect                                     |
-| `supabase-architect` | `.claude/skills/supabase-architect/SKILL.md`     | data-architect (external projects only)            |
-| `ui-ux-pro-max`      | `.claude/skills/ui-ux-pro-max/SKILL.md`          | design-specialist                                  |
-| `design`             | `.claude/skills/design/SKILL.md`                 | design-specialist                                  |
-| `design-system`      | `.claude/skills/design-system/SKILL.md`          | design-specialist                                  |
-| `brand`              | `.claude/skills/brand/SKILL.md`                  | design-specialist                                  |
-| `banner-design`      | `.claude/skills/banner-design/SKILL.md`          | design-specialist                                  |
-| `slides`             | `.claude/skills/slides/SKILL.md`                 | design-specialist                                  |
-| `git-workflow`       | `.claude/skills/git-workflow/SKILL.md`           | dx-specialist                                      |
-| `ipc-patterns`       | `.claude/skills/ipc-patterns/SKILL.md`           | platform-architect, frontend-architect             |
-| `mermaid-diagrams`   | `.claude/skills/mermaid-diagrams/SKILL.md`       | dx-specialist                                      |
-| `design-docs`        | `.claude/skills/design-docs/SKILL.md`            | dx-specialist                                      |
-| `general-dev`        | `.claude/skills/general-dev/SKILL.md`            | generalist-developer, dx-specialist                |
-| `testing-specialist` | `.claude/skills/testing-specialist/SKILL.md`     | testing-specialist                                 |
-| `planner`            | `.claude/skills/planner/SKILL.md`                | planner                                            |
-| `security`           | `.claude/skills/security/SKILL.md`               | platform-architect                                 |
-| `infrastructure`     | `.claude/skills/infrastructure/SKILL.md`         | platform-engineer                                  |
+| Skill                | Path                                         | Used by agents                                            |
+| -------------------- | -------------------------------------------- | --------------------------------------------------------- |
+| `electron-pro`       | `.claude/skills/electron-pro/SKILL.md`       | platform-architect, platform-engineer, frontend-architect |
+| `dotnet-architect`   | `.claude/skills/dotnet-architect/SKILL.md`   | dotnet-architect                                          |
+| `claude-code-cli`    | `.claude/skills/claude-cli/SKILL.md`         | platform-architect, generalist-agent                      |
+| `claude-architect`   | `.claude/skills/claude-architect/SKILL.md`   | platform-architect                                        |
+| `agent-sdk-patterns` | `.claude/skills/agent-sdk-patterns/SKILL.md` | platform-architect                                        |
+| `sqlite-patterns`    | `.claude/skills/sqlite-patterns/SKILL.md`    | data-architect                                            |
+| `supabase-architect` | `.claude/skills/supabase-architect/SKILL.md` | data-architect (external projects only)                   |
+| `ui-ux-pro-max`      | `.claude/skills/ui-ux-pro-max/SKILL.md`      | design-specialist                                         |
+| `design`             | `.claude/skills/design/SKILL.md`             | design-specialist                                         |
+| `design-system`      | `.claude/skills/design-system/SKILL.md`      | design-specialist                                         |
+| `brand`              | `.claude/skills/brand/SKILL.md`              | design-specialist                                         |
+| `banner-design`      | `.claude/skills/banner-design/SKILL.md`      | design-specialist                                         |
+| `slides`             | `.claude/skills/slides/SKILL.md`             | design-specialist                                         |
+| `git-workflow`       | `.claude/skills/git-workflow/SKILL.md`       | dx-specialist                                             |
+| `ipc-patterns`       | `.claude/skills/ipc-patterns/SKILL.md`       | platform-architect, frontend-architect                    |
+| `mermaid-diagrams`   | `.claude/skills/mermaid-diagrams/SKILL.md`   | dx-specialist                                             |
+| `design-docs`        | `.claude/skills/design-docs/SKILL.md`        | dx-specialist                                             |
+| `general-dev`        | `.claude/skills/general-dev/SKILL.md`        | generalist-developer, dx-specialist                       |
+| `testing-specialist` | `.claude/skills/testing-specialist/SKILL.md` | testing-specialist                                        |
+| `planner`            | `.claude/skills/planner/SKILL.md`            | planner                                                   |
+| `security`           | `.claude/skills/security/SKILL.md`           | platform-architect                                        |
+| `infrastructure`     | `.claude/skills/infrastructure/SKILL.md`     | platform-engineer                                         |
 
 ### Electron skill trigger
 

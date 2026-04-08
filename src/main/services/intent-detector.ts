@@ -111,17 +111,14 @@ export class IntentDetector {
     controlToolState: ControlToolState,
     handoffDetectedInStream: boolean
   ): void {
-    const regexPlanFired =
-      !controlToolState.plan && !!accumulatedText.match(PLAN_REGEX)
+    const regexPlanFired = !controlToolState.plan && !!accumulatedText.match(PLAN_REGEX)
     const regexHandoffFired =
       !controlToolState.handoff &&
       !handoffDetectedInStream &&
       !!accumulatedText.match(HANDOFF_REGEX)
 
     if (controlToolState.plan || regexPlanFired) {
-      log.info(
-        `[PIPELINE:plan-path] tool=${controlToolState.plan} regex=${regexPlanFired}`
-      )
+      log.info(`[PIPELINE:plan-path] tool=${controlToolState.plan} regex=${regexPlanFired}`)
     }
     if (controlToolState.handoff || regexHandoffFired) {
       log.info(

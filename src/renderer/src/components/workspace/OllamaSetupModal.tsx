@@ -18,6 +18,17 @@ export default function OllamaSetupModal({
   const [pullProgress, setPullProgress] = useState<PullProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const startPull = useCallback(async (): Promise<void> => {
+    setState('pulling')
+    setPullProgress(null)
+    setError(null)
+    try {
+      await window.api.ollamaPullModel({ model })
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [model])
+
   const checkStatus = useCallback(async () => {
     setState('checking')
     setError(null)
@@ -45,24 +56,14 @@ export default function OllamaSetupModal({
       setError((e as Error).message)
       setState('not-installed')
     }
-  }, [model])
-
-  const startPull = async (): Promise<void> => {
-    setState('pulling')
-    setPullProgress(null)
-    setError(null)
-    try {
-      await window.api.ollamaPullModel({ model })
-    } catch (e) {
-      setError((e as Error).message)
-    }
-  }
+  }, [model, startPull])
 
   const cancelPull = (): void => {
     window.api.ollamaCancelPull()
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- checkStatus sets state from async IPC result
     checkStatus()
   }, [checkStatus])
 
@@ -210,9 +211,7 @@ export default function OllamaSetupModal({
               <div className="flex items-center gap-3">
                 <Loader2 size={16} className="animate-spin text-primary" />
                 <div className="flex-1">
-                  <p className="text-sm text-text-body font-medium">
-                    Downloading {model}
-                  </p>
+                  <p className="text-sm text-text-body font-medium">Downloading {model}</p>
                   <p className="text-xs text-text-secondary mt-0.5">
                     {pullProgress?.status || 'Starting download...'}
                   </p>

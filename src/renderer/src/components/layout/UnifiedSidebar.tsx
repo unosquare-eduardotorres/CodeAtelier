@@ -1,18 +1,7 @@
 import { useState, useEffect } from 'react'
-import {
-  Plus,
-  MessageSquare,
-  FolderOpen,
-  ChevronLeft,
-  ChevronRight,
-  Settings
-} from 'lucide-react'
+import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight, Settings } from 'lucide-react'
 import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
-import {
-  ChatItem,
-  UnsavedChangesDialog,
-  CompleteDialog
-} from '@renderer/components/chat'
+import { ChatItem, UnsavedChangesDialog, CompleteDialog } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
 import { SETTINGS_MENU } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
@@ -32,7 +21,6 @@ interface UnifiedSidebarProps {
 export default function UnifiedSidebar({
   isCollapsed: externalCollapsed,
   onToggleCollapse,
-  onCreateIdea,
   activeSettingsTab,
   onSettingsTabChange,
   onViewChange,
@@ -40,12 +28,8 @@ export default function UnifiedSidebar({
 }: UnifiedSidebarProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<SidebarTab>('chats')
   const { activeWorkspace } = useWorkspaceStore()
-  const {
-    loadConversations,
-    selectConversation,
-    closeConversation,
-    renameConversation
-  } = useChatActions()
+  const { loadConversations, selectConversation, closeConversation, renameConversation } =
+    useChatActions()
   const conversations = useChatStore((s) => s.conversations)
   const activeConversation = useChatStore((s) => s.activeConversation)
 
@@ -370,7 +354,6 @@ export default function UnifiedSidebar({
         }}
         onCancel={() => setCompleteFromUnsaved(null)}
       />
-
     </>
   )
 }

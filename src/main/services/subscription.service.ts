@@ -15,10 +15,7 @@ class SubscriptionService {
    * Run all subscription checks in parallel.
    */
   async validateAll(): Promise<SubscriptionCheckResult> {
-    const [claudeCli, codexCli] = await Promise.all([
-      this.checkClaudeCli(),
-      this.checkCodexCli()
-    ])
+    const [claudeCli, codexCli] = await Promise.all([this.checkClaudeCli(), this.checkCodexCli()])
 
     // Auth & subscription checks depend on CLI being installed
     let claudeAuth: SubscriptionCheckResult['claudeAuth'] = {

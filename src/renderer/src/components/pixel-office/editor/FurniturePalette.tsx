@@ -26,7 +26,7 @@ function SpritePreview({
   selected: boolean
   onClick: () => void
   label: string
-}) {
+}): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const previewSize = 40
 
@@ -88,7 +88,7 @@ function SpritePreview({
 export default function FurniturePalette({
   selectedFurnitureType,
   onFurnitureTypeChange
-}: FurniturePaletteProps) {
+}: FurniturePaletteProps): React.JSX.Element {
   const categories = getActiveCategories()
   const [activeCategory, setActiveCategory] = useState<FurnitureCategory>(
     categories[0]?.id ?? 'desks'
@@ -142,9 +142,7 @@ export default function FurniturePalette({
           ))}
         </div>
         {items.length === 0 && (
-          <p className="text-[10px] text-text-muted text-center py-4">
-            No items in this category
-          </p>
+          <p className="text-[10px] text-text-muted text-center py-4">No items in this category</p>
         )}
       </div>
     </div>

@@ -21,6 +21,7 @@ export default function CodeGraphProgressPanel({
   }, [workspaceId])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch + event subscription both set state
     fetchStatus()
     const unsub = window.api.onCodeGraphProgress((progress) => {
       if (progress.workspaceId === workspaceId) setState(progress)
@@ -41,10 +42,7 @@ export default function CodeGraphProgressPanel({
   if (state.status === 'scanning') {
     progressLabel = 'Discovering source files...'
   } else if (state.status === 'parsing') {
-    percent =
-      state.totalFiles > 0
-        ? Math.round((state.processedFiles / state.totalFiles) * 100)
-        : 0
+    percent = state.totalFiles > 0 ? Math.round((state.processedFiles / state.totalFiles) * 100) : 0
     progressLabel = `Parsing files... ${state.processedFiles} / ${state.totalFiles}`
   } else if (state.status === 'ranking') {
     percent = 85 // ranking is fast, show near-complete

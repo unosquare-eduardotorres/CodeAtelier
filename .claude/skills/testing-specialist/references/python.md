@@ -3,6 +3,7 @@
 ## Framework: pytest (standard)
 
 ### Setup
+
 ```bash
 pip install pytest pytest-cov pytest-mock pytest-asyncio
 ```
@@ -28,6 +29,7 @@ show_missing = true
 ```
 
 ### Unit Tests
+
 ```python
 import pytest
 from myapp.pricing import calculate_discount
@@ -51,15 +53,18 @@ class TestCalculateDiscount:
 ```
 
 ### Mocking
+
 ```python
 def test_sends_email(mocker):
     mock_send = mocker.patch("myapp.notifications.email_client.send")
     send_notification(user_id=42, message="Hello")
     mock_send.assert_called_once_with(to="user42@example.com", body="Hello")
 ```
+
 Use `mocker.patch` (pytest-mock) — auto-cleans up after test.
 
 ### Fixtures
+
 ```python
 @pytest.fixture
 def sample_user():
@@ -74,6 +79,7 @@ def db_session():
 ```
 
 ### Integration: FastAPI
+
 ```python
 from fastapi.testclient import TestClient
 from myapp.main import app
@@ -90,6 +96,7 @@ def test_create_item(client):
 ```
 
 ### Integration: Django
+
 ```python
 import pytest
 from django.test import Client
@@ -103,6 +110,7 @@ def test_create_user():
 ```
 
 ### Async
+
 ```python
 @pytest.mark.asyncio
 async def test_async_fetch():
@@ -111,6 +119,7 @@ async def test_async_fetch():
 ```
 
 ### Running
+
 ```bash
 pytest                              # all
 pytest -m unit                      # by marker

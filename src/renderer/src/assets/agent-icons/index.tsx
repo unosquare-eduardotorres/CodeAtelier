@@ -23,7 +23,11 @@ interface AgentIconProps {
   className?: string
 }
 
-function SvgIcon({ svg, size = 24, className }: AgentIconProps & { svg: string }) {
+function SvgIcon({
+  svg,
+  size = 24,
+  className
+}: AgentIconProps & { svg: string }): React.JSX.Element {
   return (
     <span
       className={className}
@@ -37,6 +41,7 @@ function SvgIcon({ svg, size = 24, className }: AgentIconProps & { svg: string }
  * Map of agent type slugs to their SVG icon components.
  * Agent types match the slugs used in the database and agent registry.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- intentional co-located constant export with component
 export const AGENT_ICON_MAP: Record<string, string> = {
   'react-architect': ReactArchitectSvg,
   'dotnet-architect': DotnetArchitectSvg,
@@ -53,7 +58,7 @@ export const AGENT_ICON_MAP: Record<string, string> = {
   'cicd-specialist': CicdSpecialistSvg,
   'cloud-infra': CloudSpecialistSvg,
   'cloud-specialist': CloudSpecialistSvg,
-  'generalist': GeneralistSvg,
+  generalist: GeneralistSvg,
   'generalist-developer': GeneralistSvg,
   'docs-diagrams-specialist': DocsSpecialistSvg,
   'docs-specialist': DocsSpecialistSvg
@@ -63,7 +68,11 @@ export const AGENT_ICON_MAP: Record<string, string> = {
  * Render an agent icon by agent type slug.
  * Falls back to the generalist icon if the type is not recognized.
  */
-export function AgentIcon({ agentType, size = 24, className }: AgentIconProps & { agentType: string }) {
+export function AgentIcon({
+  agentType,
+  size = 24,
+  className
+}: AgentIconProps & { agentType: string }): React.JSX.Element {
   const svg = AGENT_ICON_MAP[agentType] ?? GeneralistSvg
   return <SvgIcon svg={svg} size={size} className={className} />
 }

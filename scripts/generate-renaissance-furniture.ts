@@ -5,9 +5,15 @@ import { writeGeneratedFurnitureItem } from './renaissance-furniture/output-writ
 
 async function main(): Promise<void> {
   const validation = validateRegistry(renaissanceFurnitureSpecs)
-  if (validation.duplicateIds.length > 0 || validation.unknownIds.length > 0 || validation.missingIds.length > 0) {
+  if (
+    validation.duplicateIds.length > 0 ||
+    validation.unknownIds.length > 0 ||
+    validation.missingIds.length > 0
+  ) {
     const details = [
-      validation.duplicateIds.length > 0 ? `duplicate: ${validation.duplicateIds.join(', ')}` : null,
+      validation.duplicateIds.length > 0
+        ? `duplicate: ${validation.duplicateIds.join(', ')}`
+        : null,
       validation.unknownIds.length > 0 ? `unknown: ${validation.unknownIds.join(', ')}` : null,
       validation.missingIds.length > 0 ? `missing: ${validation.missingIds.join(', ')}` : null
     ]
@@ -16,10 +22,14 @@ async function main(): Promise<void> {
     throw new Error(`Invalid renaissance furniture registry: ${details}`)
   }
 
-  const implemented = renaissanceFurnitureSpecs.filter((spec) => typeof spec.generator === 'function')
+  const implemented = renaissanceFurnitureSpecs.filter(
+    (spec) => typeof spec.generator === 'function'
+  )
   const pending = renaissanceFurnitureSpecs.filter((spec) => typeof spec.generator !== 'function')
 
-  console.log(`Renaissance furniture output root: ${path.relative(process.cwd(), FURNITURE_OUTPUT_ROOT)}`)
+  console.log(
+    `Renaissance furniture output root: ${path.relative(process.cwd(), FURNITURE_OUTPUT_ROOT)}`
+  )
   console.log(`Total specs: ${renaissanceFurnitureSpecs.length}`)
   console.log(`Implemented generators: ${implemented.length}`)
   console.log(`Pending generators: ${pending.length}`)

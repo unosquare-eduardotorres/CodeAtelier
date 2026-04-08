@@ -32,10 +32,7 @@ export class CoreAgentPromptRepository {
     return rows.map(mapRow)
   }
 
-  findByRoleAndMode(
-    agentRole: 'generalist',
-    mode: 'plan' | 'build'
-  ): CoreAgentPrompt | undefined {
+  findByRoleAndMode(agentRole: 'generalist', mode: 'plan' | 'build'): CoreAgentPrompt | undefined {
     const db = getDatabase()
     const row = db
       .prepare('SELECT * FROM core_agent_prompts WHERE agent_role = ? AND mode = ?')
@@ -43,11 +40,7 @@ export class CoreAgentPromptRepository {
     return row ? mapRow(row) : undefined
   }
 
-  upsert(
-    agentRole: 'generalist',
-    mode: 'plan' | 'build',
-    promptText: string
-  ): CoreAgentPrompt {
+  upsert(agentRole: 'generalist', mode: 'plan' | 'build', promptText: string): CoreAgentPrompt {
     const db = getDatabase()
     const row = db
       .prepare(
@@ -68,10 +61,7 @@ export class CoreAgentPromptRepository {
     return mapRow(row)
   }
 
-  resetToDefault(
-    agentRole: 'generalist',
-    mode: 'plan' | 'build'
-  ): CoreAgentPrompt {
+  resetToDefault(agentRole: 'generalist', mode: 'plan' | 'build'): CoreAgentPrompt {
     const db = getDatabase()
     const row = db
       .prepare(

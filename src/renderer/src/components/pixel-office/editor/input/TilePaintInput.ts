@@ -45,11 +45,7 @@ export function handlePaintDrag(
   // Drag painting for floor/wall/erase
   if (isDragging && pointer.leftButtonDown()) {
     const tool = editorState.activeTool
-    if (
-      tool === EditTool.TILE_PAINT ||
-      tool === EditTool.WALL_PAINT ||
-      tool === EditTool.ERASE
-    ) {
+    if (tool === EditTool.TILE_PAINT || tool === EditTool.WALL_PAINT || tool === EditTool.ERASE) {
       callbacks.onTileAction?.(col, row)
     }
   }
@@ -57,10 +53,8 @@ export function handlePaintDrag(
   // Drag erasing with right button or Ctrl+left
   if (
     isDragging &&
-    (pointer.rightButtonDown() ||
-      (pointer.leftButtonDown() && pointer.event.ctrlKey))
+    (pointer.rightButtonDown() || (pointer.leftButtonDown() && pointer.event.ctrlKey))
   ) {
     callbacks.onEraseAction?.(col, row)
   }
 }
-

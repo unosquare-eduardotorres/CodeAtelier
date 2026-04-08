@@ -107,9 +107,9 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   },
 
   onFeedProgress: (progress) => {
-    if (progress.type === 'error') {
+    if (progress.status === 'error') {
       set({ feedStatus: 'error', feedError: progress.message })
-    } else if (progress.type === 'complete') {
+    } else if (progress.status === 'done') {
       set({
         feedStatus: 'completed',
         feedMessage: progress.message,

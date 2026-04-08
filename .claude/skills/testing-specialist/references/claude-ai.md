@@ -6,8 +6,8 @@ rather than exact text.
 
 ## What You're Testing
 
-| Component                    | Test approach                                      |
-|------------------------------|----------------------------------------------------|
+| Component                    | Test approach                                       |
+| ---------------------------- | --------------------------------------------------- |
 | Your code that calls the SDK | Unit test — mock the Anthropic client               |
 | Prompt behavior              | Eval framework (promptfoo, custom harness)          |
 | Tool use / function calling  | Assert on tool call names, arguments, and sequences |
@@ -19,6 +19,7 @@ rather than exact text.
 Mock the Anthropic client so tests are fast, free, and deterministic.
 
 ### Python (anthropic SDK)
+
 ```python
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -54,6 +55,7 @@ def test_summarize_returns_text(mock_client):
 ```
 
 ### TypeScript (@anthropic-ai/sdk)
+
 ```typescript
 import { describe, it, expect, vi } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
@@ -64,10 +66,10 @@ vi.mock('@anthropic-ai/sdk', () => ({
     messages: {
       create: vi.fn().mockResolvedValue({
         content: [{ type: 'text', text: 'This is a summary.' }],
-        usage: { input_tokens: 100, output_tokens: 20 },
-      }),
-    },
-  })),
+        usage: { input_tokens: 100, output_tokens: 20 }
+      })
+    }
+  }))
 }))
 
 describe('[unit] summarizeText', () => {
@@ -78,7 +80,7 @@ describe('[unit] summarizeText', () => {
     expect(client.messages.create).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'claude-sonnet-4-6',
-        max_tokens: expect.any(Number),
+        max_tokens: expect.any(Number)
       })
     )
   })
@@ -121,7 +123,7 @@ promptfoo is the standard tool for evaluating prompt quality across variations.
 
 ```yaml
 # promptfoo.yaml
-description: "Summarization prompt evaluation"
+description: 'Summarization prompt evaluation'
 
 providers:
   - id: anthropic:messages:claude-sonnet-4-6
@@ -133,26 +135,26 @@ prompts:
 
 tests:
   - vars:
-      text: "The Federal Reserve announced today that it would hold interest rates steady..."
+      text: 'The Federal Reserve announced today that it would hold interest rates steady...'
     assert:
       - type: contains
-        value: "Federal Reserve"
+        value: 'Federal Reserve'
       - type: llm-rubric
-        value: "The summary captures the main point about interest rates"
+        value: 'The summary captures the main point about interest rates'
       - type: javascript
-        value: "output.length < 500"  # Not too long
+        value: 'output.length < 500' # Not too long
 
   - vars:
-      text: ""
+      text: ''
     assert:
       - type: contains
-        value: "cannot summarize"  # Handles empty input gracefully
+        value: 'cannot summarize' # Handles empty input gracefully
 
   - vars:
-      text: "Short."
+      text: 'Short.'
     assert:
       - type: not-contains
-        value: "ERROR"
+        value: 'ERROR'
 ```
 
 ```bash
@@ -165,6 +167,7 @@ npx promptfoo view   # interactive results viewer
 For agents built on the Claude Agent SDK (formerly Claude Code SDK):
 
 ### With promptfoo
+
 ```yaml
 providers:
   - id: anthropic:claude-agent-sdk
@@ -174,7 +177,7 @@ providers:
       permission_mode: 'acceptEdits'
 
 prompts:
-  - "Add input validation to the login function in auth.ts"
+  - 'Add input validation to the login function in auth.ts'
 
 tests:
   - assert:
@@ -192,6 +195,7 @@ tests:
 ```
 
 ### Testing Skill Invocation
+
 ```yaml
 providers:
   - id: anthropic:claude-agent-sdk
@@ -201,15 +205,16 @@ providers:
       append_allowed_tools: ['Skill', 'Read']
 
 prompts:
-  - "Review the authentication module for security issues"
+  - 'Review the authentication module for security issues'
 
 tests:
   - assert:
       - type: skill-used
-        value: code-review  # Verify the expected skill was triggered
+        value: code-review # Verify the expected skill was triggered
 ```
 
 ### Managing Side Effects
+
 Agent tests that write files need cleanup:
 
 ```bash

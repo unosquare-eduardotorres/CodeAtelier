@@ -6,7 +6,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { rgbaToHex, flipSpriteH, pixelDataToSpriteData, spriteDataToPixelData } from '../sprites/spriteUtils'
+import {
+  rgbaToHex,
+  flipSpriteH,
+  pixelDataToSpriteData,
+  spriteDataToPixelData
+} from '../sprites/spriteUtils'
 import type { SpriteData } from '../engine/types'
 
 // ── rgbaToHex ────────────────────────────────────────────────────
@@ -104,8 +109,22 @@ describe('pixelDataToSpriteData', () => {
 
   it('handles 2x2 pixels', () => {
     const data = new Uint8ClampedArray([
-      255, 0, 0, 255, 0, 255, 0, 255, // row 0: red, green
-      0, 0, 255, 255, 255, 255, 255, 255 // row 1: blue, white
+      255,
+      0,
+      0,
+      255,
+      0,
+      255,
+      0,
+      255, // row 0: red, green
+      0,
+      0,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255 // row 1: blue, white
     ])
     const sprite = pixelDataToSpriteData(data, 2, 2)
     assert.equal(sprite.length, 2)

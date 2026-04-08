@@ -1,5 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Zap, Activity, Clock, Users, DollarSign, ShieldCheck, Database, MessageSquare } from 'lucide-react'
+import {
+  Zap,
+  Activity,
+  Clock,
+  Users,
+  DollarSign,
+  ShieldCheck,
+  Database,
+  MessageSquare
+} from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { Skeleton } from '@renderer/components/common'
 import type { TokenSummary, AgentSessionRecord } from '../../../../shared/types'
@@ -298,7 +307,9 @@ export default function TokenUsagePage(): React.JSX.Element {
             <Activity size={12} />
             Sessions
           </div>
-          <div className="text-2xl font-display font-normal text-text-primary">{summary?.sessionCount ?? 0}</div>
+          <div className="text-2xl font-display font-normal text-text-primary">
+            {summary?.sessionCount ?? 0}
+          </div>
           <div className="text-xs text-text-secondary mt-1">Agent sessions recorded</div>
         </div>
 
@@ -307,7 +318,9 @@ export default function TokenUsagePage(): React.JSX.Element {
             <Users size={12} />
             Most Active
           </div>
-          <div className="text-2xl font-display font-normal text-text-primary truncate">{mostActiveAgent}</div>
+          <div className="text-2xl font-display font-normal text-text-primary truncate">
+            {mostActiveAgent}
+          </div>
           <div className="text-xs text-text-secondary mt-1">Highest token consumption</div>
         </div>
       </div>
@@ -342,9 +355,7 @@ export default function TokenUsagePage(): React.JSX.Element {
             {/* Per-turn breakdown bars */}
             {cacheEfficiency.turnBreakdown.length > 0 && (
               <div className="space-y-1.5">
-                <p className="text-xs text-text-secondary font-medium">
-                  Per-Turn Token Breakdown
-                </p>
+                <p className="text-xs text-text-secondary font-medium">Per-Turn Token Breakdown</p>
                 {cacheEfficiency.turnBreakdown.map((t) => {
                   const total = t.inputTokens + t.outputTokens + t.cacheReadTokens
                   if (total === 0) return null

@@ -355,10 +355,8 @@ export abstract class AgentBaseService extends EventEmitter {
                   toolInput &&
                   typeof toolInput.content === 'string' &&
                   typeof toolInput.file_path === 'string' &&
-                  (
-                    (toolInput.file_path as string).includes('.claude/plans/') ||
-                    isPlanContent(toolInput.content as string)
-                  )
+                  ((toolInput.file_path as string).includes('.claude/plans/') ||
+                    isPlanContent(toolInput.content as string))
                 ) {
                   this.emit('chunk', {
                     type: 'text',
@@ -501,10 +499,8 @@ export abstract class AgentBaseService extends EventEmitter {
               if (
                 typeof toolInput.content === 'string' &&
                 typeof toolInput.file_path === 'string' &&
-                (
-                  (toolInput.file_path as string).includes('.claude/plans/') ||
-                  isPlanContent(toolInput.content as string)
-                )
+                ((toolInput.file_path as string).includes('.claude/plans/') ||
+                  isPlanContent(toolInput.content as string))
               ) {
                 this.emit('chunk', {
                   type: 'text',
@@ -610,7 +606,7 @@ export abstract class AgentBaseService extends EventEmitter {
   /**
    * Override in subclasses to handle `system` init events.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   protected onSystemEvent(_event: Record<string, unknown>): void {
     // Default: no-op — subclasses override for session tracking
   }

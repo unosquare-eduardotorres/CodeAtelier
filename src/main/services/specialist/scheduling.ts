@@ -20,11 +20,7 @@ import type { DecomposedTask } from '../../../shared/types'
 
 // ── Strategy Types ──
 
-type SchedulingStrategyName =
-  | 'round-robin'
-  | 'least-busy'
-  | 'capability-match'
-  | 'dependency-first'
+type SchedulingStrategyName = 'round-robin' | 'least-busy' | 'capability-match' | 'dependency-first'
 
 export interface AgentCapability {
   agentId: string
@@ -87,7 +83,7 @@ class RoundRobinStrategy implements SchedulingStrategy {
       }))
   }
 
-  selectAgent(task: DecomposedTask, agents: AgentCapability[]): string | undefined {
+  selectAgent(_task: DecomposedTask, agents: AgentCapability[]): string | undefined {
     if (agents.length === 0) return undefined
     const available = agents.filter((a) => a.activeTaskCount < a.maxConcurrent)
     if (available.length === 0) return undefined
@@ -290,7 +286,10 @@ export class CompositeScheduler implements SchedulingStrategy {
 
   rankTasks(context: SchedulingContext): TaskPriority[] {
     // Collect scores from all strategies
-    const taskScores = new Map<string, { task: DecomposedTask; weightedScore: number; reasons: string[] }>()
+    const taskScores = new Map<
+      string,
+      { task: DecomposedTask; weightedScore: number; reasons: string[] }
+    >()
 
     for (const { strategy, weight } of this.strategies) {
       const ranked = strategy.rankTasks(context)

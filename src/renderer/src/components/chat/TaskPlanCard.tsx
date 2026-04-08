@@ -17,10 +17,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type {
-  InvestigationReport,
-  StructuredPlan
-} from '../../../../shared/types'
+import type { InvestigationReport, StructuredPlan } from '../../../../shared/types'
 import { MermaidDiagram } from '@renderer/components/common'
 
 function shortenPath(filePath: string): string {
@@ -53,7 +50,6 @@ export default function TaskPlanCard({
   isExecuting = false,
   planContent,
   investigation,
-  investigationSpecialist,
   onBuildNow,
   onOrchestratedBuild,
   onSaveAsIdea,
@@ -121,7 +117,10 @@ export default function TaskPlanCard({
       : 'Task Plan'
 
   return (
-    <div data-testid="task-plan-card" className={`my-3 rounded-xl border ${isInvestigation ? 'border-primary/30' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}>
+    <div
+      data-testid="task-plan-card"
+      className={`my-3 rounded-xl border ${isInvestigation ? 'border-primary/30' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}
+    >
       {/* Header */}
       <div className={`flex items-center gap-3 px-4 py-3 border-b ${headerBg}`}>
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${headerIconBg}`}>
@@ -136,13 +135,17 @@ export default function TaskPlanCard({
           <p className="text-xs text-text-secondary truncate">{summary}</p>
         </div>
         {isInvestigation && investigation && (
-          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${impactStyles[investigation.impact] ?? impactStyles.medium}`}>
+          <span
+            className={`px-2 py-0.5 rounded-full text-xs font-medium ${impactStyles[investigation.impact] ?? impactStyles.medium}`}
+          >
             {investigation.impact} impact
           </span>
         )}
         <span
           className={`text-[10px] px-2 py-0.5 rounded-full ${
-            mode === 'build' ? 'bg-mode-build-muted text-mode-build-text' : 'bg-mode-plan-muted text-mode-plan-text'
+            mode === 'build'
+              ? 'bg-mode-build-muted text-mode-build-text'
+              : 'bg-mode-plan-muted text-mode-plan-text'
           }`}
         >
           {mode}
@@ -154,7 +157,9 @@ export default function TaskPlanCard({
         <div>
           {/* Problem */}
           <div className="px-5 py-3 border-b border-border-subtle">
-            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">Problem</span>
+            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+              Problem
+            </span>
             <div className="mt-1 prose prose-sm prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{investigation.problem}</ReactMarkdown>
             </div>
@@ -162,7 +167,9 @@ export default function TaskPlanCard({
 
           {/* Root Cause */}
           <div className="px-5 py-3 border-b border-border-subtle">
-            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">Root Cause</span>
+            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+              Root Cause
+            </span>
             <div className="mt-1 prose prose-sm prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{investigation.rootCause}</ReactMarkdown>
             </div>
@@ -170,7 +177,9 @@ export default function TaskPlanCard({
 
           {/* Proposed Fix */}
           <div className="px-5 py-3 border-b border-border-subtle">
-            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">How to Fix</span>
+            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+              How to Fix
+            </span>
             <div className="mt-1 prose prose-sm prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{investigation.proposedFix}</ReactMarkdown>
             </div>
@@ -220,67 +229,85 @@ export default function TaskPlanCard({
             </div>
           )}
 
-          {'problemSummary' in structuredPlan && typeof structuredPlan.problemSummary === 'string' && structuredPlan.problemSummary && (
-            <div className="rounded-lg border border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-muted)] overflow-hidden">
-              <button
-                type="button"
-                onClick={() => toggleSection('problemSummary')}
-                className="w-full px-4 py-3 flex items-center justify-between text-left"
-              >
-                <span className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-text)]">
-                  <AlertTriangle size={14} className="text-amber-400" />
-                  Problem Summary
-                </span>
-                <span className="text-xs text-text-secondary">
-                  {expandedSections.has('problemSummary') ? 'Hide' : 'Show'}
-                </span>
-              </button>
-              {expandedSections.has('problemSummary') && (
-                <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{structuredPlan.problemSummary}</ReactMarkdown>
+          {'problemSummary' in structuredPlan &&
+            typeof structuredPlan.problemSummary === 'string' &&
+            structuredPlan.problemSummary && (
+              <div className="rounded-lg border border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-muted)] overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => toggleSection('problemSummary')}
+                  className="w-full px-4 py-3 flex items-center justify-between text-left"
+                >
+                  <span className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-text)]">
+                    <AlertTriangle size={14} className="text-amber-400" />
+                    Problem Summary
+                  </span>
+                  <span className="text-xs text-text-secondary">
+                    {expandedSections.has('problemSummary') ? 'Hide' : 'Show'}
+                  </span>
+                </button>
+                {expandedSections.has('problemSummary') && (
+                  <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {structuredPlan.problemSummary}
+                    </ReactMarkdown>
+                  </div>
+                )}
+              </div>
+            )}
+
+          {'rootCause' in structuredPlan &&
+            typeof structuredPlan.rootCause === 'string' &&
+            structuredPlan.rootCause && (
+              <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
+                  <Bug size={14} className="text-rose-400" />
+                  Root Cause
                 </div>
-              )}
-            </div>
-          )}
+                <div className="prose prose-sm prose-invert max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {structuredPlan.rootCause}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
 
-          {'rootCause' in structuredPlan && typeof structuredPlan.rootCause === 'string' && structuredPlan.rootCause && (
-            <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
-                <Bug size={14} className="text-rose-400" />
-                Root Cause
-              </div>
-              <div className="prose prose-sm prose-invert max-w-none">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{structuredPlan.rootCause}</ReactMarkdown>
-              </div>
-            </div>
-          )}
-
-          {'decisions' in structuredPlan && Array.isArray(structuredPlan.decisions) && structuredPlan.decisions.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-                <GitBranch size={14} className="text-sky-400" />
-                Decisions
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border-collapse table-fixed">
-                  <thead>
-                    <tr className="bg-surface-raised">
-                      <th className="border border-border-subtle px-3 py-1.5 text-left font-medium text-text-primary w-[35%]">What</th>
-                      <th className="border border-border-subtle px-3 py-1.5 text-left font-medium text-text-primary w-[65%]">Why</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {structuredPlan.decisions.map((decision, index) => (
-                      <tr key={`decision-${index}`}>
-                        <td className="border border-border-subtle px-3 py-1.5 text-text-secondary align-top">{decision.what}</td>
-                        <td className="border border-border-subtle px-3 py-1.5 text-text-secondary break-words">{decision.why}</td>
+          {'decisions' in structuredPlan &&
+            Array.isArray(structuredPlan.decisions) &&
+            structuredPlan.decisions.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                  <GitBranch size={14} className="text-sky-400" />
+                  Decisions
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse table-fixed">
+                    <thead>
+                      <tr className="bg-surface-raised">
+                        <th className="border border-border-subtle px-3 py-1.5 text-left font-medium text-text-primary w-[35%]">
+                          What
+                        </th>
+                        <th className="border border-border-subtle px-3 py-1.5 text-left font-medium text-text-primary w-[65%]">
+                          Why
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {structuredPlan.decisions.map((decision, index) => (
+                        <tr key={`decision-${index}`}>
+                          <td className="border border-border-subtle px-3 py-1.5 text-text-secondary align-top">
+                            {decision.what}
+                          </td>
+                          <td className="border border-border-subtle px-3 py-1.5 text-text-secondary break-words">
+                            {decision.why}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {structuredPlan.steps && structuredPlan.steps.length > 0 && (
             <div className="space-y-2">
@@ -294,16 +321,23 @@ export default function TaskPlanCard({
                         ? 'text-red-300 bg-red-500/20'
                         : 'text-amber-300 bg-amber-500/20'
                   return (
-                    <li key={`${step.number}-${step.title}`} className="rounded-lg border border-border-subtle bg-surface-base/40 p-3">
+                    <li
+                      key={`${step.number}-${step.title}`}
+                      className="rounded-lg border border-border-subtle bg-surface-base/40 p-3"
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-sky-500/20 text-sky-300 text-xs font-semibold">
                               {step.number}
                             </span>
-                            <span className="text-sm font-semibold text-text-primary">{step.title}</span>
+                            <span className="text-sm font-semibold text-text-primary">
+                              {step.title}
+                            </span>
                             {step.complexity && (
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide ${complexityClass}`}>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide ${complexityClass}`}
+                              >
                                 {step.complexity}
                               </span>
                             )}
@@ -324,136 +358,171 @@ export default function TaskPlanCard({
             </div>
           )}
 
-          {'filesChanged' in structuredPlan && Array.isArray(structuredPlan.filesChanged) && structuredPlan.filesChanged.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-                <FileCode size={14} className="text-sky-400" />
-                Files Changed
-              </div>
-              <div className="prose prose-sm prose-invert max-w-none prose-table:border-collapse prose-th:border prose-th:border-border-subtle prose-th:bg-surface-raised prose-th:px-3 prose-th:py-1.5 prose-td:border prose-td:border-border-subtle prose-td:px-3 prose-td:py-1.5">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>File</th>
-                      <th>Change</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {structuredPlan.filesChanged.map((entry, index) => (
-                      <tr key={`file-change-${index}`}>
-                        <td>
-                          <span className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 cursor-pointer font-mono text-xs bg-sky-400/10 px-1.5 py-0.5 rounded">
-                            <FileCode size={12} />
-                            {shortenPath(entry.file)}
-                          </span>
-                        </td>
-                        <td>{entry.change}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {'files' in structuredPlan && Array.isArray(structuredPlan.files) && structuredPlan.files.length > 0 && !('filesChanged' in structuredPlan && Array.isArray(structuredPlan.filesChanged) && structuredPlan.filesChanged.length > 0) && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-                <FileCode size={14} className="text-sky-400" />
-                Files in Scope
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {structuredPlan.files.map((file, index) => (
-                  <span
-                    key={`scope-file-${index}`}
-                    className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 cursor-pointer font-mono text-xs bg-sky-400/10 px-1.5 py-0.5 rounded"
-                  >
-                    <FileCode size={12} />
-                    {shortenPath(file)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {'risks' in structuredPlan && Array.isArray(structuredPlan.risks) && structuredPlan.risks.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-                <AlertCircle size={14} className="text-rose-400" />
-                Risks
-              </div>
+          {'filesChanged' in structuredPlan &&
+            Array.isArray(structuredPlan.filesChanged) &&
+            structuredPlan.filesChanged.length > 0 && (
               <div className="space-y-2">
-                {structuredPlan.risks.map((riskItem, index) => {
-                  const risk = typeof riskItem === 'string' ? riskItem : riskItem.risk
-                  const severity = typeof riskItem === 'string' ? 'medium' : riskItem.severity
-                  const mitigation = typeof riskItem === 'string' ? undefined : riskItem.mitigation
-                  const severityClass =
-                    severity === 'low'
-                      ? 'text-emerald-300 bg-emerald-500/20'
-                      : severity === 'high'
-                        ? 'text-red-300 bg-red-500/20'
-                        : 'text-amber-300 bg-amber-500/20'
-                  return (
-                    <div key={`risk-${index}`} className="rounded-lg border border-border-subtle bg-surface-base/40 p-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide ${severityClass}`}>
-                          {severity}
-                        </span>
-                        <p className="text-sm text-text-body">{risk}</p>
-                      </div>
-                      {mitigation && <p className="mt-2 text-xs text-text-secondary"><strong>Mitigation:</strong> {mitigation}</p>}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {'expectedOutcome' in structuredPlan && typeof structuredPlan.expectedOutcome === 'string' && structuredPlan.expectedOutcome && (
-            <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-300 mb-2">
-                <CheckCircle2 size={14} />
-                Expected Outcome
-              </div>
-              <div className="text-sm text-text-body">{structuredPlan.expectedOutcome}</div>
-            </div>
-          )}
-
-          {'deferredItems' in structuredPlan && Array.isArray(structuredPlan.deferredItems) && structuredPlan.deferredItems.length > 0 && (
-            <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
-                <Clock size={14} className="text-slate-300" />
-                Deferred Items
-              </div>
-              <ul className="list-disc pl-5 space-y-1 text-sm text-text-body">
-                {structuredPlan.deferredItems.map((item, index) => (
-                  <li key={`deferred-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {'diagrams' in structuredPlan && Array.isArray(structuredPlan.diagrams) && structuredPlan.diagrams.length > 0 && (
-            <div className="space-y-3">
-              {structuredPlan.diagrams.map((diagram, index) => (
-                <div key={`diagram-${index}`} className="rounded-lg border border-border-subtle bg-surface-base p-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
-                    {diagram.title}
-                  </div>
-                  <MermaidDiagram definition={diagram.mermaid} />
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                  <FileCode size={14} className="text-sky-400" />
+                  Files Changed
                 </div>
-              ))}
-            </div>
-          )}
+                <div className="prose prose-sm prose-invert max-w-none prose-table:border-collapse prose-th:border prose-th:border-border-subtle prose-th:bg-surface-raised prose-th:px-3 prose-th:py-1.5 prose-td:border prose-td:border-border-subtle prose-td:px-3 prose-td:py-1.5">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>File</th>
+                        <th>Change</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {structuredPlan.filesChanged.map((entry, index) => (
+                        <tr key={`file-change-${index}`}>
+                          <td>
+                            <span className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 cursor-pointer font-mono text-xs bg-sky-400/10 px-1.5 py-0.5 rounded">
+                              <FileCode size={12} />
+                              {shortenPath(entry.file)}
+                            </span>
+                          </td>
+                          <td>{entry.change}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+          {'files' in structuredPlan &&
+            Array.isArray(structuredPlan.files) &&
+            structuredPlan.files.length > 0 &&
+            !(
+              'filesChanged' in structuredPlan &&
+              Array.isArray(structuredPlan.filesChanged) &&
+              structuredPlan.filesChanged.length > 0
+            ) && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                  <FileCode size={14} className="text-sky-400" />
+                  Files in Scope
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {structuredPlan.files.map((file, index) => (
+                    <span
+                      key={`scope-file-${index}`}
+                      className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 cursor-pointer font-mono text-xs bg-sky-400/10 px-1.5 py-0.5 rounded"
+                    >
+                      <FileCode size={12} />
+                      {shortenPath(file)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+          {'risks' in structuredPlan &&
+            Array.isArray(structuredPlan.risks) &&
+            structuredPlan.risks.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                  <AlertCircle size={14} className="text-rose-400" />
+                  Risks
+                </div>
+                <div className="space-y-2">
+                  {structuredPlan.risks.map((riskItem, index) => {
+                    const risk = typeof riskItem === 'string' ? riskItem : riskItem.risk
+                    const severity = typeof riskItem === 'string' ? 'medium' : riskItem.severity
+                    const mitigation =
+                      typeof riskItem === 'string' ? undefined : riskItem.mitigation
+                    const severityClass =
+                      severity === 'low'
+                        ? 'text-emerald-300 bg-emerald-500/20'
+                        : severity === 'high'
+                          ? 'text-red-300 bg-red-500/20'
+                          : 'text-amber-300 bg-amber-500/20'
+                    return (
+                      <div
+                        key={`risk-${index}`}
+                        className="rounded-lg border border-border-subtle bg-surface-base/40 p-3"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide ${severityClass}`}
+                          >
+                            {severity}
+                          </span>
+                          <p className="text-sm text-text-body">{risk}</p>
+                        </div>
+                        {mitigation && (
+                          <p className="mt-2 text-xs text-text-secondary">
+                            <strong>Mitigation:</strong> {mitigation}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+          {'expectedOutcome' in structuredPlan &&
+            typeof structuredPlan.expectedOutcome === 'string' &&
+            structuredPlan.expectedOutcome && (
+              <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-emerald-300 mb-2">
+                  <CheckCircle2 size={14} />
+                  Expected Outcome
+                </div>
+                <div className="text-sm text-text-body">{structuredPlan.expectedOutcome}</div>
+              </div>
+            )}
+
+          {'deferredItems' in structuredPlan &&
+            Array.isArray(structuredPlan.deferredItems) &&
+            structuredPlan.deferredItems.length > 0 && (
+              <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
+                  <Clock size={14} className="text-slate-300" />
+                  Deferred Items
+                </div>
+                <ul className="list-disc pl-5 space-y-1 text-sm text-text-body">
+                  {structuredPlan.deferredItems.map((item, index) => (
+                    <li key={`deferred-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+          {'diagrams' in structuredPlan &&
+            Array.isArray(structuredPlan.diagrams) &&
+            structuredPlan.diagrams.length > 0 && (
+              <div className="space-y-3">
+                {structuredPlan.diagrams.map((diagram, index) => (
+                  <div
+                    key={`diagram-${index}`}
+                    className="rounded-lg border border-border-subtle bg-surface-base p-3"
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
+                      {diagram.title}
+                    </div>
+                    <MermaidDiagram definition={diagram.mermaid} />
+                  </div>
+                ))}
+              </div>
+            )}
 
           {/* Legacy sections for backward compatibility */}
           {structuredPlan.sections && structuredPlan.sections.length > 0 && (
             <div className="space-y-3">
               {structuredPlan.sections.map((section, index) => (
-                <div key={`${section.heading}-${index}`} className="rounded-lg border border-mode-plan-border bg-mode-plan-muted overflow-hidden">
+                <div
+                  key={`${section.heading}-${index}`}
+                  className="rounded-lg border border-mode-plan-border bg-mode-plan-muted overflow-hidden"
+                >
                   <div className="px-4 py-3">
                     {section.icon && <span className="text-base mr-2">{section.icon}</span>}
-                    <span className="text-sm font-semibold text-mode-plan-text">{section.heading}</span>
+                    <span className="text-sm font-semibold text-mode-plan-text">
+                      {section.heading}
+                    </span>
                   </div>
                   <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.content}</ReactMarkdown>
@@ -482,7 +551,10 @@ export default function TaskPlanCard({
         <div className="flex items-center gap-2 px-4 py-3 border-t border-border-subtle bg-surface-base/50">
           {onBuildNow && (
             <button
-              onClick={() => { setUserClicked(true); onBuildNow() }}
+              onClick={() => {
+                setUserClicked(true)
+                onBuildNow()
+              }}
               className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-mode-build/50 press-scale"
             >
               <Hammer size={14} />
@@ -491,7 +563,10 @@ export default function TaskPlanCard({
           )}
           {onOrchestratedBuild && (
             <button
-              onClick={() => { setUserClicked(true); onOrchestratedBuild() }}
+              onClick={() => {
+                setUserClicked(true)
+                onOrchestratedBuild()
+              }}
               className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
             >
               <Users size={14} />
@@ -500,7 +575,10 @@ export default function TaskPlanCard({
           )}
           {onSaveAsIdea && (
             <button
-              onClick={() => { setUserClicked(true); onSaveAsIdea() }}
+              onClick={() => {
+                setUserClicked(true)
+                onSaveAsIdea()
+              }}
               className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
             >
               <Lightbulb size={14} />
@@ -509,7 +587,10 @@ export default function TaskPlanCard({
           )}
           {onRefine && (
             <button
-              onClick={() => { setUserClicked(true); onRefine() }}
+              onClick={() => {
+                setUserClicked(true)
+                onRefine()
+              }}
               className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
             >
               <RefreshCw size={14} />
@@ -526,8 +607,6 @@ export default function TaskPlanCard({
           Preparing fix plan...
         </div>
       )}
-
     </div>
   )
 }
-

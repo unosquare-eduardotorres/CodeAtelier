@@ -48,7 +48,9 @@ class DescriptionCacheService {
    * Generate a deterministic cache key from the chunk's identity + content.
    */
   makeKey(filePath: string, symbolName: string, body: string): string {
-    return createHash('sha256').update(filePath + symbolName + body).digest('hex')
+    return createHash('sha256')
+      .update(filePath + symbolName + body)
+      .digest('hex')
   }
 
   /**
@@ -56,22 +58,16 @@ class DescriptionCacheService {
    */
   get(key: string): string | null {
     const db = getDatabase()
-    const row = db
-      .prepare('SELECT description FROM chunk_descriptions WHERE key = ?')
-      .get(key) as { description: string } | undefined
+    const row = db.prepare('SELECT description FROM chunk_descriptions WHERE key = ?').get(key) as
+      | { description: string }
+      | undefined
     return row?.description ?? null
   }
 
   /**
    * Store a description in the cache.
    */
-  set(
-    key: string,
-    description: string,
-    model: string,
-    filePath: string,
-    symbolName: string
-  ): void {
+  set(key: string, description: string, model: string, filePath: string, symbolName: string): void {
     const db = getDatabase()
     db.prepare(
       `INSERT OR REPLACE INTO chunk_descriptions (key, workspace_id, description, model, file_path, symbol_name)
@@ -85,9 +81,7 @@ class DescriptionCacheService {
    */
   invalidateFile(filePath: string): number {
     const db = getDatabase()
-    const result = db
-      .prepare('DELETE FROM chunk_descriptions WHERE file_path = ?')
-      .run(filePath)
+    const result = db.prepare('DELETE FROM chunk_descriptions WHERE file_path = ?').run(filePath)
     return result.changes
   }
 
@@ -175,10 +169,7 @@ class DescriptionCacheService {
     workspacePath?: string
   ): Promise<Map<number, string>> {
     const symbolBlocks = chunks
-      .map(
-        (c, i) =>
-          `### Symbol ${i + 1}: ${c.chunk.symbolName}\n${c.embedText.slice(0, 400)}`
-      )
+      .map((c, i) => `### Symbol ${i + 1}: ${c.chunk.symbolName}\n${c.embedText.slice(0, 400)}`)
       .join('\n\n')
 
     const prompt = BATCH_DESCRIPTION_PROMPT.replace('{symbols}', symbolBlocks)
@@ -256,9 +247,9 @@ class DescriptionCacheService {
    */
   getCount(): number {
     const db = getDatabase()
-    const row = db
-      .prepare('SELECT COUNT(*) as count FROM chunk_descriptions')
-      .get() as { count: number }
+    const row = db.prepare('SELECT COUNT(*) as count FROM chunk_descriptions').get() as {
+      count: number
+    }
     return row.count
   }
 

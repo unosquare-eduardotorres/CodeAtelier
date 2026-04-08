@@ -45,12 +45,25 @@ export default function RateLimitBanner(): React.JSX.Element | null {
     }
   }, [dismiss])
 
+  const [resetsInMin, setResetsInMin] = useState<number | undefined>(undefined)
+
+  useEffect(() => {
+    if (!rateLimit?.resetsAt) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync state with external rate limit data
+      setResetsInMin(undefined)
+      return
+    }
+    // Calculate immediately, then update every 30s
+    const calc = (): void =>
+      setResetsInMin(Math.max(1, Math.ceil((rateLimit.resetsAt! - Date.now()) / 60_000)))
+    calc()
+    const interval = setInterval(calc, 30_000)
+    return () => clearInterval(interval)
+  }, [rateLimit?.resetsAt])
+
   if (!rateLimit || rateLimit.status === 'allowed') return null
 
   const isRejected = rateLimit.status === 'rejected'
-  const resetsInMin = rateLimit.resetsAt
-    ? Math.max(1, Math.ceil((rateLimit.resetsAt - Date.now()) / 60_000))
-    : undefined
 
   return (
     <div

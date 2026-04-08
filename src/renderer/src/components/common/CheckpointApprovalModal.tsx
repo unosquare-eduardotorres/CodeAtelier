@@ -1,5 +1,13 @@
 import { useEffect, useState, useCallback } from 'react'
-import { ShieldCheck, ChevronDown, ChevronUp, CheckCircle2, XCircle, FileText, AlertTriangle } from 'lucide-react'
+import {
+  ShieldCheck,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  XCircle,
+  FileText,
+  AlertTriangle
+} from 'lucide-react'
 
 interface CheckpointApprovalRequest {
   id: string
@@ -16,23 +24,21 @@ interface CheckpointApprovalRequest {
   createdAt: string
 }
 
-const TYPE_BADGES: Record<
-  CheckpointApprovalRequest['type'],
-  { label: string; className: string }
-> = {
-  phase_gate: {
-    label: 'Phase Gate',
-    className: 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-  },
-  merge_approval: {
-    label: 'Merge Approval',
-    className: 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-  },
-  destructive_action: {
-    label: 'Destructive Action',
-    className: 'bg-red-500/20 text-red-400 border-red-500/30'
+const TYPE_BADGES: Record<CheckpointApprovalRequest['type'], { label: string; className: string }> =
+  {
+    phase_gate: {
+      label: 'Phase Gate',
+      className: 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+    },
+    merge_approval: {
+      label: 'Merge Approval',
+      className: 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+    },
+    destructive_action: {
+      label: 'Destructive Action',
+      className: 'bg-red-500/20 text-red-400 border-red-500/30'
+    }
   }
-}
 
 export default function CheckpointApprovalModal(): React.JSX.Element | null {
   const [requests, setRequests] = useState<CheckpointApprovalRequest[]>([])
@@ -68,7 +74,10 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
         <div className="flex items-center gap-3 px-5 py-4 bg-surface-overlay border-b border-border-default">
           <ShieldCheck size={20} className="text-primary flex-shrink-0" />
           <div className="flex-1 min-w-0">
-            <h3 id="checkpoint-approval-title" className="text-sm font-semibold text-text-primary truncate">
+            <h3
+              id="checkpoint-approval-title"
+              className="text-sm font-semibold text-text-primary truncate"
+            >
               {current.title}
             </h3>
             <p className="text-xs text-text-secondary mt-0.5">{current.summary}</p>

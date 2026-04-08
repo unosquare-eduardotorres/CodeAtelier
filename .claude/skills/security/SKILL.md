@@ -7,6 +7,7 @@ Security analysis and hardening for desktop and web applications, with deep expe
 ## Core Competencies
 
 ### Authentication & Authorization
+
 - **OAuth 2.0 + PKCE**: Preferred for desktop apps (no client secret storage needed)
 - **JWT Management**: Short-lived access tokens, secure refresh token rotation
 - **API Key Security**: Scoped keys, rotation policies, never in source code
@@ -14,6 +15,7 @@ Security analysis and hardening for desktop and web applications, with deep expe
 - **RBAC/ABAC**: Role-based and attribute-based access control patterns
 
 ### Input Validation & Sanitization
+
 - **Validation Location**: Always validate on the trust boundary (main process for Electron)
 - **Allowlist over Denylist**: Define what IS valid, not what ISN'T
 - **Type Coercion**: Validate types before processing (string lengths, number ranges, enum values)
@@ -22,6 +24,7 @@ Security analysis and hardening for desktop and web applications, with deep expe
 - **XSS Prevention**: CSP headers, no `innerHTML` with user content, React auto-escaping
 
 ### Electron-Specific Security
+
 - **Context Isolation**: Always `contextIsolation: true` — renderer cannot access Node.js
 - **Node Integration**: Always `nodeIntegration: false` — prevent arbitrary code execution
 - **Sandbox**: Enable `sandbox: true` for renderer processes
@@ -32,6 +35,7 @@ Security analysis and hardening for desktop and web applications, with deep expe
 - **Fuses**: Set Electron Fuses to prevent runtime toggles of security features
 
 ### Secret Management
+
 - **Environment Variables**: Use `.env` files (gitignored) for development
 - **OS Keychain**: Use `keytar` or `safeStorage` for persisting credentials
 - **Never in Source**: No secrets in code, config files, or commit history
@@ -39,6 +43,7 @@ Security analysis and hardening for desktop and web applications, with deep expe
 - **Credential Rotation**: Support rotating credentials without downtime
 
 ### Attack Surface Analysis
+
 - **IPC Channel Audit**: Every `ipcMain.handle` validates sender and sanitizes inputs
 - **File System Access**: Minimize, validate paths, use `app.getPath()` for safe directories
 - **External URLs**: Validate before `shell.openExternal()`, allowlist domains
@@ -56,6 +61,7 @@ When evaluating security posture, score based on:
 5. **Attack Surface (15%)**: Are IPC channels validated? Is file access minimized? Are external URLs checked?
 
 ## Anti-Patterns to Flag
+
 - Storing secrets in localStorage or SQLite without encryption
 - Using `shell.openExternal()` with user-provided URLs without validation
 - Disabling `contextIsolation` or enabling `nodeIntegration`

@@ -53,7 +53,9 @@ export default function FileChangeList({
           <Check size={24} className="text-success" />
         </div>
         <p className="text-sm font-medium text-text-primary mb-1">No uncommitted changes</p>
-        <p className="text-xs text-text-secondary">All file changes in this conversation have been committed.</p>
+        <p className="text-xs text-text-secondary">
+          All file changes in this conversation have been committed.
+        </p>
       </div>
     )
   }
@@ -125,9 +127,7 @@ export default function FileChangeList({
               {/* File name + path */}
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-text-primary truncate">{fileName}</p>
-                {dirPath && (
-                  <p className="text-[10px] text-text-muted truncate">{dirPath}</p>
-                )}
+                {dirPath && <p className="text-[10px] text-text-muted truncate">{dirPath}</p>}
               </div>
 
               {/* Change type badge */}

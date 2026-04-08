@@ -4,8 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { OfficeState } from '../engine/officeState'
-import { CharacterState, Direction, TileType, TILE_SIZE } from '../engine/types'
-import type { OfficeLayout, Seat } from '../engine/types'
+import '../engine/types'
 
 let passed = 0
 let failed = 0
@@ -28,38 +27,6 @@ function describe(name: string, fn: () => void): void {
 }
 
 // ── Fixtures ──────────────────────────────────────────────
-
-/** Minimal layout with 4 desks and chairs for testing */
-function makeTestLayout(): OfficeLayout {
-  // 7x5 grid: wall border, floor interior, with 2 desk+chair pairs
-  const cols = 7
-  const rows = 5
-  const tiles: number[] = []
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (r === 0 || r === rows - 1 || c === 0 || c === cols - 1) {
-        tiles.push(TileType.WALL)
-      } else {
-        tiles.push(TileType.FLOOR_1)
-      }
-    }
-  }
-
-  return {
-    version: 1,
-    cols,
-    rows,
-    tiles: tiles as any,
-    furniture: [
-      // Desk at (2,1), chair at (2,2) facing UP
-      { uid: 'desk-1', type: 'desk-front', col: 2, row: 1 },
-      { uid: 'chair-1', type: 'chair-front', col: 2, row: 2 },
-      // Desk at (4,1), chair at (4,2) facing UP
-      { uid: 'desk-2', type: 'desk-front', col: 4, row: 1 },
-      { uid: 'chair-2', type: 'chair-front', col: 4, row: 2 }
-    ]
-  }
-}
 
 // ── Constructor ──────────────────────────────────────────
 

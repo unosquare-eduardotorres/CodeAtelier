@@ -39,7 +39,6 @@ class ModelConfigService {
     const overrides = (settings?.modelOverrides ?? {}) as ModelOverrides
     return overrides[action] ?? DEFAULT_MODEL_CONFIG[action]
   }
-
 }
 
 export const modelConfigService = new ModelConfigService()

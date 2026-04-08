@@ -96,7 +96,7 @@ jobs:
 # Cache node_modules
 - uses: actions/setup-node@v4
   with:
-    cache: 'npm'  # Built-in npm caching
+    cache: 'npm' # Built-in npm caching
 
 # Cache Electron binaries (saves ~100MB download)
 - uses: actions/cache@v4

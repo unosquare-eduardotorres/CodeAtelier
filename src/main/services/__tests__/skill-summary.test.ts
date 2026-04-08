@@ -232,12 +232,18 @@ describe('SkillSummaryService', () => {
 
     test('standard summary respects ~800 char budget', () => {
       const summaries = service.generateSummaries(SAMPLE_SKILL)
-      assert.ok(summaries.standard.length <= 900, `standard summary too long: ${summaries.standard.length}`)
+      assert.ok(
+        summaries.standard.length <= 900,
+        `standard summary too long: ${summaries.standard.length}`
+      )
     })
 
     test('minimal summary respects ~200 char budget', () => {
       const summaries = service.generateSummaries(SAMPLE_SKILL)
-      assert.ok(summaries.minimal.length <= 200, `minimal summary too long: ${summaries.minimal.length}`)
+      assert.ok(
+        summaries.minimal.length <= 200,
+        `minimal summary too long: ${summaries.minimal.length}`
+      )
     })
 
     test('minimal summary contains skill name', () => {

@@ -3,6 +3,7 @@
 Use alongside `references/javascript-typescript.md` for base Vitest/Jest patterns.
 
 ## Setup
+
 ```bash
 npm install -D @testing-library/react @testing-library/jest-dom @testing-library/user-event jsdom
 ```
@@ -23,6 +24,7 @@ import '@testing-library/jest-dom'
 ## Component Tests
 
 ### Basic Render
+
 ```typescript
 import { render, screen } from '@testing-library/react'
 import { Greeting } from './Greeting'
@@ -34,6 +36,7 @@ it('renders the greeting message', () => {
 ```
 
 ### User Interactions
+
 ```typescript
 import userEvent from '@testing-library/user-event'
 
@@ -48,6 +51,7 @@ it('increments count on click', async () => {
 ```
 
 ### Forms
+
 ```typescript
 it('submits form with entered data', async () => {
   const user = userEvent.setup()
@@ -66,6 +70,7 @@ it('submits form with entered data', async () => {
 ```
 
 ### Async / Loading States
+
 ```typescript
 it('shows data after loading', async () => {
   render(<UserProfile userId={1} />)
@@ -80,6 +85,7 @@ it('shows data after loading', async () => {
 ```
 
 ### Custom Hooks
+
 ```typescript
 import { renderHook, act } from '@testing-library/react'
 import { useCounter } from './useCounter'
@@ -96,6 +102,7 @@ it('increments and resets', () => {
 ```
 
 ### Context Providers
+
 ```typescript
 function renderWithProviders(ui: React.ReactElement) {
   return render(
@@ -114,6 +121,7 @@ it('shows user name from context', () => {
 ```
 
 ### Mocking API Calls (MSW)
+
 ```typescript
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'

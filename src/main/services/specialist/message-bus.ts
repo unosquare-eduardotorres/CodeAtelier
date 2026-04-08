@@ -28,13 +28,13 @@
 // ── Message Types ──
 
 export type MessageType =
-  | 'context'          // Contextual info (e.g., architectural decisions)
-  | 'finding'          // Discovery or issue found during analysis
-  | 'dependency'       // Output data from a dependency task
-  | 'feedback'         // Review feedback or suggestions
-  | 'status'           // Status update (started, blocked, etc.)
-  | 'artifact'         // Reference to an artifact (file path, URL, etc.)
-  | 'custom'           // Extensible — any other communication
+  | 'context' // Contextual info (e.g., architectural decisions)
+  | 'finding' // Discovery or issue found during analysis
+  | 'dependency' // Output data from a dependency task
+  | 'feedback' // Review feedback or suggestions
+  | 'status' // Status update (started, blocked, etc.)
+  | 'artifact' // Reference to an artifact (file path, URL, etc.)
+  | 'custom' // Extensible — any other communication
 
 export interface AgentMessage {
   /** Auto-generated unique ID */
@@ -168,8 +168,7 @@ export class MessageBus {
   getConversation(agent1: string, agent2: string): AgentMessage[] {
     return this.messages.filter(
       (msg) =>
-        (msg.from === agent1 && msg.to === agent2) ||
-        (msg.from === agent2 && msg.to === agent1)
+        (msg.from === agent1 && msg.to === agent2) || (msg.from === agent2 && msg.to === agent1)
     )
   }
 
@@ -249,7 +248,11 @@ export class MessageBus {
   private notifySubscribers(message: AgentMessage): void {
     // Global subscribers
     for (const cb of this.globalSubscribers) {
-      try { cb(message) } catch { /* never crash the bus */ }
+      try {
+        cb(message)
+      } catch {
+        /* never crash the bus */
+      }
     }
 
     // Direct recipient subscribers
@@ -257,7 +260,11 @@ export class MessageBus {
       const subs = this.subscribers.get(message.to)
       if (subs) {
         for (const cb of subs) {
-          try { cb(message) } catch { /* never crash the bus */ }
+          try {
+            cb(message)
+          } catch {
+            /* never crash the bus */
+          }
         }
       }
     } else {
@@ -265,7 +272,11 @@ export class MessageBus {
       for (const [agentId, subs] of this.subscribers) {
         if (agentId === message.from) continue
         for (const cb of subs) {
-          try { cb(message) } catch { /* never crash the bus */ }
+          try {
+            cb(message)
+          } catch {
+            /* never crash the bus */
+          }
         }
       }
     }

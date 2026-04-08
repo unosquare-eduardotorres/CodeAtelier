@@ -88,11 +88,16 @@ export default function SpecialistCard({
       <div className="flex items-start gap-3 mb-3">
         <div
           className="flex items-center justify-center w-10 h-10 rounded-sm flex-shrink-0 overflow-hidden"
-          style={{ backgroundColor: `${specialist.color}18`, border: `1px solid ${specialist.color}35` }}
+          style={{
+            backgroundColor: `${specialist.color}18`,
+            border: `1px solid ${specialist.color}35`
+          }}
         >
-          {(specialist.pixelSpriteId || getSpriteAssignment(specialist.agentId).pixelSpriteId) ? (
+          {specialist.pixelSpriteId || getSpriteAssignment(specialist.agentId).pixelSpriteId ? (
             <PixelSpriteAvatar
-              spriteId={specialist.pixelSpriteId ?? getSpriteAssignment(specialist.agentId).pixelSpriteId!}
+              spriteId={
+                specialist.pixelSpriteId ?? getSpriteAssignment(specialist.agentId).pixelSpriteId!
+              }
               size={32}
             />
           ) : specialist.avatarUrl ? (
@@ -144,8 +149,10 @@ export default function SpecialistCard({
       {/* Activate/Deactivate button */}
       <div className="mt-auto">
         {specialist.isCore ? (
-          <div className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
-            text-text-muted border border-border-subtle/50 bg-surface-float/30 cursor-default min-h-[36px]">
+          <div
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
+            text-text-muted border border-border-subtle/50 bg-surface-float/30 cursor-default min-h-[36px]"
+          >
             <Shield size={12} />
             Core Agent &middot; Always Active
           </div>

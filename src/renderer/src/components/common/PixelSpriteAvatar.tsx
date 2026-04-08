@@ -1,15 +1,12 @@
 import { useRef, useEffect, useState } from 'react'
-import {
-  PIXEL_SPRITE_CATALOG,
-  type PixelSpriteEntry
-} from '@renderer/assets/pixel-office/sprites'
+import { PIXEL_SPRITE_CATALOG, type PixelSpriteEntry } from '@renderer/assets/pixel-office/sprites'
 
 // ── Vite glob import: resolve all sprite PNGs at build time ──
 
-const spriteModules = import.meta.glob<string>(
-  '@renderer/assets/pixel-office/sprites/**/*.png',
-  { eager: true, import: 'default' }
-)
+const spriteModules = import.meta.glob<string>('@renderer/assets/pixel-office/sprites/**/*.png', {
+  eager: true,
+  import: 'default'
+})
 
 /** Resolve a catalog entry's src path to an actual Vite-resolved URL */
 function resolveSpriteSrc(entry: PixelSpriteEntry): string {

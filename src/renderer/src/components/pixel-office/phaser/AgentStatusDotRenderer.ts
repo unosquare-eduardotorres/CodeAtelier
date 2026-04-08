@@ -10,21 +10,17 @@ import type { AgentVisual } from './PhaserAgentManager'
 
 // ── Status colors ──
 const STATUS_COLORS: Record<string, number> = {
-  working: 0x34d399,  // green
+  working: 0x34d399, // green
   thinking: 0xfbbf24, // amber
-  reading: 0x60a5fa,  // blue
-  idle: 0x9ca3af,     // gray
-  failed: 0xef4444    // red
+  reading: 0x60a5fa, // blue
+  idle: 0x9ca3af, // gray
+  failed: 0xef4444 // red
 }
 
 /**
  * Show or update a status dot above the agent.
  */
-export function showAgentStatusDot(
-  scene: Phaser.Scene,
-  visual: AgentVisual,
-  status: string
-): void {
+export function showAgentStatusDot(scene: Phaser.Scene, visual: AgentVisual, status: string): void {
   const color = STATUS_COLORS[status] ?? STATUS_COLORS.idle
 
   if (visual.statusDot) {

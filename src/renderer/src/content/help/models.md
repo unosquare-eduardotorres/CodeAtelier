@@ -18,11 +18,11 @@ All three models come from **Anthropic's Claude** family. You already have acces
 
 ## Available Models
 
-| Model | Speed | Quality | Best For |
-|-------|-------|---------|----------|
-| **Haiku** | Very fast | Good | Quick questions, simple edits, formatting, boilerplate code |
-| **Sonnet** | Fast | Very good | Day-to-day coding, code review, explanations, most tasks |
-| **Opus** | Slower | Excellent | Complex architecture decisions, difficult bugs, nuanced analysis |
+| Model      | Speed     | Quality   | Best For                                                         |
+| ---------- | --------- | --------- | ---------------------------------------------------------------- |
+| **Haiku**  | Very fast | Good      | Quick questions, simple edits, formatting, boilerplate code      |
+| **Sonnet** | Fast      | Very good | Day-to-day coding, code review, explanations, most tasks         |
+| **Opus**   | Slower    | Excellent | Complex architecture decisions, difficult bugs, nuanced analysis |
 
 ```mermaid
 quadrantChart
@@ -39,16 +39,19 @@ quadrantChart
 ## How to Choose a Model
 
 ### Use **Haiku** when:
+
 - You need a quick answer or simple code snippet
 - The task is straightforward (rename a variable, fix a typo, generate boilerplate)
 - You want to save tokens for more complex work later
 
 ### Use **Sonnet** when:
+
 - You're doing regular development work (this is the recommended default)
 - You want a good balance of speed and intelligence
 - The task requires understanding context but isn't extremely complex
 
 ### Use **Opus** when:
+
 - You're tackling a difficult architectural decision
 - The bug is subtle and requires deep reasoning
 - You need the AI to consider many edge cases
@@ -76,6 +79,7 @@ quadrantChart
 - A full page of text is about 500-750 tokens
 
 Different models use tokens at different rates:
+
 - **Haiku** uses the fewest tokens per response
 - **Sonnet** uses a moderate amount
 - **Opus** uses the most tokens per response (because it "thinks" more deeply)

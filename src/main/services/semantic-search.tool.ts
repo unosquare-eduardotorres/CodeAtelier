@@ -34,7 +34,9 @@ class SemanticSearchMcpService {
             'chunks with file paths, symbol names, code bodies, and relevance scores. ' +
             'Use this to find code related to a concept, pattern, or functionality.',
           inputSchema: {
-            query: z.string().describe('Natural language search query (e.g. "JWT token validation")'),
+            query: z
+              .string()
+              .describe('Natural language search query (e.g. "JWT token validation")'),
             language: z
               .string()
               .optional()
@@ -49,10 +51,13 @@ class SemanticSearchMcpService {
               .describe('Maximum number of results to return (default: 5, max: 20)')
           },
           handler: async (args) => {
-            const { query, language, directory, nResults } = args
-            log.info(
-              `[SemanticSearch] MCP query: "${query}" (workspace: ${workspaceId})`
-            )
+            const { query, language, directory, nResults } = args as {
+              query: string
+              language?: string
+              directory?: string
+              nResults?: number
+            }
+            log.info(`[SemanticSearch] MCP query: "${query}" (workspace: ${workspaceId})`)
 
             const where: Record<string, unknown> = {}
             if (language) where.language = language
@@ -63,9 +68,7 @@ class SemanticSearchMcpService {
               where: Object.keys(where).length > 0 ? where : undefined
             })
 
-            log.info(
-              `[SemanticSearch] Returned ${results.length} results for "${query}"`
-            )
+            log.info(`[SemanticSearch] Returned ${results.length} results for "${query}"`)
 
             return {
               content: [

@@ -68,7 +68,8 @@ async function generateIcns(pngPath: string, outPath: string): Promise<void> {
   // Generate all required sizes using sips
   const sizes = [16, 32, 64, 128, 256, 512, 1024]
   for (const s of sizes) {
-    const name = s === 1024 ? 'icon_512x512@2x.png' : s === 64 ? 'icon_32x32@2x.png' : `icon_${s}x${s}.png`
+    const name =
+      s === 1024 ? 'icon_512x512@2x.png' : s === 64 ? 'icon_32x32@2x.png' : `icon_${s}x${s}.png`
     const dest = path.join(tmpIconset, name)
     execSync(`sips -z ${s} ${s} "${pngPath}" --out "${dest}"`, { stdio: 'pipe' })
 
@@ -78,7 +79,9 @@ async function generateIcns(pngPath: string, outPath: string): Promise<void> {
       if (retinaSize <= 1024) {
         const retinaName = `icon_${s}x${s}@2x.png`
         const retinaDest = path.join(tmpIconset, retinaName)
-        execSync(`sips -z ${retinaSize} ${retinaSize} "${pngPath}" --out "${retinaDest}"`, { stdio: 'pipe' })
+        execSync(`sips -z ${retinaSize} ${retinaSize} "${pngPath}" --out "${retinaDest}"`, {
+          stdio: 'pipe'
+        })
       }
     }
   }

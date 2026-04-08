@@ -16,19 +16,19 @@
 
 ## Phase Status Tracker
 
-| Phase | Name | Status | Key Files |
-|-------|------|--------|-----------|
-| 1 | Complexity Scoring & Model Routing | ✅ **IMPLEMENTED** | `complexity-scorer.service.ts`, `specialist-pool.service.ts` |
-| 2 | Task Loop with Quality Gates | ✅ **IMPLEMENTED** | `task-loop.service.ts`, `quality-gate-runner.service.ts` |
-| 3 | Anti-Abandonment Detection | 🔲 Not started | — |
-| 4 | File-Based Agent Communication Chain | 🔲 Not started | — |
-| 5 | Cost Tracking Dashboard | ✅ **IMPLEMENTED** | `cost-tracker.service.ts` |
-| 6 | Human Checkpoint UI | ⚡ **PARTIAL** (tool-approval hooks) | `tool-approval.service.ts`, `sdk-hooks.ts` |
-| 7 | Progressive Skill Loading | 🔲 Not started | — |
-| 8 | Scope Enforcement Layer | ✅ **IMPLEMENTED** (SDK scope guard) | `sdk-hooks.ts` (createScopeGuard) |
-| 9 | Declarative Hooks System | ⚡ **PARTIAL** (PreToolUse hooks wired) | `sdk-hooks.ts`, `specialist/hooks.ts` |
-| 10 | Deep Agent Personas & Bug Council | 🔲 Not started | — |
-| 11 | **SDK Full Surface Leverage** | 🆕 **NEW — Not started** | `sdk-executor.ts`, `specialist-pool.service.ts`, `generalist.service.ts` |
+| Phase | Name                                 | Status                                  | Key Files                                                                |
+| ----- | ------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------ |
+| 1     | Complexity Scoring & Model Routing   | ✅ **IMPLEMENTED**                      | `complexity-scorer.service.ts`, `specialist-pool.service.ts`             |
+| 2     | Task Loop with Quality Gates         | ✅ **IMPLEMENTED**                      | `task-loop.service.ts`, `quality-gate-runner.service.ts`                 |
+| 3     | Anti-Abandonment Detection           | 🔲 Not started                          | —                                                                        |
+| 4     | File-Based Agent Communication Chain | 🔲 Not started                          | —                                                                        |
+| 5     | Cost Tracking Dashboard              | ✅ **IMPLEMENTED**                      | `cost-tracker.service.ts`                                                |
+| 6     | Human Checkpoint UI                  | ⚡ **PARTIAL** (tool-approval hooks)    | `tool-approval.service.ts`, `sdk-hooks.ts`                               |
+| 7     | Progressive Skill Loading            | 🔲 Not started                          | —                                                                        |
+| 8     | Scope Enforcement Layer              | ✅ **IMPLEMENTED** (SDK scope guard)    | `sdk-hooks.ts` (createScopeGuard)                                        |
+| 9     | Declarative Hooks System             | ⚡ **PARTIAL** (PreToolUse hooks wired) | `sdk-hooks.ts`, `specialist/hooks.ts`                                    |
+| 10    | Deep Agent Personas & Bug Council    | 🔲 Not started                          | —                                                                        |
+| 11    | **SDK Full Surface Leverage**        | 🆕 **NEW — Not started**                | `sdk-executor.ts`, `specialist-pool.service.ts`, `generalist.service.ts` |
 
 ---
 
@@ -1553,36 +1553,36 @@ equivalents that are more robust, better maintained, and integrate with the SDK'
 
 #### Currently Used
 
-| SDK Export | Where Used | Notes |
-|---|---|---|
-| `query()` | `sdk-executor.ts` | Core execution — ✅ well-wired |
-| `createSdkMcpServer()` | 7 `.tool.ts` files | MCP tools — ✅ well-wired |
-| `tool()` | Inside each `.tool.ts` | Tool definitions — ✅ well-wired |
-| `HookCallback` type | `sdk-hooks.ts` | PreToolUse only — ⚠️ only 2 of 25 hook events used |
-| `SDKUserMessage` type | `generalist.service.ts` | Streaming input — ✅ |
-| `McpServerConfig` type | Multiple services | Type only — ✅ |
+| SDK Export             | Where Used              | Notes                                              |
+| ---------------------- | ----------------------- | -------------------------------------------------- |
+| `query()`              | `sdk-executor.ts`       | Core execution — ✅ well-wired                     |
+| `createSdkMcpServer()` | 7 `.tool.ts` files      | MCP tools — ✅ well-wired                          |
+| `tool()`               | Inside each `.tool.ts`  | Tool definitions — ✅ well-wired                   |
+| `HookCallback` type    | `sdk-hooks.ts`          | PreToolUse only — ⚠️ only 2 of 25 hook events used |
+| `SDKUserMessage` type  | `generalist.service.ts` | Streaming input — ✅                               |
+| `McpServerConfig` type | Multiple services       | Type only — ✅                                     |
 
 #### Not Used — Prioritized
 
-| Priority | SDK Feature | Impact | Effort | Score |
-|----------|-------------|--------|--------|-------|
-| 🔴 P0 | `outputFormat` (structured JSON output) | High — eliminates parsing failures | Low | **9/10** |
-| 🔴 P0 | `effort` level (adaptive thinking) | High — proper thinking control | Low | **9/10** |
-| 🔴 P0 | `thinking` config (replaces deprecated) | High — future-proofing | Low | **8/10** |
-| 🔴 P0 | `maxBudgetUsd` (cost caps) | High — cost control | Low | **8/10** |
-| 🟡 P1 | `canUseTool` (native permission handler) | High — richer UX | Medium | **7/10** |
-| 🟡 P1 | `onElicitation` (MCP auth flows) | High — enables MCP OAuth | Medium | **7/10** |
-| 🟡 P1 | `getContextUsage()` (context window) | Medium — UX indicator | Low | **7/10** |
-| 🟡 P1 | `promptSuggestions` (next action) | Medium — UX feature | Low | **6/10** |
-| 🟡 P1 | `stopTask(taskId)` (per-specialist cancel) | Medium — granular control | Medium | **6/10** |
-| 🟢 P2 | `enableFileCheckpointing` + `rewindFiles()` | Medium — evaluate vs ours | Medium | **5/10** |
-| 🟢 P2 | Session APIs (`list/get/fork/rename/tag`) | Medium — richer session mgmt | Medium | **5/10** |
-| 🟢 P2 | `plugins` (user-extensible) | High — long-term | High | **5/10** |
-| 🟢 P2 | `EnterWorktree`/`ExitWorktree` tools | Medium — isolated parallel | High | **4/10** |
-| 🟢 P2 | Query control (`setModel`, `setPermissionMode`) | Low — mid-session changes | Low | **4/10** |
-| 🟢 P2 | `accountInfo()` | Low — replace subscription svc | Low | **3/10** |
-| 🔵 P3 | V2 Session API (`unstable_v2_*`) | High when stable | Blocked | **2/10** |
-| 🔵 P3 | `taskBudget` (alpha) | Medium — token pacing | Blocked | **2/10** |
+| Priority | SDK Feature                                     | Impact                             | Effort  | Score    |
+| -------- | ----------------------------------------------- | ---------------------------------- | ------- | -------- |
+| 🔴 P0    | `outputFormat` (structured JSON output)         | High — eliminates parsing failures | Low     | **9/10** |
+| 🔴 P0    | `effort` level (adaptive thinking)              | High — proper thinking control     | Low     | **9/10** |
+| 🔴 P0    | `thinking` config (replaces deprecated)         | High — future-proofing             | Low     | **8/10** |
+| 🔴 P0    | `maxBudgetUsd` (cost caps)                      | High — cost control                | Low     | **8/10** |
+| 🟡 P1    | `canUseTool` (native permission handler)        | High — richer UX                   | Medium  | **7/10** |
+| 🟡 P1    | `onElicitation` (MCP auth flows)                | High — enables MCP OAuth           | Medium  | **7/10** |
+| 🟡 P1    | `getContextUsage()` (context window)            | Medium — UX indicator              | Low     | **7/10** |
+| 🟡 P1    | `promptSuggestions` (next action)               | Medium — UX feature                | Low     | **6/10** |
+| 🟡 P1    | `stopTask(taskId)` (per-specialist cancel)      | Medium — granular control          | Medium  | **6/10** |
+| 🟢 P2    | `enableFileCheckpointing` + `rewindFiles()`     | Medium — evaluate vs ours          | Medium  | **5/10** |
+| 🟢 P2    | Session APIs (`list/get/fork/rename/tag`)       | Medium — richer session mgmt       | Medium  | **5/10** |
+| 🟢 P2    | `plugins` (user-extensible)                     | High — long-term                   | High    | **5/10** |
+| 🟢 P2    | `EnterWorktree`/`ExitWorktree` tools            | Medium — isolated parallel         | High    | **4/10** |
+| 🟢 P2    | Query control (`setModel`, `setPermissionMode`) | Low — mid-session changes          | Low     | **4/10** |
+| 🟢 P2    | `accountInfo()`                                 | Low — replace subscription svc     | Low     | **3/10** |
+| 🔵 P3    | V2 Session API (`unstable_v2_*`)                | High when stable                   | Blocked | **2/10** |
+| 🔵 P3    | `taskBudget` (alpha)                            | Medium — token pacing              | Blocked | **2/10** |
 
 ---
 
@@ -1592,6 +1592,7 @@ equivalents that are more robust, better maintained, and integrate with the SDK'
 to return structured JSON matching a schema, instead of parsing freeform text.
 
 **Current State (BEFORE)**:
+
 - `decomposition.service.ts` → `parseDecompositionResult()` in `generalist-utils.ts` uses regex to
   extract ```json fences, then `JSON.parse()`. Fails when LLM returns malformed JSON or extra text.
   - File: `src/main/services/generalist-utils.ts:60-71`
@@ -1603,6 +1604,7 @@ to return structured JSON matching a schema, instead of parsing freeform text.
 - `generalist.service.ts` → intent detection parsed from freeform stream text.
 
 **After State (AFTER)**:
+
 - Decomposition: SDK guarantees valid JSON response matching `DecomposedTask[]` schema.
   - Eliminates: regex extraction, JSON.parse try-catch, "invalid JSON" error path
   - Eliminates: ~20 lines in `parseDecompositionResult()`
@@ -1615,12 +1617,12 @@ to return structured JSON matching a schema, instead of parsing freeform text.
 
 **Files to Modify**:
 
-| Action | File | Changes |
-|--------|------|---------|
-| MODIFY | `src/main/services/sdk-executor.ts` | Add `outputFormat` to `SDKExecuteOptions` + pass to `query()` |
-| MODIFY | `src/main/services/decomposition.service.ts` | Pass JSON schema for task decomposition, simplify parsing |
-| MODIFY | `src/main/services/generalist-utils.ts` | Simplify `parseDecompositionResult()` — remove regex/fence extraction |
-| MODIFY | `src/main/services/specialist-pool.service.ts` | Use structured output for investigation reports |
+| Action | File                                           | Changes                                                               |
+| ------ | ---------------------------------------------- | --------------------------------------------------------------------- |
+| MODIFY | `src/main/services/sdk-executor.ts`            | Add `outputFormat` to `SDKExecuteOptions` + pass to `query()`         |
+| MODIFY | `src/main/services/decomposition.service.ts`   | Pass JSON schema for task decomposition, simplify parsing             |
+| MODIFY | `src/main/services/generalist-utils.ts`        | Simplify `parseDecompositionResult()` — remove regex/fence extraction |
+| MODIFY | `src/main/services/specialist-pool.service.ts` | Use structured output for investigation reports                       |
 
 **Implementation**:
 
@@ -1672,6 +1674,7 @@ const { result } = await executor.executeAndCollect({
 ```
 
 **Acceptance Criteria**:
+
 - [ ] `SDKExecuteOptions` supports `outputFormat`
 - [ ] Decomposition uses JSON schema and never throws "invalid JSON" errors
 - [ ] Investigation reports use structured output (phase 2 of this sub-phase)
@@ -1685,6 +1688,7 @@ const { result } = await executor.executeAndCollect({
 level control for adaptive thinking depth based on task complexity.
 
 **Current State (BEFORE)**:
+
 - `THINKING_BUDGETS` in `constants.ts` defines static token counts: haiku=5000, sonnet=10000, opus=31999
 - `specialist-pool.service.ts:1458` passes `maxThinkingTokens: parseInt(thinkingBudget)`
 - `sdk-executor.ts:188` passes `maxThinkingTokens` directly to `query()`
@@ -1692,6 +1696,7 @@ level control for adaptive thinking depth based on task complexity.
 - No `effort` control — all tasks get the same reasoning depth regardless of complexity
 
 **After State (AFTER)**:
+
 - `thinking: { type: 'adaptive' }` for Opus 4.6+ (Claude decides thinking depth)
 - `thinking: { type: 'enabled', budgetTokens: N }` for older models
 - `effort` mapped from complexity score: simple→'low', moderate→'medium', complex→'high'
@@ -1702,12 +1707,12 @@ level control for adaptive thinking depth based on task complexity.
 
 **Files to Modify**:
 
-| Action | File | Changes |
-|--------|------|---------|
-| MODIFY | `src/main/services/sdk-executor.ts` | Add `thinking` + `effort` to options, pass to `query()` |
+| Action | File                                           | Changes                                                   |
+| ------ | ---------------------------------------------- | --------------------------------------------------------- |
+| MODIFY | `src/main/services/sdk-executor.ts`            | Add `thinking` + `effort` to options, pass to `query()`   |
 | MODIFY | `src/main/services/specialist-pool.service.ts` | Map complexity tier → effort level, use `thinking` config |
-| MODIFY | `src/main/services/generalist.service.ts` | Use `thinking: { type: 'adaptive' }` + `effort: 'high'` |
-| MODIFY | `src/shared/constants.ts` | Add effort mapping alongside `THINKING_BUDGETS` |
+| MODIFY | `src/main/services/generalist.service.ts`      | Use `thinking: { type: 'adaptive' }` + `effort: 'high'`   |
+| MODIFY | `src/shared/constants.ts`                      | Add effort mapping alongside `THINKING_BUDGETS`           |
 
 **Implementation**:
 
@@ -1738,6 +1743,7 @@ export const COMPLEXITY_TO_EFFORT = {
 ```
 
 **Acceptance Criteria**:
+
 - [ ] `SDKExecuteOptions` supports `thinking` and `effort`
 - [ ] Simple tasks use `effort: 'low'`, complex use `effort: 'high'`
 - [ ] Opus 4.6 models use `thinking: { type: 'adaptive' }` instead of `maxThinkingTokens`
@@ -1752,12 +1758,14 @@ export const COMPLEXITY_TO_EFFORT = {
 preventing runaway cost on stuck or looping agents.
 
 **Current State (BEFORE)**:
+
 - Cost control relies on `maxTurns` (hard turn limit) and circuit breaker (tool call count)
 - `cost-tracker.service.ts` tracks costs **after** execution — no prevention
 - A stuck specialist can burn tokens until `maxTurns` or circuit breaker triggers
 - No per-task budget awareness — same limits for $0.01 and $5.00 tasks
 
 **After State (AFTER)**:
+
 - Each specialist gets a USD budget based on complexity tier:
   - simple (haiku): $0.10 cap
   - moderate (sonnet): $0.50 cap
@@ -1770,11 +1778,11 @@ preventing runaway cost on stuck or looping agents.
 
 **Files to Modify**:
 
-| Action | File | Changes |
-|--------|------|---------|
-| MODIFY | `src/main/services/sdk-executor.ts` | Add `maxBudgetUsd` to options, pass to `query()` |
-| MODIFY | `src/main/services/specialist-pool.service.ts` | Set budget based on complexity tier |
-| MODIFY | `src/shared/constants.ts` | Add `SPECIALIST_BUDGET_CAPS` constant |
+| Action | File                                           | Changes                                          |
+| ------ | ---------------------------------------------- | ------------------------------------------------ |
+| MODIFY | `src/main/services/sdk-executor.ts`            | Add `maxBudgetUsd` to options, pass to `query()` |
+| MODIFY | `src/main/services/specialist-pool.service.ts` | Set budget based on complexity tier              |
+| MODIFY | `src/shared/constants.ts`                      | Add `SPECIALIST_BUDGET_CAPS` constant            |
 
 **Implementation**:
 
@@ -1803,6 +1811,7 @@ for await (const chunk of executor.execute({
 ```
 
 **Acceptance Criteria**:
+
 - [ ] `SDKExecuteOptions` supports `maxBudgetUsd`
 - [ ] Each specialist tier has a default budget cap
 - [ ] SDK `error_max_budget_usd` results are handled gracefully (not treated as crashes)
@@ -1817,27 +1826,32 @@ These features require more work and are documented here for tracking. Implement
 will be expanded when they move to active development.
 
 #### 11.4a — `canUseTool` (Native Permission Handler)
+
 **Current**: `ToolApprovalService` uses PreToolUse hooks as workaround.
 **Target**: Migrate to native `canUseTool` callback for richer prompts (title, displayName,
 suggestions, PermissionDecisionClassification).
 **Impact**: Better UX for permission dialogs, integration with SDK's "always allow" system.
 
 #### 11.4b — `onElicitation` (MCP OAuth Flows)
+
 **Current**: MCP servers that need auth silently fail (elicitation auto-declined).
 **Target**: Route elicitation requests to renderer for OAuth dialogs and form input.
 **Impact**: Enables authenticated MCP servers (GitHub, Slack, etc.).
 
 #### 11.4c — `getContextUsage()` (Context Window Indicator)
+
 **Current**: No visibility into context window usage.
 **Target**: Query object's `getContextUsage()` method → context usage widget in UI.
 **Impact**: Users can see when context is filling up, explains degraded responses.
 
 #### 11.4d — `promptSuggestions` (Next Action)
+
 **Current**: No suggested next actions.
 **Target**: Enable `promptSuggestions: true` → emit SDKPromptSuggestionMessage → UI chips.
 **Impact**: Lower friction UX — user clicks suggested next action instead of typing.
 
 #### 11.4e — `stopTask(taskId)` (Per-Specialist Cancel)
+
 **Current**: `AbortController.abort()` kills entire query. No per-task granularity.
 **Target**: `Query.stopTask(taskId)` to cancel individual subagents.
 **Impact**: Cancel a stuck specialist without losing work from others.
@@ -1847,25 +1861,31 @@ suggestions, PermissionDecisionClassification).
 ### Sub-Phase 11.5 — P2 Features (Strategic, Future)
 
 #### 11.5a — `enableFileCheckpointing` + `rewindFiles()`
+
 Evaluate SDK's native file checkpointing vs our `checkpoint-context.tool.ts` implementation.
 May complement or replace our system.
 
 #### 11.5b — Session Management APIs
+
 `listSessions()`, `getSessionInfo()`, `getSessionMessages()`, `forkSession()`, `renameSession()`, `tagSession()`
 — enable conversation branching, session history browser, and session metadata.
 
 #### 11.5c — `plugins` (User-Extensible Agent System)
+
 Local plugins that provide custom commands, agents, skills, and hooks.
 Enables community-contributed specialist agents.
 
 #### 11.5d — Git Worktree Tools (`EnterWorktree`/`ExitWorktree`)
+
 SDK built-in worktree management for isolated parallel agent execution.
 Evaluate vs our custom worktree handling.
 
 #### 11.5e — Query Control Methods
+
 `setModel()`, `setPermissionMode()`, `applyFlagSettings()` for mid-session dynamic changes.
 
 #### 11.5f — `accountInfo()`
+
 Replace custom subscription detection with SDK's `accountInfo()` → email, org, subscriptionType.
 
 ---
@@ -1873,10 +1893,12 @@ Replace custom subscription detection with SDK's `accountInfo()` → email, org,
 ### Sub-Phase 11.6 — P3 Features (Blocked / Alpha)
 
 #### 11.6a — V2 Session API (`unstable_v2_createSession`, `unstable_v2_resumeSession`, `unstable_v2_prompt`)
+
 Persistent multi-turn sessions with `send()/stream()` pattern. Cleaner than current streaming
 input approach for the generalist. **Blocked**: Marked `@alpha` / unstable.
 
 #### 11.6b — `taskBudget` (Token Budget Awareness)
+
 API-side task budget in tokens — model is aware of remaining budget and can pace tool use.
 **Blocked**: Marked `@alpha`.
 
@@ -1912,8 +1934,8 @@ Phase 11: SDK Full Surface Leverage ← NEW, P0 sub-phases are independent
 
 ### Suggested Sprint Plan (Updated)
 
-| Sprint   | Phases              | Focus                                                           | Status |
-| -------- | ------------------- | --------------------------------------------------------------- | ------ |
+| Sprint   | Phases              | Focus                                                           | Status  |
+| -------- | ------------------- | --------------------------------------------------------------- | ------- |
 | Sprint 1 | **Phase 1 + 5**     | Model routing + cost visibility (quick wins, immediate savings) | ✅ Done |
 | Sprint 2 | **Phase 2 + 8**     | Task loop + scope enforcement (reliability core)                | ✅ Done |
 | Sprint 3 | **Phase 11.1-11.3** | SDK P0 features (structured output, thinking, cost caps)        | 🎯 Next |
@@ -1953,22 +1975,22 @@ Phase 11: SDK Full Surface Leverage ← NEW, P0 sub-phases are independent
 
 ### SDK Reference: `@anthropic-ai/claude-agent-sdk` (Phase 11)
 
-| Feature                     | SDK Type/Function              | Local Reference                                                |
-| --------------------------- | ------------------------------ | -------------------------------------------------------------- |
-| Structured JSON output      | `Options.outputFormat`         | `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts:1093`   |
-| Effort level                | `Options.effort`               | `sdk.d.ts:1031`                                                |
-| Thinking config             | `Options.thinking`             | `sdk.d.ts:1019`                                                |
-| Cost caps                   | `Options.maxBudgetUsd`         | `sdk.d.ts:1050`                                                |
-| Permission handler          | `Options.canUseTool`           | `sdk.d.ts:867`                                                 |
-| MCP elicitation             | `Options.onElicitation`        | `sdk.d.ts:993`                                                 |
-| Context usage               | `Query.getContextUsage()`      | `sdk.d.ts:1586`                                                |
-| Prompt suggestions          | `Options.promptSuggestions`    | `sdk.d.ts:1147`                                                |
-| Stop subagent               | `Query.stopTask(taskId)`       | `sdk.d.ts:1674`                                                |
-| File checkpointing          | `Options.enableFileCheckpointing` + `Query.rewindFiles()` | `sdk.d.ts:935, 1608` |
-| Session list/info           | `listSessions()` / `getSessionInfo()` | `sdk.d.ts:597, 495`                                  |
-| Session fork                | `forkSession()`                | `sdk.d.ts:466`                                                 |
-| Plugins                     | `Options.plugins`              | `sdk.d.ts:1131`                                                |
-| V2 Session (alpha)          | `unstable_v2_createSession()`  | `sdk.d.ts:4213`                                                |
-| Task budget (alpha)         | `Options.taskBudget`           | `sdk.d.ts:1058`                                                |
-| Account info                | `Query.accountInfo()`          | `sdk.d.ts:1599`                                                |
-| AskUserQuestion tool config | `Options.toolConfig.askUserQuestion` | `sdk.d.ts:4162-4176`                                  |
+| Feature                     | SDK Type/Function                                         | Local Reference                                             |
+| --------------------------- | --------------------------------------------------------- | ----------------------------------------------------------- |
+| Structured JSON output      | `Options.outputFormat`                                    | `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts:1093` |
+| Effort level                | `Options.effort`                                          | `sdk.d.ts:1031`                                             |
+| Thinking config             | `Options.thinking`                                        | `sdk.d.ts:1019`                                             |
+| Cost caps                   | `Options.maxBudgetUsd`                                    | `sdk.d.ts:1050`                                             |
+| Permission handler          | `Options.canUseTool`                                      | `sdk.d.ts:867`                                              |
+| MCP elicitation             | `Options.onElicitation`                                   | `sdk.d.ts:993`                                              |
+| Context usage               | `Query.getContextUsage()`                                 | `sdk.d.ts:1586`                                             |
+| Prompt suggestions          | `Options.promptSuggestions`                               | `sdk.d.ts:1147`                                             |
+| Stop subagent               | `Query.stopTask(taskId)`                                  | `sdk.d.ts:1674`                                             |
+| File checkpointing          | `Options.enableFileCheckpointing` + `Query.rewindFiles()` | `sdk.d.ts:935, 1608`                                        |
+| Session list/info           | `listSessions()` / `getSessionInfo()`                     | `sdk.d.ts:597, 495`                                         |
+| Session fork                | `forkSession()`                                           | `sdk.d.ts:466`                                              |
+| Plugins                     | `Options.plugins`                                         | `sdk.d.ts:1131`                                             |
+| V2 Session (alpha)          | `unstable_v2_createSession()`                             | `sdk.d.ts:4213`                                             |
+| Task budget (alpha)         | `Options.taskBudget`                                      | `sdk.d.ts:1058`                                             |
+| Account info                | `Query.accountInfo()`                                     | `sdk.d.ts:1599`                                             |
+| AskUserQuestion tool config | `Options.toolConfig.askUserQuestion`                      | `sdk.d.ts:4162-4176`                                        |

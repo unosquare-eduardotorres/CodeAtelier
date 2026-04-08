@@ -14,8 +14,8 @@
 
 import Phaser from 'phaser'
 
-import type { OfficeLayout, FloorColor, FurnitureInstance, SpriteData, Character } from '../engine/types'
-import { TileType, TILE_SIZE } from '../engine/types'
+import type { OfficeLayout, FurnitureInstance, SpriteData, Character } from '../engine/types'
+import { TILE_SIZE } from '../engine/types'
 import { OfficeState } from '../engine/officeState'
 import { deserializeLayout } from '../layout'
 import { loadAllAssets } from '../assetLoader'
@@ -29,7 +29,7 @@ import { PhaserAgentManager } from './PhaserAgentManager'
 // SPRITE_ASSIGNMENTS and DEFAULT_SEAT_ASSIGNMENTS are now used internally by PlaceholderManager
 import { PhaserDragSystem } from './PhaserDragSystem'
 import { DustParticleSystem } from './DustParticleSystem'
-import { PlaceholderManager, AGENT_NAMES } from './PlaceholderManager'
+import { PlaceholderManager } from './PlaceholderManager'
 import {
   drawWalls as drawWallsShared,
   drawFloorTiles,
@@ -126,114 +126,114 @@ export class PhaserOfficeScene extends Phaser.Scene {
 
   async create(): Promise<void> {
     try {
-    // Load existing assets using the same pipeline as old engine
-    await loadAllAssets()
+      // Load existing assets using the same pipeline as old engine
+      await loadAllAssets()
 
-    // Guard: scene may have been destroyed during asset loading
-    if (!this.sys?.game?.renderer) return
+      // Guard: scene may have been destroyed during asset loading
+      if (!this.sys?.game?.renderer) return
 
-    // Create character textures from loaded PNGs
-    await createCharacterTextures(this)
+      // Create character textures from loaded PNGs
+      await createCharacterTextures(this)
 
-    // Guard: scene may have been destroyed during character texture creation
-    if (!this.sys?.game?.renderer) return
+      // Guard: scene may have been destroyed during character texture creation
+      if (!this.sys?.game?.renderer) return
 
-    // Create bubble textures
-    createBubbleTextures(this)
+      // Create bubble textures
+      createBubbleTextures(this)
 
-    this.assetsLoaded = true
+      this.assetsLoaded = true
 
-    // Initialize office state — prefer pendingLayout (from React), then initData, then default
-    const layout =
-      this.pendingLayout ||
-      this.initData.layout ||
-      deserializeLayout(JSON.stringify(defaultLayoutJson)) ||
-      undefined
-    this.officeState = new OfficeState(layout)
+      // Initialize office state — prefer pendingLayout (from React), then initData, then default
+      const layout =
+        this.pendingLayout ||
+        this.initData.layout ||
+        deserializeLayout(JSON.stringify(defaultLayoutJson)) ||
+        undefined
+      this.officeState = new OfficeState(layout)
 
-    // Initialize sub-systems
-    this.agentManager = new PhaserAgentManager(this)
-    this.dragSystem = new PhaserDragSystem(this, {
-      onAgentClick: this.initData.callbacks?.onAgentClick,
-      onFurnitureDrop: (uid, col, row) => {
-        this.initData.callbacks?.onFurnitureDrop?.(uid, col, row)
-      },
-      onAgentDrop: (numericId, col, row) => {
-        // Reassign agent to nearest seat at drop position
-        const office = this.officeState
-        if (!office) return
-        const seatId = office.getSeatAtTile(col, row)
-        if (seatId) {
-          office.reassignSeat(numericId, seatId)
+      // Initialize sub-systems
+      this.agentManager = new PhaserAgentManager(this)
+      this.dragSystem = new PhaserDragSystem(this, {
+        onAgentClick: this.initData.callbacks?.onAgentClick,
+        onFurnitureDrop: (uid, col, row) => {
+          this.initData.callbacks?.onFurnitureDrop?.(uid, col, row)
+        },
+        onAgentDrop: (numericId, col, row) => {
+          // Reassign agent to nearest seat at drop position
+          const office = this.officeState
+          if (!office) return
+          const seatId = office.getSeatAtTile(col, row)
+          if (seatId) {
+            office.reassignSeat(numericId, seatId)
+          }
         }
-      }
-    })
+      })
 
-    const layoutData = this.officeState.getLayout()
-    this.dragSystem.setup(layoutData.cols, layoutData.rows)
+      const layoutData = this.officeState.getLayout()
+      this.dragSystem.setup(layoutData.cols, layoutData.rows)
 
-    // Render the static office elements (procedural floor + walls)
-    this.drawOffice()
+      // Render the static office elements (procedural floor + walls)
+      this.drawOffice()
 
-    // Create furniture textures once and add sprites
-    this.createFurniture()
+      // Create furniture textures once and add sprites
+      this.createFurniture()
 
-    // Initialize dust particles (extracted system)
-    this.dustSystem.init(this, this.officeState.getLayout())
+      // Initialize dust particles (extracted system)
+      this.dustSystem.init(this, this.officeState.getLayout())
 
-    // Populate idle placeholder agents (gives life to the office at rest)
-    this.populatePlaceholders()
+      // Populate idle placeholder agents (gives life to the office at rest)
+      this.populatePlaceholders()
 
-    // Center camera on the office (no bounds — let RESIZE mode handle viewport)
-    const worldW = layoutData.cols * TILE_SIZE
-    const worldH = layoutData.rows * TILE_SIZE
-    this.cameras.main.centerOn(worldW / 2, worldH / 2)
+      // Center camera on the office (no bounds — let RESIZE mode handle viewport)
+      const worldW = layoutData.cols * TILE_SIZE
+      const worldH = layoutData.rows * TILE_SIZE
+      this.cameras.main.centerOn(worldW / 2, worldH / 2)
 
-    // ── Camera drag-to-pan ──
-    // Track drag state for hand-panning the camera (only when not dragging agents/furniture)
-    let cameraDragging = false
-    let lastPointerX = 0
-    let lastPointerY = 0
+      // ── Camera drag-to-pan ──
+      // Track drag state for hand-panning the camera (only when not dragging agents/furniture)
+      let cameraDragging = false
+      let lastPointerX = 0
+      let lastPointerY = 0
 
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      // Only start camera pan if not clicking an interactive object
-      const hitObjects = this.input.hitTestPointer(pointer)
-      if (hitObjects.length === 0) {
-        cameraDragging = true
+      this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        // Only start camera pan if not clicking an interactive object
+        const hitObjects = this.input.hitTestPointer(pointer)
+        if (hitObjects.length === 0) {
+          cameraDragging = true
+          lastPointerX = pointer.x
+          lastPointerY = pointer.y
+          this.input.manager.canvas.style.cursor = 'grabbing'
+        }
+      })
+
+      this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+        if (!cameraDragging) return
+        const cam = this.cameras.main
+        const dx = (lastPointerX - pointer.x) / cam.zoom
+        const dy = (lastPointerY - pointer.y) / cam.zoom
+        cam.scrollX += dx
+        cam.scrollY += dy
         lastPointerX = pointer.x
         lastPointerY = pointer.y
-        this.input.manager.canvas.style.cursor = 'grabbing'
-      }
-    })
+      })
 
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (!cameraDragging) return
-      const cam = this.cameras.main
-      const dx = (lastPointerX - pointer.x) / cam.zoom
-      const dy = (lastPointerY - pointer.y) / cam.zoom
-      cam.scrollX += dx
-      cam.scrollY += dy
-      lastPointerX = pointer.x
-      lastPointerY = pointer.y
-    })
+      this.input.on('pointerup', () => {
+        if (cameraDragging) {
+          cameraDragging = false
+          this.input.manager.canvas.style.cursor = 'grab'
+        }
+      })
 
-    this.input.on('pointerup', () => {
-      if (cameraDragging) {
-        cameraDragging = false
-        this.input.manager.canvas.style.cursor = 'grab'
-      }
-    })
+      // Set initial cursor
+      this.input.manager.canvas.style.cursor = 'grab'
 
-    // Set initial cursor
-    this.input.manager.canvas.style.cursor = 'grab'
+      // Disable scroll wheel zoom on the Phaser canvas
+      this.input.mouse?.disableContextMenu()
 
-    // Disable scroll wheel zoom on the Phaser canvas
-    this.input.mouse?.disableContextMenu()
-
-    // Signal that the scene is fully initialized (assets loaded, placeholders populated).
-    // PhaserOfficeCanvas listens for this instead of the Phaser 'create' event, which
-    // fires before this async method completes.
-    this.events.emit('office-ready')
+      // Signal that the scene is fully initialized (assets loaded, placeholders populated).
+      // PhaserOfficeCanvas listens for this instead of the Phaser 'create' event, which
+      // fires before this async method completes.
+      this.events.emit('office-ready')
     } catch (err) {
       // Swallow errors from destroyed scenes — not actionable
       if (!this.sys?.game?.renderer) return

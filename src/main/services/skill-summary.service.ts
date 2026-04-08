@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { BudgetTier, Skill } from '../../shared/types'
+import type { Skill } from '../../shared/types'
 
 /**
  * SkillSummaryService — generates pre-computed semantic summaries from SKILL.md content.
@@ -156,7 +156,10 @@ export function isHighSignalSection(header: string, content: string): boolean {
  * Generate a full-tier summary (~2000 chars).
  * Includes: preamble + all section headers + first paragraph of each + critical code fences.
  */
-function generateFullSummary(frontmatter: ParsedFrontmatter, sections: ReturnType<typeof splitSections>): string {
+function generateFullSummary(
+  frontmatter: ParsedFrontmatter,
+  sections: ReturnType<typeof splitSections>
+): string {
   const budget = TIER_BUDGETS.full
   const parts: string[] = []
 
@@ -188,7 +191,10 @@ function generateFullSummary(frontmatter: ParsedFrontmatter, sections: ReturnTyp
  * Generate a standard-tier summary (~800 chars).
  * Includes: identity + only high-signal sections (non-negotiable, critical, always/never).
  */
-function generateStandardSummary(frontmatter: ParsedFrontmatter, sections: ReturnType<typeof splitSections>): string {
+function generateStandardSummary(
+  frontmatter: ParsedFrontmatter,
+  sections: ReturnType<typeof splitSections>
+): string {
   const budget = TIER_BUDGETS.standard
   const parts: string[] = []
 
@@ -225,7 +231,10 @@ function generateStandardSummary(frontmatter: ParsedFrontmatter, sections: Retur
  * Generate a minimal-tier summary (~200 chars).
  * Just the skill name + frontmatter description.
  */
-function generateMinimalSummary(frontmatter: ParsedFrontmatter, sections: ReturnType<typeof splitSections>): string {
+function generateMinimalSummary(
+  frontmatter: ParsedFrontmatter,
+  sections: ReturnType<typeof splitSections>
+): string {
   const budget = TIER_BUDGETS.minimal
 
   if (frontmatter.name && frontmatter.description) {
@@ -294,7 +303,6 @@ export class SkillSummaryService {
     if (!skill.summaryHash || !skill.summaryFull) return true
     return skill.summaryHash !== this.contentHash(currentContent)
   }
-
 }
 
 export const skillSummaryService = new SkillSummaryService()

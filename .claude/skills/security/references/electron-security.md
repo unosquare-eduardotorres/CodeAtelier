@@ -5,13 +5,13 @@
 ```typescript
 const mainWindow = new BrowserWindow({
   webPreferences: {
-    contextIsolation: true,      // MANDATORY — isolates preload from renderer
-    nodeIntegration: false,      // MANDATORY — no Node.js in renderer
-    sandbox: true,               // RECOMMENDED — OS-level sandboxing
-    webSecurity: true,           // MANDATORY — enforce same-origin policy
+    contextIsolation: true, // MANDATORY — isolates preload from renderer
+    nodeIntegration: false, // MANDATORY — no Node.js in renderer
+    sandbox: true, // RECOMMENDED — OS-level sandboxing
+    webSecurity: true, // MANDATORY — enforce same-origin policy
     allowRunningInsecureContent: false, // MANDATORY
-    enableBlinkFeatures: '',     // Don't enable experimental features
-    webviewTag: false,           // Disable <webview> unless explicitly needed
+    enableBlinkFeatures: '', // Don't enable experimental features
+    webviewTag: false, // Disable <webview> unless explicitly needed
     preload: path.join(__dirname, 'preload.js') // Typed bridge only
   }
 })
@@ -20,6 +20,7 @@ const mainWindow = new BrowserWindow({
 ## Content Security Policy
 
 ### Production CSP
+
 ```
 default-src 'self';
 script-src 'self';
@@ -35,6 +36,7 @@ frame-ancestors 'none';
 ```
 
 ### Setting CSP in Electron
+
 ```typescript
 session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
   callback({
@@ -100,7 +102,7 @@ const ALLOWED_DOMAINS = ['github.com', 'docs.anthropic.com']
 function openExternal(url: string): void {
   const parsed = new URL(url)
   if (parsed.protocol !== 'https:') throw new Error('HTTPS only')
-  if (!ALLOWED_DOMAINS.some(d => parsed.hostname.endsWith(d))) {
+  if (!ALLOWED_DOMAINS.some((d) => parsed.hostname.endsWith(d))) {
     throw new Error('Domain not allowed')
   }
   shell.openExternal(url)
@@ -113,6 +115,7 @@ shell.openExternal(userProvidedUrl) // DANGEROUS
 ## Electron Fuses
 
 Set at build time to prevent runtime security toggles:
+
 ```
 @electron/fuses set:
   RunAsNode=off              # Prevent ELECTRON_RUN_AS_NODE

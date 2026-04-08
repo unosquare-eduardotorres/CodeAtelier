@@ -52,9 +52,12 @@ try {
   createTestDb = helpers.createTestDb
   seedWorkspace = helpers.seedWorkspace
   _setDatabaseForTesting = require('../../db/index')._setDatabaseForTesting
-  CodeGraphTagRepository = require('../../db/repositories/code-graph-tag.repository').CodeGraphTagRepository
-  CodeGraphEdgeRepository = require('../../db/repositories/code-graph-edge.repository').CodeGraphEdgeRepository
-  CodeGraphRankRepository = require('../../db/repositories/code-graph-rank.repository').CodeGraphRankRepository
+  CodeGraphTagRepository =
+    require('../../db/repositories/code-graph-tag.repository').CodeGraphTagRepository
+  CodeGraphEdgeRepository =
+    require('../../db/repositories/code-graph-edge.repository').CodeGraphEdgeRepository
+  CodeGraphRankRepository =
+    require('../../db/repositories/code-graph-rank.repository').CodeGraphRankRepository
 
   // Verify we can actually create a DB
   const testDb = createTestDb()
@@ -143,10 +146,29 @@ describe('CodeGraphTagRepository.searchByName', () => {
   test('finds tags by substring match (case-insensitive)', () => {
     const { wsId } = setupTestDb()
     const tags: RepomapTag[] = [
-      { relFname: 'src/auth.ts', fname: '/abs/src/auth.ts', line: 1, name: 'validateJwt', kind: 'def' },
-      { relFname: 'src/utils.ts', fname: '/abs/src/utils.ts', line: 1, name: 'formatDate', kind: 'def' }
+      {
+        relFname: 'src/auth.ts',
+        fname: '/abs/src/auth.ts',
+        line: 1,
+        name: 'validateJwt',
+        kind: 'def'
+      },
+      {
+        relFname: 'src/utils.ts',
+        fname: '/abs/src/utils.ts',
+        line: 1,
+        name: 'formatDate',
+        kind: 'def'
+      }
     ]
-    tagRepo.upsertTags(wsId, tags, new Map([['src/auth.ts', 1000], ['src/utils.ts', 1000]]))
+    tagRepo.upsertTags(
+      wsId,
+      tags,
+      new Map([
+        ['src/auth.ts', 1000],
+        ['src/utils.ts', 1000]
+      ])
+    )
 
     const results = tagRepo.searchByName(wsId, 'jwt')
     assert.equal(results.length, 1)
@@ -159,7 +181,14 @@ describe('CodeGraphTagRepository.searchByName', () => {
       { relFname: 'src/a.ts', fname: '/abs/src/a.ts', line: 1, name: 'MyClass', kind: 'def' },
       { relFname: 'src/b.ts', fname: '/abs/src/b.ts', line: 5, name: 'MyClass', kind: 'ref' }
     ]
-    tagRepo.upsertTags(wsId, tags, new Map([['src/a.ts', 1000], ['src/b.ts', 1000]]))
+    tagRepo.upsertTags(
+      wsId,
+      tags,
+      new Map([
+        ['src/a.ts', 1000],
+        ['src/b.ts', 1000]
+      ])
+    )
 
     const defsOnly = tagRepo.searchByName(wsId, 'MyClass', {
       includeDefinitions: true,
@@ -396,5 +425,7 @@ describe('CodeGraphEdgeRepository', () => {
 // ── Summary ──
 
 console.log(`\n${'─'.repeat(40)}`)
-console.log(`code-graph-db: ${passed} passed, ${failed} failed${skipped ? `, ${skipped} skipped` : ''}`)
+console.log(
+  `code-graph-db: ${passed} passed, ${failed} failed${skipped ? `, ${skipped} skipped` : ''}`
+)
 if (failed > 0) process.exit(1)

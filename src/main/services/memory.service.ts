@@ -32,8 +32,7 @@ class MemoryService {
       const selectedMemories =
         trimmedHint && trimmedHint.length > 0
           ? memories.filter(
-              (memory) =>
-                memory.type === 'feedback' || this.scoreRelevance(memory, trimmedHint) > 0
+              (memory) => memory.type === 'feedback' || this.scoreRelevance(memory, trimmedHint) > 0
             )
           : memories
       if (selectedMemories.length === 0) return ''

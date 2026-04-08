@@ -20,6 +20,7 @@ Agent Studio is an **Electron desktop app** that orchestrates multiple Claude ag
 2. **SDK backend** (API key mode) — uses `@anthropic-ai/claude-agent-sdk` `query()` for streaming, with the same `StreamChunk` interface
 
 The backend is selected at runtime by `AuthProvider.supportsSDK()`:
+
 - `claude-max` auth mode → CLI path
 - `api-key` auth mode with valid key → SDK path
 
@@ -41,6 +42,7 @@ User ↔ Renderer (React/Zustand)
 The `SDKExecutor` class wraps `@anthropic-ai/claude-agent-sdk`'s `query()` into an async generator of `StreamChunk` — the same interface as CLI-based agents. This means all downstream code (IPC, renderer) works identically regardless of backend.
 
 Key features:
+
 - **Deduplication**: Tracks `hasStreamedText` / `processedToolIds` to prevent double emission from `stream_event` deltas + `assistant` message replay
 - **Scope guard hooks**: Wires `PreToolUse` hooks via `createScopeGuard()` for file-scope and dangerous-command protection
 - **AbortController**: Supports cancellation via `AbortController` passed through to `query()`
@@ -50,16 +52,16 @@ Key features:
 
 ## 2. Official Documentation Reference
 
-| Topic                    | URL                                                                              |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| Claude CLI Usage         | https://code.claude.com/docs/en/cli-usage                                        |
-| CLI Headless Mode        | https://code.claude.com/docs/en/headless                                         |
-| CLI Subagents            | https://code.claude.com/docs/en/sub-agents                                       |
-| Permission Modes         | https://code.claude.com/docs/en/settings#permission-settings                     |
-| Hooks (CLI)              | https://code.claude.com/docs/en/hooks                                            |
-| Agent SDK Overview       | https://platform.claude.com/docs/en/agent-sdk/overview                           |
-| Agent SDK Streaming      | https://platform.claude.com/docs/en/agent-sdk/streaming-output                   |
-| Electron Docs            | https://www.electronjs.org/docs/latest/api                                       |
+| Topic               | URL                                                            |
+| ------------------- | -------------------------------------------------------------- |
+| Claude CLI Usage    | https://code.claude.com/docs/en/cli-usage                      |
+| CLI Headless Mode   | https://code.claude.com/docs/en/headless                       |
+| CLI Subagents       | https://code.claude.com/docs/en/sub-agents                     |
+| Permission Modes    | https://code.claude.com/docs/en/settings#permission-settings   |
+| Hooks (CLI)         | https://code.claude.com/docs/en/hooks                          |
+| Agent SDK Overview  | https://platform.claude.com/docs/en/agent-sdk/overview         |
+| Agent SDK Streaming | https://platform.claude.com/docs/en/agent-sdk/streaming-output |
+| Electron Docs       | https://www.electronjs.org/docs/latest/api                     |
 
 ---
 
@@ -70,9 +72,9 @@ Key features:
 | `src/main/services/agent-base.service.ts`      | Base class: stream-json parsing, NDJSON buffer, token tracking, env building |
 | `src/main/services/generalist.service.ts`      | Long-lived interactive Claude CLI, handoff detection, session resume         |
 | `src/main/services/generalist-prompts.ts`      | Generalist system prompt construction                                        |
-| `src/main/services/generalist.service.ts`    | Per-message CLI or SDK, task decomposition, skill matching                   |
+| `src/main/services/generalist.service.ts`      | Per-message CLI or SDK, task decomposition, skill matching                   |
 | `src/main/services/specialist-pool.service.ts` | Parallel/sequential execution, worktree isolation, retry logic               |
-| `src/main/services/sdk-executor.ts`            | Agent SDK query() wrapper — yields StreamChunks like CLI path               |
+| `src/main/services/sdk-executor.ts`            | Agent SDK query() wrapper — yields StreamChunks like CLI path                |
 | `src/main/services/sdk-hooks.ts`               | PreToolUse scope guard + dangerous command guard for SDK path                |
 | `src/main/services/auth-provider.ts`           | Auth mode detection, API key management, supportsSDK() gate                  |
 | `src/main/services/system-prompts.ts`          | PLAN_MODE / BUILD_MODE / DECOMPOSITION system prompts                        |
@@ -84,7 +86,7 @@ Key features:
 | `src/main/db/repositories/*.ts`                | Data access: specialist, skill, conversation, worktree, agentSession repos   |
 | `src/shared/constants.ts`                      | `IPC_CHANNELS`, constants                                                    |
 | `src/shared/types.ts`                          | All TypeScript interfaces                                                    |
-| `.claude/agents/*.yml`                         | Agent YAML definitions (14 specialists + generalist + coordinator)          |
+| `.claude/agents/*.yml`                         | Agent YAML definitions (14 specialists + generalist + coordinator)           |
 
 ---
 
@@ -94,16 +96,23 @@ Key features:
 
 ```typescript
 const args = [
-  '--output-format', 'stream-json',
-  '--input-format', 'stream-json',
+  '--output-format',
+  'stream-json',
+  '--input-format',
+  'stream-json',
   '--verbose',
   ...(isBuildMode
     ? ['--dangerously-skip-permissions']
     : ['--permission-mode', 'plan', '--allowedTools', 'WebSearch,WebFetch']),
-  '--system-prompt', fullSystemPrompt,
+  '--system-prompt',
+  fullSystemPrompt,
   ...(resumeSessionId ? ['--resume', resumeSessionId] : [])
 ]
-this.process = spawn('claude', args, { cwd: workspacePath, env: this.buildEnvWithPath(), stdio: ['pipe', 'pipe', 'pipe'] })
+this.process = spawn('claude', args, {
+  cwd: workspacePath,
+  env: this.buildEnvWithPath(),
+  stdio: ['pipe', 'pipe', 'pipe']
+})
 ```
 
 - Process stays alive — stdin/stdout pipe open for entire conversation
@@ -114,11 +123,16 @@ this.process = spawn('claude', args, { cwd: workspacePath, env: this.buildEnvWit
 
 ```typescript
 const args = [
-  '-p', augmentedMessage,
-  '--output-format', 'stream-json',
+  '-p',
+  augmentedMessage,
+  '--output-format',
+  'stream-json',
   '--verbose',
-  ...(isBuildMode ? ['--dangerously-skip-permissions'] : ['--permission-mode', 'plan', '--allowedTools', 'WebSearch,WebFetch']),
-  '--system-prompt', systemPrompt,
+  ...(isBuildMode
+    ? ['--dangerously-skip-permissions']
+    : ['--permission-mode', 'plan', '--allowedTools', 'WebSearch,WebFetch']),
+  '--system-prompt',
+  systemPrompt,
   ...(sessionId ? ['--resume', sessionId] : [])
 ]
 this.process = spawn('claude', args, { cwd: workspacePath, env, stdio: ['pipe', 'pipe', 'pipe'] })

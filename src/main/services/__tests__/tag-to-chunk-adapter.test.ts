@@ -58,7 +58,10 @@ describe('inferSymbolKind', () => {
   })
 
   test('identifies function', () => {
-    assert.equal(inferSymbolKind('export function helperFunction(input: string): string {'), 'function')
+    assert.equal(
+      inferSymbolKind('export function helperFunction(input: string): string {'),
+      'function'
+    )
   })
 
   test('defaults to method for unrecognized patterns', () => {
@@ -133,17 +136,11 @@ describe('extractSignature', () => {
   })
 
   test('returns full trimmed line when no brace', () => {
-    assert.equal(
-      extractSignature('  export const MAX_RETRIES = 3'),
-      'export const MAX_RETRIES = 3'
-    )
+    assert.equal(extractSignature('  export const MAX_RETRIES = 3'), 'export const MAX_RETRIES = 3')
   })
 
   test('handles class declaration', () => {
-    assert.equal(
-      extractSignature('export class UserService {'),
-      'export class UserService'
-    )
+    assert.equal(extractSignature('export class UserService {'), 'export class UserService')
   })
 })
 
@@ -151,11 +148,7 @@ describe('extractSignature', () => {
 
 describe('findSymbolEnd', () => {
   test('finds closing brace via depth tracking', () => {
-    const lines = [
-      'function add(a: number, b: number): number {',
-      '  return a + b',
-      '}'
-    ]
+    const lines = ['function add(a: number, b: number): number {', '  return a + b', '}']
     assert.equal(findSymbolEnd(lines, 0, lines.length), 3)
   })
 
@@ -172,22 +165,12 @@ describe('findSymbolEnd', () => {
   })
 
   test('returns maxEnd when no braces found', () => {
-    const lines = [
-      'export const MAX = 3',
-      'export const MIN = 1'
-    ]
+    const lines = ['export const MAX = 3', 'export const MIN = 1']
     assert.equal(findSymbolEnd(lines, 0, 1), 1)
   })
 
   test('respects maxEnd boundary', () => {
-    const lines = [
-      'function a() {',
-      '  return 1',
-      '}',
-      'function b() {',
-      '  return 2',
-      '}'
-    ]
+    const lines = ['function a() {', '  return 1', '}', 'function b() {', '  return 2', '}']
     // Should stop at maxEnd=3 (before function b)
     assert.equal(findSymbolEnd(lines, 0, 3), 3)
   })
@@ -200,9 +183,27 @@ describe('convertTagsToChunks', () => {
 
   test('filters out ref tags — only def tags produce chunks', () => {
     const tags: RepomapTag[] = [
-      { relFname: 'sample.ts', fname: join(fixturesPath, 'sample.ts'), line: 1, name: 'UserService', kind: 'def' },
-      { relFname: 'sample.ts', fname: join(fixturesPath, 'sample.ts'), line: 9, name: 'getUser', kind: 'def' },
-      { relFname: 'sample.ts', fname: join(fixturesPath, 'sample.ts'), line: 9, name: 'Database', kind: 'ref' }
+      {
+        relFname: 'sample.ts',
+        fname: join(fixturesPath, 'sample.ts'),
+        line: 1,
+        name: 'UserService',
+        kind: 'def'
+      },
+      {
+        relFname: 'sample.ts',
+        fname: join(fixturesPath, 'sample.ts'),
+        line: 9,
+        name: 'getUser',
+        kind: 'def'
+      },
+      {
+        relFname: 'sample.ts',
+        fname: join(fixturesPath, 'sample.ts'),
+        line: 9,
+        name: 'Database',
+        kind: 'ref'
+      }
     ]
 
     const { chunks } = convertTagsToChunks(tags, fixturesPath)
@@ -215,8 +216,20 @@ describe('convertTagsToChunks', () => {
 
   test('groups by file — reads file once per group', () => {
     const tags: RepomapTag[] = [
-      { relFname: 'sample.ts', fname: join(fixturesPath, 'sample.ts'), line: 1, name: 'UserService', kind: 'def' },
-      { relFname: 'sample.ts', fname: join(fixturesPath, 'sample.ts'), line: 18, name: 'helperFunction', kind: 'def' }
+      {
+        relFname: 'sample.ts',
+        fname: join(fixturesPath, 'sample.ts'),
+        line: 1,
+        name: 'UserService',
+        kind: 'def'
+      },
+      {
+        relFname: 'sample.ts',
+        fname: join(fixturesPath, 'sample.ts'),
+        line: 18,
+        name: 'helperFunction',
+        kind: 'def'
+      }
     ]
 
     const { chunks, fileContents } = convertTagsToChunks(tags, fixturesPath)
@@ -228,18 +241,33 @@ describe('convertTagsToChunks', () => {
 
   test('returns fileContents map with entries for processed files', () => {
     const tags: RepomapTag[] = [
-      { relFname: 'sample.ts', fname: join(fixturesPath, 'sample.ts'), line: 1, name: 'UserService', kind: 'def' }
+      {
+        relFname: 'sample.ts',
+        fname: join(fixturesPath, 'sample.ts'),
+        line: 1,
+        name: 'UserService',
+        kind: 'def'
+      }
     ]
 
     const { fileContents } = convertTagsToChunks(tags, fixturesPath)
     assert.equal(fileContents.size, 1)
     const content = fileContents.get('sample.ts')
-    assert.ok(content && content.includes('export class UserService'), 'file content should contain UserService')
+    assert.ok(
+      content && content.includes('export class UserService'),
+      'file content should contain UserService'
+    )
   })
 
   test('skips files that cannot be read', () => {
     const tags: RepomapTag[] = [
-      { relFname: 'nonexistent.ts', fname: join(fixturesPath, 'nonexistent.ts'), line: 1, name: 'Foo', kind: 'def' }
+      {
+        relFname: 'nonexistent.ts',
+        fname: join(fixturesPath, 'nonexistent.ts'),
+        line: 1,
+        name: 'Foo',
+        kind: 'def'
+      }
     ]
 
     const { chunks, fileContents } = convertTagsToChunks(tags, fixturesPath)

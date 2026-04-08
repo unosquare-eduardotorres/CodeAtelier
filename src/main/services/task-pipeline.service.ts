@@ -128,8 +128,7 @@ export class TaskPipelineService {
         // Respect the user's explicit mode choice.
         // Only default to plan when conversation mode is not set to build.
         // When user is in build mode, honor it — even for investigation-like summaries.
-        const effectiveMode: ConversationMode =
-          conversation?.mode === 'build' ? 'build' : 'plan'
+        const effectiveMode: ConversationMode = conversation?.mode === 'build' ? 'build' : 'plan'
 
         if (effectiveMode !== brief.mode) {
           log.info(
@@ -207,7 +206,9 @@ export class TaskPipelineService {
         } else {
           // No conversation overrides — let decomposition LLM choose from active roster
           specialists = []
-          log.info('[PIPELINE:plan-execution] No conversation overrides — decomposition LLM will select specialists')
+          log.info(
+            '[PIPELINE:plan-execution] No conversation overrides — decomposition LLM will select specialists'
+          )
         }
 
         // Collect files from plan steps and filesChanged
@@ -298,7 +299,8 @@ export class TaskPipelineService {
         case 'delegation': {
           const specialistNames = brief.specialists
             .map((id) => {
-              const spec = specialistRepository.findByAgentId(id) ?? specialistRepository.findById(id)
+              const spec =
+                specialistRepository.findByAgentId(id) ?? specialistRepository.findById(id)
               return spec?.displayName ?? id
             })
             .join(', ')
@@ -346,7 +348,7 @@ export class TaskPipelineService {
       // Fire plan_created hook (non-blocking)
       hookEngine
         .executeHooks('plan_created', {
-          taskCount: taskPlan.tasks.length,
+          taskCount: String(taskPlan.tasks.length),
           mode: taskPlan.mode
         })
         .catch((err) => log.warn('Hook error (plan_created):', err))
@@ -354,9 +356,7 @@ export class TaskPipelineService {
       // ── Step 6: Auto-execute directly — no floating card ──
       // In plan mode, specialist will produce a ```plan block → inline card in MessageBubble
       // In build mode, specialist executes changes directly
-      log.info(
-        `[PIPELINE:auto-executing] taskCount=${taskPlan.tasks.length} mode=${taskPlan.mode}`
-      )
+      log.info(`[PIPELINE:auto-executing] taskCount=${taskPlan.tasks.length} mode=${taskPlan.mode}`)
       await this.execute({
         conversationId,
         tasks: taskPlan.tasks,
@@ -677,16 +677,12 @@ export class TaskPipelineService {
       }
 
       if (contextToInject.trim()) {
-        const taskDescriptions = tasks
-          .map((t) => `- ${t.specialist}: ${t.description}`)
-          .join('\n')
+        const taskDescriptions = tasks.map((t) => `- ${t.specialist}: ${t.description}`).join('\n')
         await generalistService.injectContext(
           `[Specialist execution complete — ${tasks.length} task(s)]\n\nTasks executed:\n${taskDescriptions}\n\nResults summary:\n${contextToInject}`,
           conversationId
         )
-        log.info(
-          `[PIPELINE:context-injection] Injected ${contextToInject.length} chars`
-        )
+        log.info(`[PIPELINE:context-injection] Injected ${contextToInject.length} chars`)
       }
     } catch (e) {
       log.warn('Context injection after specialist execution failed:', e)

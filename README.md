@@ -29,24 +29,24 @@ flowchart LR
 
 ## Agent Team
 
-| Icon | Agent | Alias | Role |
-|---|---|---|---|
-| 🎨 | **Generalist** | **Da Vinci** | Always-on assistant, read-only codebase analysis, detects handoffs |
-| 🎼 | **Orchestrator** | **Stravinsky** | Spawned on-demand, coordinates specialists with appropriate permissions |
-| ⚛️ | React Architect | | Frontend architecture, components, state management |
-| ⚡ | Electron Architect | | Desktop app patterns, IPC, native integration |
-| 🤖 | Agentic Architect | | AI agent design, Claude CLI integration |
-| 🟣 | .NET Architect | | Backend services, API design |
-| 🗄️ | DB Architect | | SQLite patterns, schema design, migrations |
-| 🎨 | UX/UI Specialist | | Design system, accessibility, user experience |
-| 🔀 | Git/GitHub Specialist | | Branching, PRs, workflow automation |
-| 🚀 | CI/CD DevOps | | Build pipelines, packaging, distribution |
-| ☁️ | Cloud Infrastructure | | Deployment, hosting, infrastructure |
-| 📝 | Code Planner | | Task decomposition, implementation strategy |
-| 📅 | Execution Planner | | Sequencing, dependency resolution |
-| 📋 | Requirements Specialist | | Specification, acceptance criteria |
-| 📐 | Docs & Diagrams | | Documentation, Mermaid diagrams, design docs |
-| 🛠️ | Generalist Developer | | Full-stack implementation, broad coverage |
+| Icon | Agent                   | Alias          | Role                                                                    |
+| ---- | ----------------------- | -------------- | ----------------------------------------------------------------------- |
+| 🎨   | **Generalist**          | **Da Vinci**   | Always-on assistant, read-only codebase analysis, detects handoffs      |
+| 🎼   | **Orchestrator**        | **Stravinsky** | Spawned on-demand, coordinates specialists with appropriate permissions |
+| ⚛️   | React Architect         |                | Frontend architecture, components, state management                     |
+| ⚡   | Electron Architect      |                | Desktop app patterns, IPC, native integration                           |
+| 🤖   | Agentic Architect       |                | AI agent design, Claude CLI integration                                 |
+| 🟣   | .NET Architect          |                | Backend services, API design                                            |
+| 🗄️   | DB Architect            |                | SQLite patterns, schema design, migrations                              |
+| 🎨   | UX/UI Specialist        |                | Design system, accessibility, user experience                           |
+| 🔀   | Git/GitHub Specialist   |                | Branching, PRs, workflow automation                                     |
+| 🚀   | CI/CD DevOps            |                | Build pipelines, packaging, distribution                                |
+| ☁️   | Cloud Infrastructure    |                | Deployment, hosting, infrastructure                                     |
+| 📝   | Code Planner            |                | Task decomposition, implementation strategy                             |
+| 📅   | Execution Planner       |                | Sequencing, dependency resolution                                       |
+| 📋   | Requirements Specialist |                | Specification, acceptance criteria                                      |
+| 📐   | Docs & Diagrams         |                | Documentation, Mermaid diagrams, design docs                            |
+| 🛠️   | Generalist Developer    |                | Full-stack implementation, broad coverage                               |
 
 ## Tech Stack
 

@@ -13,7 +13,9 @@ interface DragMoveActions {
   handleDragMove: (uid: string, newCol: number, newRow: number) => void
 }
 
-export function useDragMove(ctx: Pick<EditorHookContext, 'getOfficeState' | 'applyEdit'>): DragMoveActions {
+export function useDragMove(
+  ctx: Pick<EditorHookContext, 'getOfficeState' | 'applyEdit'>
+): DragMoveActions {
   const { getOfficeState, applyEdit } = ctx
 
   const handleDragMove = useCallback(

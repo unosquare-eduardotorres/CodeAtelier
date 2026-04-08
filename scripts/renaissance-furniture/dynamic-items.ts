@@ -200,7 +200,9 @@ function drawAlchemySide(canvas: PixelCanvas): void {
 
 function generateTorchSconce(): GeneratedFurnitureItem {
   const frameFiles = ['TORCH_SCONCE_1.png', 'TORCH_SCONCE_2.png', 'TORCH_SCONCE_3.png']
-  const pngs = frameFiles.map((file, index) => makePng(file, 16, 32, (canvas) => drawTorchSconceFrame(canvas, index)))
+  const pngs = frameFiles.map((file, index) =>
+    makePng(file, 16, 32, (canvas) => drawTorchSconceFrame(canvas, index))
+  )
   const manifest: FurnitureGroupManifest = {
     id: 'TORCH_SCONCE',
     name: 'Torch Sconce',
@@ -217,7 +219,9 @@ function generateTorchSconce(): GeneratedFurnitureItem {
 
 function generateFountain(): GeneratedFurnitureItem {
   const frameFiles = ['FOUNTAIN_1.png', 'FOUNTAIN_2.png', 'FOUNTAIN_3.png']
-  const pngs = frameFiles.map((file, index) => makePng(file, 32, 32, (canvas) => drawFountainFrame(canvas, index)))
+  const pngs = frameFiles.map((file, index) =>
+    makePng(file, 32, 32, (canvas) => drawFountainFrame(canvas, index))
+  )
   const manifest: FurnitureGroupManifest = {
     id: 'FOUNTAIN',
     name: 'Fountain',
@@ -234,7 +238,9 @@ function generateFountain(): GeneratedFurnitureItem {
 
 function generateFirepit(): GeneratedFurnitureItem {
   const frameFiles = ['FIREPIT_1.png', 'FIREPIT_2.png', 'FIREPIT_3.png']
-  const pngs = frameFiles.map((file, index) => makePng(file, 32, 16, (canvas) => drawFirepitFrame(canvas, index)))
+  const pngs = frameFiles.map((file, index) =>
+    makePng(file, 32, 16, (canvas) => drawFirepitFrame(canvas, index))
+  )
   const manifest: FurnitureGroupManifest = {
     id: 'FIREPIT',
     name: 'Firepit',

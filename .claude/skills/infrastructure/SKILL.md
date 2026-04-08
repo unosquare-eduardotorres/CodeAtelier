@@ -7,6 +7,7 @@ CI/CD pipeline design, deployment automation, monitoring, and release management
 ## Core Competencies
 
 ### CI/CD Pipeline Design
+
 - **Pipeline Stages**: lint → typecheck → test → build → package → sign → publish
 - **Parallel Execution**: Run lint, typecheck, and test in parallel; build after all pass
 - **Caching Strategy**: Cache `node_modules` (npm/pnpm), Electron binaries, build artifacts
@@ -15,6 +16,7 @@ CI/CD pipeline design, deployment automation, monitoring, and release management
 - **Branch Protection**: Require CI pass + review before merge to main
 
 ### GitHub Actions Patterns
+
 - **Reusable Workflows**: Extract common patterns into `.github/workflows/reusable-*.yml`
 - **Composite Actions**: Share steps across workflows via `.github/actions/*/action.yml`
 - **Environment Secrets**: Use GitHub Environments for production secrets (code signing certs)
@@ -23,6 +25,7 @@ CI/CD pipeline design, deployment automation, monitoring, and release management
 - **Matrix Strategy**: `{ os: [ubuntu-latest, macos-latest, windows-latest] }`
 
 ### Electron Packaging & Distribution
+
 - **electron-builder**: Cross-platform packaging (DMG, NSIS, AppImage, Snap)
 - **Code Signing**: macOS (Developer ID), Windows (Authenticode), auto-sign in CI
 - **Notarization**: macOS notarization via `notarytool` (required for Gatekeeper)
@@ -31,6 +34,7 @@ CI/CD pipeline design, deployment automation, monitoring, and release management
 - **Universal Builds**: macOS universal binary (x64 + arm64)
 
 ### Deployment Strategies
+
 - **Staged Rollout**: Release to beta channel → staging → production
 - **Canary Releases**: Small percentage of users get new version first
 - **Feature Flags**: Enable/disable features without redeployment
@@ -38,6 +42,7 @@ CI/CD pipeline design, deployment automation, monitoring, and release management
 - **Blue-Green (for cloud services)**: Zero-downtime deployment with traffic switching
 
 ### Monitoring & Observability
+
 - **Crash Reporting**: Electron `crashReporter`, Sentry/Bugsnag integration
 - **Analytics**: Opt-in usage telemetry (respect privacy)
 - **Health Checks**: Auto-update server availability, API endpoint monitoring
@@ -45,6 +50,7 @@ CI/CD pipeline design, deployment automation, monitoring, and release management
 - **Performance Metrics**: App startup time, memory usage, IPC latency
 
 ### Release Automation
+
 - **Semantic Versioning**: Major.Minor.Patch with conventional commits
 - **Changelog Generation**: Auto-generate from commit messages (conventional-changelog)
 - **GitHub Releases**: Auto-create with release notes, attach binaries
@@ -62,6 +68,7 @@ When evaluating infrastructure readiness, score based on:
 5. **Release Automation (15%)**: Is versioning automated? Are changelogs generated? Are releases scripted?
 
 ## Anti-Patterns to Flag
+
 - Manual release process (should be fully automated)
 - No caching in CI (slow builds waste developer time)
 - Missing code signing (users get scary warnings)

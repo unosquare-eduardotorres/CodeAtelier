@@ -135,9 +135,7 @@ function buildDecompositionInputsMirror(
     : ''
 
   const modeInstruction =
-    mode === 'plan'
-      ? '\n\nIMPORTANT: This is a PLAN-MODE decomposition...'
-      : ''
+    mode === 'plan' ? '\n\nIMPORTANT: This is a PLAN-MODE decomposition...' : ''
 
   const prompt = `Think step by step about the dependencies and potential file conflicts before decomposing.
 
@@ -198,9 +196,7 @@ function buildSubAgentDefinitionsMirror(
   return agents
 }
 
-function buildSdkQueryOptionsMirror(
-  options: Pick<SDKExecuteOptions, 'agents' | 'allowedTools'>
-): {
+function buildSdkQueryOptionsMirror(options: Pick<SDKExecuteOptions, 'agents' | 'allowedTools'>): {
   allowedTools?: string[]
   agents?: SDKExecuteOptions['agents']
 } {
@@ -321,7 +317,9 @@ describe('Group B: buildSubAgentDefinitions', () => {
   })
 
   test('selects haiku when all tasks are haiku', () => {
-    const tasks = [{ id: 't1', specialist: 'qa', description: 'Smoke checks', model: 'haiku' }] as const
+    const tasks = [
+      { id: 't1', specialist: 'qa', description: 'Smoke checks', model: 'haiku' as const }
+    ]
     const agents = buildSubAgentDefinitionsMirror(tasks, 'plan')
     assert.equal(agents.qa.model, 'haiku')
     assert.equal(agents.qa.budgetTier, 'minimal')
@@ -437,7 +435,11 @@ describe('Group C: buildDecompositionInputs', () => {
       recentMessages: []
     }
 
-    const { prompt: planPrompt } = buildDecompositionInputsMirror(brief, '- "x" — X: Prompt', 'plan')
+    const { prompt: planPrompt } = buildDecompositionInputsMirror(
+      brief,
+      '- "x" — X: Prompt',
+      'plan'
+    )
     const { prompt: buildPrompt } = buildDecompositionInputsMirror(
       brief,
       '- "x" — X: Prompt',
@@ -456,7 +458,7 @@ describe('Group D: SDKExecuteOptions agents wiring', () => {
         description: 'QA',
         prompt: 'QA prompt',
         tools: ['Read'],
-        model: 'haiku'
+        model: 'haiku' as const
       }
     }
     const options = buildSdkQueryOptionsMirror({ agents, allowedTools: ['Read'] })

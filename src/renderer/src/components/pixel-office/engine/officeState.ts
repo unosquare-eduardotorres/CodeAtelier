@@ -139,7 +139,12 @@ export class OfficeState {
     // Relocate characters outside bounds
     for (const ch of this.characters.values()) {
       if (ch.seatId) continue
-      if (ch.tileCol < 0 || ch.tileCol >= layout.cols || ch.tileRow < 0 || ch.tileRow >= layout.rows) {
+      if (
+        ch.tileCol < 0 ||
+        ch.tileCol >= layout.cols ||
+        ch.tileRow < 0 ||
+        ch.tileRow >= layout.rows
+      ) {
         this.relocateCharacterToWalkable(ch)
       }
     }
@@ -286,14 +291,22 @@ export class OfficeState {
 
   addSubagent(parentAgentId: number, parentToolId: string): number {
     return this.subagentMgr.addSubagent(
-      parentAgentId, parentToolId, this.characters, this.seats, this.walkableTiles
+      parentAgentId,
+      parentToolId,
+      this.characters,
+      this.seats,
+      this.walkableTiles
     )
   }
 
   removeSubagent(parentAgentId: number, parentToolId: string): void {
     const result = this.subagentMgr.removeSubagent(
-      parentAgentId, parentToolId, this.characters, this.seats,
-      this.selectedAgentId, this.cameraFollowId
+      parentAgentId,
+      parentToolId,
+      this.characters,
+      this.seats,
+      this.selectedAgentId,
+      this.cameraFollowId
     )
     this.selectedAgentId = result.selectedAgentId
     this.cameraFollowId = result.cameraFollowId
@@ -301,8 +314,11 @@ export class OfficeState {
 
   removeAllSubagents(parentAgentId: number): void {
     const result = this.subagentMgr.removeAllSubagents(
-      parentAgentId, this.characters, this.seats,
-      this.selectedAgentId, this.cameraFollowId
+      parentAgentId,
+      this.characters,
+      this.seats,
+      this.selectedAgentId,
+      this.cameraFollowId
     )
     this.selectedAgentId = result.selectedAgentId
     this.cameraFollowId = result.cameraFollowId
@@ -360,7 +376,11 @@ export class OfficeState {
   update(dt: number): void {
     // Furniture animation
     const newFurniture = this.furnitureAnim.update(
-      dt, this.layout, this.characters, this.seats, this.furniture
+      dt,
+      this.layout,
+      this.characters,
+      this.seats,
+      this.furniture
     )
     if (newFurniture) this.furniture = newFurniture
 
@@ -384,8 +404,13 @@ export class OfficeState {
       // Temporarily unblock own seat so character can pathfind to it
       this.seatMgr.withOwnSeatUnblocked(ch, this.seats, this.blockedTiles, () =>
         updateCharacter(
-          ch, dt, this.walkableTiles, this.seats,
-          this.tileMap, this.blockedTiles, this.idleZoneTiles
+          ch,
+          dt,
+          this.walkableTiles,
+          this.seats,
+          this.tileMap,
+          this.blockedTiles,
+          this.idleZoneTiles
         )
       )
     }

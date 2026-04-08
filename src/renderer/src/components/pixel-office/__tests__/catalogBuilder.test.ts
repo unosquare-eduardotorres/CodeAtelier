@@ -10,7 +10,6 @@ import {
   createMirrorEntries,
   detectRotationGroups,
   detectStatePairs,
-  registerOnStateRotations,
   detectAnimationGroups,
   buildVisibleCatalog
 } from '../layout/catalogBuilder'
@@ -44,22 +43,138 @@ function sprite(w = 16, h = 16): SpriteData {
 function makeAssets(overrides?: Partial<LoadedAssetData>): LoadedAssetData {
   return {
     catalog: [
-      { id: 'DESK_FRONT', label: 'Desk - Front', category: 'desks', width: 32, height: 16, footprintW: 2, footprintH: 1, isDesk: true, groupId: 'desk', orientation: 'front' },
-      { id: 'DESK_BACK', label: 'Desk - Back', category: 'desks', width: 32, height: 16, footprintW: 2, footprintH: 1, isDesk: true, groupId: 'desk', orientation: 'back' },
-      { id: 'LAMP_SIDE', label: 'Lamp - Side', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, groupId: 'lamp', orientation: 'side', mirrorSide: true },
-      { id: 'LAMP_FRONT', label: 'Lamp - Front', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, groupId: 'lamp', orientation: 'front' },
-      { id: 'PC_FRONT_OFF', label: 'PC - Front - Off', category: 'electronics', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, groupId: 'pc', orientation: 'front', state: 'off' },
-      { id: 'PC_FRONT_ON', label: 'PC - Front - On', category: 'electronics', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, groupId: 'pc', orientation: 'front', state: 'on' },
-      { id: 'FAN_ON_F0', label: 'Fan Frame 0', category: 'electronics', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, animationGroup: 'fan-anim', frame: 0 },
-      { id: 'FAN_ON_F1', label: 'Fan Frame 1', category: 'electronics', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, animationGroup: 'fan-anim', frame: 1 },
-      { id: 'FAN_ON_F2', label: 'Fan Frame 2', category: 'electronics', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, animationGroup: 'fan-anim', frame: 2 },
-      { id: 'PLANT', label: 'Plant', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false }
+      {
+        id: 'DESK_FRONT',
+        label: 'Desk - Front',
+        category: 'desks',
+        width: 32,
+        height: 16,
+        footprintW: 2,
+        footprintH: 1,
+        isDesk: true,
+        groupId: 'desk',
+        orientation: 'front'
+      },
+      {
+        id: 'DESK_BACK',
+        label: 'Desk - Back',
+        category: 'desks',
+        width: 32,
+        height: 16,
+        footprintW: 2,
+        footprintH: 1,
+        isDesk: true,
+        groupId: 'desk',
+        orientation: 'back'
+      },
+      {
+        id: 'LAMP_SIDE',
+        label: 'Lamp - Side',
+        category: 'decor',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        groupId: 'lamp',
+        orientation: 'side',
+        mirrorSide: true
+      },
+      {
+        id: 'LAMP_FRONT',
+        label: 'Lamp - Front',
+        category: 'decor',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        groupId: 'lamp',
+        orientation: 'front'
+      },
+      {
+        id: 'PC_FRONT_OFF',
+        label: 'PC - Front - Off',
+        category: 'electronics',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        groupId: 'pc',
+        orientation: 'front',
+        state: 'off'
+      },
+      {
+        id: 'PC_FRONT_ON',
+        label: 'PC - Front - On',
+        category: 'electronics',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        groupId: 'pc',
+        orientation: 'front',
+        state: 'on'
+      },
+      {
+        id: 'FAN_ON_F0',
+        label: 'Fan Frame 0',
+        category: 'electronics',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        animationGroup: 'fan-anim',
+        frame: 0
+      },
+      {
+        id: 'FAN_ON_F1',
+        label: 'Fan Frame 1',
+        category: 'electronics',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        animationGroup: 'fan-anim',
+        frame: 1
+      },
+      {
+        id: 'FAN_ON_F2',
+        label: 'Fan Frame 2',
+        category: 'electronics',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        animationGroup: 'fan-anim',
+        frame: 2
+      },
+      {
+        id: 'PLANT',
+        label: 'Plant',
+        category: 'decor',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false
+      }
     ],
     sprites: {
-      DESK_FRONT: sprite(), DESK_BACK: sprite(),
-      LAMP_SIDE: sprite(), LAMP_FRONT: sprite(),
-      PC_FRONT_OFF: sprite(), PC_FRONT_ON: sprite(),
-      FAN_ON_F0: sprite(), FAN_ON_F1: sprite(), FAN_ON_F2: sprite(),
+      DESK_FRONT: sprite(),
+      DESK_BACK: sprite(),
+      LAMP_SIDE: sprite(),
+      LAMP_FRONT: sprite(),
+      PC_FRONT_OFF: sprite(),
+      PC_FRONT_ON: sprite(),
+      FAN_ON_F0: sprite(),
+      FAN_ON_F1: sprite(),
+      FAN_ON_F2: sprite(),
       PLANT: sprite()
     },
     ...overrides
@@ -80,13 +195,13 @@ describe('buildCatalogEntries', () => {
     delete (assets.sprites as any)['PLANT']
     const entries = buildCatalogEntries(assets)
     assert.equal(entries.length, 9)
-    assert.ok(!entries.find(e => e.type === 'PLANT'))
+    assert.ok(!entries.find((e) => e.type === 'PLANT'))
   })
 
   test('maps asset fields correctly', () => {
     const assets = makeAssets()
     const entries = buildCatalogEntries(assets)
-    const desk = entries.find(e => e.type === 'DESK_FRONT')!
+    const desk = entries.find((e) => e.type === 'DESK_FRONT')!
     assert.equal(desk.label, 'Desk - Front')
     assert.equal(desk.footprintW, 2)
     assert.equal(desk.footprintH, 1)
@@ -98,7 +213,7 @@ describe('buildCatalogEntries', () => {
   test('includes optional fields only when truthy', () => {
     const assets = makeAssets()
     const entries = buildCatalogEntries(assets)
-    const plant = entries.find(e => e.type === 'PLANT')!
+    const plant = entries.find((e) => e.type === 'PLANT')!
     assert.equal(plant.orientation, undefined)
     assert.equal(plant.canPlaceOnSurfaces, undefined)
     assert.equal(plant.mirrorSide, undefined)
@@ -121,7 +236,17 @@ describe('createMirrorEntries', () => {
   test('does not create mirrors for non-mirrorSide assets', () => {
     const assets: LoadedAssetData = {
       catalog: [
-        { id: 'A', label: 'A', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, orientation: 'side' }
+        {
+          id: 'A',
+          label: 'A',
+          category: 'decor',
+          width: 16,
+          height: 16,
+          footprintW: 1,
+          footprintH: 1,
+          isDesk: false,
+          orientation: 'side'
+        }
       ],
       sprites: { A: sprite() }
     }
@@ -133,7 +258,18 @@ describe('createMirrorEntries', () => {
   test('does not create mirrors for non-side orientations', () => {
     const assets: LoadedAssetData = {
       catalog: [
-        { id: 'A', label: 'A', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, orientation: 'front', mirrorSide: true }
+        {
+          id: 'A',
+          label: 'A',
+          category: 'decor',
+          width: 16,
+          height: 16,
+          footprintW: 1,
+          footprintH: 1,
+          isDesk: false,
+          orientation: 'front',
+          mirrorSide: true
+        }
       ],
       sprites: { A: sprite() }
     }
@@ -178,7 +314,18 @@ describe('detectRotationGroups', () => {
   test('skips groups with only 1 orientation', () => {
     const assets: LoadedAssetData = {
       catalog: [
-        { id: 'SOLO', label: 'Solo', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, groupId: 'solo', orientation: 'front' }
+        {
+          id: 'SOLO',
+          label: 'Solo',
+          category: 'decor',
+          width: 16,
+          height: 16,
+          footprintW: 1,
+          footprintH: 1,
+          isDesk: false,
+          groupId: 'solo',
+          orientation: 'front'
+        }
       ],
       sprites: { SOLO: sprite() }
     }
@@ -210,7 +357,16 @@ describe('detectStatePairs', () => {
   test('returns empty maps when no state pairs exist', () => {
     const assets: LoadedAssetData = {
       catalog: [
-        { id: 'A', label: 'A', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false }
+        {
+          id: 'A',
+          label: 'A',
+          category: 'decor',
+          width: 16,
+          height: 16,
+          footprintW: 1,
+          footprintH: 1,
+          isDesk: false
+        }
       ],
       sprites: { A: sprite() }
     }
@@ -235,9 +391,42 @@ describe('detectAnimationGroups', () => {
   test('sorts frames by frame index', () => {
     const assets: LoadedAssetData = {
       catalog: [
-        { id: 'A2', label: 'A', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, animationGroup: 'test', frame: 2 },
-        { id: 'A0', label: 'A', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, animationGroup: 'test', frame: 0 },
-        { id: 'A1', label: 'A', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, animationGroup: 'test', frame: 1 }
+        {
+          id: 'A2',
+          label: 'A',
+          category: 'decor',
+          width: 16,
+          height: 16,
+          footprintW: 1,
+          footprintH: 1,
+          isDesk: false,
+          animationGroup: 'test',
+          frame: 2
+        },
+        {
+          id: 'A0',
+          label: 'A',
+          category: 'decor',
+          width: 16,
+          height: 16,
+          footprintW: 1,
+          footprintH: 1,
+          isDesk: false,
+          animationGroup: 'test',
+          frame: 0
+        },
+        {
+          id: 'A1',
+          label: 'A',
+          category: 'decor',
+          width: 16,
+          height: 16,
+          footprintW: 1,
+          footprintH: 1,
+          isDesk: false,
+          animationGroup: 'test',
+          frame: 1
+        }
       ],
       sprites: { A0: sprite(), A1: sprite(), A2: sprite() }
     }
@@ -249,7 +438,16 @@ describe('detectAnimationGroups', () => {
   test('returns empty map when no animation groups', () => {
     const assets: LoadedAssetData = {
       catalog: [
-        { id: 'A', label: 'A', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false }
+        {
+          id: 'A',
+          label: 'A',
+          category: 'decor',
+          width: 16,
+          height: 16,
+          footprintW: 1,
+          footprintH: 1,
+          isDesk: false
+        }
       ],
       sprites: { A: sprite() }
     }
@@ -269,9 +467,15 @@ describe('buildVisibleCatalog', () => {
     const { rotationGroups, nonFrontIds } = detectRotationGroups(assets)
     const { stateGroups } = detectStatePairs(assets)
 
-    const { visibleEntries } = buildVisibleCatalog(entries, assets, nonFrontIds, rotationGroups, stateGroups)
-    assert.ok(!visibleEntries.find(e => e.type === 'DESK_BACK'))
-    assert.ok(visibleEntries.find(e => e.type === 'DESK_FRONT'))
+    const { visibleEntries } = buildVisibleCatalog(
+      entries,
+      assets,
+      nonFrontIds,
+      rotationGroups,
+      stateGroups
+    )
+    assert.ok(!visibleEntries.find((e) => e.type === 'DESK_BACK'))
+    assert.ok(visibleEntries.find((e) => e.type === 'DESK_FRONT'))
   })
 
   test('excludes "on" state variants', () => {
@@ -280,9 +484,15 @@ describe('buildVisibleCatalog', () => {
     const { rotationGroups, nonFrontIds } = detectRotationGroups(assets)
     const { stateGroups } = detectStatePairs(assets)
 
-    const { visibleEntries } = buildVisibleCatalog(entries, assets, nonFrontIds, rotationGroups, stateGroups)
-    assert.ok(!visibleEntries.find(e => e.type === 'PC_FRONT_ON'))
-    assert.ok(visibleEntries.find(e => e.type === 'PC_FRONT_OFF'))
+    const { visibleEntries } = buildVisibleCatalog(
+      entries,
+      assets,
+      nonFrontIds,
+      rotationGroups,
+      stateGroups
+    )
+    assert.ok(!visibleEntries.find((e) => e.type === 'PC_FRONT_ON'))
+    assert.ok(visibleEntries.find((e) => e.type === 'PC_FRONT_OFF'))
   })
 
   test('strips label suffixes for grouped entries', () => {
@@ -291,8 +501,14 @@ describe('buildVisibleCatalog', () => {
     const { rotationGroups, nonFrontIds } = detectRotationGroups(assets)
     const { stateGroups } = detectStatePairs(assets)
 
-    const { visibleEntries } = buildVisibleCatalog(entries, assets, nonFrontIds, rotationGroups, stateGroups)
-    const pc = visibleEntries.find(e => e.type === 'PC_FRONT_OFF')!
+    const { visibleEntries } = buildVisibleCatalog(
+      entries,
+      assets,
+      nonFrontIds,
+      rotationGroups,
+      stateGroups
+    )
+    const pc = visibleEntries.find((e) => e.type === 'PC_FRONT_OFF')!
     // Should strip " - Front - Off" → "PC"
     assert.equal(pc.label, 'PC')
   })
@@ -303,7 +519,13 @@ describe('buildVisibleCatalog', () => {
     const { rotationGroups, nonFrontIds } = detectRotationGroups(assets)
     const { stateGroups } = detectStatePairs(assets)
 
-    const { categories } = buildVisibleCatalog(entries, assets, nonFrontIds, rotationGroups, stateGroups)
+    const { categories } = buildVisibleCatalog(
+      entries,
+      assets,
+      nonFrontIds,
+      rotationGroups,
+      stateGroups
+    )
     assert.ok(categories.length > 0)
     // Verify sorted
     for (let i = 1; i < categories.length; i++) {

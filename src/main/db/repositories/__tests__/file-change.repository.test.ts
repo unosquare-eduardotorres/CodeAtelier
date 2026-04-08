@@ -16,7 +16,6 @@ if (!env) {
   const { db, wsId } = env
   const conversationId = seedConversation(db, wsId)
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { fileChangeRepository } = require('../file-change.repository')
 
   describe('FileChangeRepository', () => {

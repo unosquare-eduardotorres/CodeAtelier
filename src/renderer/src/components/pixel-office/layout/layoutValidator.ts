@@ -4,7 +4,7 @@
  * crashes from corrupted or malformed layout JSON.
  */
 
-import type { FloorColor, OfficeLayout, PlacedFurniture } from '../engine/types'
+import type { OfficeLayout, PlacedFurniture } from '../engine/types'
 import { TileType } from '../engine/types'
 
 /** Validation result with errors */

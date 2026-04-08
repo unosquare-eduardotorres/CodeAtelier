@@ -10,10 +10,9 @@ import Phaser from 'phaser'
 
 import type { SpriteData } from '../engine/types'
 import { adjustSprite } from '../colorize'
-import type { BubbleSpriteJson } from '../sprites/spriteData'
 import { resolveBubbleSprite } from '../sprites/spriteData'
 import { loadImage, imageToSpriteData } from '../sprites/imageUtils'
-import { rgbaToHex, flipSpriteH, pixelDataToSpriteData, spriteDataToPixelData } from '../sprites/spriteUtils'
+import { flipSpriteH, pixelDataToSpriteData, spriteDataToPixelData } from '../sprites/spriteUtils'
 
 // ── Asset imports (same PNGs the old engine uses) ──
 
@@ -161,14 +160,7 @@ export async function createCharacterTextures(scene: Phaser.Scene): Promise<void
       for (let i = 0; i < totalFrames; i++) {
         const col = i % CHAR_FRAMES_PER_ROW
         const row = Math.floor(i / CHAR_FRAMES_PER_ROW)
-        canvasTex.add(
-          i,
-          0,
-          col * CHAR_FRAME_W,
-          row * CHAR_FRAME_H,
-          CHAR_FRAME_W,
-          CHAR_FRAME_H
-        )
+        canvasTex.add(i, 0, col * CHAR_FRAME_W, row * CHAR_FRAME_H, CHAR_FRAME_W, CHAR_FRAME_H)
       }
     }
   }
@@ -214,18 +206,11 @@ export function createHueShiftedCharTexture(
   const canvasTex = scene.textures.addCanvas(variantKey, shiftedCanvas)
   if (canvasTex) {
     // Add frames for sprite sheet (4 directions x 7 frames = 28 total)
-    const totalFrames = (4 * CHAR_FRAMES_PER_ROW)
+    const totalFrames = 4 * CHAR_FRAMES_PER_ROW
     for (let i = 0; i < totalFrames; i++) {
       const col = i % CHAR_FRAMES_PER_ROW
       const row = Math.floor(i / CHAR_FRAMES_PER_ROW)
-      canvasTex.add(
-        i,
-        0,
-        col * CHAR_FRAME_W,
-        row * CHAR_FRAME_H,
-        CHAR_FRAME_W,
-        CHAR_FRAME_H
-      )
+      canvasTex.add(i, 0, col * CHAR_FRAME_W, row * CHAR_FRAME_H, CHAR_FRAME_W, CHAR_FRAME_H)
     }
   }
 
@@ -280,19 +265,65 @@ export async function createRpgCharacterTexture(
     for (let f = 0; f < RPG_FRAMES_PER_ROW; f++) {
       ctx.drawImage(
         img,
-        f * RPG_FRAME_W, srcY, RPG_FRAME_W, RPG_FRAME_H,
-        f * CHAR_FRAME_W, dstY, CHAR_FRAME_W, CHAR_FRAME_H
+        f * RPG_FRAME_W,
+        srcY,
+        RPG_FRAME_W,
+        RPG_FRAME_H,
+        f * CHAR_FRAME_W,
+        dstY,
+        CHAR_FRAME_W,
+        CHAR_FRAME_H
       )
     }
 
     // Type frames 3-4: reuse center frame (frame index 1 in RPG)
     const centerSrcX = 1 * RPG_FRAME_W
-    ctx.drawImage(img, centerSrcX, srcY, RPG_FRAME_W, RPG_FRAME_H, 3 * CHAR_FRAME_W, dstY, CHAR_FRAME_W, CHAR_FRAME_H)
-    ctx.drawImage(img, centerSrcX, srcY, RPG_FRAME_W, RPG_FRAME_H, 4 * CHAR_FRAME_W, dstY, CHAR_FRAME_W, CHAR_FRAME_H)
+    ctx.drawImage(
+      img,
+      centerSrcX,
+      srcY,
+      RPG_FRAME_W,
+      RPG_FRAME_H,
+      3 * CHAR_FRAME_W,
+      dstY,
+      CHAR_FRAME_W,
+      CHAR_FRAME_H
+    )
+    ctx.drawImage(
+      img,
+      centerSrcX,
+      srcY,
+      RPG_FRAME_W,
+      RPG_FRAME_H,
+      4 * CHAR_FRAME_W,
+      dstY,
+      CHAR_FRAME_W,
+      CHAR_FRAME_H
+    )
 
     // Read frames 5-6: reuse center frame
-    ctx.drawImage(img, centerSrcX, srcY, RPG_FRAME_W, RPG_FRAME_H, 5 * CHAR_FRAME_W, dstY, CHAR_FRAME_W, CHAR_FRAME_H)
-    ctx.drawImage(img, centerSrcX, srcY, RPG_FRAME_W, RPG_FRAME_H, 6 * CHAR_FRAME_W, dstY, CHAR_FRAME_W, CHAR_FRAME_H)
+    ctx.drawImage(
+      img,
+      centerSrcX,
+      srcY,
+      RPG_FRAME_W,
+      RPG_FRAME_H,
+      5 * CHAR_FRAME_W,
+      dstY,
+      CHAR_FRAME_W,
+      CHAR_FRAME_H
+    )
+    ctx.drawImage(
+      img,
+      centerSrcX,
+      srcY,
+      RPG_FRAME_W,
+      RPG_FRAME_H,
+      6 * CHAR_FRAME_W,
+      dstY,
+      CHAR_FRAME_W,
+      CHAR_FRAME_H
+    )
   }
 
   // Register as Phaser canvas texture with sprite sheet frames
@@ -432,7 +463,6 @@ export function registerSpriteDataTexture(
 
 import bubblePermissionData from '../sprites/bubble-permission.json'
 import bubbleWaitingData from '../sprites/bubble-waiting.json'
-
 
 /**
  * Create bubble textures (permission and waiting).

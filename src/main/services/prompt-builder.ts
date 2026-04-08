@@ -138,8 +138,7 @@ export class PromptBuilder {
       /\b(fix|implement|build|create|add|refactor|update|change|modify|delete|remove|write|migrate|deploy|scaffold|generate)\b/i.test(
         normalized
       )
-    const includeDirectAnswerBoost =
-      isQuestionPattern && !isMutationRequest && message.length < 300
+    const includeDirectAnswerBoost = isQuestionPattern && !isMutationRequest && message.length < 300
 
     return {
       includeAskQuestionPrompt,
@@ -163,9 +162,9 @@ export class PromptBuilder {
     if (options.role === 'generalist' && options.personaSpecialistId && options.personaPrompt) {
       layers.push(
         `## Your Specialized Identity\n\n` +
-        `You are operating with the following domain expertise. ` +
-        `Apply it to all conversations and analyses.\n\n` +
-        options.personaPrompt
+          `You are operating with the following domain expertise. ` +
+          `Apply it to all conversations and analyses.\n\n` +
+          options.personaPrompt
       )
       if (options.personaSkills && options.personaSkills.length > 0) {
         const filtered = this.filterAssignedSkills(
@@ -181,7 +180,9 @@ export class PromptBuilder {
 
     // Layer 1: Base role prompt (micro prompt for minimal-budget specialists)
     // Specialist MCP guidance is conditionally assembled based on enabledMcpServers flags
-    layers.push(this.getRolePrompt(options.role, options.mode, budgetTier, options.enabledMcpServers))
+    layers.push(
+      this.getRolePrompt(options.role, options.mode, budgetTier, options.enabledMcpServers)
+    )
 
     // Layer 2: Specialist identity (skip for minimal-budget haiku tasks — just the micro prompt + task is enough)
     if (options.role === 'specialist' && options.specialistId && budgetTier !== 'minimal') {
@@ -225,14 +226,18 @@ export class PromptBuilder {
       options.skillsEnabled !== false
     ) {
       // Plan-mode specialists get skills at minimal budget tier for lighter analysis context
-      const effectiveBudgetTier = options.mode === 'plan' ? 'minimal' as BudgetTier : budgetTier
+      const effectiveBudgetTier = options.mode === 'plan' ? ('minimal' as BudgetTier) : budgetTier
       const assignedSkills = this.filterAssignedSkills(
         options.assignedSkills,
         options.skillOverrides
       )
       if (assignedSkills.length > 0) {
         const taskContext = options.brief?.summary || options.specialistPrompt || ''
-        const skillContent = this.buildSkillContent(assignedSkills, effectiveBudgetTier, taskContext)
+        const skillContent = this.buildSkillContent(
+          assignedSkills,
+          effectiveBudgetTier,
+          taskContext
+        )
         if (skillContent) {
           layers.push(skillContent)
         }
@@ -280,7 +285,9 @@ export class PromptBuilder {
    *
    * Returns an empty string if no dynamic context is needed.
    */
-  buildDynamicContext(options: Pick<PromptBuildOptions, 'role' | 'brief' | 'feedbackContext' | 'budgetTier'>): string {
+  buildDynamicContext(
+    options: Pick<PromptBuildOptions, 'role' | 'brief' | 'feedbackContext' | 'budgetTier'>
+  ): string {
     const budgetTier = options.budgetTier ?? 'standard'
     if (options.role !== 'specialist' || budgetTier === 'minimal') return ''
 
@@ -329,7 +336,8 @@ export class PromptBuilder {
     const mcpGuidance = buildSpecialistMcpGuidance(mcpFlags)
     // Minimal-budget specialists (haiku-tier, complexity 0-4) get a micro prompt
     // to save ~400 tokens on simple tasks like quick reads and investigations
-    const basePrompt = budgetTier === 'minimal' ? SPECIALIST_MICRO_PROMPT : SPECIALIST_TASK_SYSTEM_PROMPT
+    const basePrompt =
+      budgetTier === 'minimal' ? SPECIALIST_MICRO_PROMPT : SPECIALIST_TASK_SYSTEM_PROMPT
     return basePrompt + mcpGuidance
   }
 
@@ -463,7 +471,9 @@ export class PromptBuilder {
         capped.push(section)
         accumulated += section + '\n\n'
       }
-      log.info(`Skill content hard-capped: ${totalContent.length} → ${accumulated.length} chars (${SKILL_HARD_CAP} limit)`)
+      log.info(
+        `Skill content hard-capped: ${totalContent.length} → ${accumulated.length} chars (${SKILL_HARD_CAP} limit)`
+      )
       return capped.join('\n\n')
     }
     return totalContent
@@ -673,14 +683,11 @@ export class PromptBuilder {
       'design system'
     ]
 
-    const extracted = this.extractClaudeMdSections(
-      content,
-      essentialHeadings,
-      skipHeadings,
-      false
-    )
+    const extracted = this.extractClaudeMdSections(content, essentialHeadings, skipHeadings, false)
     const profile = mode === 'plan' ? 'generalist-plan (ultra-light)' : 'generalist-build (slim)'
-    log.info(`CLAUDE.md progressive injection: ${content.length} → ${extracted.length} chars for ${profile}`)
+    log.info(
+      `CLAUDE.md progressive injection: ${content.length} → ${extracted.length} chars for ${profile}`
+    )
     return extracted
   }
 
@@ -745,9 +752,7 @@ Never: require() in renderer, disable contextIsolation, use remote module, strin
       )
 
       if (extracted.length > 100) {
-        log.info(
-          `CLAUDE.md specialist extraction: ${content.length} → ${extracted.length} chars`
-        )
+        log.info(`CLAUDE.md specialist extraction: ${content.length} → ${extracted.length} chars`)
         return extracted
       }
     } catch {

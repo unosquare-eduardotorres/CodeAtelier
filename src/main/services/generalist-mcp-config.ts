@@ -123,10 +123,7 @@ export class GeneralistMcpConfig {
         servers,
         taskContextMcpService.getMcpServersConfig(opts.conversationId, opts.workspacePath)
       )
-      Object.assign(
-        servers,
-        checkpointContextMcpService.getMcpServersConfig(opts.conversationId)
-      )
+      Object.assign(servers, checkpointContextMcpService.getMcpServersConfig(opts.conversationId))
     }
     // GitHub context: conditional on token
     if (githubConfigured && opts.workspaceId) {

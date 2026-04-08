@@ -83,9 +83,7 @@ export default function AuthSettingsTab(): React.JSX.Element {
             className="mt-0.5 accent-primary"
           />
           <div>
-            <span className="text-sm font-medium text-text-primary">
-              Claude Max (CLI)
-            </span>
+            <span className="text-sm font-medium text-text-primary">Claude Max (CLI)</span>
             <p className="text-xs text-text-secondary mt-0.5">
               Uses your Claude Max subscription via the Claude CLI. No API key needed.
             </p>
@@ -102,9 +100,7 @@ export default function AuthSettingsTab(): React.JSX.Element {
             className="mt-0.5 accent-primary"
           />
           <div>
-            <span className="text-sm font-medium text-text-primary">
-              API Key (Agent SDK)
-            </span>
+            <span className="text-sm font-medium text-text-primary">API Key (Agent SDK)</span>
             <p className="text-xs text-text-secondary mt-0.5">
               Uses the Anthropic API directly via Agent SDK. Enables improved streaming, typed
               hooks, and eliminates NDJSON parsing.
@@ -144,11 +140,7 @@ export default function AuthSettingsTab(): React.JSX.Element {
           disabled={isSaving}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {isSaving ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <Check size={14} />
-          )}
+          {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
           Save
         </button>
 

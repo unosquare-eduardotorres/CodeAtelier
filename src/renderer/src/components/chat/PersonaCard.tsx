@@ -29,7 +29,7 @@ export default function PersonaCard({
       disabled={disabled}
       className={`
         relative flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all
-        min-w-[120px] max-w-[140px] text-center
+        w-[140px] h-[160px] text-center
         focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:outline-none
         ${
           selected
@@ -65,7 +65,7 @@ export default function PersonaCard({
 
       {/* Name */}
       <div className="w-full">
-        <p className="text-xs font-semibold text-text-primary truncate">
+        <p className="text-xs font-semibold text-text-primary leading-tight break-words line-clamp-2">
           {specialist.alias ?? specialist.displayName}
         </p>
         {specialist.alias && (

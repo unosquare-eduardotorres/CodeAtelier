@@ -24,10 +24,7 @@ import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
 import AuthSettingsTab from './AuthSettingsTab'
-import {
-  SkillDetailPage,
-  ActivationBanner
-} from '@renderer/components/settings'
+import { SkillDetailPage, ActivationBanner } from '@renderer/components/settings'
 import TeamPage from '@renderer/components/settings/TeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import SyncBanner from '@renderer/components/settings/SyncBanner'
@@ -191,7 +188,9 @@ export default function WorkspaceSettingsPage({
         </nav>
 
         {/* Content area */}
-        <div className={`flex-1 ${activeTab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        <div
+          className={`flex-1 ${activeTab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}
+        >
           {/* Delete All buttons for team tab */}
           {activeTab === 'team' && workspacePath && !needsActivation && !isActivating && (
             <div className="px-6 pt-4 flex justify-end gap-2">
@@ -296,8 +295,20 @@ export default function WorkspaceSettingsPage({
                 </p>
                 <IdeasList
                   onNavigateToChat={onBack}
-                  onOpenGrillSession={(ideaId, conversationId, ideaTitle, isNewSession, ideaDescription) =>
-                    setActiveGrill({ ideaId, conversationId, ideaTitle, ideaDescription, isNewSession })
+                  onOpenGrillSession={(
+                    ideaId,
+                    conversationId,
+                    ideaTitle,
+                    isNewSession,
+                    ideaDescription
+                  ) =>
+                    setActiveGrill({
+                      ideaId,
+                      conversationId,
+                      ideaTitle,
+                      ideaDescription,
+                      isNewSession
+                    })
                   }
                 />
               </div>

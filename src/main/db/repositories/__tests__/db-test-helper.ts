@@ -36,9 +36,7 @@ export function seedConversation(
   mode: 'plan' | 'build' = 'plan'
 ): string {
   const row = db
-    .prepare(
-      `INSERT INTO conversations (workspace_id, title, mode) VALUES (?, ?, ?) RETURNING id`
-    )
+    .prepare(`INSERT INTO conversations (workspace_id, title, mode) VALUES (?, ?, ?) RETURNING id`)
     .get(workspaceId, title, mode) as { id: string }
   return row.id
 }

@@ -64,11 +64,15 @@ export default function RepositorySettingsTab(): React.JSX.Element {
         setSettings(s)
         // Check Ollama status if semantic search is enabled
         if (s.semanticSearchEnabled) {
-          window.api.ollamaCheckStatus().then(setOllamaStatus).catch(() => {})
+          window.api
+            .ollamaCheckStatus()
+            .then(setOllamaStatus)
+            .catch(() => {})
         }
       })
 
       // Auto-load persisted index on workspace open
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- optimistic loading state before async fetch
       setPersistedIndexStatus((prev) => ({ ...prev, loading: true }))
       window.api
         .loadPersistedIndex({ workspaceId: activeWorkspace.id })
@@ -495,8 +499,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
               <div className="flex items-center gap-2 text-xs text-success mt-2 pl-1">
                 <Check size={12} />
                 <span>
-                  Code Graph enabled — agents will use Tree-sitter navigation in their next
-                  session.
+                  Code Graph enabled — agents will use Tree-sitter navigation in their next session.
                 </span>
               </div>
             )}
@@ -598,26 +601,32 @@ export default function RepositorySettingsTab(): React.JSX.Element {
                 {showAiDescInfo && (
                   <div className="text-xs text-text-secondary bg-surface-base rounded-md p-3 ml-0.5 space-y-2 border border-border-subtle">
                     <p>
-                      <strong className="text-text-body">What it does:</strong> During indexing, each code
-                      chunk (function, class, method) is sent to Claude Haiku which generates a one-line
-                      natural language description — e.g.{' '}
+                      <strong className="text-text-body">What it does:</strong> During indexing,
+                      each code chunk (function, class, method) is sent to Claude Haiku which
+                      generates a one-line natural language description — e.g.{' '}
                       <span className="italic text-text-muted">
-                        &quot;Validates JWT tokens and extracts user claims from the authorization header&quot;
+                        &quot;Validates JWT tokens and extracts user claims from the authorization
+                        header&quot;
                       </span>
                       . This description is embedded alongside the raw code.
                     </p>
                     <p>
-                      <strong className="text-text-body">Why it helps:</strong> Raw code embeddings match
-                      well for literal searches, but struggle with intent-based queries. When you search{' '}
-                      <span className="italic text-text-muted">&quot;how does authentication work?&quot;</span>, the
-                      AI-generated description matches far more accurately than the raw{' '}
-                      <code className="text-[10px] bg-surface-raised px-1 py-0.5 rounded">validateJwt()</code>{' '}
+                      <strong className="text-text-body">Why it helps:</strong> Raw code embeddings
+                      match well for literal searches, but struggle with intent-based queries. When
+                      you search{' '}
+                      <span className="italic text-text-muted">
+                        &quot;how does authentication work?&quot;
+                      </span>
+                      , the AI-generated description matches far more accurately than the raw{' '}
+                      <code className="text-[10px] bg-surface-raised px-1 py-0.5 rounded">
+                        validateJwt()
+                      </code>{' '}
                       function body alone. Expect noticeably better semantic search recall.
                     </p>
                     <p>
-                      <strong className="text-text-body">Tradeoff:</strong> Indexing takes longer and uses
-                      Claude Haiku tokens from your subscription (one short call per code symbol).
-                      Descriptions are cached — re-indexing only regenerates changed files.
+                      <strong className="text-text-body">Tradeoff:</strong> Indexing takes longer
+                      and uses Claude Haiku tokens from your subscription (one short call per code
+                      symbol). Descriptions are cached — re-indexing only regenerates changed files.
                     </p>
                   </div>
                 )}
@@ -635,7 +644,8 @@ export default function RepositorySettingsTab(): React.JSX.Element {
                     <div className="flex items-center gap-2 text-xs text-success">
                       <Database size={12} />
                       <span>
-                        Index loaded from cache ({persistedIndexStatus.symbolCount?.toLocaleString()} symbols)
+                        Index loaded from cache (
+                        {persistedIndexStatus.symbolCount?.toLocaleString()} symbols)
                       </span>
                     </div>
                   ) : (
@@ -685,9 +695,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
               )}
 
               {/* Indexing progress */}
-              {activeWorkspace && (
-                <IndexingProgressPanel workspaceId={activeWorkspace.id} />
-              )}
+              {activeWorkspace && <IndexingProgressPanel workspaceId={activeWorkspace.id} />}
             </div>
           )}
         </SettingsCard>
@@ -698,7 +706,10 @@ export default function RepositorySettingsTab(): React.JSX.Element {
           onClose={() => {
             setShowOllamaSetup(false)
             // Refresh Ollama status after closing modal
-            window.api.ollamaCheckStatus().then(setOllamaStatus).catch(() => {})
+            window.api
+              .ollamaCheckStatus()
+              .then(setOllamaStatus)
+              .catch(() => {})
           }}
           model={(settings.ollamaModel as string) ?? 'qwen3-embedding:4b'}
         />

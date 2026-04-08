@@ -62,7 +62,13 @@ const RENAISSANCE_SCHOLAR: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#9B7FD4',
   bgColor: BG.violet,
-  palette: { skin: '#C9997A', hair: '#2A1A0E', clothing: '#2D1F4A', accessory: '#C8B89A', eyes: '#5A3A8A' },
+  palette: {
+    skin: '#C9997A',
+    hair: '#2A1A0E',
+    clothing: '#2D1F4A',
+    accessory: '#C8B89A',
+    eyes: '#5A3A8A'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#1A0E2A)"/>
     <circle cx="24" cy="18" r="14" fill="rgba(155,127,212,0.08)"/>
@@ -92,7 +98,13 @@ const RENAISSANCE_MERCHANT: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#B8976A',
   bgColor: BG.nearBlack,
-  palette: { skin: '#BC8A6A', hair: '#1A0E08', clothing: '#5A1A1A', accessory: '#B8976A', eyes: '#3A2010' },
+  palette: {
+    skin: '#BC8A6A',
+    hair: '#1A0E08',
+    clothing: '#5A1A1A',
+    accessory: '#B8976A',
+    eyes: '#3A2010'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#1A0A0A)"/>
     <path d="M9 48 Q9 35 24 32 Q39 35 39 48Z" fill="var(--av-clothing,#5A1A1A)"/>
@@ -119,7 +131,13 @@ const RENAISSANCE_PAINTER: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#5DB88A',
   bgColor: BG.forest,
-  palette: { skin: '#C4A07A', hair: '#3A2010', clothing: '#1A3A28', accessory: '#B8976A', eyes: '#2A4A38' },
+  palette: {
+    skin: '#C4A07A',
+    hair: '#3A2010',
+    clothing: '#1A3A28',
+    accessory: '#B8976A',
+    eyes: '#2A4A38'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#0A1A14)"/>
     <path d="M8 48 Q8 34 24 31 Q40 34 40 48Z" fill="var(--av-clothing,#1A3A28)"/>
@@ -152,7 +170,13 @@ const RENAISSANCE_NAVIGATOR: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#6B9EC4',
   bgColor: BG.navy,
-  palette: { skin: '#A07850', hair: '#1A1008', clothing: '#1A2A4A', accessory: '#B8976A', eyes: '#2A3A5A' },
+  palette: {
+    skin: '#A07850',
+    hair: '#1A1008',
+    clothing: '#1A2A4A',
+    accessory: '#B8976A',
+    eyes: '#2A3A5A'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#0A0E1A)"/>
     <path d="M8 48 Q8 34 24 31 Q40 34 40 48Z" fill="var(--av-clothing,#1A2A4A)"/>
@@ -185,7 +209,13 @@ const RENAISSANCE_ALCHEMIST: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#D4A843',
   bgColor: BG.amber,
-  palette: { skin: '#B8906A', hair: '#0A0604', clothing: '#3A2A08', accessory: '#D4A843', eyes: '#4A3A08' },
+  palette: {
+    skin: '#B8906A',
+    hair: '#0A0604',
+    clothing: '#3A2A08',
+    accessory: '#D4A843',
+    eyes: '#4A3A08'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#1A1208)"/>
     <circle cx="24" cy="20" r="12" fill="rgba(212,168,67,0.06)"/>
@@ -213,7 +243,13 @@ const RENAISSANCE_NOBLEWOMAN: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#C87A9B',
   bgColor: BG.plum,
-  palette: { skin: '#D4A882', hair: '#1A0808', clothing: '#4A1A38', accessory: '#D4C8B0', eyes: '#3A1A2A' },
+  palette: {
+    skin: '#D4A882',
+    hair: '#1A0808',
+    clothing: '#4A1A38',
+    accessory: '#D4C8B0',
+    eyes: '#3A1A2A'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#1A0814)"/>
     <path d="M6 48 Q6 33 24 30 Q42 33 42 48Z" fill="var(--av-clothing,#4A1A38)"/>
@@ -248,7 +284,13 @@ const RENAISSANCE_KNIGHT: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#6B9EC4',
   bgColor: BG.teal,
-  palette: { skin: '#A87850', hair: '#0E0A06', clothing: '#2A3A3A', accessory: '#8A9A9E', eyes: '#1A2A2A' },
+  palette: {
+    skin: '#A87850',
+    hair: '#0E0A06',
+    clothing: '#2A3A3A',
+    accessory: '#8A9A9E',
+    eyes: '#1A2A2A'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#0A1212)"/>
     <path d="M8 48 Q8 34 24 31 Q40 34 40 48Z" fill="var(--av-clothing,#2A3A3A)"/>
@@ -278,7 +320,13 @@ const RENAISSANCE_SCRIBE: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#C87A9B',
   bgColor: BG.rust,
-  palette: { skin: '#C9A07A', hair: '#2A1A0E', clothing: '#3A1A10', accessory: '#B8976A', eyes: '#2A1A10' },
+  palette: {
+    skin: '#C9A07A',
+    hair: '#2A1A0E',
+    clothing: '#3A1A10',
+    accessory: '#B8976A',
+    eyes: '#2A1A10'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#140A0A)"/>
     <path d="M9 48 Q9 35 24 32 Q39 35 39 48Z" fill="var(--av-clothing,#3A1A10)"/>
@@ -308,7 +356,13 @@ const RENAISSANCE_ARCHITECT: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#7ABFDB',
   bgColor: BG.slate,
-  palette: { skin: '#B8906A', hair: '#1A1408', clothing: '#1A2A38', accessory: '#B8976A', eyes: '#1A2838' },
+  palette: {
+    skin: '#B8906A',
+    hair: '#1A1408',
+    clothing: '#1A2A38',
+    accessory: '#B8976A',
+    eyes: '#1A2838'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#0E1518)"/>
     <path d="M8 48 Q8 34 24 31 Q40 34 40 48Z" fill="var(--av-clothing,#1A2A38)"/>
@@ -335,7 +389,13 @@ const RENAISSANCE_HERBALIST: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#5DB88A',
   bgColor: BG.green,
-  palette: { skin: '#C8A07A', hair: '#2A1A10', clothing: '#1A3020', accessory: '#5DB88A', eyes: '#1A3018' },
+  palette: {
+    skin: '#C8A07A',
+    hair: '#2A1A10',
+    clothing: '#1A3020',
+    accessory: '#5DB88A',
+    eyes: '#1A3018'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#0A1610)"/>
     <path d="M8 48 Q8 34 24 31 Q40 34 40 48Z" fill="var(--av-clothing,#1A3020)"/>
@@ -365,7 +425,13 @@ const RENAISSANCE_JESTER: AvatarDefinition = {
   category: 'character',
   defaultColor: '#D49353',
   bgColor: BG.sienna,
-  palette: { skin: '#D4A07A', hair: '#1A0E06', clothing: '#4A2A08', accessory: '#D49353', eyes: '#3A1A08' },
+  palette: {
+    skin: '#D4A07A',
+    hair: '#1A0E06',
+    clothing: '#4A2A08',
+    accessory: '#D49353',
+    eyes: '#3A1A08'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#1A0E08)"/>
     <path d="M10 48 Q10 35 24 32 Q38 35 38 48Z" fill="var(--av-clothing,#4A2A08)"/>
@@ -399,7 +465,13 @@ const RENAISSANCE_BLACKSMITH: AvatarDefinition = {
   category: 'character',
   defaultColor: '#D49353',
   bgColor: BG.sepia,
-  palette: { skin: '#A06840', hair: '#0A0604', clothing: '#2A1A0A', accessory: '#8A6A3A', eyes: '#2A1808' },
+  palette: {
+    skin: '#A06840',
+    hair: '#0A0604',
+    clothing: '#2A1A0A',
+    accessory: '#8A6A3A',
+    eyes: '#2A1808'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#0E0A06)"/>
     <circle cx="24" cy="40" r="10" fill="rgba(196,113,74,0.08)"/>
@@ -430,7 +502,13 @@ const RENAISSANCE_ASTRONOMER: AvatarDefinition = {
   category: 'character',
   defaultColor: '#6B9EC4',
   bgColor: BG.midnight,
-  palette: { skin: '#C4A07A', hair: '#1A1A2A', clothing: '#0E1428', accessory: '#B8976A', eyes: '#1A1A3A' },
+  palette: {
+    skin: '#C4A07A',
+    hair: '#1A1A2A',
+    clothing: '#0E1428',
+    accessory: '#B8976A',
+    eyes: '#1A1A3A'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#080810)"/>
     <circle cx="8" cy="10" r="0.8" fill="var(--av-accessory,#B8976A)" opacity="0.5"/>
@@ -464,7 +542,13 @@ const RENAISSANCE_DIPLOMAT: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#8A9A9E',
   bgColor: BG.charcoal,
-  palette: { skin: '#BF9070', hair: '#1A1810', clothing: '#1A2228', accessory: '#B8976A', eyes: '#1A1A1A' },
+  palette: {
+    skin: '#BF9070',
+    hair: '#1A1810',
+    clothing: '#1A2228',
+    accessory: '#B8976A',
+    eyes: '#1A1A1A'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#0A0F14)"/>
     <path d="M8 48 Q8 34 24 31 Q40 34 40 48Z" fill="var(--av-clothing,#1A2228)"/>
@@ -493,7 +577,13 @@ const RENAISSANCE_POET: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#D49353',
   bgColor: BG.warmSepia,
-  palette: { skin: '#C8A07A', hair: '#2A1A0A', clothing: '#3A2010', accessory: '#B8976A', eyes: '#2A1A0A' },
+  palette: {
+    skin: '#C8A07A',
+    hair: '#2A1A0A',
+    clothing: '#3A2010',
+    accessory: '#B8976A',
+    eyes: '#2A1A0A'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#16100A)"/>
     <path d="M8 48 Q8 34 24 31 Q40 34 40 48Z" fill="var(--av-clothing,#3A2010)"/>
@@ -522,7 +612,13 @@ const RENAISSANCE_EXPLORER: AvatarDefinition = {
   category: 'renaissance',
   defaultColor: '#5BB8A8',
   bgColor: BG.hunter,
-  palette: { skin: '#A87040', hair: '#1A0E06', clothing: '#1A3020', accessory: '#B8976A', eyes: '#1A2A18' },
+  palette: {
+    skin: '#A87040',
+    hair: '#1A0E06',
+    clothing: '#1A3020',
+    accessory: '#B8976A',
+    eyes: '#1A2A18'
+  },
   svgContent: `
     <rect width="48" height="48" rx="24" fill="var(--av-bg,#0A1410)"/>
     <path d="M8 48 Q8 34 24 31 Q40 34 40 48Z" fill="var(--av-clothing,#1A3020)"/>

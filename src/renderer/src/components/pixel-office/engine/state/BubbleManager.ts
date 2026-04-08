@@ -2,10 +2,7 @@
  * Manages speech bubble state for characters in the pixel office.
  * Extracted from OfficeState to reduce complexity.
  */
-import {
-  DISMISS_BUBBLE_FAST_FADE_SEC,
-  WAITING_BUBBLE_DURATION_SEC
-} from '../../constants'
+import { DISMISS_BUBBLE_FAST_FADE_SEC, WAITING_BUBBLE_DURATION_SEC } from '../../constants'
 import type { Character } from '../types'
 
 export class BubbleManager {

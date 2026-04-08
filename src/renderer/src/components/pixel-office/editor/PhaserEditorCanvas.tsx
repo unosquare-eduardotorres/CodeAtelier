@@ -167,7 +167,10 @@ export default function PhaserEditorCanvas({
     const padding = 40
     const zoomX = (rect.width - padding * 2) / officeWidthPx
     const zoomY = (rect.height - padding * 2) / officeHeightPx
-    const fitZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.floor(Math.min(zoomX, zoomY) * 2) / 2))
+    const fitZoom = Math.max(
+      MIN_ZOOM,
+      Math.min(MAX_ZOOM, Math.floor(Math.min(zoomX, zoomY) * 2) / 2)
+    )
 
     zoomRef.current = fitZoom
     setZoomLevel(fitZoom)
@@ -186,11 +189,7 @@ export default function PhaserEditorCanvas({
   }, [fitToView])
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-full relative"
-      style={{ overflow: 'hidden' }}
-    >
+    <div ref={containerRef} className="w-full h-full relative" style={{ overflow: 'hidden' }}>
       {/* Phaser creates its canvas here */}
 
       {/* Zoom controls overlay */}

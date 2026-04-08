@@ -7,7 +7,7 @@ import {
   useConversationTokenEstimates,
   useSpecialistStore
 } from '@renderer/store'
-import type { Skill, Specialist } from '../../../../shared/types'
+import type { Skill, Specialist, SpecialistTokenEstimate } from '../../../../shared/types'
 import { PixelSpriteAvatar, Avatar } from '@renderer/components/common'
 import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
 
@@ -211,7 +211,9 @@ export default function SpecialistsTable({
                     setExpandedSpecialistId((cur) => (cur === specialist.id ? null : specialist.id))
                   }
                   onToggleActive={() =>
-                    void handleToggleActive(specialist.id, !effective.isActive).catch(() => undefined)
+                    void handleToggleActive(specialist.id, !effective.isActive).catch(
+                      () => undefined
+                    )
                   }
                   onToggleSkillsEnabled={() =>
                     void handleToggleSkillsEnabled(specialist.id, !effective.skillsEnabled).catch(
@@ -238,7 +240,9 @@ export default function SpecialistsTable({
 
         {sortedSpecialists.length === 0 && (
           <div className="px-6 py-12 text-center">
-            <p className="text-sm text-text-secondary">No specialists available in this workspace.</p>
+            <p className="text-sm text-text-secondary">
+              No specialists available in this workspace.
+            </p>
           </div>
         )}
       </div>
@@ -257,7 +261,7 @@ interface SpecialistRowProps {
     selectedSkillIds: string[]
     allSkillIds: string[]
   }
-  estimate: { estimatedTokens: number } | undefined
+  estimate: SpecialistTokenEstimate | undefined
   skills: Skill[]
   isExpanded: boolean
   isMutating: boolean
@@ -445,7 +449,9 @@ function SpecialistRow({
                     <div>Prompt: ~{TOKEN_FORMATTER.format(estimate.promptTokens)}</div>
                   )}
                   {estimate.skillBreakdown?.map((s) => (
-                    <div key={s.name}>{s.name}: ~{TOKEN_FORMATTER.format(s.tokens)}</div>
+                    <div key={s.name}>
+                      {s.name}: ~{TOKEN_FORMATTER.format(s.tokens)}
+                    </div>
                   ))}
                 </div>
               </div>

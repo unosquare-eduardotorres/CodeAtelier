@@ -50,22 +50,22 @@ flowchart LR
 
 Code Atelier comes with a comprehensive set of built-in skills:
 
-| Skill | What it covers | Used by |
-|-------|---------------|---------|
-| **Electron Pro** | Electron security, IPC, window management | React Architect, Electron Architect |
-| **.NET Architect** | C# patterns, API design, .NET conventions | .NET Architect |
-| **Claude CLI** | Claude command-line tool usage | Electron Architect, Agentic Architect |
-| **Claude Architect** | Agent configuration and orchestration | Agentic Architect |
-| **SQLite Patterns** | Database queries, migrations, performance | Database Architect |
-| **UI/UX Pro Max** | User experience best practices | UX/UI Specialist |
-| **Design** | Visual design principles | UX/UI Specialist |
-| **Design System** | Component library, tokens, styling | UX/UI Specialist |
-| **Brand** | Brand guidelines and consistency | UX/UI Specialist |
-| **Git Workflow** | Branching, merging, PR conventions | Git/GitHub Specialist |
-| **IPC Patterns** | Inter-process communication patterns | Multiple architects |
-| **Mermaid Diagrams** | Diagram syntax and best practices | Docs/Diagrams Specialist |
-| **Design Docs** | Technical documentation standards | Docs/Diagrams Specialist |
-| **General Dev** | General development best practices | Generalist Developer |
+| Skill                | What it covers                            | Used by                               |
+| -------------------- | ----------------------------------------- | ------------------------------------- |
+| **Electron Pro**     | Electron security, IPC, window management | React Architect, Electron Architect   |
+| **.NET Architect**   | C# patterns, API design, .NET conventions | .NET Architect                        |
+| **Claude CLI**       | Claude command-line tool usage            | Electron Architect, Agentic Architect |
+| **Claude Architect** | Agent configuration and orchestration     | Agentic Architect                     |
+| **SQLite Patterns**  | Database queries, migrations, performance | Database Architect                    |
+| **UI/UX Pro Max**    | User experience best practices            | UX/UI Specialist                      |
+| **Design**           | Visual design principles                  | UX/UI Specialist                      |
+| **Design System**    | Component library, tokens, styling        | UX/UI Specialist                      |
+| **Brand**            | Brand guidelines and consistency          | UX/UI Specialist                      |
+| **Git Workflow**     | Branching, merging, PR conventions        | Git/GitHub Specialist                 |
+| **IPC Patterns**     | Inter-process communication patterns      | Multiple architects                   |
+| **Mermaid Diagrams** | Diagram syntax and best practices         | Docs/Diagrams Specialist              |
+| **Design Docs**      | Technical documentation standards         | Docs/Diagrams Specialist              |
+| **General Dev**      | General development best practices        | Generalist Developer                  |
 
 ---
 
@@ -100,6 +100,7 @@ Skills are stored as files in your project's `.claude/skills/` directory:
 ```
 
 Each skill directory contains:
+
 - **SKILL.md** — The main skill document (required)
 - **references/** — Optional supporting files (code examples, configurations, etc.)
 
@@ -138,7 +139,7 @@ Yes. Create a new directory under `.claude/skills/` with a `SKILL.md` file, then
 Built-in skills may be updated when Code Atelier releases new versions. Your customizations are preserved during updates.
 
 **Q: How do skills differ from Memory?**
-**Skills** are static knowledge — pre-written guides that don't change during conversations. **Memory** is dynamic — it evolves as agents learn about your project. Skills tell agents *how* to do things; Memory tells agents *what* your project is.
+**Skills** are static knowledge — pre-written guides that don't change during conversations. **Memory** is dynamic — it evolves as agents learn about your project. Skills tell agents _how_ to do things; Memory tells agents _what_ your project is.
 
 **Q: Can one specialist use multiple skills?**
 Yes. Most specialists have access to multiple skills. For example, the UX/UI Specialist uses Design, Design System, Brand, and UI/UX Pro Max skills together.

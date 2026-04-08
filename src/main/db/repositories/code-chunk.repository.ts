@@ -116,9 +116,7 @@ export class CodeChunkRepository {
    */
   deleteByWorkspace(workspaceId: string): number {
     const db = getDatabase()
-    const result = db
-      .prepare('DELETE FROM code_chunks WHERE workspace_id = ?')
-      .run(workspaceId)
+    const result = db.prepare('DELETE FROM code_chunks WHERE workspace_id = ?').run(workspaceId)
     return result.changes
   }
 
@@ -129,9 +127,7 @@ export class CodeChunkRepository {
   getFileMtimes(workspaceId: string): Map<string, number> {
     const db = getDatabase()
     const rows = db
-      .prepare(
-        'SELECT DISTINCT file_path, file_mtime FROM code_chunks WHERE workspace_id = ?'
-      )
+      .prepare('SELECT DISTINCT file_path, file_mtime FROM code_chunks WHERE workspace_id = ?')
       .all(workspaceId) as Array<{ file_path: string; file_mtime: number }>
 
     const result = new Map<string, number>()
@@ -174,7 +170,10 @@ function mapRowToChunk(row: CodeChunkRow): ProcessedChunk {
     importedBy: [],
     pageRank: 0,
     hasDocstring: row.has_docstring === 1,
-    lineCount: row.line_count
+    lineCount: row.line_count,
+    hasDescription: false,
+    lastModified: 0,
+    indexedAt: Date.now()
   }
 
   return {

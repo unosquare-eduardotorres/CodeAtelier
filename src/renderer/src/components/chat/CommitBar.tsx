@@ -25,13 +25,8 @@ export default function CommitBar({ conversationId }: CommitBarProps): React.JSX
   const pushStatus = useCodeChangesStore((s) => s.pushStatus)
   const error = useCodeChangesStore((s) => s.error)
 
-  const {
-    setCommitMessage,
-    generateCommitMessage,
-    commitSelected,
-    commitAll,
-    push
-  } = useCodeChangesStore.getState()
+  const { setCommitMessage, generateCommitMessage, commitSelected, commitAll, push } =
+    useCodeChangesStore.getState()
 
   const hasFiles = files.length > 0
   const hasChecked = checkedFiles.size > 0
@@ -166,10 +161,7 @@ export default function CommitBar({ conversationId }: CommitBarProps): React.JSX
       </div>
 
       {showPrModal && (
-        <CreatePrModal
-          conversationId={conversationId}
-          onClose={() => setShowPrModal(false)}
-        />
+        <CreatePrModal conversationId={conversationId} onClose={() => setShowPrModal(false)} />
       )}
     </>
   )

@@ -115,7 +115,10 @@ export default function CoreAgentPromptEditor({
               >
                 {mode === 'plan' ? 'Plan Mode' : 'Build Mode'}
                 {prompt?.isCustom && (
-                  <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-mode-plan" title="Customized" />
+                  <span
+                    className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-mode-plan"
+                    title="Customized"
+                  />
                 )}
               </button>
             )
@@ -150,14 +153,10 @@ export default function CoreAgentPromptEditor({
 
       {/* Footer: char count + actions */}
       <div className="flex items-center justify-between">
-        <span className="text-[11px] text-text-muted">
-          {charCount.toLocaleString()} chars
-        </span>
+        <span className="text-[11px] text-text-muted">{charCount.toLocaleString()} chars</span>
 
         <div className="flex items-center gap-2">
-          {saved && (
-            <span className="text-xs text-success font-medium">Saved!</span>
-          )}
+          {saved && <span className="text-xs text-success font-medium">Saved!</span>}
 
           {/* Reset to Default */}
           {isCustom && !showResetConfirm && (

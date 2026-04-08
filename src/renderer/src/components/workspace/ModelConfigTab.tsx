@@ -206,7 +206,10 @@ export default function ModelConfigTab(): React.JSX.Element {
               <div className="flex items-center justify-between">
                 <div className="flex-1 mr-4">
                   <div className="flex items-center gap-2">
-                    <Zap size={14} className={fastMode ? 'text-mode-build-text' : 'text-text-muted'} />
+                    <Zap
+                      size={14}
+                      className={fastMode ? 'text-mode-build-text' : 'text-text-muted'}
+                    />
                     <h4 className="text-sm font-medium text-text-primary">Fast Mode</h4>
                     {fastMode && (
                       <span className="text-xs px-1.5 py-0.5 rounded-full bg-mode-build-muted text-mode-build-text font-medium">

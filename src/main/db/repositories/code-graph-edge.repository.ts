@@ -93,9 +93,7 @@ export class CodeGraphEdgeRepository {
   findCallersOf(workspaceId: string, targetSymbol: string): CodeGraphEdge[] {
     const db = getDatabase()
     const rows = db
-      .prepare(
-        'SELECT * FROM code_graph_edges WHERE workspace_id = ? AND target_symbol = ?'
-      )
+      .prepare('SELECT * FROM code_graph_edges WHERE workspace_id = ? AND target_symbol = ?')
       .all(workspaceId, targetSymbol) as EdgeRow[]
     return rows.map(mapRow)
   }
@@ -106,9 +104,7 @@ export class CodeGraphEdgeRepository {
   findCalleesOf(workspaceId: string, sourceSymbol: string): CodeGraphEdge[] {
     const db = getDatabase()
     const rows = db
-      .prepare(
-        'SELECT * FROM code_graph_edges WHERE workspace_id = ? AND source_symbol = ?'
-      )
+      .prepare('SELECT * FROM code_graph_edges WHERE workspace_id = ? AND source_symbol = ?')
       .all(workspaceId, sourceSymbol) as EdgeRow[]
     return rows.map(mapRow)
   }

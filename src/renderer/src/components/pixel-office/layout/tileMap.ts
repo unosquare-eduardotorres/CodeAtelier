@@ -47,7 +47,7 @@ export function findPath(
 ): Array<{ col: number; row: number }> {
   if (startCol === endCol && startRow === endRow) return []
 
-  const key = (c: number, r: number) => `${c},${r}`
+  const key = (c: number, r: number): string => `${c},${r}`
   const startKey = key(startCol, startRow)
   const endKey = key(endCol, endRow)
 

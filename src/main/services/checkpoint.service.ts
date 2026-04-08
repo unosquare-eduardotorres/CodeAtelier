@@ -81,12 +81,15 @@ class CheckpointService {
       }
 
       // Safety timeout — auto-approve after 5 minutes
-      setTimeout(() => {
-        if (this.pendingApprovals.has(id)) {
-          checkpointLogger.warn(`Checkpoint approval timed out — auto-approving: ${id}`)
-          this.resolveApproval(id, true)
-        }
-      }, 5 * 60 * 1000)
+      setTimeout(
+        () => {
+          if (this.pendingApprovals.has(id)) {
+            checkpointLogger.warn(`Checkpoint approval timed out — auto-approving: ${id}`)
+            this.resolveApproval(id, true)
+          }
+        },
+        5 * 60 * 1000
+      )
     })
   }
 
@@ -103,15 +106,19 @@ class CheckpointService {
     )
 
     // Fire declarative hook
-    import('./hook-engine.service').then(({ hookEngine }) => {
-      const event = approved ? 'checkpoint_approved' : 'checkpoint_rejected'
-      hookEngine
-        .executeHooks(event as import('./hook-engine.service').HookEvent, {
-          checkpointId,
-          type: pending.checkpoint.type
-        })
-        .catch((err) => checkpointLogger.warn(`Hook error (${event}):`, err))
-    }).catch(() => { /* hook engine not available */ })
+    import('./hook-engine.service')
+      .then(({ hookEngine }) => {
+        const event = approved ? 'checkpoint_approved' : 'checkpoint_rejected'
+        hookEngine
+          .executeHooks(event as import('./hook-engine.service').HookEvent, {
+            checkpointId,
+            type: pending.checkpoint.type
+          })
+          .catch((err) => checkpointLogger.warn(`Hook error (${event}):`, err))
+      })
+      .catch(() => {
+        /* hook engine not available */
+      })
 
     pending.resolve(approved)
   }

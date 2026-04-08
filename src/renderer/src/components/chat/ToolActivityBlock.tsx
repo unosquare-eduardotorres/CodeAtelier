@@ -97,16 +97,16 @@ export default function ToolActivityBlock({
           {runningActivities.map((activity) => (
             <div key={activity.id} className="flex items-center gap-2 text-xs">
               <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
-              <span className="font-mono text-text-body">{getToolDisplayName(activity.toolName)}</span>
+              <span className="font-mono text-text-body">
+                {getToolDisplayName(activity.toolName)}
+              </span>
               {activity.input && (
                 <span className="text-text-muted truncate max-w-[300px]" title={activity.input}>
                   {shortenInput(activity.input)}
                 </span>
               )}
               {activity.elapsedSeconds !== undefined && (
-                <span className="text-xs text-text-muted ml-1">
-                  {activity.elapsedSeconds}s
-                </span>
+                <span className="text-xs text-text-muted ml-1">{activity.elapsedSeconds}s</span>
               )}
             </div>
           ))}
@@ -127,16 +127,16 @@ export default function ToolActivityBlock({
                       : 'bg-danger'
                 }`}
               />
-              <span className="font-mono text-text-body">{getToolDisplayName(activity.toolName)}</span>
+              <span className="font-mono text-text-body">
+                {getToolDisplayName(activity.toolName)}
+              </span>
               {activity.input && (
                 <span className="text-text-muted truncate max-w-[300px]" title={activity.input}>
                   {shortenInput(activity.input)}
                 </span>
               )}
               {activity.status === 'running' && activity.elapsedSeconds !== undefined && (
-                <span className="text-xs text-text-muted ml-1">
-                  {activity.elapsedSeconds}s
-                </span>
+                <span className="text-xs text-text-muted ml-1">{activity.elapsedSeconds}s</span>
               )}
               {activity.status === 'completed' && activity.result && (
                 <span className="text-text-muted text-[10px] ml-1">— {activity.result}</span>

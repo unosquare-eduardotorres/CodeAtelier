@@ -36,7 +36,12 @@ function mapRow(row: ConversationRow): Conversation {
 }
 
 export class ConversationRepository {
-  create(workspaceId: string, title?: string, mode?: ConversationMode, personaSpecialistId?: string): Conversation {
+  create(
+    workspaceId: string,
+    title?: string,
+    mode?: ConversationMode,
+    personaSpecialistId?: string
+  ): Conversation {
     const db = getDatabase()
     const stmt = db.prepare(`
       INSERT INTO conversations (workspace_id, title, mode, persona_specialist_id)
@@ -52,7 +57,10 @@ export class ConversationRepository {
     return mapRow(row)
   }
 
-  updatePersona(conversationId: string, personaSpecialistId: string | null): Conversation | undefined {
+  updatePersona(
+    conversationId: string,
+    personaSpecialistId: string | null
+  ): Conversation | undefined {
     const db = getDatabase()
     const stmt = db.prepare(`
       UPDATE conversations SET persona_specialist_id = ? WHERE id = ? RETURNING *

@@ -56,9 +56,7 @@ export default function ActiveSpecialistsStrip({
   const [skillPopoverSpecialistId, setSkillPopoverSpecialistId] = useState<string | null>(null)
 
   const activeSpecialists = useMemo(() => {
-    const coreIds = new Set(
-      workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id)
-    )
+    const coreIds = new Set(workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id))
     return conversationSpecialists.filter(
       (specialist) =>
         specialist.isActive &&
@@ -115,9 +113,15 @@ export default function ActiveSpecialistsStrip({
                       className="inline-flex items-center justify-center w-5 h-5 rounded-full overflow-hidden"
                       style={{ backgroundColor: `${color}22`, color }}
                     >
-                      {specialist?.usePixelForChat && (specialist?.pixelSpriteId || (specialist?.agentId && getSpriteAssignment(specialist.agentId).pixelSpriteId)) ? (
+                      {specialist?.usePixelForChat &&
+                      (specialist?.pixelSpriteId ||
+                        (specialist?.agentId &&
+                          getSpriteAssignment(specialist.agentId).pixelSpriteId)) ? (
                         <PixelSpriteAvatar
-                          spriteId={specialist?.pixelSpriteId ?? getSpriteAssignment(specialist!.agentId).pixelSpriteId!}
+                          spriteId={
+                            specialist?.pixelSpriteId ??
+                            getSpriteAssignment(specialist!.agentId).pixelSpriteId!
+                          }
                           size={16}
                         />
                       ) : specialist?.avatarUrl ? (
@@ -134,7 +138,9 @@ export default function ActiveSpecialistsStrip({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation()
-                          setSkillPopoverSpecialistId(isSkillPopoverOpen ? null : entry.specialistId)
+                          setSkillPopoverSpecialistId(
+                            isSkillPopoverOpen ? null : entry.specialistId
+                          )
                         }}
                         className="inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-surface-overlay text-text-muted hover:text-primary-text transition-colors"
                         title="Toggle skills"

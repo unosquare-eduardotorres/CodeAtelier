@@ -22,11 +22,7 @@ export function registerCodeGraphIpc(mainWindow: BrowserWindow): void {
       if (!workspace) throw new Error('Workspace not found')
 
       const state = codeGraphService.getIndexingState(args.workspaceId)
-      if (
-        state.status !== 'idle' &&
-        state.status !== 'complete' &&
-        state.status !== 'error'
-      ) {
+      if (state.status !== 'idle' && state.status !== 'complete' && state.status !== 'error') {
         throw new Error('Code graph indexing is already in progress')
       }
 
@@ -37,19 +33,13 @@ export function registerCodeGraphIpc(mainWindow: BrowserWindow): void {
     }
   )
 
-  ipcMain.handle(
-    IPC_CHANNELS.CODE_GRAPH_GET_STATUS,
-    (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      return codeGraphService.getIndexingState(args.workspaceId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.CODE_GRAPH_GET_STATUS, (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    return codeGraphService.getIndexingState(args.workspaceId)
+  })
 
-  ipcMain.handle(
-    IPC_CHANNELS.CODE_GRAPH_HAS_INDEX,
-    (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      return codeGraphService.hasPersistedIndex(args.workspaceId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.CODE_GRAPH_HAS_INDEX, (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    return codeGraphService.hasPersistedIndex(args.workspaceId)
+  })
 }

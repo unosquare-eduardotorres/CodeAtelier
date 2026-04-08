@@ -191,7 +191,8 @@ export class GeneralistPromptAssembler {
           ? specialistRepository.getSkills(opts.personaData.id)
           : undefined,
         personaSkillOverrides: this.getPersonaSkillOverrides(
-          opts.conversationId, opts.personaSpecialistId
+          opts.conversationId,
+          opts.personaSpecialistId
         )
       })
 
@@ -280,7 +281,8 @@ export class GeneralistPromptAssembler {
     // knows its identity changed without clearing the session.
     if (this.pendingPersonaSwitch) {
       const name = this.pendingPersonaSwitch.specialistId
-        ? specialistRepository.findById(this.pendingPersonaSwitch.specialistId)?.displayName ?? 'specialist'
+        ? (specialistRepository.findById(this.pendingPersonaSwitch.specialistId)?.displayName ??
+          'specialist')
         : 'Da Vinci'
       effectiveMessage = `[PERSONA SWITCH] You are now operating as ${name}. Your domain expertise and identity have been updated in the system prompt. Continue the conversation with this new perspective.\n\n---\n\n${effectiveMessage}`
       this.pendingPersonaSwitch = null
@@ -296,7 +298,8 @@ export class GeneralistPromptAssembler {
       opts.message,
       opts.hasImages,
       opts.mode,
-      opts.investigationModeEnabled
+      opts.investigationModeEnabled,
+      opts.turnCount
     )
     if (conditionalPrefix) {
       effectiveMessage = `${conditionalPrefix}\n\n---\n\n${effectiveMessage}`
@@ -308,8 +311,16 @@ export class GeneralistPromptAssembler {
     }
 
     // Strategy C: Memory context in user prompt (not system prompt) for cache stability.
+    // Turns 3+: memory is already in history — only inject critical feedback corrections.
     if (this.memoryContext) {
-      effectiveMessage = `## Auto Memory\n\n${this.memoryContext}\n\n---\n\n${effectiveMessage}`
+      if (opts.turnCount <= 2) {
+        effectiveMessage = `## Auto Memory\n\n${this.memoryContext}\n\n---\n\n${effectiveMessage}`
+      } else {
+        const feedbackOnly = this.extractFeedbackMemories(this.memoryContext)
+        if (feedbackOnly) {
+          effectiveMessage = `[Memory: ${feedbackOnly}]\n\n${effectiveMessage}`
+        }
+      }
     }
 
     this.log.debug(
@@ -394,7 +405,7 @@ export class GeneralistPromptAssembler {
   ): string[] | undefined {
     if (!personaSpecialistId || !conversationId) return undefined
     const overrides = conversationSpecialistRepository.findByConversation(conversationId)
-    const match = overrides.find(o => o.specialistId === personaSpecialistId)
+    const match = overrides.find((o) => o.specialistId === personaSpecialistId)
     return match?.skillOverrides ?? undefined
   }
 
@@ -413,6 +424,21 @@ export class GeneralistPromptAssembler {
   }
 
   /**
+   * Extract only the "Feedback & Corrections" section from memory context.
+   * Used on turns 3+ to avoid re-injecting the full memory block that's already in history.
+   */
+  private extractFeedbackMemories(memoryContext: string): string | null {
+    // Look for a Feedback & Corrections section header (### or ##)
+    const feedbackMatch = memoryContext.match(
+      /#{2,3}\s*Feedback\s*[&]\s*Corrections\s*\n([\s\S]*?)(?=\n#{2,3}\s|\n---|$)/i
+    )
+    if (feedbackMatch?.[1]?.trim()) {
+      return feedbackMatch[1].trim()
+    }
+    return null
+  }
+
+  /**
    * Strategy α: Build a conditional prefix for the user message.
    * These sections toggle based on the user's message content. Moving them to the user prompt
    * makes the system prompt 100% deterministic per mode → 90% cache discount on every turn.
@@ -421,16 +447,19 @@ export class GeneralistPromptAssembler {
     message: string,
     hasImages: boolean,
     mode: ConversationMode,
-    investigationModeEnabled: boolean
+    investigationModeEnabled: boolean,
+    turnCount: number = 1
   ): string {
     const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages)
     const sections: string[] = []
 
-    if (conditionalSections.includeAskQuestionPrompt) {
+    // Skip ask question prompt on turns 2+ — already in history from turn 1
+    if (conditionalSections.includeAskQuestionPrompt && turnCount <= 1) {
       sections.push(ASK_QUESTION_PROMPT)
     }
 
-    if (conditionalSections.includeMemoryProtocolPrompt) {
+    // Skip memory protocol prompt on turns 2+ — already in history from turn 1
+    if (conditionalSections.includeMemoryProtocolPrompt && turnCount <= 1) {
       sections.push(MEMORY_PROTOCOL_PROMPT)
     }
 
@@ -438,8 +467,9 @@ export class GeneralistPromptAssembler {
       sections.push(IMAGE_ATTACHMENTS_PROMPT)
     }
 
-    // Strategy N: Direct Answer Boost
-    if (conditionalSections.includeDirectAnswerBoost) {
+    // Strategy N: Direct Answer Boost — only inject on turn 3+ when there's conversation
+    // history to reference (irrelevant on early turns)
+    if (conditionalSections.includeDirectAnswerBoost && turnCount >= 3) {
       sections.push(DIRECT_ANSWER_BOOST_PROMPT)
     }
 
@@ -454,7 +484,9 @@ export class GeneralistPromptAssembler {
 
     if (planReminderInjected) {
       sections.push(
-        `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards.]`
+        turnCount <= 1
+          ? `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards.]`
+          : `[Use emit_plan for plans.]`
       )
     }
 

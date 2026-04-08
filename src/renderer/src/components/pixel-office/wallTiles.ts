@@ -195,7 +195,7 @@ export function wallColorToHex(color: FloorColor): string {
   }
 
   const m = lightness - ch / 2
-  const clamp = (v: number) => Math.max(0, Math.min(255, Math.round((v + m) * 255)))
+  const clamp = (v: number): number => Math.max(0, Math.min(255, Math.round((v + m) * 255)))
 
   return `#${clamp(r1).toString(16).padStart(2, '0')}${clamp(g1).toString(16).padStart(2, '0')}${clamp(b1).toString(16).padStart(2, '0')}`
 }

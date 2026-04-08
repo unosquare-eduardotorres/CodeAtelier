@@ -77,8 +77,7 @@ export default function GrillRadarChart({
   })
 
   // Build the data polygon
-  const avgScore =
-    trackScores.reduce((sum, ts) => sum + ts.score, 0) / trackScores.length
+  const avgScore = trackScores.reduce((sum, ts) => sum + ts.score, 0) / trackScores.length
   const fillColor = getScoreColor(avgScore)
 
   const dataPoints = trackScores.map((ts, i) => {
@@ -90,12 +89,7 @@ export default function GrillRadarChart({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        className="select-none"
-      >
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="select-none">
         {/* Concentric level polygons */}
         {levelPolygons.map((points, i) => (
           <polygon
@@ -171,10 +165,7 @@ export default function GrillRadarChart({
       {/* Overall average score */}
       <div className="flex items-center gap-2">
         <span className="text-xs text-text-muted">Overall:</span>
-        <span
-          className="text-sm font-bold"
-          style={{ color: fillColor }}
-        >
+        <span className="text-sm font-bold" style={{ color: fillColor }}>
           {Math.round(avgScore)}
         </span>
         <span className="text-xs text-text-muted">/ 100</span>

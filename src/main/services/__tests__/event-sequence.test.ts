@@ -18,7 +18,7 @@ describe('Suite 9: Event sequence', () => {
       filesDiscussed: ['src/main/services/generalist.service.ts'],
       recentMessages: [{ role: 'user', content: 'Find why handoff fails' }],
       specialists: ['dotnet-architect'],
-      mode: 'plan' as const,
+      mode: 'plan' as const
     }
 
     emitter.emit('handoff', brief)

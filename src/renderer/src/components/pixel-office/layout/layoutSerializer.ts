@@ -14,7 +14,6 @@ import { DEFAULT_COLS, DEFAULT_ROWS, Direction, TILE_SIZE, TileType } from '../e
 import { getCatalogEntry, getOrientationInGroup } from './furnitureCatalog'
 import { validateLayout } from './layoutValidator'
 
-
 /** Convert flat tile array from layout into 2D grid */
 export function layoutToTileMap(layout: OfficeLayout): TileTypeVal[][] {
   const map: TileTypeVal[][] = []

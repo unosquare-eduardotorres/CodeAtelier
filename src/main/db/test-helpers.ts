@@ -29,8 +29,10 @@ export function createTestDb(): Database.Database {
  * Returns the workspace ID.
  */
 export function seedWorkspace(db: Database.Database, id = 'test-workspace-1'): string {
-  db.prepare(
-    `INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)`
-  ).run(id, 'Test Project', '/tmp/test-project')
+  db.prepare(`INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)`).run(
+    id,
+    'Test Project',
+    '/tmp/test-project'
+  )
   return id
 }

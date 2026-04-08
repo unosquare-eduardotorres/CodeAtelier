@@ -79,14 +79,7 @@ export function handleIdleState(
     if (!inIdleZone && wanderArea.length > 0) {
       // Walk to a random spot in the idle zone
       const target = wanderArea[Math.floor(Math.random() * wanderArea.length)]
-      const path = findPath(
-        ch.tileCol,
-        ch.tileRow,
-        target.col,
-        target.row,
-        tileMap,
-        blockedTiles
-      )
+      const path = findPath(ch.tileCol, ch.tileRow, target.col, target.row, tileMap, blockedTiles)
       if (path.length > 0) {
         ch.path = path
         ch.moveProgress = 0
@@ -108,14 +101,7 @@ export function handleIdleState(
 
     if (wanderArea.length > 0) {
       const target = wanderArea[Math.floor(Math.random() * wanderArea.length)]
-      const path = findPath(
-        ch.tileCol,
-        ch.tileRow,
-        target.col,
-        target.row,
-        tileMap,
-        blockedTiles
-      )
+      const path = findPath(ch.tileCol, ch.tileRow, target.col, target.row, tileMap, blockedTiles)
       if (path.length > 0) {
         ch.path = path
         ch.moveProgress = 0

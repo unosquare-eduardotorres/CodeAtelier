@@ -271,7 +271,7 @@ app.whenReady().then(() => {
     const tray = new Tray(trayIcon)
     tray.setToolTip('Code Atelier')
     // Keep reference to prevent GC
-    ;(app as Record<string, unknown>)._tray = tray
+    ;(app as unknown as Record<string, unknown>)._tray = tray
   }
 
   // ── Crash reporter: captures GPU/renderer native crashes locally ──

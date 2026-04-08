@@ -155,7 +155,14 @@ export default function GrillPage({
       const prompt = buildGrillPrompt(trackId, false)
       await sendMessage(prompt)
     },
-    [activeWorkspace, conversationId, loadConversations, selectConversation, sendMessage, buildGrillPrompt]
+    [
+      activeWorkspace,
+      conversationId,
+      loadConversations,
+      selectConversation,
+      sendMessage,
+      buildGrillPrompt
+    ]
   )
 
   // Restore previous conversation on unmount
@@ -225,7 +232,21 @@ export default function GrillPage({
       await sendMessage(grillPrompt)
     }
     init()
-  }, [conversationId, activeWorkspace, loadConversations, selectConversation, sendMessage, isNewSession, ideaTitle, description, history, iterationCount, ideaId, buildGrillPrompt, selectedTrack])
+  }, [
+    conversationId,
+    activeWorkspace,
+    loadConversations,
+    selectConversation,
+    sendMessage,
+    isNewSession,
+    ideaTitle,
+    description,
+    history,
+    iterationCount,
+    ideaId,
+    buildGrillPrompt,
+    selectedTrack
+  ])
 
   // Listen for grill evaluation events
   useEffect(() => {
@@ -278,7 +299,12 @@ export default function GrillPage({
       const states: Record<string, QuestionState> = {}
       for (const q of data.questions) {
         const recommended = q.options.filter((o) => o.recommended).map((o) => o.label)
-        states[q.id] = { selectedOptions: recommended, otherText: '', otherSelected: false, skipped: false }
+        states[q.id] = {
+          selectedOptions: recommended,
+          otherText: '',
+          otherSelected: false,
+          skipped: false
+        }
       }
       setQuestionStates(states)
     })
@@ -313,7 +339,12 @@ export default function GrillPage({
       const states: Record<string, QuestionState> = {}
       for (const q of data.questions) {
         const recommended = q.options.filter((o) => o.recommended).map((o) => o.label)
-        states[q.id] = { selectedOptions: recommended, otherText: '', otherSelected: false, skipped: false }
+        states[q.id] = {
+          selectedOptions: recommended,
+          otherText: '',
+          otherSelected: false,
+          skipped: false
+        }
       }
       setQuestionStates(states)
     })
@@ -407,7 +438,18 @@ export default function GrillPage({
 
     const grillPrompt = buildGrillPrompt(selectedTrack, true, historyText)
     await sendMessage(grillPrompt)
-  }, [currentIteration, formatAnswers, description, iterationCount, history, sendMessage, buildGrillPrompt, selectedTrack, saveDecisions, trackScores])
+  }, [
+    currentIteration,
+    formatAnswers,
+    description,
+    iterationCount,
+    history,
+    sendMessage,
+    buildGrillPrompt,
+    selectedTrack,
+    saveDecisions,
+    trackScores
+  ])
 
   /** Return to track selection after completing a track iteration */
   const handleBackToTracks = useCallback(async () => {
@@ -452,22 +494,47 @@ export default function GrillPage({
     }
 
     onComplete()
-  }, [currentIteration, history, ideaId, completeFromGrill, conversationId, onComplete, activeWorkspace, ideaTitle, buildFullDescription, convertDirect, loadConversations, selectConversation, sendMessage, saveDecisions, trackScores])
+  }, [
+    currentIteration,
+    history,
+    ideaId,
+    completeFromGrill,
+    conversationId,
+    onComplete,
+    activeWorkspace,
+    ideaTitle,
+    buildFullDescription,
+    convertDirect,
+    loadConversations,
+    selectConversation,
+    sendMessage,
+    saveDecisions,
+    trackScores
+  ])
 
-  const answeredCount = currentIteration?.questions.filter((q) => {
-    const state = questionStates[q.id]
-    if (!state) return false
-    return state.skipped || state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
-  }).length ?? 0
+  const answeredCount =
+    currentIteration?.questions.filter((q) => {
+      const state = questionStates[q.id]
+      if (!state) return false
+      return (
+        state.skipped ||
+        state.selectedOptions.length > 0 ||
+        state.otherSelected ||
+        state.otherText.trim().length > 0
+      )
+    }).length ?? 0
 
   const totalQuestions = currentIteration?.questions.length ?? 0
 
-  const canSubmit = currentIteration?.questions.every((q) => {
-    const state = questionStates[q.id]
-    if (!state) return false
-    if (state.skipped) return true
-    return state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
-  }) ?? false
+  const canSubmit =
+    currentIteration?.questions.every((q) => {
+      const state = questionStates[q.id]
+      if (!state) return false
+      if (state.skipped) return true
+      return (
+        state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
+      )
+    }) ?? false
 
   const shouldSuggestCompletion =
     iterationCount >= MIN_ITERATIONS || description.length >= MAX_DESCRIPTION_CHARS
@@ -499,9 +566,7 @@ export default function GrillPage({
           <div className="w-px h-5 bg-border-subtle" />
           <div className="flex items-center gap-2 min-w-0">
             <Flame size={14} className="text-accent flex-shrink-0" />
-            <span className="text-sm font-medium text-accent truncate">
-              Grill: {ideaTitle}
-            </span>
+            <span className="text-sm font-medium text-accent truncate">Grill: {ideaTitle}</span>
             {selectedTrack && phase !== 'selecting' && (
               <>
                 <span className="text-text-muted">/</span>
@@ -550,7 +615,8 @@ export default function GrillPage({
                 </h2>
                 <p className="text-sm text-text-muted">
                   Each track evaluates your requirement from a specialist perspective.
-                  {trackScores.length === 0 && ' Start with any track — we recommend Requirements first.'}
+                  {trackScores.length === 0 &&
+                    ' Start with any track — we recommend Requirements first.'}
                 </p>
               </div>
 
@@ -600,7 +666,8 @@ export default function GrillPage({
                       )}
                       {existingScore && (
                         <div className="mt-2 text-xs text-text-muted">
-                          {existingScore.iterationCount} iteration{existingScore.iterationCount !== 1 ? 's' : ''} completed
+                          {existingScore.iterationCount} iteration
+                          {existingScore.iterationCount !== 1 ? 's' : ''} completed
                         </div>
                       )}
                     </button>
@@ -749,8 +816,11 @@ export default function GrillPage({
                           : `Score: ${currentIteration.score}/100 — your requirement looks ${currentIteration.score >= 85 ? 'ready' : 'solid'}. You can keep refining or convert now.`}
                       </p>
                       <p className="text-xs text-text-muted mt-0.5">
-                        {iterationCount} iteration{iterationCount !== 1 ? 's' : ''} completed · {description.length.toLocaleString()} / {MAX_DESCRIPTION_CHARS.toLocaleString()} chars
-                        {trackScores.length > 0 && ` · ${trackScores.length} track${trackScores.length !== 1 ? 's' : ''} grilled`}
+                        {iterationCount} iteration{iterationCount !== 1 ? 's' : ''} completed ·{' '}
+                        {description.length.toLocaleString()} /{' '}
+                        {MAX_DESCRIPTION_CHARS.toLocaleString()} chars
+                        {trackScores.length > 0 &&
+                          ` · ${trackScores.length} track${trackScores.length !== 1 ? 's' : ''} grilled`}
                       </p>
                     </div>
                   </div>
@@ -763,7 +833,8 @@ export default function GrillPage({
                   <div className="px-4 py-8 flex flex-col items-center gap-3">
                     <Loader2 size={24} className="text-accent animate-spin" />
                     <span className="text-sm text-text-muted">
-                      Evaluating your requirement{selectedTrack ? ` (${GRILL_TRACKS[selectedTrack].name})` : ''}...
+                      Evaluating your requirement
+                      {selectedTrack ? ` (${GRILL_TRACKS[selectedTrack].name})` : ''}...
                     </span>
                     <span className="text-xs text-text-muted">
                       This may take a moment as Da Vinci explores your codebase.

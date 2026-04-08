@@ -11,11 +11,7 @@ import {
   turnUsageRepository,
   specialistRepository
 } from '../db/repositories'
-import {
-  generalistService,
-  gitWorktreeService,
-  fileService
-} from '../services'
+import { generalistService, gitWorktreeService, fileService } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { ConversationMode } from '../../shared/types'
 import { githubService } from '../services/github.service'
@@ -24,7 +20,7 @@ import { validateSender } from './validate-sender'
 
 const log = chatIpcLogger
 
-export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
+export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(
     IPC_CHANNELS.CHAT_GET_CONVERSATIONS,
     async (event, args: { workspaceId: string }) => {
@@ -40,7 +36,15 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_CREATE_CONVERSATION,
-    async (event, args: { workspaceId: string; title?: string; mode?: ConversationMode; personaSpecialistId?: string }) => {
+    async (
+      event,
+      args: {
+        workspaceId: string
+        title?: string
+        mode?: ConversationMode
+        personaSpecialistId?: string
+      }
+    ) => {
       validateSender(event)
 
       if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
@@ -62,7 +66,12 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
         if (!specialist) throw new Error('Invalid persona specialist ID')
       }
 
-      const conversation = conversationRepository.create(args.workspaceId, args.title, args.mode, args.personaSpecialistId)
+      const conversation = conversationRepository.create(
+        args.workspaceId,
+        args.title,
+        args.mode,
+        args.personaSpecialistId
+      )
       conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 
       // Auto-activate specialists based on detected tech stack
@@ -164,7 +173,8 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
         if (!specialist) throw new Error('Invalid persona specialist ID')
       }
       const updated = conversationRepository.updatePersona(
-        args.conversationId, args.personaSpecialistId
+        args.conversationId,
+        args.personaSpecialistId
       )
       if (!updated) throw new Error('Conversation not found')
 
@@ -450,26 +460,23 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
     }
   )
 
-  ipcMain.handle(
-    IPC_CHANNELS.READ_IMAGE_BASE64,
-    async (event, args: { filePath: string }) => {
-      validateSender(event)
+  ipcMain.handle(IPC_CHANNELS.READ_IMAGE_BASE64, async (event, args: { filePath: string }) => {
+    validateSender(event)
 
-      if (!args?.filePath || typeof args.filePath !== 'string') {
-        throw new Error('Invalid file path')
-      }
-
-      // Security: only allow reading from chat-images directory
-      const chatImagesDir = join(app.getPath('userData'), 'chat-images')
-      const resolved = resolve(args.filePath)
-      if (!resolved.startsWith(chatImagesDir)) {
-        throw new Error('Access denied: file is outside chat-images directory')
-      }
-
-      const { base64, mimeType } = fileService.readImageAsBase64(resolved)
-      return `data:${mimeType};base64,${base64}`
+    if (!args?.filePath || typeof args.filePath !== 'string') {
+      throw new Error('Invalid file path')
     }
-  )
+
+    // Security: only allow reading from chat-images directory
+    const chatImagesDir = join(app.getPath('userData'), 'chat-images')
+    const resolved = resolve(args.filePath)
+    if (!resolved.startsWith(chatImagesDir)) {
+      throw new Error('Access denied: file is outside chat-images directory')
+    }
+
+    const { base64, mimeType } = fileService.readImageAsBase64(resolved)
+    return `data:${mimeType};base64,${base64}`
+  })
 
   // ── Context usage: return token consumption for a conversation ──
   ipcMain.handle(
@@ -482,20 +489,41 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
       // Total context = non-cached input + cache read + cache creation tokens
       // The SDK reports inputTokens as only the non-cached portion, but the full
       // context window consumption includes all cached tokens too
-      const inputTokens = (lastTurn?.inputTokens ?? 0)
-        + (lastTurn?.cacheReadTokens ?? 0)
-        + (lastTurn?.cacheCreationTokens ?? 0)
-      const contextWindowSize = 200_000
+      const inputTokens =
+        (lastTurn?.inputTokens ?? 0) +
+        (lastTurn?.cacheReadTokens ?? 0) +
+        (lastTurn?.cacheCreationTokens ?? 0)
+      // 1M context beta enabled — actual window is 1M
+      const contextWindowSize = 1_000_000
+      // Quality degrades past 200K even with 1M window — use for level thresholds
+      const effectiveQualityWindow = 200_000
       const percentage = Math.round((inputTokens / contextWindowSize) * 100)
+      // Level is based on quality window, not total capacity
+      const qualityPercentage = Math.round((inputTokens / effectiveQualityWindow) * 100)
       const level =
-        percentage > 50 ? 'critical' : percentage > 40 ? 'red' : percentage > 25 ? 'yellow' : 'green'
+        qualityPercentage > 80
+          ? 'critical'
+          : qualityPercentage > 60
+            ? 'red'
+            : qualityPercentage > 40
+              ? 'yellow'
+              : 'green'
+      const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
+        qualityPercentage <= 40
+          ? 'excellent'
+          : qualityPercentage <= 60
+            ? 'good'
+            : qualityPercentage <= 80
+              ? 'moderate'
+              : 'low'
 
       return {
         conversationId: args.conversationId,
         inputTokens,
         contextWindowSize,
         percentage,
-        level
+        level,
+        qualityLevel
       }
     }
   )

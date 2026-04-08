@@ -71,7 +71,6 @@ describe('Suite 5: Pipeline auto-executes after decomposition (no CHAT_TASK_PLAN
 })
 
 describe('Suite 6: Pipeline ordering', () => {
-
   test('decomposition failure sends error chunk AND COMPLETE', () => {
     const mainWindow = createMockMainWindow()
     const repos = createMockRepositories()
@@ -259,7 +258,9 @@ describe('Suite 8: Investigation fix flow', () => {
       role: 'generalist'
     })
 
-    const chunkMsg = mainWindow.sentMessages.find((m) => m.channel === IPC_CHANNELS.CHAT_MESSAGE_CHUNK)
+    const chunkMsg = mainWindow.sentMessages.find(
+      (m) => m.channel === IPC_CHANNELS.CHAT_MESSAGE_CHUNK
+    )
     assert.ok(chunkMsg)
     assert.equal(
       String((chunkMsg.data as { chunk: string }).chunk).includes('**Mode switched to Build**'),

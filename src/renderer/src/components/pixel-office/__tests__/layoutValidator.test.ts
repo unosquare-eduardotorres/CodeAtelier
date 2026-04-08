@@ -34,12 +34,14 @@ function validLayout(): OfficeLayout {
     cols: 3,
     rows: 2,
     tiles: [
-      TileType.WALL, TileType.WALL, TileType.WALL,
-      TileType.WALL, TileType.FLOOR_1, TileType.WALL
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.FLOOR_1,
+      TileType.WALL
     ],
-    furniture: [
-      { uid: 'f1', type: 'DESK', col: 1, row: 1 }
-    ]
+    furniture: [{ uid: 'f1', type: 'DESK', col: 1, row: 1 }]
   }
 }
 
@@ -71,7 +73,14 @@ describe('validateLayout — valid layouts', () => {
   test('accepts layout with VOID tiles', () => {
     const layout = {
       ...validLayout(),
-      tiles: [TileType.VOID, TileType.WALL, TileType.VOID, TileType.WALL, TileType.FLOOR_1, TileType.WALL]
+      tiles: [
+        TileType.VOID,
+        TileType.WALL,
+        TileType.VOID,
+        TileType.WALL,
+        TileType.FLOOR_1,
+        TileType.WALL
+      ]
     }
     const result = validateLayout(layout)
     assert.equal(result.valid, true)

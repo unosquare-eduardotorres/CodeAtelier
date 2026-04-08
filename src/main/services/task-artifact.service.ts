@@ -29,23 +29,6 @@ interface PlanExecutionState {
 }
 
 /**
- * Per-task artifact written to disk.
- */
-interface TaskArtifact {
-  taskId: string
-  specialist: string
-  description: string
-  dependsOn: string[]
-  input: string
-  output?: string
-  gateResults?: QualityGateResult[]
-  loopState?: Partial<TaskLoopState>
-  startedAt: string
-  completedAt?: string
-  status: 'running' | 'completed' | 'failed'
-}
-
-/**
  * Task Artifact Service — Manages file-based artifact chain for agent communication.
  *
  * Directory structure:

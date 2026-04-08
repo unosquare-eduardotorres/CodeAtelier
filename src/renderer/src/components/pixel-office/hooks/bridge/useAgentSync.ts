@@ -7,11 +7,7 @@
 import { useEffect, useMemo, useRef, type RefObject } from 'react'
 import { useAgentStore } from '@renderer/store'
 import { useSpecialistStore } from '@renderer/store/specialist.store'
-import {
-  getSpriteAssignment,
-  getDefaultSeatIndex,
-  STATUS_BUBBLES
-} from '../../agentMapping'
+import { getSpriteAssignment, getDefaultSeatIndex, STATUS_BUBBLES } from '../../agentMapping'
 import type { PixelOfficeEngine } from './types'
 import {
   agentIdToNumeric,
@@ -153,12 +149,14 @@ export function useAgentSync(
 
   // Cleanup on unmount
   useEffect(() => {
+    const timeouts = bubbleTimeouts.current
+    const tracked = trackedAgents.current
     return () => {
-      for (const timeout of bubbleTimeouts.current.values()) {
+      for (const timeout of timeouts.values()) {
         clearTimeout(timeout)
       }
-      bubbleTimeouts.current.clear()
-      trackedAgents.current.clear()
+      timeouts.clear()
+      tracked.clear()
     }
   }, [])
 }

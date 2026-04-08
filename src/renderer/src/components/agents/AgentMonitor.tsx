@@ -1,5 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Monitor, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, OctagonX, RotateCcw } from 'lucide-react'
+import {
+  Monitor,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  OctagonX,
+  RotateCcw
+} from 'lucide-react'
 import { useAgentStore, useSpecialistStore, useChatStore } from '@renderer/store'
 import { AgentStatusCard, BugCouncilPanel } from '@renderer/components/agents'
 import type { BugCouncilResult } from '../../../../shared/types'

@@ -66,7 +66,9 @@ export default function FileDiffView({
       <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
         <FileCode size={40} className="text-text-muted/30 mb-3" />
         <p className="text-sm text-text-secondary">Select a file to view changes</p>
-        <p className="text-xs text-text-muted mt-1">Click on any file in the list to see the diff</p>
+        <p className="text-xs text-text-muted mt-1">
+          Click on any file in the list to see the diff
+        </p>
       </div>
     )
   }

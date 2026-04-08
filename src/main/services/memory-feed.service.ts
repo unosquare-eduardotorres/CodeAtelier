@@ -43,8 +43,8 @@ class MemoryFeedService {
       }
     }
 
-    const emit = (msg: string, type: MemoryFeedProgress['type'] = 'status'): void => {
-      onProgress?.({ type, message: msg, source: 'document', timestamp: Date.now() })
+    const emit = (msg: string, status: MemoryFeedProgress['status'] = 'running'): void => {
+      onProgress?.({ status, message: msg, source: 'document', timestamp: Date.now() })
     }
 
     try {
@@ -92,7 +92,7 @@ ${content.substring(0, 50000)}`
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-document')
 
       this.saveFeedTimestamp(workspacePath, 'document')
-      emit(`Created ${memories} memories from document`, 'complete')
+      emit(`Created ${memories} memories from document`, 'done')
       return { success: true, source: 'document', memoriesCreated: memories }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)

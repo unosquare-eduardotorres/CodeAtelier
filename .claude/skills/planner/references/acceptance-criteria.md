@@ -39,6 +39,7 @@ Scenario: AI suggests next track
 For every feature, consider these boundaries:
 
 ### Input Boundaries
+
 - [ ] Empty/null input
 - [ ] Minimum valid input
 - [ ] Maximum valid input (length, size, count)
@@ -47,6 +48,7 @@ For every feature, consider these boundaries:
 - [ ] Whitespace-only input
 
 ### State Boundaries
+
 - [ ] First use (no prior data)
 - [ ] Single item
 - [ ] Many items (pagination threshold)
@@ -55,6 +57,7 @@ For every feature, consider these boundaries:
 - [ ] Stale data (cache invalidation)
 
 ### Time Boundaries
+
 - [ ] Immediate action
 - [ ] Timeout threshold
 - [ ] Retry after failure
@@ -62,6 +65,7 @@ For every feature, consider these boundaries:
 - [ ] Session expiration during operation
 
 ### Error Boundaries
+
 - [ ] Network disconnection mid-operation
 - [ ] Service unavailable (database, API, Claude CLI)
 - [ ] Partial failure (some items succeed, others fail)
@@ -71,6 +75,7 @@ For every feature, consider these boundaries:
 ## Definition of Done Template
 
 A feature is "Done" when:
+
 - [ ] All acceptance criteria pass
 - [ ] Unit tests cover critical paths
 - [ ] E2E test for happy path exists

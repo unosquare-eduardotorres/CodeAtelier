@@ -74,14 +74,7 @@ interface TeamPageProps {
 // ── Component ──
 
 export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.Element {
-  const {
-    agents,
-    skills,
-    loadAgents,
-    loadSkills,
-    selectSkill,
-    deployAll
-  } = useSettingsStore()
+  const { agents, skills, loadAgents, loadSkills, selectSkill, deployAll } = useSettingsStore()
   const { specialists } = useSpecialistStore()
 
   // Agent interaction state
@@ -111,7 +104,10 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
   const agentCardsRef = useRef<Map<string, HTMLDivElement>>(new Map())
 
   // Derived data
-  const skillAgentMap = useMemo(() => buildSkillAgentMap(agents, specialists), [agents, specialists])
+  const skillAgentMap = useMemo(
+    () => buildSkillAgentMap(agents, specialists),
+    [agents, specialists]
+  )
 
   // Sort agents: active first, then by name
   const sortedAgents = useMemo(() => {
@@ -325,8 +321,8 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
             </div>
             <h3 className="text-base font-semibold text-text-primary mb-2">Get Started</h3>
             <p className="text-sm text-text-secondary max-w-md mb-6">
-              Activate specialist agents for this workspace. Each can be individually
-              activated or deactivated as needed for your project.
+              Activate specialist agents for this workspace. Each can be individually activated or
+              deactivated as needed for your project.
             </p>
             <button
               onClick={handleAutoActivate}
@@ -434,219 +430,220 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
           )}
 
           {/* Agent detail — inline expand */}
-          {expandedAgent && (() => {
-            const agent = agents.find((a) => a.filename === expandedAgent)
-            if (!agent) return null
-            const meta = getAgentMeta(agent.parsed.name, specialists)
-            const displayName = meta?.displayName ?? agent.parsed.name
-            const icon = meta?.icon ?? '🤖'
+          {expandedAgent &&
+            (() => {
+              const agent = agents.find((a) => a.filename === expandedAgent)
+              if (!agent) return null
+              const meta = getAgentMeta(agent.parsed.name, specialists)
+              const displayName = meta?.displayName ?? agent.parsed.name
+              const icon = meta?.icon ?? '🤖'
 
-            return (
-              <div className="mt-4 bg-surface-overlay border border-border-subtle rounded p-5 space-y-4 animate-in fade-in duration-200">
-                {/* Header */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xl">{icon}</span>
-                    <div>
-                      <h4 className="text-sm font-semibold text-text-primary">{displayName}</h4>
-                      {agent.parsed.description && (
-                        <p className="text-xs text-text-secondary mt-0.5">
-                          {agent.parsed.description}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {agent.isDeployed && (
-                      <button
-                        onClick={() => handleActivateToggle(agent)}
-                        disabled={togglingId === agent.filename}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
-                          agent.isActive
-                            ? 'bg-warning-muted text-mode-build-text border border-mode-build/30 hover:bg-mode-build-muted'
-                            : 'bg-success-muted text-success border border-success/30 hover:bg-success-muted'
-                        }`}
-                        aria-label={agent.isActive ? 'Deactivate agent' : 'Activate agent'}
-                      >
-                        {togglingId === agent.filename ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : agent.isActive ? (
-                          <PowerOff size={12} />
-                        ) : (
-                          <Power size={12} />
+              return (
+                <div className="mt-4 bg-surface-overlay border border-border-subtle rounded p-5 space-y-4 animate-in fade-in duration-200">
+                  {/* Header */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl">{icon}</span>
+                      <div>
+                        <h4 className="text-sm font-semibold text-text-primary">{displayName}</h4>
+                        {agent.parsed.description && (
+                          <p className="text-xs text-text-secondary mt-0.5">
+                            {agent.parsed.description}
+                          </p>
                         )}
-                        {agent.isActive ? 'Deactivate' : 'Activate'}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setExpandedAgent(null)}
-                      className="p-1 rounded-md hover:bg-surface-float text-text-secondary hover:text-text-primary transition-colors"
-                      aria-label="Close agent detail"
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Info grid */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-surface-float rounded-lg p-3 border border-border-subtle">
-                    <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                      Model
-                    </label>
-                    <p className="text-sm text-text-primary mt-1">{agent.parsed.model}</p>
-                  </div>
-                  <div className="bg-surface-float rounded-lg p-3 border border-border-subtle">
-                    <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                      Status
-                    </label>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span
-                        className={`w-2 h-2 rounded-full ${
-                          agent.isActive ? 'bg-success' : 'bg-surface-overlay'
-                        }`}
-                      />
-                      <span
-                        className={`text-sm ${
-                          agent.isActive ? 'text-success' : 'text-text-secondary'
-                        }`}
-                      >
-                        {agent.isActive ? 'Active' : 'Inactive'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Tools */}
-                {agent.parsed.tools.length > 0 && (
-                  <div className="bg-surface-float rounded-lg p-3 border border-border-subtle">
-                    <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                      Tools
-                    </label>
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {agent.parsed.tools.map((tool) => (
-                        <span
-                          key={tool}
-                          className="px-2 py-0.5 text-xs rounded-md bg-surface-overlay text-text-body font-mono"
-                        >
-                          {tool}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Skills with clickable links */}
-                {agent.parsed.skills.length > 0 && (
-                  <div className="bg-surface-float rounded-lg p-3 border border-border-subtle">
-                    <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                      Skills
-                    </label>
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {agent.parsed.skills.map((skill) => (
-                        <button
-                          key={skill}
-                          onClick={() => scrollToSkill(skill)}
-                          className="px-2 py-0.5 text-xs rounded-md bg-primary-muted text-primary-text font-medium hover:bg-primary/20 transition-colors cursor-pointer"
-                          aria-label={`View skill: ${skill}`}
-                        >
-                          {skill}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* YAML Editor accordion */}
-                {agent.isDeployed && (
-                  <div className="border border-border-subtle rounded-lg overflow-hidden">
-                    <button
-                      onClick={() => setYamlOpen(!yamlOpen)}
-                      className="flex items-center justify-between w-full px-4 py-2.5 bg-surface-float hover:bg-surface-overlay transition-colors text-left"
-                      aria-expanded={yamlOpen}
-                      aria-label="Toggle YAML editor"
-                    >
-                      <span className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                        Agent YAML
-                      </span>
-                      {yamlOpen ? (
-                        <ChevronDown size={14} className="text-text-muted" />
-                      ) : (
-                        <ChevronRight size={14} className="text-text-muted" />
-                      )}
-                    </button>
-                    {yamlOpen && (
-                      <div className="border-t border-border-subtle p-3 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-text-muted font-mono truncate max-w-[250px]">
-                            {agent.filePath}
-                          </span>
-                          <button
-                            onClick={() => handleSaveYaml(agent)}
-                            disabled={!hasEditorChanges || isSaving}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                              hasEditorChanges
-                                ? 'bg-primary hover:bg-primary-hover text-white'
-                                : 'bg-surface-overlay text-text-muted cursor-not-allowed'
-                            }`}
-                            aria-label="Save YAML changes"
-                          >
-                            {isSaving ? (
-                              <>
-                                <Loader2 size={12} className="animate-spin" />
-                                Saving...
-                              </>
-                            ) : (
-                              <>
-                                <Save size={12} />
-                                Save
-                              </>
-                            )}
-                          </button>
-                        </div>
-                        <CodeEditor
-                          value={editorContent}
-                          onChange={handleEditorChange}
-                          language="yaml"
-                          className="min-h-[300px] max-h-[500px]"
-                        />
                       </div>
-                    )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {agent.isDeployed && (
+                        <button
+                          onClick={() => handleActivateToggle(agent)}
+                          disabled={togglingId === agent.filename}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
+                            agent.isActive
+                              ? 'bg-warning-muted text-mode-build-text border border-mode-build/30 hover:bg-mode-build-muted'
+                              : 'bg-success-muted text-success border border-success/30 hover:bg-success-muted'
+                          }`}
+                          aria-label={agent.isActive ? 'Deactivate agent' : 'Activate agent'}
+                        >
+                          {togglingId === agent.filename ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : agent.isActive ? (
+                            <PowerOff size={12} />
+                          ) : (
+                            <Power size={12} />
+                          )}
+                          {agent.isActive ? 'Deactivate' : 'Activate'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setExpandedAgent(null)}
+                        className="p-1 rounded-md hover:bg-surface-float text-text-secondary hover:text-text-primary transition-colors"
+                        aria-label="Close agent detail"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
                   </div>
-                )}
 
-                {/* Actions row */}
-                <div className="flex items-center gap-2 pt-2 border-t border-border-subtle">
-                  <button
-                    onClick={() => handleSyncAgent(agent)}
-                    disabled={syncingAgentIds.has(agent.filename)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-secondary border border-border-subtle hover:bg-surface-float transition-colors disabled:opacity-50"
-                    aria-label="Sync agent from master"
-                  >
-                    {syncingAgentIds.has(agent.filename) ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <RefreshCw size={12} />
-                    )}
-                    Sync from master
-                  </button>
-                  <button
-                    onClick={() => setDeleteAgentTarget(agent)}
-                    disabled={deletingAgentId === agent.filename}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-danger border border-danger/30 hover:bg-danger-muted transition-colors disabled:opacity-50"
-                    aria-label="Delete agent from workspace"
-                  >
-                    {deletingAgentId === agent.filename ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <Trash2 size={12} />
-                    )}
-                    Delete from workspace
-                  </button>
+                  {/* Info grid */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-surface-float rounded-lg p-3 border border-border-subtle">
+                      <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
+                        Model
+                      </label>
+                      <p className="text-sm text-text-primary mt-1">{agent.parsed.model}</p>
+                    </div>
+                    <div className="bg-surface-float rounded-lg p-3 border border-border-subtle">
+                      <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
+                        Status
+                      </label>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            agent.isActive ? 'bg-success' : 'bg-surface-overlay'
+                          }`}
+                        />
+                        <span
+                          className={`text-sm ${
+                            agent.isActive ? 'text-success' : 'text-text-secondary'
+                          }`}
+                        >
+                          {agent.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tools */}
+                  {agent.parsed.tools.length > 0 && (
+                    <div className="bg-surface-float rounded-lg p-3 border border-border-subtle">
+                      <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
+                        Tools
+                      </label>
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {agent.parsed.tools.map((tool) => (
+                          <span
+                            key={tool}
+                            className="px-2 py-0.5 text-xs rounded-md bg-surface-overlay text-text-body font-mono"
+                          >
+                            {tool}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Skills with clickable links */}
+                  {agent.parsed.skills.length > 0 && (
+                    <div className="bg-surface-float rounded-lg p-3 border border-border-subtle">
+                      <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
+                        Skills
+                      </label>
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {agent.parsed.skills.map((skill) => (
+                          <button
+                            key={skill}
+                            onClick={() => scrollToSkill(skill)}
+                            className="px-2 py-0.5 text-xs rounded-md bg-primary-muted text-primary-text font-medium hover:bg-primary/20 transition-colors cursor-pointer"
+                            aria-label={`View skill: ${skill}`}
+                          >
+                            {skill}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* YAML Editor accordion */}
+                  {agent.isDeployed && (
+                    <div className="border border-border-subtle rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => setYamlOpen(!yamlOpen)}
+                        className="flex items-center justify-between w-full px-4 py-2.5 bg-surface-float hover:bg-surface-overlay transition-colors text-left"
+                        aria-expanded={yamlOpen}
+                        aria-label="Toggle YAML editor"
+                      >
+                        <span className="text-xs text-text-muted uppercase tracking-wider font-medium">
+                          Agent YAML
+                        </span>
+                        {yamlOpen ? (
+                          <ChevronDown size={14} className="text-text-muted" />
+                        ) : (
+                          <ChevronRight size={14} className="text-text-muted" />
+                        )}
+                      </button>
+                      {yamlOpen && (
+                        <div className="border-t border-border-subtle p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-text-muted font-mono truncate max-w-[250px]">
+                              {agent.filePath}
+                            </span>
+                            <button
+                              onClick={() => handleSaveYaml(agent)}
+                              disabled={!hasEditorChanges || isSaving}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                hasEditorChanges
+                                  ? 'bg-primary hover:bg-primary-hover text-white'
+                                  : 'bg-surface-overlay text-text-muted cursor-not-allowed'
+                              }`}
+                              aria-label="Save YAML changes"
+                            >
+                              {isSaving ? (
+                                <>
+                                  <Loader2 size={12} className="animate-spin" />
+                                  Saving...
+                                </>
+                              ) : (
+                                <>
+                                  <Save size={12} />
+                                  Save
+                                </>
+                              )}
+                            </button>
+                          </div>
+                          <CodeEditor
+                            value={editorContent}
+                            onChange={handleEditorChange}
+                            language="yaml"
+                            className="min-h-[300px] max-h-[500px]"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Actions row */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-border-subtle">
+                    <button
+                      onClick={() => handleSyncAgent(agent)}
+                      disabled={syncingAgentIds.has(agent.filename)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-secondary border border-border-subtle hover:bg-surface-float transition-colors disabled:opacity-50"
+                      aria-label="Sync agent from master"
+                    >
+                      {syncingAgentIds.has(agent.filename) ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={12} />
+                      )}
+                      Sync from master
+                    </button>
+                    <button
+                      onClick={() => setDeleteAgentTarget(agent)}
+                      disabled={deletingAgentId === agent.filename}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-danger border border-danger/30 hover:bg-danger-muted transition-colors disabled:opacity-50"
+                      aria-label="Delete agent from workspace"
+                    >
+                      {deletingAgentId === agent.filename ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Trash2 size={12} />
+                      )}
+                      Delete from workspace
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )
-          })()}
+              )
+            })()}
         </section>
 
         {/* ────────────────────────────────────────────────────────
@@ -702,9 +699,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
                     <button
                       key={skill.name}
                       id={`skill-tag-${skill.name}`}
-                      onClick={() =>
-                        setExpandedSkill(isExpanded ? null : skill.name)
-                      }
+                      onClick={() => setExpandedSkill(isExpanded ? null : skill.name)}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all min-h-[36px] ${
                         isExpanded
                           ? 'bg-primary-muted text-primary-text border border-primary/30 shadow-sm'
@@ -713,16 +708,18 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
                       aria-label={`Skill: ${skill.name} (${agentCount} agent${agentCount !== 1 ? 's' : ''})`}
                       aria-expanded={isExpanded}
                     >
-                      <FolderOpen size={12} className={isExpanded ? 'text-primary-text' : 'text-text-muted'} />
+                      <FolderOpen
+                        size={12}
+                        className={isExpanded ? 'text-primary-text' : 'text-text-muted'}
+                      />
                       <span>{skill.name}</span>
-                      {agentCount > 0 && (
-                        <span className="text-text-muted">
-                          ({agentCount})
-                        </span>
-                      )}
+                      {agentCount > 0 && <span className="text-text-muted">({agentCount})</span>}
                       {stale && <AlertTriangle size={10} className="text-mode-build-text" />}
                       {!skill.isActive && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-surface-overlay" title="Not deployed" />
+                        <span
+                          className="w-1.5 h-1.5 rounded-full bg-surface-overlay"
+                          title="Not deployed"
+                        />
                       )}
                     </button>
                   )
@@ -730,140 +727,141 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
               </div>
 
               {/* Expanded skill detail */}
-              {expandedSkill && (() => {
-                const skill = skills.find((s) => s.name === expandedSkill)
-                if (!skill) return null
-                const stale = isStale(skill.lastUpdated)
-                const usedByAgents = skillAgentMap.get(skill.name) ?? []
-                const isSyncing = syncingSkillIds.has(skill.name)
-                const isDeleting = deletingSkillId === skill.name
+              {expandedSkill &&
+                (() => {
+                  const skill = skills.find((s) => s.name === expandedSkill)
+                  if (!skill) return null
+                  const stale = isStale(skill.lastUpdated)
+                  const usedByAgents = skillAgentMap.get(skill.name) ?? []
+                  const isSyncing = syncingSkillIds.has(skill.name)
+                  const isDeleting = deletingSkillId === skill.name
 
-                return (
-                  <div className="bg-surface-overlay border border-border-subtle rounded p-5 space-y-3 animate-in fade-in duration-200">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start gap-3">
-                        <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary-muted text-primary-text flex-shrink-0 mt-0.5">
-                          <FolderOpen size={16} />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="text-sm font-semibold text-text-primary">
-                              {skill.name}
-                            </h4>
-                            <span
-                              className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${
-                                skill.isActive
-                                  ? 'bg-success-muted text-success'
-                                  : 'bg-surface-float text-text-muted'
-                              }`}
-                            >
-                              {skill.isActive ? 'Deployed' : 'Not deployed'}
-                            </span>
+                  return (
+                    <div className="bg-surface-overlay border border-border-subtle rounded p-5 space-y-3 animate-in fade-in duration-200">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary-muted text-primary-text flex-shrink-0 mt-0.5">
+                            <FolderOpen size={16} />
                           </div>
-                          {skill.frontmatter?.description && (
-                            <p className="text-xs text-text-secondary mt-0.5">
-                              {skill.frontmatter.description}
-                            </p>
-                          )}
-                          <div className="flex items-center gap-3 mt-1.5">
-                            <span className="text-xs text-text-muted">
-                              {skill.hasSkillMd ? 'SKILL.md' : 'no SKILL.md'} +{' '}
-                              {skill.referenceFiles.length} reference
-                              {skill.referenceFiles.length !== 1 ? 's' : ''}
-                            </span>
-                            {skill.lastUpdated && (
-                              <span className="text-xs text-text-muted">
-                                Updated: {formatDate(skill.lastUpdated)}
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-sm font-semibold text-text-primary">
+                                {skill.name}
+                              </h4>
+                              <span
+                                className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${
+                                  skill.isActive
+                                    ? 'bg-success-muted text-success'
+                                    : 'bg-surface-float text-text-muted'
+                                }`}
+                              >
+                                {skill.isActive ? 'Deployed' : 'Not deployed'}
                               </span>
+                            </div>
+                            {skill.frontmatter?.description && (
+                              <p className="text-xs text-text-secondary mt-0.5">
+                                {skill.frontmatter.description}
+                              </p>
                             )}
+                            <div className="flex items-center gap-3 mt-1.5">
+                              <span className="text-xs text-text-muted">
+                                {skill.hasSkillMd ? 'SKILL.md' : 'no SKILL.md'} +{' '}
+                                {skill.referenceFiles.length} reference
+                                {skill.referenceFiles.length !== 1 ? 's' : ''}
+                              </span>
+                              {skill.lastUpdated && (
+                                <span className="text-xs text-text-muted">
+                                  Updated: {formatDate(skill.lastUpdated)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <button
-                          onClick={() => handleSyncSkill(skill)}
-                          disabled={isSyncing}
-                          className="p-1.5 rounded-md hover:bg-primary-muted text-text-secondary hover:text-primary-text transition-colors disabled:opacity-50"
-                          aria-label={`Sync ${skill.name}`}
-                          title="Sync skill to workspace"
-                        >
-                          {isSyncing ? (
-                            <Loader2 size={14} className="animate-spin" />
-                          ) : (
-                            <RefreshCw size={14} />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => selectSkill(skill)}
-                          className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-text-secondary hover:text-text-primary hover:bg-surface-float transition-colors"
-                          aria-label={`View full details for ${skill.name}`}
-                        >
-                          View
-                          <ChevronRight size={12} />
-                        </button>
-                        <button
-                          onClick={() => setDeleteSkillTarget(skill)}
-                          disabled={isDeleting}
-                          className="p-1.5 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors disabled:opacity-50"
-                          aria-label={`Delete ${skill.name}`}
-                          title="Delete skill from workspace"
-                        >
-                          {isDeleting ? (
-                            <Loader2 size={14} className="animate-spin" />
-                          ) : (
-                            <Trash2 size={14} />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => setExpandedSkill(null)}
-                          className="p-1 rounded-md hover:bg-surface-float text-text-secondary hover:text-text-primary transition-colors"
-                          aria-label="Close skill detail"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Staleness warning */}
-                    {stale && (
-                      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-warning-muted border border-mode-build/20">
-                        <AlertTriangle size={12} className="text-mode-build-text flex-shrink-0" />
-                        <span className="text-xs text-mode-build-text">
-                          This skill might require an update.
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Used by agents */}
-                    {usedByAgents.length > 0 && (
-                      <div>
-                        <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                          Used by
-                        </label>
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {usedByAgents.map((a) => (
-                            <button
-                              key={a.name}
-                              onClick={() => scrollToAgent(a.name)}
-                              className="flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-surface-float text-text-body hover:bg-surface-overlay hover:text-text-primary transition-colors cursor-pointer"
-                              aria-label={`Navigate to agent: ${a.name}`}
-                            >
-                              <span>{a.icon}</span>
-                              <span>{a.name}</span>
-                            </button>
-                          ))}
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button
+                            onClick={() => handleSyncSkill(skill)}
+                            disabled={isSyncing}
+                            className="p-1.5 rounded-md hover:bg-primary-muted text-text-secondary hover:text-primary-text transition-colors disabled:opacity-50"
+                            aria-label={`Sync ${skill.name}`}
+                            title="Sync skill to workspace"
+                          >
+                            {isSyncing ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <RefreshCw size={14} />
+                            )}
+                          </button>
+                          <button
+                            onClick={() => selectSkill(skill)}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-text-secondary hover:text-text-primary hover:bg-surface-float transition-colors"
+                            aria-label={`View full details for ${skill.name}`}
+                          >
+                            View
+                            <ChevronRight size={12} />
+                          </button>
+                          <button
+                            onClick={() => setDeleteSkillTarget(skill)}
+                            disabled={isDeleting}
+                            className="p-1.5 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors disabled:opacity-50"
+                            aria-label={`Delete ${skill.name}`}
+                            title="Delete skill from workspace"
+                          >
+                            {isDeleting ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={14} />
+                            )}
+                          </button>
+                          <button
+                            onClick={() => setExpandedSkill(null)}
+                            className="p-1 rounded-md hover:bg-surface-float text-text-secondary hover:text-text-primary transition-colors"
+                            aria-label="Close skill detail"
+                          >
+                            <X size={14} />
+                          </button>
                         </div>
                       </div>
-                    )}
-                    {usedByAgents.length === 0 && (
-                      <p className="text-xs text-text-muted italic">
-                        No agents currently reference this skill
-                      </p>
-                    )}
-                  </div>
-                )
-              })()}
+
+                      {/* Staleness warning */}
+                      {stale && (
+                        <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-warning-muted border border-mode-build/20">
+                          <AlertTriangle size={12} className="text-mode-build-text flex-shrink-0" />
+                          <span className="text-xs text-mode-build-text">
+                            This skill might require an update.
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Used by agents */}
+                      {usedByAgents.length > 0 && (
+                        <div>
+                          <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
+                            Used by
+                          </label>
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {usedByAgents.map((a) => (
+                              <button
+                                key={a.name}
+                                onClick={() => scrollToAgent(a.name)}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-surface-float text-text-body hover:bg-surface-overlay hover:text-text-primary transition-colors cursor-pointer"
+                                aria-label={`Navigate to agent: ${a.name}`}
+                              >
+                                <span>{a.icon}</span>
+                                <span>{a.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {usedByAgents.length === 0 && (
+                        <p className="text-xs text-text-muted italic">
+                          No agents currently reference this skill
+                        </p>
+                      )}
+                    </div>
+                  )
+                })()}
             </div>
           )}
         </section>
@@ -913,9 +911,21 @@ interface AgentCardProps {
 }
 
 const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
-  { agent, isExpanded, isSyncing, isDeleting, isToggling, onExpand, onSync, onDelete, onToggle, onSkillClick },
+  {
+    agent,
+    isExpanded,
+    isSyncing,
+    isDeleting,
+    isToggling,
+    onExpand,
+    onSync,
+    onDelete,
+    onToggle,
+    onSkillClick
+  },
   ref
 ) {
+  const { specialists } = useSpecialistStore()
   const meta = getAgentMeta(agent.parsed.name, specialists)
   const icon = meta?.icon ?? '🤖'
   const displayName = meta?.displayName ?? agent.parsed.name
@@ -965,9 +975,7 @@ const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
             />
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
-            <span
-              className={`text-xs ${agent.isDeployed ? 'text-success' : 'text-text-muted'}`}
-            >
+            <span className={`text-xs ${agent.isDeployed ? 'text-success' : 'text-text-muted'}`}>
               {agent.isDeployed ? 'Deployed' : 'Not deployed'}
             </span>
           </div>
@@ -1036,11 +1044,7 @@ const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
           title="Sync agent"
           aria-label="Sync agent to workspace"
         >
-          {isSyncing ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : (
-            <RefreshCw size={12} />
-          )}
+          {isSyncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
         </button>
         <button
           onClick={(e) => {
@@ -1052,11 +1056,7 @@ const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
           title="Delete agent"
           aria-label="Delete agent from workspace"
         >
-          {isDeleting ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : (
-            <Trash2 size={12} />
-          )}
+          {isDeleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
         </button>
       </div>
     </div>

@@ -17,11 +17,7 @@
  *   // ... execute specialist ...
  *   await hooks.runAfterRun('frontend-architect', result)
  */
-import type {
-  ConversationMode,
-  DecomposedTask,
-  ModelTier
-} from '../../../shared/types'
+import type { ConversationMode, DecomposedTask, ModelTier } from '../../../shared/types'
 import log from 'electron-log/main'
 
 const hooksLog = log.scope('SpecialistHooks')
@@ -239,7 +235,12 @@ export const specialistHookRunner = new SpecialistHookRunner()
 // falling back to Read/Grep/Glob. Logs violations and compliance for
 // observability — never blocks or mutates anything.
 
-const GRAPH_TOOL_FRAGMENTS = ['graph_map', 'search_identifiers', 'find_dead_code', 'semantic_search']
+const GRAPH_TOOL_FRAGMENTS = [
+  'graph_map',
+  'search_identifiers',
+  'find_dead_code',
+  'semantic_search'
+]
 const EXPLORATION_TOOL_NAMES = new Set(['Read', 'Grep', 'Glob'])
 
 /** Global telemetry hook: logs Code Graph-first compliance per specialist */

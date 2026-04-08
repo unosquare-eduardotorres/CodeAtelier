@@ -34,10 +34,7 @@ function toModel(row: AgentMessageRow): AgentMessage {
  */
 export class AgentMessageRepository {
   /** Persist a single message */
-  create(
-    message: AgentMessage,
-    opts?: { conversationId?: string; runId?: string }
-  ): void {
+  create(message: AgentMessage, opts?: { conversationId?: string; runId?: string }): void {
     const db = getDatabase()
     db.prepare(
       `INSERT OR IGNORE INTO agent_messages (id, conversation_id, run_id, from_agent, to_agent, type, content, task_id, metadata_json, created_at)
@@ -60,9 +57,7 @@ export class AgentMessageRepository {
   findByTaskId(taskId: string): AgentMessage[] {
     const db = getDatabase()
     const rows = db
-      .prepare(
-        `SELECT * FROM agent_messages WHERE task_id = ? ORDER BY created_at ASC`
-      )
+      .prepare(`SELECT * FROM agent_messages WHERE task_id = ? ORDER BY created_at ASC`)
       .all(taskId) as AgentMessageRow[]
     return rows.map(toModel)
   }
@@ -70,9 +65,7 @@ export class AgentMessageRepository {
   /** Prune messages older than a given date */
   pruneOlderThan(date: string): number {
     const db = getDatabase()
-    const result = db
-      .prepare(`DELETE FROM agent_messages WHERE created_at < ?`)
-      .run(date)
+    const result = db.prepare(`DELETE FROM agent_messages WHERE created_at < ?`).run(date)
     return result.changes
   }
 }

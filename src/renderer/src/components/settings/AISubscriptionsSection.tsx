@@ -25,7 +25,14 @@ interface CheckRowProps {
   error: string | null
 }
 
-function CheckRow({ icon, label, detail, status, statusLabel, error }: CheckRowProps): React.JSX.Element {
+function CheckRow({
+  icon,
+  label,
+  detail,
+  status,
+  statusLabel,
+  error
+}: CheckRowProps): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
 
   const statusIcon = {
@@ -54,7 +61,7 @@ function CheckRow({ icon, label, detail, status, statusLabel, error }: CheckRowP
         <span className="text-text-secondary flex-shrink-0">{icon}</span>
         <span className="text-sm font-medium text-text-primary flex-1 text-left">{label}</span>
         <span className="text-xs text-text-secondary font-mono truncate max-w-[140px]">
-          {status === 'checking' ? '...' : detail ?? '\u2014'}
+          {status === 'checking' ? '...' : (detail ?? '\u2014')}
         </span>
         <span className={`flex items-center gap-1.5 text-xs font-medium ${statusColor[status]}`}>
           {statusIcon[status]}

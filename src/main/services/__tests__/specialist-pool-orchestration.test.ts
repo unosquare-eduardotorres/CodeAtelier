@@ -10,17 +10,13 @@ import assert from 'node:assert/strict'
 import { z } from 'zod'
 
 import {
-  extractJSON,
   validateTaskOutput,
   registerOutputSchema,
   getOutputSchema,
   listOutputSchemas,
   validateWithSchema
 } from '../specialist/structured-output'
-import {
-  topologicalSort,
-  detectConclusivePattern
-} from '../specialist/task-scheduler'
+import { topologicalSort, detectConclusivePattern } from '../specialist/task-scheduler'
 import type { DecomposedTask } from '../../../shared/types'
 
 let passed = 0
@@ -84,9 +80,7 @@ describe('R1: Failure Cascade — shouldCascadeSkip logic', () => {
     const failedSet = new Set<string>()
     const skippedSet = new Set<string>()
 
-    const shouldSkip = task.dependsOn.some(
-      (depId) => failedSet.has(depId) || skippedSet.has(depId)
-    )
+    const shouldSkip = task.dependsOn.some((depId) => failedSet.has(depId) || skippedSet.has(depId))
     assert.equal(shouldSkip, false)
   })
 
@@ -95,9 +89,7 @@ describe('R1: Failure Cascade — shouldCascadeSkip logic', () => {
     const failedSet = new Set<string>(['t1'])
     const skippedSet = new Set<string>()
 
-    const shouldSkip = task.dependsOn.some(
-      (depId) => failedSet.has(depId) || skippedSet.has(depId)
-    )
+    const shouldSkip = task.dependsOn.some((depId) => failedSet.has(depId) || skippedSet.has(depId))
     assert.equal(shouldSkip, true)
   })
 
@@ -106,9 +98,7 @@ describe('R1: Failure Cascade — shouldCascadeSkip logic', () => {
     const failedSet = new Set<string>(['t1'])
     const skippedSet = new Set<string>(['t2'])
 
-    const shouldSkip = task.dependsOn.some(
-      (depId) => failedSet.has(depId) || skippedSet.has(depId)
-    )
+    const shouldSkip = task.dependsOn.some((depId) => failedSet.has(depId) || skippedSet.has(depId))
     assert.equal(shouldSkip, true)
   })
 
@@ -118,9 +108,7 @@ describe('R1: Failure Cascade — shouldCascadeSkip logic', () => {
     const skippedSet = new Set<string>()
     const completedSet = new Set<string>(['t1'])
 
-    const shouldSkip = task.dependsOn.some(
-      (depId) => failedSet.has(depId) || skippedSet.has(depId)
-    )
+    const shouldSkip = task.dependsOn.some((depId) => failedSet.has(depId) || skippedSet.has(depId))
     assert.equal(shouldSkip, false)
     // And the dep IS completed
     assert.ok(completedSet.has('t1'))
@@ -131,9 +119,7 @@ describe('R1: Failure Cascade — shouldCascadeSkip logic', () => {
     const failedSet = new Set<string>(['t1'])
     const skippedSet = new Set<string>()
 
-    const shouldSkip = task.dependsOn.some(
-      (depId) => failedSet.has(depId) || skippedSet.has(depId)
-    )
+    const shouldSkip = task.dependsOn.some((depId) => failedSet.has(depId) || skippedSet.has(depId))
     assert.equal(shouldSkip, true)
   })
 
@@ -145,16 +131,12 @@ describe('R1: Failure Cascade — shouldCascadeSkip logic', () => {
     const skippedSet = new Set<string>()
 
     // t2 check
-    const t2ShouldSkip = t2.dependsOn.some(
-      (depId) => failedSet.has(depId) || skippedSet.has(depId)
-    )
+    const t2ShouldSkip = t2.dependsOn.some((depId) => failedSet.has(depId) || skippedSet.has(depId))
     assert.equal(t2ShouldSkip, true)
     skippedSet.add('t2')
 
     // t3 check (depends on t2 which is now skipped)
-    const t3ShouldSkip = t3.dependsOn.some(
-      (depId) => failedSet.has(depId) || skippedSet.has(depId)
-    )
+    const t3ShouldSkip = t3.dependsOn.some((depId) => failedSet.has(depId) || skippedSet.has(depId))
     assert.equal(t3ShouldSkip, true)
   })
 })
@@ -296,10 +278,12 @@ describe('R3: validateTaskOutput', () => {
   // Register a test schema for these tests
   const taskResultSchema = z.object({
     status: z.enum(['success', 'partial', 'failure']),
-    changes: z.array(z.object({
-      file: z.string().min(1),
-      action: z.enum(['created', 'modified', 'deleted'])
-    })),
+    changes: z.array(
+      z.object({
+        file: z.string().min(1),
+        action: z.enum(['created', 'modified', 'deleted'])
+      })
+    ),
     summary: z.string().min(1)
   })
   registerOutputSchema('task-result', taskResultSchema as z.ZodType<unknown>)
@@ -353,10 +337,7 @@ describe('R3: validateTaskOutput', () => {
   })
 
   test('returns error for output with no JSON', () => {
-    const result = validateTaskOutput(
-      'I finished the task. Everything looks good!',
-      'task-result'
-    )
+    const result = validateTaskOutput('I finished the task. Everything looks good!', 'task-result')
     assert.equal(result.success, false)
     if (!result.success) {
       assert.ok(result.errors.some((e) => e.includes('No valid JSON')))

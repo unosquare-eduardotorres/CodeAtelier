@@ -52,18 +52,14 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     appendLocalMessage,
     clearGrillSession,
     createItemsFromGrill,
-    executeInvestigationFix,
-    clearInvestigationReport
+    executeInvestigationFix
   } = useChatActions()
 
   // Single actions object passed to all MessageBubbles — avoids N×useShallow subscriptions
-  const handleSaveAsIdea = useCallback(
-    (title: string, description: string): void => {
-      setIdeaPopoverData({ title, description })
-      setShowIdeaPopover(true)
-    },
-    []
-  )
+  const handleSaveAsIdea = useCallback((title: string, description: string): void => {
+    setIdeaPopoverData({ title, description })
+    setShowIdeaPopover(true)
+  }, [])
 
   const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
 
@@ -112,9 +108,10 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     (s) => s.specialists.find((sp) => sp.agentId === 'generalist') ?? null
   )
   const generalistAlias =
-    generalistSpec?.alias ?? generalistSpec?.displayName ?? CORE_AGENT_DEFAULTS.generalist.displayName
-  const thinkingAvatarKey =
-    generalistSpec?.avatarUrl ?? CORE_AGENT_DEFAULTS.generalist.avatarKey
+    generalistSpec?.alias ??
+    generalistSpec?.displayName ??
+    CORE_AGENT_DEFAULTS.generalist.displayName
+  const thinkingAvatarKey = generalistSpec?.avatarUrl ?? CORE_AGENT_DEFAULTS.generalist.avatarKey
   const thinkingAccentColor = generalistSpec?.color ?? CORE_AGENT_DEFAULTS.generalist.color
 
   // Coordinator role is deprecated — map to generalist identity (Da Vinci)
@@ -142,9 +139,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         avatarKey: coordinatorAvatarKey,
         accentColor: CORE_AGENT_DEFAULTS.generalist.color,
         pixelSpriteId:
-          generalistSpec?.pixelSpriteId ??
-          getSpriteAssignment('generalist').pixelSpriteId ??
-          null
+          generalistSpec?.pixelSpriteId ?? getSpriteAssignment('generalist').pixelSpriteId ?? null
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialistData) {
@@ -214,9 +209,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const handleReviseInvestigation = useCallback((): void => {
     // Don't clear investigationReport — card stays visible with buttons hidden
     // (TaskPlanCard's internal userClicked state hides the buttons after click)
-    appendLocalMessage(
-      'Refine this investigation — tell me what to re-analyze and I\'ll update it.'
-    )
+    appendLocalMessage("Refine this investigation — tell me what to re-analyze and I'll update it.")
   }, [appendLocalMessage])
 
   const handleSaveInvestigationAsIdea = useCallback((): void => {

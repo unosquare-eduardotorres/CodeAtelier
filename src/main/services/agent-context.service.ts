@@ -31,12 +31,7 @@ class AgentContextService {
    * Persist a finding from a specialist's output.
    * Findings represent discovered facts, analysis results, or investigation conclusions.
    */
-  persistFinding(
-    conversationId: string,
-    agentId: string,
-    content: string,
-    taskId?: string
-  ): void {
+  persistFinding(conversationId: string, agentId: string, content: string, taskId?: string): void {
     this.persist(conversationId, agentId, 'finding', content, taskId)
   }
 
@@ -44,12 +39,7 @@ class AgentContextService {
    * Persist a decision made during task execution.
    * Decisions represent architectural choices, tool selections, or strategy changes.
    */
-  persistDecision(
-    conversationId: string,
-    agentId: string,
-    content: string,
-    taskId?: string
-  ): void {
+  persistDecision(conversationId: string, agentId: string, content: string, taskId?: string): void {
     this.persist(conversationId, agentId, 'decision', content, taskId)
   }
 
@@ -57,12 +47,7 @@ class AgentContextService {
    * Persist a summary of a specialist's output.
    * Summaries are compact representations of full outputs for cross-agent consumption.
    */
-  persistSummary(
-    conversationId: string,
-    agentId: string,
-    content: string,
-    taskId?: string
-  ): void {
+  persistSummary(conversationId: string, agentId: string, content: string, taskId?: string): void {
     this.persist(conversationId, agentId, 'summary', content, taskId)
   }
 
@@ -70,7 +55,10 @@ class AgentContextService {
    * Build formatted context string for injection into specialist prompts.
    * Returns empty string if no prior context exists.
    */
-  getContextForPrompt(conversationId: string, maxTokens: number = DEFAULT_PROMPT_TOKEN_BUDGET): string {
+  getContextForPrompt(
+    conversationId: string,
+    maxTokens: number = DEFAULT_PROMPT_TOKEN_BUDGET
+  ): string {
     return agentContextRepository.buildContextForPrompt(conversationId, maxTokens)
   }
 
@@ -98,9 +86,7 @@ class AgentContextService {
     }
 
     // Check for tool-result investigation report (JSON with investigation fields)
-    const toolResultMatch = output.match(
-      /"problem"\s*:\s*"[^"]+"\s*,\s*"rootCause"\s*:\s*"[^"]+"/s
-    )
+    const toolResultMatch = output.match(/"problem"\s*:\s*"[^"]+"\s*,\s*"rootCause"\s*:\s*"[^"]+"/s)
     if (toolResultMatch) {
       try {
         // Try to extract a JSON object containing investigation report fields
@@ -165,9 +151,8 @@ class AgentContextService {
   ): void {
     if (!content || content.trim().length === 0) return
 
-    const truncated = content.length > MAX_ENTRY_LENGTH
-      ? content.substring(0, MAX_ENTRY_LENGTH) + '…'
-      : content
+    const truncated =
+      content.length > MAX_ENTRY_LENGTH ? content.substring(0, MAX_ENTRY_LENGTH) + '…' : content
 
     try {
       agentContextRepository.create(conversationId, agentId, contextType, truncated, taskId)

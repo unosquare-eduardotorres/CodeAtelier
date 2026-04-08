@@ -78,7 +78,10 @@ type TraceListener = (event: TraceEvent) => void
 
 /** Valid end types for paired span events — guards against incorrect type derivation */
 const VALID_TRACE_END_TYPES = new Set<TraceEventType>([
-  'run_end', 'specialist_end', 'llm_call_end', 'tool_call_end'
+  'run_end',
+  'specialist_end',
+  'llm_call_end',
+  'tool_call_end'
 ])
 
 // ── Execution Tracer ──
@@ -101,10 +104,7 @@ export class ExecutionTracer {
   }
 
   /** Start a new execution run. Returns the runId for correlation. */
-  startRun(
-    description: string,
-    metadata?: Record<string, unknown>
-  ): string {
+  startRun(description: string, metadata?: Record<string, unknown>): string {
     const runId = randomUUID()
     this.activeRuns.set(runId, { startTime: Date.now(), events: [] })
 
@@ -121,10 +121,7 @@ export class ExecutionTracer {
   }
 
   /** End an execution run. Emits summary with total duration. */
-  endRun(
-    runId: string,
-    metadata?: Record<string, unknown>
-  ): void {
+  endRun(runId: string, metadata?: Record<string, unknown>): void {
     const run = this.activeRuns.get(runId)
     const durationMs = run ? Date.now() - run.startTime : undefined
 

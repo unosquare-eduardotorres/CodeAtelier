@@ -45,10 +45,10 @@ export default function NewChatPage({
   const { daVinci, activeSpecialists, inactiveSpecialists } = useMemo(() => {
     const dv = specialists.find((s) => s.agentId === 'generalist')
     const active = specialists
-      .filter((s) => !s.isCore && s.isActive)
+      .filter((s) => !s.isCore && s.isActive && s.agentId !== 'orchestrator')
       .sort((a, b) => a.priority - b.priority)
     const inactive = specialists
-      .filter((s) => !s.isCore && !s.isActive)
+      .filter((s) => !s.isCore && !s.isActive && s.agentId !== 'orchestrator')
       .sort((a, b) => a.priority - b.priority)
     return { daVinci: dv, activeSpecialists: active, inactiveSpecialists: inactive }
   }, [specialists])
@@ -102,45 +102,6 @@ export default function NewChatPage({
         <p className="text-sm text-text-secondary mb-8 text-center">
           Choose who you&apos;ll be talking to, then start your conversation.
         </p>
-
-        {/* Persona Grid */}
-        <div className="w-full mb-8">
-          <label className="block text-sm font-medium text-text-primary mb-3">Talk to</label>
-          <div className="flex flex-wrap gap-3">
-            {/* Da Vinci (default) */}
-            {daVinci && (
-              <PersonaCard
-                specialist={daVinci}
-                isDefault
-                selected={!selectedPersonaId}
-                onSelect={() => setSelectedPersonaId(undefined)}
-              />
-            )}
-
-            {/* Active specialists */}
-            {activeSpecialists.map((s) => (
-              <PersonaCard
-                key={s.id}
-                specialist={s}
-                selected={selectedPersonaId === s.id}
-                onSelect={() => setSelectedPersonaId(s.id)}
-              />
-            ))}
-
-            {/* Inactive specialists (grayed out) */}
-            {inactiveSpecialists.map((s) => (
-              <PersonaCard
-                key={s.id}
-                specialist={s}
-                selected={false}
-                disabled
-                onSelect={() => {
-                  /* disabled */
-                }}
-              />
-            ))}
-          </div>
-        </div>
 
         {/* Title */}
         <div className="w-full mb-5">
@@ -268,6 +229,45 @@ export default function NewChatPage({
             </label>
           </div>
         )}
+
+        {/* Persona Grid */}
+        <div className="w-full mb-8">
+          <label className="block text-sm font-medium text-text-primary mb-3">Talk to</label>
+          <div className="flex flex-wrap gap-3">
+            {/* Da Vinci (default) */}
+            {daVinci && (
+              <PersonaCard
+                specialist={daVinci}
+                isDefault
+                selected={!selectedPersonaId}
+                onSelect={() => setSelectedPersonaId(undefined)}
+              />
+            )}
+
+            {/* Active specialists */}
+            {activeSpecialists.map((s) => (
+              <PersonaCard
+                key={s.id}
+                specialist={s}
+                selected={selectedPersonaId === s.id}
+                onSelect={() => setSelectedPersonaId(s.id)}
+              />
+            ))}
+
+            {/* Inactive specialists (grayed out) */}
+            {inactiveSpecialists.map((s) => (
+              <PersonaCard
+                key={s.id}
+                specialist={s}
+                selected={false}
+                disabled
+                onSelect={() => {
+                  /* disabled */
+                }}
+              />
+            ))}
+          </div>
+        </div>
 
         {/* Action buttons */}
         <div className="w-full flex items-center justify-between pt-4 border-t border-border-subtle">

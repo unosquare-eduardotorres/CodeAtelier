@@ -58,7 +58,6 @@ export default function ChatSidebar({
     }
   }, [activeWorkspace, loadConversations])
 
-
   const handleNewChat = (): void => {
     setShowNewChatModal(true)
   }
@@ -112,7 +111,9 @@ export default function ChatSidebar({
     // Make the drag image slightly transparent
     const target = e.currentTarget as HTMLElement
     target.style.opacity = '0.5'
-    setTimeout(() => { target.style.opacity = '1' }, 0)
+    setTimeout(() => {
+      target.style.opacity = '1'
+    }, 0)
   }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent, id: string) => {

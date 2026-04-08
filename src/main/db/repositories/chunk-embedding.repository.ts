@@ -57,7 +57,9 @@ export class ChunkEmbeddingRepository {
    * Load all embeddings for a workspace.
    * Returns chunk IDs paired with their deserialized embedding vectors.
    */
-  loadAllForWorkspace(workspaceId: string): Array<{ chunkId: string; embedding: number[]; model: string }> {
+  loadAllForWorkspace(
+    workspaceId: string
+  ): Array<{ chunkId: string; embedding: number[]; model: string }> {
     const db = getDatabase()
     const rows = db
       .prepare('SELECT chunk_id, embedding, model FROM chunk_embeddings WHERE workspace_id = ?')
@@ -87,9 +89,7 @@ export class ChunkEmbeddingRepository {
   hasEmbeddings(workspaceId: string): boolean {
     const db = getDatabase()
     const row = db
-      .prepare(
-        'SELECT 1 FROM chunk_embeddings WHERE workspace_id = ? LIMIT 1'
-      )
+      .prepare('SELECT 1 FROM chunk_embeddings WHERE workspace_id = ? LIMIT 1')
       .get(workspaceId)
     return !!row
   }

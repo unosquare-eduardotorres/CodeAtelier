@@ -22,10 +22,7 @@ src/shared/constants.ts:
 │   AGENT_IDS`
 
     const files = parseRepomapFiles(mapText)
-    assert.deepEqual(files, [
-      'src/main/services/generalist.service.ts',
-      'src/shared/constants.ts'
-    ])
+    assert.deepEqual(files, ['src/main/services/generalist.service.ts', 'src/shared/constants.ts'])
   })
 
   test('filters out non-file lines (no / or .)', () => {
@@ -64,9 +61,7 @@ tsconfig.json:
 (Rank value: 0.25)`
 
     const files = parseRepomapFiles(mapText)
-    assert.deepEqual(files, [
-      'src/renderer/src/components/workspace/RepositorySettingsTab.tsx'
-    ])
+    assert.deepEqual(files, ['src/renderer/src/components/workspace/RepositorySettingsTab.tsx'])
   })
 })
 

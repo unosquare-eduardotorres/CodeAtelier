@@ -27,7 +27,13 @@ export type SettingsTab =
   | 'events'
   | 'office'
 
-export const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
+// eslint-disable-next-line react-refresh/only-export-components -- intentional co-located constant export with component
+export const SETTINGS_MENU: {
+  id: SettingsTab
+  label: string
+  icon: LucideIcon
+  iconColor?: string
+}[] = [
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning' },
   { id: 'team', label: 'Team', icon: Users, iconColor: 'text-info' },
   { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-accent' },

@@ -97,9 +97,7 @@ export default function OfficeEditorPage(): React.JSX.Element {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle bg-surface-raised">
         <Castle size={16} className="text-accent flex-shrink-0" />
         <h2 className="text-sm font-semibold text-text-primary">Office Editor</h2>
-        <span className="text-[10px] text-text-muted ml-1">
-          Design your pixel office layout
-        </span>
+        <span className="text-[10px] text-text-muted ml-1">Design your pixel office layout</span>
         {actions.isDirty && (
           <span className="ml-auto text-[10px] text-warning font-medium px-1.5 py-0.5 rounded bg-warning/10">
             Unsaved changes
@@ -144,7 +142,9 @@ export default function OfficeEditorPage(): React.JSX.Element {
             {showFurniturePalette && (
               <div className="border-b border-border-subtle">
                 <div className="px-3 py-2 border-b border-border-subtle">
-                  <span className="text-[11px] font-semibold text-text-primary">Furniture Catalog</span>
+                  <span className="text-[11px] font-semibold text-text-primary">
+                    Furniture Catalog
+                  </span>
                 </div>
                 <FurniturePalette
                   selectedFurnitureType={editorState.selectedFurnitureType}
@@ -183,20 +183,24 @@ export default function OfficeEditorPage(): React.JSX.Element {
       {/* Status bar */}
       <div className="flex items-center gap-4 px-4 py-1.5 border-t border-border-subtle bg-surface-raised text-[10px] text-text-muted">
         <span>
-          Tool: <strong className="text-text-secondary">{formatToolName(editorState.activeTool)}</strong>
+          Tool:{' '}
+          <strong className="text-text-secondary">{formatToolName(editorState.activeTool)}</strong>
         </span>
         {editorState.selectedFurnitureUid && (
           <span>
-            Selected: <strong className="text-text-secondary">{editorState.selectedFurnitureUid.slice(0, 12)}</strong>
+            Selected:{' '}
+            <strong className="text-text-secondary">
+              {editorState.selectedFurnitureUid.slice(0, 12)}
+            </strong>
           </span>
         )}
         <span className="ml-auto">
           Undo: {editorState.undoStack.length} · Redo: {editorState.redoStack.length}
         </span>
         <span>
-          Shortcuts: <kbd className="px-1 py-0.5 rounded bg-surface-overlay text-[9px]">R</kbd> Rotate ·
-          <kbd className="px-1 py-0.5 rounded bg-surface-overlay text-[9px]">T</kbd> Toggle ·
-          <kbd className="px-1 py-0.5 rounded bg-surface-overlay text-[9px]">Del</kbd> Delete ·
+          Shortcuts: <kbd className="px-1 py-0.5 rounded bg-surface-overlay text-[9px]">R</kbd>{' '}
+          Rotate ·<kbd className="px-1 py-0.5 rounded bg-surface-overlay text-[9px]">T</kbd> Toggle
+          ·<kbd className="px-1 py-0.5 rounded bg-surface-overlay text-[9px]">Del</kbd> Delete ·
           <kbd className="px-1 py-0.5 rounded bg-surface-overlay text-[9px]">Esc</kbd> Deselect
         </span>
       </div>

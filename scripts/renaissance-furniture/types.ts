@@ -19,7 +19,14 @@ export const RENAISSANCE_FURNITURE_IDS = [
 ] as const
 
 export type RenaissanceFurnitureId = (typeof RENAISSANCE_FURNITURE_IDS)[number]
-export type FurnitureCategory = 'desks' | 'chairs' | 'storage' | 'decor' | 'electronics' | 'wall' | 'misc'
+export type FurnitureCategory =
+  | 'desks'
+  | 'chairs'
+  | 'storage'
+  | 'decor'
+  | 'electronics'
+  | 'wall'
+  | 'misc'
 export type RotationScheme = '2-way' | '3-way-mirror'
 export type GroupType = 'rotation' | 'state' | 'animation'
 export type Orientation = 'front' | 'back' | 'left' | 'right' | 'side'

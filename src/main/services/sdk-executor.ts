@@ -235,6 +235,7 @@ export class SDKExecutor {
 
       this.activeQuery = query({
         prompt: options.prompt,
+        // @ts-expect-error — TODO: agents.mcpServers type drift with SDK AgentMcpServerSpec
         options: {
           model: options.model,
           systemPrompt: options.systemPrompt,
@@ -259,9 +260,7 @@ export class SDKExecutor {
             ? [...new Set([...(options.allowedTools ?? []), 'Agent'])]
             : options.allowedTools,
           // Block tools completely — removes them from model context
-          ...(options.disallowedTools?.length
-            ? { disallowedTools: options.disallowedTools }
-            : {}),
+          ...(options.disallowedTools?.length ? { disallowedTools: options.disallowedTools } : {}),
           resume: options.resume,
           // Modern thinking config takes precedence over deprecated maxThinkingTokens
           ...(options.thinking
@@ -297,381 +296,379 @@ export class SDKExecutor {
       })
 
       try {
-      for await (const message of this.activeQuery) {
-        lastActivityAt = Date.now()
+        for await (const message of this.activeQuery) {
+          lastActivityAt = Date.now()
 
-        // Emit pending heartbeat if timer fired between iterations
-        if (pendingHeartbeat) {
-          pendingHeartbeat = false
-          yield { type: 'status', content: 'heartbeat' }
-        }
-        const msg = message as Record<string, unknown>
-
-        // Capture session ID from system.init messages
-        if (msg.type === 'system' && msg.subtype === 'init') {
-          sessionId = msg.session_id as string | undefined
-        }
-
-        // ── SubAgent lifecycle events ──
-        if (msg.type === 'system' && msg.subtype === 'task_started') {
-          const taskMsg = msg as Record<string, unknown>
-          yield {
-            type: 'subagent_start',
-            content: taskMsg.description as string,
-            toolId: taskMsg.task_id as string,
-            toolName: (taskMsg.task_type as string) || 'Agent'
+          // Emit pending heartbeat if timer fired between iterations
+          if (pendingHeartbeat) {
+            pendingHeartbeat = false
+            yield { type: 'status', content: 'heartbeat' }
           }
-        }
+          const msg = message as Record<string, unknown>
 
-        if (msg.type === 'system' && msg.subtype === 'task_progress') {
-          const taskMsg = msg as Record<string, unknown>
-          yield {
-            type: 'subagent_progress',
-            content: (taskMsg.summary as string) || (taskMsg.description as string),
-            toolId: taskMsg.task_id as string,
-            toolName: taskMsg.last_tool_name as string | undefined
+          // Capture session ID from system.init messages
+          if (msg.type === 'system' && msg.subtype === 'init') {
+            sessionId = msg.session_id as string | undefined
           }
-        }
 
-        if (msg.type === 'system' && msg.subtype === 'task_notification') {
-          const taskMsg = msg as Record<string, unknown>
-          yield {
-            type: 'subagent_complete',
-            content: taskMsg.summary as string,
-            toolId: taskMsg.task_id as string,
-            toolInput: taskMsg.status as string // 'completed' | 'failed' | 'stopped'
+          // ── SubAgent lifecycle events ──
+          if (msg.type === 'system' && msg.subtype === 'task_started') {
+            const taskMsg = msg as Record<string, unknown>
+            yield {
+              type: 'subagent_start',
+              content: taskMsg.description as string,
+              toolId: taskMsg.task_id as string,
+              toolName: (taskMsg.task_type as string) || 'Agent'
+            }
           }
-        }
 
-        // Map assistant messages to StreamChunks.
-        // The assistant message is a full replay of the response — only yield blocks
-        // that weren't already emitted via stream_event deltas (dedup).
-        if (msg.type === 'assistant') {
-          const assistantMsg = msg.message as Record<string, unknown> | undefined
-          if (assistantMsg?.content && Array.isArray(assistantMsg.content)) {
-            for (const block of assistantMsg.content as Record<string, unknown>[]) {
-              if (block.type === 'text' && block.text && !hasStreamedText) {
-                hasStreamedText = true // prevent result message from re-yielding
-                yield { type: 'text', content: block.text as string }
-              } else if (block.type === 'tool_use') {
-                const toolName = block.name as string
-                const toolInput = block.input as Record<string, unknown> | undefined
+          if (msg.type === 'system' && msg.subtype === 'task_progress') {
+            const taskMsg = msg as Record<string, unknown>
+            yield {
+              type: 'subagent_progress',
+              content: (taskMsg.summary as string) || (taskMsg.description as string),
+              toolId: taskMsg.task_id as string,
+              toolName: taskMsg.last_tool_name as string | undefined
+            }
+          }
 
-                const toolId = block.id as string | undefined
-                if (toolId && processedToolIds.has(toolId)) continue
-                if (toolId) {
-                  processedToolIds.add(toolId)
-                  toolIdToName.set(toolId, toolName)
+          if (msg.type === 'system' && msg.subtype === 'task_notification') {
+            const taskMsg = msg as Record<string, unknown>
+            yield {
+              type: 'subagent_complete',
+              content: taskMsg.summary as string,
+              toolId: taskMsg.task_id as string,
+              toolInput: taskMsg.status as string // 'completed' | 'failed' | 'stopped'
+            }
+          }
+
+          // Map assistant messages to StreamChunks.
+          // The assistant message is a full replay of the response — only yield blocks
+          // that weren't already emitted via stream_event deltas (dedup).
+          if (msg.type === 'assistant') {
+            const assistantMsg = msg.message as Record<string, unknown> | undefined
+            if (assistantMsg?.content && Array.isArray(assistantMsg.content)) {
+              for (const block of assistantMsg.content as Record<string, unknown>[]) {
+                if (block.type === 'text' && block.text && !hasStreamedText) {
+                  hasStreamedText = true // prevent result message from re-yielding
+                  yield { type: 'text', content: block.text as string }
+                } else if (block.type === 'tool_use') {
+                  const toolName = block.name as string
+                  const toolInput = block.input as Record<string, unknown> | undefined
+
+                  const toolId = block.id as string | undefined
+                  if (toolId && processedToolIds.has(toolId)) continue
+                  if (toolId) {
+                    processedToolIds.add(toolId)
+                    toolIdToName.set(toolId, toolName)
+                  }
+                  yield {
+                    type: 'tool_use',
+                    toolName,
+                    toolId,
+                    toolInput: toolInput
+                      ? summarizeToolInput(toolName, toolInput, options.cwd)
+                      : undefined
+                  }
                 }
+              }
+            }
+          }
+
+          // Map stream_event (SDK wraps Anthropic API events in a stream_event wrapper)
+          if (msg.type === 'stream_event') {
+            const streamEvent = (msg as Record<string, unknown>).event as Record<string, unknown>
+            if (!streamEvent) continue
+
+            // Real-time text streaming
+            if (streamEvent.type === 'content_block_delta') {
+              const delta = streamEvent.delta as Record<string, unknown> | undefined
+              if (delta?.type === 'text_delta' && delta.text) {
+                hasStreamedText = true
+                yield { type: 'text', content: delta.text as string }
+              }
+              // Structured output may stream as json_delta
+              if (delta?.type === 'json_delta' && delta.json) {
+                hasStreamedText = true
+                yield { type: 'text', content: delta.json as string }
+              }
+            }
+
+            // Tool use start — track ID for dedup against assistant replay
+            if (streamEvent.type === 'content_block_start') {
+              const cb = streamEvent.content_block as Record<string, unknown> | undefined
+              if (cb?.type === 'tool_use') {
+                const toolId = cb.id as string | undefined
+                const toolName = cb.name as string
+                const toolInput = cb.input as Record<string, unknown> | undefined
+                const hasInput = toolInput && Object.keys(toolInput).length > 0
+
+                if (toolId) {
+                  toolIdToName.set(toolId, toolName)
+                  // Only mark as processed if we have actual input — the API streams
+                  // tool input via input_json_delta so content_block_start often has
+                  // empty input {}. Deferring dedup lets the assistant message replay
+                  // (which has the full input + cwd) handle file tracking correctly.
+                  if (hasInput) {
+                    processedToolIds.add(toolId)
+                  }
+                }
+
                 yield {
                   type: 'tool_use',
                   toolName,
                   toolId,
-                  toolInput: toolInput
+                  toolInput: hasInput
                     ? summarizeToolInput(toolName, toolInput, options.cwd)
                     : undefined
                 }
               }
             }
-          }
-        }
 
-        // Map stream_event (SDK wraps Anthropic API events in a stream_event wrapper)
-        if (msg.type === 'stream_event') {
-          const streamEvent = (msg as Record<string, unknown>).event as Record<string, unknown>
-          if (!streamEvent) continue
+            // Token usage from message_start + turn boundary detection
+            if (streamEvent.type === 'message_start') {
+              // Turn boundary — signal renderer to finalize current bubble and start a new one
+              // Only emit when there's been prior content (text or tools) to avoid empty bubbles
+              if (hasStreamedText || processedToolIds.size > 0) {
+                yield { type: 'turn_boundary' as const, content: `turn-${Date.now()}` }
+              }
+              // Reset per-turn text dedup so new turn can stream fresh text
+              hasStreamedText = false
 
-          // Real-time text streaming
-          if (streamEvent.type === 'content_block_delta') {
-            const delta = streamEvent.delta as Record<string, unknown> | undefined
-            if (delta?.type === 'text_delta' && delta.text) {
-              hasStreamedText = true
-              yield { type: 'text', content: delta.text as string }
+              const startMsg = streamEvent.message as Record<string, unknown> | undefined
+              const startUsage = startMsg?.usage as Record<string, number> | undefined
+              if (startUsage) {
+                totalUsage.input += startUsage.input_tokens ?? 0
+                totalUsage.cacheReadInputTokens += startUsage.cache_read_input_tokens ?? 0
+                totalUsage.cacheCreationInputTokens += startUsage.cache_creation_input_tokens ?? 0
+              }
             }
-            // Structured output may stream as json_delta
-            if (delta?.type === 'json_delta' && delta.json) {
-              hasStreamedText = true
-              yield { type: 'text', content: delta.json as string }
+
+            // Token usage from message_delta
+            if (streamEvent.type === 'message_delta') {
+              const deltaUsage = streamEvent.usage as Record<string, number> | undefined
+              if (deltaUsage) {
+                totalUsage.output += deltaUsage.output_tokens ?? 0
+              }
             }
           }
 
-          // Tool use start — track ID for dedup against assistant replay
-          if (streamEvent.type === 'content_block_start') {
-            const cb = streamEvent.content_block as Record<string, unknown> | undefined
-            if (cb?.type === 'tool_use') {
-              const toolId = cb.id as string | undefined
-              const toolName = cb.name as string
-              const toolInput = cb.input as Record<string, unknown> | undefined
-              const hasInput = toolInput && Object.keys(toolInput).length > 0
-
-              if (toolId) {
-                toolIdToName.set(toolId, toolName)
-                // Only mark as processed if we have actual input — the API streams
-                // tool input via input_json_delta so content_block_start often has
-                // empty input {}. Deferring dedup lets the assistant message replay
-                // (which has the full input + cwd) handle file tracking correctly.
-                if (hasInput) {
-                  processedToolIds.add(toolId)
+          // Map user messages for tool results
+          if (msg.type === 'user') {
+            const userMsg = msg.message as Record<string, unknown> | undefined
+            if (userMsg?.content && Array.isArray(userMsg.content)) {
+              for (const block of userMsg.content as Record<string, unknown>[]) {
+                if (block.type === 'tool_result') {
+                  const toolUseId = block.tool_use_id as string | undefined
+                  const toolName = (toolUseId && toolIdToName.get(toolUseId)) ?? 'Unknown'
+                  if (toolUseId) {
+                    toolIdToName.delete(toolUseId)
+                  }
+                  yield {
+                    type: 'tool_result',
+                    toolName,
+                    toolId: toolUseId
+                  }
                 }
               }
+            }
+          }
 
+          // Capture result text
+          if (msg.type === 'result') {
+            const subtype = (msg as Record<string, unknown>).subtype as string | undefined
+            const isError = (msg as Record<string, unknown>).is_error as boolean | undefined
+
+            // Detect SDK-level execution errors (budget exceeded, max turns, schema validation)
+            if (isError && subtype && subtype !== 'success') {
+              const errorDetail =
+                subtype === 'error_max_budget_usd'
+                  ? 'budget cap exceeded'
+                  : subtype === 'error_max_turns'
+                    ? 'max turns reached'
+                    : subtype === 'error_max_structured_output_retries'
+                      ? 'structured output schema validation failed after retries'
+                      : subtype
+              sdkLog.warn(`[TELEMETRY:sdk-result-error] subtype=${subtype} detail=${errorDetail}`)
               yield {
-                type: 'tool_use',
-                toolName,
-                toolId,
-                toolInput: hasInput
-                  ? summarizeToolInput(toolName, toolInput, options.cwd)
-                  : undefined
+                type: 'error',
+                error: `SDK execution stopped: ${errorDetail}`
               }
             }
-          }
 
-          // Token usage from message_start + turn boundary detection
-          if (streamEvent.type === 'message_start') {
-            // Turn boundary — signal renderer to finalize current bubble and start a new one
-            // Only emit when there's been prior content (text or tools) to avoid empty bubbles
-            if (hasStreamedText || processedToolIds.size > 0) {
-              yield { type: 'turn_boundary' as const, content: `turn-${Date.now()}` }
-            }
-            // Reset per-turn text dedup so new turn can stream fresh text
-            hasStreamedText = false
+            resultText = msg.result as string | undefined
 
-            const startMsg = streamEvent.message as Record<string, unknown> | undefined
-            const startUsage = startMsg?.usage as Record<string, number> | undefined
-            if (startUsage) {
-              totalUsage.input += startUsage.input_tokens ?? 0
-              totalUsage.cacheReadInputTokens += startUsage.cache_read_input_tokens ?? 0
-              totalUsage.cacheCreationInputTokens += startUsage.cache_creation_input_tokens ?? 0
-            }
-          }
-
-          // Token usage from message_delta
-          if (streamEvent.type === 'message_delta') {
-            const deltaUsage = streamEvent.usage as Record<string, number> | undefined
-            if (deltaUsage) {
-              totalUsage.output += deltaUsage.output_tokens ?? 0
-            }
-          }
-        }
-
-        // Map user messages for tool results
-        if (msg.type === 'user') {
-          const userMsg = msg.message as Record<string, unknown> | undefined
-          if (userMsg?.content && Array.isArray(userMsg.content)) {
-            for (const block of userMsg.content as Record<string, unknown>[]) {
-              if (block.type === 'tool_result') {
-                const toolUseId = block.tool_use_id as string | undefined
-                const toolName = (toolUseId && toolIdToName.get(toolUseId)) ?? 'Unknown'
-                if (toolUseId) {
-                  toolIdToName.delete(toolUseId)
-                }
-                yield {
-                  type: 'tool_result',
-                  toolName,
-                  toolId: toolUseId
-                }
+            // For structured output (json_schema), the JSON is in structured_output, not result
+            if (!resultText) {
+              const structuredOutput = (msg as Record<string, unknown>).structured_output
+              if (structuredOutput) {
+                resultText =
+                  typeof structuredOutput === 'string'
+                    ? structuredOutput
+                    : JSON.stringify(structuredOutput)
               }
             }
+
+            if (resultText && !hasStreamedText) {
+              yield { type: 'text', content: resultText }
+            }
+            // SDK result has rich usage — prefer it over accumulated stream usage
+            const resultUsage = msg.usage as Record<string, number> | undefined
+            if (resultUsage) {
+              totalUsage.input =
+                resultUsage.input_tokens ?? resultUsage.inputTokens ?? totalUsage.input
+              totalUsage.output =
+                resultUsage.output_tokens ?? resultUsage.outputTokens ?? totalUsage.output
+              totalUsage.cacheReadInputTokens =
+                resultUsage.cache_read_input_tokens ??
+                resultUsage.cacheReadInputTokens ??
+                totalUsage.cacheReadInputTokens
+              totalUsage.cacheCreationInputTokens =
+                resultUsage.cache_creation_input_tokens ??
+                resultUsage.cacheCreationInputTokens ??
+                totalUsage.cacheCreationInputTokens
+            }
           }
-        }
 
-        // Capture result text
-        if (msg.type === 'result') {
-          const subtype = (msg as Record<string, unknown>).subtype as string | undefined
-          const isError = (msg as Record<string, unknown>).is_error as boolean | undefined
-
-          // Detect SDK-level execution errors (budget exceeded, max turns, schema validation)
-          if (isError && subtype && subtype !== 'success') {
-            const errorDetail =
-              subtype === 'error_max_budget_usd'
-                ? 'budget cap exceeded'
-                : subtype === 'error_max_turns'
-                  ? 'max turns reached'
-                  : subtype === 'error_max_structured_output_retries'
-                    ? 'structured output schema validation failed after retries'
-                    : subtype
-            sdkLog.warn(`[TELEMETRY:sdk-result-error] subtype=${subtype} detail=${errorDetail}`)
+          // ── tool_progress — elapsed time updates for running tools ──
+          if (msg.type === 'tool_progress') {
+            const toolMsg = msg as Record<string, unknown>
             yield {
-              type: 'error',
-              error: `SDK execution stopped: ${errorDetail}`
+              type: 'tool_progress',
+              toolId: toolMsg.tool_use_id as string,
+              toolName: toolMsg.tool_name as string,
+              elapsedSeconds: toolMsg.elapsed_time_seconds as number,
+              content: `${toolMsg.elapsed_time_seconds}s`
             }
           }
 
-          resultText = msg.result as string | undefined
-
-          // For structured output (json_schema), the JSON is in structured_output, not result
-          if (!resultText) {
-            const structuredOutput = (msg as Record<string, unknown>).structured_output
-            if (structuredOutput) {
-              resultText =
-                typeof structuredOutput === 'string'
-                  ? structuredOutput
-                  : JSON.stringify(structuredOutput)
-            }
-          }
-
-          if (resultText && !hasStreamedText) {
-            yield { type: 'text', content: resultText }
-          }
-          // SDK result has rich usage — prefer it over accumulated stream usage
-          const resultUsage = msg.usage as Record<string, number> | undefined
-          if (resultUsage) {
-            totalUsage.input =
-              resultUsage.input_tokens ?? resultUsage.inputTokens ?? totalUsage.input
-            totalUsage.output =
-              resultUsage.output_tokens ?? resultUsage.outputTokens ?? totalUsage.output
-            totalUsage.cacheReadInputTokens =
-              resultUsage.cache_read_input_tokens ??
-              resultUsage.cacheReadInputTokens ??
-              totalUsage.cacheReadInputTokens
-            totalUsage.cacheCreationInputTokens =
-              resultUsage.cache_creation_input_tokens ??
-              resultUsage.cacheCreationInputTokens ??
-              totalUsage.cacheCreationInputTokens
-          }
-        }
-
-        // ── tool_progress — elapsed time updates for running tools ──
-        if (msg.type === 'tool_progress') {
-          const toolMsg = msg as Record<string, unknown>
-          yield {
-            type: 'tool_progress',
-            toolId: toolMsg.tool_use_id as string,
-            toolName: toolMsg.tool_name as string,
-            elapsedSeconds: toolMsg.elapsed_time_seconds as number,
-            content: `${toolMsg.elapsed_time_seconds}s`
-          }
-        }
-
-        // ── rate_limit_event — subscription rate limit warnings/rejections ──
-        if (msg.type === 'rate_limit_event') {
-          const rateMsg = msg as Record<string, unknown>
-          const info = rateMsg.rate_limit_info as Record<string, unknown>
-          if (info) {
-            yield {
-              type: 'rate_limit',
-              rateLimit: {
-                status: info.status as 'allowed' | 'allowed_warning' | 'rejected',
-                utilization: info.utilization as number | undefined,
-                resetsAt: info.resetsAt as number | undefined,
-                rateLimitType: info.rateLimitType as string | undefined
+          // ── rate_limit_event — subscription rate limit warnings/rejections ──
+          if (msg.type === 'rate_limit_event') {
+            const rateMsg = msg as Record<string, unknown>
+            const info = rateMsg.rate_limit_info as Record<string, unknown>
+            if (info) {
+              yield {
+                type: 'rate_limit',
+                rateLimit: {
+                  status: info.status as 'allowed' | 'allowed_warning' | 'rejected',
+                  utilization: info.utilization as number | undefined,
+                  resetsAt: info.resetsAt as number | undefined,
+                  rateLimitType: info.rateLimitType as string | undefined
+                }
               }
             }
           }
-        }
 
-        // ── system/api_retry — API retry events ──
-        if (msg.type === 'system' && msg.subtype === 'api_retry') {
-          const retryMsg = msg as Record<string, unknown>
-          yield {
-            type: 'api_retry',
-            retryInfo: {
-              attempt: retryMsg.attempt as number,
-              maxRetries: retryMsg.max_retries as number,
-              retryDelayMs: retryMsg.retry_delay_ms as number,
-              errorStatus: retryMsg.error_status as number | null
+          // ── system/api_retry — API retry events ──
+          if (msg.type === 'system' && msg.subtype === 'api_retry') {
+            const retryMsg = msg as Record<string, unknown>
+            yield {
+              type: 'api_retry',
+              retryInfo: {
+                attempt: retryMsg.attempt as number,
+                maxRetries: retryMsg.max_retries as number,
+                retryDelayMs: retryMsg.retry_delay_ms as number,
+                errorStatus: retryMsg.error_status as number | null
+              }
             }
           }
-        }
 
-        // ── system/compact_boundary — context compaction ──
-        if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
-          const meta = (msg as Record<string, unknown>).compact_metadata as
-            | Record<string, unknown>
-            | undefined
-          yield {
-            type: 'compact_boundary',
-            content: `Context compacted (trigger: ${meta?.trigger ?? 'auto'}, pre-tokens: ${meta?.pre_tokens ?? '?'})`
+          // ── system/compact_boundary — context compaction ──
+          if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+            const meta = (msg as Record<string, unknown>).compact_metadata as
+              | Record<string, unknown>
+              | undefined
+            yield {
+              type: 'compact_boundary',
+              content: `Context compacted (trigger: ${meta?.trigger ?? 'auto'}, pre-tokens: ${meta?.pre_tokens ?? '?'})`
+            }
           }
-        }
 
-        // ── system/status — compacting status ──
-        if (msg.type === 'system' && msg.subtype === 'status') {
-          const status = (msg as Record<string, unknown>).status as string | null
-          yield { type: 'session_state', content: status ?? 'idle' }
-        }
-
-        // ── prompt_suggestion — follow-up prompt suggestions ──
-        if (msg.type === 'prompt_suggestion') {
-          yield {
-            type: 'prompt_suggestion',
-            content: (msg as Record<string, unknown>).suggestion as string
+          // ── system/status — compacting status ──
+          if (msg.type === 'system' && msg.subtype === 'status') {
+            const status = (msg as Record<string, unknown>).status as string | null
+            yield { type: 'session_state', content: status ?? 'idle' }
           }
-        }
 
-        // ── system/files_persisted — track file changes ──
-        if (msg.type === 'system' && msg.subtype === 'files_persisted') {
-          const filesMsg = msg as Record<string, unknown>
-          yield {
-            type: 'files_persisted',
-            persistedFiles: (
-              filesMsg.files as Array<{ filename: string; file_id: string }> | undefined
-            )?.map((f) => ({
-              filename: f.filename,
-              fileId: f.file_id
-            }))
+          // ── prompt_suggestion — follow-up prompt suggestions ──
+          if (msg.type === 'prompt_suggestion') {
+            yield {
+              type: 'prompt_suggestion',
+              content: (msg as Record<string, unknown>).suggestion as string
+            }
           }
-        }
 
-        // ── tool_use_summary — batch tool summaries ──
-        if (msg.type === 'tool_use_summary') {
-          yield {
-            type: 'tool_use_summary',
-            content: (msg as Record<string, unknown>).summary as string
+          // ── system/files_persisted — track file changes ──
+          if (msg.type === 'system' && msg.subtype === 'files_persisted') {
+            const filesMsg = msg as Record<string, unknown>
+            yield {
+              type: 'files_persisted',
+              persistedFiles: (
+                filesMsg.files as Array<{ filename: string; file_id: string }> | undefined
+              )?.map((f) => ({
+                filename: f.filename,
+                fileId: f.file_id
+              }))
+            }
           }
-        }
 
-        // ── system/hook_started, hook_progress, hook_response ──
-        if (
-          msg.type === 'system' &&
-          ['hook_started', 'hook_progress', 'hook_response'].includes(msg.subtype as string)
-        ) {
-          const hookMsg = msg as Record<string, unknown>
-          yield {
-            type: 'hook_lifecycle',
-            hookInfo: {
-              hookId: hookMsg.hook_id as string,
-              hookName: hookMsg.hook_name as string,
-              hookEvent: hookMsg.hook_event as string,
-              phase: (
-                msg.subtype === 'hook_started'
+          // ── tool_use_summary — batch tool summaries ──
+          if (msg.type === 'tool_use_summary') {
+            yield {
+              type: 'tool_use_summary',
+              content: (msg as Record<string, unknown>).summary as string
+            }
+          }
+
+          // ── system/hook_started, hook_progress, hook_response ──
+          if (
+            msg.type === 'system' &&
+            ['hook_started', 'hook_progress', 'hook_response'].includes(msg.subtype as string)
+          ) {
+            const hookMsg = msg as Record<string, unknown>
+            yield {
+              type: 'hook_lifecycle',
+              hookInfo: {
+                hookId: hookMsg.hook_id as string,
+                hookName: hookMsg.hook_name as string,
+                hookEvent: hookMsg.hook_event as string,
+                phase: (msg.subtype === 'hook_started'
                   ? 'started'
                   : msg.subtype === 'hook_progress'
                     ? 'progress'
-                    : 'response'
-              ) as 'started' | 'progress' | 'response',
-              output: hookMsg.output as string | undefined,
-              outcome: hookMsg.outcome as 'success' | 'error' | 'cancelled' | undefined
+                    : 'response') as 'started' | 'progress' | 'response',
+                output: hookMsg.output as string | undefined,
+                outcome: hookMsg.outcome as 'success' | 'error' | 'cancelled' | undefined
+              }
             }
           }
-        }
 
-        // ── system/session_state_changed ──
-        if (msg.type === 'system' && msg.subtype === 'session_state_changed') {
-          yield {
-            type: 'session_state',
-            content: (msg as Record<string, unknown>).state as string
+          // ── system/session_state_changed ──
+          if (msg.type === 'system' && msg.subtype === 'session_state_changed') {
+            yield {
+              type: 'session_state',
+              content: (msg as Record<string, unknown>).state as string
+            }
+          }
+
+          // ── auth_status ──
+          if (msg.type === 'auth_status') {
+            const authMsg = msg as Record<string, unknown>
+            yield {
+              type: 'auth_status',
+              content: authMsg.error ? `Auth error: ${authMsg.error}` : 'Authenticating...'
+            }
+          }
+
+          // Accumulate token usage from all event types
+          const usage = msg.usage as Record<string, number> | undefined
+          if (usage && msg.type !== 'result') {
+            totalUsage.input += usage.input_tokens ?? 0
+            totalUsage.output += usage.output_tokens ?? 0
+            totalUsage.cacheReadInputTokens += usage.cache_read_input_tokens ?? 0
+            totalUsage.cacheCreationInputTokens += usage.cache_creation_input_tokens ?? 0
           }
         }
-
-        // ── auth_status ──
-        if (msg.type === 'auth_status') {
-          const authMsg = msg as Record<string, unknown>
-          yield {
-            type: 'auth_status',
-            content: authMsg.error ? `Auth error: ${authMsg.error}` : 'Authenticating...'
-          }
-        }
-
-        // Accumulate token usage from all event types
-        const usage = msg.usage as Record<string, number> | undefined
-        if (usage && msg.type !== 'result') {
-          totalUsage.input += usage.input_tokens ?? 0
-          totalUsage.output += usage.output_tokens ?? 0
-          totalUsage.cacheReadInputTokens += usage.cache_read_input_tokens ?? 0
-          totalUsage.cacheCreationInputTokens += usage.cache_creation_input_tokens ?? 0
-        }
-      }
       } finally {
         this.activeQuery = null
       }

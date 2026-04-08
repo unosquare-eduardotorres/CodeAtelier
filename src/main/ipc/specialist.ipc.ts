@@ -81,16 +81,13 @@ export function registerSpecialistIpc(): void {
     specialistRepository.delete(args.id)
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.SPECIALIST_REORDER,
-    async (event, args: { orderedIds: string[] }) => {
-      validateSender(event)
-      if (!Array.isArray(args?.orderedIds) || args.orderedIds.length === 0) {
-        throw new Error('Invalid ordered IDs')
-      }
-      specialistRepository.reorderPriorities(args.orderedIds)
+  ipcMain.handle(IPC_CHANNELS.SPECIALIST_REORDER, async (event, args: { orderedIds: string[] }) => {
+    validateSender(event)
+    if (!Array.isArray(args?.orderedIds) || args.orderedIds.length === 0) {
+      throw new Error('Invalid ordered IDs')
     }
-  )
+    specialistRepository.reorderPriorities(args.orderedIds)
+  })
 
   ipcMain.handle(
     IPC_CHANNELS.SPECIALIST_ASSIGN_SKILL,

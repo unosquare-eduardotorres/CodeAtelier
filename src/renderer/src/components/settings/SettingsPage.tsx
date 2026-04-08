@@ -337,9 +337,7 @@ function SchedulingStrategySection(): React.JSX.Element {
     (key: keyof SchedulingWeights, value: number) => {
       const updated = { ...weights, [key]: value }
       // Normalize: distribute remaining budget proportionally among other keys
-      const others = (
-        Object.keys(updated) as (keyof SchedulingWeights)[]
-      ).filter((k) => k !== key)
+      const others = (Object.keys(updated) as (keyof SchedulingWeights)[]).filter((k) => k !== key)
       const remaining = Math.max(0, 1.0 - value)
       const otherSum = others.reduce((s, k) => s + weights[k], 0)
       for (const k of others) {

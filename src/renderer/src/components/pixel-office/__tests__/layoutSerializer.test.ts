@@ -50,9 +50,15 @@ function make3x3Layout(): OfficeLayout {
     cols: 3,
     rows: 3,
     tiles: [
-      TileType.WALL, TileType.WALL, TileType.WALL,
-      TileType.WALL, TileType.FLOOR_1, TileType.WALL,
-      TileType.WALL, TileType.WALL, TileType.WALL
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.FLOOR_1,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL
     ],
     furniture: []
   }
@@ -65,9 +71,18 @@ function make4x3Layout(): OfficeLayout {
     cols: 4,
     rows: 3,
     tiles: [
-      TileType.WALL, TileType.WALL, TileType.WALL, TileType.WALL,
-      TileType.WALL, TileType.FLOOR_1, TileType.FLOOR_2, TileType.WALL,
-      TileType.WALL, TileType.WALL, TileType.WALL, TileType.WALL
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.FLOOR_1,
+      TileType.FLOOR_2,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL,
+      TileType.WALL
     ],
     furniture: []
   }
@@ -178,8 +193,11 @@ describe('layoutToTileMap', () => {
 
   test('handles single-cell layout', () => {
     const layout: OfficeLayout = {
-      version: 1, cols: 1, rows: 1,
-      tiles: [TileType.FLOOR_1], furniture: []
+      version: 1,
+      cols: 1,
+      rows: 1,
+      tiles: [TileType.FLOOR_1],
+      furniture: []
     }
     const map = layoutToTileMap(layout)
     assert.equal(map.length, 1)
@@ -189,7 +207,9 @@ describe('layoutToTileMap', () => {
 
   test('handles all floor types', () => {
     const layout: OfficeLayout = {
-      version: 1, cols: 3, rows: 1,
+      version: 1,
+      cols: 3,
+      rows: 1,
       tiles: [TileType.FLOOR_1, TileType.FLOOR_5, TileType.VOID],
       furniture: []
     }
@@ -209,9 +229,7 @@ describe('getBlockedTiles', () => {
   })
 
   test('blocks tiles under furniture footprint', () => {
-    const furniture: PlacedFurniture[] = [
-      { uid: 'd1', type: 'TEST_DESK', col: 2, row: 2 }
-    ]
+    const furniture: PlacedFurniture[] = [{ uid: 'd1', type: 'TEST_DESK', col: 2, row: 2 }]
     const blocked = getBlockedTiles(furniture)
     // TEST_DESK is 2x1 footprint
     assert.ok(blocked.has('2,2'))
@@ -220,9 +238,7 @@ describe('getBlockedTiles', () => {
   })
 
   test('skips background tile rows', () => {
-    const furniture: PlacedFurniture[] = [
-      { uid: 'p1', type: 'TEST_PLANT', col: 3, row: 3 }
-    ]
+    const furniture: PlacedFurniture[] = [{ uid: 'p1', type: 'TEST_PLANT', col: 3, row: 3 }]
     const blocked = getBlockedTiles(furniture)
     // TEST_PLANT has backgroundTiles: 1 and footprintH: 1
     // With footprintH=1 and bgRows=1, the only row (row 0) is a background row -> skipped
@@ -230,9 +246,7 @@ describe('getBlockedTiles', () => {
   })
 
   test('respects excludeTiles parameter', () => {
-    const furniture: PlacedFurniture[] = [
-      { uid: 'd1', type: 'TEST_DESK', col: 2, row: 2 }
-    ]
+    const furniture: PlacedFurniture[] = [{ uid: 'd1', type: 'TEST_DESK', col: 2, row: 2 }]
     const exclude = new Set(['2,2'])
     const blocked = getBlockedTiles(furniture, exclude)
     assert.ok(!blocked.has('2,2'))
@@ -266,9 +280,7 @@ describe('layoutToSeats', () => {
   })
 
   test('creates seat for chair furniture', () => {
-    const furniture: PlacedFurniture[] = [
-      { uid: 'c1', type: 'TEST_CHAIR_FRONT', col: 3, row: 3 }
-    ]
+    const furniture: PlacedFurniture[] = [{ uid: 'c1', type: 'TEST_CHAIR_FRONT', col: 3, row: 3 }]
     const seats = layoutToSeats(furniture)
     assert.equal(seats.size, 1)
     const seat = seats.get('c1')!
@@ -278,9 +290,7 @@ describe('layoutToSeats', () => {
   })
 
   test('does not create seats for non-chair furniture', () => {
-    const furniture: PlacedFurniture[] = [
-      { uid: 'd1', type: 'TEST_DESK', col: 2, row: 2 }
-    ]
+    const furniture: PlacedFurniture[] = [{ uid: 'd1', type: 'TEST_DESK', col: 2, row: 2 }]
     const seats = layoutToSeats(furniture)
     assert.equal(seats.size, 0)
   })
@@ -298,9 +308,7 @@ describe('layoutToSeats', () => {
   })
 
   test('seats start unassigned', () => {
-    const furniture: PlacedFurniture[] = [
-      { uid: 'c1', type: 'TEST_CHAIR_FRONT', col: 3, row: 3 }
-    ]
+    const furniture: PlacedFurniture[] = [{ uid: 'c1', type: 'TEST_CHAIR_FRONT', col: 3, row: 3 }]
     const seats = layoutToSeats(furniture)
     assert.equal(seats.get('c1')!.assigned, false)
   })
@@ -331,9 +339,7 @@ describe('layoutToFurnitureInstances', () => {
   })
 
   test('creates instance with correct pixel position', () => {
-    const furniture: PlacedFurniture[] = [
-      { uid: 'd1', type: 'TEST_DESK', col: 2, row: 3 }
-    ]
+    const furniture: PlacedFurniture[] = [{ uid: 'd1', type: 'TEST_DESK', col: 2, row: 3 }]
     const instances = layoutToFurnitureInstances(furniture)
     assert.equal(instances.length, 1)
     // TILE_SIZE is 16, so pixel pos = col * 16, row * 16
@@ -342,18 +348,14 @@ describe('layoutToFurnitureInstances', () => {
   })
 
   test('has sprite data for each instance', () => {
-    const furniture: PlacedFurniture[] = [
-      { uid: 'd1', type: 'TEST_DESK', col: 2, row: 3 }
-    ]
+    const furniture: PlacedFurniture[] = [{ uid: 'd1', type: 'TEST_DESK', col: 2, row: 3 }]
     const instances = layoutToFurnitureInstances(furniture)
     assert.ok(instances[0].sprite)
     assert.ok(instances[0].sprite.length > 0)
   })
 
   test('skips unknown furniture types gracefully', () => {
-    const furniture: PlacedFurniture[] = [
-      { uid: 'x1', type: 'NONEXISTENT_TYPE', col: 1, row: 1 }
-    ]
+    const furniture: PlacedFurniture[] = [{ uid: 'x1', type: 'NONEXISTENT_TYPE', col: 1, row: 1 }]
     const instances = layoutToFurnitureInstances(furniture)
     assert.equal(instances.length, 0)
   })

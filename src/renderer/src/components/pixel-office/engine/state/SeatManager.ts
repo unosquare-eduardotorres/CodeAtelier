@@ -2,13 +2,10 @@
  * Manages seat assignment, pathfinding to seats, and seat-related operations.
  * Extracted from OfficeState to reduce complexity.
  */
-import {
-  INACTIVE_SEAT_TIMER_MIN_SEC,
-  INACTIVE_SEAT_TIMER_RANGE_SEC
-} from '../../constants'
+import { INACTIVE_SEAT_TIMER_MIN_SEC, INACTIVE_SEAT_TIMER_RANGE_SEC } from '../../constants'
 import { findPath, isWalkable } from '../../layout/tileMap'
 import type { Character, Seat, TileType as TileTypeVal } from '../types'
-import { CharacterState, TILE_SIZE } from '../types'
+import { CharacterState } from '../types'
 
 export class SeatManager {
   /** Find a free (unassigned) seat, or null if none available */

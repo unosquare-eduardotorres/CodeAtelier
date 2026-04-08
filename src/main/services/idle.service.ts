@@ -93,7 +93,6 @@ class IdleService {
       log.error('Idle check failed:', error)
     }
   }
-
 }
 
 export const idleService = new IdleService()

@@ -370,9 +370,7 @@ describe('buildScopeContexts', () => {
   })
 
   test('returns empty map for files with no classes', () => {
-    const tags: RawChunk[] = [
-      makeChunk({ symbolKind: 'function', startLine: 1, endLine: 10 })
-    ]
+    const tags: RawChunk[] = [makeChunk({ symbolKind: 'function', startLine: 1, endLine: 10 })]
     const contexts = buildScopeContexts(tags)
 
     assert.equal(contexts.size, 0)

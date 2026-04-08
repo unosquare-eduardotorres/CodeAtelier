@@ -21,10 +21,19 @@ interface ColorSliderProps {
   colorClass?: string
 }
 
-function ColorSlider({ label, value, min, max, onChange, colorClass }: ColorSliderProps) {
+function ColorSlider({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+  colorClass
+}: ColorSliderProps): React.JSX.Element {
   return (
     <div className="flex items-center gap-2">
-      <span className={`text-[10px] font-medium w-4 text-right ${colorClass ?? 'text-text-secondary'}`}>
+      <span
+        className={`text-[10px] font-medium w-4 text-right ${colorClass ?? 'text-text-secondary'}`}
+      >
         {label}
       </span>
       <input
@@ -58,7 +67,7 @@ export default function ColorPicker({
   showColorize = false,
   compact = false,
   label
-}: ColorPickerProps) {
+}: ColorPickerProps): React.JSX.Element {
   const handleChange = useCallback(
     (key: keyof FloorColor, value: number | boolean) => {
       onChange({ ...color, [key]: value })

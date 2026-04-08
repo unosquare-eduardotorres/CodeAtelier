@@ -60,13 +60,89 @@ function simpleSprite(w: number, h: number): SpriteData {
 function buildTestCatalog(): void {
   const assets: LoadedAssetData = {
     catalog: [
-      { id: 'ED_DESK', label: 'Desk', category: 'desks', width: 32, height: 16, footprintW: 2, footprintH: 1, isDesk: true },
-      { id: 'ED_CHAIR_FRONT', label: 'Chair - Front', category: 'chairs', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, groupId: 'ed-chair', orientation: 'front' },
-      { id: 'ED_CHAIR_BACK', label: 'Chair - Back', category: 'chairs', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, groupId: 'ed-chair', orientation: 'back' },
-      { id: 'ED_PLANT', label: 'Plant', category: 'decor', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false },
-      { id: 'ED_PC_OFF', label: 'PC - Front - Off', category: 'electronics', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, groupId: 'ed-pc', orientation: 'front', state: 'off', canPlaceOnSurfaces: true },
-      { id: 'ED_PC_ON', label: 'PC - Front - On', category: 'electronics', width: 16, height: 16, footprintW: 1, footprintH: 1, isDesk: false, groupId: 'ed-pc', orientation: 'front', state: 'on', canPlaceOnSurfaces: true },
-      { id: 'ED_WALL_ART', label: 'Wall Art', category: 'wall', width: 16, height: 32, footprintW: 1, footprintH: 2, isDesk: false, canPlaceOnWalls: true }
+      {
+        id: 'ED_DESK',
+        label: 'Desk',
+        category: 'desks',
+        width: 32,
+        height: 16,
+        footprintW: 2,
+        footprintH: 1,
+        isDesk: true
+      },
+      {
+        id: 'ED_CHAIR_FRONT',
+        label: 'Chair - Front',
+        category: 'chairs',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        groupId: 'ed-chair',
+        orientation: 'front'
+      },
+      {
+        id: 'ED_CHAIR_BACK',
+        label: 'Chair - Back',
+        category: 'chairs',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        groupId: 'ed-chair',
+        orientation: 'back'
+      },
+      {
+        id: 'ED_PLANT',
+        label: 'Plant',
+        category: 'decor',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false
+      },
+      {
+        id: 'ED_PC_OFF',
+        label: 'PC - Front - Off',
+        category: 'electronics',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        groupId: 'ed-pc',
+        orientation: 'front',
+        state: 'off',
+        canPlaceOnSurfaces: true
+      },
+      {
+        id: 'ED_PC_ON',
+        label: 'PC - Front - On',
+        category: 'electronics',
+        width: 16,
+        height: 16,
+        footprintW: 1,
+        footprintH: 1,
+        isDesk: false,
+        groupId: 'ed-pc',
+        orientation: 'front',
+        state: 'on',
+        canPlaceOnSurfaces: true
+      },
+      {
+        id: 'ED_WALL_ART',
+        label: 'Wall Art',
+        category: 'wall',
+        width: 16,
+        height: 32,
+        footprintW: 1,
+        footprintH: 2,
+        isDesk: false,
+        canPlaceOnWalls: true
+      }
     ],
     sprites: {
       ED_DESK: simpleSprite(32, 16),
@@ -314,16 +390,19 @@ describe('toggleFurnitureState', () => {
     // Place desk first (PC needs surface), then place PC on desk
     layout = placeFurniture(layout, { uid: 'd1', type: 'ED_DESK', col: 1, row: 1 })
     // Manually add PC since canPlaceOnSurfaces logic may be complex
-    layout = { ...layout, furniture: [...layout.furniture, { uid: 'pc1', type: 'ED_PC_OFF', col: 1, row: 1 }] }
+    layout = {
+      ...layout,
+      furniture: [...layout.furniture, { uid: 'pc1', type: 'ED_PC_OFF', col: 1, row: 1 }]
+    }
     const result = toggleFurnitureState(layout, 'pc1')
-    assert.equal(result.furniture.find(f => f.uid === 'pc1')!.type, 'ED_PC_ON')
+    assert.equal(result.furniture.find((f) => f.uid === 'pc1')!.type, 'ED_PC_ON')
   })
 
   test('toggles PC from on back to off', () => {
     let layout = make5x5Layout()
     layout = { ...layout, furniture: [{ uid: 'pc1', type: 'ED_PC_ON', col: 2, row: 2 }] }
     const result = toggleFurnitureState(layout, 'pc1')
-    assert.equal(result.furniture.find(f => f.uid === 'pc1')!.type, 'ED_PC_OFF')
+    assert.equal(result.furniture.find((f) => f.uid === 'pc1')!.type, 'ED_PC_OFF')
   })
 
   test('returns same layout for non-toggleable furniture', () => {
@@ -583,12 +662,22 @@ describe('resolveTilePaintAction', () => {
   test('returns null when no change', () => {
     const layout = make5x5Layout()
     // Tile at (0,0) is WALL, painting WALL with no color → no change
-    const result = resolveTilePaintAction(layout, 0, 0, TileType.WALL, { h: 0, s: 0, b: 0, c: 0 })
+    resolveTilePaintAction(layout, 0, 0, TileType.WALL, { h: 0, s: 0, b: 0, c: 0 })
     // paintTile returns same ref for WALL→WALL since color is null for walls
     // But we're passing a color, so paintTile adds tileColors — this IS a change
     // For a true no-op, paint a floor tile to its existing type and color
-    const floorLayout = paintTile(make5x5Layout(), 2, 2, TileType.FLOOR_2, { h: 10, s: 20, b: 0, c: 0 })
-    const noChange = resolveTilePaintAction(floorLayout, 2, 2, TileType.FLOOR_2, { h: 10, s: 20, b: 0, c: 0 })
+    const floorLayout = paintTile(make5x5Layout(), 2, 2, TileType.FLOOR_2, {
+      h: 10,
+      s: 20,
+      b: 0,
+      c: 0
+    })
+    const noChange = resolveTilePaintAction(floorLayout, 2, 2, TileType.FLOOR_2, {
+      h: 10,
+      s: 20,
+      b: 0,
+      c: 0
+    })
     assert.equal(noChange, null)
   })
 })
@@ -600,7 +689,15 @@ describe('resolveWallPaintAction', () => {
     const layout = make5x5Layout()
     const wallColor: FloorColor = { h: 0, s: 0, b: 0, c: 0 }
     const fallbackColor: FloorColor = { h: 0, s: 0, b: 0, c: 0 }
-    const result = resolveWallPaintAction(layout, 2, 2, null, wallColor, TileType.FLOOR_1, fallbackColor)
+    const result = resolveWallPaintAction(
+      layout,
+      2,
+      2,
+      null,
+      wallColor,
+      TileType.FLOOR_1,
+      fallbackColor
+    )
     assert.ok(result.layout)
     assert.equal(result.wallDragAdding, true)
     assert.equal(result.layout!.tiles[2 * 5 + 2], TileType.WALL)
@@ -611,7 +708,15 @@ describe('resolveWallPaintAction', () => {
     const wallColor: FloorColor = { h: 0, s: 0, b: 0, c: 0 }
     const fallbackColor: FloorColor = { h: 0, s: 0, b: 0, c: 0 }
     // (0,0) is WALL in make5x5Layout
-    const result = resolveWallPaintAction(layout, 0, 0, null, wallColor, TileType.FLOOR_1, fallbackColor)
+    const result = resolveWallPaintAction(
+      layout,
+      0,
+      0,
+      null,
+      wallColor,
+      TileType.FLOOR_1,
+      fallbackColor
+    )
     assert.ok(result.layout)
     assert.equal(result.wallDragAdding, false)
     assert.equal(result.layout!.tiles[0], TileType.FLOOR_1)
@@ -621,7 +726,15 @@ describe('resolveWallPaintAction', () => {
     const layout = make5x5Layout()
     const wallColor: FloorColor = { h: 0, s: 0, b: 0, c: 0 }
     const fallbackColor: FloorColor = { h: 0, s: 0, b: 0, c: 0 }
-    const result = resolveWallPaintAction(layout, 2, 2, true, wallColor, TileType.FLOOR_1, fallbackColor)
+    const result = resolveWallPaintAction(
+      layout,
+      2,
+      2,
+      true,
+      wallColor,
+      TileType.FLOOR_1,
+      fallbackColor
+    )
     assert.equal(result.wallDragAdding, true)
   })
 })

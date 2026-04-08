@@ -79,7 +79,10 @@ export function parseSkillTiers(name: string, description: string, content: stri
       .toLowerCase()
       .replace(/[^a-z0-9\s-]/g, '')
       .split(/[\s-]+/)
-      .filter((w) => w.length > 2 && !['the', 'and', 'for', 'not', 'with', 'how', 'what', 'when'].includes(w))
+      .filter(
+        (w) =>
+          w.length > 2 && !['the', 'and', 'for', 'not', 'with', 'how', 'what', 'when'].includes(w)
+      )
       .forEach((w) => keywords.add(w))
   }
 

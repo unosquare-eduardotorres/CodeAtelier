@@ -7,10 +7,10 @@
  */
 
 // ── Glob all furniture PNGs at build time ──
-const pngModules = import.meta.glob<string>(
-  '@renderer/assets/pixel-office/furniture/**/*.png',
-  { eager: true, import: 'default' }
-)
+const pngModules = import.meta.glob<string>('@renderer/assets/pixel-office/furniture/**/*.png', {
+  eager: true,
+  import: 'default'
+})
 
 // ── Glob all furniture manifests at build time ──
 const manifestModules = import.meta.glob<Record<string, unknown>>(

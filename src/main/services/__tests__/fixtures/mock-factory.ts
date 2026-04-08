@@ -46,11 +46,20 @@ export function createMockRepositories() {
       updateSessionId: (_id: string, _sessionId: string) => {}
     },
     messageRepository: {
-      create: (_convId: string, role: string, content: string) => ({ id: `msg-${Date.now()}`, role, contentMd: content }),
+      create: (_convId: string, role: string, content: string) => ({
+        id: `msg-${Date.now()}`,
+        role,
+        contentMd: content
+      }),
       findByConversation: (_convId: string) => []
     },
     specialistRepository: {
-      findByAgentId: (id: string) => ({ agentId: id, displayName: id, prompt: 'Specialist prompt', isActive: true }),
+      findByAgentId: (id: string) => ({
+        agentId: id,
+        displayName: id,
+        prompt: 'Specialist prompt',
+        isActive: true
+      }),
       findActive: () => []
     }
   }

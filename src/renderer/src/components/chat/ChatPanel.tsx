@@ -1,13 +1,22 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Search, X, Bot, Braces, SearchCode } from 'lucide-react'
-import { useChatStore, useChatActions, useWorkspaceStore, useConversationSpecialists, useSpecialistStore, useCodeChangesStore, useAgentStore } from '@renderer/store'
+import {
+  useChatStore,
+  useChatActions,
+  useWorkspaceStore,
+  useConversationSpecialists,
+  useSpecialistStore,
+  useCodeChangesStore,
+  useAgentStore
+} from '@renderer/store'
 import {
   MessageList,
   MessageInput,
   AttachmentDropzone,
   ModeToggle,
   RepoWarningBanner,
-  ContextBadge
+  ContextBadge,
+  RateLimitBadge
 } from '@renderer/components/chat'
 import NewChatPage from './NewChatPage'
 import PersonaSelector from './PersonaSelector'
@@ -25,12 +34,17 @@ interface ChatPanelProps {
   onNewChatDismiss?: () => void
 }
 
-export default function ChatPanel({ onCreateIdea, onStartGrillMe, showNewChat, onNewChatDismiss }: ChatPanelProps): React.JSX.Element {
+export default function ChatPanel({
+  onCreateIdea,
+  onStartGrillMe,
+  showNewChat,
+  onNewChatDismiss
+}: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, agentStatus } = useWorkspaceStore()
   const { createConversation, updateMode, sendMessage, loadContextUsage } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
-  const contextUsage = useChatStore(
-    (s) => (activeConversation ? s.contextUsages[activeConversation.id] : undefined)
+  const contextUsage = useChatStore((s) =>
+    activeConversation ? s.contextUsages[activeConversation.id] : undefined
   )
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -45,9 +59,7 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe, showNewChat, o
   const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
   const activeSpecialistCount = useMemo(() => {
     const coreIds = new Set(workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id))
-    return conversationSpecialists.filter(
-      (s) => s.isActive && !coreIds.has(s.specialistId)
-    ).length
+    return conversationSpecialists.filter((s) => s.isActive && !coreIds.has(s.specialistId)).length
   }, [conversationSpecialists, workspaceSpecialists])
 
   // Code changes count for tab badge
@@ -58,6 +70,25 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe, showNewChat, o
     const generalist = s.statuses.find((st) => st.agentType === 'generalist')
     return generalist?.activeMcpTools
   })
+
+  // Rate limit state — listens to SDK rate limit events
+  const [rateLimitState, setRateLimitState] = useState<{
+    status: 'allowed' | 'allowed_warning' | 'rejected'
+    utilization?: number
+  } | null>(null)
+
+  const dismissRateLimit = useCallback(() => setRateLimitState(null), [])
+
+  useEffect(() => {
+    const cleanup = window.api.onRateLimitEvent((data) => {
+      if (data.status === 'allowed') {
+        dismissRateLimit()
+        return
+      }
+      setRateLimitState(data as { status: 'allowed_warning' | 'rejected'; utilization?: number })
+    })
+    return cleanup
+  }, [dismissRateLimit])
 
   // Load code changes when conversation changes
   const loadFiles = useCodeChangesStore((s) => s.loadFiles)
@@ -76,6 +107,7 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe, showNewChat, o
 
   // Reset tab when conversation changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on conversation switch
     setActiveTab('chat')
   }, [activeConversation?.id])
 
@@ -110,12 +142,7 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe, showNewChat, o
   // Workspace selected but no active conversation
   if (!activeConversation) {
     if (showNewChat) {
-      return (
-        <NewChatPage
-          onCreateChat={handleCreateChat}
-          onCreateIdea={onCreateIdea}
-        />
-      )
+      return <NewChatPage onCreateChat={handleCreateChat} onCreateIdea={onCreateIdea} />
     }
     // Empty state — no auto-show of NewChatPage
     return (
@@ -172,11 +199,14 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe, showNewChat, o
         {activeTab === 'chat' && (
           <div className="flex items-center gap-2">
             <PersonaSelector conversation={activeConversation} />
-            {contextUsage && contextUsage.percentage > 0 && (
-              <ContextBadge
-                percentage={contextUsage.percentage}
-                level={contextUsage.level}
+            {rateLimitState && rateLimitState.status !== 'allowed' && (
+              <RateLimitBadge
+                utilization={rateLimitState.utilization ?? 0}
+                status={rateLimitState.status}
               />
+            )}
+            {contextUsage && contextUsage.percentage > 0 && (
+              <ContextBadge percentage={contextUsage.percentage} level={contextUsage.level} />
             )}
             <ModeToggle
               mode={activeConversation.mode}
@@ -242,7 +272,9 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe, showNewChat, o
                   <Bot size={28} className="text-primary-text animate-pulse" />
                 </div>
               </div>
-              <h3 className="text-lg font-medium text-text-primary mb-2">Initializing AI Agent...</h3>
+              <h3 className="text-lg font-medium text-text-primary mb-2">
+                Initializing AI Agent...
+              </h3>
               <p className="text-sm text-text-secondary max-w-sm">
                 Setting up the workspace context and initializing the AI agent. This may take a few
                 seconds.
@@ -261,20 +293,24 @@ export default function ChatPanel({ onCreateIdea, onStartGrillMe, showNewChat, o
 
           {/* Input - pinned to bottom */}
           <div className="flex-shrink-0 px-6 pb-4 pt-2">
-            <AttachmentDropzone attachments={attachments} onAttachmentsChange={setAttachments} conversationId={activeConversation.id}>
-              <MessageInput attachments={attachments} onClearAttachments={() => setAttachments([])} onStartGrillMe={onStartGrillMe} />
+            <AttachmentDropzone
+              attachments={attachments}
+              onAttachmentsChange={setAttachments}
+              conversationId={activeConversation.id}
+            >
+              <MessageInput
+                attachments={attachments}
+                onClearAttachments={() => setAttachments([])}
+                onStartGrillMe={onStartGrillMe}
+              />
             </AttachmentDropzone>
           </div>
         </>
       )}
 
-      {activeTab === 'specialists' && (
-        <SpecialistsTable conversationId={activeConversation.id} />
-      )}
+      {activeTab === 'specialists' && <SpecialistsTable conversationId={activeConversation.id} />}
 
-      {activeTab === 'code-changes' && (
-        <CodeChangesPanel conversationId={activeConversation.id} />
-      )}
+      {activeTab === 'code-changes' && <CodeChangesPanel conversationId={activeConversation.id} />}
     </div>
   )
 }

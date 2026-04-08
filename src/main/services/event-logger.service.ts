@@ -375,20 +375,15 @@ class EventLoggerService {
     specialists: string[]
     mode?: string
   }): void {
-    this.log(
-      'handoff.detected',
-      'agent',
-      `Handoff detected: ${opts.summary.substring(0, 120)}`,
-      {
-        ...opts,
-        agentId: 'generalist',
-        data: {
-          summary: opts.summary,
-          specialists: opts.specialists,
-          mode: opts.mode
-        }
+    this.log('handoff.detected', 'agent', `Handoff detected: ${opts.summary.substring(0, 120)}`, {
+      ...opts,
+      agentId: 'generalist',
+      data: {
+        summary: opts.summary,
+        specialists: opts.specialists,
+        mode: opts.mode
       }
-    )
+    })
   }
 
   logPlanDetected(opts: {

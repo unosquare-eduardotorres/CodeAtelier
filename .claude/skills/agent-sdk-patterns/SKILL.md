@@ -35,6 +35,7 @@ for await (const chunk of executor.execute(options)) {
 ### Auth Provider
 
 `authProvider.supportsSDK()` determines which backend to use:
+
 - `true` → SDK path (API key configured)
 - `false` → CLI path (Claude Max, default)
 
@@ -58,6 +59,7 @@ export function createScopeGuard(allowedCwd: string) {
 ```
 
 Benefits over shell hooks:
+
 - Direct access to services (eventLogger, costTracker, DB)
 - Type safety — no JSON parsing or exit code conventions
 - Testable — standard TypeScript unit tests

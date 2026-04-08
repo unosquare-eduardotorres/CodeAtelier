@@ -10,7 +10,7 @@ import {
 } from '../../constants'
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../../layout/furnitureCatalog'
 import { layoutToFurnitureInstances } from '../../layout/layoutSerializer'
-import type { Character, Direction, FurnitureInstance, OfficeLayout, PlacedFurniture, Seat } from '../types'
+import type { Character, FurnitureInstance, OfficeLayout, PlacedFurniture, Seat } from '../types'
 import { Direction as Dir } from '../types'
 
 export class FurnitureAnimator {

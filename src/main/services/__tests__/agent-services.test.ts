@@ -50,29 +50,17 @@ describe('summarizeToolInput', () => {
   })
 
   test('Write — returns relative path', () => {
-    const result = summarizeToolInput(
-      'Write',
-      { file_path: '/proj/src/foo.ts' },
-      '/proj'
-    )
+    const result = summarizeToolInput('Write', { file_path: '/proj/src/foo.ts' }, '/proj')
     assert.equal(result, 'src/foo.ts')
   })
 
   test('Edit — returns relative path', () => {
-    const result = summarizeToolInput(
-      'Edit',
-      { file_path: '/proj/src/bar.ts' },
-      '/proj'
-    )
+    const result = summarizeToolInput('Edit', { file_path: '/proj/src/bar.ts' }, '/proj')
     assert.equal(result, 'src/bar.ts')
   })
 
   test('Grep — returns pattern with path', () => {
-    const result = summarizeToolInput(
-      'Grep',
-      { pattern: 'TODO', path: '/proj/src' },
-      '/proj'
-    )
+    const result = summarizeToolInput('Grep', { pattern: 'TODO', path: '/proj/src' }, '/proj')
     assert.equal(result, '/TODO/ in src')
   })
 
@@ -328,10 +316,14 @@ describe('tierToModelAction', () => {
   // Replicated from specialist-pool.service.ts since it's module-private
   function tierToModelAction(tier: string): string {
     switch (tier) {
-      case 'haiku': return 'specialist:simple'
-      case 'sonnet': return 'specialist:moderate'
-      case 'opus': return 'specialist:complex'
-      default: return 'specialist:moderate'
+      case 'haiku':
+        return 'specialist:simple'
+      case 'sonnet':
+        return 'specialist:moderate'
+      case 'opus':
+        return 'specialist:complex'
+      default:
+        return 'specialist:moderate'
     }
   }
 

@@ -45,10 +45,7 @@ export function showAgentBubble(
 /**
  * Clear speech bubble from an agent.
  */
-export function clearAgentBubble(
-  scene: Phaser.Scene,
-  visual: AgentVisual
-): void {
+export function clearAgentBubble(scene: Phaser.Scene, visual: AgentVisual): void {
   if (!visual.bubble) return
 
   if (visual.bubbleTween) {
@@ -93,13 +90,15 @@ export function showAgentThoughtBubble(
   const bubbleContainer = scene.add.container(0, -BUBBLE_VERTICAL_OFFSET_PX - 4)
 
   // Measure text first to size the bubble
-  const textObj = scene.add.text(0, 0, displayText, {
-    fontSize: '8px',
-    fontFamily: '"Inter", system-ui, -apple-system, sans-serif',
-    color: '#1f2937',
-    align: 'center',
-    wordWrap: { width: 120 }
-  }).setOrigin(0.5, 0.5)
+  const textObj = scene.add
+    .text(0, 0, displayText, {
+      fontSize: '8px',
+      fontFamily: '"Inter", system-ui, -apple-system, sans-serif',
+      color: '#1f2937',
+      align: 'center',
+      wordWrap: { width: 120 }
+    })
+    .setOrigin(0.5, 0.5)
 
   const padX = 6
   const padY = 4
@@ -156,10 +155,7 @@ export function showAgentThoughtBubble(
 /**
  * Hide the thought bubble from an agent.
  */
-export function hideAgentThoughtBubble(
-  scene: Phaser.Scene,
-  visual: AgentVisual
-): void {
+export function hideAgentThoughtBubble(scene: Phaser.Scene, visual: AgentVisual): void {
   if (visual.thoughtBubbleTween) {
     visual.thoughtBubbleTween.destroy()
     visual.thoughtBubbleTween = null

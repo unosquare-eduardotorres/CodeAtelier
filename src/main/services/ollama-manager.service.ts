@@ -250,7 +250,6 @@ class OllamaManagerService extends EventEmitter {
       return false
     }
   }
-
 }
 
 export const ollamaManager = new OllamaManagerService()

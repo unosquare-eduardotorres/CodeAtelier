@@ -74,18 +74,12 @@ export default function ScoreGauge({
           >
             {clampedScore}
           </span>
-          <span
-            className="text-text-muted leading-none"
-            style={{ fontSize: size * 0.12 }}
-          >
+          <span className="text-text-muted leading-none" style={{ fontSize: size * 0.12 }}>
             /100
           </span>
         </div>
       </div>
-      <span
-        className="text-xs font-semibold text-text-secondary text-center"
-        style={{ color }}
-      >
+      <span className="text-xs font-semibold text-text-secondary text-center" style={{ color }}>
         {displayLabel}
       </span>
     </div>

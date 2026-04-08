@@ -23,7 +23,12 @@ import { semanticSearchMcpService } from './semantic-search.tool'
 import { codeGraphMcpService } from './code-graph.tool'
 import { githubService } from './github.service'
 import { memoryService } from './memory.service'
-import { conversationRepository, memoryRepository, specialistRepository, workspaceRepository } from '../db/repositories'
+import {
+  conversationRepository,
+  memoryRepository,
+  specialistRepository,
+  workspaceRepository
+} from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
 import type { ControlActionCallbacks } from './control-actions.tool'
@@ -71,10 +76,10 @@ export class GeneralistService extends AgentBaseService {
    * These defaults can be overridden per-workspace via settings:
    *   compactSuggestThreshold, compactAutoThreshold
    */
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 120_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 160_000
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 80_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 120_000
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 90_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 130_000
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 60_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 90_000
   /** Workspace-specific compaction thresholds (loaded from settings, fallback to defaults) */
   private compactSuggestThreshold: number = GeneralistService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
   private compactAutoThreshold: number = GeneralistService.DEFAULT_COMPACT_AUTO_THRESHOLD
@@ -83,6 +88,9 @@ export class GeneralistService extends AgentBaseService {
   private compactCount: number = 0
   /** Cost preference from workspace settings — affects compaction aggressiveness */
   private costPreference: CostPreference = 'balanced'
+
+  /** When true, the next successful stream completion will clear the session and inject a summary */
+  private pendingSessionReset = false
 
   /** Absolute cap per interaction — aborts SDK query if exceeded (replaces old CLI MAX_INTERACTION_TIMEOUT_MS) */
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
@@ -98,9 +106,6 @@ export class GeneralistService extends AgentBaseService {
   private mcpConfig = new GeneralistMcpConfig()
   private recoveryNudge = new RecoveryNudgeService()
   private promptAssembler = new GeneralistPromptAssembler()
-
-  /** Full system prompt — rebuilt per turn in send(). */
-  private fullSystemPrompt: string = ''
 
   /** Whether repomap code graph is enabled for this workspace */
   private repomapEnabled: boolean = false
@@ -222,9 +227,6 @@ export class GeneralistService extends AgentBaseService {
       }
     }
 
-    // S17: prompt is rebuilt per turn in send() so turn-aware shrinking can apply.
-    this.fullSystemPrompt = ''
-
     // If a resume session ID was passed, pre-populate the session map
     if (resumeSessionId && this.currentConversationId) {
       this.sessionMap.set(this.currentConversationId, resumeSessionId)
@@ -280,8 +282,6 @@ export class GeneralistService extends AgentBaseService {
       turnCount,
       sessionId
     )
-    this.fullSystemPrompt = systemPrompt
-
     const sdkPrompt = this.buildSdkPrompt(effectiveMessage, images)
     const controlCallbacks = this.buildControlCallbacks()
     const mcpResult = this.mcpConfig.build({
@@ -472,9 +472,7 @@ export class GeneralistService extends AgentBaseService {
           const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
           const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
           const memWorkspaceId =
-            memory.type === 'user' || memory.type === 'feedback'
-              ? null
-              : workspace?.id ?? null
+            memory.type === 'user' || memory.type === 'feedback' ? null : (workspace?.id ?? null)
           const conversationId = this.currentConversationId
           const mem = memoryRepository.createIfNotDuplicate({
             workspaceId: memWorkspaceId,
@@ -549,6 +547,7 @@ export class GeneralistService extends AgentBaseService {
       // Resolve the main model before execute — needed to conditionally set fallbackModel
       const resolvedModel = modelConfigService.getModel(this.workspacePath!, 'generalist')
 
+      // @ts-expect-error — TODO: mcpServers shape needs aligning with SDK McpServerConfigForProcessTransport
       for await (const chunk of this.sdkExecutor.execute({
         prompt: sdkPrompt,
         systemPrompt,
@@ -569,10 +568,10 @@ export class GeneralistService extends AgentBaseService {
         promptSuggestions: true,
         // Native file checkpointing for rewindFiles() support
         enableFileCheckpointing: true,
+        // Enable 1M context window — 5x headroom over default 200K
+        betas: ['context-1m-2025-08-07'],
         // Fallback to Sonnet if Opus is rate-limited (omit when main model is already Sonnet)
-        ...(resolvedModel !== 'claude-sonnet-4-6'
-          ? { fallbackModel: 'claude-sonnet-4-6' }
-          : {}),
+        ...(resolvedModel !== 'claude-sonnet-4-6' ? { fallbackModel: 'claude-sonnet-4-6' } : {}),
         ...(mcpServers ? { mcpServers } : {})
       })) {
         if (this.circuitBreaker.isBroken) break
@@ -599,9 +598,10 @@ export class GeneralistService extends AgentBaseService {
           })
           this.tokenUsage += totalTokens
           // Total context = non-cached + cache read + cache creation
-          const totalContextTokens = meta.tokenUsage.input
-            + meta.tokenUsage.cacheReadInputTokens
-            + meta.tokenUsage.cacheCreationInputTokens
+          const totalContextTokens =
+            meta.tokenUsage.input +
+            meta.tokenUsage.cacheReadInputTokens +
+            meta.tokenUsage.cacheCreationInputTokens
           this.checkCompaction(totalContextTokens)
         } else {
           // Accumulate text for handoff/grill detection
@@ -705,6 +705,28 @@ export class GeneralistService extends AgentBaseService {
       // ── Intent detection + emission ──
       this.emitDetectedIntents(conversationId, handoffDetectedInStream)
 
+      // ── Session-reset compaction: clear session after successful compact response ──
+      if (this.pendingSessionReset) {
+        this.pendingSessionReset = false
+        const summary = this.accumulatedText
+        // Clear the current session — next send() will start fresh
+        this.sessionMap.delete(conversationId)
+        try {
+          conversationRepository.updateSessionId(conversationId, '')
+        } catch (err) {
+          this.log.error('Failed to clear session ID:', err)
+        }
+        // Inject summary as context for the new session
+        this.promptAssembler.addPendingContext(
+          conversationId,
+          `## Compressed Context (from prior conversation)\n\n${summary}`
+        )
+        this.log.info(
+          `[PIPELINE:session-reset] Cleared session for conversation ${conversationId}. ` +
+            `Summary: ${summary.length} chars. Next send() starts fresh.`
+        )
+      }
+
       this.currentStatus = 'idle'
       this.flushTokenUsage()
       this.emit('statusUpdate', this.getStatus())
@@ -717,7 +739,7 @@ export class GeneralistService extends AgentBaseService {
   }
 
   /** Detect and emit intents from accumulated text and control tool state. */
-  private emitDetectedIntents(conversationId: string, handoffDetectedInStream: boolean): void {
+  private emitDetectedIntents(_conversationId: string, handoffDetectedInStream: boolean): void {
     const detectionState: ControlToolState = handoffDetectedInStream
       ? { ...this.controlToolState, handoff: true }
       : this.controlToolState
@@ -980,7 +1002,7 @@ export class GeneralistService extends AgentBaseService {
 
     this.currentPersonaSpecialistId = personaSpecialistId
     this.currentPersonaData = personaSpecialistId
-      ? specialistRepository.findById(personaSpecialistId) ?? null
+      ? (specialistRepository.findById(personaSpecialistId) ?? null)
       : null
 
     // Invalidate system prompt snapshot — forces full rebuild on next turn
@@ -1039,7 +1061,7 @@ export class GeneralistService extends AgentBaseService {
     }
 
     this.log.info(
-      `Scheduling lazy compaction (compact #${this.compactCount + 1}, nuance=${extractNuance}) — will execute on next send()`
+      `Starting session-reset compaction (compact #${this.compactCount + 1}, nuance=${extractNuance}) — will execute on next send()`
     )
     this.compactCount++
     this.compactSuggested = false
@@ -1064,7 +1086,7 @@ export class GeneralistService extends AgentBaseService {
 - **Pending:** Unresolved items or next steps
 - **Specialist Findings:** Key results from investigations (preserve report data)
 
-Then continue using this summary as your working context and answer the user's message that follows.`
+After producing the summary, continue with the user's next message using ONLY this summary as context.`
       )
     } else {
       // Quick Compact mode — summarizes older messages for speed
@@ -1086,9 +1108,14 @@ Then continue using this summary as your working context and answer the user's m
 - **Pending:** Unresolved items or next steps
 - **Specialist Findings:** Key results from investigations (preserve report data)
 
-Then continue using this summary as your working context and answer the user's message that follows.`
+After producing the summary, continue with the user's next message using ONLY this summary as context.`
       )
     }
+
+    // Phase 2: After the next response, clear the session so the FOLLOWING
+    // send() starts fresh. The summary will be in the last response, and
+    // addPendingContext() will inject it into the new session.
+    this.pendingSessionReset = true
   }
 
   /** Returns the session ID for a given conversation, if captured. */
@@ -1112,7 +1139,9 @@ Then continue using this summary as your working context and answer the user's m
     if (!this.workspacePath) return
 
     const previousMode = this.currentMode
-    this.log.info(`[PIPELINE:mode-switch] ${previousMode} → ${mode} conversationId=${this.currentConversationId}`)
+    this.log.info(
+      `[PIPELINE:mode-switch] ${previousMode} → ${mode} conversationId=${this.currentConversationId}`
+    )
     this.currentMode = mode
 
     // Strategy ζ: Invalidate system prompt snapshot on mode switch

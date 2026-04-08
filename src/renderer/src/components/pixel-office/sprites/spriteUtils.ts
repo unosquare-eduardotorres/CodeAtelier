@@ -56,9 +56,11 @@ export function pixelDataToSpriteData(
  * Convert SpriteData to flat RGBA pixel data (Uint8ClampedArray).
  * Pure inverse of pixelDataToSpriteData.
  */
-export function spriteDataToPixelData(
-  sprite: SpriteData
-): { data: Uint8ClampedArray; width: number; height: number } {
+export function spriteDataToPixelData(sprite: SpriteData): {
+  data: Uint8ClampedArray
+  width: number
+  height: number
+} {
   const height = sprite.length
   const width = height > 0 ? sprite[0].length : 0
   const data = new Uint8ClampedArray(width * height * 4)

@@ -12,7 +12,9 @@ import { test, describe } from './test-harness'
 // ── Key generation (pure function — testable without Electron) ──
 
 function makeKey(filePath: string, symbolName: string, body: string): string {
-  return createHash('sha256').update(filePath + symbolName + body).digest('hex')
+  return createHash('sha256')
+    .update(filePath + symbolName + body)
+    .digest('hex')
 }
 
 describe('makeKey', () => {
@@ -49,10 +51,15 @@ describe('makeKey', () => {
 // ── In-memory cache simulation (tests cache logic without SQLite) ──
 
 class MockDescriptionCache {
-  private store = new Map<string, { description: string; model: string; filePath: string; symbolName: string }>()
+  private store = new Map<
+    string,
+    { description: string; model: string; filePath: string; symbolName: string }
+  >()
 
   makeKey(filePath: string, symbolName: string, body: string): string {
-    return createHash('sha256').update(filePath + symbolName + body).digest('hex')
+    return createHash('sha256')
+      .update(filePath + symbolName + body)
+      .digest('hex')
   }
 
   get(key: string): string | null {

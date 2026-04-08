@@ -82,7 +82,8 @@ export default function SkillImportDropzone(): React.JSX.Element {
           <>
             <FileText size={24} className="text-text-secondary mb-2" />
             <p className="text-sm text-text-muted">
-              Drag and drop a <span className="text-text-secondary font-medium">.md</span> skill file here
+              Drag and drop a <span className="text-text-secondary font-medium">.md</span> skill
+              file here
             </p>
             <p className="text-[11px] text-text-secondary mt-1">
               or{' '}

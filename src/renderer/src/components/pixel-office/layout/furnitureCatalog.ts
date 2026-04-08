@@ -121,7 +121,11 @@ export function buildDynamicCatalog(assets: LoadedAssetData): boolean {
 
   // Stage 7: Build visible catalog for editor palette
   const visResult = buildVisibleCatalog(
-    allEntries, assets, rotResult.nonFrontIds, rotationGroups, stateGroups
+    allEntries,
+    assets,
+    rotResult.nonFrontIds,
+    rotationGroups,
+    stateGroups
   )
   dynamicCatalog = visResult.visibleEntries
   dynamicCategories = visResult.categories

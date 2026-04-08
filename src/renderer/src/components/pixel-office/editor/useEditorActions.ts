@@ -9,6 +9,8 @@
  * - useDragMove: drag-move validation + application
  */
 
+/* eslint-disable react-hooks/immutability -- editorState is mutable Phaser game state, not React state */
+
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { EditorState } from './editorState'
@@ -61,21 +63,27 @@ export function useEditorActions(
   const persistence = useLayoutPersistence(getOfficeState, editorState)
 
   // ── Undo/Redo ──
-  const undoCtx: Omit<EditorHookContext, 'applyEdit'> = useMemo(() => ({
-    getOfficeState,
-    editorState,
-    saveLayout: persistence.saveLayout,
-    setIsDirty: persistence.setIsDirty,
-    setEditorTick
-  }), [getOfficeState, editorState, persistence.saveLayout, persistence.setIsDirty, setEditorTick])
+  const undoCtx: Omit<EditorHookContext, 'applyEdit'> = useMemo(
+    () => ({
+      getOfficeState,
+      editorState,
+      saveLayout: persistence.saveLayout,
+      setIsDirty: persistence.setIsDirty,
+      setEditorTick
+    }),
+    [getOfficeState, editorState, persistence.saveLayout, persistence.setIsDirty, setEditorTick]
+  )
 
   const undoRedo = useUndoRedo(undoCtx, persistence.lastSavedLayoutRef)
 
   // ── Shared context for sub-hooks (includes applyEdit from undoRedo) ──
-  const ctx: EditorHookContext = useMemo(() => ({
-    ...undoCtx,
-    applyEdit: undoRedo.applyEdit
-  }), [undoCtx, undoRedo.applyEdit])
+  const ctx: EditorHookContext = useMemo(
+    () => ({
+      ...undoCtx,
+      applyEdit: undoRedo.applyEdit
+    }),
+    [undoCtx, undoRedo.applyEdit]
+  )
 
   // ── Tile Painting ──
   const tilePainting = useTilePainting(ctx)

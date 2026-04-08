@@ -1,10 +1,7 @@
 // Adapted from pixel-agents: webview-ui/src/office/engine/characters.ts
 // Animation FSM (IDLE/TYPE/WALK), character creation, sprite selection.
 
-import {
-  WANDER_MOVES_BEFORE_REST_MAX,
-  WANDER_MOVES_BEFORE_REST_MIN
-} from '../constants'
+import { WANDER_MOVES_BEFORE_REST_MAX, WANDER_MOVES_BEFORE_REST_MIN } from '../constants'
 import type { CharacterSprites } from '../sprites/spriteData'
 import type { Character, Seat, SpriteData, TileType as TileTypeVal } from './types'
 import { CharacterState, Direction, TILE_SIZE } from './types'

@@ -181,9 +181,7 @@ async function run(): Promise<void> {
           throw new Error(`Expected investigation task but got: "${task.description}"`)
         }
         if (/^(Fix|Implement|Test|Deploy)\b/i.test(task.description)) {
-          throw new Error(
-            `Investigation should not produce action tasks: "${task.description}"`
-          )
+          throw new Error(`Investigation should not produce action tasks: "${task.description}"`)
         }
       }
     })
@@ -207,9 +205,7 @@ async function run(): Promise<void> {
 
       for (const task of plan.tasks) {
         if (/^(Fix|Implement|Rebuild)\b/i.test(task.description)) {
-          throw new Error(
-            `Plan-mode task should not start with action verb: "${task.description}"`
-          )
+          throw new Error(`Plan-mode task should not start with action verb: "${task.description}"`)
         }
       }
     })
@@ -232,9 +228,7 @@ async function run(): Promise<void> {
 
       for (const task of plan.tasks) {
         if (task.specialist !== 'dotnet-architect') {
-          throw new Error(
-            `Expected specialist "dotnet-architect" but got "${task.specialist}"`
-          )
+          throw new Error(`Expected specialist "dotnet-architect" but got "${task.specialist}"`)
         }
       }
     })
@@ -259,9 +253,7 @@ async function run(): Promise<void> {
           throw new Error(`Task "${task.id}" complexity.total is not a number`)
         }
         if (!['simple', 'moderate', 'complex'].includes(task.complexity.tier)) {
-          throw new Error(
-            `Task "${task.id}" complexity.tier is invalid: "${task.complexity.tier}"`
-          )
+          throw new Error(`Task "${task.id}" complexity.tier is invalid: "${task.complexity.tier}"`)
         }
         for (const dim of [
           'filesAffected',

@@ -12,7 +12,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 62
+const CURRENT_SCHEMA_VERSION = 64
 
 interface Migration {
   version: number
@@ -344,9 +344,7 @@ const migrations: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_events_category ON events(category)`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_events_conversation ON events(conversation_id)`)
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC)`
-      )
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC)`)
     }
   },
   {
@@ -375,15 +373,9 @@ const migrations: Migration[] = [
     version: 24,
     name: 'add_cost_tracking_to_sessions',
     up: (db) => {
-      db.exec(
-        `ALTER TABLE agent_sessions ADD COLUMN estimated_cost_cents REAL DEFAULT 0`
-      )
-      db.exec(
-        `ALTER TABLE agent_sessions ADD COLUMN input_tokens INTEGER DEFAULT 0`
-      )
-      db.exec(
-        `ALTER TABLE agent_sessions ADD COLUMN output_tokens INTEGER DEFAULT 0`
-      )
+      db.exec(`ALTER TABLE agent_sessions ADD COLUMN estimated_cost_cents REAL DEFAULT 0`)
+      db.exec(`ALTER TABLE agent_sessions ADD COLUMN input_tokens INTEGER DEFAULT 0`)
+      db.exec(`ALTER TABLE agent_sessions ADD COLUMN output_tokens INTEGER DEFAULT 0`)
     }
   },
   {
@@ -406,9 +398,7 @@ const migrations: Migration[] = [
       db.exec(
         `CREATE INDEX IF NOT EXISTS idx_gate_results_conversation ON gate_results(conversation_id)`
       )
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_gate_results_task ON gate_results(task_id)`
-      )
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_results_task ON gate_results(task_id)`)
     }
   },
   {
@@ -417,22 +407,31 @@ const migrations: Migration[] = [
     up: (db) => {
       // Deactivate archived agent IDs
       const archivedIds = [
-        'electron-architect', 'agentic-architect',
-        'code-planner', 'execution-planner', 'requirements-specialist',
-        'cicd-devops', 'cloud-infrastructure',
-        'git-github-specialist', 'docs-diagrams-specialist'
+        'electron-architect',
+        'agentic-architect',
+        'code-planner',
+        'execution-planner',
+        'requirements-specialist',
+        'cicd-devops',
+        'cloud-infrastructure',
+        'git-github-specialist',
+        'docs-diagrams-specialist'
       ]
-      const deactivateStmt = db.prepare(
-        `UPDATE specialists SET active = 0 WHERE agent_id = ?`
-      )
+      const deactivateStmt = db.prepare(`UPDATE specialists SET active = 0 WHERE agent_id = ?`)
       for (const id of archivedIds) {
         deactivateStmt.run(id)
       }
 
       // Rename existing agents
-      db.prepare(`UPDATE specialists SET agent_id = 'frontend-architect', display_name = 'Frontend Architect' WHERE agent_id = 'react-architect'`).run()
-      db.prepare(`UPDATE specialists SET agent_id = 'data-architect', display_name = 'Data Architect' WHERE agent_id = 'db-architect'`).run()
-      db.prepare(`UPDATE specialists SET agent_id = 'design-specialist', display_name = 'Design Specialist' WHERE agent_id = 'ux-ui-specialist'`).run()
+      db.prepare(
+        `UPDATE specialists SET agent_id = 'frontend-architect', display_name = 'Frontend Architect' WHERE agent_id = 'react-architect'`
+      ).run()
+      db.prepare(
+        `UPDATE specialists SET agent_id = 'data-architect', display_name = 'Data Architect' WHERE agent_id = 'db-architect'`
+      ).run()
+      db.prepare(
+        `UPDATE specialists SET agent_id = 'design-specialist', display_name = 'Design Specialist' WHERE agent_id = 'ux-ui-specialist'`
+      ).run()
 
       // Note: New agents (platform-architect, planner, platform-engineer, dx-specialist)
       // will be inserted by agent-sync.service on next workspace open when it discovers the new YAMLs.
@@ -454,13 +453,13 @@ const migrations: Migration[] = [
         'ponytail-girl': 'renaissance-noblewoman',
         'cap-guy': 'renaissance-explorer',
         'da-vinci': 'renaissance-painter',
-        'stravinsky': 'renaissance-astronomer',
-        'robot': 'renaissance-alchemist',
-        'ninja': 'renaissance-knight',
-        'superhero': 'renaissance-knight',
-        'pirate': 'renaissance-navigator',
-        'scientist': 'renaissance-alchemist',
-        'chef': 'renaissance-jester'
+        stravinsky: 'renaissance-astronomer',
+        robot: 'renaissance-alchemist',
+        ninja: 'renaissance-knight',
+        superhero: 'renaissance-knight',
+        pirate: 'renaissance-navigator',
+        scientist: 'renaissance-alchemist',
+        chef: 'renaissance-jester'
       }
       const updateProfile = db.prepare(
         `UPDATE user_profile SET avatar_key = ? WHERE avatar_key = ?`
@@ -628,7 +627,9 @@ const migrations: Migration[] = [
     name: 'add-skill-gating-and-app-preferences',
     up: (db) => {
       // Add skill-gating columns to conversation_specialists
-      db.exec(`ALTER TABLE conversation_specialists ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`)
+      db.exec(
+        `ALTER TABLE conversation_specialists ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`
+      )
       db.exec(
         `ALTER TABLE conversation_specialists ADD COLUMN skills_enabled INTEGER NOT NULL DEFAULT 1`
       )
@@ -706,9 +707,15 @@ const migrations: Migration[] = [
       `)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_workspace ON code_chunks(workspace_id)`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_file ON code_chunks(workspace_id, file_path)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_symbol ON code_chunks(workspace_id, symbol_name)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_kind ON code_chunks(workspace_id, symbol_kind)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_language ON code_chunks(workspace_id, language)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_chunks_symbol ON code_chunks(workspace_id, symbol_name)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_chunks_kind ON code_chunks(workspace_id, symbol_kind)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_chunks_language ON code_chunks(workspace_id, language)`
+      )
 
       // chunk_embeddings — vector storage as BLOBs
       db.exec(`
@@ -720,7 +727,9 @@ const migrations: Migration[] = [
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_embeddings_workspace ON chunk_embeddings(workspace_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_embeddings_workspace ON chunk_embeddings(workspace_id)`
+      )
 
       // chunk_descriptions — AI-generated descriptions (replaces description-cache.db)
       db.exec(`
@@ -734,7 +743,9 @@ const migrations: Migration[] = [
           generated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_descriptions_workspace ON chunk_descriptions(workspace_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_descriptions_workspace ON chunk_descriptions(workspace_id)`
+      )
       db.exec(`CREATE INDEX IF NOT EXISTS idx_descriptions_file ON chunk_descriptions(file_path)`)
 
       // code_graph_edges — cached symbol relationships
@@ -752,8 +763,12 @@ const migrations: Migration[] = [
         )
       `)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_workspace ON code_graph_edges(workspace_id)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_source ON code_graph_edges(workspace_id, source_file, source_symbol)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_target ON code_graph_edges(workspace_id, target_file, target_symbol)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_graph_source ON code_graph_edges(workspace_id, source_file, source_symbol)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_graph_target ON code_graph_edges(workspace_id, target_file, target_symbol)`
+      )
 
       // indexing_state — persistent indexing progress per workspace
       db.exec(`
@@ -780,18 +795,19 @@ const migrations: Migration[] = [
       try {
         const userDataPath = app.getPath('userData')
         const oldDbPath = join(userDataPath, 'description-cache.db')
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import in migration
         const { existsSync } = require('node:fs') as typeof import('node:fs')
 
         if (existsSync(oldDbPath)) {
+          // @ts-expect-error — better-sqlite3 CJS import shape doesn't match namespace type
+          // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import in migration
           const OldDatabase = require('better-sqlite3') as typeof import('better-sqlite3').default
           const oldDb = new OldDatabase(oldDbPath, { readonly: true })
 
           try {
             // Check if the old table exists
             const tableExists = oldDb
-              .prepare(
-                `SELECT name FROM sqlite_master WHERE type='table' AND name='descriptions'`
-              )
+              .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='descriptions'`)
               .get()
 
             if (tableExists) {
@@ -821,9 +837,7 @@ const migrations: Migration[] = [
                   )
                 }
 
-                dbLogger.info(
-                  `✓ Migrated ${rows.length} descriptions from description-cache.db`
-                )
+                dbLogger.info(`✓ Migrated ${rows.length} descriptions from description-cache.db`)
               }
             }
           } finally {
@@ -860,7 +874,9 @@ const migrations: Migration[] = [
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_messages_conversation ON agent_messages(conversation_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_agent_messages_conversation ON agent_messages(conversation_id)`
+      )
       db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_messages_run ON agent_messages(run_id)`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_messages_task ON agent_messages(task_id)`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_messages_from ON agent_messages(from_agent)`)
@@ -903,9 +919,7 @@ const migrations: Migration[] = [
         'execution-planner': 'female-02-3',
         'cicd-devops': 'male-12-1'
       }
-      const update = db.prepare(
-        'UPDATE specialists SET pixel_sprite_id = ? WHERE agent_id = ?'
-      )
+      const update = db.prepare('UPDATE specialists SET pixel_sprite_id = ? WHERE agent_id = ?')
       for (const [agentId, spriteId] of Object.entries(assignments)) {
         update.run(spriteId, agentId)
       }
@@ -967,18 +981,12 @@ const migrations: Migration[] = [
           UNIQUE(workspace_id, rel_fname, line, name, kind)
         )
       `)
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_cg_tags_workspace ON code_graph_tags(workspace_id)`
-      )
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_cg_tags_workspace ON code_graph_tags(workspace_id)`)
       db.exec(
         `CREATE INDEX IF NOT EXISTS idx_cg_tags_file ON code_graph_tags(workspace_id, rel_fname)`
       )
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_cg_tags_name ON code_graph_tags(workspace_id, name)`
-      )
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_cg_tags_kind ON code_graph_tags(workspace_id, kind)`
-      )
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_cg_tags_name ON code_graph_tags(workspace_id, name)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_cg_tags_kind ON code_graph_tags(workspace_id, kind)`)
 
       // Per-file PageRank scores — pre-computed during indexing for instant lookups
       db.exec(`
@@ -990,9 +998,7 @@ const migrations: Migration[] = [
           PRIMARY KEY (workspace_id, rel_fname)
         )
       `)
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_cg_ranks_workspace ON code_graph_ranks(workspace_id)`
-      )
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_cg_ranks_workspace ON code_graph_ranks(workspace_id)`)
 
       // Indexing state for code graph (separate from semantic search indexing_state)
       db.exec(`
@@ -1104,9 +1110,7 @@ const migrations: Migration[] = [
       if (userSpec) {
         const currentName = userSpec.display_name
         const alias =
-          currentName && currentName !== 'Developer' && currentName !== 'User'
-            ? currentName
-            : null
+          currentName && currentName !== 'Developer' && currentName !== 'User' ? currentName : null
 
         db.prepare(
           `
@@ -1388,6 +1392,36 @@ const migrations: Migration[] = [
         ADD COLUMN persona_specialist_id TEXT DEFAULT NULL
         REFERENCES specialists(id) ON DELETE SET NULL
       `)
+    }
+  },
+  {
+    version: 63,
+    name: 'remove-lingering-orchestrator-specialist',
+    up: (db) => {
+      db.exec(`DELETE FROM specialists WHERE agent_id = 'orchestrator'`)
+    }
+  },
+  {
+    version: 64,
+    name: 'ensure-agent-session-token-columns',
+    up: (db) => {
+      // Safety net: re-add granular token columns if migration v37 was skipped or partially applied.
+      // Each ALTER is wrapped individually so "duplicate column" errors are caught per-column.
+      const columns = [
+        'input_tokens',
+        'output_tokens',
+        'cache_read_tokens',
+        'cache_creation_tokens'
+      ]
+      for (const col of columns) {
+        try {
+          db.exec(`ALTER TABLE agent_sessions ADD COLUMN ${col} INTEGER DEFAULT 0`)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          if (!msg.includes('duplicate column name')) throw e
+          // Column already exists — safe to skip
+        }
+      }
     }
   }
 ]

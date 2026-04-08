@@ -66,6 +66,7 @@ export default function WorkspaceSettingsContent({
   // Auto-activate grill page when navigated from /grillme command
   useEffect(() => {
     if (pendingGrill) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- consuming pending navigation action
       setActiveGrill({
         ideaId: pendingGrill.ideaId,
         conversationId: pendingGrill.conversationId,
@@ -97,7 +98,9 @@ export default function WorkspaceSettingsContent({
   }
 
   return (
-    <div className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${tab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+    <div
+      className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${tab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}
+    >
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
 
@@ -133,7 +136,13 @@ export default function WorkspaceSettingsContent({
             </p>
             <IdeasList
               onNavigateToChat={onNavigateToChat}
-              onOpenGrillSession={(ideaId, conversationId, ideaTitle, isNewSession, ideaDescription) =>
+              onOpenGrillSession={(
+                ideaId,
+                conversationId,
+                ideaTitle,
+                isNewSession,
+                ideaDescription
+              ) =>
                 setActiveGrill({ ideaId, conversationId, ideaTitle, ideaDescription, isNewSession })
               }
             />

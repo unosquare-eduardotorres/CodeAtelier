@@ -97,7 +97,14 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
         // If PixelOfficeEngine changes a method signature, this will fail at build time.
         const engine: PixelOfficeEngine = {
           addAgent(_id, numericId, spriteIndex, hueShift, seatIndex, displayName, pixelSpriteId) {
-            sceneRef.current?.addAgent(numericId, spriteIndex, hueShift, seatIndex, displayName, pixelSpriteId)
+            sceneRef.current?.addAgent(
+              numericId,
+              spriteIndex,
+              hueShift,
+              seatIndex,
+              displayName,
+              pixelSpriteId
+            )
           },
           removeAgent(numericId) {
             sceneRef.current?.removeAgent(numericId)
@@ -148,7 +155,6 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
       engineRef.current = null
       setEngineReady(false)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout])
 
   // ── Handle container resize ──
@@ -242,9 +248,7 @@ export default function PhaserOfficeCanvas({ layout }: PhaserOfficeCanvasProps):
         >
           <ZoomOut size={14} />
         </button>
-        <span className="text-[10px] text-[#8b7fb0] w-8 text-center font-mono">
-          {zoomLevel}x
-        </span>
+        <span className="text-[10px] text-[#8b7fb0] w-8 text-center font-mono">{zoomLevel}x</span>
         <button
           onClick={() => changeZoom(0.5)}
           className="p-1 rounded hover:bg-[#2a2844] text-[#8b7fb0] hover:text-[#c8b8e8] transition-colors"

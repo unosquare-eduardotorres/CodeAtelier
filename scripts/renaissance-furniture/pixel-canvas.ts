@@ -25,7 +25,10 @@ function normalizeColor(color: RgbaColor): Required<RgbaColor> {
 export class PixelCanvas {
   readonly png: PNG
 
-  constructor(public readonly width: number, public readonly height: number) {
+  constructor(
+    public readonly width: number,
+    public readonly height: number
+  ) {
     this.png = new PNG({ width, height, colorType: 6 })
     this.clear()
   }

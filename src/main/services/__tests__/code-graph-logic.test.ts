@@ -3,11 +3,7 @@
  * Tests edge building from tags, rank boosting, and rank sorting/filtering — zero DB deps.
  */
 import assert from 'node:assert/strict'
-import {
-  buildEdgesFromTags,
-  applyRankBoosts,
-  sortAndFilterByRank
-} from '../code-graph.service'
+import { buildEdgesFromTags, applyRankBoosts, sortAndFilterByRank } from '../code-graph.service'
 import type { RepomapTag } from '../../db/repositories/code-graph-tag.repository'
 
 let passed = 0
@@ -31,12 +27,7 @@ function describe(name: string, fn: () => void): void {
 }
 
 /** Helper to create a minimal RepomapTag */
-function tag(
-  name: string,
-  kind: 'def' | 'ref',
-  relFname: string,
-  line = 1
-): RepomapTag {
+function tag(name: string, kind: 'def' | 'ref', relFname: string, line = 1): RepomapTag {
   return { relFname, fname: `/abs/${relFname}`, line, name, kind }
 }
 
@@ -44,10 +35,7 @@ function tag(
 
 describe('buildEdgesFromTags', () => {
   test('creates edge from ref file to def file for same symbol', () => {
-    const tags = [
-      tag('MyClass', 'def', 'src/myclass.ts'),
-      tag('MyClass', 'ref', 'src/consumer.ts')
-    ]
+    const tags = [tag('MyClass', 'def', 'src/myclass.ts'), tag('MyClass', 'ref', 'src/consumer.ts')]
     const edges = buildEdgesFromTags(tags)
     assert.equal(edges.length, 1)
     assert.equal(edges[0].from, 'src/consumer.ts')
@@ -56,10 +44,7 @@ describe('buildEdgesFromTags', () => {
   })
 
   test('ignores self-references (ref and def in same file)', () => {
-    const tags = [
-      tag('helper', 'def', 'src/utils.ts'),
-      tag('helper', 'ref', 'src/utils.ts')
-    ]
+    const tags = [tag('helper', 'def', 'src/utils.ts'), tag('helper', 'ref', 'src/utils.ts')]
     const edges = buildEdgesFromTags(tags)
     assert.equal(edges.length, 0, 'Self-references should produce no edges')
   })
@@ -83,19 +68,13 @@ describe('buildEdgesFromTags', () => {
   })
 
   test('symbols with only definitions produce no edges', () => {
-    const tags = [
-      tag('orphanDef', 'def', 'src/a.ts'),
-      tag('orphanDef', 'def', 'src/b.ts')
-    ]
+    const tags = [tag('orphanDef', 'def', 'src/a.ts'), tag('orphanDef', 'def', 'src/b.ts')]
     const edges = buildEdgesFromTags(tags)
     assert.equal(edges.length, 0)
   })
 
   test('symbols with only references produce no edges', () => {
-    const tags = [
-      tag('missing', 'ref', 'src/a.ts'),
-      tag('missing', 'ref', 'src/b.ts')
-    ]
+    const tags = [tag('missing', 'ref', 'src/a.ts'), tag('missing', 'ref', 'src/b.ts')]
     const edges = buildEdgesFromTags(tags)
     assert.equal(edges.length, 0)
   })

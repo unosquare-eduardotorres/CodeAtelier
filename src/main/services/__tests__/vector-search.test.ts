@@ -30,18 +30,7 @@ function describe(name: string, fn: () => void): void {
 function makeProcessedChunk(overrides: Partial<ProcessedChunk['metadata']> = {}): ProcessedChunk {
   return {
     id: `chunk-${Math.random().toString(36).slice(2, 8)}`,
-    filePath: 'src/auth/auth.service.ts',
-    symbolName: 'validateJwt',
-    symbolKind: 'method',
     body: 'validateJwt(token: string): boolean { return true }',
-    startLine: 10,
-    endLine: 15,
-    signature: 'validateJwt(token: string): boolean',
-    isPublic: true,
-    isAsync: false,
-    isStatic: false,
-    isAbstract: false,
-    language: 'typescript',
     embedText: '# File: auth.service.ts\nvalidateJwt(token: string): boolean { return true }',
     metadata: {
       filePath: 'src/auth/auth.service.ts',
@@ -61,7 +50,12 @@ function makeProcessedChunk(overrides: Partial<ProcessedChunk['metadata']> = {})
       hasDocstring: false,
       lineCount: 5,
       hasDescription: false,
+      lastModified: 0,
       indexedAt: Date.now(),
+      projectName: '',
+      hasTests: false,
+      importedBy: [],
+      pageRank: 0,
       ...overrides
     }
   }
@@ -146,7 +140,11 @@ describe('InMemoryCollection.query', () => {
     // chunkB embedding [0, 0, 1] — orthogonal (similarity ~0.0)
     collection.upsert(
       ['a', 'b', 'c'],
-      [[1, 0, 0], [0, 0, 1], [0.7, 0.7, 0]],
+      [
+        [1, 0, 0],
+        [0, 0, 1],
+        [0.7, 0.7, 0]
+      ],
       [chunkA, chunkB, chunkC]
     )
 
@@ -164,7 +162,10 @@ describe('InMemoryCollection.query', () => {
 
     collection.upsert(
       ['ts-1', 'py-1'],
-      [[1, 0, 0], [0.9, 0.1, 0]],
+      [
+        [1, 0, 0],
+        [0.9, 0.1, 0]
+      ],
       [tsChunk, pyChunk]
     )
 
@@ -188,7 +189,14 @@ describe('InMemoryCollection.clear', () => {
   test('resets size to 0', () => {
     const collection = new InMemoryCollection()
     const chunk = makeProcessedChunk()
-    collection.upsert(['id-1', 'id-2'], [[1, 0, 0], [0, 1, 0]], [chunk, chunk])
+    collection.upsert(
+      ['id-1', 'id-2'],
+      [
+        [1, 0, 0],
+        [0, 1, 0]
+      ],
+      [chunk, chunk]
+    )
     assert.equal(collection.size, 2)
 
     collection.clear()
@@ -255,7 +263,14 @@ describe('InMemoryCollection.query edge cases', () => {
     const collection = new InMemoryCollection()
     const chunkA = makeProcessedChunk({ symbolName: 'first' })
     const chunkB = makeProcessedChunk({ symbolName: 'second' })
-    collection.upsert(['a', 'b'], [[1, 0, 0], [0, 1, 0]], [chunkA, chunkB])
+    collection.upsert(
+      ['a', 'b'],
+      [
+        [1, 0, 0],
+        [0, 1, 0]
+      ],
+      [chunkA, chunkB]
+    )
 
     const entries = collection.getEntries()
     assert.equal(entries.length, 2)

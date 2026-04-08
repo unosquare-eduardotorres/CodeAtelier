@@ -156,7 +156,17 @@ export function buildSubAgentDefinitions(
 
     const tools =
       mode === 'build'
-        ? ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch', ...mcpToolNames]
+        ? [
+            'Read',
+            'Write',
+            'Edit',
+            'Bash',
+            'Grep',
+            'Glob',
+            'WebSearch',
+            'WebFetch',
+            ...mcpToolNames
+          ]
         : ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', ...mcpToolNames]
 
     const { systemPrompt, description } = buildAgentConfig(specialistId, specialistTasks, mode)

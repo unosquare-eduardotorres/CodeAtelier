@@ -18,6 +18,7 @@ Post-MVP Re-Architecture — Performance Optimization & Intelligence Layer Upgra
 ## Completed Items
 
 ### Foundation (March 21-22)
+
 - Electron 40 + React 19 + TypeScript 5.9 scaffold (electron-vite 5, Tailwind CSS 4)
 - SQLite database with better-sqlite3 (repository pattern, 36 migrations)
 - Streaming chat via Claude Agent SDK
@@ -38,6 +39,7 @@ Post-MVP Re-Architecture — Performance Optimization & Intelligence Layer Upgra
 - Context compaction: auto-compact brain files at 500 lines
 
 ### SDK Migration & Orchestrator Removal (March 24-28)
+
 - Claude Agent SDK integration replacing CLI spawn (SDKExecutor, sdk-hooks)
 - OrchestratorService fully removed — generalist absorbs orchestration
 - orchestrator.ipc.ts renamed to agent-lifecycle.ipc.ts
@@ -50,6 +52,7 @@ Post-MVP Re-Architecture — Performance Optimization & Intelligence Layer Upgra
 - Tool approval system (tool-approval.service.ts, tool-approval.ipc.ts, sdk-hooks.ts)
 
 ### Intelligence Layer (Sprint 0-4 — March 24-28)
+
 - F000: Database migration system (36 migrations, PRAGMA user_version)
 - F001: Complexity scoring & model routing (complexity-scorer.service.ts, tiers haiku/sonnet/opus)
 - F002: Task loop with quality gates (task-loop.service.ts, quality-gate-runner.service.ts)
@@ -60,6 +63,7 @@ Post-MVP Re-Architecture — Performance Optimization & Intelligence Layer Upgra
 - F007: Progressive skill loading (3 tiers, relevance scoring, 8K hard cap)
 
 ### Performance Optimization (Waves 1-3 — March 28-30)
+
 - S1: Trimmed all 10 agent YAML bodies to 2-4 lines
 - S2: Compressed generalist prompts (GENERALIST_BASE_PROMPT: 4,676→1,990 chars)
 - S3: Tighter skill budgets + 8K hard cap in buildSkillContent
@@ -86,6 +90,7 @@ Post-MVP Re-Architecture — Performance Optimization & Intelligence Layer Upgra
 - Plan-mode specialist CLAUDE.md reduced to tech stack only (397 chars)
 
 ### UI & Design (March 26-30)
+
 - Code Atelier brand migration — Renaissance theme, darker surfaces, bigger fonts
 - TaskPlanCard UX label split for plan vs build modes
 - Role-aware streaming pipeline — thinking indicator shows correct agent identity
@@ -93,12 +98,14 @@ Post-MVP Re-Architecture — Performance Optimization & Intelligence Layer Upgra
 ## Pending Items
 
 ### Tier 1: Performance — Immediate (2h)
+
 - **NEW-S1**: Full single-specialist direct dispatch (skip decomposition for ALL 1-specialist handoffs, not just gated)
 - **NEW-S2**: Slash specialist BUILD CLAUDE.md (4,463→~800 chars) — specialists don't need full conventions for focused tasks
 - **NEW-S3**: Skills opt-in with complexity gate — only load skills when task complexity ≥5
 - **NEW-S5**: Memory budget scaled by turn count (turn 1: 5000, turn 3+: 2000, turn 6+: 0)
 
 ### Tier 2: Architecture — Near-Term (8-12h)
+
 - **Phase 1**: RepoMapper MCP integration — ranked file lists for specialist context (blocks Phase 4)
 - **F008**: Scope Enforcement Layer — post-execution validation of file changes against task scope
 - **NEW-S7**: Ask user before specialist — opt-in specialist spawning to eliminate unnecessary spawns
@@ -106,6 +113,7 @@ Post-MVP Re-Architecture — Performance Optimization & Intelligence Layer Upgra
 - **NEW-S6**: Merge redundant PLAN_MODE/BUILD_MODE sections in default-prompts.ts
 
 ### Tier 3: Future Features (20-30h)
+
 - **Phase 4**: Validated file-ranked context (blocked by Phase 1 / RepoMapper MCP)
 - **F009**: Declarative Hooks System — user-defined automation hooks in .agentstudio/hooks.yaml
 - **F010**: Deep Agent Personas & Bug Council — 5 diagnostic agents for persistent failures

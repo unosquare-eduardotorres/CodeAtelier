@@ -17,7 +17,7 @@ if (!env) {
   const conversationId = seedConversation(db, wsId)
 
   // Import AFTER db injection so the repository uses our in-memory DB
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+
   const { messageRepository } = require('../message.repository')
 
   describe('MessageRepository', () => {

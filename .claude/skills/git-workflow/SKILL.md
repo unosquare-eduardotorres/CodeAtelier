@@ -78,16 +78,16 @@ Types:
 
 ### Scopes (project-specific)
 
-| Scope          | Area                         |
-| -------------- | ---------------------------- |
-| `main`         | Main process code            |
-| `renderer`     | React frontend               |
-| `preload`      | Preload bridge               |
-| `ipc`          | IPC handlers/channels        |
-| `db`           | Database schema/repositories |
-| `agents`       | Agent system                 |
+| Scope         | Area                         |
+| ------------- | ---------------------------- |
+| `main`        | Main process code            |
+| `renderer`    | React frontend               |
+| `preload`     | Preload bridge               |
+| `ipc`         | IPC handlers/channels        |
+| `db`          | Database schema/repositories |
+| `agents`      | Agent system                 |
 | `coordinator` | Orchestrator service         |
-| `build`        | Electron-builder, packaging  |
+| `build`       | Electron-builder, packaging  |
 
 ### Examples
 

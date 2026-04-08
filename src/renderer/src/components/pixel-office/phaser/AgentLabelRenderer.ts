@@ -24,20 +24,24 @@ export function createAgentLabels(
   labelBg: Phaser.GameObjects.Graphics
 } {
   const labelBg = scene.add.graphics()
-  const nameLabel = scene.add.text(0, 4, displayName, {
-    fontSize: '7px',
-    fontFamily: '"Inter", system-ui, -apple-system, sans-serif',
-    color: '#e5e7eb',
-    align: 'center',
-    fontStyle: 'bold'
-  }).setOrigin(0.5, 0)
+  const nameLabel = scene.add
+    .text(0, 4, displayName, {
+      fontSize: '7px',
+      fontFamily: '"Inter", system-ui, -apple-system, sans-serif',
+      color: '#e5e7eb',
+      align: 'center',
+      fontStyle: 'bold'
+    })
+    .setOrigin(0.5, 0)
 
-  const statusLabel = scene.add.text(0, 13, '', {
-    fontSize: '6px',
-    fontFamily: '"Inter", system-ui, -apple-system, sans-serif',
-    color: '#9ca3af',
-    align: 'center'
-  }).setOrigin(0.5, 0)
+  const statusLabel = scene.add
+    .text(0, 13, '', {
+      fontSize: '6px',
+      fontFamily: '"Inter", system-ui, -apple-system, sans-serif',
+      color: '#9ca3af',
+      align: 'center'
+    })
+    .setOrigin(0.5, 0)
 
   container.add([labelBg, nameLabel, statusLabel])
 
@@ -47,15 +51,13 @@ export function createAgentLabels(
 /**
  * Update agent labels (name and status text) based on character state.
  */
-export function updateAgentLabels(
-  visual: AgentVisual,
-  isActive: boolean,
-  state: string
-): void {
+export function updateAgentLabels(visual: AgentVisual, isActive: boolean, state: string): void {
   if (!visual.statusLabel || !visual.nameLabel || !visual.labelBg) return
 
   const statusText = isActive
-    ? state === CharacterState.TYPE ? '⌨ Working' : '📖 Reading'
+    ? state === CharacterState.TYPE
+      ? '⌨ Working'
+      : '📖 Reading'
     : '💤 Idle'
 
   visual.statusLabel.setText(statusText)
@@ -72,10 +74,7 @@ export function updateAgentLabels(
 /**
  * Update only the display name text.
  */
-export function updateAgentDisplayName(
-  visual: AgentVisual,
-  name: string
-): void {
+export function updateAgentDisplayName(visual: AgentVisual, name: string): void {
   if (!visual.nameLabel) return
   visual.nameLabel.setText(name)
 

@@ -205,10 +205,7 @@ interface Api {
     skillsEnabled?: boolean
     skillOverrides?: string[] | null
   }) => Promise<void>
-  removeConvSpecialist: (args: {
-    conversationId: string
-    specialistId: string
-  }) => Promise<void>
+  removeConvSpecialist: (args: { conversationId: string; specialistId: string }) => Promise<void>
   resetConvSpecialists: (args: { conversationId: string }) => Promise<void>
   estimateConvTokens: (args: { conversationId: string }) => Promise<SpecialistTokenEstimate[]>
 
@@ -462,6 +459,7 @@ interface Api {
       agentId: string
       agentType: string
       status: string
+      currentTask?: string
       elapsedMs: number
       tokenUsage: number
       model?: 'haiku' | 'sonnet' | 'opus'
@@ -512,7 +510,9 @@ interface Api {
   // Code Changes
   getFileDetails: (args: {
     conversationId: string
-  }) => Promise<Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>>
+  }) => Promise<
+    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+  >
   getFileDiff: (args: {
     conversationId: string
     filePath: string
@@ -522,9 +522,7 @@ interface Api {
     filePaths: string[]
     message: string
   }) => Promise<{ commitHash: string }>
-  repoPush: (args: {
-    conversationId: string
-  }) => Promise<{ branch: string; remote: string }>
+  repoPush: (args: { conversationId: string }) => Promise<{ branch: string; remote: string }>
   getPushStatus: (args: {
     conversationId: string
   }) => Promise<{ branch: string; commitsAhead: number; hasRemote: boolean }>
@@ -607,9 +605,9 @@ interface Api {
     byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
   }>
   getConversationCost: (args: { conversationId: string }) => Promise<number>
-  getWorkspaceConversationCosts: (args: { workspaceId: string }) => Promise<
-    { conversationId: string; costCents: number; totalTokens: number }[]
-  >
+  getWorkspaceConversationCosts: (args: {
+    workspaceId: string
+  }) => Promise<{ conversationId: string; costCents: number; totalTokens: number }[]>
   checkBudget: (args: { workspaceId: string }) => Promise<{
     currentCostCents: number
     dailyBudgetCents: number
@@ -767,9 +765,9 @@ interface Api {
   indexingResume: (args: { workspaceId: string }) => Promise<void>
   indexingCancel: (args: { workspaceId: string }) => Promise<void>
   indexingGetStatus: (args: { workspaceId: string }) => Promise<IndexingState>
-  loadPersistedIndex: (
-    args: { workspaceId: string }
-  ) => Promise<{ loaded: boolean; status: string; symbolCount?: number }>
+  loadPersistedIndex: (args: {
+    workspaceId: string
+  }) => Promise<{ loaded: boolean; status: string; symbolCount?: number }>
   onIndexingProgress: (callback: (state: IndexingState) => void) => () => void
   // Code Graph (persisted repomap)
   codeGraphIndexStart: (args: { workspaceId: string }) => Promise<void>
@@ -829,7 +827,6 @@ interface Api {
   sdkRewindFiles: (args: { userMessageId: string; dryRun?: boolean }) => Promise<unknown>
   sdkReconnectMcp: (args: { serverName: string }) => Promise<unknown>
   sdkSupportedAgents: () => Promise<unknown>
-
 }
 
 declare global {

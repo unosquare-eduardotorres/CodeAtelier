@@ -13,7 +13,7 @@ extraResources:
   - from: src/main/hooks
     to: hooks
     filter:
-      - "*.sh"
+      - '*.sh'
 afterPack: build/afterPack.js
 asarUnpack:
   - resources/**

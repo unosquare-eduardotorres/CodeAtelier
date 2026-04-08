@@ -272,9 +272,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_CLEAR_CONVERSATION_HISTORY, args),
 
   // ── Conversation Specialist Activation (skill gating) ──
-  listConvSpecialists: (args: {
-    conversationId: string
-  }): Promise<ConversationSpecialist[]> =>
+  listConvSpecialists: (args: { conversationId: string }): Promise<ConversationSpecialist[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_LIST, args),
 
   upsertConvSpecialist: (args: {
@@ -283,21 +281,15 @@ const api = {
     isActive?: boolean
     skillsEnabled?: boolean
     skillOverrides?: string[] | null
-  }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_UPSERT, args),
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_UPSERT, args),
 
-  removeConvSpecialist: (args: {
-    conversationId: string
-    specialistId: string
-  }): Promise<void> =>
+  removeConvSpecialist: (args: { conversationId: string; specialistId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_REMOVE, args),
 
   resetConvSpecialists: (args: { conversationId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_RESET, args),
 
-  estimateConvTokens: (args: {
-    conversationId: string
-  }): Promise<SpecialistTokenEstimate[]> =>
+  estimateConvTokens: (args: { conversationId: string }): Promise<SpecialistTokenEstimate[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_ESTIMATE, args),
 
   // ── App Preferences ──
@@ -1005,8 +997,9 @@ const api = {
   // ── Code Changes ──
   getFileDetails: (args: {
     conversationId: string
-  }): Promise<Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DETAILS, args),
+  }): Promise<
+    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DETAILS, args),
 
   getFileDiff: (args: {
     conversationId: string
@@ -1018,12 +1011,9 @@ const api = {
     conversationId: string
     filePaths: string[]
     message: string
-  }): Promise<{ commitHash: string }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.REPO_COMMIT_FILES, args),
+  }): Promise<{ commitHash: string }> => ipcRenderer.invoke(IPC_CHANNELS.REPO_COMMIT_FILES, args),
 
-  repoPush: (args: {
-    conversationId: string
-  }): Promise<{ branch: string; remote: string }> =>
+  repoPush: (args: { conversationId: string }): Promise<{ branch: string; remote: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.REPO_PUSH, args),
 
   getPushStatus: (args: {
@@ -1143,9 +1133,8 @@ const api = {
 
   getWorkspaceConversationCosts: (args: {
     workspaceId: string
-  }): Promise<
-    { conversationId: string; costCents: number; totalTokens: number }[]
-  > => ipcRenderer.invoke(IPC_CHANNELS.COST_GET_WORKSPACE_CONVERSATIONS, args),
+  }): Promise<{ conversationId: string; costCents: number; totalTokens: number }[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.COST_GET_WORKSPACE_CONVERSATIONS, args),
 
   checkBudget: (args: {
     workspaceId: string
@@ -1367,7 +1356,9 @@ const api = {
     }>
   > => ipcRenderer.invoke(IPC_CHANNELS.HOOKS_LIST),
 
-  reloadHooks: (args: { workspacePath: string }): Promise<
+  reloadHooks: (args: {
+    workspacePath: string
+  }): Promise<
     Array<{
       event: string
       name: string
@@ -1443,9 +1434,9 @@ const api = {
   indexingGetStatus: (args: { workspaceId: string }): Promise<IndexingState> =>
     ipcRenderer.invoke(IPC_CHANNELS.INDEXING_GET_STATUS, args),
 
-  loadPersistedIndex: (
-    args: { workspaceId: string }
-  ): Promise<{ loaded: boolean; status: string; symbolCount?: number }> =>
+  loadPersistedIndex: (args: {
+    workspaceId: string
+  }): Promise<{ loaded: boolean; status: string; symbolCount?: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.INDEXING_LOAD_PERSISTED, args),
 
   onIndexingProgress: (callback: (state: IndexingState) => void): (() => void) => {
@@ -1467,13 +1458,9 @@ const api = {
   codeGraphHasIndex: (args: { workspaceId: string }): Promise<boolean> =>
     ipcRenderer.invoke(IPC_CHANNELS.CODE_GRAPH_HAS_INDEX, args),
 
-  onCodeGraphProgress: (
-    callback: (state: CodeGraphIndexingState) => void
-  ): (() => void) => {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      state: CodeGraphIndexingState
-    ): void => callback(state)
+  onCodeGraphProgress: (callback: (state: CodeGraphIndexingState) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: CodeGraphIndexingState): void =>
+      callback(state)
     ipcRenderer.on(IPC_CHANNELS.CODE_GRAPH_PROGRESS, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.CODE_GRAPH_PROGRESS, handler)
@@ -1562,7 +1549,12 @@ const api = {
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
-      data: { attempt: number; maxRetries: number; retryDelayMs: number; errorStatus: number | null }
+      data: {
+        attempt: number
+        maxRetries: number
+        retryDelayMs: number
+        errorStatus: number | null
+      }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.SDK_API_RETRY, handler)
     return () => {
@@ -1570,13 +1562,9 @@ const api = {
     }
   },
 
-  onSessionState: (
-    callback: (data: { state: string }) => void
-  ): (() => void) => {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      data: { state: string }
-    ): void => callback(data)
+  onSessionState: (callback: (data: { state: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { state: string }): void =>
+      callback(data)
     ipcRenderer.on(IPC_CHANNELS.SDK_SESSION_STATE, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.SDK_SESSION_STATE, handler)
@@ -1590,14 +1578,11 @@ const api = {
   sdkStopTask: (args: { taskId: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.SDK_STOP_TASK, args),
 
-  sdkInterrupt: (): Promise<unknown> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SDK_INTERRUPT),
+  sdkInterrupt: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SDK_INTERRUPT),
 
-  sdkAccountInfo: (): Promise<unknown> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SDK_ACCOUNT_INFO),
+  sdkAccountInfo: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SDK_ACCOUNT_INFO),
 
-  sdkSupportedModels: (): Promise<unknown> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_MODELS),
+  sdkSupportedModels: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_MODELS),
 
   sdkMcpServerStatus: (): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.SDK_MCP_SERVER_STATUS),
@@ -1620,9 +1605,7 @@ const api = {
   sdkReconnectMcp: (args: { serverName: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.SDK_RECONNECT_MCP, args),
 
-  sdkSupportedAgents: (): Promise<unknown> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_AGENTS),
-
+  sdkSupportedAgents: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_AGENTS)
 } as const
 
 if (process.contextIsolated) {

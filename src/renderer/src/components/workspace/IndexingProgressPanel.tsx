@@ -28,6 +28,7 @@ export default function IndexingProgressPanel({
   }, [workspaceId])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetchStatus sets state from async IPC result
     fetchStatus()
     const unsub = window.api.onIndexingProgress((progress) => {
       if (!progress.workspaceId || progress.workspaceId === workspaceId) {
@@ -35,7 +36,7 @@ export default function IndexingProgressPanel({
       }
     })
     return unsub
-  }, [fetchStatus])
+  }, [fetchStatus, workspaceId])
 
   const handlePause = (): void => {
     window.api.indexingPause({ workspaceId })
@@ -48,6 +49,36 @@ export default function IndexingProgressPanel({
   const handleCancel = (): void => {
     window.api.indexingCancel({ workspaceId })
   }
+
+  // Track when preprocessing starts for ETA calculation (side-effect in useEffect, not render)
+  const [etaLabel, setEtaLabel] = useState('')
+
+  useEffect(() => {
+    if (state?.status === 'preprocessing' && !preprocessStartRef.current) {
+      preprocessStartRef.current = Date.now()
+    } else if (state?.status !== 'preprocessing') {
+      preprocessStartRef.current = null
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset ETA label when leaving preprocessing
+      setEtaLabel('')
+      return
+    }
+
+    // Recalculate ETA when description progress changes
+    if (state?.status === 'preprocessing' && state.descriptionsTotal > 0) {
+      const descDone = state.descriptionsProcessed
+      const descTotal = state.descriptionsTotal
+      if (preprocessStartRef.current && descDone > 0) {
+        const elapsed = (Date.now() - preprocessStartRef.current) / 1000
+        const rate = descDone / elapsed
+        if (rate > 0) {
+          const remaining = (descTotal - descDone) / rate
+          setEtaLabel(` (${formatEta(remaining)})`)
+          return
+        }
+      }
+    }
+    setEtaLabel('')
+  }, [state])
 
   if (!state || state.status === 'idle') return <div />
 
@@ -64,13 +95,6 @@ export default function IndexingProgressPanel({
   let percent = 0
   let progressLabel = ''
 
-  // Track when preprocessing starts for ETA calculation
-  if (state.status === 'preprocessing' && !preprocessStartRef.current) {
-    preprocessStartRef.current = Date.now()
-  } else if (state.status !== 'preprocessing') {
-    preprocessStartRef.current = null
-  }
-
   if (state.status === 'scanning') {
     progressLabel = 'Scanning files...'
   } else if (state.status === 'preprocessing') {
@@ -82,17 +106,6 @@ export default function IndexingProgressPanel({
       const descDone = state.descriptionsProcessed
       const descTotal = state.descriptionsTotal
       percent = descTotal > 0 ? Math.round((descDone / descTotal) * 100) : 0
-
-      // ETA based on description progress
-      let etaLabel = ''
-      if (preprocessStartRef.current && descDone > 0) {
-        const elapsed = (Date.now() - preprocessStartRef.current) / 1000
-        const rate = descDone / elapsed
-        if (rate > 0) {
-          const remaining = (descTotal - descDone) / rate
-          etaLabel = ` (${formatEta(remaining)})`
-        }
-      }
 
       const cached = state.descriptionsCached
       progressLabel = `Generating AI descriptions... ${descDone}/${descTotal}${etaLabel}`
@@ -108,15 +121,11 @@ export default function IndexingProgressPanel({
     }
   } else if (state.status === 'indexing-chunks') {
     percent =
-      state.totalChunks > 0
-        ? Math.round((state.processedChunks / state.totalChunks) * 100)
-        : 0
+      state.totalChunks > 0 ? Math.round((state.processedChunks / state.totalChunks) * 100) : 0
     progressLabel = `Embedding chunks... ${state.processedChunks} / ${state.totalChunks}`
   } else if (state.status === 'paused') {
     percent =
-      state.totalChunks > 0
-        ? Math.round((state.processedChunks / state.totalChunks) * 100)
-        : 0
+      state.totalChunks > 0 ? Math.round((state.processedChunks / state.totalChunks) * 100) : 0
     progressLabel = 'Paused'
   } else if (state.status === 'complete') {
     percent = 100
@@ -165,13 +174,9 @@ export default function IndexingProgressPanel({
       {/* Details */}
       <div className="text-xs text-text-secondary space-y-0.5">
         <p>{progressLabel}</p>
-        {state.preprocessSkipped > 0 && (
-          <p>{state.preprocessSkipped} files skipped</p>
-        )}
+        {state.preprocessSkipped > 0 && <p>{state.preprocessSkipped} files skipped</p>}
         {state.currentFile && (isActive || isPaused) && (
-          <p className="truncate font-mono text-text-muted">
-            {state.currentFile}
-          </p>
+          <p className="truncate font-mono text-text-muted">{state.currentFile}</p>
         )}
         {(state.descriptionsGenerated > 0 || state.descriptionsCached > 0) && (
           <p>

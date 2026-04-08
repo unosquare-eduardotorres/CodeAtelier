@@ -1,6 +1,7 @@
 Review the current changes for quality, bugs, and convention compliance.
 
 Steps:
+
 1. Run `git diff` to see all unstaged changes, and `git diff --cached` for staged changes
 2. For each changed file, check:
    - **Correctness**: Are there logic bugs, off-by-one errors, or missing error handling?

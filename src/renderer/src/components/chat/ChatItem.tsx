@@ -150,11 +150,7 @@ export default function ChatItem({
         <div className="flex items-center gap-1.5 text-xs text-text-muted truncate">
           <span>{formatRelativeTime(conversation.createdAt)}</span>
           {contextUsage && contextUsage.percentage > 0 && (
-            <ContextBadge
-              percentage={contextUsage.percentage}
-              level={contextUsage.level}
-              compact
-            />
+            <ContextBadge percentage={contextUsage.percentage} level={contextUsage.level} compact />
           )}
         </div>
       </div>

@@ -206,6 +206,7 @@ export class GitHubService {
     }
     if (opts.labels) params.labels = opts.labels
 
+    // @ts-expect-error — TODO: params built dynamically, Octokit expects strict shape
     const response = await octokit.rest.issues.listForRepo(params)
 
     // Filter out pull requests (GitHub API returns PRs as issues too)

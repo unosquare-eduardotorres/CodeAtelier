@@ -25,7 +25,13 @@ type IdeaFilter = (typeof FILTER_TABS)[number]['value']
 
 interface IdeasListProps {
   onNavigateToChat: () => void
-  onOpenGrillSession?: (ideaId: string, conversationId: string, ideaTitle: string, isNewSession?: boolean, ideaDescription?: string) => void
+  onOpenGrillSession?: (
+    ideaId: string,
+    conversationId: string,
+    ideaTitle: string,
+    isNewSession?: boolean,
+    ideaDescription?: string
+  ) => void
 }
 
 function StatusBadge({ status }: { status: Idea['status'] }): React.JSX.Element {
@@ -81,8 +87,12 @@ function GrillSummaryPreview({ summary }: { summary: string }): React.JSX.Elemen
   )
 }
 
-export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: IdeasListProps): React.JSX.Element {
-  const { ideas, loadIdeas, deleteIdea, updateIdea, startGrill, convertDirect, isLoading } = useIdeaStore()
+export default function IdeasList({
+  onNavigateToChat,
+  onOpenGrillSession
+}: IdeasListProps): React.JSX.Element {
+  const { ideas, loadIdeas, deleteIdea, updateIdea, startGrill, convertDirect, isLoading } =
+    useIdeaStore()
   const { activeWorkspace } = useWorkspaceStore()
   const { selectConversation, sendMessage, loadConversations } = useChatActions()
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -169,7 +179,13 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
 
       // Open the dedicated grill session view — prompt will be sent AFTER conversation loads
       if (onOpenGrillSession) {
-        onOpenGrillSession(updatedIdea.id, conversation.id, updatedIdea.title, isNewSession, updatedIdea.description)
+        onOpenGrillSession(
+          updatedIdea.id,
+          conversation.id,
+          updatedIdea.title,
+          isNewSession,
+          updatedIdea.description
+        )
       } else {
         // Fallback: navigate to chat
         await loadConversations(activeWorkspace.id)
@@ -196,7 +212,13 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
 
       // Open the dedicated grill session view — prompt will be sent AFTER conversation loads
       if (onOpenGrillSession) {
-        onOpenGrillSession(updatedIdea.id, conversation.id, updatedIdea.title, isNewConversation, updatedIdea.description)
+        onOpenGrillSession(
+          updatedIdea.id,
+          conversation.id,
+          updatedIdea.title,
+          isNewConversation,
+          updatedIdea.description
+        )
       } else {
         // Fallback: navigate to chat if no grill view handler provided
         await loadConversations(activeWorkspace.id)
@@ -276,8 +298,8 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
         <Lightbulb size={32} className="text-warning/30 mb-3" />
         <p className="text-sm text-text-secondary mb-1">No ideas yet</p>
         <p className="text-xs text-text-muted">
-          Use the <Lightbulb size={10} className="inline text-warning" /> button in the chat
-          input to capture ideas.
+          Use the <Lightbulb size={10} className="inline text-warning" /> button in the chat input
+          to capture ideas.
         </p>
       </div>
     )
@@ -332,190 +354,195 @@ export default function IdeasList({ onNavigateToChat, onOpenGrillSession }: Idea
           </p>
         </div>
       ) : (
-      <div className="space-y-2">
-        {filteredIdeas.map((idea) => (
-          <div
-            key={idea.id}
-            className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm"
-          >
-            {editingId === idea.id ? (
-              /* Inline editing mode */
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  {idea.status === 'grilling' ? (
-                    <Flame size={14} className="text-accent flex-shrink-0" />
-                  ) : (
-                    <Lightbulb size={14} className="text-warning flex-shrink-0" />
-                  )}
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') saveEditing()
-                      if (e.key === 'Escape') cancelEditing()
-                    }}
-                    className="flex-1 bg-surface-base border border-border-default rounded-md px-2 py-1 text-sm font-medium text-text-primary outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/30"
-                    autoFocus
-                  />
-                </div>
-                <textarea
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') cancelEditing()
-                  }}
-                  placeholder="Add a description..."
-                  rows={5}
-                  className="w-full bg-surface-base border border-border-default rounded-md px-2 py-1.5 text-xs text-text-secondary outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/30 resize-none ml-[22px]"
-                  style={{ width: 'calc(100% - 22px)' }}
-                />
-                <div className="flex items-center gap-1.5 ml-[22px]">
-                  <button
-                    onClick={saveEditing}
-                    disabled={!editTitle.trim()}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-success bg-success-muted border border-success/20 rounded-lg hover:bg-success/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <Check size={12} />
-                    Save
-                  </button>
-                  <button
-                    onClick={cancelEditing}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text-primary hover:bg-surface-overlay rounded-lg transition-colors"
-                  >
-                    <X size={12} />
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                {/* Title row */}
-                <div className="flex items-start justify-between gap-3 mb-1">
-                  <div className="flex items-center gap-2 min-w-0">
+        <div className="space-y-2">
+          {filteredIdeas.map((idea) => (
+            <div
+              key={idea.id}
+              className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm"
+            >
+              {editingId === idea.id ? (
+                /* Inline editing mode */
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
                     {idea.status === 'grilling' ? (
                       <Flame size={14} className="text-accent flex-shrink-0" />
-                    ) : idea.status === 'completed' ? (
-                      <CheckCircle size={14} className="text-success flex-shrink-0" />
                     ) : (
                       <Lightbulb size={14} className="text-warning flex-shrink-0" />
                     )}
-                    <span className="text-base font-normal text-text-primary truncate" style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}>{idea.title}</span>
-                    {idea.status !== 'completed' && (
-                      <button
-                        onClick={() => startEditing(idea)}
-                        className="p-0.5 text-text-muted hover:text-text-primary rounded transition-colors opacity-0 group-hover:opacity-100"
-                        aria-label="Edit idea"
-                        title="Edit idea"
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveEditing()
+                        if (e.key === 'Escape') cancelEditing()
+                      }}
+                      className="flex-1 bg-surface-base border border-border-default rounded-md px-2 py-1 text-sm font-medium text-text-primary outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/30"
+                      autoFocus
+                    />
+                  </div>
+                  <textarea
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') cancelEditing()
+                    }}
+                    placeholder="Add a description..."
+                    rows={5}
+                    className="w-full bg-surface-base border border-border-default rounded-md px-2 py-1.5 text-xs text-text-secondary outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/30 resize-none ml-[22px]"
+                    style={{ width: 'calc(100% - 22px)' }}
+                  />
+                  <div className="flex items-center gap-1.5 ml-[22px]">
+                    <button
+                      onClick={saveEditing}
+                      disabled={!editTitle.trim()}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-success bg-success-muted border border-success/20 rounded-lg hover:bg-success/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Check size={12} />
+                      Save
+                    </button>
+                    <button
+                      onClick={cancelEditing}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text-primary hover:bg-surface-overlay rounded-lg transition-colors"
+                    >
+                      <X size={12} />
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Title row */}
+                  <div className="flex items-start justify-between gap-3 mb-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {idea.status === 'grilling' ? (
+                        <Flame size={14} className="text-accent flex-shrink-0" />
+                      ) : idea.status === 'completed' ? (
+                        <CheckCircle size={14} className="text-success flex-shrink-0" />
+                      ) : (
+                        <Lightbulb size={14} className="text-warning flex-shrink-0" />
+                      )}
+                      <span
+                        className="text-base font-normal text-text-primary truncate"
+                        style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}
                       >
-                        <Pencil size={11} />
+                        {idea.title}
+                      </span>
+                      {idea.status !== 'completed' && (
+                        <button
+                          onClick={() => startEditing(idea)}
+                          className="p-0.5 text-text-muted hover:text-text-primary rounded transition-colors opacity-0 group-hover:opacity-100"
+                          aria-label="Edit idea"
+                          title="Edit idea"
+                        >
+                          <Pencil size={11} />
+                        </button>
+                      )}
+                    </div>
+                    <StatusBadge status={idea.status} />
+                  </div>
+
+                  {/* Description */}
+                  {idea.description && (
+                    <p className="text-xs text-text-secondary mb-3 ml-[22px] line-clamp-2">
+                      {idea.description}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* Actions — hidden while editing */}
+              {editingId !== idea.id && (
+                <div className="flex items-center gap-2 ml-[22px]">
+                  {idea.status === 'draft' && (
+                    <>
+                      <button
+                        onClick={() => handleStartGrill(idea)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
+                      >
+                        <Flame size={12} />
+                        Grill Me
+                      </button>
+                      <button
+                        onClick={() => handleConvertDirect(idea)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
+                      >
+                        <Play size={12} />
+                        Convert Directly
+                      </button>
+                    </>
+                  )}
+
+                  {idea.status === 'grilling' && (
+                    <>
+                      <button
+                        onClick={() => handleContinueGrill(idea)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
+                      >
+                        <Flame size={12} />
+                        Continue Grill
+                      </button>
+                      <button
+                        onClick={() => handleConvertDirect(idea)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
+                      >
+                        <Play size={12} />
+                        Convert Directly
+                      </button>
+                    </>
+                  )}
+
+                  {idea.status === 'completed' && idea.convertedConversationId && (
+                    <button
+                      onClick={() => handleGoToConversation(idea.convertedConversationId!)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-success bg-success-muted border border-success/20 rounded-lg hover:bg-success/20 transition-colors"
+                    >
+                      <ExternalLink size={12} />
+                      Go to Conversation
+                    </button>
+                  )}
+
+                  {idea.status === 'completed' &&
+                    idea.grillConversationId &&
+                    !idea.convertedConversationId && (
+                      <button
+                        onClick={() => handleGoToConversation(idea.grillConversationId!)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-success bg-success-muted border border-success/20 rounded-lg hover:bg-success/20 transition-colors"
+                      >
+                        <ExternalLink size={12} />
+                        Go to Grill Conversation
                       </button>
                     )}
-                  </div>
-                  <StatusBadge status={idea.status} />
+
+                  {idea.status === 'completed' && (
+                    <button
+                      onClick={() => handleCreatePlanFromCompleted(idea)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
+                    >
+                      <Play size={12} />
+                      Create New Plan
+                    </button>
+                  )}
+
+                  {/* Delete button — always available */}
+                  <button
+                    onClick={() => setDeleteTarget(idea.id)}
+                    className="inline-flex items-center p-1 text-text-muted hover:text-danger hover:bg-danger-muted rounded-md transition-colors ml-auto"
+                    aria-label="Delete idea"
+                    title="Delete idea"
+                  >
+                    <Trash2 size={12} />
+                  </button>
                 </div>
-
-                {/* Description */}
-                {idea.description && (
-                  <p className="text-xs text-text-secondary mb-3 ml-[22px] line-clamp-2">
-                    {idea.description}
-                  </p>
-                )}
-              </>
-            )}
-
-            {/* Actions — hidden while editing */}
-            {editingId !== idea.id && (
-            <div className="flex items-center gap-2 ml-[22px]">
-              {idea.status === 'draft' && (
-                <>
-                  <button
-                    onClick={() => handleStartGrill(idea)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
-                  >
-                    <Flame size={12} />
-                    Grill Me
-                  </button>
-                  <button
-                    onClick={() => handleConvertDirect(idea)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
-                  >
-                    <Play size={12} />
-                    Convert Directly
-                  </button>
-                </>
               )}
 
-              {idea.status === 'grilling' && (
-                <>
-                  <button
-                    onClick={() => handleContinueGrill(idea)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
-                  >
-                    <Flame size={12} />
-                    Continue Grill
-                  </button>
-                  <button
-                    onClick={() => handleConvertDirect(idea)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
-                  >
-                    <Play size={12} />
-                    Convert Directly
-                  </button>
-                </>
+              {/* Grill summary — expandable */}
+              {idea.grillSummary && idea.status === 'completed' && (
+                <GrillSummaryPreview summary={idea.grillSummary} />
               )}
-
-              {idea.status === 'completed' && idea.convertedConversationId && (
-                <button
-                  onClick={() => handleGoToConversation(idea.convertedConversationId!)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-success bg-success-muted border border-success/20 rounded-lg hover:bg-success/20 transition-colors"
-                >
-                  <ExternalLink size={12} />
-                  Go to Conversation
-                </button>
-              )}
-
-              {idea.status === 'completed' &&
-                idea.grillConversationId &&
-                !idea.convertedConversationId && (
-                  <button
-                    onClick={() => handleGoToConversation(idea.grillConversationId!)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-success bg-success-muted border border-success/20 rounded-lg hover:bg-success/20 transition-colors"
-                  >
-                    <ExternalLink size={12} />
-                    Go to Grill Conversation
-                  </button>
-                )}
-
-              {idea.status === 'completed' && (
-                <button
-                  onClick={() => handleCreatePlanFromCompleted(idea)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
-                >
-                  <Play size={12} />
-                  Create New Plan
-                </button>
-              )}
-
-              {/* Delete button — always available */}
-              <button
-                onClick={() => setDeleteTarget(idea.id)}
-                className="inline-flex items-center p-1 text-text-muted hover:text-danger hover:bg-danger-muted rounded-md transition-colors ml-auto"
-                aria-label="Delete idea"
-                title="Delete idea"
-              >
-                <Trash2 size={12} />
-              </button>
             </div>
-            )}
-
-            {/* Grill summary — expandable */}
-            {idea.grillSummary && idea.status === 'completed' && (
-              <GrillSummaryPreview summary={idea.grillSummary} />
-            )}
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
       )}
 
       <ConfirmDialog

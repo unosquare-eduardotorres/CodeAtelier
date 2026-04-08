@@ -66,20 +66,20 @@ claude -n "my-session"                  # Name the session
 
 ## Slash Commands (In-Session)
 
-| Command            | What it does                                                         |
-| ------------------ | -------------------------------------------------------------------- |
-| `/clear`           | Clear conversation history, start fresh context                      |
-| `/compact`         | Summarize conversation to reduce token usage                         |
-| `/context`         | Show current context usage, skill budget, loaded files               |
-| `/model`           | Switch model mid-session                                             |
-| `/effort`          | Set effort level (low/medium/high)                                   |
-| `/fast`            | Switch to Haiku for quick tasks                                      |
-| `/init`            | Generate CLAUDE.md by analyzing project                              |
-| `/review`          | Review code, diffs, or pull requests                                 |
-| `/simplify`        | 3-agent quality review pipeline                                      |
-| `/batch`           | Run large-scale changes in parallel across worktrees                 |
-| `/rewind`          | Undo recent changes                                                  |
-| `/plan`            | Create an implementation plan                                        |
+| Command     | What it does                                           |
+| ----------- | ------------------------------------------------------ |
+| `/clear`    | Clear conversation history, start fresh context        |
+| `/compact`  | Summarize conversation to reduce token usage           |
+| `/context`  | Show current context usage, skill budget, loaded files |
+| `/model`    | Switch model mid-session                               |
+| `/effort`   | Set effort level (low/medium/high)                     |
+| `/fast`     | Switch to Haiku for quick tasks                        |
+| `/init`     | Generate CLAUDE.md by analyzing project                |
+| `/review`   | Review code, diffs, or pull requests                   |
+| `/simplify` | 3-agent quality review pipeline                        |
+| `/batch`    | Run large-scale changes in parallel across worktrees   |
+| `/rewind`   | Undo recent changes                                    |
+| `/plan`     | Create an implementation plan                          |
 
 Shell commands: `> !npm test` (bypasses conversational mode, saves tokens)
 
@@ -113,16 +113,16 @@ Skills are the recommended format (replacing `.claude/commands/`). Support slash
 
 ### Frontmatter Options
 
-| Field                            | Purpose                                                  |
-| -------------------------------- | -------------------------------------------------------- |
-| `name`                           | Becomes the /slash-command name                          |
-| `description`                    | Helps Claude decide when to auto-invoke                  |
-| `allowed-tools`                  | Restrict which tools the skill can use                   |
-| `model`                          | Override model when skill is invoked                     |
-| `effort`                         | Override effort level                                    |
-| `disable-model-invocation: true` | Only user can invoke (side-effect skills like /deploy)   |
-| `user-invocable: false`          | Only Claude can invoke (background knowledge skills)     |
-| `isolation: worktree`            | Run in isolated git worktree                             |
+| Field                            | Purpose                                                |
+| -------------------------------- | ------------------------------------------------------ |
+| `name`                           | Becomes the /slash-command name                        |
+| `description`                    | Helps Claude decide when to auto-invoke                |
+| `allowed-tools`                  | Restrict which tools the skill can use                 |
+| `model`                          | Override model when skill is invoked                   |
+| `effort`                         | Override effort level                                  |
+| `disable-model-invocation: true` | Only user can invoke (side-effect skills like /deploy) |
+| `user-invocable: false`          | Only Claude can invoke (background knowledge skills)   |
+| `isolation: worktree`            | Run in isolated git worktree                           |
 
 ### Skill Budget
 
@@ -150,15 +150,19 @@ for await (const msg of query({
     model: 'claude-sonnet-4-20250514',
     systemPrompt: 'system instructions',
     cwd: '/path/to/workspace',
-    permissionMode: 'plan',           // 'plan' | 'bypassPermissions' | 'acceptEdits'
-    allowedTools: ['Read', 'Grep'],   // Optional tool whitelist
-    resume: 'session-id',            // Resume existing session
-    maxThinkingTokens: 10000,        // Extended thinking budget
+    permissionMode: 'plan', // 'plan' | 'bypassPermissions' | 'acceptEdits'
+    allowedTools: ['Read', 'Grep'], // Optional tool whitelist
+    resume: 'session-id', // Resume existing session
+    maxThinkingTokens: 10000 // Extended thinking budget
   }
 })) {
   // msg is a typed SDKMessage — no NDJSON parsing needed
-  if (msg.type === 'assistant') { /* text/tool_use blocks */ }
-  if (msg.type === 'result') { /* final result text */ }
+  if (msg.type === 'assistant') {
+    /* text/tool_use blocks */
+  }
+  if (msg.type === 'result') {
+    /* final result text */
+  }
 }
 ```
 
@@ -183,10 +187,10 @@ const scopeGuard = async (input) => {
 
 ### Key Differences from CLI
 
-| Feature | CLI | SDK |
-|---------|-----|-----|
-| Auth | Claude Max login | API key required |
-| Output | NDJSON on stdout | Typed async generator |
-| Hooks | Shell scripts (exit codes) | TypeScript callbacks |
-| Process | ChildProcess lifecycle | Promise-based |
-| Streaming | Manual buffer parsing | Native async iteration |
+| Feature   | CLI                        | SDK                    |
+| --------- | -------------------------- | ---------------------- |
+| Auth      | Claude Max login           | API key required       |
+| Output    | NDJSON on stdout           | Typed async generator  |
+| Hooks     | Shell scripts (exit codes) | TypeScript callbacks   |
+| Process   | ChildProcess lifecycle     | Promise-based          |
+| Streaming | Manual buffer parsing      | Native async iteration |

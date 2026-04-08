@@ -11,7 +11,11 @@ import type {
   SchedulingWeights,
   TaskExecutionProgress
 } from '../../shared/types'
-import { THINKING_BUDGETS, COMPLEXITY_TO_EFFORT, SPECIALIST_BUDGET_CAPS } from '../../shared/constants'
+import {
+  THINKING_BUDGETS,
+  COMPLEXITY_TO_EFFORT,
+  SPECIALIST_BUDGET_CAPS
+} from '../../shared/constants'
 import { specialistPoolLogger } from '../logger'
 import {
   specialistRepository,
@@ -29,7 +33,11 @@ import type { MergeResult } from './git-worktree.service'
 import { modelConfigService } from './model-config.service'
 import { checkpointService } from './checkpoint.service'
 import { eventLoggerService } from './event-logger.service'
-import { detectAbandonment, detectQualityGates, getReEngagementPrompt } from './abandonment-detector.service'
+import {
+  detectAbandonment,
+  detectQualityGates,
+  getReEngagementPrompt
+} from './abandonment-detector.service'
 import { gateResultRepository } from '../db/repositories/gate-result.repository'
 import { costTrackerService } from './cost-tracker.service'
 import { taskLoopService } from './task-loop.service'
@@ -40,7 +48,7 @@ import { SDKExecutor } from './sdk-executor'
 import type { SDKExecuteResult } from './sdk-executor'
 import {
   topologicalSort as topologicalSortFn,
-  detectConclusivePattern as detectConclusivePatternFn,
+  detectConclusivePattern as detectConclusivePatternFn
 } from './specialist/task-scheduler'
 import { Semaphore } from './specialist/semaphore'
 import { executionTracer } from './specialist/trace'
@@ -54,7 +62,11 @@ import type {
   SchedulingContext,
   AgentCapability
 } from './specialist/scheduling'
-import { validateInvestigationReport, buildFallbackReport, validateTaskOutput } from './specialist/structured-output'
+import {
+  validateInvestigationReport,
+  buildFallbackReport,
+  validateTaskOutput
+} from './specialist/structured-output'
 import { specialistRateLimiter } from './specialist/rate-limiter'
 import { createStructuredLogger } from './specialist/structured-log'
 import { codeGraphMcpService } from './code-graph.tool'
@@ -185,15 +197,18 @@ function summarizeToolInput(toolName: string, toolInput: string): string {
 import { isInvestigationIntent } from './specialist'
 
 /** Map TaskExecutionProgress status → AgentStatus status */
-function mapToAgentStatus(
-  status: TaskExecutionProgress['status']
-): AgentStatus['status'] {
+function mapToAgentStatus(status: TaskExecutionProgress['status']): AgentStatus['status'] {
   switch (status) {
-    case 'running': return 'thinking'
-    case 'completed': return 'completed'
-    case 'failed': return 'failed'
-    case 'pending': return 'idle'
-    default: return 'idle'
+    case 'running':
+      return 'thinking'
+    case 'completed':
+      return 'completed'
+    case 'failed':
+      return 'failed'
+    case 'pending':
+      return 'idle'
+    default:
+      return 'idle'
   }
 }
 
@@ -268,8 +283,6 @@ export class SpecialistPoolService extends EventEmitter {
   private taskStatuses: Map<string, TaskExecutionProgress['status']> = new Map()
   /** R1: Tasks skipped due to dependency failure cascade */
   private skippedTasks: Set<string> = new Set()
-  /** R1: Reference to all tasks in current execution (for cascade lookups) */
-  private allTasks: DecomposedTask[] = []
   private aborted: boolean = false
   /** Enriched handoff context from the generalist, injected into specialist prompts */
   private conversationBrief: HandoffBrief | null = null
@@ -475,9 +488,6 @@ export class SpecialistPoolService extends EventEmitter {
       taskLoopService.initLoop(task.id, task.specialist)
     }
 
-    // R1: Store all tasks for cascade failure lookups
-    this.allTasks = tasks
-
     const pending = new Map<string, DecomposedTask>()
     for (const task of tasks) {
       pending.set(task.id, task)
@@ -638,10 +648,15 @@ export class SpecialistPoolService extends EventEmitter {
 
     this.log.info(
       `[CASCADE:skip] Task ${task.id} (${task.specialist}) skipped — ` +
-      `reason: ${reason}, failed dependencies: [${failedDeps.join(', ')}]`
+        `reason: ${reason}, failed dependencies: [${failedDeps.join(', ')}]`
     )
 
-    this.emitProgress(task, 'skipped', undefined, `Skipped: dependency ${failedDeps.join(', ')} failed`)
+    this.emitProgress(
+      task,
+      'skipped',
+      undefined,
+      `Skipped: dependency ${failedDeps.join(', ')} failed`
+    )
 
     // Trace the cascade event
     if (this.currentRunId) {
@@ -856,7 +871,8 @@ export class SpecialistPoolService extends EventEmitter {
 
           // Inject validation errors into task description for retry
           const originalDesc = task.description
-          task.description = `${originalDesc}\n\n` +
+          task.description =
+            `${originalDesc}\n\n` +
             `IMPORTANT: Your previous output failed schema validation ("${task.outputSchema}").\n` +
             `Errors:\n${validation.errors.join('\n')}\n` +
             `Please fix your output to match the required schema.`
@@ -925,13 +941,7 @@ export class SpecialistPoolService extends EventEmitter {
     // Write output artifact
     if (this.workspacePath && this.conversationId) {
       taskArtifactService
-        .writeTaskOutput(
-          this.workspacePath,
-          this.conversationId,
-          task.id,
-          info.output,
-          'completed'
-        )
+        .writeTaskOutput(this.workspacePath, this.conversationId, task.id, info.output, 'completed')
         .catch((err) => this.log.warn('Failed to write task output artifact:', err))
     }
 
@@ -1036,14 +1046,16 @@ export class SpecialistPoolService extends EventEmitter {
 
     // Check if retryable — circuit breaker errors should NOT retry (retrying a loop just loops again)
     const isCircuitBreakerError =
-      error.message.includes('exceeded') &&
-      error.message.includes('tool calls')
+      error.message.includes('exceeded') && error.message.includes('tool calls')
     // Budget-exceeded errors should NOT retry — escalating model would hit cap faster
-    const isBudgetExceeded = error.message.includes('error_max_budget_usd')
-      || error.message.includes('budget cap exceeded')
+    const isBudgetExceeded =
+      error.message.includes('error_max_budget_usd') ||
+      error.message.includes('budget cap exceeded')
     const isRetryable =
-      !this.aborted && !isCircuitBreakerError && !isBudgetExceeded
-      && info.attempt < RETRY_CONFIG.maxRetries
+      !this.aborted &&
+      !isCircuitBreakerError &&
+      !isBudgetExceeded &&
+      info.attempt < RETRY_CONFIG.maxRetries
     if (isRetryable) {
       const delay = Math.min(
         RETRY_CONFIG.baseDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, info.attempt),
@@ -1194,7 +1206,15 @@ export class SpecialistPoolService extends EventEmitter {
     const budgetTier: BudgetTier =
       model === 'haiku' ? 'minimal' : model === 'opus' ? 'full' : 'standard'
 
-    return { specialist, assignedSkills, skillsEnabled, skillOverrides, feedbackContext, budgetTier, model }
+    return {
+      specialist,
+      assignedSkills,
+      skillsEnabled,
+      skillOverrides,
+      feedbackContext,
+      budgetTier,
+      model
+    }
   }
 
   /**
@@ -1206,9 +1226,10 @@ export class SpecialistPoolService extends EventEmitter {
     mode: ConversationMode,
     config: ReturnType<SpecialistPoolService['resolveSpecialistConfig']>
   ): string {
-    const effectiveSkillsEnabled = config.skillsEnabled !== undefined
-      ? config.skillsEnabled
-      : (task.complexity?.total ?? 5) >= 5 && (task.complexity?.filesAffected ?? 1) > 1
+    const effectiveSkillsEnabled =
+      config.skillsEnabled !== undefined
+        ? config.skillsEnabled
+        : (task.complexity?.total ?? 5) >= 5 && (task.complexity?.filesAffected ?? 1) > 1
 
     // Detect which MCP servers are active for conditional tool guidance injection
     const mcpFlags = this.detectEnabledMcpServers()
@@ -1472,16 +1493,19 @@ export class SpecialistPoolService extends EventEmitter {
       // For investigation tasks, hard-cap output to prevent verbose responses.
       // Build-mode tasks get no cap — they need full output for code generation.
       const depthBudget = SpecialistPoolService.DEPTH_BUDGETS[this.investigationDepth]
-      const maxOutputTokens = execState.isInvestigationTask ? depthBudget.maxOutputTokens : undefined
+      const maxOutputTokens = execState.isInvestigationTask
+        ? depthBudget.maxOutputTokens
+        : undefined
 
       // Compute effort from complexity tier
       const effortLevel = task.complexity?.tier
         ? COMPLEXITY_TO_EFFORT[task.complexity.tier as keyof typeof COMPLEXITY_TO_EFFORT]
         : 'medium'
       // Compute budget cap from complexity tier
-      const budgetCap = SPECIALIST_BUDGET_CAPS[
-        (task.complexity?.tier ?? 'moderate') as keyof typeof SPECIALIST_BUDGET_CAPS
-      ]
+      const budgetCap =
+        SPECIALIST_BUDGET_CAPS[
+          (task.complexity?.tier ?? 'moderate') as keyof typeof SPECIALIST_BUDGET_CAPS
+        ]
 
       // Enable 1M context beta for Sonnet models
       const isSonnet = modelId.includes('sonnet')
@@ -1512,13 +1536,18 @@ export class SpecialistPoolService extends EventEmitter {
         onFileChanged: (absoluteFilePath: string, changeType: string) => {
           if (this.conversationId) {
             try {
-              const relativePath = this.workspacePath && absoluteFilePath.startsWith(this.workspacePath)
-                ? absoluteFilePath.slice(this.workspacePath.length).replace(/^\//, '')
-                : absoluteFilePath
+              const relativePath =
+                this.workspacePath && absoluteFilePath.startsWith(this.workspacePath)
+                  ? absoluteFilePath.slice(this.workspacePath.length).replace(/^\//, '')
+                  : absoluteFilePath
               fileChangeRepository.track(
                 this.conversationId,
                 relativePath,
-                changeType === 'create' ? 'created' : changeType === 'delete' ? 'deleted' : 'modified'
+                changeType === 'create'
+                  ? 'created'
+                  : changeType === 'delete'
+                    ? 'deleted'
+                    : 'modified'
               )
             } catch (e) {
               this.log.warn('FileChanged hook: failed to track file change:', e)
@@ -1656,7 +1685,11 @@ export class SpecialistPoolService extends EventEmitter {
       }
     }
     const gitContext = !!this.workspacePath
-    const githubContext = !!(this.workspaceId && this.workspacePath && githubService.isConfigured(this.workspaceId))
+    const githubContext = !!(
+      this.workspaceId &&
+      this.workspacePath &&
+      githubService.isConfigured(this.workspaceId)
+    )
     return { codeGraph, semanticSearch, gitContext, githubContext }
   }
 
@@ -1702,7 +1735,15 @@ export class SpecialistPoolService extends EventEmitter {
    * Returns true if the stream loop should break (early exit).
    */
   private processSDKStreamChunk(
-    chunk: { type?: string; content?: string; error?: string; toolName?: string; toolId?: string; toolInput?: string; _meta?: unknown },
+    chunk: {
+      type?: string
+      content?: string
+      error?: string
+      toolName?: string
+      toolId?: string
+      toolInput?: string
+      _meta?: unknown
+    },
     state: SDKExecutionState
   ): boolean {
     const { task, info } = state
@@ -1738,7 +1779,11 @@ export class SpecialistPoolService extends EventEmitter {
   }
 
   /** Handle _meta chunk — accumulate token usage */
-  private handleMetaChunk(meta: SDKExecuteResult, task: DecomposedTask, info: SpecialistProcessInfo): void {
+  private handleMetaChunk(
+    meta: SDKExecuteResult,
+    task: DecomposedTask,
+    info: SpecialistProcessInfo
+  ): void {
     info.tokenUsage += meta.tokenUsage.input + meta.tokenUsage.output
     info.inputTokens += meta.tokenUsage.input
     info.outputTokens += meta.tokenUsage.output
@@ -1799,7 +1844,7 @@ export class SpecialistPoolService extends EventEmitter {
     if (state.consecutiveIdenticalToolCalls >= MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS) {
       this.log.warn(
         `[LOOP:detected] ${task.specialist}/${task.id} — ` +
-        `${state.consecutiveIdenticalToolCalls} consecutive identical tool calls: ${chunk.toolName}`
+          `${state.consecutiveIdenticalToolCalls} consecutive identical tool calls: ${chunk.toolName}`
       )
       this.slog.toolCallLimitReached({
         taskId: task.id,
@@ -1811,7 +1856,7 @@ export class SpecialistPoolService extends EventEmitter {
       state.abortController.abort()
       throw new Error(
         `Specialist ${task.specialist} stuck in loop — ${state.consecutiveIdenticalToolCalls} identical ` +
-        `${chunk.toolName} calls with same input`
+          `${chunk.toolName} calls with same input`
       )
     }
 
@@ -1893,10 +1938,7 @@ export class SpecialistPoolService extends EventEmitter {
   }
 
   /** Handle error chunk — distinguish intentional abort from real errors. Returns true to break. */
-  private handleErrorChunk(
-    chunk: { error?: string },
-    state: SDKExecutionState
-  ): boolean {
+  private handleErrorChunk(chunk: { error?: string }, state: SDKExecutionState): boolean {
     const { task } = state
     if (
       state.abortedAfterReportDetection &&
@@ -2028,7 +2070,12 @@ export class SpecialistPoolService extends EventEmitter {
           .filter(Boolean)
           .join('. ')
         if (findingSummary) {
-          agentContextService.persistFinding(this.conversationId, task.specialist, findingSummary, task.id)
+          agentContextService.persistFinding(
+            this.conversationId,
+            task.specialist,
+            findingSummary,
+            task.id
+          )
         }
       }
 
@@ -2141,7 +2188,12 @@ export class SpecialistPoolService extends EventEmitter {
     status: TaskExecutionProgress['status'],
     output?: string,
     error?: string,
-    extras?: Partial<Pick<TaskExecutionProgress, 'currentTool' | 'currentToolSummary' | 'toolCallCount' | 'startedAt' | 'completedAt'>>
+    extras?: Partial<
+      Pick<
+        TaskExecutionProgress,
+        'currentTool' | 'currentToolSummary' | 'toolCallCount' | 'startedAt' | 'completedAt'
+      >
+    >
   ): void {
     const progress: TaskExecutionProgress = {
       taskId: task.id,
@@ -2407,7 +2459,8 @@ export class SpecialistPoolService extends EventEmitter {
     task.description = task.description + loopResult.fixContext
 
     // Inject re-engagement prompt if abandonment was detected during post-completion analysis
-    const reEngagement = ((task.metadata as Record<string, unknown>)?.reEngagementPrompt as string) ?? ''
+    const reEngagement =
+      ((task.metadata as Record<string, unknown>)?.reEngagementPrompt as string) ?? ''
     if (reEngagement) {
       task.description = task.description + '\n\n' + reEngagement
       // Clear after injection to avoid stacking on subsequent retries
@@ -2463,7 +2516,10 @@ export class SpecialistPoolService extends EventEmitter {
   /**
    * Finalize task completion — mark as completed, merge worktree, clean up task loop.
    */
-  private async finalizeTaskCompletion(task: DecomposedTask, info: SpecialistProcessInfo): Promise<void> {
+  private async finalizeTaskCompletion(
+    task: DecomposedTask,
+    info: SpecialistProcessInfo
+  ): Promise<void> {
     // Guard against duplicate completion — can happen if both runTaskLoopGates
     // and its catch handler call finalizeTaskCompletion for the same task.
     if (this.taskStatuses.get(task.id) === 'completed') {
@@ -2740,7 +2796,6 @@ export class SpecialistPoolService extends EventEmitter {
     this.taskResults.clear()
     this.taskStatuses.clear()
     this.skippedTasks.clear()
-    this.allTasks = []
     this.activeProcesses.clear()
     this.aborted = false
     this.conversationBrief = null
@@ -2755,7 +2810,6 @@ export class SpecialistPoolService extends EventEmitter {
     this.schedulingStrategy = SpecialistPoolService.createSchedulingStrategy()
     // Note: workspacePath and conversationId are preserved across resets
   }
-
 }
 
 export const specialistPoolService = new SpecialistPoolService()

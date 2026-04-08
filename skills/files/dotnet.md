@@ -3,6 +3,7 @@
 ## Frameworks: xUnit (preferred), NUnit, MSTest
 
 ### Setup (xUnit)
+
 ```bash
 dotnet new xunit -n MyApp.Tests
 dotnet add MyApp.Tests package Moq
@@ -22,6 +23,7 @@ dotnet add MyApp.Tests package Microsoft.AspNetCore.Mvc.Testing
 ## Unit Tests
 
 ### Basic xUnit
+
 ```csharp
 public class DiscountCalculatorTests
 {
@@ -55,6 +57,7 @@ public class DiscountCalculatorTests
 ```
 
 ### Mocking with Moq
+
 ```csharp
 public class OrderServiceTests
 {
@@ -170,6 +173,7 @@ public class UserRepositoryTests : IDisposable
 ```
 
 ## NUnit Equivalent
+
 ```csharp
 [TestFixture]
 public class CalculatorTests
@@ -190,6 +194,7 @@ public class CalculatorTests
 ```
 
 ## Running
+
 ```bash
 dotnet test                                   # all
 dotnet test --filter "Category=Unit"          # by trait
@@ -198,6 +203,7 @@ dotnet test --no-build                        # skip build
 ```
 
 ## Key Principles for .NET Tests
+
 1. **Use `IClassFixture<T>`** for shared expensive setup (WebApplicationFactory, DB).
 2. **Prefer FluentAssertions** — `result.Should().Be(x)` reads better than `Assert.Equal`.
 3. **Use `WebApplicationFactory`** for integration — don't start Kestrel manually.

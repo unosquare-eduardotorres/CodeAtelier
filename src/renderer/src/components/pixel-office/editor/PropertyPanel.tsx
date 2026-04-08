@@ -48,7 +48,7 @@ export default function PropertyPanel({
   onRotateSelected,
   onToggleState,
   onTileTypeChange
-}: PropertyPanelProps) {
+}: PropertyPanelProps): React.JSX.Element {
   // Find the selected furniture item
   const selectedItem = selectedFurnitureUid
     ? furniture.find((f) => f.uid === selectedFurnitureUid)
@@ -130,7 +130,9 @@ export default function PropertyPanel({
       {showFurnitureProps && selectedItem && selectedEntry && (
         <>
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-text-primary">{selectedEntry.label}</span>
+            <span className="text-[11px] font-semibold text-text-primary">
+              {selectedEntry.label}
+            </span>
           </div>
 
           {/* Action buttons */}

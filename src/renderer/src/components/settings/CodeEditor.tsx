@@ -47,7 +47,9 @@ export default function CodeEditor({
   )
 
   return (
-    <div className={`rounded-lg border border-border-subtle bg-surface-base overflow-auto ${className}`}>
+    <div
+      className={`rounded-lg border border-border-subtle bg-surface-base overflow-auto ${className}`}
+    >
       <Editor
         value={value}
         onValueChange={readOnly ? () => {} : onChange}

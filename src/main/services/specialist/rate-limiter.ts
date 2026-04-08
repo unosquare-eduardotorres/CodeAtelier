@@ -67,22 +67,25 @@ export class TokenBucketRateLimiter {
     )
 
     return new Promise<() => void>((resolve) => {
-      const timer = setTimeout(() => {
-        this.refill()
-        if (this.permits >= 1) {
-          this.permits -= 1
-          log.info(
-            `[rate-limiter] Permit acquired after wait (${this.permits.toFixed(1)}/${this.maxPermits} remaining)`
-          )
-          resolve(() => this.release())
-        } else {
-          // Edge case: still no permits — enqueue for next release
-          this.waitQueue.push(() => {
+      const timer = setTimeout(
+        () => {
+          this.refill()
+          if (this.permits >= 1) {
             this.permits -= 1
+            log.info(
+              `[rate-limiter] Permit acquired after wait (${this.permits.toFixed(1)}/${this.maxPermits} remaining)`
+            )
             resolve(() => this.release())
-          })
-        }
-      }, Math.max(100, waitMs))
+          } else {
+            // Edge case: still no permits — enqueue for next release
+            this.waitQueue.push(() => {
+              this.permits -= 1
+              resolve(() => this.release())
+            })
+          }
+        },
+        Math.max(100, waitMs)
+      )
 
       // Clean up timer if a release happens before timeout
       this.waitQueue.push(() => {
@@ -108,7 +111,6 @@ export class TokenBucketRateLimiter {
       waiter()
     }
   }
-
 }
 
 /** Singleton rate limiter for specialist SDK calls */

@@ -4,6 +4,8 @@
  * Extracted from useEditorActions to isolate persistence concerns.
  */
 
+/* eslint-disable react-hooks/immutability -- editorState is mutable Phaser game state, not React state */
+
 import { useCallback, useRef, useState } from 'react'
 
 import { LAYOUT_SAVE_DEBOUNCE_MS } from '../../constants'

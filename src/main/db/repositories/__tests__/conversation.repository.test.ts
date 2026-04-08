@@ -15,7 +15,6 @@ if (!env) {
 } else {
   const { db, wsId } = env
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { conversationRepository } = require('../conversation.repository')
 
   // Seed a second workspace for isolation tests

@@ -58,7 +58,14 @@ export class PhaserDragSystem {
     this.gridOverlay.setDepth(1000)
 
     // Create snap highlight (hidden by default)
-    this.snapHighlight = this.scene.add.rectangle(0, 0, TILE_SIZE, TILE_SIZE, SNAP_HIGHLIGHT_COLOR, SNAP_HIGHLIGHT_ALPHA)
+    this.snapHighlight = this.scene.add.rectangle(
+      0,
+      0,
+      TILE_SIZE,
+      TILE_SIZE,
+      SNAP_HIGHLIGHT_COLOR,
+      SNAP_HIGHLIGHT_ALPHA
+    )
     this.snapHighlight.setOrigin(0, 0)
     this.snapHighlight.setVisible(false)
     this.snapHighlight.setDepth(999)
@@ -200,18 +207,12 @@ export class PhaserDragSystem {
 
     // Vertical lines
     for (let c = 0; c <= this.cols; c++) {
-      this.gridOverlay.lineBetween(
-        c * TILE_SIZE, 0,
-        c * TILE_SIZE, this.rows * TILE_SIZE
-      )
+      this.gridOverlay.lineBetween(c * TILE_SIZE, 0, c * TILE_SIZE, this.rows * TILE_SIZE)
     }
 
     // Horizontal lines
     for (let r = 0; r <= this.rows; r++) {
-      this.gridOverlay.lineBetween(
-        0, r * TILE_SIZE,
-        this.cols * TILE_SIZE, r * TILE_SIZE
-      )
+      this.gridOverlay.lineBetween(0, r * TILE_SIZE, this.cols * TILE_SIZE, r * TILE_SIZE)
     }
   }
 

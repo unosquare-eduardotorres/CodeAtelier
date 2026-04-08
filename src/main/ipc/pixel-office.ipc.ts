@@ -15,21 +15,18 @@ function getLayoutPath(): string {
 
 export function registerPixelOfficeHandlers(): void {
   // ── Layout persistence ──
-  ipcMain.handle(
-    IPC_CHANNELS.PIXEL_OFFICE_SAVE_LAYOUT,
-    async (event, args: { layout: string }) => {
-      validateSender(event)
-      try {
-        const layoutPath = getLayoutPath()
-        await mkdir(join(layoutPath, '..'), { recursive: true })
-        await writeFile(layoutPath, args.layout, 'utf-8')
-        return { success: true }
-      } catch (err) {
-        log.error('Failed to save office layout:', err)
-        throw new Error('Failed to save office layout')
-      }
+  ipcMain.handle(IPC_CHANNELS.PIXEL_OFFICE_SAVE_LAYOUT, async (event, args: { layout: string }) => {
+    validateSender(event)
+    try {
+      const layoutPath = getLayoutPath()
+      await mkdir(join(layoutPath, '..'), { recursive: true })
+      await writeFile(layoutPath, args.layout, 'utf-8')
+      return { success: true }
+    } catch (err) {
+      log.error('Failed to save office layout:', err)
+      throw new Error('Failed to save office layout')
     }
-  )
+  })
 
   ipcMain.handle(IPC_CHANNELS.PIXEL_OFFICE_LOAD_LAYOUT, async (event) => {
     validateSender(event)
@@ -43,27 +40,30 @@ export function registerPixelOfficeHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.PIXEL_OFFICE_EXPORT_LAYOUT, async (event, args: { layout: string }) => {
-    validateSender(event)
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win) throw new Error('No window found')
+  ipcMain.handle(
+    IPC_CHANNELS.PIXEL_OFFICE_EXPORT_LAYOUT,
+    async (event, args: { layout: string }) => {
+      validateSender(event)
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) throw new Error('No window found')
 
-    const result = await dialog.showSaveDialog(win, {
-      title: 'Export Office Layout',
-      defaultPath: 'office-layout.json',
-      filters: [{ name: 'JSON Files', extensions: ['json'] }]
-    })
+      const result = await dialog.showSaveDialog(win, {
+        title: 'Export Office Layout',
+        defaultPath: 'office-layout.json',
+        filters: [{ name: 'JSON Files', extensions: ['json'] }]
+      })
 
-    if (result.canceled || !result.filePath) return { success: false }
+      if (result.canceled || !result.filePath) return { success: false }
 
-    try {
-      await writeFile(result.filePath, args.layout, 'utf-8')
-      return { success: true, path: result.filePath }
-    } catch (err) {
-      log.error('Failed to export office layout:', err)
-      throw new Error('Failed to export office layout')
+      try {
+        await writeFile(result.filePath, args.layout, 'utf-8')
+        return { success: true, path: result.filePath }
+      } catch (err) {
+        log.error('Failed to export office layout:', err)
+        throw new Error('Failed to export office layout')
+      }
     }
-  })
+  )
 
   ipcMain.handle(IPC_CHANNELS.PIXEL_OFFICE_IMPORT_LAYOUT, async (event) => {
     validateSender(event)

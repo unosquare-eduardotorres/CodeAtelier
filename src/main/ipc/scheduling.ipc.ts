@@ -22,34 +22,31 @@ export function registerSchedulingIpc(): void {
     }
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.SCHEDULING_SET_WEIGHTS,
-    async (event, weights: SchedulingWeights) => {
-      validateSender(event)
+  ipcMain.handle(IPC_CHANNELS.SCHEDULING_SET_WEIGHTS, async (event, weights: SchedulingWeights) => {
+    validateSender(event)
 
-      if (!weights || typeof weights !== 'object') {
-        throw new Error('Invalid weights object')
-      }
-
-      const { dependencyFirst, capabilityMatch, leastBusy } = weights
-
-      // Validate each weight is between 0 and 1
-      if (
-        [dependencyFirst, capabilityMatch, leastBusy].some(
-          (w) => typeof w !== 'number' || w < 0 || w > 1
-        )
-      ) {
-        throw new Error('Each weight must be a number between 0 and 1')
-      }
-
-      // Validate weights sum to ~1.0
-      const sum = dependencyFirst + capabilityMatch + leastBusy
-      if (Math.abs(sum - 1.0) > 0.01) {
-        throw new Error('Weights must sum to 1.0')
-      }
-
-      appPreferenceRepository.set('scheduling.weights', JSON.stringify(weights))
-      // Note: weights apply on next execution run (SpecialistPoolService reads at construction)
+    if (!weights || typeof weights !== 'object') {
+      throw new Error('Invalid weights object')
     }
-  )
+
+    const { dependencyFirst, capabilityMatch, leastBusy } = weights
+
+    // Validate each weight is between 0 and 1
+    if (
+      [dependencyFirst, capabilityMatch, leastBusy].some(
+        (w) => typeof w !== 'number' || w < 0 || w > 1
+      )
+    ) {
+      throw new Error('Each weight must be a number between 0 and 1')
+    }
+
+    // Validate weights sum to ~1.0
+    const sum = dependencyFirst + capabilityMatch + leastBusy
+    if (Math.abs(sum - 1.0) > 0.01) {
+      throw new Error('Weights must sum to 1.0')
+    }
+
+    appPreferenceRepository.set('scheduling.weights', JSON.stringify(weights))
+    // Note: weights apply on next execution run (SpecialistPoolService reads at construction)
+  })
 }

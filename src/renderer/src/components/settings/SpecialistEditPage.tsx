@@ -28,8 +28,7 @@ export default function SpecialistEditPage({
   // Detect core agent and map to agentRole
   const isCore = 'isCore' in specialist ? specialist.isCore : false
   const isUserSpecialist = specialist.agentId === 'user'
-  const coreAgentRole: 'generalist' | null =
-    isCore && !isUserSpecialist ? 'generalist' : null
+  const coreAgentRole: 'generalist' | null = isCore && !isUserSpecialist ? 'generalist' : null
 
   // ── Form state ──
   const [displayName, setDisplayName] = useState(specialist.displayName)
@@ -130,9 +129,7 @@ export default function SpecialistEditPage({
           <p className="text-xs text-text-muted">{specialist.agentId}</p>
         </div>
         <div className="flex items-center gap-2">
-          {saved && (
-            <span className="text-xs text-success font-medium">Saved!</span>
-          )}
+          {saved && <span className="text-xs text-success font-medium">Saved!</span>}
           <button
             onClick={handleSave}
             disabled={isSaving || !displayName.trim()}
@@ -140,11 +137,7 @@ export default function SpecialistEditPage({
               bg-primary text-white hover:bg-primary-hover
               disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {isSaving ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <Save size={12} />
-            )}
+            {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
             {isSaving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
@@ -197,8 +190,7 @@ export default function SpecialistEditPage({
               {alias.trim() &&
                 specialists.some(
                   (s) =>
-                    s.id !== specialist.id &&
-                    s.alias?.toLowerCase() === alias.trim().toLowerCase()
+                    s.id !== specialist.id && s.alias?.toLowerCase() === alias.trim().toLowerCase()
                 ) && (
                   <p className="text-[11px] text-warning mt-1">
                     This alias is already used by{' '}
@@ -275,7 +267,11 @@ export default function SpecialistEditPage({
               className="px-3 py-1.5 text-xs font-medium text-text-body hover:text-text-primary bg-surface-base border border-border-subtle hover:bg-surface-overlay rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={usePixelForChat}
             >
-              {usePixelForChat ? 'Using Pixel Sprite' : showAvatarPicker ? 'Hide Avatars' : 'Change Avatar'}
+              {usePixelForChat
+                ? 'Using Pixel Sprite'
+                : showAvatarPicker
+                  ? 'Hide Avatars'
+                  : 'Change Avatar'}
             </button>
           </div>
           {/* Only show the avatar picker when NOT using pixel for chat */}
@@ -306,9 +302,10 @@ export default function SpecialistEditPage({
               onClick={() => setUsePixelForChat(!usePixelForChat)}
               className={`
                 inline-flex items-center gap-2 mt-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all
-                ${usePixelForChat
-                  ? 'bg-primary text-white'
-                  : 'bg-surface-base text-text-secondary border border-border-subtle hover:bg-surface-overlay'
+                ${
+                  usePixelForChat
+                    ? 'bg-primary text-white'
+                    : 'bg-surface-base text-text-secondary border border-border-subtle hover:bg-surface-overlay'
                 }
               `}
             >
@@ -326,8 +323,8 @@ export default function SpecialistEditPage({
               System Prompts
             </h2>
             <p className="text-[11px] text-text-muted">
-              Edit the system prompts used by this core agent. Each mode has its own prompt.
-              Changes take effect on the next conversation.
+              Edit the system prompts used by this core agent. Each mode has its own prompt. Changes
+              take effect on the next conversation.
             </p>
             <CoreAgentPromptEditor agentRole={coreAgentRole} />
           </section>
@@ -390,7 +387,8 @@ export default function SpecialistEditPage({
             Skills
           </h2>
           <p className="text-[11px] text-text-muted">
-            Skills assigned to this specialist. Managed through the database — synced from YAML on workspace open.
+            Skills assigned to this specialist. Managed through the database — synced from YAML on
+            workspace open.
           </p>
           {specialist.skills && specialist.skills.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

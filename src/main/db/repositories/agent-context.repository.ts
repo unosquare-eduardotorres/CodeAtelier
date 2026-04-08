@@ -43,13 +43,13 @@ export class AgentContextRepository {
       VALUES (?, ?, ?, ?, ?, ?)
     `)
 
-    const id = (
-      db.prepare("SELECT lower(hex(randomblob(16))) as id").get() as { id: string }
-    ).id
+    const id = (db.prepare('SELECT lower(hex(randomblob(16))) as id').get() as { id: string }).id
 
     stmt.run(conversationId, agentId, taskId ?? null, contextType, content, tokenEstimate)
 
-    log.debug(`[agent-context] Stored ${contextType} for ${agentId} in ${conversationId} (${tokenEstimate} est. tokens)`)
+    log.debug(
+      `[agent-context] Stored ${contextType} for ${agentId} in ${conversationId} (${tokenEstimate} est. tokens)`
+    )
 
     return {
       id,
@@ -100,10 +100,7 @@ export class AgentContextRepository {
    *
    * Returns empty string if no relevant context exists.
    */
-  buildContextForPrompt(
-    conversationId: string,
-    maxTokens: number = 3000
-  ): string {
+  buildContextForPrompt(conversationId: string, maxTokens: number = 3000): string {
     const entries = this.findByConversation(conversationId)
     if (entries.length === 0) return ''
 
@@ -130,9 +127,7 @@ export class AgentContextRepository {
 
     if (selected.length === 0) return ''
 
-    const lines = selected.map(
-      (e) => `[${e.context_type}] (${e.agent_id}) ${e.content}`
-    )
+    const lines = selected.map((e) => `[${e.context_type}] (${e.agent_id}) ${e.content}`)
     return `<agent-context>\nPrevious findings and decisions from this conversation:\n${lines.join('\n')}\n</agent-context>`
   }
 
@@ -142,7 +137,9 @@ export class AgentContextRepository {
   getTokenEstimate(conversationId: string): number {
     const db = getDb()
     const row = db
-      .prepare('SELECT COALESCE(SUM(token_estimate), 0) as total FROM agent_context WHERE conversation_id = ?')
+      .prepare(
+        'SELECT COALESCE(SUM(token_estimate), 0) as total FROM agent_context WHERE conversation_id = ?'
+      )
       .get(conversationId) as { total: number }
     return row.total
   }

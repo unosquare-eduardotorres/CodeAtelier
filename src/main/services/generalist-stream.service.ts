@@ -1,16 +1,11 @@
 import type { BrowserWindow } from 'electron'
-import {
-  conversationRepository,
-  messageRepository,
-  workspaceRepository
-} from '../db/repositories'
+import { conversationRepository, messageRepository, workspaceRepository } from '../db/repositories'
 import { generalistService, fileService } from '../services'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
   GeneralistIntent,
-  GrillEvaluation,
   GrillQuestion,
   HandoffBrief,
   ImageAttachment,
@@ -106,11 +101,7 @@ export class GeneralistStreamService {
   /**
    * Full generalist streaming lifecycle.
    */
-  async stream(
-    conversationId: string,
-    text: string,
-    attachments?: string[]
-  ): Promise<void> {
+  async stream(conversationId: string, text: string, attachments?: string[]): Promise<void> {
     // Reset stop flag for new message cycle
     this.isStopped = false
 
@@ -307,7 +298,9 @@ export class GeneralistStreamService {
         chunk: planBlock,
         role: 'generalist'
       })
-      log.info('[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer')
+      log.info(
+        '[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer'
+      )
     }
 
     const cleanupListeners = (): void => {

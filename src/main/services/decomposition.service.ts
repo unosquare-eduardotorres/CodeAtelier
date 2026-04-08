@@ -70,11 +70,9 @@ export class DecompositionService {
 
         if (semanticSearchEnabled && workspaceId) {
           try {
-            const semanticResults = await vectorSearchService.search(
-              workspaceId,
-              brief.summary,
-              { nResults: 10 }
-            )
+            const semanticResults = await vectorSearchService.search(workspaceId, brief.summary, {
+              nResults: 10
+            })
             if (semanticResults.length > 0) {
               const semanticFiles = semanticResults.map((r) => r.filePath)
               sources.push({ source: 'semantic', files: semanticFiles, priority: 2 })
@@ -123,9 +121,7 @@ export class DecompositionService {
     mode: ConversationMode,
     workspacePath: string
   ): Promise<TaskPlan> {
-    this.log.info(
-      `Single-specialist fast path: skipping decomposition for ${brief.specialists[0]}`
-    )
+    this.log.info(`Single-specialist fast path: skipping decomposition for ${brief.specialists[0]}`)
 
     const syntheticTask: DecomposedTask = {
       id: 't1',

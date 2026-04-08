@@ -124,9 +124,7 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
 
   generateCommitMessage: async (conversationId: string): Promise<void> => {
     const { checkedFiles, files } = get()
-    const filePaths = checkedFiles.size > 0
-      ? [...checkedFiles]
-      : files.map((f) => f.filePath)
+    const filePaths = checkedFiles.size > 0 ? [...checkedFiles] : files.map((f) => f.filePath)
     if (filePaths.length === 0) return
 
     set({ isGeneratingMessage: true, error: null })
@@ -215,4 +213,3 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
     set(initialState)
   }
 }))
-

@@ -16,12 +16,7 @@
 export { Semaphore } from './semaphore'
 
 // ── Tracing ──
-export {
-  ExecutionTracer,
-  executionTracer,
-  type TraceEvent,
-  type TraceSpan
-} from './trace'
+export { ExecutionTracer, executionTracer, type TraceEvent, type TraceSpan } from './trace'
 
 // ── Trace Bridge ──
 export { bridgeTracerToEventLogger } from './trace-bridge'
@@ -71,10 +66,7 @@ export { createStructuredLogger } from './structured-log'
 export { agentContextService } from '../agent-context.service'
 
 // ── Task Scheduler (existing) ──
-export {
-  topologicalSort,
-  detectConclusivePattern
-} from './task-scheduler'
+export { topologicalSort, detectConclusivePattern } from './task-scheduler'
 
 // ── Investigation Detection ──
 export { isInvestigationIntent } from './investigation-detect'

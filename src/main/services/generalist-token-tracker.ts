@@ -67,8 +67,7 @@ export class GeneralistTokenTracker {
 
     // S8 + Strategy M: Log prompt cache effectiveness
     if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
-      const totalInput =
-        meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
+      const totalInput = meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
       const cacheHitRate = totalInput > 0 ? (cacheReadInputTokens / totalInput) * 100 : 0
       this.log.info(
         `[PIPELINE:prompt-cache] read=${cacheReadInputTokens} creation=${cacheCreationInputTokens} hitRate=${cacheHitRate.toFixed(1)}%`
@@ -90,8 +89,7 @@ export class GeneralistTokenTracker {
       outputTokens: meta.tokenUsage.output,
       cacheReadTokens: cacheReadInputTokens,
       cacheCreationTokens: cacheCreationInputTokens,
-      cacheHitRate:
-        totalInputForRate > 0 ? (cacheReadInputTokens / totalInputForRate) * 100 : 0,
+      cacheHitRate: totalInputForRate > 0 ? (cacheReadInputTokens / totalInputForRate) * 100 : 0,
       timestamp: Date.now()
     })
 

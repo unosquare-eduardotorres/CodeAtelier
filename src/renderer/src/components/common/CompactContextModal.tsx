@@ -10,7 +10,8 @@ interface CompactContextModalProps {
   onCancel: () => void
 }
 
-const CONTEXT_WINDOW_SIZE = 200_000
+const CONTEXT_WINDOW_SIZE = 1_000_000
+const QUALITY_WINDOW_SIZE = 200_000
 
 function getBarColor(level: string): string {
   switch (level) {
@@ -59,6 +60,16 @@ export default function CompactContextModal({
   const tokensK = (inputTokens / 1000).toFixed(1)
   const windowK = (CONTEXT_WINDOW_SIZE / 1000).toFixed(1)
   const percentage = Math.min(Math.round((inputTokens / CONTEXT_WINDOW_SIZE) * 100), 100)
+  // Quality is based on the effective 200K window (quality degrades past this)
+  const qualityPercentage = Math.min(Math.round((inputTokens / QUALITY_WINDOW_SIZE) * 100), 100)
+  const qualityLabel =
+    qualityPercentage <= 40
+      ? 'Excellent'
+      : qualityPercentage <= 60
+        ? 'Good'
+        : qualityPercentage <= 80
+          ? 'Moderate'
+          : 'Low'
   const barColor = getBarColor(level)
 
   return (
@@ -84,10 +95,7 @@ export default function CompactContextModal({
               <Minimize2 size={18} className="text-warning" />
             </div>
             <div>
-              <h3
-                id="compact-dialog-title"
-                className="text-base font-semibold text-text-primary"
-              >
+              <h3 id="compact-dialog-title" className="text-base font-semibold text-text-primary">
                 Compact Context
               </h3>
               <p className="text-xs text-text-secondary mt-0.5">
@@ -109,13 +117,13 @@ export default function CompactContextModal({
           <div className="flex items-center justify-between text-xs text-text-secondary mb-1.5">
             <span>Context usage</span>
             <span className="font-mono">
-              {tokensK}K / {windowK}K ({percentage}%)
+              {tokensK}K / {windowK}K ({percentage}%) — Quality: {qualityLabel}
             </span>
           </div>
           <div className="w-full h-2 bg-surface-overlay rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-300 ${barColor}`}
-              style={{ width: `${percentage}%` }}
+              style={{ width: `${qualityPercentage}%` }}
             />
           </div>
         </div>
@@ -125,8 +133,8 @@ export default function CompactContextModal({
           <div className="px-3 py-2.5 rounded-lg bg-warning/5 border border-warning/20">
             <p className="text-xs text-text-secondary leading-relaxed">
               Standard compaction may lose important context and nuance.{' '}
-              <span className="text-warning font-medium">&quot;Extract Nuance&quot;</span>{' '}
-              preserves critical details before compacting.
+              <span className="text-warning font-medium">&quot;Extract Nuance&quot;</span> preserves
+              critical details before compacting.
             </p>
           </div>
         </div>

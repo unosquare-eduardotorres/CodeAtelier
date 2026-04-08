@@ -27,10 +27,7 @@ describe('assertWithinRepo \u2014 path traversal protection', () => {
   })
 
   test('blocks ../../etc/passwd traversal', () => {
-    assert.throws(
-      () => assertWithinRepo(repoPath, '../../etc/passwd'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo(repoPath, '../../etc/passwd'), /Path traversal denied/)
   })
 
   test('blocks ../ traversal one level up', () => {
@@ -41,17 +38,11 @@ describe('assertWithinRepo \u2014 path traversal protection', () => {
   })
 
   test('blocks absolute path outside repo', () => {
-    assert.throws(
-      () => assertWithinRepo(repoPath, '/etc/passwd'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo(repoPath, '/etc/passwd'), /Path traversal denied/)
   })
 
   test('blocks mixed traversal in middle of path', () => {
-    assert.throws(
-      () => assertWithinRepo(repoPath, 'src/../../etc/shadow'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo(repoPath, 'src/../../etc/shadow'), /Path traversal denied/)
   })
 
   test('allows path with ./ prefix (current dir)', () => {

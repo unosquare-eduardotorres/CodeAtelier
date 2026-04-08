@@ -26,9 +26,7 @@ export function paintTile(
   const existingColors = layout.tileColors || new Array(layout.tiles.length).fill(null)
   const newColor =
     color ??
-    (tileType === TileType.WALL || tileType === TileType.VOID
-      ? null
-      : { ...DEFAULT_NEUTRAL_COLOR })
+    (tileType === TileType.WALL || tileType === TileType.VOID ? null : { ...DEFAULT_NEUTRAL_COLOR })
 
   // Check if anything actually changed
   if (layout.tiles[idx] === tileType) {
@@ -78,9 +76,7 @@ export function moveFurniture(
   if (!canPlaceFurniture(layout, item.type, newCol, newRow, uid)) return layout
   return {
     ...layout,
-    furniture: layout.furniture.map((f) =>
-      f.uid === uid ? { ...f, col: newCol, row: newRow } : f
-    )
+    furniture: layout.furniture.map((f) => (f.uid === uid ? { ...f, col: newCol, row: newRow } : f))
   }
 }
 

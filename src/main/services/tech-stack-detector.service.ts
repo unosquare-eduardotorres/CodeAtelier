@@ -27,15 +27,25 @@ const TECH_MARKERS: TechMarker[] = [
   { files: ['package.json'], deps: ['tailwindcss', '@tailwindcss/typography'], tech: 'tailwind' },
 
   // Electron
-  { files: ['electron-builder.yml', 'electron.vite.config.ts', 'electron.vite.config.mts'], tech: 'electron' },
+  {
+    files: ['electron-builder.yml', 'electron.vite.config.ts', 'electron.vite.config.mts'],
+    tech: 'electron'
+  },
   { files: ['package.json'], deps: ['electron'], tech: 'electron' },
 
   // .NET
   { files: ['*.csproj', '*.sln', 'global.json'], tech: 'dotnet' },
 
   // Python
-  { files: ['pyproject.toml', 'requirements.txt', 'setup.py', 'Pipfile', 'poetry.lock'], tech: 'python' },
-  { files: ['pyproject.toml', 'requirements.txt'], deps: ['django', 'flask', 'fastapi'], tech: 'python-web' },
+  {
+    files: ['pyproject.toml', 'requirements.txt', 'setup.py', 'Pipfile', 'poetry.lock'],
+    tech: 'python'
+  },
+  {
+    files: ['pyproject.toml', 'requirements.txt'],
+    deps: ['django', 'flask', 'fastapi'],
+    tech: 'python-web'
+  },
 
   // Rust
   { files: ['Cargo.toml'], tech: 'rust' },
@@ -54,7 +64,11 @@ const TECH_MARKERS: TechMarker[] = [
 
   // Database
   { files: ['package.json'], deps: ['better-sqlite3', 'sqlite3'], tech: 'sqlite' },
-  { files: ['package.json'], deps: ['pg', 'knex', 'prisma', 'drizzle-orm', 'typeorm', 'sequelize'], tech: 'database' },
+  {
+    files: ['package.json'],
+    deps: ['pg', 'knex', 'prisma', 'drizzle-orm', 'typeorm', 'sequelize'],
+    tech: 'database'
+  },
   { files: ['supabase/config.toml', '.supabase'], tech: 'supabase' },
 
   // Docker / infra
@@ -62,7 +76,11 @@ const TECH_MARKERS: TechMarker[] = [
   { files: ['terraform.tf', 'main.tf'], tech: 'terraform' },
 
   // Testing
-  { files: ['package.json'], deps: ['jest', 'vitest', '@playwright/test', 'mocha', 'cypress'], tech: 'testing' },
+  {
+    files: ['package.json'],
+    deps: ['jest', 'vitest', '@playwright/test', 'mocha', 'cypress'],
+    tech: 'testing'
+  }
 ]
 
 /**
@@ -70,28 +88,28 @@ const TECH_MARKERS: TechMarker[] = [
  * These should match agent_id values in the specialists table.
  */
 const TECH_TO_SPECIALIST: Record<string, string[]> = {
-  'react': ['frontend-architect', 'design-specialist'],
-  'vue': ['frontend-architect', 'design-specialist'],
-  'angular': ['frontend-architect', 'design-specialist'],
-  'svelte': ['frontend-architect', 'design-specialist'],
-  'typescript': ['generalist-developer'],
+  react: ['frontend-architect', 'design-specialist'],
+  vue: ['frontend-architect', 'design-specialist'],
+  angular: ['frontend-architect', 'design-specialist'],
+  svelte: ['frontend-architect', 'design-specialist'],
+  typescript: ['generalist-developer'],
   'node-backend': ['platform-engineer', 'generalist-developer'],
-  'tailwind': ['design-specialist'],
-  'electron': ['platform-architect', 'platform-engineer', 'frontend-architect'],
-  'dotnet': ['dotnet-architect'],
-  'python': ['generalist-developer'],
+  tailwind: ['design-specialist'],
+  electron: ['platform-architect', 'platform-engineer', 'frontend-architect'],
+  dotnet: ['dotnet-architect'],
+  python: ['generalist-developer'],
   'python-web': ['generalist-developer', 'platform-engineer'],
-  'rust': ['generalist-developer'],
-  'go': ['generalist-developer'],
-  'java': ['generalist-developer'],
-  'ruby': ['generalist-developer'],
-  'php': ['generalist-developer'],
-  'sqlite': ['data-architect'],
-  'database': ['data-architect'],
-  'supabase': ['data-architect'],
-  'docker': ['platform-engineer'],
-  'terraform': ['platform-engineer'],
-  'testing': ['testing-specialist'],
+  rust: ['generalist-developer'],
+  go: ['generalist-developer'],
+  java: ['generalist-developer'],
+  ruby: ['generalist-developer'],
+  php: ['generalist-developer'],
+  sqlite: ['data-architect'],
+  database: ['data-architect'],
+  supabase: ['data-architect'],
+  docker: ['platform-engineer'],
+  terraform: ['platform-engineer'],
+  testing: ['testing-specialist']
 }
 
 function filePatternExists(workspacePath: string, pattern: string): boolean {

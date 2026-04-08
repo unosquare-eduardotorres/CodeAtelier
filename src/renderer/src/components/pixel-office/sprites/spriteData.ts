@@ -63,7 +63,7 @@ const spriteCache = new Map<string, CharacterSprites>()
 /** Apply hue shift to every sprite in a CharacterSprites set */
 function hueShiftSprites(sprites: CharacterSprites, hueShift: number): CharacterSprites {
   const color: FloorColor = { h: hueShift, s: 0, b: 0, c: 0 }
-  const shift = (s: SpriteData) => adjustSprite(s, color)
+  const shift = (s: SpriteData): SpriteData => adjustSprite(s, color)
   const shiftWalk = (
     arr: [SpriteData, SpriteData, SpriteData, SpriteData]
   ): [SpriteData, SpriteData, SpriteData, SpriteData] => [

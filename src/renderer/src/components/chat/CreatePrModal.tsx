@@ -1,12 +1,5 @@
 import { useState, useEffect } from 'react'
-import {
-  X,
-  Loader2,
-  GitPullRequest,
-  ExternalLink,
-  AlertCircle,
-  Sparkles
-} from 'lucide-react'
+import { X, Loader2, GitPullRequest, ExternalLink, AlertCircle, Sparkles } from 'lucide-react'
 import { useCodeChangesStore } from '@renderer/store'
 
 interface CreatePrModalProps {

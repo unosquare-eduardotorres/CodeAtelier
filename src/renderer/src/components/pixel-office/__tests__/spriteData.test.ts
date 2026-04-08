@@ -208,7 +208,11 @@ describe('getOutlineSprite', () => {
   })
 
   test('transparent pixels produce no outline', () => {
-    const sprite: SpriteData = [['', '', ''], ['', '', ''], ['', '', '']]
+    const sprite: SpriteData = [
+      ['', '', ''],
+      ['', '', ''],
+      ['', '', '']
+    ]
     const outline = getOutlineSprite(sprite)
     // All should be empty
     for (const row of outline) {

@@ -22,6 +22,7 @@ Applied 6 strategies from the post-optimization deep audit (S1-S6 of Wave 4).
 - Typecheck: 0 new errors introduced
 
 **Performance impact:**
+
 - Investigation latency: 30-100s → 12-25s estimated
 - Investigation tokens: ~3,815 → ~2,685 (-30%)
 - Simple Q&A tokens: ~3,815 → ~2,510 (-34%)

@@ -33,19 +33,19 @@ Before writing any test, identify:
 
 Then read the appropriate reference file(s):
 
-| Stack / Framework              | Reference file                          |
-|--------------------------------|-----------------------------------------|
-| Python (pytest, FastAPI, etc.) | `references/python.md`                  |
-| JavaScript / TypeScript        | `references/javascript-typescript.md`   |
-| React                          | `references/react.md`                   |
-| Angular                        | `references/angular.md`                 |
-| Node.js / Express / NestJS     | `references/node.md`                    |
-| .NET / C# (xUnit, NUnit)      | `references/dotnet.md`                  |
-| Java (JUnit, Spring Boot)      | `references/java.md`                    |
-| Electron                       | `references/electron.md`                |
-| Claude CLI & SDKs              | `references/claude-ai.md`              |
-| E2E (Playwright, Cypress)      | `references/e2e.md`                     |
-| General patterns & philosophy  | `references/patterns.md`                |
+| Stack / Framework              | Reference file                        |
+| ------------------------------ | ------------------------------------- |
+| Python (pytest, FastAPI, etc.) | `references/python.md`                |
+| JavaScript / TypeScript        | `references/javascript-typescript.md` |
+| React                          | `references/react.md`                 |
+| Angular                        | `references/angular.md`               |
+| Node.js / Express / NestJS     | `references/node.md`                  |
+| .NET / C# (xUnit, NUnit)       | `references/dotnet.md`                |
+| Java (JUnit, Spring Boot)      | `references/java.md`                  |
+| Electron                       | `references/electron.md`              |
+| Claude CLI & SDKs              | `references/claude-ai.md`             |
+| E2E (Playwright, Cypress)      | `references/e2e.md`                   |
+| General patterns & philosophy  | `references/patterns.md`              |
 
 Multiple references can be combined. For example, testing a React + Node full-stack app
 would use `references/react.md` + `references/node.md` + `references/e2e.md`.
@@ -53,6 +53,7 @@ would use `references/react.md` + `references/node.md` + `references/e2e.md`.
 ## Step 1 — Choose the Right Test Level
 
 ### Unit Tests
+
 Test a single function, method, or class **in isolation**. All external dependencies
 are mocked or stubbed.
 
@@ -60,6 +61,7 @@ Write when: meaningful logic exists (conditionals, transformations, calculations
 parsing). Skip when: code is pure glue with no logic, or trivially simple.
 
 ### Integration Tests
+
 Test how multiple components work **together** — a module calling a real database,
 an API endpoint hit with an in-memory server, two services communicating.
 
@@ -68,6 +70,7 @@ mocks would hide real bugs. Skip when: the integration is already well-covered b
 E2E tests and the contract is stable.
 
 ### E2E Tests
+
 Test the full user-facing flow from the **outside in** — browser clicks, CLI commands,
 API sequences simulating a real user session.
 
@@ -80,7 +83,9 @@ ones. Don't duplicate what lower levels already cover.
 These principles apply to every test at every level, in every framework.
 
 ### Naming
+
 State the scenario and expected outcome. A test name is a specification:
+
 ```
 test_parse_csv_with_empty_rows_skips_blanks
 it("returns 401 when token is expired")
@@ -88,6 +93,7 @@ CalculateDiscount_WithNegativePrice_ThrowsArgumentException
 ```
 
 ### Structure — Arrange / Act / Assert
+
 1. **Arrange** — set up inputs, mocks, fixtures, state
 2. **Act** — call the function / hit the endpoint / perform the action
 3. **Assert** — verify the outcome
@@ -95,16 +101,19 @@ CalculateDiscount_WithNegativePrice_ThrowsArgumentException
 One act per test. Related assertions are fine; unrelated ones get their own test.
 
 ### Isolation
+
 - Unit: mock all externals (DB, HTTP, filesystem, clock)
 - Integration: real dependencies in controlled environments (test DB, in-memory server)
 - E2E: full stack running locally or in CI
 
 ### Determinism
+
 No flakiness. Freeze time, seed RNGs, avoid order-dependent tests, mock external APIs
 or use recorded responses (VCR/Polly pattern). Every test passes 100% of the time when
 code is correct.
 
 ### What to Cover
+
 - Happy path, edge cases (empty, null, boundary), error paths, auth failures
 - Don't cover: generated code, trivial getters, framework boilerplate
 - Aim for meaningful coverage, not a coverage number
@@ -123,6 +132,7 @@ from the reference file. General rules:
 ## Step 4 — Validate
 
 After writing tests:
+
 1. Run them. Fix failures before presenting.
 2. Check coverage and note important gaps.
 3. Review quality: are assertions meaningful? Would they catch a real bug?

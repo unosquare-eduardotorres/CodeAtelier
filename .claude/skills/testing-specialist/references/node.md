@@ -60,7 +60,7 @@ describe('[integration] AppController', () => {
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
+      imports: [AppModule]
     })
       .overrideProvider(DatabaseService)
       .useValue(mockDbService)
@@ -70,7 +70,9 @@ describe('[integration] AppController', () => {
     await app.init()
   })
 
-  afterAll(async () => { await app.close() })
+  afterAll(async () => {
+    await app.close()
+  })
 
   it('GET /health returns 200', () => {
     return request(app.getHttpServer()).get('/health').expect(200)
@@ -79,6 +81,7 @@ describe('[integration] AppController', () => {
 ```
 
 ### NestJS Service Unit Test
+
 ```typescript
 import { Test } from '@nestjs/testing'
 import { UserService } from './user.service'
@@ -91,10 +94,7 @@ describe('[unit] UserService', () => {
   beforeEach(async () => {
     repo = { findOne: vi.fn() }
     const module = await Test.createTestingModule({
-      providers: [
-        UserService,
-        { provide: UserRepository, useValue: repo },
-      ],
+      providers: [UserService, { provide: UserRepository, useValue: repo }]
     }).compile()
 
     service = module.get(UserService)
@@ -180,6 +180,7 @@ it('creates user and retrieves by email', async () => {
 ```
 
 ## Key Principles for Node Tests
+
 1. **Use `supertest` or `inject()`** — don't start a real HTTP server for integration tests.
 2. **Isolate test data** — clean DB before each test, not after (so you can inspect on failure).
 3. **Mock external services, not your own** — mock Stripe, SendGrid; test your own DB layer for real.

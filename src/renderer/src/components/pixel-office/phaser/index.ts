@@ -3,7 +3,12 @@ export type { SceneCallbacks, SceneInitData } from './PhaserOfficeScene'
 export { PhaserAgentManager } from './PhaserAgentManager'
 export type { AgentVisual } from './PhaserAgentManager'
 export { createAgentLabels, updateAgentLabels, updateAgentDisplayName } from './AgentLabelRenderer'
-export { showAgentBubble, clearAgentBubble, showAgentThoughtBubble, hideAgentThoughtBubble } from './AgentBubbleRenderer'
+export {
+  showAgentBubble,
+  clearAgentBubble,
+  showAgentThoughtBubble,
+  hideAgentThoughtBubble
+} from './AgentBubbleRenderer'
 export { showAgentStatusDot } from './AgentStatusDotRenderer'
 export { PhaserDragSystem } from './PhaserDragSystem'
 export type { DragCallbacks } from './PhaserDragSystem'

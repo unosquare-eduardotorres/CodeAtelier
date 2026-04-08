@@ -105,9 +105,7 @@ describe('handoffSchema', () => {
   })
 
   test('rejects invalid mode', () => {
-    assert.throws(() =>
-      handoffSchema.parse({ specialist: 'x', summary: 'y', mode: 'invalid' })
-    )
+    assert.throws(() => handoffSchema.parse({ specialist: 'x', summary: 'y', mode: 'invalid' }))
   })
 
   test('rejects missing specialist', () => {
@@ -145,11 +143,7 @@ describe('askUserSchema', () => {
 
   test('accepts multiple questions', () => {
     const result = askUserSchema.parse({
-      questions: [
-        { question: 'Q1' },
-        { question: 'Q2', header: 'Section' },
-        { question: 'Q3' }
-      ]
+      questions: [{ question: 'Q1' }, { question: 'Q2', header: 'Section' }, { question: 'Q3' }]
     })
     assert.equal(result.questions.length, 3)
   })
@@ -189,15 +183,11 @@ describe('emitMemorySchema', () => {
   })
 
   test('rejects empty title', () => {
-    assert.throws(() =>
-      emitMemorySchema.parse({ type: 'user', title: '', content: 'content' })
-    )
+    assert.throws(() => emitMemorySchema.parse({ type: 'user', title: '', content: 'content' }))
   })
 
   test('rejects empty content', () => {
-    assert.throws(() =>
-      emitMemorySchema.parse({ type: 'user', title: 'Title', content: '' })
-    )
+    assert.throws(() => emitMemorySchema.parse({ type: 'user', title: 'Title', content: '' }))
   })
 
   test('rejects missing fields', () => {
@@ -267,8 +257,17 @@ describe('Control action callbacks', () => {
       onAskUser: () => {},
       onMemory: () => {}
     }
-    const brief = handoffSchema.parse({ specialist: 'dx-specialist', summary: 'Write docs' })
-    callbacks.onHandoff(brief as Parameters<ControlActionCallbacks['onHandoff']>[0])
+    const brief = handoffSchema.parse({
+      specialist: 'dx-specialist',
+      summary: 'Write docs',
+      recentMessages: [],
+      specialists: ['dx-specialist'],
+      decisions: [],
+      constraints: [],
+      filesDiscussed: [],
+      mode: 'build'
+    })
+    callbacks.onHandoff(brief as unknown as Parameters<ControlActionCallbacks['onHandoff']>[0])
     assert.ok(receivedBrief)
     assert.equal((receivedBrief as Record<string, unknown>).specialist, 'dx-specialist')
   })

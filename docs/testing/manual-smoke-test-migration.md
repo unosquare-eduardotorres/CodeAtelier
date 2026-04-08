@@ -3,6 +3,7 @@
 Use this checklist for manual E2E validation of the Generalist + SubAgent migration in Agent Studio.
 
 ## Prerequisites
+
 - [ ] Install dependencies (`npm install`)
 - [ ] Run typecheck (`npm run typecheck` or project-standard command)
 - [ ] Start the app (`npm run dev`)
@@ -10,6 +11,7 @@ Use this checklist for manual E2E validation of the Generalist + SubAgent migrat
 - [ ] Use a writable test workspace with a Git repo
 
 ## Test 1: Workspace Initialization
+
 - Goal: verify baseline workspace and conversation startup.
 - Steps:
   - [ ] Open or create a workspace
@@ -21,6 +23,7 @@ Use this checklist for manual E2E validation of the Generalist + SubAgent migrat
   - [ ] Generalist handles the exchange without migration errors
 
 ## Test 2: Plan Mode Handoff + Decomposition
+
 - Goal: verify plan-mode decomposition path through Generalist.
 - Steps:
   - [ ] Switch to Plan mode
@@ -32,6 +35,7 @@ Use this checklist for manual E2E validation of the Generalist + SubAgent migrat
   - [ ] Plan-mode tasks are investigation-focused (not direct implementation)
 
 ## Test 3: Build Mode SubAgent Execution
+
 - Goal: verify task execution uses SDK SubAgents.
 - Steps:
   - [ ] Switch to Build mode
@@ -43,6 +47,7 @@ Use this checklist for manual E2E validation of the Generalist + SubAgent migrat
   - [ ] Execution completes with a final summary and no orchestrator usage
 
 ## Test 4: Error Handling
+
 - Goal: verify graceful failure behavior after migration.
 - Steps:
   - [ ] Trigger a decomposition failure path (invalid decomposition input/response)
@@ -54,6 +59,7 @@ Use this checklist for manual E2E validation of the Generalist + SubAgent migrat
   - [ ] Conversation remains usable for follow-up actions
 
 ## Test 5: Session Continuity
+
 - Goal: verify session resume and context continuity.
 - Steps:
   - [ ] Run one decomposition + execution cycle
@@ -64,6 +70,7 @@ Use this checklist for manual E2E validation of the Generalist + SubAgent migrat
   - [ ] No unexpected session reset or duplication occurs
 
 ## Test 6: Conversation Lifecycle
+
 - Goal: verify stop/close/complete/delete lifecycle paths.
 - Steps:
   - [ ] Start a long-running response and click Stop
@@ -75,6 +82,7 @@ Use this checklist for manual E2E validation of the Generalist + SubAgent migrat
   - [ ] Deletion removes conversation data and UI entry cleanly
 
 ## Sign-off
+
 - [ ] All six smoke tests passed
 - [ ] Failures (if any) captured with repro steps and logs
 - [ ] Migration is ready for broader QA/UAT validation

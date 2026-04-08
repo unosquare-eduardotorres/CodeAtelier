@@ -85,7 +85,8 @@ describe('Suite 1: parseHandoffBlock', () => {
 
   test('does not rewrite action verbs when mode is build', () => {
     // Build mode handoff with an action verb — should preserve the original verb
-    const buildHandoff = '```handoff\n{\n  "action": "handoff",\n  "summary": "Implement the new API",\n  "specialists": ["api-specialist"],\n  "mode": "build"\n}\n```'
+    const buildHandoff =
+      '```handoff\n{\n  "action": "handoff",\n  "summary": "Implement the new API",\n  "specialists": ["api-specialist"],\n  "mode": "build"\n}\n```'
     const result = parseHandoffBlock(buildHandoff)
     assert.ok(result)
     assert.equal(result.mode, 'build')
@@ -155,9 +156,9 @@ describe('Suite 3: buildSubAgentDefinitions', () => {
   test('build mode uses full tools', () => {
     const tasks = [{ id: 't1', specialist: 'qa', description: 'Run checks', dependsOn: [] }]
     const agents = buildSubAgentDefinitions(tasks, 'build', simpleBuildConfig)
-    assert.ok(agents.qa.tools.includes('Write'))
-    assert.ok(agents.qa.tools.includes('Edit'))
-    assert.ok(agents.qa.tools.includes('Bash'))
+    assert.ok(agents.qa.tools!.includes('Write'))
+    assert.ok(agents.qa.tools!.includes('Edit'))
+    assert.ok(agents.qa.tools!.includes('Bash'))
   })
 
   test('model selection: highest tier wins', () => {
@@ -174,9 +175,9 @@ describe('Suite 4: Mode enforcement', () => {
   test('plan mode excludes write tools', () => {
     const tasks = [{ id: 't1', specialist: 'qa', description: 'Investigate', dependsOn: [] }]
     const agents = buildSubAgentDefinitions(tasks, 'plan', simpleBuildConfig)
-    assert.ok(!agents.qa.tools.includes('Write'))
-    assert.ok(!agents.qa.tools.includes('Edit'))
-    assert.ok(!agents.qa.tools.includes('Bash'))
+    assert.ok(!agents.qa.tools!.includes('Write'))
+    assert.ok(!agents.qa.tools!.includes('Edit'))
+    assert.ok(!agents.qa.tools!.includes('Bash'))
   })
 
   test('build mode includes all tools', () => {

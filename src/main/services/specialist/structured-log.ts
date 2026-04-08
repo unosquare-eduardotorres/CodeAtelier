@@ -52,11 +52,13 @@ interface StructuredLogger {
   /** Log specialist execution failed */
   specialistFailed(fields: SpecialistLogFields): void
   /** Log task retry with optional escalation */
-  taskRetried(fields: SpecialistLogFields & {
-    maxRetries?: number
-    escalation?: { fromModel: string; toModel: string }
-    reason?: string
-  }): void
+  taskRetried(
+    fields: SpecialistLogFields & {
+      maxRetries?: number
+      escalation?: { fromModel: string; toModel: string }
+      reason?: string
+    }
+  ): void
   /** Log concurrency event (semaphore) */
   concurrencyEvent(fields: {
     event: 'acquired' | 'released' | 'queued' | 'limit_reached'
@@ -66,10 +68,12 @@ interface StructuredLogger {
     taskId?: string
   }): void
   /** Log tool call circuit breaker */
-  toolCallLimitReached(fields: SpecialistLogFields & {
-    toolCallCount: number
-    maxToolCalls: number
-  }): void
+  toolCallLimitReached(
+    fields: SpecialistLogFields & {
+      toolCallCount: number
+      maxToolCalls: number
+    }
+  ): void
   /** Log scheduling decision */
   schedulingDecision(fields: {
     strategy: string

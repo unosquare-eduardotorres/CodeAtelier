@@ -47,15 +47,16 @@ flowchart LR
 
 Auto Memory focuses on **project-level knowledge** — things that are true about your codebase as a whole, not about specific conversations. Examples:
 
-| Category | Example |
-|----------|---------|
-| **Architecture** | "This project uses a microservices architecture with 5 services" |
-| **Conventions** | "All API endpoints follow REST naming conventions" |
-| **Tech Stack** | "The frontend uses React 19 with TypeScript strict mode" |
-| **Patterns** | "Error handling uses a centralized ErrorBoundary component" |
-| **Configuration** | "The project uses environment variables stored in .env.local" |
+| Category          | Example                                                          |
+| ----------------- | ---------------------------------------------------------------- |
+| **Architecture**  | "This project uses a microservices architecture with 5 services" |
+| **Conventions**   | "All API endpoints follow REST naming conventions"               |
+| **Tech Stack**    | "The frontend uses React 19 with TypeScript strict mode"         |
+| **Patterns**      | "Error handling uses a centralized ErrorBoundary component"      |
+| **Configuration** | "The project uses environment variables stored in .env.local"    |
 
 Things that are **not** stored in memory:
+
 - Personal information or credentials
 - Specific conversation messages
 - Temporary debugging details

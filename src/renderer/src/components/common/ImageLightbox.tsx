@@ -8,7 +8,11 @@ interface ImageLightboxProps {
   onClose: () => void
 }
 
-export default function ImageLightbox({ src, alt, onClose }: ImageLightboxProps): React.JSX.Element {
+export default function ImageLightbox({
+  src,
+  alt,
+  onClose
+}: ImageLightboxProps): React.JSX.Element {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()

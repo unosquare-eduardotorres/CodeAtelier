@@ -144,12 +144,12 @@ function matchesSkipPattern(filePath: string, patterns: string[]): boolean {
   for (const pattern of patterns) {
     // Convert glob to regex using placeholder to avoid double-replacement
     const regexStr = pattern
-      .replace(/\*\*/g, '\0GLOBSTAR\0')   // placeholder for **
-      .replace(/\*/g, '[^/]*')            // * → non-slash chars
-      .replace(/\./g, '\\.')              // escape dots
-      .replace(/\0GLOBSTAR\0\//g, '(?:.+/)?')  // **/ → optional prefix ending in /
-      .replace(/\/\0GLOBSTAR\0/g, '(?:/.+)?')  // /** → optional suffix starting with /
-      .replace(/\0GLOBSTAR\0/g, '.*')          // ** standalone → anything
+      .replace(/\*\*/g, '\0GLOBSTAR\0') // placeholder for **
+      .replace(/\*/g, '[^/]*') // * → non-slash chars
+      .replace(/\./g, '\\.') // escape dots
+      .replace(/\0GLOBSTAR\0\//g, '(?:.+/)?') // **/ → optional prefix ending in /
+      .replace(/\/\0GLOBSTAR\0/g, '(?:/.+)?') // /** → optional suffix starting with /
+      .replace(/\0GLOBSTAR\0/g, '.*') // ** standalone → anything
     if (new RegExp(`^${regexStr}$`).test(normalized)) {
       return true
     }
@@ -222,7 +222,13 @@ export function extractRelevantImports(fileContent: string, chunk: RawChunk): st
 
   let match: RegExpExecArray | null
   while ((match = esImportRegex.exec(fileContent)) !== null) {
-    const names = match[1].split(',').map((n) => n.trim().split(/\s+as\s+/).pop()!.trim())
+    const names = match[1].split(',').map((n) =>
+      n
+        .trim()
+        .split(/\s+as\s+/)
+        .pop()!
+        .trim()
+    )
     const module = match[2]
     for (const name of names) {
       if (name) allImportedNames.push({ name, module })
@@ -314,10 +320,7 @@ export function buildScopeContexts(fileTags: RawChunk[]): Map<string, ScopeConte
   for (const cls of classChunks) {
     // Find methods that belong to this class (by line range)
     const methods = fileTags.filter(
-      (t) =>
-        t.symbolKind === 'method' &&
-        t.startLine >= cls.startLine &&
-        t.endLine <= cls.endLine
+      (t) => t.symbolKind === 'method' && t.startLine >= cls.startLine && t.endLine <= cls.endLine
     )
 
     // Extract decorators from the class body
@@ -339,9 +342,7 @@ export function buildScopeContexts(fileTags: RawChunk[]): Map<string, ScopeConte
       classKind = 'record'
     }
 
-    const siblingSignatures = methods
-      .filter((m) => m.isPublic)
-      .map((m) => m.signature)
+    const siblingSignatures = methods.filter((m) => m.isPublic).map((m) => m.signature)
 
     contexts.set(cls.symbolName, {
       className: cls.symbolName,
@@ -398,9 +399,7 @@ export function buildMetadata(
 
   // Detect docstring
   const hasDocstring =
-    chunk.body.includes('/**') ||
-    chunk.body.includes('///') ||
-    chunk.body.includes('/// <summary>')
+    chunk.body.includes('/**') || chunk.body.includes('///') || chunk.body.includes('/// <summary>')
 
   const lines = chunk.body.split('\n')
 

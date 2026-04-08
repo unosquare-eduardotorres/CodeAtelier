@@ -74,8 +74,8 @@ export default function IdeaPopover({
           <div className="p-4 space-y-3">
             <p className="text-xs text-text-secondary leading-relaxed">
               Save this idea for later. You can find it in{' '}
-              <span className="text-text-primary font-medium">Workspace Settings → Ideas</span>, then
-              refine it with &quot;Grill Me&quot; or convert it directly into a work item.
+              <span className="text-text-primary font-medium">Workspace Settings → Ideas</span>,
+              then refine it with &quot;Grill Me&quot; or convert it directly into a work item.
             </p>
             <input
               type="text"

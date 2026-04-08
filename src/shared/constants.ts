@@ -364,8 +364,7 @@ export const IPC_CHANNELS = {
   SDK_SET_MCP_SERVERS: 'sdk:setMcpServers',
   SDK_REWIND_FILES: 'sdk:rewindFiles',
   SDK_RECONNECT_MCP: 'sdk:reconnectMcp',
-  SDK_SUPPORTED_AGENTS: 'sdk:supportedAgents',
-
+  SDK_SUPPORTED_AGENTS: 'sdk:supportedAgents'
 } as const
 
 export const CONVERSATION_MODES = {
@@ -440,23 +439,26 @@ export const AVAILABLE_MODELS = [
 ] as const
 
 /** Default model for each configurable action */
-export const DEFAULT_MODEL_CONFIG: Record<
-  import('./types').ModelAction,
-  string
-> = {
+export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string> = {
   generalist: 'claude-sonnet-4-6',
   'specialist:simple': 'claude-haiku-4-5-20251001',
   'specialist:moderate': 'claude-sonnet-4-6',
   'specialist:complex': 'claude-opus-4-6',
   dream: 'claude-haiku-4-5-20251001',
   memoryFeed: 'claude-haiku-4-5-20251001',
-  activation: 'claude-haiku-4-5-20251001'
+  activation: 'claude-haiku-4-5-20251001',
+  haiku: 'claude-haiku-4-5-20251001'
 } as const
 
 /** Human-readable metadata for each model action — used in the Models config UI */
 export const MODEL_ACTIONS_META: Record<
   import('./types').ModelAction,
-  { label: string; description: string; icon: string; section: 'agent' | 'specialist' | 'background' }
+  {
+    label: string
+    description: string
+    icon: string
+    section: 'agent' | 'specialist' | 'background'
+  }
 > = {
   generalist: {
     label: 'Generalist',
@@ -499,6 +501,12 @@ export const MODEL_ACTIONS_META: Record<
     description: 'CLAUDE.md generation during agent activation',
     icon: '🚀',
     section: 'background'
+  },
+  haiku: {
+    label: 'Haiku (Lightweight)',
+    description: 'Fast, lightweight tasks like code descriptions',
+    icon: '⚡',
+    section: 'background'
   }
 } as const
 
@@ -529,13 +537,13 @@ export const COMPLEXITY_TO_EFFORT = {
  * SDK returns error_max_budget_usd when exceeded — clean exit, no crash.
  */
 export const SPECIALIST_BUDGET_CAPS = {
-  simple: 0.10,
-  moderate: 0.50,
-  complex: 2.00
+  simple: 0.1,
+  moderate: 0.5,
+  complex: 2.0
 } as const satisfies Record<string, number>
 
 /** Generalist per-turn budget — higher because coordinator handles full conversations */
-export const GENERALIST_BUDGET_CAP = 1.50
+export const GENERALIST_BUDGET_CAP = 1.5
 
 /** Maximum skill file size in bytes (500 KB) */
 export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const // 500 * 1024
@@ -685,7 +693,11 @@ export const GRILL_TRACKS: Record<GrillTrackId, GrillTrack> = {
 //   MCP_TOOLS.CODE_GRAPH._PREFIX          → 'mcp__code-graph__'
 //   MCP_TOOLS.CONTROL_ACTIONS._ALL_NAMES  → ['mcp__control-actions__emit_plan', ...]
 
-function mcpTool(server: string, tool: string, displayName: string) {
+function mcpTool(
+  server: string,
+  tool: string,
+  displayName: string
+): { name: `mcp__${string}__${string}`; tool: string; server: string; displayName: string } {
   return {
     /** Full SDK tool name: mcp__{server}__{tool} */
     name: `mcp__${server}__${tool}` as const,
@@ -701,7 +713,7 @@ function mcpTool(server: string, tool: string, displayName: string) {
 function mcpServer<T extends Record<string, ReturnType<typeof mcpTool>>>(
   server: string,
   tools: T
-) {
+): { _SERVER: string; _PREFIX: `mcp__${string}__`; _ALL_NAMES: string[] } & T {
   return {
     /** MCP server name */
     _SERVER: server,
@@ -716,7 +728,11 @@ function mcpServer<T extends Record<string, ReturnType<typeof mcpTool>>>(
 export const MCP_TOOLS = {
   CODE_GRAPH: mcpServer('code-graph', {
     GRAPH_MAP: mcpTool('code-graph', 'graph_map', 'Code Graph · graph_map'),
-    SEARCH_IDENTIFIERS: mcpTool('code-graph', 'search_identifiers', 'Code Graph · search_identifiers'),
+    SEARCH_IDENTIFIERS: mcpTool(
+      'code-graph',
+      'search_identifiers',
+      'Code Graph · search_identifiers'
+    ),
     FIND_DEAD_CODE: mcpTool('code-graph', 'find_dead_code', 'Code Graph · find_dead_code')
   }),
   SEMANTIC_SEARCH: mcpServer('semantic-search', {

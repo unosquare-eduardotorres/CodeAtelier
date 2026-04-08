@@ -49,8 +49,8 @@ import { vi, describe, it, expect } from 'vitest'
 // Mock electron before importing the module
 vi.mock('electron', () => ({
   dialog: {
-    showOpenDialog: vi.fn(),
-  },
+    showOpenDialog: vi.fn()
+  }
 }))
 
 import { dialog } from 'electron'
@@ -60,7 +60,7 @@ describe('[unit] openFile', () => {
   it('returns file contents when user selects a file', async () => {
     vi.mocked(dialog.showOpenDialog).mockResolvedValue({
       canceled: false,
-      filePaths: ['/tmp/test.txt'],
+      filePaths: ['/tmp/test.txt']
     })
     // Also mock fs.readFileSync as needed
 
@@ -71,7 +71,7 @@ describe('[unit] openFile', () => {
   it('returns null when dialog is canceled', async () => {
     vi.mocked(dialog.showOpenDialog).mockResolvedValue({
       canceled: true,
-      filePaths: [],
+      filePaths: []
     })
 
     expect(await openFile()).toBeNull()
@@ -116,7 +116,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: () => ipcRenderer.invoke('get-app-version'),
-  saveData: (data: string) => ipcRenderer.invoke('save-data', data),
+  saveData: (data: string) => ipcRenderer.invoke('save-data', data)
 })
 ```
 
@@ -124,11 +124,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 // Mock both contextBridge and ipcRenderer
 vi.mock('electron', () => ({
   contextBridge: {
-    exposeInMainWorld: vi.fn(),
+    exposeInMainWorld: vi.fn()
   },
   ipcRenderer: {
-    invoke: vi.fn(),
-  },
+    invoke: vi.fn()
+  }
 }))
 
 describe('[unit] preload', () => {
@@ -139,7 +139,7 @@ describe('[unit] preload', () => {
       'electronAPI',
       expect.objectContaining({
         getVersion: expect.any(Function),
-        saveData: expect.any(Function),
+        saveData: expect.any(Function)
       })
     )
   })
@@ -158,7 +158,7 @@ The key difference: mock `window.electronAPI` (the preload bridge):
 beforeEach(() => {
   window.electronAPI = {
     getVersion: vi.fn().mockResolvedValue('1.0.0'),
-    saveData: vi.fn().mockResolvedValue({ success: true }),
+    saveData: vi.fn().mockResolvedValue({ success: true })
   }
 })
 ```
@@ -177,8 +177,8 @@ let electronApp: Awaited<ReturnType<typeof electron.launch>>
 
 test.beforeAll(async () => {
   electronApp = await electron.launch({
-    args: ['.'],              // path to your main entry
-    env: { NODE_ENV: 'test' },
+    args: ['.'], // path to your main entry
+    env: { NODE_ENV: 'test' }
   })
 })
 
@@ -215,6 +215,7 @@ test('can evaluate in main process', async () => {
 ```
 
 ## Running
+
 ```bash
 # Unit tests (main + preload + renderer)
 npx vitest run
@@ -227,6 +228,7 @@ npm run build && npx playwright test
 ```
 
 ## Key Principles for Electron Tests
+
 1. **Mock `electron` module in unit tests** — it's not available outside Electron runtime.
 2. **Test IPC handlers as plain functions** — extract logic from ipcMain.handle into testable functions.
 3. **Separate main, preload, and renderer tests** — each has different available APIs.

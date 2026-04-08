@@ -41,7 +41,6 @@ import {
   useConversationSpecialists,
   useSpecialistStore
 } from '@renderer/store'
-import type { ConversationMode } from '../../../../shared/types'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
@@ -72,7 +71,7 @@ export default function AppLayout(): React.JSX.Element {
   const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
   const statuses = useAgentStore((s) => s.statuses)
   const sessionTokens = useAgentStore((s) => s.sessionTokens)
-  const { createConversation, updateMode, sendMessage } = useChatActions()
+  const { updateMode } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
   const { hydrateConversationSpecialists } = useConversationSpecialistActions()
   const conversationSpecialists = useConversationSpecialists(activeConversation?.id)
@@ -92,6 +91,7 @@ export default function AppLayout(): React.JSX.Element {
   // Auto-reset showNewChat when a conversation is selected
   useEffect(() => {
     if (activeConversation) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on selection change
       setShowNewChat(false)
     }
   }, [activeConversation])
@@ -124,9 +124,8 @@ export default function AppLayout(): React.JSX.Element {
   )
   const activeConversationSpecialistCount = useMemo(
     () =>
-      conversationSpecialists.filter(
-        (s) => s.isActive && !coreSpecialistIds.has(s.specialistId)
-      ).length,
+      conversationSpecialists.filter((s) => s.isActive && !coreSpecialistIds.has(s.specialistId))
+        .length,
     [conversationSpecialists, coreSpecialistIds]
   )
 
@@ -313,27 +312,6 @@ export default function AppLayout(): React.JSX.Element {
       })
     } catch (error) {
       console.error('[AppLayout] Failed to start grill from /grillme command:', error)
-    }
-  }
-
-  const handleCreateChat = async (data: {
-    title: string
-    description?: string
-    mode: ConversationMode
-    attachments?: string[]
-    useIsolatedBranch?: boolean
-  }): Promise<void> => {
-    if (!activeWorkspace) return
-    await createConversation(activeWorkspace.id, data.mode, data.title)
-    setShowNewChat(false)
-    if (data.useIsolatedBranch) {
-      // TODO: integrate worktree IPC — creates a git worktree for this conversation
-      console.info(
-        '[NewConversationModal] Isolated branch requested — worktree integration pending'
-      )
-    }
-    if (data.description) {
-      sendMessage(data.description, data.attachments)
     }
   }
 
@@ -674,7 +652,6 @@ export default function AppLayout(): React.JSX.Element {
           </button>
         </div>
       </div>
-
     </div>
   )
 }

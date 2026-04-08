@@ -31,13 +31,16 @@ let _storeSet: ((partial: Partial<ChatState>) => void) | null = null
  */
 function resetStreamingSafetyTimer(): void {
   if (streamingSafetyTimer) clearTimeout(streamingSafetyTimer)
-  streamingSafetyTimer = setTimeout(() => {
-    if (_storeGet?.().isStreaming) {
-      rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
-      _storeSet?.({ isStreaming: false, streamingContent: '', toolActivities: [] })
-    }
-    streamingSafetyTimer = null
-  }, 2 * 60 * 1000)
+  streamingSafetyTimer = setTimeout(
+    () => {
+      if (_storeGet?.().isStreaming) {
+        rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
+        _storeSet?.({ isStreaming: false, streamingContent: '', toolActivities: [] })
+      }
+      streamingSafetyTimer = null
+    },
+    2 * 60 * 1000
+  )
 }
 
 interface HandoffState {
@@ -101,8 +104,17 @@ interface ChatState {
   renameConversation: (id: string, title: string) => Promise<void>
   stopGeneration: () => Promise<void>
   sendMessage: (text: string, attachments?: string[]) => Promise<void>
-  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator' | 'specialist', taskId?: string, specialist?: string) => void
-  updateStreamingIdentity: (role: 'generalist' | 'coordinator' | 'specialist', taskId?: string, specialist?: string) => void
+  appendStreamChunk: (
+    chunk: string,
+    role?: 'generalist' | 'coordinator' | 'specialist',
+    taskId?: string,
+    specialist?: string
+  ) => void
+  updateStreamingIdentity: (
+    role: 'generalist' | 'coordinator' | 'specialist',
+    taskId?: string,
+    specialist?: string
+  ) => void
   finalizeStream: (messageId: string, taskId?: string) => void
   finalizeTurnBubble: (turnId: string) => void
   addToolActivity: (activity: ToolActivity) => void
@@ -185,6 +197,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   toolActivities: previousChatState?.toolActivities ?? [],
   taskProgress: previousChatState?.taskProgress ?? new Map(),
   isExecutingPlan: previousChatState?.isExecutingPlan ?? false,
+  decomposedTasks: previousChatState?.decomposedTasks ?? [],
   compactSuggestion: previousChatState?.compactSuggestion ?? null,
   grillSession: previousChatState?.grillSession ?? null,
   pendingQuestions: previousChatState?.pendingQuestions ?? null,
@@ -193,7 +206,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   contextUsages: previousChatState?.contextUsages ?? {},
 
   // Bind lazy refs for the safety timer helper (runs once on store creation)
-  ...(() => { _storeGet = get; _storeSet = set; return {} })(),
+  ...(() => {
+    _storeGet = get
+    _storeSet = set
+    return {}
+  })(),
 
   loadConversations: async (workspaceId: string) => {
     try {
@@ -204,8 +221,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  createConversation: async (workspaceId: string, mode?: ConversationMode, title?: string, personaSpecialistId?: string) => {
-    const conversation = await window.api.createConversation({ workspaceId, mode, title, personaSpecialistId })
+  createConversation: async (
+    workspaceId: string,
+    mode?: ConversationMode,
+    title?: string,
+    personaSpecialistId?: string
+  ) => {
+    const conversation = await window.api.createConversation({
+      workspaceId,
+      mode,
+      title,
+      personaSpecialistId
+    })
     set((state) => ({
       conversations: [conversation, ...state.conversations],
       activeConversation: conversation,
@@ -224,7 +251,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
     set((state) => ({
       activeConversation: updated,
-      conversations: state.conversations.map(c => c.id === updated.id ? updated : c)
+      conversations: state.conversations.map((c) => (c.id === updated.id ? updated : c))
     }))
   },
 
@@ -402,7 +429,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  appendStreamChunk: (chunk: string, role?: 'generalist' | 'coordinator' | 'specialist', taskId?: string, specialist?: string) => {
+  appendStreamChunk: (
+    chunk: string,
+    role?: 'generalist' | 'coordinator' | 'specialist',
+    taskId?: string,
+    specialist?: string
+  ) => {
     // Reset safety timer — backend is still alive
     resetStreamingSafetyTimer()
     if (!chunk) return // Skip empty chunks (tool-only messages)
@@ -452,7 +484,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // Preserve existing input if update doesn't provide one
             input: activity.input ?? activities[i].input,
             // If elapsedSeconds is provided but no explicit status change, keep current status
-            status: activity.status ?? (activity.elapsedSeconds !== undefined ? activities[i].status : 'completed'),
+            status:
+              activity.status ??
+              (activity.elapsedSeconds !== undefined ? activities[i].status : 'completed'),
             // Preserve elapsedSeconds for progress display
             elapsedSeconds: activity.elapsedSeconds ?? activities[i].elapsedSeconds
           }
@@ -476,9 +510,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Safety net: force-complete any tools still marked as "running" — ensures
       // no tool dots stay yellow/running after the stream ends, even if a tool_result was lost.
       const currentToolActivities = get().toolActivities.map((a) =>
-        a.status === 'running'
-          ? { ...a, status: 'completed' as const, completedAt: Date.now() }
-          : a
+        a.status === 'running' ? { ...a, status: 'completed' as const, completedAt: Date.now() } : a
       )
       const finalMessage: Message = {
         id: messageId,
@@ -525,17 +557,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })
         .catch((error) => {
           rendererLog.error('Failed to reload messages after stream finalize:', error)
-          set({ streamingContent: '', isStreaming: false, toolActivities: [], streamingTaskId: null, activeHandoff: null })
+          set({
+            streamingContent: '',
+            isStreaming: false,
+            toolActivities: [],
+            streamingTaskId: null,
+            activeHandoff: null
+          })
         })
     } else {
-      set({ streamingContent: '', isStreaming: false, toolActivities: [], streamingTaskId: null, activeHandoff: null })
+      set({
+        streamingContent: '',
+        isStreaming: false,
+        toolActivities: [],
+        streamingTaskId: null,
+        activeHandoff: null
+      })
     }
   },
 
   finalizeTurnBubble: (turnId: string) => {
     const {
-      streamingContent, streamingRole, streamingSpecialist,
-      activeConversation, toolActivities
+      streamingContent,
+      streamingRole,
+      streamingSpecialist,
+      activeConversation,
+      toolActivities
     } = get()
 
     // Nothing to finalize — agent went straight to tools without text
@@ -553,19 +600,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         attachmentsJson: '[]',
         createdAt: new Date().toISOString(),
         // Snapshot current tool activities into this bubble
-        toolActivities: toolActivities.length > 0
-          ? toolActivities.map((a) => ({
-              ...a,
-              status: a.status === 'running' ? ('completed' as const) : a.status
-            }))
-          : undefined
+        toolActivities:
+          toolActivities.length > 0
+            ? toolActivities.map((a) => ({
+                ...a,
+                status: a.status === 'running' ? ('completed' as const) : a.status
+              }))
+            : undefined
       }
 
       set((state) => ({
         messages: [...state.messages, turnMessage],
-        streamingContent: '',     // Reset for next turn
-        toolActivities: [],       // Reset tools for next turn
-        isStreaming: true          // Stay in streaming mode
+        streamingContent: '', // Reset for next turn
+        toolActivities: [], // Reset tools for next turn
+        isStreaming: true // Stay in streaming mode
       }))
     }
   },
@@ -943,6 +991,7 @@ export const useChatActions = (): Pick<
   | 'skipAllGrillQuestions'
   | 'createItemsFromGrill'
   | 'setCompactSuggestion'
+  | 'setDecomposedTasks'
   | 'updateTaskProgress'
   | 'setGrillQuestions'
   | 'endGrillSession'

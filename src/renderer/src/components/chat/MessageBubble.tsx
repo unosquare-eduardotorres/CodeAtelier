@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
 import type { Plugin } from 'unified'
-import type { Root, Text, PhrasingContent } from 'mdast'
+import type { Root, Text, PhrasingContent, Html, RootContent } from 'mdast'
 import { visit } from 'unist-util-visit'
 import { Copy, Check, Paperclip, Flame, Lightbulb, FileText } from 'lucide-react'
 import type {
@@ -105,10 +105,48 @@ const remarkHighlightQuestions: Plugin<[], Root> = () => {
       tree.children.splice(
         lastQuestionIndex,
         1,
-        { type: 'html', value: '<div class="agent-question">' } as any,
+        { type: 'html', value: '<div class="agent-question">' } as Html as RootContent,
         node,
-        { type: 'html', value: '</div>' } as any
+        { type: 'html', value: '</div>' } as Html as RootContent
       )
+    }
+  }
+}
+
+/**
+ * Remark plugin: wraps "Next Steps" headings and their following content in a styled
+ * <div class="agent-next-steps"> so actionable next-step blocks stand out visually.
+ */
+const remarkHighlightNextSteps: Plugin<[], Root> = () => {
+  return (tree) => {
+    const children = tree.children
+    let i = 0
+    while (i < children.length) {
+      const node = children[i]
+      if (node.type === 'heading') {
+        const textContent = (node as { children: Array<{ value?: string }> }).children
+          .map((c) => c.value ?? '')
+          .join('')
+          .trim()
+        if (/next\s+steps?/i.test(textContent)) {
+          // Collect the heading + all nodes until the next heading or end
+          let end = i + 1
+          while (end < children.length && children[end].type !== 'heading') {
+            end++
+          }
+          const wrapped = children.slice(i, end)
+          const openTag = {
+            type: 'html',
+            value: '<div class="agent-next-steps">'
+          } as Html as RootContent
+          const closeTag = { type: 'html', value: '</div>' } as Html as RootContent
+          // Replace the range [i..end) with open + wrapped nodes + close
+          children.splice(i, end - i, openTag, ...wrapped, closeTag)
+          i += wrapped.length + 2 // skip past the inserted wrapper
+          continue
+        }
+      }
+      i++
     }
   }
 }
@@ -169,7 +207,13 @@ function shortenFilePath(filePath: string): string {
 }
 
 // Module-level constants — stable references, never recreated on render
-const REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkEmojiSpan, remarkHighlightQuestions]
+const REMARK_PLUGINS = [
+  remarkGfm,
+  remarkBreaks,
+  remarkEmojiSpan,
+  remarkHighlightQuestions,
+  remarkHighlightNextSteps
+]
 const REHYPE_PLUGINS = [rehypeRaw]
 
 function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Element {
@@ -187,6 +231,17 @@ function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Eleme
     (codeChild?.props as { children?: React.ReactNode })?.children || ''
   ).replace(/\n$/, '')
 
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(codeText)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Fallback for non-secure contexts
+      console.error('Failed to copy to clipboard')
+    }
+  }, [codeText])
+
   // ── Mermaid: render as interactive diagram ──
   if (language === 'mermaid') {
     return (
@@ -198,17 +253,6 @@ function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Eleme
       </div>
     )
   }
-
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(codeText)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // Fallback for non-secure contexts
-      console.error('Failed to copy to clipboard')
-    }
-  }, [codeText])
 
   return (
     <div className="relative group my-2 rounded-lg overflow-hidden border border-border-subtle">
@@ -249,11 +293,12 @@ function stripStrayBackticks(children: React.ReactNode): React.ReactNode[] | nul
       const stripped = child.replace(/`/g, '')
       return stripped || null
     }
-    if (React.isValidElement(child) && child.props?.children) {
+    if (React.isValidElement(child) && (child.props as Record<string, unknown>)?.children) {
+      const childProps = child.props as Record<string, unknown>
       return React.cloneElement(child, {
-        ...child.props,
-        children: stripStrayBackticks(child.props.children)
-      })
+        ...childProps,
+        children: stripStrayBackticks(childProps.children as React.ReactNode)
+      } as Record<string, unknown>)
     }
     return child
   })
@@ -263,7 +308,9 @@ function stripStrayBackticks(children: React.ReactNode): React.ReactNode[] | nul
 const markdownComponents = {
   p: ({ children }: { children?: React.ReactNode }) => <p>{stripStrayBackticks(children)}</p>,
   li: ({ children }: { children?: React.ReactNode }) => <li>{stripStrayBackticks(children)}</li>,
-  strong: ({ children }: { children?: React.ReactNode }) => <strong>{stripStrayBackticks(children)}</strong>,
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong>{stripStrayBackticks(children)}</strong>
+  ),
   em: ({ children }: { children?: React.ReactNode }) => <em>{stripStrayBackticks(children)}</em>,
   pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
@@ -292,9 +339,9 @@ const markdownComponents = {
     }
 
     const isFilePath =
-      /^[\/~][\w.\-\/@ ]+\.\w{1,10}$/.test(text) ||
+      /^[/~][\w.\-/@ ]+\.\w{1,10}$/.test(text) ||
       /^[A-Z]:\\/.test(text) ||
-      /^[\w@][\w.\-\/@ ]*\/[\w.\-\/@ ]*\.\w{1,10}$/.test(text)
+      /^[\w@][\w.\-/@ ]*\/[\w.\-/@ ]*\.\w{1,10}$/.test(text)
     if (isFilePath) {
       const shortenedPath = shortenFilePath(text)
       return (
@@ -387,9 +434,7 @@ function useMessageIdentity(message: Message): {
             avatarKey: persona.avatarUrl ?? getDefaultAvatarForRole(persona.agentId),
             accentColor: persona.color ?? '#F59E0B',
             pixelSpriteId:
-              persona.pixelSpriteId ??
-              getSpriteAssignment(persona.agentId).pixelSpriteId ??
-              null
+              persona.pixelSpriteId ?? getSpriteAssignment(persona.agentId).pixelSpriteId ?? null
           }
         }
       }
@@ -403,9 +448,7 @@ function useMessageIdentity(message: Message): {
         avatarKey: coreSpec?.avatarUrl ?? defaults?.avatarKey ?? 'renaissance-alchemist',
         accentColor: coreSpec?.color ?? defaults?.color ?? '#6366F1',
         pixelSpriteId:
-          coreSpec?.pixelSpriteId ??
-          getSpriteAssignment(coreRole).pixelSpriteId ??
-          null
+          coreSpec?.pixelSpriteId ?? getSpriteAssignment(coreRole).pixelSpriteId ?? null
       }
     }
 
@@ -418,9 +461,7 @@ function useMessageIdentity(message: Message): {
         avatarKey: specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId),
         accentColor: specialist.color ?? '#F59E0B',
         pixelSpriteId:
-          specialist.pixelSpriteId ??
-          getSpriteAssignment(specialist.agentId).pixelSpriteId ??
-          null
+          specialist.pixelSpriteId ?? getSpriteAssignment(specialist.agentId).pixelSpriteId ?? null
       }
     }
 
@@ -495,18 +536,15 @@ function MessageBubbleInner({
 
   // Memoize all regex matching, JSON parsing, and content splitting to avoid redundant work on re-render
   const {
-    attachments,
     imageAttachments,
     fileAttachments,
     isGrillActivation,
     ideaToRefineMatch,
     displayContent,
-    planMatch,
     planContent,
     structuredPlan,
     beforePlan,
     afterPlan,
-    grillMatch,
     grillSummary,
     grillProposedTasks,
     beforeGrill,
@@ -515,7 +553,6 @@ function MessageBubbleInner({
     grillQuestions,
     beforeGrillQuestion,
     afterGrillQuestion,
-    grillEvalMatch,
     grillEvalData,
     beforeGrillEval,
     afterGrillEval,
@@ -706,7 +743,7 @@ function MessageBubbleInner({
   }
 
   const handleRefine = (): void => {
-    appendLocalMessage('Refine this plan — tell me what to change and I\'ll update it.')
+    appendLocalMessage("Refine this plan — tell me what to change and I'll update it.")
   }
 
   const handleOrchestratedBuild = (): void => {

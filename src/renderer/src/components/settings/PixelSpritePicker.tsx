@@ -9,10 +9,10 @@ import {
 
 // ── Vite glob import: resolve all sprite PNGs at build time ──
 
-const spriteModules = import.meta.glob<string>(
-  '@renderer/assets/pixel-office/sprites/**/*.png',
-  { eager: true, import: 'default' }
-)
+const spriteModules = import.meta.glob<string>('@renderer/assets/pixel-office/sprites/**/*.png', {
+  eager: true,
+  import: 'default'
+})
 
 /** Resolve a catalog entry's src path to an actual Vite-resolved URL */
 function resolveSpriteSrc(entry: PixelSpriteEntry): string {
@@ -93,11 +93,12 @@ function SpriteThumbnail({
       className={`
         relative rounded-lg transition-all duration-150
         border-2 p-0.5
-        ${selected
-          ? 'border-primary ring-2 ring-primary/40 scale-110 bg-primary/10 cursor-pointer'
-          : disabled
-            ? 'border-transparent opacity-40 grayscale cursor-default'
-            : 'border-transparent hover:border-border-default hover:scale-105 cursor-pointer'
+        ${
+          selected
+            ? 'border-primary ring-2 ring-primary/40 scale-110 bg-primary/10 cursor-pointer'
+            : disabled
+              ? 'border-transparent opacity-40 grayscale cursor-default'
+              : 'border-transparent hover:border-border-default hover:scale-105 cursor-pointer'
         }
         ${!loaded ? 'bg-surface-base' : ''}
         focus:outline-none focus-visible:ring-2 focus-visible:ring-primary
@@ -143,7 +144,8 @@ export default function PixelSpritePicker({
 
   // Get unique design groups with their first entry (for thumbnail)
   const designGroups = useMemo(() => {
-    const groups: { designGroup: string; firstEntry: PixelSpriteEntry; totalVariants: number }[] = []
+    const groups: { designGroup: string; firstEntry: PixelSpriteEntry; totalVariants: number }[] =
+      []
     const seen = new Set<string>()
 
     for (const entry of PIXEL_SPRITE_CATALOG) {
@@ -226,9 +228,10 @@ export default function PixelSpritePicker({
             }}
             className={`
               px-3 py-1 rounded-md text-xs font-medium transition-colors
-              ${filter === cat
-                ? 'bg-primary text-white'
-                : 'bg-surface-base text-text-secondary hover:text-text-primary hover:bg-surface-overlay border border-border-subtle'
+              ${
+                filter === cat
+                  ? 'bg-primary text-white'
+                  : 'bg-surface-base text-text-secondary hover:text-text-primary hover:bg-surface-overlay border border-border-subtle'
               }
             `}
           >
@@ -268,9 +271,7 @@ export default function PixelSpritePicker({
             const isGroupSelected = groupVariants.some((v) => v.id === value)
 
             // Check if the entire group is taken (any variant used by someone else)
-            const groupUsageEntry = groupVariants
-              .map((v) => usageMap.get(v.id))
-              .find(Boolean)
+            const groupUsageEntry = groupVariants.map((v) => usageMap.get(v.id)).find(Boolean)
             const isGroupTaken = !!groupUsageEntry && !isGroupSelected
 
             return (
@@ -314,7 +315,10 @@ export default function PixelSpritePicker({
 
       {/* Expanded variant row — separate section below grid */}
       {expandedGroup && (
-        <div ref={variantRowRef} className="border border-border-subtle rounded-lg bg-surface-base p-3">
+        <div
+          ref={variantRowRef}
+          className="border border-border-subtle rounded-lg bg-surface-base p-3"
+        >
           <p className="text-xs text-text-secondary mb-2">
             Variants for{' '}
             <span className="font-medium text-text-primary">
@@ -351,16 +355,17 @@ export default function PixelSpritePicker({
 
       {/* Selection info (when nothing is selected) */}
       {!selectedEntry && (
-        <div className="text-xs text-text-muted italic">
-          No pixel sprite selected
-        </div>
+        <div className="text-xs text-text-muted italic">No pixel sprite selected</div>
       )}
 
       {/* Prominent duplicate warning */}
       {selectedEntry && usageMap.has(selectedEntry.id) && (
         <div className="px-3 py-2 rounded-lg bg-warning/10 border border-warning/20 text-xs text-warning">
-          ⚠️ This avatar is already assigned to <strong>{usageMap.get(selectedEntry.id)!.alias || usageMap.get(selectedEntry.id)!.displayName}</strong>.
-          Consider choosing a unique avatar for each specialist.
+          ⚠️ This avatar is already assigned to{' '}
+          <strong>
+            {usageMap.get(selectedEntry.id)!.alias || usageMap.get(selectedEntry.id)!.displayName}
+          </strong>
+          . Consider choosing a unique avatar for each specialist.
         </div>
       )}
     </div>

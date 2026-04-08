@@ -9,13 +9,10 @@ export function registerHooksIpc(): void {
     return hookEngine.getLoadedHooks()
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.HOOKS_RELOAD,
-    async (event, args: { workspacePath: string }) => {
-      validateSender(event)
-      if (!args?.workspacePath) throw new Error('workspacePath is required')
-      await hookEngine.loadHooks(args.workspacePath)
-      return hookEngine.getLoadedHooks()
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.HOOKS_RELOAD, async (event, args: { workspacePath: string }) => {
+    validateSender(event)
+    if (!args?.workspacePath) throw new Error('workspacePath is required')
+    await hookEngine.loadHooks(args.workspacePath)
+    return hookEngine.getLoadedHooks()
+  })
 }

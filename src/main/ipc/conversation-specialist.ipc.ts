@@ -120,9 +120,7 @@ export function registerConversationSpecialistIpc(): void {
           : skills
 
         // Estimate tokens from specialist prompt (~3.5 chars per token)
-        const promptTokens = specialist?.prompt
-          ? Math.ceil(specialist.prompt.length / 3.5)
-          : 0
+        const promptTokens = specialist?.prompt ? Math.ceil(specialist.prompt.length / 3.5) : 0
 
         let skillTokens = 0
         const skillBreakdown: { name: string; tokens: number }[] = []

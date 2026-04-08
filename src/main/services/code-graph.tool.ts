@@ -19,10 +19,7 @@ class CodeGraphMcpService {
    * Get or create an MCP server config for the given workspace.
    * Exposes `graph_map` and `search_identifiers` tools backed by SQLite.
    */
-  getMcpServersConfig(
-    workspaceId: string,
-    workspacePath: string
-  ): Record<string, McpServerConfig> {
+  getMcpServersConfig(workspaceId: string, workspacePath: string): Record<string, McpServerConfig> {
     let config = this.servers.get(workspaceId)
     if (config) {
       return { 'code-graph': config }
@@ -83,9 +80,7 @@ class CodeGraphMcpService {
           },
           handler: async (args) => {
             const query = args.query as string
-            log.info(
-              `[CodeGraph] MCP search_identifiers: "${query}" (workspace: ${workspaceId})`
-            )
+            log.info(`[CodeGraph] MCP search_identifiers: "${query}" (workspace: ${workspaceId})`)
             const results = await codeGraphService.searchIdentifiers(
               workspaceId,
               workspacePath,

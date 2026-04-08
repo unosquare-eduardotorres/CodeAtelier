@@ -3,6 +3,7 @@
 ## Framework: Playwright (preferred) or Cypress
 
 ### Playwright Setup
+
 ```bash
 npm init playwright@latest
 ```
@@ -17,17 +18,17 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',
-    screenshot: 'only-on-failure',
+    screenshot: 'only-on-failure'
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } }
   ],
   webServer: {
     command: 'npm run dev',
     port: 3000,
-    reuseExistingServer: !process.env.CI,
-  },
+    reuseExistingServer: !process.env.CI
+  }
 })
 ```
 
@@ -50,7 +51,9 @@ export class LoginPage {
     this.errorMessage = page.getByRole('alert')
   }
 
-  async goto() { await this.page.goto('/login') }
+  async goto() {
+    await this.page.goto('/login')
+  }
 
   async login(email: string, password: string) {
     await this.emailInput.fill(email)
@@ -96,7 +99,7 @@ test.describe('Order API flow', () => {
 
   test.beforeAll(async ({ request }) => {
     const res = await request.post('/api/auth/login', {
-      data: { email: 'test@example.com', password: 'test123' },
+      data: { email: 'test@example.com', password: 'test123' }
     })
     token = (await res.json()).token
   })
@@ -107,7 +110,7 @@ test.describe('Order API flow', () => {
     // Create
     const create = await request.post('/api/orders', {
       headers,
-      data: { items: [{ sku: 'WIDGET-1', qty: 2 }] },
+      data: { items: [{ sku: 'WIDGET-1', qty: 2 }] }
     })
     expect(create.status()).toBe(201)
     const { id } = await create.json()
@@ -166,6 +169,7 @@ describe('Authentication', () => {
 ```
 
 ## Running
+
 ```bash
 # Playwright
 npx playwright test
@@ -179,6 +183,7 @@ npx cypress open                    # interactive
 ```
 
 ## Key Principles
+
 1. **Test journeys, not screens** — walk through realistic workflows end to end.
 2. **Seed data via API** — don't click through forms to set up preconditions.
 3. **Use accessible selectors** — `getByRole`, `getByLabel`, `data-testid`. Never CSS classes.

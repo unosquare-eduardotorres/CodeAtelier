@@ -91,10 +91,7 @@ export function handleCameraPanMove(
 /**
  * End camera pan on pointer up.
  */
-export function endCameraPan(
-  state: CameraPanState,
-  updateCursor: () => void
-): void {
+export function endCameraPan(state: CameraPanState, updateCursor: () => void): void {
   if (state.cameraDragging) {
     state.cameraDragging = false
     updateCursor()

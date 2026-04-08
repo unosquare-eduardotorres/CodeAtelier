@@ -98,7 +98,10 @@ function formatTokens(count: number): string {
   return count.toString()
 }
 
-export default function AgentStatusCard({ status, isSubagent }: AgentStatusCardProps): React.JSX.Element {
+export default function AgentStatusCard({
+  status,
+  isSubagent
+}: AgentStatusCardProps): React.JSX.Element {
   const [elapsed, setElapsed] = useState(status.elapsedMs)
   const [isExpanded, setIsExpanded] = useState(false)
   const outputRef = useRef<HTMLDivElement>(null)
@@ -156,9 +159,11 @@ export default function AgentStatusCard({ status, isSubagent }: AgentStatusCardP
         }}
       >
         <div className="flex items-center gap-2">
-          {(specialist?.pixelSpriteId || getSpriteAssignment(status.agentType).pixelSpriteId) ? (
+          {specialist?.pixelSpriteId || getSpriteAssignment(status.agentType).pixelSpriteId ? (
             <PixelSpriteAvatar
-              spriteId={specialist?.pixelSpriteId ?? getSpriteAssignment(status.agentType).pixelSpriteId!}
+              spriteId={
+                specialist?.pixelSpriteId ?? getSpriteAssignment(status.agentType).pixelSpriteId!
+              }
               size={20}
             />
           ) : (

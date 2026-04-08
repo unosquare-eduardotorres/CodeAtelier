@@ -7,10 +7,7 @@ export {
   ConversationSpecialistRepository,
   conversationSpecialistRepository
 } from './conversation-specialist.repository'
-export {
-  AppPreferenceRepository,
-  appPreferenceRepository
-} from './app-preference.repository'
+export { AppPreferenceRepository, appPreferenceRepository } from './app-preference.repository'
 export {
   SpecialistConversationHistoryRepository,
   specialistConversationHistoryRepository

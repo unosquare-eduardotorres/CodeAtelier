@@ -53,13 +53,13 @@ The Team tab displays each agent with:
 
 ## Agent Statuses
 
-| Status | What it means |
-|--------|---------------|
-| **Idle** | The agent is available but not currently working |
-| **Thinking** | The agent is analyzing your request or planning its approach |
-| **Writing** | The agent is actively generating code or documentation |
-| **Reviewing** | The agent is reviewing code or verifying its work |
-| **Error** | Something went wrong — check the agent panel for details |
+| Status        | What it means                                                |
+| ------------- | ------------------------------------------------------------ |
+| **Idle**      | The agent is available but not currently working             |
+| **Thinking**  | The agent is analyzing your request or planning its approach |
+| **Writing**   | The agent is actively generating code or documentation       |
+| **Reviewing** | The agent is reviewing code or verifying its work            |
+| **Error**     | Something went wrong — check the agent panel for details     |
 
 You can also see live agent activity in the **Agent Panel** on the right side of the screen (toggle with **Cmd+J** / **Ctrl+J**).
 

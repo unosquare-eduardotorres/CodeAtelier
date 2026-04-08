@@ -319,7 +319,13 @@ class CodeGraphService extends EventEmitter {
     const tags = codeGraphTagRepository.findDefsByWorkspace(workspaceId)
 
     // Apply focus/priority boosts using extracted pure function
-    const boostedRanks = applyRankBoosts(ranks, focusFiles, priorityFiles, priorityIdentifiers, tags)
+    const boostedRanks = applyRankBoosts(
+      ranks,
+      focusFiles,
+      priorityFiles,
+      priorityIdentifiers,
+      tags
+    )
 
     // Sort and filter using extracted pure function
     const rankedFiles = sortAndFilterByRank(boostedRanks, options.excludeUnranked ?? false)

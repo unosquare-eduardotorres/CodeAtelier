@@ -69,8 +69,7 @@ export function handleFurnitureDragMove(
   if (!editorState.dragUid || !pointer.leftButtonDown()) return false
 
   const dist = Math.sqrt(
-    (pointer.x - dragState.dragStartPointerX) ** 2 +
-    (pointer.y - dragState.dragStartPointerY) ** 2
+    (pointer.x - dragState.dragStartPointerX) ** 2 + (pointer.y - dragState.dragStartPointerY) ** 2
   )
   if (dist > DRAG_THRESHOLD) {
     editorState.isDragMoving = true
@@ -84,10 +83,7 @@ export function handleFurnitureDragMove(
 /**
  * Finalize furniture drag-move on pointer up.
  */
-export function endFurnitureDrag(
-  editorState: EditorState | null,
-  updateCursor: () => void
-): void {
+export function endFurnitureDrag(editorState: EditorState | null, updateCursor: () => void): void {
   if (editorState?.dragUid) {
     editorState.clearDrag()
     updateCursor()

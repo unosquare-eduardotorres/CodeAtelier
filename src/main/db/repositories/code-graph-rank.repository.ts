@@ -51,9 +51,7 @@ export class CodeGraphRankRepository {
   getRank(workspaceId: string, relFname: string): number {
     const db = getDatabase()
     const row = db
-      .prepare(
-        'SELECT page_rank FROM code_graph_ranks WHERE workspace_id = ? AND rel_fname = ?'
-      )
+      .prepare('SELECT page_rank FROM code_graph_ranks WHERE workspace_id = ? AND rel_fname = ?')
       .get(workspaceId, relFname) as { page_rank: number } | undefined
     return row?.page_rank ?? 0
   }

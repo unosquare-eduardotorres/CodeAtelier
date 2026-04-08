@@ -15,6 +15,16 @@ export class Semaphore {
     if (maxConcurrency < 1) throw new Error('Semaphore maxConcurrency must be >= 1')
   }
 
+  /** Whether at least one slot is open for immediate acquisition */
+  get available(): boolean {
+    return this.current < this.maxConcurrency
+  }
+
+  /** Number of currently acquired slots */
+  get active(): number {
+    return this.current
+  }
+
   /**
    * Acquire a slot. Resolves immediately if under the limit,
    * otherwise queues and resolves when a slot opens.

@@ -253,7 +253,11 @@ export default function SpecialistDrawer({
                         {specialist.usePixelForChat && specialist.pixelSpriteId ? (
                           <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={28} />
                         ) : specialist.avatarUrl ? (
-                          <Avatar avatarKey={specialist.avatarUrl} size="sm" accentColor={specialist.color} />
+                          <Avatar
+                            avatarKey={specialist.avatarUrl}
+                            size="sm"
+                            accentColor={specialist.color}
+                          />
                         ) : AGENT_ICON_MAP[specialist.agentId] ? (
                           <AgentIcon agentType={specialist.agentId} size={22} />
                         ) : (

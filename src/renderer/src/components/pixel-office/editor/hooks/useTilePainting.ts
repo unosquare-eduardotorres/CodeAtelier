@@ -4,6 +4,8 @@
  * Extracted from useEditorActions to isolate tile-level editing logic.
  */
 
+/* eslint-disable react-hooks/immutability -- editorState is mutable Phaser game state, not React state */
+
 import { useCallback, useRef } from 'react'
 
 import type { EditorHookContext } from './index'
@@ -15,7 +17,7 @@ import {
   resolveTilePaintAction,
   resolveWallPaintAction
 } from '../editorActions'
-import { EditTool } from '../../engine/types'
+import { EditTool, TileType } from '../../engine/types'
 import type { FloorColor, OfficeLayout } from '../../engine/types'
 import type { OfficeState } from '../../engine/officeState'
 
@@ -57,7 +59,9 @@ interface TilePaintingActions {
   resetWallColorEdit: () => void
 }
 
-export function useTilePainting(ctx: Pick<EditorHookContext, 'editorState' | 'setEditorTick'>): TilePaintingActions {
+export function useTilePainting(
+  ctx: Pick<EditorHookContext, 'editorState' | 'setEditorTick'>
+): TilePaintingActions {
   const { editorState, setEditorTick } = ctx
   const wallColorEditActiveRef = useRef(false)
 
@@ -134,26 +138,24 @@ export function useTilePainting(ctx: Pick<EditorHookContext, 'editorState' | 'se
   )
 
   const handleTilePaint = useCallback(
-    (
-      layout: OfficeLayout,
-      col: number,
-      row: number,
-      _os: OfficeState
-    ): OfficeLayout | null => {
-      return resolveTilePaintAction(layout, col, row, editorState.selectedTileType, editorState.floorColor)
+    (layout: OfficeLayout, col: number, row: number, _os: OfficeState): OfficeLayout | null => {
+      return resolveTilePaintAction(
+        layout,
+        col,
+        row,
+        editorState.selectedTileType,
+        editorState.floorColor
+      )
     },
     [editorState]
   )
 
   const handleWallPaint = useCallback(
-    (
-      layout: OfficeLayout,
-      col: number,
-      row: number,
-      _os: OfficeState
-    ): OfficeLayout | null => {
+    (layout: OfficeLayout, col: number, row: number, _os: OfficeState): OfficeLayout | null => {
       const result = resolveWallPaintAction(
-        layout, col, row,
+        layout,
+        col,
+        row,
         editorState.wallDragAdding,
         editorState.wallColor,
         editorState.selectedTileType,

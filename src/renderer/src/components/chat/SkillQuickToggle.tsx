@@ -1,9 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react'
 import { X, Zap, ZapOff } from 'lucide-react'
-import {
-  useConversationSpecialists,
-  useConversationSpecialistActions
-} from '@renderer/store'
+import { useConversationSpecialists, useConversationSpecialistActions } from '@renderer/store'
 import type { Specialist } from '../../../../shared/types'
 
 interface SkillQuickToggleProps {
@@ -50,9 +47,7 @@ export default function SkillQuickToggle({
   const { upsertConversationSpecialist } = useConversationSpecialistActions()
 
   const conversationOverride = useMemo(() => {
-    const entry = conversationSpecialists.find(
-      (cs) => cs.specialistId === specialist.id
-    )
+    const entry = conversationSpecialists.find((cs) => cs.specialistId === specialist.id)
     return entry
       ? {
           isActive: entry.isActive,
@@ -173,9 +168,7 @@ export default function SkillQuickToggle({
             <label
               key={skill.id}
               className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors ${
-                !skillsEnabled
-                  ? 'opacity-40 pointer-events-none'
-                  : 'hover:bg-surface-overlay'
+                !skillsEnabled ? 'opacity-40 pointer-events-none' : 'hover:bg-surface-overlay'
               }`}
             >
               <input
@@ -190,9 +183,7 @@ export default function SkillQuickToggle({
                   {skill.name}
                 </div>
                 {skill.description && (
-                  <div className="text-[10px] text-text-muted truncate">
-                    {skill.description}
-                  </div>
+                  <div className="text-[10px] text-text-muted truncate">{skill.description}</div>
                 )}
               </div>
             </label>

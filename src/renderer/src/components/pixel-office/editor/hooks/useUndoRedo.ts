@@ -5,6 +5,8 @@
  * Pure state management: push, pop, undo, redo, reset.
  */
 
+/* eslint-disable react-hooks/immutability -- editorState is mutable Phaser game state, not React state */
+
 import { useCallback } from 'react'
 
 import type { EditorHookContext } from './index'

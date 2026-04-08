@@ -15,6 +15,15 @@ const MAX_FIX_CONTEXT_CHARS = 4000
 /** After seeing the same error N times, force model escalation */
 const STUCK_DETECTION_THRESHOLD = 2
 
+/** Result of a single evaluate-and-advance cycle */
+export interface TaskLoopResult {
+  passed: boolean
+  iterations: number
+  state: TaskLoopState
+  fixContext: string
+  shouldEscalate: boolean
+}
+
 /** Tracks the state of an iterative task loop */
 export interface TaskLoopState {
   taskId: string
@@ -138,7 +147,7 @@ class TaskLoopService {
           taskId,
           agentId: state.agentId,
           outcome: 'passed',
-          iterations: state.iteration
+          iterations: String(state.iteration)
         })
         .catch((err) => loopLog.warn('Hook error (task_loop_complete):', err))
 
@@ -164,7 +173,7 @@ class TaskLoopService {
           taskId,
           agentId: state.agentId,
           outcome: 'max_iterations',
-          iterations: state.iteration
+          iterations: String(state.iteration)
         })
         .catch((err) => loopLog.warn('Hook error (task_loop_complete):', err))
 

@@ -12,21 +12,16 @@
 import Phaser from 'phaser'
 import { loadAllAssets } from '../assetLoader'
 import { OfficeState } from '../engine/officeState'
-import type { FloorColor, OfficeLayout, SpriteData, FurnitureInstance } from '../engine/types'
-import { TILE_SIZE, TileType } from '../engine/types'
+import type { OfficeLayout, SpriteData, FurnitureInstance } from '../engine/types'
+import { TILE_SIZE } from '../engine/types'
 import { deserializeLayout } from '../layout/layoutSerializer'
 import { getCatalogEntry } from '../layout/furnitureCatalog'
 import { registerSpriteDataTexture } from '../phaser/PhaserSpriteLoader'
 import {
   drawWalls as drawWallsShared,
-  floorColorToHex as floorColorToHexShared,
   drawFloorTiles,
   createFurnitureSprites as createFurnitureSpritesShared,
-  clearFurnitureSprites,
-  PLANK_COLORS,
-  WALL_BASE_COLOR,
-  WALL_ACCENT_COLOR,
-  BASEBOARD_COLOR
+  clearFurnitureSprites
 } from '../phaser/renderUtils'
 import type { EditorState } from './editorState'
 import { EditTool } from '../engine/types'
@@ -112,9 +107,7 @@ export class PhaserEditorScene extends Phaser.Scene {
     this.assetsLoaded = true
 
     const layout =
-      this.pendingLayout ||
-      deserializeLayout(JSON.stringify(defaultLayoutJson)) ||
-      undefined
+      this.pendingLayout || deserializeLayout(JSON.stringify(defaultLayoutJson)) || undefined
     this.officeState = new OfficeState(layout)
     this.lastLayoutRef = this.officeState.getLayout()
 
@@ -139,7 +132,9 @@ export class PhaserEditorScene extends Phaser.Scene {
       getCallbacks: () => this.callbacks,
       findFurnitureAtTile: (col, row) => this.findFurnitureAtTileLocal(col, row),
       updateCursor: () => this.updateCursor(),
-      setIsDragging: (d) => { this.isDragging = d },
+      setIsDragging: (d) => {
+        this.isDragging = d
+      },
       getIsDragging: () => this.isDragging
     })
     this.updateCursor()
@@ -397,10 +392,6 @@ export class PhaserEditorScene extends Phaser.Scene {
     if (instances === this.lastFurnitureRef) return
 
     this.createFurniture()
-  }
-
-  private floorColorToHex(color: FloorColor): number {
-    return floorColorToHexShared(color)
   }
 
   // ═══════════════════════════════════════════════════════════════

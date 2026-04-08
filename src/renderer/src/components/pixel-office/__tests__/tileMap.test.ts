@@ -4,7 +4,6 @@
  */
 import assert from 'node:assert/strict'
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap'
-import { TileType } from '../engine/types'
 import type { TileType as TileTypeVal } from '../engine/types'
 
 let passed = 0
@@ -251,7 +250,10 @@ describe('findPath', () => {
     for (const step of path) {
       const dc = Math.abs(step.col - prev.col)
       const dr = Math.abs(step.row - prev.row)
-      assert.ok(dc + dr === 1, `Step from (${prev.col},${prev.row}) to (${step.col},${step.row}) is not 4-connected`)
+      assert.ok(
+        dc + dr === 1,
+        `Step from (${prev.col},${prev.row}) to (${step.col},${step.row}) is not 4-connected`
+      )
       prev = step
     }
   })

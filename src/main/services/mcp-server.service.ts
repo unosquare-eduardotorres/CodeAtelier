@@ -49,4 +49,3 @@ export function enrichFilesDiscussed(
   }
   return { files: merged, contributions }
 }
-

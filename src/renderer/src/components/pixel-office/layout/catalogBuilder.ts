@@ -7,8 +7,11 @@
  *         → buildVisibleCatalog
  */
 
-import type { FurnitureCatalogEntry, SpriteData } from '../engine/types'
-import type { LoadedAssetData, CatalogEntryWithCategory, FurnitureCategory } from './furnitureCatalog'
+import type {
+  LoadedAssetData,
+  CatalogEntryWithCategory,
+  FurnitureCategory
+} from './furnitureCatalog'
 
 // ── Types for intermediate pipeline data ─────────────────────
 
@@ -17,17 +20,6 @@ export interface RotationGroup {
   orientations: string[]
   /** Maps orientation → asset ID (for the default/off state) */
   members: Record<string, string>
-}
-
-interface CatalogBuildResult {
-  allEntries: CatalogEntryWithCategory[]
-  visibleEntries: CatalogEntryWithCategory[]
-  categories: FurnitureCategory[]
-  rotationGroups: Map<string, RotationGroup>
-  stateGroups: Map<string, string>
-  offToOn: Map<string, string>
-  onToOff: Map<string, string>
-  animationGroups: Map<string, string[]>
 }
 
 // ── Stage 1: Build catalog entries from raw assets ───────────
@@ -254,7 +246,10 @@ export function detectAnimationGroups(assets: LoadedAssetData): Map<string, stri
   }
   for (const [, frames] of animGroupCollector) {
     frames.sort((a, b) => a.frame - b.frame)
-    animationGroups.set(frames[0].id, frames.map((f) => f.id))
+    animationGroups.set(
+      frames[0].id,
+      frames.map((f) => f.id)
+    )
   }
 
   return animationGroups

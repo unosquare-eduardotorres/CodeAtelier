@@ -4,6 +4,8 @@
  * Extracted from useEditorActions to isolate furniture-related editing logic.
  */
 
+/* eslint-disable react-hooks/immutability -- editorState is mutable Phaser game state, not React state */
+
 import { useCallback, useRef } from 'react'
 
 import type { EditorHookContext } from './index'
@@ -140,7 +142,11 @@ export function useFurnitureOps(ctx: EditorHookContext): FurnitureOpsActions {
       }
 
       const result = resolveFurniturePlacement(
-        layout, col, row, type, editorState.pickedFurnitureColor
+        layout,
+        col,
+        row,
+        type,
+        editorState.pickedFurnitureColor
       )
       return result ? result.layout : null
     },

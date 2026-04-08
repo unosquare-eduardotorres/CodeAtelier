@@ -231,7 +231,7 @@ function generateSource(entries: PixelSpriteEntry[]): string {
     ']',
     '',
     'export function getDesignGroups(): string[] {',
-    "  return [...new Set(PIXEL_SPRITE_CATALOG.map((entry) => entry.designGroup))]",
+    '  return [...new Set(PIXEL_SPRITE_CATALOG.map((entry) => entry.designGroup))]',
     '}',
     '',
     'export function getVariants(designGroup: string): PixelSpriteEntry[] {',

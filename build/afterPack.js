@@ -14,8 +14,7 @@ const path = require('path')
  * @param {import('electron-builder').AfterPackContext} context
  */
 module.exports = async function afterPack(context) {
-  const ext =
-    { darwin: '.app', win32: '.exe', linux: '' }[context.electronPlatformName] || ''
+  const ext = { darwin: '.app', win32: '.exe', linux: '' }[context.electronPlatformName] || ''
   const executableName = context.packager.appInfo.productFilename + ext
   const executablePath = path.join(context.appOutDir, executableName)
 

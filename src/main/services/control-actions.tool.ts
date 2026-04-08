@@ -91,28 +91,12 @@ export const planSchema = z.object({
 })
 
 export const handoffSchema = z.object({
-  specialist: z
-    .string()
-    .describe('The specialist ID to hand off to (e.g. "platform-architect")'),
-  summary: z
-    .string()
-    .describe('What the specialist should do — actionable description'),
-  mode: z
-    .enum(['plan', 'build'])
-    .optional()
-    .describe('Execution mode (default: current mode)'),
-  decisions: z
-    .array(z.string())
-    .optional()
-    .describe('Key decisions already made'),
-  constraints: z
-    .array(z.string())
-    .optional()
-    .describe('Constraints the specialist must follow'),
-  filesDiscussed: z
-    .array(z.string())
-    .optional()
-    .describe('Files already read/discussed')
+  specialist: z.string().describe('The specialist ID to hand off to (e.g. "platform-architect")'),
+  summary: z.string().describe('What the specialist should do — actionable description'),
+  mode: z.enum(['plan', 'build']).optional().describe('Execution mode (default: current mode)'),
+  decisions: z.array(z.string()).optional().describe('Key decisions already made'),
+  constraints: z.array(z.string()).optional().describe('Constraints the specialist must follow'),
+  filesDiscussed: z.array(z.string()).optional().describe('Files already read/discussed')
 })
 
 export const emitMemorySchema = z.object({

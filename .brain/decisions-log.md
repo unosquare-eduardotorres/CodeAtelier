@@ -53,6 +53,7 @@ Plan-mode specialists (investigations, analysis) no longer receive skill content
 > 2026-03-30
 
 Deep audit verified current token usage across all LLM call paths. After Wave 4 optimizations:
+
 - Investigation total: ~3,815 → ~2,685 tokens (-30%)
 - Simple Q&A: ~3,815 → ~2,510 tokens (-34%)
 - Investigation latency: 30-100s → 12-25s (-66%)
@@ -141,6 +142,7 @@ Replace the plan reminder regex in `intent-detector.ts` with a lightweight NLU c
 **Scope:** ~4h. Touches `intent-detector.ts` (main change), `generalist-prompt-assembler.ts` (plan reminder injection), and tests.
 
 **Approach options:**
+
 1. Heuristic keyword classifier (zero-cost, fast, ~80% coverage improvement)
 2. Small local model via Ollama (high accuracy, adds latency + dependency)
 3. Claude Haiku one-shot classification (high accuracy, costs tokens per turn)

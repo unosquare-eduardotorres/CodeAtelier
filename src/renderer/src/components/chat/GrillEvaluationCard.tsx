@@ -14,8 +14,7 @@ export default function GrillEvaluationCard({
   feedback,
   questions
 }: GrillEvaluationCardProps): React.JSX.Element {
-  const scoreColor =
-    score >= 70 ? 'text-success' : score >= 40 ? 'text-accent' : 'text-danger'
+  const scoreColor = score >= 70 ? 'text-success' : score >= 40 ? 'text-accent' : 'text-danger'
   const scoreBg =
     score >= 70
       ? 'bg-success-muted border-success/30'
@@ -35,9 +34,7 @@ export default function GrillEvaluationCard({
           >
             {score}/100
           </span>
-          {scoreLabel && (
-            <span className="text-xs text-accent/70 font-medium">{scoreLabel}</span>
-          )}
+          {scoreLabel && <span className="text-xs text-accent/70 font-medium">{scoreLabel}</span>}
         </div>
       </div>
 

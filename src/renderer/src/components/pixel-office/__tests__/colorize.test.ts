@@ -48,7 +48,10 @@ function isValidHex(s: string): boolean {
 
 describe('colorizeSprite', () => {
   test('preserves transparent pixels (empty strings)', () => {
-    const sprite: SpriteData = [['', '#FF0000', ''], ['#00FF00', '', '#0000FF']]
+    const sprite: SpriteData = [
+      ['', '#FF0000', ''],
+      ['#00FF00', '', '#0000FF']
+    ]
     const color: FloorColor = { h: 180, s: 50, b: 0, c: 0, colorize: true }
     const result = colorizeSprite(sprite, color)
     assert.equal(result[0][0], '')
@@ -92,16 +95,31 @@ describe('colorizeSprite', () => {
     const base = colorizeSprite(pixel('#808080'), { h: 200, s: 50, b: 0, c: 0, colorize: true })
     const bright = colorizeSprite(pixel('#808080'), { h: 200, s: 50, b: 50, c: 0, colorize: true })
     // Compare perceived luminance (simple: sum of RGB)
-    const baseSum = parseInt(singlePixel(base).slice(1, 3), 16) + parseInt(singlePixel(base).slice(3, 5), 16) + parseInt(singlePixel(base).slice(5, 7), 16)
-    const brightSum = parseInt(singlePixel(bright).slice(1, 3), 16) + parseInt(singlePixel(bright).slice(3, 5), 16) + parseInt(singlePixel(bright).slice(5, 7), 16)
-    assert.ok(brightSum > baseSum, `Expected brighter pixel, got base=${baseSum} bright=${brightSum}`)
+    const baseSum =
+      parseInt(singlePixel(base).slice(1, 3), 16) +
+      parseInt(singlePixel(base).slice(3, 5), 16) +
+      parseInt(singlePixel(base).slice(5, 7), 16)
+    const brightSum =
+      parseInt(singlePixel(bright).slice(1, 3), 16) +
+      parseInt(singlePixel(bright).slice(3, 5), 16) +
+      parseInt(singlePixel(bright).slice(5, 7), 16)
+    assert.ok(
+      brightSum > baseSum,
+      `Expected brighter pixel, got base=${baseSum} bright=${brightSum}`
+    )
   })
 
   test('brightness < 0 makes pixels darker', () => {
     const base = colorizeSprite(pixel('#808080'), { h: 200, s: 50, b: 0, c: 0, colorize: true })
     const dark = colorizeSprite(pixel('#808080'), { h: 200, s: 50, b: -50, c: 0, colorize: true })
-    const baseSum = parseInt(singlePixel(base).slice(1, 3), 16) + parseInt(singlePixel(base).slice(3, 5), 16) + parseInt(singlePixel(base).slice(5, 7), 16)
-    const darkSum = parseInt(singlePixel(dark).slice(1, 3), 16) + parseInt(singlePixel(dark).slice(3, 5), 16) + parseInt(singlePixel(dark).slice(5, 7), 16)
+    const baseSum =
+      parseInt(singlePixel(base).slice(1, 3), 16) +
+      parseInt(singlePixel(base).slice(3, 5), 16) +
+      parseInt(singlePixel(base).slice(5, 7), 16)
+    const darkSum =
+      parseInt(singlePixel(dark).slice(1, 3), 16) +
+      parseInt(singlePixel(dark).slice(3, 5), 16) +
+      parseInt(singlePixel(dark).slice(5, 7), 16)
     assert.ok(darkSum < baseSum, `Expected darker pixel, got base=${baseSum} dark=${darkSum}`)
   })
 
@@ -110,9 +128,16 @@ describe('colorizeSprite', () => {
     const darkBase = colorizeSprite(pixel('#404040'), { h: 0, s: 0, b: 0, c: 0, colorize: true })
     const lightHigh = colorizeSprite(pixel('#C0C0C0'), { h: 0, s: 0, b: 0, c: 50, colorize: true })
     const darkHigh = colorizeSprite(pixel('#404040'), { h: 0, s: 0, b: 0, c: 50, colorize: true })
-    const rangeBase = parseInt(singlePixel(lightBase).slice(1, 3), 16) - parseInt(singlePixel(darkBase).slice(1, 3), 16)
-    const rangeHigh = parseInt(singlePixel(lightHigh).slice(1, 3), 16) - parseInt(singlePixel(darkHigh).slice(1, 3), 16)
-    assert.ok(rangeHigh >= rangeBase, `Expected higher contrast range, got base=${rangeBase} high=${rangeHigh}`)
+    const rangeBase =
+      parseInt(singlePixel(lightBase).slice(1, 3), 16) -
+      parseInt(singlePixel(darkBase).slice(1, 3), 16)
+    const rangeHigh =
+      parseInt(singlePixel(lightHigh).slice(1, 3), 16) -
+      parseInt(singlePixel(darkHigh).slice(1, 3), 16)
+    assert.ok(
+      rangeHigh >= rangeBase,
+      `Expected higher contrast range, got base=${rangeBase} high=${rangeHigh}`
+    )
   })
 
   test('preserves alpha channel from 8-digit hex (#RRGGBBAA)', () => {
@@ -140,16 +165,26 @@ describe('colorizeSprite', () => {
   })
 
   test('different hues produce different outputs for same gray input', () => {
-    const r1 = singlePixel(colorizeSprite(pixel('#808080'), { h: 0, s: 80, b: 0, c: 0, colorize: true }))
-    const r2 = singlePixel(colorizeSprite(pixel('#808080'), { h: 120, s: 80, b: 0, c: 0, colorize: true }))
-    const r3 = singlePixel(colorizeSprite(pixel('#808080'), { h: 240, s: 80, b: 0, c: 0, colorize: true }))
+    const r1 = singlePixel(
+      colorizeSprite(pixel('#808080'), { h: 0, s: 80, b: 0, c: 0, colorize: true })
+    )
+    const r2 = singlePixel(
+      colorizeSprite(pixel('#808080'), { h: 120, s: 80, b: 0, c: 0, colorize: true })
+    )
+    const r3 = singlePixel(
+      colorizeSprite(pixel('#808080'), { h: 240, s: 80, b: 0, c: 0, colorize: true })
+    )
     assert.notEqual(r1, r2)
     assert.notEqual(r2, r3)
   })
 
   test('zero saturation produces gray regardless of hue', () => {
-    const r1 = singlePixel(colorizeSprite(pixel('#808080'), { h: 0, s: 0, b: 0, c: 0, colorize: true }))
-    const r2 = singlePixel(colorizeSprite(pixel('#808080'), { h: 180, s: 0, b: 0, c: 0, colorize: true }))
+    const r1 = singlePixel(
+      colorizeSprite(pixel('#808080'), { h: 0, s: 0, b: 0, c: 0, colorize: true })
+    )
+    const r2 = singlePixel(
+      colorizeSprite(pixel('#808080'), { h: 180, s: 0, b: 0, c: 0, colorize: true })
+    )
     assert.equal(r1, r2, `Zero saturation should produce same gray regardless of hue`)
   })
 })
@@ -204,11 +239,32 @@ describe('adjustSprite', () => {
     // More saturated = bigger difference between max and min RGB channels
     const basePx = singlePixel(base)
     const vividPx = singlePixel(vivid)
-    const baseRange = Math.max(parseInt(basePx.slice(1, 3), 16), parseInt(basePx.slice(3, 5), 16), parseInt(basePx.slice(5, 7), 16)) -
-                      Math.min(parseInt(basePx.slice(1, 3), 16), parseInt(basePx.slice(3, 5), 16), parseInt(basePx.slice(5, 7), 16))
-    const vividRange = Math.max(parseInt(vividPx.slice(1, 3), 16), parseInt(vividPx.slice(3, 5), 16), parseInt(vividPx.slice(5, 7), 16)) -
-                       Math.min(parseInt(vividPx.slice(1, 3), 16), parseInt(vividPx.slice(3, 5), 16), parseInt(vividPx.slice(5, 7), 16))
-    assert.ok(vividRange >= baseRange, `Expected more vivid: base range=${baseRange}, vivid range=${vividRange}`)
+    const baseRange =
+      Math.max(
+        parseInt(basePx.slice(1, 3), 16),
+        parseInt(basePx.slice(3, 5), 16),
+        parseInt(basePx.slice(5, 7), 16)
+      ) -
+      Math.min(
+        parseInt(basePx.slice(1, 3), 16),
+        parseInt(basePx.slice(3, 5), 16),
+        parseInt(basePx.slice(5, 7), 16)
+      )
+    const vividRange =
+      Math.max(
+        parseInt(vividPx.slice(1, 3), 16),
+        parseInt(vividPx.slice(3, 5), 16),
+        parseInt(vividPx.slice(5, 7), 16)
+      ) -
+      Math.min(
+        parseInt(vividPx.slice(1, 3), 16),
+        parseInt(vividPx.slice(3, 5), 16),
+        parseInt(vividPx.slice(5, 7), 16)
+      )
+    assert.ok(
+      vividRange >= baseRange,
+      `Expected more vivid: base range=${baseRange}, vivid range=${vividRange}`
+    )
   })
 
   test('brightness shift makes pixels lighter', () => {
@@ -306,8 +362,12 @@ describe('clearColorizeCache', () => {
 
 describe('color math edge cases', () => {
   test('hue 0 and hue 360 produce same result in colorize mode', () => {
-    const r0 = singlePixel(colorizeSprite(pixel('#808080'), { h: 0, s: 50, b: 0, c: 0, colorize: true }))
-    const r360 = singlePixel(colorizeSprite(pixel('#808080'), { h: 360, s: 50, b: 0, c: 0, colorize: true }))
+    const r0 = singlePixel(
+      colorizeSprite(pixel('#808080'), { h: 0, s: 50, b: 0, c: 0, colorize: true })
+    )
+    const r360 = singlePixel(
+      colorizeSprite(pixel('#808080'), { h: 360, s: 50, b: 0, c: 0, colorize: true })
+    )
     assert.equal(r0, r360)
   })
 
@@ -333,7 +393,13 @@ describe('color math edge cases', () => {
   })
 
   test('negative contrast is valid', () => {
-    const result = colorizeSprite(pixel('#808080'), { h: 200, s: 80, b: 0, c: -100, colorize: true })
+    const result = colorizeSprite(pixel('#808080'), {
+      h: 200,
+      s: 80,
+      b: 0,
+      c: -100,
+      colorize: true
+    })
     const px = singlePixel(result)
     assert.ok(isValidHex(px), `Expected valid hex with negative contrast, got: ${px}`)
   })

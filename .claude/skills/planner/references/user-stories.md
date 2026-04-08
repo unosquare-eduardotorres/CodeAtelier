@@ -4,14 +4,14 @@
 
 Every user story should satisfy INVEST:
 
-| Criterion | Description | Test |
-|-----------|-------------|------|
-| **I**ndependent | Can be developed without other stories | No blocking dependencies |
-| **N**egotiable | Details can be discussed, not a contract | Conversation, not specification |
-| **V**aluable | Delivers value to a stakeholder | "So that..." clause is meaningful |
-| **E**stimable | Team can estimate effort | Not too vague, not too large |
-| **S**mall | Fits in one sprint/iteration | Max 4h implementation time |
-| **T**estable | Has clear acceptance criteria | Can write automated tests |
+| Criterion       | Description                              | Test                              |
+| --------------- | ---------------------------------------- | --------------------------------- |
+| **I**ndependent | Can be developed without other stories   | No blocking dependencies          |
+| **N**egotiable  | Details can be discussed, not a contract | Conversation, not specification   |
+| **V**aluable    | Delivers value to a stakeholder          | "So that..." clause is meaningful |
+| **E**stimable   | Team can estimate effort                 | Not too vague, not too large      |
+| **S**mall       | Fits in one sprint/iteration             | Max 4h implementation time        |
+| **T**estable    | Has clear acceptance criteria            | Can write automated tests         |
 
 ## Story Format
 

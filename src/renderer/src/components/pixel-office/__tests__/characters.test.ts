@@ -4,11 +4,10 @@
  * pathfinding triggers, wander logic, and sprite selection.
  */
 import assert from 'node:assert/strict'
-import { createCharacter, getCharacterSprite, isReadingTool, updateCharacter } from '../engine/characters'
+import { createCharacter, isReadingTool, updateCharacter } from '../engine/characters'
 import { CharacterState, Direction, TILE_SIZE } from '../engine/types'
-import type { Character, Seat, TileType as TileTypeVal } from '../engine/types'
-import { TileType } from '../engine/types'
-import { findPath, getWalkableTiles } from '../layout/tileMap'
+import type { Seat, TileType as TileTypeVal } from '../engine/types'
+import { getWalkableTiles } from '../layout/tileMap'
 
 let passed = 0
 let failed = 0
@@ -288,7 +287,10 @@ describe('updateCharacter — WALK state', () => {
     ch.tileRow = 1
     ch.x = 1 * TILE_SIZE + TILE_SIZE / 2
     ch.y = 1 * TILE_SIZE + TILE_SIZE / 2
-    ch.path = [{ col: 2, row: 1 }, { col: 3, row: 1 }]
+    ch.path = [
+      { col: 2, row: 1 },
+      { col: 3, row: 1 }
+    ]
     ch.moveProgress = 0
     ch.isActive = true
 

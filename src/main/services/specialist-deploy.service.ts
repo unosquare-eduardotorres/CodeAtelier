@@ -148,9 +148,7 @@ class SpecialistDeployService {
         try {
           this.deploySpecialist(workspacePath, specialist.id, { skipSkills: true })
         } catch (error) {
-          deployLogger.warn(
-            `Failed to activate ${specialist.agentId}: ${(error as Error).message}`
-          )
+          deployLogger.warn(`Failed to activate ${specialist.agentId}: ${(error as Error).message}`)
         }
       }
     }
@@ -276,7 +274,8 @@ ${skillRows}`)
     const result = {
       model: 'sonnet',
       tools: [] as string[],
-      description: specialist.description || specialist.prompt || `${specialist.displayName} specialist`
+      description:
+        specialist.description || specialist.prompt || `${specialist.displayName} specialist`
     }
 
     if (!specialist.sourceYaml) return result

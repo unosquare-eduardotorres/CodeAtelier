@@ -48,11 +48,7 @@ export default function CodeChangesPanel({
         />
 
         {/* Right: Diff view */}
-        <FileDiffView
-          filePath={selectedFile}
-          diff={currentDiff}
-          isLoading={isLoadingDiff}
-        />
+        <FileDiffView filePath={selectedFile} diff={currentDiff} isLoading={isLoadingDiff} />
       </div>
 
       {/* Bottom: Commit bar */}

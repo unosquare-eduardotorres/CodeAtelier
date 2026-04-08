@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import {
   Search,
   Landmark,
@@ -34,10 +34,9 @@ const PERSPECTIVE_COLORS: Record<BugCouncilPerspective['role'], string> = {
   'adversarial-tester': 'text-success'
 }
 
-function ConfidenceBar({ confidence }: { confidence: number }): JSX.Element {
+function ConfidenceBar({ confidence }: { confidence: number }): React.JSX.Element {
   const pct = Math.round(confidence * 100)
-  const color =
-    pct >= 80 ? 'bg-success' : pct >= 50 ? 'bg-warning' : 'bg-danger'
+  const color = pct >= 80 ? 'bg-success' : pct >= 50 ? 'bg-warning' : 'bg-danger'
 
   return (
     <div className="flex items-center gap-2 text-xs text-fg-muted">
@@ -53,7 +52,7 @@ function PerspectiveCard({
   perspective
 }: {
   perspective: BugCouncilPerspective
-}): JSX.Element {
+}): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const Icon = PERSPECTIVE_ICONS[perspective.role] ?? Search
   const color = PERSPECTIVE_COLORS[perspective.role] ?? 'text-fg-muted'
@@ -67,9 +66,7 @@ function PerspectiveCard({
       >
         <div className="flex items-center gap-2">
           <Icon size={16} className={color} />
-          <span className="text-sm font-medium text-fg-primary">
-            {perspective.displayName}
-          </span>
+          <span className="text-sm font-medium text-fg-primary">{perspective.displayName}</span>
           <ConfidenceBar confidence={perspective.confidence} />
         </div>
         {expanded ? (
@@ -88,7 +85,7 @@ function PerspectiveCard({
   )
 }
 
-function StatusBadge({ status }: { status: BugCouncilResult['status'] }): JSX.Element {
+function StatusBadge({ status }: { status: BugCouncilResult['status'] }): React.JSX.Element {
   switch (status) {
     case 'analyzing':
       return (
@@ -119,15 +116,11 @@ function StatusBadge({ status }: { status: BugCouncilResult['status'] }): JSX.El
         </span>
       )
     default:
-      return (
-        <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
-          Active
-        </span>
-      )
+      return <span className="inline-flex items-center gap-1 text-xs text-fg-muted">Active</span>
   }
 }
 
-export default function BugCouncilPanel({ result }: BugCouncilPanelProps): JSX.Element {
+export default function BugCouncilPanel({ result }: BugCouncilPanelProps): React.JSX.Element {
   const [showDetails, setShowDetails] = useState(false)
 
   return (

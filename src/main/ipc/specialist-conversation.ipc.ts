@@ -37,8 +37,13 @@ export function registerSpecialistConversationIpc(): void {
         throw new Error('Invalid specialist ID')
       }
 
-      conversationSpecialistRepository.upsert(args.conversationId, args.specialistId, { isActive: true })
-      return conversationSpecialistRepository.findByConversationAndSpecialist(args.conversationId, args.specialistId)
+      conversationSpecialistRepository.upsert(args.conversationId, args.specialistId, {
+        isActive: true
+      })
+      return conversationSpecialistRepository.findByConversationAndSpecialist(
+        args.conversationId,
+        args.specialistId
+      )
     }
   )
 

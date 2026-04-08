@@ -92,7 +92,11 @@ describe('Turn count — resumed session (seedTurnCountForResume)', () => {
 
     // Turn-1-only injections should NOT fire
     const shouldInjectRoster = turnCount <= 1
-    assert.equal(shouldInjectRoster, false, 'Specialist roster should NOT be injected on resumed session')
+    assert.equal(
+      shouldInjectRoster,
+      false,
+      'Specialist roster should NOT be injected on resumed session'
+    )
     assert.equal(turnCount, 2)
   })
 

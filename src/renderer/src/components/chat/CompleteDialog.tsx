@@ -43,7 +43,7 @@ export default function CompleteDialog({
       setBranchName(`chat/${slug}-${conversationId.slice(0, 8)}`)
 
       // Pre-fill commit message
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+
       setCommitMessage(conversationTitle)
       setError(null)
       setIsSubmitting(false)

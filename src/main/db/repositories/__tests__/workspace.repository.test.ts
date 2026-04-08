@@ -13,7 +13,6 @@ if (!env) {
     test('create() inserts and returns a workspace', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { workspaceRepository } = require('../workspace.repository')
 
   describe('WorkspaceRepository', () => {
@@ -27,7 +26,11 @@ if (!env) {
     })
 
     test('create() stores git remote URL', () => {
-      const ws = workspaceRepository.create('Remote', '/tmp/ws-test-2', 'https://github.com/org/repo.git')
+      const ws = workspaceRepository.create(
+        'Remote',
+        '/tmp/ws-test-2',
+        'https://github.com/org/repo.git'
+      )
       assert.equal(ws.gitRemoteUrl, 'https://github.com/org/repo.git')
     })
 

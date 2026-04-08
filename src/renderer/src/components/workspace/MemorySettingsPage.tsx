@@ -1,13 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import {
-  Database,
-  Search,
-  Trash2,
-  Upload,
-  Moon,
-  Sparkles,
-  RefreshCw
-} from 'lucide-react'
+import { Database, Search, Trash2, Upload, Moon, Sparkles, RefreshCw } from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore, useDreamStore } from '@renderer/store'
 import { SettingsCard } from '@renderer/components/common'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
@@ -242,7 +234,11 @@ export default function MemorySettingsPage(): React.JSX.Element {
                   color: 'bg-mode-plan-muted text-mode-plan-text'
                 },
                 { value: 'user', label: 'User', color: 'bg-info-muted text-info' },
-                { value: 'feedback', label: 'Feedback', color: 'bg-mode-build-muted text-mode-build-text' }
+                {
+                  value: 'feedback',
+                  label: 'Feedback',
+                  color: 'bg-mode-build-muted text-mode-build-text'
+                }
               ] as const
             ).map(({ value, label, color }) => (
               <button
@@ -279,7 +275,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
                 </h3>
               </div>
               <p className="text-xs text-text-secondary mb-4 leading-relaxed">
-                Memories give your AI agents persistent context across conversations. They're
+                Memories give your AI agents persistent context across conversations. They&apos;re
                 extracted automatically during chats, or you can seed them from your project files.
               </p>
               <div className="space-y-2.5">

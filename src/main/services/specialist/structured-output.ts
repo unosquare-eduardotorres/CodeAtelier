@@ -27,9 +27,9 @@ interface ValidationFailure {
 export type ValidationResult<T> = ValidationSuccess<T> | ValidationFailure
 
 type ExtractionStrategy =
-  | 'code-fence'       // ```json or ```investigation-report blocks
-  | 'bracket-match'    // First { to last } or first [ to last ]
-  | 'direct-parse'     // Try JSON.parse on the entire input
+  | 'code-fence' // ```json or ```investigation-report blocks
+  | 'bracket-match' // First { to last } or first [ to last ]
+  | 'direct-parse' // Try JSON.parse on the entire input
 
 // ── JSON Extraction Strategies ──
 
@@ -104,10 +104,12 @@ export const InvestigationReportSchema = z.object({
   problem: z.string().min(1),
   rootCause: z.string().min(1),
   proposedFix: z.string().min(1),
-  filesAffected: z.array(z.object({
-    path: z.string().min(1),
-    reason: z.string().min(1)
-  })),
+  filesAffected: z.array(
+    z.object({
+      path: z.string().min(1),
+      reason: z.string().min(1)
+    })
+  ),
   impact: z.enum(['very-low', 'low', 'medium', 'high', 'critical']),
   impactReason: z.string().min(1)
 })
@@ -126,9 +128,7 @@ const VALID_IMPACT_LEVELS = new Set(['very-low', 'low', 'medium', 'high', 'criti
  * Tries multiple JSON extraction strategies before failing.
  * Uses Zod schema for type-safe validation with field-level error reporting.
  */
-export function validateInvestigationReport(
-  text: string
-): ValidationResult<InvestigationReport> {
+export function validateInvestigationReport(text: string): ValidationResult<InvestigationReport> {
   const extracted = extractJSON(text)
   if (!extracted) {
     return {
@@ -143,12 +143,16 @@ export function validateInvestigationReport(
     const result = InvestigationReportSchema.safeParse(parsed)
 
     if (result.success) {
-      return { success: true, data: result.data as InvestigationReport, strategy: extracted.strategy }
+      return {
+        success: true,
+        data: result.data as InvestigationReport,
+        strategy: extracted.strategy
+      }
     }
 
     return {
       success: false,
-      errors: result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`),
+      errors: result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
       rawText: extracted.json.substring(0, 500)
     }
   } catch (error) {
@@ -172,7 +176,7 @@ export function validateWithSchema<T>(
   if (result.success) return { success: true, data: result.data }
   return {
     success: false,
-    errors: result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`)
+    errors: result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`)
   }
 }
 
@@ -209,15 +213,14 @@ export function listOutputSchemas(): string[] {
  * - success: typed data + extraction strategy
  * - failure: field-level error messages + raw text for retry injection
  */
-export function validateTaskOutput(
-  output: string,
-  schemaName: string
-): ValidationResult<unknown> {
+export function validateTaskOutput(output: string, schemaName: string): ValidationResult<unknown> {
   const schema = schemaRegistry.get(schemaName)
   if (!schema) {
     return {
       success: false,
-      errors: [`No schema registered with name "${schemaName}". Available: [${listOutputSchemas().join(', ')}]`]
+      errors: [
+        `No schema registered with name "${schemaName}". Available: [${listOutputSchemas().join(', ')}]`
+      ]
     }
   }
 
@@ -275,19 +278,21 @@ export function buildFallbackReport(
   reason: string
 ): InvestigationReport {
   return {
-    problem: (typeof partialData?.problem === 'string' && partialData.problem)
-      || 'Investigation completed but the report could not be fully parsed.',
-    rootCause: (typeof partialData?.rootCause === 'string' && partialData.rootCause)
-      || reason,
-    proposedFix: (typeof partialData?.proposedFix === 'string' && partialData.proposedFix)
-      || 'Check the specialist output above for details.',
+    problem:
+      (typeof partialData?.problem === 'string' && partialData.problem) ||
+      'Investigation completed but the report could not be fully parsed.',
+    rootCause: (typeof partialData?.rootCause === 'string' && partialData.rootCause) || reason,
+    proposedFix:
+      (typeof partialData?.proposedFix === 'string' && partialData.proposedFix) ||
+      'Check the specialist output above for details.',
     filesAffected: Array.isArray(partialData?.filesAffected)
       ? (partialData.filesAffected as InvestigationReport['filesAffected'])
       : [],
     impact: VALID_IMPACT_LEVELS.has(partialData?.impact as string)
       ? (partialData!.impact as InvestigationReport['impact'])
       : 'medium',
-    impactReason: (typeof partialData?.impactReason === 'string' && partialData.impactReason)
-      || `Validation failed: ${reason}`
+    impactReason:
+      (typeof partialData?.impactReason === 'string' && partialData.impactReason) ||
+      `Validation failed: ${reason}`
   }
 }

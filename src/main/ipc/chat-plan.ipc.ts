@@ -1,9 +1,6 @@
+import { spawn } from 'node:child_process'
 import { ipcMain, type BrowserWindow } from 'electron'
-import {
-  conversationRepository,
-  fileChangeRepository,
-  messageRepository
-} from '../db/repositories'
+import { conversationRepository, fileChangeRepository, messageRepository } from '../db/repositories'
 import { costTrackerService } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
@@ -149,7 +146,7 @@ Respond with ONLY the markdown content, no preamble.`
         child.stdout?.on('data', (data: Buffer) => {
           stdout += data.toString()
         })
-        child.on('exit', (code) => {
+        child.on('exit', (code: number | null) => {
           if (code === 0) resolve(stdout.trim())
           else reject(new Error(`PR description generation failed (code ${code})`))
         })

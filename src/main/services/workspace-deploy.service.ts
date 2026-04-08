@@ -821,9 +821,8 @@ ${skillRows}`)
     agentSyncService.autoSyncNewEntries(workspacePath)
 
     // Count activated agents from DB (actual activation is handled by specialist-deploy.service)
-    const { specialistRepository: specRepo } = await import(
-      '../db/repositories/specialist.repository'
-    )
+    const { specialistRepository: specRepo } =
+      await import('../db/repositories/specialist.repository')
     const allSpecialists = specRepo.findAll()
     const agentCount = allSpecialists.filter((s) => !s.isActive).length
 

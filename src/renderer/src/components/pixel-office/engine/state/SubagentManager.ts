@@ -33,7 +33,7 @@ export class SubagentManager {
     // Find the free seat closest to the parent agent
     const parentCol = parentCh ? parentCh.tileCol : 0
     const parentRow = parentCh ? parentCh.tileRow : 0
-    const dist = (c: number, r: number) => Math.abs(c - parentCol) + Math.abs(r - parentRow)
+    const dist = (c: number, r: number): number => Math.abs(c - parentCol) + Math.abs(r - parentRow)
 
     let bestSeatId: string | null = null
     let bestDist = Infinity

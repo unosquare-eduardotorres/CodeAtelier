@@ -18,13 +18,13 @@ data-heavy backends lean integration; simple CRUD apps skip trivial unit tests.
 
 ## Test Doubles
 
-| Double   | What it does                        | When to use                          |
-|----------|-------------------------------------|--------------------------------------|
-| Stub     | Returns canned data                 | Isolate from slow/unreliable deps    |
-| Mock     | Records calls for verification      | Verify interactions (email sent?)    |
-| Spy      | Wraps real impl, records calls      | Observe without replacing behavior   |
-| Fake     | Simplified working implementation   | In-memory DB, local file system      |
-| Fixture  | Pre-built test data                 | Consistent setup across tests        |
+| Double  | What it does                      | When to use                        |
+| ------- | --------------------------------- | ---------------------------------- |
+| Stub    | Returns canned data               | Isolate from slow/unreliable deps  |
+| Mock    | Records calls for verification    | Verify interactions (email sent?)  |
+| Spy     | Wraps real impl, records calls    | Observe without replacing behavior |
+| Fake    | Simplified working implementation | In-memory DB, local file system    |
+| Fixture | Pre-built test data               | Consistent setup across tests      |
 
 Prefer stubs for queries, mocks for commands. Don't mock what you don't own —
 write integration tests against real external dependencies instead.
@@ -32,12 +32,14 @@ write integration tests against real external dependencies instead.
 ## Test Data Strategies
 
 ### Builder Pattern
+
 ```typescript
 const user = buildUser({ email: 'specific@test.com' })
 const order = buildOrder({ userId: user.id, status: 'cancelled' })
 ```
 
 ### Factory Pattern
+
 ```python
 class UserFactory(factory.Factory):
     class Meta:
@@ -47,11 +49,13 @@ class UserFactory(factory.Factory):
 ```
 
 ### Fixture Files
+
 For complex test data (large JSON, CSV), store in `fixtures/` alongside tests.
 
 ## Contract Testing
 
 When services communicate, contract tests verify the interface:
+
 - **Consumer-driven:** consumer writes expectations, provider verifies
 - **Schema-based:** validate against OpenAPI/JSON Schema
 - **Tools:** Pact (multi-language), Schemathesis (Python/OpenAPI)
@@ -72,6 +76,7 @@ Danger: developers blindly updating snapshots. Review every snapshot change.
 ## Testing Error Handling
 
 Every handled error path needs a test:
+
 - Invalid input (wrong type, missing field, out of range)
 - External failures (network timeout, DB connection lost)
 - Authorization failures (missing token, insufficient permissions)

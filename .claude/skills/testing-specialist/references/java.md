@@ -3,6 +3,7 @@
 ## Framework: JUnit 5 + Mockito + Spring Boot Test
 
 ### Setup (Maven)
+
 ```xml
 <dependencies>
   <dependency>
@@ -36,6 +37,7 @@
 ## Unit Tests
 
 ### Basic JUnit 5
+
 ```java
 import static org.assertj.core.api.Assertions.*;
 
@@ -64,6 +66,7 @@ class DiscountCalculatorTest {
 ```
 
 ### Mockito
+
 ```java
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
@@ -99,6 +102,7 @@ class OrderServiceTest {
 ## Integration Tests: Spring Boot
 
 ### MockMvc (no server started)
+
 ```java
 @WebMvcTest(ItemController.class)
 class ItemControllerTest {
@@ -141,6 +145,7 @@ class ItemControllerTest {
 ```
 
 ### Full Integration (@SpringBootTest)
+
 ```java
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
@@ -179,6 +184,7 @@ class ItemApiIntegrationTest {
 ```
 
 ### Repository Test (JPA)
+
 ```java
 @DataJpaTest
 class UserRepositoryTest {
@@ -199,6 +205,7 @@ class UserRepositoryTest {
 ```
 
 ## Running
+
 ```bash
 mvn test                            # all tests
 mvn test -Dtest=ItemControllerTest  # specific class
@@ -208,6 +215,7 @@ mvn test -Dgroups=unit              # JUnit 5 tags
 ```
 
 ## Key Principles for Java Tests
+
 1. **Use `@ExtendWith(MockitoExtension.class)`** — cleaner than `MockitoAnnotations.openMocks`.
 2. **Prefer AssertJ** — `assertThat(x).isEqualTo(y)` is more readable and has better error messages.
 3. **Use `@WebMvcTest` for controller unit tests** — faster than `@SpringBootTest`.

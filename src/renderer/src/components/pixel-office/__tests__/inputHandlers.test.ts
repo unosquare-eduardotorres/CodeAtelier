@@ -13,9 +13,7 @@ import {
   endCameraPan
 } from '../editor/input/CameraPanHandler'
 import type { CameraPanState } from '../editor/input/CameraPanHandler'
-import {
-  createFurnitureDragState,
-} from '../editor/input/FurnitureInput'
+import { createFurnitureDragState } from '../editor/input/FurnitureInput'
 
 // ── createCameraPanState ────────────────────────────────────────
 
@@ -117,11 +115,7 @@ describe('tryStartCameraPan', () => {
   it('returns false on left-click without Space', () => {
     const state = createCameraPanState()
     const canvas = makeCanvas()
-    const result = tryStartCameraPan(
-      makePointer({ leftButtonDown: true }),
-      state,
-      canvas
-    )
+    const result = tryStartCameraPan(makePointer({ leftButtonDown: true }), state, canvas)
     assert.equal(result, false)
   })
 })
@@ -136,11 +130,7 @@ describe('handleCameraPanMove', () => {
   it('returns false when not dragging', () => {
     const state = createCameraPanState()
     const camera = makeCamera(0, 0, 1)
-    const result = handleCameraPanMove(
-      { x: 100, y: 200 } as Phaser.Input.Pointer,
-      state,
-      camera
-    )
+    const result = handleCameraPanMove({ x: 100, y: 200 } as Phaser.Input.Pointer, state, camera)
     assert.equal(result, false)
   })
 
@@ -173,7 +163,7 @@ describe('handleCameraPanMove', () => {
     const camera = makeCamera(10, 20, 1)
     handleCameraPanMove({ x: 55, y: 60 } as Phaser.Input.Pointer, state, camera)
     // dx = (50 - 55) / 1 = -5, dy = (50 - 60) / 1 = -10
-    assert.equal(camera.scrollX, 5)  // 10 + (-5) = 5
+    assert.equal(camera.scrollX, 5) // 10 + (-5) = 5
     assert.equal(camera.scrollY, 10) // 20 + (-10) = 10
   })
 })
@@ -189,7 +179,9 @@ describe('endCameraPan', () => {
       spaceDown: false
     }
     let cursorUpdated = false
-    endCameraPan(state, () => { cursorUpdated = true })
+    endCameraPan(state, () => {
+      cursorUpdated = true
+    })
 
     assert.equal(state.cameraDragging, false)
     assert.equal(cursorUpdated, true)
@@ -198,7 +190,9 @@ describe('endCameraPan', () => {
   it('does not call updateCursor when not dragging', () => {
     const state = createCameraPanState()
     let cursorUpdated = false
-    endCameraPan(state, () => { cursorUpdated = true })
+    endCameraPan(state, () => {
+      cursorUpdated = true
+    })
 
     assert.equal(cursorUpdated, false)
   })
