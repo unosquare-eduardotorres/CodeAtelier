@@ -287,6 +287,8 @@ export const IPC_CHANNELS = {
   // Tool approval
   TOOL_APPROVAL_REQUEST: 'tool:approvalRequest',
   TOOL_APPROVAL_RESPONSE: 'tool:approvalResponse',
+  TOOL_APPROVAL_SET_MODE: 'tool:approvalSetMode',
+  TOOL_APPROVAL_GET_MODE: 'tool:approvalGetMode',
 
   // Core Agent Prompts
   CORE_AGENT_PROMPT_LIST: 'coreAgentPrompt:list',

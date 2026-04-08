@@ -116,6 +116,18 @@ export class EventRepository {
     return rows.map(toModel)
   }
 
+  /** Get recent events for a specific workspace */
+  getRecentByWorkspace(workspaceId: string, limit: number = 200): EventRecord[] {
+    const db = getDatabase()
+    const rows = db
+      .prepare(
+        `SELECT * FROM events WHERE workspace_id = ?
+         ORDER BY created_at DESC LIMIT ?`
+      )
+      .all(workspaceId, limit) as EventRow[]
+    return rows.map(toModel)
+  }
+
   /** Prune old events to prevent unbounded DB growth */
   pruneOlderThan(days: number): number {
     const db = getDatabase()

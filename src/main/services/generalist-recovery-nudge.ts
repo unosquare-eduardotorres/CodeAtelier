@@ -113,6 +113,9 @@ export class RecoveryNudgeService {
           ? '\n\n_I read a file but my response was cut short. Could you repeat your question?_'
           : `\n\n_I used ${opts.toolCallCount} tools but didn't produce a summary. Try asking "what did you find?" and I'll summarize._`
       recoveredText = fallbackMessage
+      this.log.warn(
+        `[PIPELINE:recovery-nudge-fallback] Emitting fallback for conversationId=${opts.conversationId} toolCalls=${opts.toolCallCount}`
+      )
       opts.onChunk({
         type: 'text',
         content: fallbackMessage

@@ -1185,6 +1185,7 @@ const api = {
 
   // ── Events (audit log) ──
   getRecentEvents: (args?: {
+    workspaceId?: string
     limit?: number
   }): Promise<
     {
@@ -1300,6 +1301,10 @@ const api = {
   },
   respondToolApproval: (requestId: string, approved: boolean): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_RESPONSE, requestId, approved),
+  setToolApprovalMode: (mode: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_SET_MODE, mode),
+  getToolApprovalMode: (): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_GET_MODE),
 
   // ── Checkpoint Approval ──
   onCheckpointApprovalRequest: (
@@ -1572,8 +1577,13 @@ const api = {
   },
 
   // ── SDK Control — Query instance methods ──
-  sdkGetContextUsage: (): Promise<unknown> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SDK_GET_CONTEXT_USAGE),
+  sdkGetContextUsage: (): Promise<{
+    totalTokens: number
+    maxTokens: number
+    percentage: number
+    model: string
+    categories: { name: string; tokens: number; color: string }[]
+  } | null> => ipcRenderer.invoke(IPC_CHANNELS.SDK_GET_CONTEXT_USAGE),
 
   sdkStopTask: (args: { taskId: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.SDK_STOP_TASK, args),

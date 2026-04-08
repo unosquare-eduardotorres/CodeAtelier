@@ -1,17 +1,27 @@
 import { useEffect, useRef } from 'react'
 import { Minimize2, X, Sparkles, Zap } from 'lucide-react'
 
+interface ContextCategory {
+  name: string
+  tokens: number
+  color: string
+}
+
 interface CompactContextModalProps {
   isOpen: boolean
   inputTokens: number
+  contextWindowSize?: number
   level: string
+  categories?: ContextCategory[]
   onExtractNuance: () => void
   onQuickCompact: () => void
   onCancel: () => void
 }
 
-const CONTEXT_WINDOW_SIZE = 1_000_000
-const QUALITY_WINDOW_SIZE = 200_000
+const DEFAULT_CONTEXT_WINDOW_SIZE = 1_000_000
+/** Quality window is 50% of context window, capped at 500K */
+const QUALITY_RATIO = 0.5
+const QUALITY_WINDOW_CAP = 500_000
 
 function getBarColor(level: string): string {
   switch (level) {
@@ -29,7 +39,9 @@ function getBarColor(level: string): string {
 export default function CompactContextModal({
   isOpen,
   inputTokens,
+  contextWindowSize,
   level,
+  categories,
   onExtractNuance,
   onQuickCompact,
   onCancel
@@ -57,11 +69,13 @@ export default function CompactContextModal({
 
   if (!isOpen) return null
 
+  const effectiveWindowSize = contextWindowSize || DEFAULT_CONTEXT_WINDOW_SIZE
+  const qualityWindow = Math.min(Math.round(effectiveWindowSize * QUALITY_RATIO), QUALITY_WINDOW_CAP)
   const tokensK = (inputTokens / 1000).toFixed(1)
-  const windowK = (CONTEXT_WINDOW_SIZE / 1000).toFixed(1)
-  const percentage = Math.min(Math.round((inputTokens / CONTEXT_WINDOW_SIZE) * 100), 100)
-  // Quality is based on the effective 200K window (quality degrades past this)
-  const qualityPercentage = Math.min(Math.round((inputTokens / QUALITY_WINDOW_SIZE) * 100), 100)
+  const windowK = (effectiveWindowSize / 1000).toFixed(1)
+  const percentage = Math.min(Math.round((inputTokens / effectiveWindowSize) * 100), 100)
+  // Quality is based on a scaled quality window (50% of context window, capped at 500K)
+  const qualityPercentage = Math.min(Math.round((inputTokens / qualityWindow) * 100), 100)
   const qualityLabel =
     qualityPercentage <= 40
       ? 'Excellent'
@@ -127,6 +141,22 @@ export default function CompactContextModal({
             />
           </div>
         </div>
+
+        {/* Context Category Breakdown */}
+        {categories && categories.length > 0 && (
+          <div className="px-5 pb-3">
+            <div className="text-[10px] text-text-muted space-y-1">
+              {categories.map((cat) => (
+                <div key={cat.name} className="flex justify-between">
+                  <span className="truncate mr-2">{cat.name}</span>
+                  <span className="font-mono flex-shrink-0">
+                    {(cat.tokens / 1000).toFixed(1)}K
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Warning Note */}
         <div className="px-5 pb-4">

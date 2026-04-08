@@ -27,6 +27,7 @@ import {
   conversationRepository,
   memoryRepository,
   specialistRepository,
+  turnUsageRepository,
   workspaceRepository
 } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
@@ -69,17 +70,18 @@ export class GeneralistService extends AgentBaseService {
 
   /**
    * Token thresholds for context compaction — configurable via workspace settings.
-   * Strategy 2: Lowered from 80K/150K to 50K/100K.
-   * Strategy 7 (v2): Further lowered — earlier compaction prevents runaway costs.
-   * Economy mode uses even lower thresholds for aggressive cost control.
+   * Scaled for 1M context window (context-1m-2025-08-07 beta):
+   *   - Suggest at 350K (35% of 1M), auto at 500K (50% of 1M)
+   *   - Economy: suggest at 200K (20% of 1M), auto at 350K (35% of 1M)
+   * Previous thresholds (90K/130K) were calibrated for a 200K window.
    *
    * These defaults can be overridden per-workspace via settings:
    *   compactSuggestThreshold, compactAutoThreshold
    */
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 90_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 130_000
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 60_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 90_000
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 350_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 500_000
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 200_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 350_000
   /** Workspace-specific compaction thresholds (loaded from settings, fallback to defaults) */
   private compactSuggestThreshold: number = GeneralistService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
   private compactAutoThreshold: number = GeneralistService.DEFAULT_COMPACT_AUTO_THRESHOLD
@@ -106,6 +108,8 @@ export class GeneralistService extends AgentBaseService {
   private mcpConfig = new GeneralistMcpConfig()
   private recoveryNudge = new RecoveryNudgeService()
   private promptAssembler = new GeneralistPromptAssembler()
+  /** Last known SDK context window size (from getContextUsage().totalTokens) */
+  private lastContextTokens: number | undefined
 
   /** Whether repomap code graph is enabled for this workspace */
   private repomapEnabled: boolean = false
@@ -172,6 +176,7 @@ export class GeneralistService extends AgentBaseService {
     this.startedAt = Date.now()
     this.currentStatus = 'idle'
     this.tokenUsage = 0
+    this.lastContextTokens = undefined
     this.currentConversationId = null
     this.accumulatedText = ''
     this.compactCount = 0
@@ -596,13 +601,53 @@ export class GeneralistService extends AgentBaseService {
             dbSessionId: this.dbSessionId,
             workspacePath: this.workspacePath!
           })
+          // tokenUsage: running sum of billing tokens (input+output) across all turns.
+          // Used for cost tracking in getStatus() and post-handoff compact threshold (line ~813).
+          // This is NOT the same as context window size — see sdkContextData below.
           this.tokenUsage += totalTokens
-          // Total context = non-cached + cache read + cache creation
+
+          // Fetch SDK context usage ONCE — reused for compaction check and DB correction
+          let sdkContextData: { totalTokens?: number } | undefined
+          try {
+            const sdkUsage = await this.sdkExecutor.getActiveQuery()?.getContextUsage()
+            sdkContextData = sdkUsage as { totalTokens?: number } | undefined
+          } catch {
+            /* SDK not available — fall back to accumulated meta */
+          }
+
+          // Cache latest SDK context size for getStatus().contextTokens
+          if (sdkContextData?.totalTokens) {
+            this.lastContextTokens = sdkContextData.totalTokens
+          }
+
+          // Log SDK context category breakdown for diagnostics
+          if (sdkContextData) {
+            const categories = (sdkContextData as { categories?: { name: string; tokens: number }[] }).categories
+            if (categories) {
+              this.log.info(`[PIPELINE:context-breakdown] ${JSON.stringify(categories)}`)
+            }
+          }
+
+          // Total context: prefer SDK native data, fall back to accumulated meta
           const totalContextTokens =
+            sdkContextData?.totalTokens ??
             meta.tokenUsage.input +
-            meta.tokenUsage.cacheReadInputTokens +
-            meta.tokenUsage.cacheCreationInputTokens
+              meta.tokenUsage.cacheReadInputTokens +
+              meta.tokenUsage.cacheCreationInputTokens
           this.checkCompaction(totalContextTokens)
+
+          // Correct DB turn record with accurate SDK context size (fire-and-forget)
+          if (this.dbSessionId && conversationId && sdkContextData?.totalTokens) {
+            try {
+              turnUsageRepository.updateLastTurnTokens(conversationId, {
+                inputTokens: sdkContextData.totalTokens,
+                cacheReadTokens: 0, // Already included in totalTokens
+                cacheCreationTokens: 0
+              })
+            } catch {
+              /* DB update failed, non-critical */
+            }
+          }
         } else {
           // Accumulate text for handoff/grill detection
           if (chunk.type === 'text' && chunk.content) {
@@ -684,6 +729,10 @@ export class GeneralistService extends AgentBaseService {
 
       // Recovery nudge for silent tool completion
       if (this.circuitBreaker.count > 0 && !hasTextAfterLastTool && !handoffDetectedInStream) {
+        this.log.warn(
+          `[PIPELINE:recovery-nudge-triggered] conversationId=${conversationId} ` +
+            `toolCalls=${this.circuitBreaker.count} accumulatedTextLen=${this.accumulatedText.length}`
+        )
         const recoveryResult = await this.recoveryNudge.attemptRecovery({
           sdkExecutor: this.sdkExecutor,
           systemPrompt,
@@ -699,7 +748,15 @@ export class GeneralistService extends AgentBaseService {
             this.tokenUsage += tokens
           }
         })
+        this.log.info(
+          `[PIPELINE:recovery-nudge-result] recovered=${recoveryResult.recovered} textLen=${recoveryResult.text.length}`
+        )
         this.accumulatedText += recoveryResult.text
+      } else {
+        this.log.info(
+          `[PIPELINE:recovery-nudge-skipped] toolCount=${this.circuitBreaker.count} ` +
+            `hasTextAfterLastTool=${hasTextAfterLastTool} handoff=${handoffDetectedInStream}`
+        )
       }
 
       // ── Intent detection + emission ──
@@ -767,6 +824,9 @@ export class GeneralistService extends AgentBaseService {
     )
 
     // Post-handoff auto-compact
+    // NOTE: tokenUsage here is cumulative billing tokens, not context window size.
+    // Could be improved to use lastContextTokens (SDK context size) for a more
+    // accurate threshold. Kept as-is for now since it's a conservative heuristic.
     const hasHandoffIntent =
       detectedIntents.some((i) => i.type === 'handoff') || handoffDetectedInStream
     if (hasHandoffIntent && this.tokenUsage > 30_000 && this.compactCount < 5) {
@@ -952,6 +1012,7 @@ export class GeneralistService extends AgentBaseService {
       status: this.currentStatus,
       elapsedMs: isActive && this.messageStartedAt ? Date.now() - this.messageStartedAt : 0,
       tokenUsage: this.tokenUsage,
+      contextTokens: this.lastContextTokens,
       activeMcpTools: activeMcpTools.length > 0 ? activeMcpTools : undefined
     }
   }
@@ -1133,6 +1194,10 @@ After producing the summary, continue with the user's next message using ONLY th
    * Switches the generalist mode (plan ↔ build).
    * With SDK, this is lightweight — just rebuild the system prompt and change permissionMode.
    * No process restart needed; the next send() call uses the new settings.
+   *
+   * If an active SDK query exists, applies setPermissionMode() immediately so
+   * the mode change takes effect for any in-flight or subsequent tool calls,
+   * not just the next send().
    */
   async switchMode(mode: ConversationMode): Promise<void> {
     if (mode === this.currentMode) return
@@ -1152,7 +1217,17 @@ After producing the summary, continue with the user's next message using ONLY th
     // preserving the full conversation history (session is NOT cleared).
     this.promptAssembler.setPendingModeSwitch(previousMode, mode)
 
-    // Prompt is rebuilt on each send() turn; mode change only updates pending switch context.
+    // Apply permission change immediately via SDK (if active query exists)
+    const activeQuery = this.sdkExecutor.getActiveQuery()
+    if (activeQuery) {
+      const sdkMode = mode === 'build' ? 'bypassPermissions' : 'default'
+      try {
+        await activeQuery.setPermissionMode(sdkMode)
+        this.log.info(`[PIPELINE:mode-switch] SDK permissionMode set to '${sdkMode}'`)
+      } catch (err) {
+        this.log.warn('[PIPELINE:mode-switch] SDK setPermissionMode failed:', err)
+      }
+    }
   }
 }
 

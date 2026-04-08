@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
+import { detectPlanIntent } from '@renderer/utils/plan-intent-detector'
 import type {
   CompleteResult,
   ContextUsage,
@@ -35,7 +36,10 @@ function resetStreamingSafetyTimer(): void {
     () => {
       if (_storeGet?.().isStreaming) {
         rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
-        _storeSet?.({ isStreaming: false, streamingContent: '', toolActivities: [] })
+        // Only unblock the UI — preserve streamingContent and toolActivities so that
+        // finalizeStream can still use them when CHAT_MESSAGE_COMPLETE eventually arrives.
+        // This prevents data loss when the safety timer fires during long tool runs.
+        _storeSet?.({ isStreaming: false })
       }
       streamingSafetyTimer = null
     },
@@ -157,6 +161,10 @@ interface ChatState {
   executeInvestigationFix: (strategy: ExecutionStrategy) => Promise<void>
   clearInvestigationReport: () => void
 
+  // Auto mode switch pill (e.g., build → plan on investigation prompts)
+  autoModeSwitchPill: { from: ConversationMode; to: ConversationMode } | null
+  clearAutoModeSwitchPill: () => void
+
   // /complete and /close actions
   completeConversation: (
     branchName: string,
@@ -202,6 +210,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   grillSession: previousChatState?.grillSession ?? null,
   pendingQuestions: previousChatState?.pendingQuestions ?? null,
   investigationReport: null,
+  autoModeSwitchPill: null,
   draftTexts: previousChatState?.draftTexts ?? {},
   contextUsages: previousChatState?.contextUsages ?? {},
 
@@ -390,8 +399,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (text: string, attachments?: string[]) => {
-    const { activeConversation } = get()
+    const { activeConversation, updateMode } = get()
     if (!activeConversation) return
+
+    // Auto-detect plan intent in build mode → switch to plan
+    if (activeConversation.mode === 'build' && detectPlanIntent(text)) {
+      await updateMode('plan')
+      set({ autoModeSwitchPill: { from: 'build', to: 'plan' } })
+      // Auto-dismiss after 5 seconds
+      setTimeout(() => {
+        const current = _storeGet?.()
+        if (current?.autoModeSwitchPill?.to === 'plan') {
+          _storeSet?.({ autoModeSwitchPill: null })
+        }
+      }, 5000)
+    }
 
     // Add optimistic user message
     const optimisticMessage: Message = {
@@ -545,9 +567,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // The backend saved a message (possibly an error or "No response received")
       window.api
         .getMessages({ conversationId: activeConversation.id })
-        .then((messages) => {
+        .then((dbMessages) => {
+          // Guard: don't replace existing messages with empty DB result
+          // This prevents data loss from DB lock contention or timing issues
+          const currentMessages = _storeGet?.()?.messages ?? []
           set({
-            messages,
+            messages: dbMessages.length > 0 ? dbMessages : currentMessages,
             streamingContent: '',
             isStreaming: false,
             toolActivities: [],
@@ -650,6 +675,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setInvestigationReport: (data) => set({ investigationReport: data }),
 
   clearInvestigationReport: () => set({ investigationReport: null }),
+
+  clearAutoModeSwitchPill: () => set({ autoModeSwitchPill: null }),
 
   executeInvestigationFix: async (strategy) => {
     const { investigationReport, activeConversation } = get()

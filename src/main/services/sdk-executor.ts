@@ -6,6 +6,7 @@ import { authProvider } from './auth-provider'
 import {
   createScopeGuard,
   createCodeGraphFirstHook,
+  createFireAndForgetHook,
   createPostToolUseHook,
   createPostToolUseFailureHook,
   createNotificationHook,
@@ -202,6 +203,9 @@ export class SDKExecutor {
       // Build PreToolUse scope guard hooks — defense-in-depth even with bypassPermissions
       const scopeGuard = createScopeGuard(options.cwd)
       const preToolUseHooks = [scopeGuard]
+
+      // Add fire-and-forget detection for long-running Bash commands
+      preToolUseHooks.push(createFireAndForgetHook())
 
       // Add Code Graph-first enforcement when code-graph MCP server is active (warn mode — logs but doesn't block)
       if (
@@ -464,10 +468,24 @@ export class SDKExecutor {
                   if (toolUseId) {
                     toolIdToName.delete(toolUseId)
                   }
+
+                  // Extract tool result content for forwarding to renderer
+                  let resultContent: string | undefined
+                  if (typeof block.content === 'string') {
+                    resultContent = block.content
+                  } else if (Array.isArray(block.content)) {
+                    // Content blocks array — extract text parts
+                    resultContent = (block.content as Record<string, unknown>[])
+                      .filter((c) => c.type === 'text')
+                      .map((c) => c.text as string)
+                      .join('\n')
+                  }
+
                   yield {
                     type: 'tool_result',
                     toolName,
-                    toolId: toolUseId
+                    toolId: toolUseId,
+                    content: resultContent
                   }
                 }
               }

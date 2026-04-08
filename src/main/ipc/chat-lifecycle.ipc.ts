@@ -13,7 +13,7 @@ import {
 } from '../db/repositories'
 import { generalistService, gitWorktreeService, fileService } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { ConversationMode } from '../../shared/types'
+import type { ConversationMode, ContextUsageLevel } from '../../shared/types'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -479,28 +479,83 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
   })
 
   // ── Context usage: return token consumption for a conversation ──
+  // Strategy: SDK-first (accurate, live) → DB fallback (historical/idle)
   ipcMain.handle(
     IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE,
     async (event, args: { conversationId: string }) => {
       validateSender(event)
       if (!args?.conversationId) throw new Error('Invalid conversation ID')
 
+      // ── Strategy 1: Use SDK native context usage (accurate, live) ──
+      const activeQuery = generalistService.getActiveQuery()
+      const currentConvId = generalistService.getCurrentConversationId()
+
+      if (activeQuery && currentConvId === args.conversationId) {
+        try {
+          const sdkUsage = await activeQuery.getContextUsage()
+          if (sdkUsage && typeof sdkUsage === 'object' && 'totalTokens' in sdkUsage) {
+            const sdk = sdkUsage as {
+              totalTokens: number
+              maxTokens: number
+              percentage?: number
+              model?: string
+              categories?: { name: string; tokens: number; color: string }[]
+            }
+            const percentage =
+              sdk.percentage ?? Math.round((sdk.totalTokens / sdk.maxTokens) * 100)
+            // Quality window scales with context window: 50% of max, capped at 500K
+            // For 1M context: 500K quality window. For 200K context: 100K quality window.
+            const effectiveQualityWindow = Math.min(Math.round(sdk.maxTokens * 0.5), 500_000)
+            const qualityPercentage = Math.round(
+              (sdk.totalTokens / effectiveQualityWindow) * 100
+            )
+            const level: ContextUsageLevel =
+              qualityPercentage > 80
+                ? 'critical'
+                : qualityPercentage > 60
+                  ? 'red'
+                  : qualityPercentage > 40
+                    ? 'yellow'
+                    : 'green'
+            const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
+              qualityPercentage <= 40
+                ? 'excellent'
+                : qualityPercentage <= 60
+                  ? 'good'
+                  : qualityPercentage <= 80
+                    ? 'moderate'
+                    : 'low'
+
+            return {
+              conversationId: args.conversationId,
+              inputTokens: sdk.totalTokens,
+              contextWindowSize: sdk.maxTokens,
+              percentage,
+              level,
+              qualityLevel,
+              categories: sdk.categories,
+              model: sdk.model,
+              source: 'sdk' as const
+            }
+          }
+        } catch (err) {
+          log.warn('SDK getContextUsage failed, falling back to DB:', err)
+          // Fall through to DB-based calculation
+        }
+      }
+
+      // ── Strategy 2: DB fallback (historical/idle conversations) ──
       const lastTurn = turnUsageRepository.getLastTurn(args.conversationId)
-      // Total context = non-cached input + cache read + cache creation tokens
-      // The SDK reports inputTokens as only the non-cached portion, but the full
-      // context window consumption includes all cached tokens too
       const inputTokens =
         (lastTurn?.inputTokens ?? 0) +
         (lastTurn?.cacheReadTokens ?? 0) +
         (lastTurn?.cacheCreationTokens ?? 0)
-      // 1M context beta enabled — actual window is 1M
       const contextWindowSize = 1_000_000
-      // Quality degrades past 200K even with 1M window — use for level thresholds
-      const effectiveQualityWindow = 200_000
+      // Quality window scales with context window: 50% of max, capped at 500K
+      const effectiveQualityWindow = Math.min(Math.round(contextWindowSize * 0.5), 500_000)
       const percentage = Math.round((inputTokens / contextWindowSize) * 100)
-      // Level is based on quality window, not total capacity
       const qualityPercentage = Math.round((inputTokens / effectiveQualityWindow) * 100)
-      const level =
+      const level: ContextUsageLevel =
         qualityPercentage > 80
           ? 'critical'
           : qualityPercentage > 60
@@ -523,7 +578,8 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
         contextWindowSize,
         percentage,
         level,
-        qualityLevel
+        qualityLevel,
+        source: 'db' as const
       }
     }
   )

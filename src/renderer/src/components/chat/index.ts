@@ -1,4 +1,5 @@
 export { default as AttachmentDropzone } from './AttachmentDropzone'
+export { default as AutoModeSwitchPill } from './AutoModeSwitchPill'
 export { default as ChatItem } from './ChatItem'
 export { default as CompleteDialog } from './CompleteDialog'
 export { default as ChatPanel } from './ChatPanel'

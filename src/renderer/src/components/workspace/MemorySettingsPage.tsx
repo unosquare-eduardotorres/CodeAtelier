@@ -372,6 +372,11 @@ function MemoryCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <span className={`px-2 py-0.5 text-xs rounded-full ${badge.color}`}>{badge.label}</span>
+            {!memory.workspaceId && (
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-surface-overlay text-text-muted border border-border-subtle">
+                Global
+              </span>
+            )}
             {memory.importance >= 7 && (
               <span className="text-xs text-mode-build-text">★ High importance</span>
             )}

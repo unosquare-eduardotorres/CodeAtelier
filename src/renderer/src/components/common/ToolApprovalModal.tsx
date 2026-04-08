@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { ShieldAlert, Check, X } from 'lucide-react'
+import { ShieldAlert, Check, CheckCheck, X } from 'lucide-react'
 
 interface ToolApprovalRequest {
   requestId: string
@@ -50,6 +50,21 @@ export default function ToolApprovalModal(): React.JSX.Element | null {
       timerRefs.current.delete(requestId)
     }
   }, [])
+
+  const handleAcceptAll = useCallback(() => {
+    // Approve all pending requests
+    for (const req of requests) {
+      window.api.respondToolApproval(req.requestId, true)
+    }
+    // Clear all auto-dismiss timers
+    for (const timer of timerRefs.current.values()) {
+      clearTimeout(timer)
+    }
+    timerRefs.current.clear()
+    setRequests([])
+    // Set session-level auto-approve so no more prompts appear
+    window.api.setToolApprovalMode('accept-all')
+  }, [requests])
 
   if (requests.length === 0) return null
 
@@ -108,6 +123,14 @@ export default function ToolApprovalModal(): React.JSX.Element | null {
           >
             <X size={14} />
             Deny
+          </button>
+          <button
+            onClick={handleAcceptAll}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            aria-label="Accept all tools for this session"
+          >
+            <CheckCheck size={14} />
+            Accept All
           </button>
           <button
             onClick={() => handleRespond(current.requestId, true)}

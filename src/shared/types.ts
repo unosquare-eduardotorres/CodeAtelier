@@ -72,6 +72,12 @@ export interface ContextUsage {
   percentage: number
   level: ContextUsageLevel
   qualityLevel?: 'excellent' | 'good' | 'moderate' | 'low'
+  /** SDK-native breakdown by category (system prompt, tools, messages, etc.) */
+  categories?: { name: string; tokens: number; color: string }[]
+  /** Current model reported by SDK */
+  model?: string
+  /** Whether this was sourced from SDK (live) or DB (historical fallback) */
+  source?: 'sdk' | 'db'
 }
 
 export interface Message {
@@ -104,7 +110,14 @@ export interface AgentStatus {
   status: 'idle' | 'thinking' | 'writing' | 'reviewing' | 'completed' | 'failed'
   currentTask?: string
   elapsedMs: number
+  /** Running sum of billing tokens (input+output) across all turns — used for cost tracking. */
   tokenUsage: number
+  /**
+   * Live SDK context window consumption (from query.getContextUsage().totalTokens).
+   * This reflects the actual context size the model sees, unlike tokenUsage which is
+   * a cumulative billing total. Only populated for the generalist when SDK is active.
+   */
+  contextTokens?: number
   // Complexity scoring — populated when running as a specialist
   model?: ModelTier
   complexityTier?: ComplexityTier

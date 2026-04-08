@@ -2,6 +2,7 @@ import log from 'electron-log/main'
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { summarizeToolInput } from './agent-base.service'
+import { isDangerousCommand } from './sdk-hooks'
 
 const approvalLog = log.scope('ToolApproval')
 
@@ -10,6 +11,9 @@ const APPROVAL_CACHE_TTL_MS = 30_000
 
 /** Timeout before auto-approving an unresponded request (30 seconds) */
 const APPROVAL_TIMEOUT_MS = 30_000
+
+/** Session-level approval modes */
+export type ToolApprovalMode = 'prompt' | 'accept-all' | 'dangerous-only'
 
 interface PendingApproval {
   resolve: (approved: boolean) => void
@@ -27,6 +31,14 @@ interface CachedApproval {
 export class ToolApprovalService {
   private pendingApprovals = new Map<string, PendingApproval>()
   private approvalCache = new Map<string, CachedApproval>()
+
+  /**
+   * Session-level approval mode.
+   * - 'dangerous-only' (default): only prompts for dangerous Bash commands
+   * - 'accept-all': everything auto-approved, no prompts
+   * - 'prompt': prompts for all non-read tools (legacy behavior)
+   */
+  private sessionMode: ToolApprovalMode = 'dangerous-only'
 
   /** Tools that are always auto-approved (safe, read-only) */
   private autoApprovedTools = new Set([
@@ -54,8 +66,22 @@ export class ToolApprovalService {
     agentId: string,
     taskId?: string
   ): Promise<boolean> {
-    // Auto-approve safe tools
+    // Auto-approve safe tools (always, regardless of mode)
     if (this.isAutoApproved(toolName)) return true
+
+    // Session mode: accept-all → approve everything
+    if (this.sessionMode === 'accept-all') return true
+
+    // Session mode: dangerous-only → only prompt for dangerous bash commands
+    if (this.sessionMode === 'dangerous-only') {
+      if (toolName === 'Bash') {
+        const command = (toolInput?.command as string) ?? ''
+        if (!isDangerousCommand(command)) return true
+        // Fall through to prompt for dangerous commands
+      } else {
+        return true // Auto-approve all non-Bash tools (Write, Edit, etc.)
+      }
+    }
 
     // Check cache
     const cacheKey = this.buildCacheKey(toolName, toolInput)
@@ -125,6 +151,24 @@ export class ToolApprovalService {
     if (this.autoApprovedTools.has(toolName)) return true
     // Prefix match for MCP tools
     return this.autoApprovedPrefixes.some((prefix) => toolName.startsWith(prefix))
+  }
+
+  /** Set the session-level approval mode */
+  setSessionMode(mode: ToolApprovalMode): void {
+    approvalLog.info(`Tool approval mode set to: ${mode}`)
+    this.sessionMode = mode
+
+    // If switching to accept-all, resolve all pending approvals
+    if (mode === 'accept-all') {
+      for (const [id] of this.pendingApprovals) {
+        this.resolveApproval(id, true)
+      }
+    }
+  }
+
+  /** Get the current session-level approval mode */
+  getSessionMode(): ToolApprovalMode {
+    return this.sessionMode
   }
 
   private buildCacheKey(toolName: string, input: Record<string, unknown>): string {

@@ -267,7 +267,8 @@ export class WorkspaceDeployService {
       // DB not ready — leave isActive as-is
     }
 
-    return agents
+    // Filter out deprecated orchestrator agent
+    return agents.filter((a) => a.parsed.name !== 'orchestrator')
   }
 
   /** Scan target workspace's deployed skills */
@@ -816,15 +817,25 @@ ${skillRows}`)
     mkdirSync(join(workspacePath, '.claude', 'agents'), { recursive: true })
     mkdirSync(join(workspacePath, '.claude', 'skills'), { recursive: true })
 
+    // Remove deprecated orchestrator YAML if present
+    const orchestratorPath = join(workspacePath, '.claude', 'agents', 'orchestrator.yml')
+    if (existsSync(orchestratorPath)) {
+      unlinkSync(orchestratorPath)
+    }
+
     // Auto-sync any new entries from workspace to DB
     const { agentSyncService } = await import('./agent-sync.service')
     agentSyncService.autoSyncNewEntries(workspacePath)
 
-    // Count activated agents from DB (actual activation is handled by specialist-deploy.service)
+    // Actually activate all inactive specialists
+    const { specialistDeployService } = await import('./specialist-deploy.service')
+    specialistDeployService.deployAll(workspacePath)
+
+    // Count how many were activated
     const { specialistRepository: specRepo } =
       await import('../db/repositories/specialist.repository')
     const allSpecialists = specRepo.findAll()
-    const agentCount = allSpecialists.filter((s) => !s.isActive).length
+    const agentCount = allSpecialists.filter((s) => s.isActive).length
 
     return { agents: agentCount, skills: 0 }
   }

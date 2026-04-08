@@ -84,6 +84,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
   const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [isDeploying, setIsDeploying] = useState(false)
+  const [showInactive, setShowInactive] = useState(false)
 
   // YAML editor state
   const [editorContent, setEditorContent] = useState('')
@@ -361,9 +362,17 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
             <div className="flex items-center gap-2">
               <Bot size={16} className="text-info" />
               <h3 className="text-sm font-semibold text-text-primary">
-                Agents ({sortedAgents.length})
+                Agents ({activeAgents.length} active)
               </h3>
             </div>
+            {inactiveAgents.length > 0 && (
+              <button
+                onClick={() => setShowInactive(!showInactive)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-secondary border border-border-subtle hover:bg-surface-float transition-colors"
+              >
+                {showInactive ? 'Hide' : 'Show'} inactive ({inactiveAgents.length})
+              </button>
+            )}
           </div>
 
           {/* Active agents */}
@@ -396,12 +405,12 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
           )}
 
           {/* Divider between active and inactive */}
-          {activeAgents.length > 0 && inactiveAgents.length > 0 && (
+          {showInactive && activeAgents.length > 0 && inactiveAgents.length > 0 && (
             <div className="border-t border-border-subtle my-4" />
           )}
 
-          {/* Inactive agents */}
-          {inactiveAgents.length > 0 && (
+          {/* Inactive agents — only when toggled */}
+          {showInactive && inactiveAgents.length > 0 && (
             <div>
               <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
                 Inactive

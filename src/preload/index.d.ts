@@ -629,7 +629,7 @@ interface Api {
   ) => () => void
 
   // Events (audit log)
-  getRecentEvents: (args?: { limit?: number }) => Promise<
+  getRecentEvents: (args?: { workspaceId?: string; limit?: number }) => Promise<
     {
       id: string
       sessionId: string | null
@@ -698,6 +698,8 @@ interface Api {
     }) => void
   ) => () => void
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
+  setToolApprovalMode: (mode: 'prompt' | 'accept-all' | 'dangerous-only') => Promise<void>
+  getToolApprovalMode: () => Promise<string>
 
   // Checkpoint approval
   onCheckpointApprovalRequest: (
@@ -814,7 +816,13 @@ interface Api {
   onSessionState: (callback: (data: { state: string }) => void) => () => void
 
   // SDK Control — Query instance methods
-  sdkGetContextUsage: () => Promise<unknown>
+  sdkGetContextUsage: () => Promise<{
+    totalTokens: number
+    maxTokens: number
+    percentage: number
+    model: string
+    categories: { name: string; tokens: number; color: string }[]
+  } | null>
   sdkStopTask: (args: { taskId: string }) => Promise<unknown>
   sdkInterrupt: () => Promise<unknown>
   sdkAccountInfo: () => Promise<unknown>

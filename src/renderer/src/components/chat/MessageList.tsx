@@ -16,6 +16,7 @@ import IdeaPopover from './IdeaPopover'
 import { Avatar, PixelSpriteAvatar, CompactContextModal } from '@renderer/components/common'
 import type { MessageBubbleActions } from './MessageBubble'
 import type { StructuredPlan } from '../../../../shared/types'
+import AutoModeSwitchPill from './AutoModeSwitchPill'
 import FloatingRobots from './FloatingRobots'
 import ScrollToBottomButton from './ScrollToBottomButton'
 
@@ -35,6 +36,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const decomposedTasks = useChatStore((s) => s.decomposedTasks)
   const taskProgress = useChatStore((s) => s.taskProgress)
   const compactSuggestion = useChatStore((s) => s.compactSuggestion)
+  const contextUsages = useChatStore((s) => s.contextUsages)
   const pendingGrillQuestions = useChatStore((s) => s.grillSession?.pendingQuestions ?? null)
   const hasPendingGrillQuestions = (pendingGrillQuestions?.length ?? 0) > 0
   const pendingQuestions = useChatStore((s) => s.pendingQuestions)
@@ -390,6 +392,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
         {/* Non-virtualized footer items — always rendered below the virtual list */}
 
+        {/* Auto mode switch pill (e.g., build → plan on investigation prompts) */}
+        <AutoModeSwitchPill />
+
         {/* Handoff indicator — shown when generalist triggers a handoff */}
         {activeHandoff && (
           <HandoffIndicator
@@ -443,6 +448,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           isOpen={!!compactSuggestion}
           inputTokens={compactSuggestion?.inputTokens ?? 0}
           level={compactSuggestion?.level ?? 'suggest'}
+          categories={activeConversationId ? contextUsages[activeConversationId]?.categories : undefined}
           onExtractNuance={() => {
             setCompactSuggestion(null)
             sendMessage('/compact --nuance')

@@ -97,6 +97,23 @@ export class TurnUsageRepository {
     return row ? toModel(row) : null
   }
 
+  /** Update the most recent turn's token data for a conversation (used for SDK-corrected values) */
+  updateLastTurnTokens(
+    conversationId: string,
+    tokens: { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+  ): void {
+    const db = getDatabase()
+    db.prepare(
+      `UPDATE turn_usage
+       SET input_tokens = ?, cache_read_tokens = ?, cache_creation_tokens = ?
+       WHERE id = (
+         SELECT id FROM turn_usage
+         WHERE conversation_id = ?
+         ORDER BY turn_number DESC LIMIT 1
+       )`
+    ).run(tokens.inputTokens, tokens.cacheReadTokens, tokens.cacheCreationTokens, conversationId)
+  }
+
   /** Prune old turn usage records to prevent unbounded growth */
   pruneOlderThan(days: number): number {
     const db = getDatabase()
