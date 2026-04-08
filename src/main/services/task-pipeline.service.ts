@@ -507,6 +507,11 @@ export class TaskPipelineService {
       },
 
       allComplete: async (): Promise<void> => {
+        const elapsed = startTime ? Date.now() - startTime : 0
+        log.info(
+          `[PIPELINE:allComplete-received] conversationId=${conversationId} elapsed=${elapsed}ms ` +
+            `accumulated=${accumulatedContent.value.length} chars`
+        )
         try {
           await this.onExecutionComplete(
             conversationId,

@@ -207,10 +207,9 @@ function shortenFilePath(filePath: string): string {
 }
 
 // Module-level constants — stable references, never recreated on render
+const REMARK_PLUGINS_BASE = [remarkGfm, remarkBreaks, remarkEmojiSpan]
 const REMARK_PLUGINS = [
-  remarkGfm,
-  remarkBreaks,
-  remarkEmojiSpan,
+  ...REMARK_PLUGINS_BASE,
   remarkHighlightQuestions,
   remarkHighlightNextSteps
 ]
@@ -1085,7 +1084,7 @@ function MessageBubbleInner({
             {(isUser ? displayContent : message.contentMd) ? (
               <div className="prose max-w-none overflow-hidden">
                 <ReactMarkdown
-                  remarkPlugins={REMARK_PLUGINS}
+                  remarkPlugins={isUser ? REMARK_PLUGINS_BASE : REMARK_PLUGINS}
                   rehypePlugins={REHYPE_PLUGINS}
                   components={markdownComponents}
                 >

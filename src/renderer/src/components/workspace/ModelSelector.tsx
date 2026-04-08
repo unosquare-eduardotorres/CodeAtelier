@@ -3,12 +3,16 @@ import { AVAILABLE_MODELS, DEFAULT_MODEL_CONFIG } from '../../../../shared/const
 import type { ModelAction } from '../../../../shared/types'
 import { AgentIcon, AGENT_ICON_MAP } from '@renderer/assets/agent-icons'
 
+type ModelEntry = { id: string; label: string; tier: string; description: string }
+
 interface ModelSelectorProps {
   action: ModelAction
   label: string
   description: string
   icon: string
   selectedModel: string
+  /** Dynamic model list — falls back to static AVAILABLE_MODELS if not provided */
+  models?: readonly ModelEntry[]
   onChange: (action: ModelAction, modelId: string) => void
   onReset: (action: ModelAction) => void
 }
@@ -19,12 +23,14 @@ export default function ModelSelector({
   description,
   icon,
   selectedModel,
+  models,
   onChange,
   onReset
 }: ModelSelectorProps): React.JSX.Element {
+  const modelList = models ?? AVAILABLE_MODELS
   const defaultModel = DEFAULT_MODEL_CONFIG[action]
   const isOverridden = selectedModel !== defaultModel
-  const defaultModelLabel = AVAILABLE_MODELS.find((m) => m.id === defaultModel)?.label ?? 'Unknown'
+  const defaultModelLabel = modelList.find((m) => m.id === defaultModel)?.label ?? 'Unknown'
 
   return (
     <div
@@ -56,7 +62,7 @@ export default function ModelSelector({
 
       <div className="flex items-center gap-2">
         <div className="flex gap-2 flex-1">
-          {AVAILABLE_MODELS.map((model) => {
+          {modelList.map((model) => {
             const isSelected = selectedModel === model.id
             const isDefault = model.id === defaultModel
             return (

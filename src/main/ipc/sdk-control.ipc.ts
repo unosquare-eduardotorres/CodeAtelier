@@ -24,6 +24,18 @@ import { validateSender } from './validate-sender'
  * - close() — forceful query termination (we use AbortController instead)
  */
 export function registerSdkControlIpc(): void {
+  // Elicitation response — renderer sends user's response to MCP elicitation request
+  ipcMain.handle(
+    IPC_CHANNELS.ELICITATION_RESPONSE,
+    async (event, args: { action: string; content?: Record<string, unknown> }) => {
+      validateSender(event)
+      generalistService.emit('elicitationResponse', {
+        action: args.action as 'accept' | 'decline' | 'cancel',
+        content: args.content
+      })
+    }
+  )
+
   // TODO: Not called from renderer — generalist.service.ts uses SDK directly for context usage
   // getContextUsage — native context window breakdown
   ipcMain.handle(IPC_CHANNELS.SDK_GET_CONTEXT_USAGE, async (event) => {
@@ -150,4 +162,18 @@ export function registerSdkControlIpc(): void {
     if (!query) throw new Error('No active query')
     return query.supportedAgents()
   })
+
+  // forkSession — branch a conversation at a specific message point
+  // Used for "Branch Conversation" feature — creates a new session forked from an existing one
+  ipcMain.handle(
+    IPC_CHANNELS.SDK_FORK_SESSION,
+    async (event, args: { sessionId: string; upToMessageId?: string }) => {
+      validateSender(event)
+      const { forkSession } = await import('@anthropic-ai/claude-agent-sdk')
+      return forkSession(
+        args.sessionId,
+        args.upToMessageId ? { upToMessageId: args.upToMessageId } : undefined
+      )
+    }
+  )
 }

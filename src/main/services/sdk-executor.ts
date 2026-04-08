@@ -115,6 +115,11 @@ export interface SDKExecuteOptions {
   effort?: 'low' | 'medium' | 'high' | 'max'
   /** Hard USD budget cap. SDK returns error_max_budget_usd when exceeded. */
   maxBudgetUsd?: number
+  /** Callback for MCP server elicitation requests (structured forms / URL auth) */
+  onElicitation?: (
+    request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest,
+    options: { signal: AbortSignal }
+  ) => Promise<import('@anthropic-ai/claude-agent-sdk').ElicitationResult>
 }
 
 export interface SDKExecuteResult {
@@ -170,12 +175,12 @@ export class SDKExecutor {
     let pendingHeartbeat = false
     const STALL_THRESHOLD_MS = 60000
 
-    // Deduplication tracking — prevents double emission from stream_event + assistant replay.
-    // The SDK yields stream_event deltas in real-time, then an `assistant` message with the
-    // complete content as a replay. Without dedup, every text/tool block gets yielded twice.
-    let hasStreamedText = false
-    const processedToolIds = new Set<string>()
+    // With includePartialMessages: true, stream_event messages are guaranteed for real-time
+    // streaming. The `assistant` message is a complete replay — we skip yielding from it.
+    // Only toolIdToName is needed to map tool_result back to tool names.
     const toolIdToName = new Map<string, string>()
+    // Track whether any content has been emitted this turn (for turn_boundary detection)
+    let hasPriorContent = false
 
     // Start heartbeat timer — sets a flag that the generator checks on each iteration
     if (heartbeatInterval > 0) {
@@ -234,7 +239,56 @@ export class SDKExecutor {
           : {}),
         ...(options.onFileChanged
           ? { FileChanged: [{ hooks: [createFileChangedHook(options.onFileChanged)] }] }
-          : {})
+          : {}),
+        // Elicitation lifecycle hooks — log MCP server elicitation requests
+        Elicitation: [
+          {
+            hooks: [
+              (input: Record<string, unknown>) => {
+                sdkLog.info(
+                  `[elicitation:requested] server=${input.mcp_server_name} mode=${input.mode ?? 'form'}`
+                )
+                return {}
+              }
+            ]
+          }
+        ],
+        ElicitationResult: [
+          {
+            hooks: [
+              (input: Record<string, unknown>) => {
+                sdkLog.info(`[elicitation:result] action=${input.action}`)
+                return {}
+              }
+            ]
+          }
+        ],
+        // Compaction lifecycle hooks — log pre/post compaction for diagnostics
+        PreCompact: [
+          {
+            hooks: [
+              (input: Record<string, unknown>) => {
+                sdkLog.info(
+                  `[compact:pre] Compaction starting — trigger=${input.trigger ?? 'unknown'}`
+                )
+                return { decision: 'proceed' }
+              }
+            ]
+          }
+        ],
+        PostCompact: [
+          {
+            hooks: [
+              (input: Record<string, unknown>) => {
+                const summary = input.compact_summary as string | undefined
+                sdkLog.info(
+                  `[compact:post] Compaction complete — summary_length=${summary?.length ?? 0}`
+                )
+                return {}
+              }
+            ]
+          }
+        ]
       }
 
       this.activeQuery = query({
@@ -295,7 +349,11 @@ export class SDKExecutor {
           ...(options.promptSuggestions ? { promptSuggestions: true } : {}),
           ...(options.betas?.length ? { betas: options.betas } : {}),
           ...(options.fallbackModel ? { fallbackModel: options.fallbackModel } : {}),
-          ...(options.canUseTool ? { canUseTool: options.canUseTool } : {})
+          ...(options.canUseTool ? { canUseTool: options.canUseTool } : {}),
+          // Get typed streaming events — eliminates need for dedup with assistant replay
+          includePartialMessages: true,
+          // Wire elicitation callback for MCP server user input requests
+          ...(options.onElicitation ? { onElicitation: options.onElicitation } : {})
         }
       })
 
@@ -346,40 +404,26 @@ export class SDKExecutor {
             }
           }
 
-          // Map assistant messages to StreamChunks.
-          // The assistant message is a full replay of the response — only yield blocks
-          // that weren't already emitted via stream_event deltas (dedup).
+          // Assistant messages are complete replays — with includePartialMessages: true,
+          // all content was already streamed via stream_event. We only use assistant messages
+          // to populate toolIdToName for any tool_use blocks not yet tracked.
           if (msg.type === 'assistant') {
             const assistantMsg = msg.message as Record<string, unknown> | undefined
             if (assistantMsg?.content && Array.isArray(assistantMsg.content)) {
               for (const block of assistantMsg.content as Record<string, unknown>[]) {
-                if (block.type === 'text' && block.text && !hasStreamedText) {
-                  hasStreamedText = true // prevent result message from re-yielding
-                  yield { type: 'text', content: block.text as string }
-                } else if (block.type === 'tool_use') {
-                  const toolName = block.name as string
-                  const toolInput = block.input as Record<string, unknown> | undefined
-
+                if (block.type === 'tool_use') {
                   const toolId = block.id as string | undefined
-                  if (toolId && processedToolIds.has(toolId)) continue
-                  if (toolId) {
-                    processedToolIds.add(toolId)
+                  const toolName = block.name as string
+                  if (toolId && !toolIdToName.has(toolId)) {
                     toolIdToName.set(toolId, toolName)
-                  }
-                  yield {
-                    type: 'tool_use',
-                    toolName,
-                    toolId,
-                    toolInput: toolInput
-                      ? summarizeToolInput(toolName, toolInput, options.cwd)
-                      : undefined
                   }
                 }
               }
             }
           }
 
-          // Map stream_event (SDK wraps Anthropic API events in a stream_event wrapper)
+          // Map stream_event — with includePartialMessages: true, these are the
+          // authoritative source for real-time text and tool_use streaming.
           if (msg.type === 'stream_event') {
             const streamEvent = (msg as Record<string, unknown>).event as Record<string, unknown>
             if (!streamEvent) continue
@@ -388,17 +432,17 @@ export class SDKExecutor {
             if (streamEvent.type === 'content_block_delta') {
               const delta = streamEvent.delta as Record<string, unknown> | undefined
               if (delta?.type === 'text_delta' && delta.text) {
-                hasStreamedText = true
+                hasPriorContent = true
                 yield { type: 'text', content: delta.text as string }
               }
               // Structured output may stream as json_delta
               if (delta?.type === 'json_delta' && delta.json) {
-                hasStreamedText = true
+                hasPriorContent = true
                 yield { type: 'text', content: delta.json as string }
               }
             }
 
-            // Tool use start — track ID for dedup against assistant replay
+            // Tool use start
             if (streamEvent.type === 'content_block_start') {
               const cb = streamEvent.content_block as Record<string, unknown> | undefined
               if (cb?.type === 'tool_use') {
@@ -409,15 +453,9 @@ export class SDKExecutor {
 
                 if (toolId) {
                   toolIdToName.set(toolId, toolName)
-                  // Only mark as processed if we have actual input — the API streams
-                  // tool input via input_json_delta so content_block_start often has
-                  // empty input {}. Deferring dedup lets the assistant message replay
-                  // (which has the full input + cwd) handle file tracking correctly.
-                  if (hasInput) {
-                    processedToolIds.add(toolId)
-                  }
                 }
 
+                hasPriorContent = true
                 yield {
                   type: 'tool_use',
                   toolName,
@@ -433,11 +471,9 @@ export class SDKExecutor {
             if (streamEvent.type === 'message_start') {
               // Turn boundary — signal renderer to finalize current bubble and start a new one
               // Only emit when there's been prior content (text or tools) to avoid empty bubbles
-              if (hasStreamedText || processedToolIds.size > 0) {
+              if (hasPriorContent) {
                 yield { type: 'turn_boundary' as const, content: `turn-${Date.now()}` }
               }
-              // Reset per-turn text dedup so new turn can stream fresh text
-              hasStreamedText = false
 
               const startMsg = streamEvent.message as Record<string, unknown> | undefined
               const startUsage = startMsg?.usage as Record<string, number> | undefined
@@ -527,7 +563,7 @@ export class SDKExecutor {
               }
             }
 
-            if (resultText && !hasStreamedText) {
+            if (resultText && !hasPriorContent) {
               yield { type: 'text', content: resultText }
             }
             // SDK result has rich usage — prefer it over accumulated stream usage

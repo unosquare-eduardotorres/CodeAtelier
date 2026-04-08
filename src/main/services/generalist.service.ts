@@ -8,9 +8,14 @@ import type {
   ImageAttachment,
   PlanDetectedEvent,
   Specialist,
-  TaskPlan
+  TaskPlan,
+  ElicitationEvent
 } from '../../shared/types'
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type {
+  SDKUserMessage,
+  ElicitationRequest,
+  ElicitationResult
+} from '@anthropic-ai/claude-agent-sdk'
 import { AGENT_IDS, MCP_TOOLS, GENERALIST_BUDGET_CAP } from '../../shared/constants'
 import { generalistLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
@@ -91,8 +96,7 @@ export class GeneralistService extends AgentBaseService {
   /** Cost preference from workspace settings — affects compaction aggressiveness */
   private costPreference: CostPreference = 'balanced'
 
-  /** When true, the next successful stream completion will clear the session and inject a summary */
-  private pendingSessionReset = false
+  // pendingSessionReset removed — SDK native /compact preserves session state automatically
 
   /** Absolute cap per interaction — aborts SDK query if exceeded (replaces old CLI MAX_INTERACTION_TIMEOUT_MS) */
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
@@ -577,7 +581,40 @@ export class GeneralistService extends AgentBaseService {
         betas: ['context-1m-2025-08-07'],
         // Fallback to Sonnet if Opus is rate-limited (omit when main model is already Sonnet)
         ...(resolvedModel !== 'claude-sonnet-4-6' ? { fallbackModel: 'claude-sonnet-4-6' } : {}),
-        ...(mcpServers ? { mcpServers } : {})
+        ...(mcpServers ? { mcpServers } : {}),
+        // Wire MCP elicitation — structured user input requests from MCP servers
+        onElicitation: async (request: ElicitationRequest, { signal }: { signal: AbortSignal }) => {
+          this.log.info(
+            `[elicitation] server=${request.serverName} message="${request.message?.substring(0, 80)}"`
+          )
+          // Emit to renderer for UI display
+          const elicitationEvent: ElicitationEvent = {
+            serverName: request.serverName,
+            message: request.message,
+            mode: request.mode ?? 'form',
+            requestedSchema: request.requestedSchema as Record<string, unknown> | undefined,
+            url: request.url,
+            elicitationId: request.elicitationId
+          }
+          this.emit('elicitation', elicitationEvent)
+          // Wait for user response via a Promise that the renderer resolves
+          return new Promise<ElicitationResult>((resolve) => {
+            const handler = (result: ElicitationResult): void => {
+              this.removeListener('elicitationResponse', handler)
+              resolve(result)
+            }
+            this.on('elicitationResponse', handler)
+            // Handle abort — decline if the query is cancelled
+            signal.addEventListener(
+              'abort',
+              () => {
+                this.removeListener('elicitationResponse', handler)
+                resolve({ action: 'decline' } as ElicitationResult)
+              },
+              { once: true }
+            )
+          })
+        }
       })) {
         if (this.circuitBreaker.isBroken) break
 
@@ -622,7 +659,9 @@ export class GeneralistService extends AgentBaseService {
 
           // Log SDK context category breakdown for diagnostics
           if (sdkContextData) {
-            const categories = (sdkContextData as { categories?: { name: string; tokens: number }[] }).categories
+            const categories = (
+              sdkContextData as { categories?: { name: string; tokens: number }[] }
+            ).categories
             if (categories) {
               this.log.info(`[PIPELINE:context-breakdown] ${JSON.stringify(categories)}`)
             }
@@ -762,27 +801,7 @@ export class GeneralistService extends AgentBaseService {
       // ── Intent detection + emission ──
       this.emitDetectedIntents(conversationId, handoffDetectedInStream)
 
-      // ── Session-reset compaction: clear session after successful compact response ──
-      if (this.pendingSessionReset) {
-        this.pendingSessionReset = false
-        const summary = this.accumulatedText
-        // Clear the current session — next send() will start fresh
-        this.sessionMap.delete(conversationId)
-        try {
-          conversationRepository.updateSessionId(conversationId, '')
-        } catch (err) {
-          this.log.error('Failed to clear session ID:', err)
-        }
-        // Inject summary as context for the new session
-        this.promptAssembler.addPendingContext(
-          conversationId,
-          `## Compressed Context (from prior conversation)\n\n${summary}`
-        )
-        this.log.info(
-          `[PIPELINE:session-reset] Cleared session for conversation ${conversationId}. ` +
-            `Summary: ${summary.length} chars. Next send() starts fresh.`
-        )
-      }
+      // Session-reset compaction removed — SDK native /compact preserves session state
 
       this.currentStatus = 'idle'
       this.flushTokenUsage()
@@ -1122,61 +1141,24 @@ export class GeneralistService extends AgentBaseService {
     }
 
     this.log.info(
-      `Starting session-reset compaction (compact #${this.compactCount + 1}, nuance=${extractNuance}) — will execute on next send()`
+      `Starting native SDK compaction (compact #${this.compactCount + 1}, nuance=${extractNuance})`
     )
     this.compactCount++
     this.compactSuggested = false
 
     if (extractNuance) {
-      // Extract Nuance mode — preserves critical details, preferences, and decisions verbatim
+      // Extract Nuance mode — hint to SDK's native /compact to preserve critical details
       this.promptAssembler.setPendingCompaction(
         this.currentConversationId,
-        `/compact — Before answering the user's message below, compress our conversation context:
-
-**Instructions (Extract Nuance mode):**
-1. First, extract and preserve ALL important nuances, decisions, preferences, and key details from the full conversation.
-2. Then compress the conversation, keeping extracted nuances verbatim at the top.
-3. Preserve ALL file paths, specialist reports, architecture decisions, and user preferences.
-4. Keep the MOST RECENT 3-4 turns VERBATIM — do not summarize recent work.
-
-**Summary format (preserve nuances first, then terse bullet points):**
-- **Nuances & Preferences:** User preferences, tone, style choices, constraints mentioned
-- **Decisions:** Architecture choices, approach selections, trade-offs made
-- **Current Task:** What we're actively working on
-- **Files:** Important file paths referenced or modified
-- **Pending:** Unresolved items or next steps
-- **Specialist Findings:** Key results from investigations (preserve report data)
-
-After producing the summary, continue with the user's next message using ONLY this summary as context.`
+        '/compact Extract nuance: preserve ALL decisions, preferences, file paths, specialist reports verbatim. Keep recent 3-4 turns verbatim.'
       )
     } else {
-      // Quick Compact mode — summarizes older messages for speed
-      // Strategy μ: Smarter compaction — compress only the oldest conversation context,
-      // keeping recent specialist findings and current task context verbatim.
-      this.promptAssembler.setPendingCompaction(
-        this.currentConversationId,
-        `/compact — Before answering the user's message below, compress our conversation context:
-
-**Instructions:**
-1. Summarize ONLY the OLDER parts of our conversation (first ~50% of messages) into bullet points.
-2. Keep the MOST RECENT specialist findings and current task context VERBATIM — do not summarize recent work.
-3. Preserve ALL file paths, decisions, and specialist report data from the last 2-3 turns exactly.
-
-**Summary format (terse bullet points only, omit empty categories):**
-- **Decisions:** Architecture choices, approach selections
-- **Current Task:** What we're actively working on
-- **Files:** Important file paths referenced or modified
-- **Pending:** Unresolved items or next steps
-- **Specialist Findings:** Key results from investigations (preserve report data)
-
-After producing the summary, continue with the user's next message using ONLY this summary as context.`
-      )
+      // Quick Compact — use native SDK /compact directly
+      this.promptAssembler.setPendingCompaction(this.currentConversationId, '/compact')
     }
 
-    // Phase 2: After the next response, clear the session so the FOLLOWING
-    // send() starts fresh. The summary will be in the last response, and
-    // addPendingContext() will inject it into the new session.
-    this.pendingSessionReset = true
+    // No pendingSessionReset needed — the SDK's native compaction preserves session state
+    // automatically. PreCompact/PostCompact hooks in sdk-executor.ts log the lifecycle.
   }
 
   /** Returns the session ID for a given conversation, if captured. */

@@ -5,6 +5,7 @@ import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
+  ElicitationEvent,
   GeneralistIntent,
   GrillQuestion,
   HandoffBrief,
@@ -73,6 +74,14 @@ export class GeneralistStreamService {
       this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
         conversationId: generalistService.getCurrentConversationId() || '',
         questions: data.questions
+      })
+    })
+
+    // Elicitation — MCP server user input requests forwarded to renderer
+    generalistService.on('elicitation', (data: ElicitationEvent) => {
+      this.mainWindow.webContents.send(IPC_CHANNELS.ELICITATION_REQUEST, {
+        conversationId: generalistService.getCurrentConversationId() || '',
+        ...data
       })
     })
 

@@ -353,6 +353,10 @@ export const IPC_CHANNELS = {
   SDK_SESSION_STATE: 'sdk:sessionState',
   SDK_AUTH_STATUS: 'sdk:authStatus',
 
+  // Elicitation — MCP server user input requests
+  ELICITATION_REQUEST: 'elicitation:request',
+  ELICITATION_RESPONSE: 'elicitation:response',
+
   // SDK Control — Query instance methods
   SDK_GET_CONTEXT_USAGE: 'sdk:getContextUsage',
   SDK_STOP_TASK: 'sdk:stopTask',
@@ -366,7 +370,10 @@ export const IPC_CHANNELS = {
   SDK_SET_MCP_SERVERS: 'sdk:setMcpServers',
   SDK_REWIND_FILES: 'sdk:rewindFiles',
   SDK_RECONNECT_MCP: 'sdk:reconnectMcp',
-  SDK_SUPPORTED_AGENTS: 'sdk:supportedAgents'
+  SDK_SUPPORTED_AGENTS: 'sdk:supportedAgents',
+
+  // SDK Session — session mutation methods
+  SDK_FORK_SESSION: 'sdk:forkSession'
 } as const
 
 export const CONVERSATION_MODES = {

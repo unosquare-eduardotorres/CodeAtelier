@@ -88,6 +88,8 @@ const RETRY_CONFIG = {
   rateLimitDelayMs: 10000 // Longer delay for rate-limited retries
 }
 
+/** Hard timeout for specialist execution — aborts if exceeded */
+const SPECIALIST_TIMEOUT_MS = 10 * 60_000 // 10 minutes
 /** Circuit breaker threshold — consecutive spawn failures before stopping all tasks */
 const CIRCUIT_BREAKER_THRESHOLD = 5
 /** R2: Max consecutive identical tool calls before aborting (loop detection) */
@@ -390,10 +392,15 @@ export class SpecialistPoolService extends EventEmitter {
           completedAt: Date.now()
         })
       } catch (error) {
+        this.taskStatuses.set(task.id, 'failed')
         this.emitProgress(task, 'failed', undefined, (error as Error).message, {
           startedAt: taskStartedAt,
           completedAt: Date.now()
         })
+        this.log.error(
+          `[PIPELINE:sequential-task-failed] ${task.specialist}/${task.id} — ${(error as Error).message} ` +
+            `elapsed=${Date.now() - taskStartedAt}ms`
+        )
         // Continue with remaining tasks — downstream dependents will still run
         // but without the output context from this failed task
       }
@@ -534,6 +541,9 @@ export class SpecialistPoolService extends EventEmitter {
             this.startTask(task, mode, () => {
               // On task completion, check if more tasks can start
               if (pending.size === 0 && this.activeProcesses.size === 0) {
+                this.log.info(
+                  `[PIPELINE:allComplete-from-onDone] pending=0 active=0 completed=${this.completedTasks.size}`
+                )
                 unsubBusTrace()
                 if (this.currentRunId) {
                   executionTracer.endRun(this.currentRunId, {
@@ -559,8 +569,15 @@ export class SpecialistPoolService extends EventEmitter {
           })
         }
 
-        // If nothing is running and nothing is pending, we're done
-        if (pending.size === 0 && this.activeProcesses.size === 0) {
+        // If nothing is running and nothing is pending, we're done.
+        // Belt-and-suspenders: also require startedInRound === 0 — if tasks were just kicked off,
+        // their onDone callbacks will handle the allComplete check. This guard should only fire
+        // when nothing was started (e.g., all tasks were cascade-skipped).
+        if (pending.size === 0 && this.activeProcesses.size === 0 && startedInRound === 0) {
+          this.log.info(
+            `[PIPELINE:allComplete-from-guard] pending=0 active=0 completed=${this.completedTasks.size} ` +
+              `startedInRound=${startedInRound}`
+          )
           unsubBusTrace()
           if (this.currentRunId) {
             executionTracer.endRun(this.currentRunId, { tasksCompleted: this.completedTasks.size })
@@ -613,8 +630,42 @@ export class SpecialistPoolService extends EventEmitter {
     const startedAt = Date.now()
     this.emitProgress(task, 'running', undefined, undefined, { startedAt })
 
+    // RACE FIX: Register placeholder in activeProcesses synchronously so the
+    // completion guard in executeParallel sees pending=0 + active>0 and doesn't
+    // fire allComplete before createWorktreeAndSpawn's async body sets the real entry.
+    if (!this.activeProcesses.has(task.id)) {
+      this.activeProcesses.set(task.id, {
+        task,
+        output: '',
+        status: 'pending',
+        worktreeId: undefined,
+        dbSessionId: undefined,
+        attempt: 0,
+        tokenUsage: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        escalations: [],
+        toolCallCount: 0,
+        startedAt
+      })
+    }
+
     // Create worktree for isolation, then spawn the specialist
-    this.createWorktreeAndSpawn(task, mode, onDone)
+    // Gap 1: .catch() prevents unhandled rejection if createWorktreeAndSpawn throws
+    // before its internal try/catch (e.g., semaphore error, resolveWorktree throw)
+    this.createWorktreeAndSpawn(task, mode, onDone).catch((err) => {
+      this.log.error(
+        `[PIPELINE:startTask-unhandled] ${task.specialist}/${task.id} — ` +
+          `createWorktreeAndSpawn rejected without calling onDone: ${(err as Error).message}`
+      )
+      // Ensure task doesn't hang forever — clean up and call onDone
+      this.activeProcesses.delete(task.id)
+      this.taskStatuses.set(task.id, 'failed')
+      this.emitProgress(task, 'failed', undefined, (err as Error).message)
+      onDone()
+    })
   }
 
   // ── R1: Failure Cascade ──
@@ -781,6 +832,22 @@ export class SpecialistPoolService extends EventEmitter {
       startedAt: Date.now()
     }
 
+    // Set hard timeout to prevent orphaned specialists from running indefinitely
+    info.timeoutTimer = setTimeout(() => {
+      this.log.error(
+        `[SPECIALIST:timeout] ${task.specialist}/${task.id} — execution exceeded ${SPECIALIST_TIMEOUT_MS / 60_000} minutes`
+      )
+      eventLoggerService.logAgentTimeout({
+        agentId: task.specialist,
+        conversationId: this.conversationId ?? undefined,
+        elapsedMs: SPECIALIST_TIMEOUT_MS,
+        toolCallCount: info.toolCallCount
+      })
+      if (info.abortController) {
+        info.abortController.abort()
+      }
+    }, SPECIALIST_TIMEOUT_MS)
+
     return { traceSpan, info }
   }
 
@@ -795,6 +862,12 @@ export class SpecialistPoolService extends EventEmitter {
     traceSpan: TraceSpan | undefined,
     onDone: () => void
   ): Promise<void> {
+    // Clear timeout timer to prevent stale abort after successful completion
+    if (info.timeoutTimer) {
+      clearTimeout(info.timeoutTimer)
+      info.timeoutTimer = undefined
+    }
+
     // End trace span on success — capture durationMs for afterRun consistency
     let spanDurationMs = 0
     if (traceSpan) {
@@ -878,7 +951,15 @@ export class SpecialistPoolService extends EventEmitter {
             `Please fix your output to match the required schema.`
 
           setTimeout(() => {
-            this.createWorktreeAndSpawn(task, mode, onDone, info.attempt + 1)
+            this.createWorktreeAndSpawn(task, mode, onDone, info.attempt + 1).catch((err) => {
+              this.log.error(
+                `[PIPELINE:schema-retry-unhandled] ${task.specialist}/${task.id} — ${(err as Error).message}`
+              )
+              this.activeProcesses.delete(task.id)
+              this.taskStatuses.set(task.id, 'failed')
+              this.emitProgress(task, 'failed', undefined, (err as Error).message)
+              onDone()
+            })
             task.description = originalDesc // Restore for potential further retries
           }, 1000)
           return
@@ -953,6 +1034,9 @@ export class SpecialistPoolService extends EventEmitter {
     await this.runTaskLoopGates(task, info, mode, gateCwd, onDone).catch(async (err) => {
       this.log.error(`Task loop gate evaluation failed for ${task.id}:`, err)
       await this.finalizeTaskCompletion(task, info)
+      this.log.info(
+        `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=gate-catch`
+      )
       onDone()
     })
   }
@@ -969,6 +1053,12 @@ export class SpecialistPoolService extends EventEmitter {
     traceSpan: TraceSpan | undefined,
     onDone: () => void
   ): Promise<void> {
+    // Clear timeout timer to prevent stale abort after failure handling
+    if (info.timeoutTimer) {
+      clearTimeout(info.timeoutTimer)
+      info.timeoutTimer = undefined
+    }
+
     // Error is surfaced via emitProgress('failed') → BuildProgressCard, not chat stream
 
     // End trace span on error — capture durationMs for afterRun consistency
@@ -1097,8 +1187,20 @@ export class SpecialistPoolService extends EventEmitter {
       this.taskResults.delete(task.id)
 
       // Semaphore auto-released by sem.run() — next attempt will re-acquire
+      this.log.info(
+        `[PIPELINE:onDone-deferred] ${task.specialist}/${task.id} — ` +
+          `retrying in ${delay}ms, onDone deferred to attempt ${info.attempt + 1}`
+      )
       setTimeout(() => {
-        this.createWorktreeAndSpawn(task, mode, onDone, info.attempt + 1)
+        this.createWorktreeAndSpawn(task, mode, onDone, info.attempt + 1).catch((err) => {
+          this.log.error(
+            `[PIPELINE:retry-unhandled] ${task.specialist}/${task.id} — ${(err as Error).message}`
+          )
+          this.activeProcesses.delete(task.id)
+          this.taskStatuses.set(task.id, 'failed')
+          this.emitProgress(task, 'failed', undefined, (err as Error).message)
+          onDone()
+        })
       }, delay)
       return
     }
@@ -1119,6 +1221,10 @@ export class SpecialistPoolService extends EventEmitter {
       })
       this.emit('circuitBreakerTripped', { failures: this.consecutiveSpawnFailures })
       this.stopAll()
+      this.log.info(
+        `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=circuit-breaker`
+      )
+      onDone() // CRITICAL: unblock the executeParallel promise
       return
     }
 
@@ -1127,6 +1233,9 @@ export class SpecialistPoolService extends EventEmitter {
     }
 
     // Semaphore auto-released by sem.run() — continue parallel execution
+    this.log.info(
+      `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=failure-settled`
+    )
     onDone()
   }
 
@@ -1563,7 +1672,12 @@ export class SpecialistPoolService extends EventEmitter {
         if (shouldBreak) break
       }
     } catch (error) {
-      if (!this.isIntentionalEarlyExitAbort(error, execState)) {
+      // Loop detection and investigation-report early exits abort the SDK query,
+      // which can throw "Operation aborted" from in-flight SDK control requests.
+      // These are expected and should not propagate as unhandled errors.
+      const isAbort = error instanceof Error && /abort/i.test(error.message)
+      const isLoopAbort = execState.abortController.signal.aborted && isAbort
+      if (!this.isIntentionalEarlyExitAbort(error, execState) && !isLoopAbort) {
         execState.releasePermit()
         throw error
       }
@@ -2163,9 +2277,25 @@ export class SpecialistPoolService extends EventEmitter {
   async stopAll(): Promise<void> {
     this.aborted = true
 
+    // Summary telemetry: capture what's being aborted before clearing
+    const abortedTasks = [...this.activeProcesses.entries()].map(([id, info]) => ({
+      taskId: id,
+      specialist: info.task.specialist,
+      status: info.status,
+      toolCalls: info.toolCallCount
+    }))
+
+    this.log.info(
+      `[PIPELINE:stopAll] Aborting ${abortedTasks.length} active tasks: ` +
+        abortedTasks.map((t) => `${t.specialist}/${t.taskId}(${t.status})`).join(', ')
+    )
+
     // End trace run on abort — prevents memory leak in tracer's activeRuns map
     if (this.currentRunId) {
-      executionTracer.endRun(this.currentRunId, { aborted: true })
+      executionTracer.endRun(this.currentRunId, {
+        aborted: true,
+        abortedTasks: abortedTasks.length
+      })
       this.currentRunId = null
     }
 
@@ -2242,6 +2372,9 @@ export class SpecialistPoolService extends EventEmitter {
     // Only run task loop in build mode — plan mode doesn't produce code to validate
     if (mode !== 'build') {
       await this.finalizeTaskCompletion(task, info)
+      this.log.info(
+        `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=non-build-mode`
+      )
       onDone()
       return
     }
@@ -2284,6 +2417,9 @@ export class SpecialistPoolService extends EventEmitter {
       }
 
       await this.finalizeTaskCompletion(task, info)
+      this.log.info(
+        `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=gates-passed`
+      )
       onDone()
       return
     }
@@ -2373,7 +2509,17 @@ export class SpecialistPoolService extends EventEmitter {
             this.taskResults.delete(task.id)
 
             // Re-spawn with council guidance
-            this.createWorktreeAndSpawn(task, mode, onDone, info.attempt, info.worktreeId)
+            this.createWorktreeAndSpawn(task, mode, onDone, info.attempt, info.worktreeId).catch(
+              (err) => {
+                this.log.error(
+                  `[PIPELINE:council-retry-unhandled] ${task.specialist}/${task.id} — ${(err as Error).message}`
+                )
+                this.activeProcesses.delete(task.id)
+                this.taskStatuses.set(task.id, 'failed')
+                this.emitProgress(task, 'failed', undefined, (err as Error).message)
+                onDone()
+              }
+            )
             return
           }
         } catch (councilError) {
@@ -2402,6 +2548,9 @@ export class SpecialistPoolService extends EventEmitter {
       }
 
       await this.finalizeTaskCompletion(task, info)
+      this.log.info(
+        `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=max-iterations-exhausted`
+      )
       onDone()
       return
     }
@@ -2510,7 +2659,15 @@ export class SpecialistPoolService extends EventEmitter {
     this.taskResults.delete(task.id)
 
     // Re-spawn in the SAME worktree (reuse for fix iteration)
-    this.createWorktreeAndSpawn(task, mode, onDone, info.attempt, info.worktreeId)
+    this.createWorktreeAndSpawn(task, mode, onDone, info.attempt, info.worktreeId).catch((err) => {
+      this.log.error(
+        `[PIPELINE:gate-retry-unhandled] ${task.specialist}/${task.id} — ${(err as Error).message}`
+      )
+      this.activeProcesses.delete(task.id)
+      this.taskStatuses.set(task.id, 'failed')
+      this.emitProgress(task, 'failed', undefined, (err as Error).message)
+      onDone()
+    })
   }
 
   /**
@@ -2552,7 +2709,15 @@ export class SpecialistPoolService extends EventEmitter {
       })
 
       if (!approved) {
-        this.log.info(`Merge rejected for ${task.specialist}/${task.id}`)
+        this.log.info(
+          `[PIPELINE:merge-rejected] ${task.specialist}/${task.id} — user rejected merge`
+        )
+        eventLoggerService.logMergeRejected({
+          conversationId: this.conversationId ?? undefined,
+          agentId: task.specialist,
+          taskId: task.id,
+          reason: 'user_rejected'
+        })
         worktreeRepository.updateStatus(info.worktreeId, 'abandoned')
 
         // Fire checkpoint_rejected hook
@@ -2574,7 +2739,15 @@ export class SpecialistPoolService extends EventEmitter {
       })
       const blocked = preHookResults.some((r) => r.exitCode !== 0 && r.exitCode !== null)
       if (blocked) {
-        this.log.warn(`Pre-merge hook blocked merge for ${task.specialist}/${task.id}`)
+        this.log.warn(
+          `[PIPELINE:merge-blocked] ${task.specialist}/${task.id} — pre-merge hook returned non-zero`
+        )
+        eventLoggerService.logMergeRejected({
+          conversationId: this.conversationId ?? undefined,
+          agentId: task.specialist,
+          taskId: task.id,
+          reason: 'pre_merge_hook_blocked'
+        })
         return
       }
 

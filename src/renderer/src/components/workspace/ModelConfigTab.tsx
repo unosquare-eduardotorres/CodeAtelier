@@ -2,9 +2,57 @@ import { useState, useEffect, useCallback } from 'react'
 import { RotateCcw, Info, Zap, Coins, Scale, Rocket } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { SettingsCard } from '@renderer/components/common'
-import { DEFAULT_MODEL_CONFIG, MODEL_ACTIONS_META } from '../../../../shared/constants'
+import {
+  AVAILABLE_MODELS,
+  DEFAULT_MODEL_CONFIG,
+  MODEL_ACTIONS_META
+} from '../../../../shared/constants'
 import type { ModelAction, ModelOverrides, CostPreference } from '../../../../shared/types'
 import ModelSelector from './ModelSelector'
+
+/** Infer model tier from model ID string */
+function inferTier(modelId: string): 'haiku' | 'sonnet' | 'opus' {
+  if (modelId.includes('haiku')) return 'haiku'
+  if (modelId.includes('opus')) return 'opus'
+  return 'sonnet'
+}
+
+type ModelEntry = {
+  id: string
+  label: string
+  tier: 'haiku' | 'sonnet' | 'opus'
+  description: string
+}
+
+/** Fetch available models from SDK (once), fall back to static AVAILABLE_MODELS */
+function useAvailableModels(): readonly ModelEntry[] {
+  const [models, setModels] = useState<readonly ModelEntry[]>(AVAILABLE_MODELS)
+
+  useEffect(() => {
+    window.api
+      .sdkSupportedModels()
+      .then((sdkModels) => {
+        const arr = sdkModels as
+          | Array<{ value: string; displayName: string; description: string }>
+          | undefined
+        if (arr?.length) {
+          setModels(
+            arr.map((m) => ({
+              id: m.value,
+              label: m.displayName,
+              tier: inferTier(m.value),
+              description: m.description
+            }))
+          )
+        }
+      })
+      .catch(() => {
+        /* Keep static fallback */
+      })
+  }, [])
+
+  return models
+}
 
 const COST_PREF_ICON: Record<CostPreference, React.ReactNode> = {
   economy: <Coins size={16} />,
@@ -36,6 +84,7 @@ const SECTIONS: { key: string; label: string; description: string; actions: Mode
 
 export default function ModelConfigTab(): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
+  const availableModels = useAvailableModels()
   const [overrides, setOverrides] = useState<ModelOverrides>({})
   const [isSaving, setIsSaving] = useState(false)
   const [costPreference, setCostPreference] = useState<CostPreference>('balanced')
@@ -355,6 +404,7 @@ export default function ModelConfigTab(): React.JSX.Element {
                       description={meta.description}
                       icon={meta.icon}
                       selectedModel={getSelectedModel(action)}
+                      models={availableModels}
                       onChange={handleChange}
                       onReset={handleReset}
                     />

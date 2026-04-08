@@ -1615,7 +1615,25 @@ const api = {
   sdkReconnectMcp: (args: { serverName: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.SDK_RECONNECT_MCP, args),
 
-  sdkSupportedAgents: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_AGENTS)
+  sdkSupportedAgents: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_AGENTS),
+
+  // Elicitation — MCP server user input requests
+  elicitationRespond: (args: {
+    action: string
+    content?: Record<string, unknown>
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.ELICITATION_RESPONSE, args),
+
+  onElicitationRequest: (callback: (data: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, data: unknown): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.ELICITATION_REQUEST, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.ELICITATION_REQUEST, handler)
+  },
+
+  // Session mutation — branch a conversation
+  sdkForkSession: (args: {
+    sessionId: string
+    upToMessageId?: string
+  }): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC_CHANNELS.SDK_FORK_SESSION, args)
 } as const
 
 if (process.contextIsolated) {

@@ -531,6 +531,26 @@ class EventLoggerService {
     )
   }
 
+  // ── Merge Events ──
+
+  logMergeRejected(opts: {
+    conversationId?: string
+    agentId: string
+    taskId: string
+    reason: string
+  }): void {
+    this.log(
+      'merge.rejected',
+      'agent',
+      `Merge rejected for ${opts.agentId}/${opts.taskId}: ${opts.reason}`,
+      {
+        conversationId: opts.conversationId,
+        agentId: opts.agentId,
+        data: { taskId: opts.taskId, reason: opts.reason }
+      }
+    )
+  }
+
   // ── Investigation Pipeline ──
 
   logInvestigationReportDetected(opts: {

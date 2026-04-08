@@ -1580,3 +1580,21 @@ export interface IpcEvents {
   'sdk:sessionState': { state: string }
   'sdk:authStatus': { message: string }
 }
+
+// ── Elicitation (MCP server user input requests) ──
+
+/** Elicitation request emitted to the renderer when an MCP server requests user input */
+export interface ElicitationEvent {
+  serverName: string
+  message: string
+  mode: 'form' | 'url'
+  requestedSchema?: Record<string, unknown>
+  url?: string
+  elicitationId?: string
+}
+
+/** Elicitation response sent from the renderer back to the main process */
+export interface ElicitationResponsePayload {
+  action: 'accept' | 'decline' | 'cancel'
+  content?: Record<string, unknown>
+}
