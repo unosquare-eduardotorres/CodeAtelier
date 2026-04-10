@@ -25,6 +25,8 @@
  *   const unsub = bus.subscribe('developer', (msg) => console.log(msg))
  */
 
+import log from '../../logger'
+
 // ── Message Types ──
 
 export type MessageType =
@@ -224,6 +226,7 @@ export class MessageBus {
     this.messages.length = 0
     this.readState.clear()
     this.persistenceContext = {}
+    this.deadLetterQueue.length = 0
     // Keep subscribers — they're registered at setup time
     messageIdCounter = 0
   }
@@ -235,13 +238,52 @@ export class MessageBus {
     this.globalSubscribers.length = 0
   }
 
-  /** Persist a message via the adapter (if enabled). Errors are swallowed to avoid crashing the bus. */
+  /** Dead-letter queue for failed persistence — retried with backoff, max 3 attempts */
+  private deadLetterQueue: Array<{ message: AgentMessage; attempts: number }> = []
+  private readonly maxDlqRetries = 3
+
+  /** Persist a message via the adapter (if enabled). Errors are logged and queued for retry. */
   private persistMessage(message: AgentMessage): void {
     if (!this.persistenceAdapter) return
     try {
       this.persistenceAdapter.persist(message, this.persistenceContext)
+    } catch (err) {
+      log.warn('[MessageBus] Persistence failed for message', message.id, '— queuing for retry:', err)
+      // Dead-letter queue with retry
+      const entry = this.deadLetterQueue.find((e) => e.message.id === message.id)
+      if (entry) {
+        entry.attempts++
+        if (entry.attempts >= this.maxDlqRetries) {
+          log.error('[MessageBus] Message', message.id, 'exceeded max retries — dropping')
+          this.deadLetterQueue = this.deadLetterQueue.filter((e) => e.message.id !== message.id)
+        } else {
+          // Retry on next tick
+          setTimeout(() => this.retryDeadLetter(message), 1000 * entry.attempts)
+        }
+      } else {
+        this.deadLetterQueue.push({ message, attempts: 1 })
+        setTimeout(() => this.retryDeadLetter(message), 1000)
+      }
+    }
+  }
+
+  /** Retry a failed persistence attempt */
+  private retryDeadLetter(message: AgentMessage): void {
+    if (!this.persistenceAdapter) return
+    const entry = this.deadLetterQueue.find((e) => e.message.id === message.id)
+    if (!entry) return
+    try {
+      this.persistenceAdapter.persist(message, this.persistenceContext)
+      log.info('[MessageBus] Dead-letter retry succeeded for message', message.id)
+      this.deadLetterQueue = this.deadLetterQueue.filter((e) => e.message.id !== message.id)
     } catch {
-      /* never crash the bus — persistence is best-effort */
+      entry.attempts++
+      if (entry.attempts >= this.maxDlqRetries) {
+        log.error('[MessageBus] Message', message.id, 'exceeded max retries after', entry.attempts, 'attempts — dropping')
+        this.deadLetterQueue = this.deadLetterQueue.filter((e) => e.message.id !== message.id)
+      } else {
+        setTimeout(() => this.retryDeadLetter(message), 1000 * entry.attempts)
+      }
     }
   }
 
@@ -250,8 +292,8 @@ export class MessageBus {
     for (const cb of this.globalSubscribers) {
       try {
         cb(message)
-      } catch {
-        /* never crash the bus */
+      } catch (err) {
+        log.warn('[MessageBus] Global subscriber error:', err)
       }
     }
 
@@ -262,8 +304,8 @@ export class MessageBus {
         for (const cb of subs) {
           try {
             cb(message)
-          } catch {
-            /* never crash the bus */
+          } catch (err) {
+            log.warn('[MessageBus] Subscriber error for agent', message.to + ':', err)
           }
         }
       }
@@ -274,8 +316,8 @@ export class MessageBus {
         for (const cb of subs) {
           try {
             cb(message)
-          } catch {
-            /* never crash the bus */
+          } catch (err) {
+            log.warn('[MessageBus] Broadcast subscriber error for agent', agentId + ':', err)
           }
         }
       }

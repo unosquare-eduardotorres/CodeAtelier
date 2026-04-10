@@ -29,6 +29,18 @@ import { fileWatcherService } from './services/file-watcher.service'
 // Must happen before app.whenReady() for early error capture
 log.initialize()
 
+// ── Process-level error safety net — never crash silently ──
+process.on('uncaughtException', (error) => {
+  log.error('[Process] Uncaught exception:', error)
+  // Don't exit — let the app continue running if possible
+  // The user may see degraded functionality but won't lose their work
+})
+
+process.on('unhandledRejection', (reason) => {
+  log.error('[Process] Unhandled rejection:', reason)
+  // Same safety — log but don't crash
+})
+
 // Bridge execution tracer events to the persistent event logger
 // Single point of truth — trace spans automatically log agent started/completed/failed
 bridgeTracerToEventLogger()

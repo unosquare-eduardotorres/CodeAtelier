@@ -1,13 +1,9 @@
 import type {
-  ConversationMode,
   ControlToolState,
   GeneralistIntent,
   GrillEvaluation,
-  GrillQuestion,
-  PlanDetectedEvent,
-  StructuredPlan
+  GrillQuestion
 } from '../../shared/types'
-import { HANDOFF_REGEX, PLAN_REGEX, parseHandoffBlock } from './generalist-utils'
 import { generalistLogger } from '../logger'
 
 const log = generalistLogger
@@ -22,48 +18,28 @@ const GRILL_QUESTION_REGEX = /```grill-question\n([\s\S]*?)```/g
 const GRILL_EVAL_REGEX = /```grill-evaluation\n([\s\S]*?)```/g
 
 /**
- * Stateless intent detector — extracts the generalist's intent from accumulated text
- * and control tool state.
+ * Stateless intent detector — extracts the generalist's intent from control tool state.
  *
- * Priority: MCP tool > regex fallback > plain response.
- * Note: ask-user uses MCP tool only (no regex fallback). Handoff and plan retain dual-path.
- *
- * This replaces the 6 detect*() methods previously scattered in GeneralistService,
- * consolidating dual-path detection (MCP tools + regex) into a single, testable class.
+ * MCP tools are the single source of truth for all action-type intents (plan, handoff, askUser).
+ * Regex detection for these intents has been eliminated — no dual-path, no races.
+ * Grill events remain regex-based (no MCP tool equivalent).
  */
 export class IntentDetector {
-  /**
-   * Quick check for handoff presence in accumulated text during streaming.
-   * Used for early stream termination — full intent detection happens post-stream.
-   */
-  hasHandoff(
-    accumulatedText: string,
-    mode: ConversationMode,
-    investigationModeEnabled: boolean
-  ): boolean {
-    if (!investigationModeEnabled) return false
-    if (mode === 'plan') return false
-    return HANDOFF_REGEX.test(accumulatedText)
-  }
-
   /**
    * Detect all intents from the completed response.
    *
    * Returns an array because the generalist can produce multiple intents in one turn
    * (e.g., grill questions + a plan). The caller should process them in order.
-   *
-   * MCP tool-based intents take priority over regex-detected ones for the same action type
-   * (plan, handoff, askUser). Grill events are always regex-based.
    */
   detectAll(
     accumulatedText: string,
     controlToolState: ControlToolState,
-    mode: ConversationMode,
-    investigationModeEnabled: boolean
+    _mode: ConversationMode,
+    _investigationModeEnabled: boolean
   ): GeneralistIntent[] {
     const intents: GeneralistIntent[] = []
 
-    // ── MCP tool intents take priority ──
+    // ── MCP tool intents (single source of truth for action types) ──
 
     if (controlToolState.plan && controlToolState.planIntent) {
       intents.push(controlToolState.planIntent)
@@ -75,18 +51,6 @@ export class IntentDetector {
 
     if (controlToolState.askUser && controlToolState.askUserIntent) {
       intents.push(controlToolState.askUserIntent)
-    }
-
-    // ── Regex fallbacks (only if MCP tool didn't fire for the same type) ──
-
-    if (!controlToolState.handoff) {
-      const handoffIntent = this.detectHandoff(accumulatedText, mode, investigationModeEnabled)
-      if (handoffIntent) intents.push(handoffIntent)
-    }
-
-    if (!controlToolState.plan) {
-      const planIntent = this.detectPlan(accumulatedText)
-      if (planIntent) intents.push(planIntent)
     }
 
     // ── Grill events (always regex-based — no MCP tool equivalent) ──
@@ -103,97 +67,7 @@ export class IntentDetector {
     return intents
   }
 
-  /**
-   * Log dual-mode telemetry — tracks which detection path fired for each action type.
-   */
-  logDetectionPaths(
-    accumulatedText: string,
-    controlToolState: ControlToolState,
-    handoffDetectedInStream: boolean
-  ): void {
-    const regexPlanFired = !controlToolState.plan && !!accumulatedText.match(PLAN_REGEX)
-    const regexHandoffFired =
-      !controlToolState.handoff &&
-      !handoffDetectedInStream &&
-      !!accumulatedText.match(HANDOFF_REGEX)
-
-    if (controlToolState.plan || regexPlanFired) {
-      log.info(`[PIPELINE:plan-path] tool=${controlToolState.plan} regex=${regexPlanFired}`)
-    }
-    if (controlToolState.handoff || regexHandoffFired) {
-      log.info(
-        `[PIPELINE:handoff-path] tool=${controlToolState.handoff} regex=${regexHandoffFired}`
-      )
-    }
-    if (controlToolState.askUser) {
-      log.info(`[PIPELINE:ask-user-path] tool=true regex=false`)
-    }
-    if (controlToolState.memory) {
-      log.info(`[PIPELINE:memory-path] tool=true`)
-    }
-  }
-
-  // ── Private detection methods ──
-
-  private detectHandoff(
-    accumulatedText: string,
-    mode: ConversationMode,
-    investigationModeEnabled: boolean
-  ): GeneralistIntent | null {
-    if (!investigationModeEnabled) return null
-
-    if (mode === 'plan') {
-      const match = accumulatedText.match(HANDOFF_REGEX)
-      if (match) {
-        log.warn(
-          `[PIPELINE:handoff-suppressed] Plan-mode handoff blocked — generalist must produce plan directly.`
-        )
-      }
-      return null
-    }
-
-    const brief = parseHandoffBlock(accumulatedText)
-    if (!brief) return null
-
-    log.info('Handoff detected (regex):', {
-      summary: brief.summary,
-      decisions: brief.decisions.length,
-      constraints: brief.constraints.length,
-      filesDiscussed: brief.filesDiscussed.length,
-      specialists: brief.specialists
-    })
-
-    return { type: 'handoff', brief }
-  }
-
-  private detectPlan(accumulatedText: string): GeneralistIntent | null {
-    const match = accumulatedText.match(PLAN_REGEX)
-    if (!match) return null
-
-    const rawContent = match[1].trim()
-    let structuredPlan: StructuredPlan | null = null
-    try {
-      const parsed = JSON.parse(rawContent)
-      if (parsed && typeof parsed === 'object' && typeof parsed.title === 'string') {
-        structuredPlan = parsed as StructuredPlan
-      }
-    } catch {
-      // Raw markdown plan — still emit the event with null structured data
-    }
-
-    log.info(
-      `[PIPELINE:plan-detected] structured=${!!structuredPlan} contentLen=${rawContent.length}`
-    )
-
-    const planEvent: PlanDetectedEvent = {
-      rawContent,
-      structuredPlan,
-      beforePlan: accumulatedText.substring(0, match.index!),
-      afterPlan: accumulatedText.substring(match.index! + match[0].length)
-    }
-
-    return { type: 'plan', plan: planEvent }
-  }
+  // ── Private detection methods (grill events only) ──
 
   private detectGrillSummary(accumulatedText: string): GeneralistIntent | null {
     const match = accumulatedText.match(GRILL_SUMMARY_REGEX)

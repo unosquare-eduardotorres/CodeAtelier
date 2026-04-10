@@ -30,6 +30,7 @@ import { githubService } from './github.service'
 import { memoryService } from './memory.service'
 import {
   conversationRepository,
+  messageRepository,
   memoryRepository,
   specialistRepository,
   turnUsageRepository,
@@ -127,6 +128,9 @@ export class GeneralistService extends AgentBaseService {
    * When ON (default), normal handoff protocol applies.
    */
   private investigationModeEnabled: boolean = true
+
+  /** Pending resume-at message ID for next send() — set by resumeAt() */
+  private pendingResumeAt: string | undefined
 
   /** Tracks which control tools fired and their intents during the current turn */
   private controlToolState: ControlToolState = {
@@ -529,6 +533,9 @@ export class GeneralistService extends AgentBaseService {
       mcpResult
     } = opts
     const { mcpServers, allowedTools, disallowedTools } = mcpResult
+    // Capture and clear pending resumeAt — consumed once per executeStream()
+    const resumeAt = this.pendingResumeAt
+    this.pendingResumeAt = undefined
     const abortController = new AbortController()
     this.sdkAbortController = abortController
 
@@ -549,12 +556,26 @@ export class GeneralistService extends AgentBaseService {
     }, GeneralistService.MAX_INTERACTION_TIMEOUT_MS)
 
     try {
-      let handoffDetectedInStream = false
       let messageStopReceived = false
       let hasTextAfterLastTool = true
+      /** Terminal reason from SDK result — used for smarter recovery nudge */
+      let lastTerminalReason: string | undefined
+      /** Session recovery — set to true when a stale session error is detected */
+      let sessionRecoveryNeeded = false
 
       // Resolve the main model before execute — needed to conditionally set fallbackModel
       const resolvedModel = modelConfigService.getModel(this.workspacePath!, 'generalist')
+      // Read additional directories for monorepo support
+      let additionalDirectories: string[] | undefined
+      try {
+        const workspace = workspaceRepository.findById(this.workspaceId!)
+        if (workspace) {
+          const settings = JSON.parse(workspace.settingsJson || '{}')
+          additionalDirectories = settings.additionalDirectories as string[] | undefined
+        }
+      } catch {
+        /* workspace settings read failure — non-fatal */
+      }
 
       // @ts-expect-error — TODO: mcpServers shape needs aligning with SDK McpServerConfigForProcessTransport
       for await (const chunk of this.sdkExecutor.execute({
@@ -562,26 +583,127 @@ export class GeneralistService extends AgentBaseService {
         systemPrompt,
         model: resolvedModel,
         cwd: this.workspacePath!,
-        permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
+        permissionMode: isBuildMode ? 'auto' : 'default',
         allowedTools,
         disallowedTools,
         maxTurns: isBuildMode ? 50 : 25,
         resume: sessionId,
+        ...(resumeAt ? { resumeSessionAt: resumeAt } : {}),
         abortController,
         agentId: AGENT_IDS.GENERALIST,
-        // Generalist: adaptive thinking + high effort (coordinator needs deep reasoning)
+        // Generalist: adaptive thinking + summarized display + high effort
         thinking: { type: 'adaptive' },
+        thinkingDisplay: 'summarized',
         effort: 'high',
+        // taskBudget: { total: 80_000 }, // disabled until API supports beta header
         maxBudgetUsd: GENERALIST_BUDGET_CAP,
         // New SDK options — prompt suggestions (nearly free, uses prompt cache)
         promptSuggestions: true,
+        // Guarantee hook lifecycle events are emitted — enables real-time hook visibility in UI
+        includeHookEvents: true,
+        // SDK native auto-compact — handles compaction timing automatically (0.2.96+)
+        autoCompactWindow: true,
         // Native file checkpointing for rewindFiles() support
         enableFileCheckpointing: true,
         // Enable 1M context window — 5x headroom over default 200K
         betas: ['context-1m-2025-08-07'],
         // Fallback to Sonnet if Opus is rate-limited (omit when main model is already Sonnet)
         ...(resolvedModel !== 'claude-sonnet-4-6' ? { fallbackModel: 'claude-sonnet-4-6' } : {}),
+        ...(additionalDirectories?.length ? { additionalDirectories } : {}),
+        // Wire enriched tool approval in build mode — richer than PreToolUse hooks
+        ...(isBuildMode
+          ? {
+              canUseTool: async (
+                toolName: string,
+                input: Record<string, unknown>,
+                opts: {
+                  signal: AbortSignal
+                  title?: string
+                  displayName?: string
+                  description?: string
+                  suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[]
+                  blockedPath?: string
+                  decisionReason?: string
+                  toolUseID: string
+                  agentID?: string
+                }
+              ): Promise<import('@anthropic-ai/claude-agent-sdk').PermissionResult> => {
+                const { toolApprovalService } = await import('./tool-approval.service')
+                const result = await toolApprovalService.requestApprovalEnriched(
+                  toolName,
+                  input,
+                  AGENT_IDS.GENERALIST,
+                  undefined,
+                  {
+                    title: opts.title,
+                    displayName: opts.displayName,
+                    description: opts.description,
+                    suggestions: opts.suggestions
+                  }
+                )
+                return result.approved
+                  ? {
+                      behavior: 'allow' as const,
+                      updatedPermissions: result.updatedPermissions as
+                        | import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[]
+                        | undefined
+                    }
+                  : { behavior: 'deny' as const, message: 'Blocked by user' }
+              }
+            }
+          : {}),
+        // PermissionDenied hook — surface SDK auto-classifier denials to the UI
+        onPermissionDenied: (toolName: string, reason: string) => {
+          this.log.info(`[PIPELINE:permission-denied] tool=${toolName} reason=${reason}`)
+          this.emit('chunk', {
+            type: 'status',
+            content: `⚠️ Permission denied: ${toolName} — ${reason}`
+          } as StreamChunk)
+        },
+        onSubagentStart: (agentId: string, description: string) => {
+          this.log.info(`[PIPELINE:subagent-start] agent=${agentId} desc=${description}`)
+        },
+        onSubagentStop: (agentId: string, status: string) => {
+          this.log.info(`[PIPELINE:subagent-stop] agent=${agentId} status=${status}`)
+        },
+        onTaskCreated: (taskId: string, description: string) => {
+          this.log.info(`[PIPELINE:task-created] task=${taskId} desc=${description}`)
+        },
+        onTaskCompleted: (taskId: string, status: string) => {
+          this.log.info(`[PIPELINE:task-completed] task=${taskId} status=${status}`)
+        },
+        sandbox: isBuildMode
+          ? {
+              enabled: true,
+              autoAllowBashIfSandboxed: true,
+              // macOS has sandbox-exec built-in; Linux may lack bubblewrap in CI
+              failIfUnavailable: process.platform === 'darwin',
+              allowUnsandboxedCommands: true,
+              network: {
+                allowLocalBinding: true
+              }
+            }
+          : undefined,
         ...(mcpServers ? { mcpServers } : {}),
+        // Wire compaction lifecycle — auto-seed read state for recently-accessed files
+        onPostCompact: async (preTokens: number, postTokens: number) => {
+          this.log.info(`[Compaction] ${preTokens} → ${postTokens} tokens`)
+          // Auto-seed read state for recently-accessed files after compaction
+          const activeQuery = this.sdkExecutor.getActiveQuery()
+          if (activeQuery && this.currentConversationId) {
+            const { fileChangeRepository } = await import('../db/repositories')
+            const files = fileChangeRepository.findByConversation(this.currentConversationId)
+            for (const file of files) {
+              try {
+                const { statSync } = await import('fs')
+                const stat = statSync(file.filePath)
+                await activeQuery.seedReadState(file.filePath, Math.floor(stat.mtimeMs))
+              } catch {
+                /* file may have been deleted — skip */
+              }
+            }
+          }
+        },
         // Wire MCP elicitation — structured user input requests from MCP servers
         onElicitation: async (request: ElicitationRequest, { signal }: { signal: AbortSignal }) => {
           this.log.info(
@@ -631,6 +753,26 @@ export class GeneralistService extends AgentBaseService {
               this.log.error('Failed to persist session ID:', err)
             }
           }
+          // Auto-name conversation using SDK session_title (free — no extra API call)
+          if (meta.sessionTitle && conversationId) {
+            try {
+              const conv = conversationRepository.findById(conversationId)
+              // Only auto-name if the conversation still has the default title
+              if (conv && (conv.title === 'New Conversation' || conv.title === '')) {
+                conversationRepository.updateTitle(conversationId, meta.sessionTitle)
+                this.log.info(`[PIPELINE:auto-title] "${meta.sessionTitle}" for ${conversationId}`)
+              }
+            } catch (err) {
+              this.log.warn('Failed to auto-name conversation from session_title:', err)
+            }
+          }
+
+          // Log terminal reason for diagnostics (SDK 0.2.96+)
+          if (meta.terminalReason) {
+            lastTerminalReason = meta.terminalReason
+            this.log.info(`[PIPELINE:terminal-reason] ${meta.terminalReason} for ${conversationId}`)
+          }
+
           // Track token usage
           const { totalTokens } = this.tokenTracker.recordTurn(meta, {
             turnCount,
@@ -688,19 +830,55 @@ export class GeneralistService extends AgentBaseService {
             }
           }
         } else {
-          // Accumulate text for handoff/grill detection
+          // ── Session recovery: detect stale session error ──
+          if (
+            chunk.type === 'error' &&
+            chunk.error?.includes('No conversation found with session ID')
+          ) {
+            this.log.warn(
+              `[PIPELINE:session-recovery] Stale session detected for conversationId=${conversationId} — initiating recovery`
+            )
+
+            // 1. Notify UI — recovery started
+            this.emit('chunk', {
+              type: 'session_recovery',
+              recoveryPhase: 'started',
+              content: 'Session expired — recovering conversation context...'
+            } as StreamChunk)
+
+            // 2. Clear the stale session from memory and DB
+            this.clearSession(conversationId)
+            try {
+              conversationRepository.updateSessionId(conversationId, '')
+            } catch (err) {
+              this.log.error('[PIPELINE:session-recovery] Failed to clear DB session:', err)
+            }
+
+            // 3. Build context from DB messages
+            this.emit('chunk', {
+              type: 'session_recovery',
+              recoveryPhase: 'building_context',
+              content: 'Rebuilding conversation context from history...'
+            } as StreamChunk)
+
+            const recoverySummary = this.buildRecoverySummary(conversationId)
+            this.promptAssembler.addPendingContext(conversationId, recoverySummary)
+
+            // 4. Signal retry
+            this.emit('chunk', {
+              type: 'session_recovery',
+              recoveryPhase: 'resuming',
+              content: 'Starting fresh session with conversation context...'
+            } as StreamChunk)
+
+            sessionRecoveryNeeded = true
+            break // exits the for-await loop — retry happens below
+          }
+
+          // Accumulate text for grill detection
           if (chunk.type === 'text' && chunk.content) {
             this.accumulatedText += chunk.content
             hasTextAfterLastTool = true
-            if (
-              intentDetector.hasHandoff(
-                this.accumulatedText,
-                this.currentMode,
-                this.investigationModeEnabled
-              )
-            ) {
-              handoffDetectedInStream = true
-            }
           }
           // Tool call counting + circuit breaker
           if (chunk.type === 'tool_use') {
@@ -742,18 +920,48 @@ export class GeneralistService extends AgentBaseService {
           if (chunk.type === 'tool_use') this.currentStatus = 'reviewing'
           this.emit('statusUpdate', this.getStatus())
           this.emit('chunk', chunk)
-
-          if (handoffDetectedInStream) {
-            this.log.info(
-              `[PIPELINE:handoff-short-circuit] conversationId=${conversationId} streamedLen=${this.accumulatedText.length}`
-            )
-            break
-          }
         }
       }
 
       clearTimeout(interactionTimer)
       this.sdkAbortController = null
+
+      // ── Session recovery retry ──
+      // If the stream broke out due to a stale session error, retry with a fresh session
+      if (sessionRecoveryNeeded) {
+        try {
+          // Re-execute without resume (sessionId is now cleared)
+          await this.executeStream({
+            sdkPrompt,
+            systemPrompt,
+            sessionId: undefined, // Fresh session
+            conversationId,
+            turnCount,
+            isBuildMode,
+            mcpResult
+          })
+          // Emit recovery completion — executeStream handles its own complete/error emission
+          this.emit('chunk', {
+            type: 'session_recovery',
+            recoveryPhase: 'completed',
+            content: 'Session recovered successfully.'
+          } as StreamChunk)
+          return
+        } catch (retryError) {
+          this.log.error('[PIPELINE:session-recovery-failed]', retryError)
+          this.emit('chunk', {
+            type: 'session_recovery',
+            recoveryPhase: 'failed',
+            content: 'Session recovery failed. Please start a new conversation.'
+          } as StreamChunk)
+          // Fall through to normal completion
+          this.currentStatus = 'failed'
+          this.flushTokenUsage()
+          this.emit('statusUpdate', this.getStatus())
+          this.emit('complete')
+          return
+        }
+      }
 
       // Stream termination validation
       if (!messageStopReceived && !this.circuitBreaker.isBroken && !timedOut) {
@@ -766,8 +974,21 @@ export class GeneralistService extends AgentBaseService {
         `[PIPELINE:generalist-response-complete] conversationId=${conversationId} textLen=${this.accumulatedText.length}`
       )
 
-      // Recovery nudge for silent tool completion
-      if (this.circuitBreaker.count > 0 && !hasTextAfterLastTool && !handoffDetectedInStream) {
+      // Recovery nudge for silent tool completion.
+      // With SDK 0.2.96 TerminalReason: skip nudge on 'max_turns' (expected behavior)
+      // and 'hook_stopped' / 'aborted_tools' (intentional stops).
+      const skipNudgeReasons = new Set([
+        'max_turns',
+        'hook_stopped',
+        'aborted_tools',
+        'aborted_streaming'
+      ])
+      const shouldSkipNudge = lastTerminalReason && skipNudgeReasons.has(lastTerminalReason)
+      if (
+        this.circuitBreaker.count > 0 &&
+        !hasTextAfterLastTool &&
+        !shouldSkipNudge
+      ) {
         this.log.warn(
           `[PIPELINE:recovery-nudge-triggered] conversationId=${conversationId} ` +
             `toolCalls=${this.circuitBreaker.count} accumulatedTextLen=${this.accumulatedText.length}`
@@ -794,12 +1015,12 @@ export class GeneralistService extends AgentBaseService {
       } else {
         this.log.info(
           `[PIPELINE:recovery-nudge-skipped] toolCount=${this.circuitBreaker.count} ` +
-            `hasTextAfterLastTool=${hasTextAfterLastTool} handoff=${handoffDetectedInStream}`
+            `hasTextAfterLastTool=${hasTextAfterLastTool}`
         )
       }
 
       // ── Intent detection + emission ──
-      this.emitDetectedIntents(conversationId, handoffDetectedInStream)
+      this.emitDetectedIntents(conversationId)
 
       // Session-reset compaction removed — SDK native /compact preserves session state
 
@@ -814,14 +1035,11 @@ export class GeneralistService extends AgentBaseService {
     }
   }
 
-  /** Detect and emit intents from accumulated text and control tool state. */
-  private emitDetectedIntents(_conversationId: string, handoffDetectedInStream: boolean): void {
-    const detectionState: ControlToolState = handoffDetectedInStream
-      ? { ...this.controlToolState, handoff: true }
-      : this.controlToolState
+  /** Detect and emit intents from control tool state (MCP-only — no regex fallback). */
+  private emitDetectedIntents(_conversationId: string): void {
     const detectedIntents = intentDetector.detectAll(
       this.accumulatedText,
-      detectionState,
+      this.controlToolState,
       this.currentMode,
       this.investigationModeEnabled
     )
@@ -835,25 +1053,9 @@ export class GeneralistService extends AgentBaseService {
       this.emit('intent', { type: 'response', content: this.accumulatedText } as GeneralistIntent)
     }
 
-    // Dual-mode telemetry
-    intentDetector.logDetectionPaths(
-      this.accumulatedText,
-      this.controlToolState,
-      handoffDetectedInStream
-    )
-
-    // Post-handoff auto-compact
-    // NOTE: tokenUsage here is cumulative billing tokens, not context window size.
-    // Could be improved to use lastContextTokens (SDK context size) for a more
-    // accurate threshold. Kept as-is for now since it's a conservative heuristic.
-    const hasHandoffIntent =
-      detectedIntents.some((i) => i.type === 'handoff') || handoffDetectedInStream
-    if (hasHandoffIntent && this.tokenUsage > 30_000 && this.compactCount < 5) {
-      this.log.info(
-        `Post-handoff auto-compact scheduled (tokens: ${this.tokenUsage}, compacts: ${this.compactCount}) — delayed 120s for result injection`
-      )
-      setTimeout(() => this.compact(), 120_000)
-    }
+    // Post-handoff compaction is handled natively by SDK autoCompactWindow (0.2.96+).
+    // Manual setTimeout-based compaction removed — the SDK monitors context window size
+    // and triggers compaction at the optimal time automatically.
   }
 
   /** Handle errors from the stream execution — timeout, abort, or SDK failure. */
@@ -1161,6 +1363,16 @@ export class GeneralistService extends AgentBaseService {
     // automatically. PreCompact/PostCompact hooks in sdk-executor.ts log the lifecycle.
   }
 
+  /** Resume session at a specific message point — rewinds files and sets next send() to resume there */
+  async resumeAt(messageId: string): Promise<void> {
+    const activeQuery = this.sdkExecutor.getActiveQuery()
+    if (activeQuery) {
+      await activeQuery.rewindFiles(messageId)
+    }
+    this.pendingResumeAt = messageId
+    this.log.info(`[resumeAt] Set pending resume at message=${messageId}`)
+  }
+
   /** Returns the session ID for a given conversation, if captured. */
   getSessionId(conversationId: string): string | undefined {
     return this.sessionMap.get(conversationId)
@@ -1170,6 +1382,36 @@ export class GeneralistService extends AgentBaseService {
   clearSession(conversationId: string): void {
     this.sessionMap.delete(conversationId)
     this.promptAssembler.clearConversation(conversationId)
+  }
+
+  /**
+   * Builds a condensed context summary from recent DB messages for session recovery.
+   * Used when a stale session is detected — injects enough history for the fresh
+   * session to continue the conversation naturally.
+   */
+  private buildRecoverySummary(conversationId: string): string {
+    const messages = messageRepository.findByConversation(conversationId)
+
+    // Take last 20 messages (enough context without being excessive)
+    const recent = messages.slice(-20)
+
+    const lines = recent.map((m) => {
+      const role = m.role === 'user' ? 'User' : 'Assistant'
+      // Truncate very long messages to keep context injection reasonable
+      const content =
+        m.contentMd.length > 2000 ? m.contentMd.slice(0, 2000) + '...[truncated]' : m.contentMd
+      return `[${role}]: ${content}`
+    })
+
+    return [
+      '--- SESSION RECOVERY CONTEXT ---',
+      'The previous session was lost. Here is a summary of the recent conversation:',
+      '',
+      ...lines,
+      '',
+      '--- END RECOVERY CONTEXT ---',
+      'Continue the conversation naturally from where we left off.'
+    ].join('\n')
   }
 
   /**
@@ -1202,7 +1444,7 @@ export class GeneralistService extends AgentBaseService {
     // Apply permission change immediately via SDK (if active query exists)
     const activeQuery = this.sdkExecutor.getActiveQuery()
     if (activeQuery) {
-      const sdkMode = mode === 'build' ? 'bypassPermissions' : 'default'
+      const sdkMode = mode === 'build' ? 'auto' : 'default'
       try {
         await activeQuery.setPermissionMode(sdkMode)
         this.log.info(`[PIPELINE:mode-switch] SDK permissionMode set to '${sdkMode}'`)
