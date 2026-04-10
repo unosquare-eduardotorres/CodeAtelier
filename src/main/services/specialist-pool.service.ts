@@ -328,24 +328,27 @@ export class SpecialistPoolService extends EventEmitter {
     this.investigationDepth = depth
   }
 
-  /**
-   * Executes tasks sequentially — one at a time in dependency order.
-   */
-  async executeSequential(tasks: DecomposedTask[], mode: ConversationMode): Promise<void> {
+  // ── Shared Execution Scaffolding ──
+
+  /** Pre-execution setup: reset, trace, bus, budget, checkpoint */
+  private preExecutionSetup(
+    tasks: DecomposedTask[],
+    mode: ConversationMode,
+    strategy: 'sequential' | 'parallel'
+  ): void {
     this.reset()
-    // Start trace run for execution timeline correlation
-    this.currentRunId = executionTracer.startRun(`sequential-execution: ${tasks.length} tasks`, {
+    this.currentRunId = executionTracer.startRun(`${strategy}-execution: ${tasks.length} tasks`, {
       mode,
       taskCount: tasks.length,
-      strategy: 'sequential'
+      strategy
     })
-    messageBus.reset() // Fresh message bus per execution run
+    messageBus.reset()
     messageBus.setPersistenceContext({
       conversationId: this.conversationId ?? undefined,
       runId: this.currentRunId ?? undefined
     })
 
-    // Check budget before execution
+    // Budget check
     if (this.workspacePath) {
       try {
         const allWs = workspaceRepository.findAll()
@@ -363,7 +366,7 @@ export class SpecialistPoolService extends EventEmitter {
       }
     }
 
-    // Auto-checkpoint before execution
+    // Auto-checkpoint
     if (this.workspacePath && this.conversationId) {
       try {
         checkpointService.createPreExecutionCheckpoint({
@@ -375,43 +378,62 @@ export class SpecialistPoolService extends EventEmitter {
         this.log.warn('Failed to create pre-execution checkpoint:', err)
       }
     }
+  }
 
-    const ordered = this.topologicalSort(tasks)
-
-    for (const task of ordered) {
-      if (this.aborted) break
-
-      const taskStartedAt = Date.now()
-      this.emitProgress(task, 'running', undefined, undefined, { startedAt: taskStartedAt })
-      try {
-        const output = await this.runSpecialistTask(task, mode)
-        this.taskResults.set(task.id, output)
-        this.completedTasks.add(task.id)
-        this.emitProgress(task, 'completed', output, undefined, {
-          startedAt: taskStartedAt,
-          completedAt: Date.now()
-        })
-      } catch (error) {
-        this.taskStatuses.set(task.id, 'failed')
-        this.emitProgress(task, 'failed', undefined, (error as Error).message, {
-          startedAt: taskStartedAt,
-          completedAt: Date.now()
-        })
-        this.log.error(
-          `[PIPELINE:sequential-task-failed] ${task.specialist}/${task.id} — ${(error as Error).message} ` +
-            `elapsed=${Date.now() - taskStartedAt}ms`
-        )
-        // Continue with remaining tasks — downstream dependents will still run
-        // but without the output context from this failed task
-      }
-    }
-
-    // End trace run
+  /** Post-execution teardown: end trace, emit allComplete */
+  private postExecutionTeardown(): void {
     if (this.currentRunId) {
       executionTracer.endRun(this.currentRunId, { tasksCompleted: this.completedTasks.size })
       this.currentRunId = null
     }
     this.emit('allComplete')
+  }
+
+  /** Execute a single task with progress emission */
+  private async runSingleTask(
+    task: DecomposedTask,
+    mode: ConversationMode
+  ): Promise<{ status: string; error?: string; duration?: number }> {
+    const taskStartedAt = Date.now()
+    this.emitProgress(task, 'running', undefined, undefined, { startedAt: taskStartedAt })
+    try {
+      const output = await this.runSpecialistTask(task, mode)
+      this.taskResults.set(task.id, output)
+      this.completedTasks.add(task.id)
+      this.emitProgress(task, 'completed', output, undefined, {
+        startedAt: taskStartedAt,
+        completedAt: Date.now()
+      })
+      return { status: 'completed', duration: Date.now() - taskStartedAt }
+    } catch (error) {
+      this.taskStatuses.set(task.id, 'failed')
+      this.emitProgress(task, 'failed', undefined, (error as Error).message, {
+        startedAt: taskStartedAt,
+        completedAt: Date.now()
+      })
+      this.log.error(
+        `[PIPELINE:task-failed] ${task.specialist}/${task.id} — ${(error as Error).message} ` +
+          `elapsed=${Date.now() - taskStartedAt}ms`
+      )
+      return { status: 'failed', error: (error as Error).message, duration: Date.now() - taskStartedAt }
+    }
+  }
+
+  /**
+   * Executes tasks sequentially — one at a time in dependency order.
+   */
+  async executeSequential(tasks: DecomposedTask[], mode: ConversationMode): Promise<void> {
+    this.preExecutionSetup(tasks, mode, 'sequential')
+    if (this.aborted) { this.postExecutionTeardown(); return }
+
+    const ordered = this.topologicalSort(tasks)
+
+    for (const task of ordered) {
+      if (this.aborted) break
+      await this.runSingleTask(task, mode)
+    }
+
+    this.postExecutionTeardown()
   }
 
   /**
@@ -420,18 +442,8 @@ export class SpecialistPoolService extends EventEmitter {
    * When a task completes, any newly-unblocked tasks are started.
    */
   async executeParallel(tasks: DecomposedTask[], mode: ConversationMode): Promise<void> {
-    this.reset()
-    // Start trace run for execution timeline correlation
-    this.currentRunId = executionTracer.startRun(`parallel-execution: ${tasks.length} tasks`, {
-      mode,
-      taskCount: tasks.length,
-      strategy: 'parallel'
-    })
-    messageBus.reset() // Fresh message bus per execution run
-    messageBus.setPersistenceContext({
-      conversationId: this.conversationId ?? undefined,
-      runId: this.currentRunId ?? undefined
-    })
+    this.preExecutionSetup(tasks, mode, 'parallel')
+    if (this.aborted) { this.postExecutionTeardown(); return }
 
     // Subscribe to all bus messages for execution tracing
     const parallelRunId = this.currentRunId
@@ -444,37 +456,6 @@ export class SpecialistPoolService extends EventEmitter {
         })
       }
     })
-
-    // Check budget before execution
-    if (this.workspacePath) {
-      try {
-        const allWs = workspaceRepository.findAll()
-        const ws = allWs.find((w) => w.repoPath === this.workspacePath)
-        if (ws) {
-          const budget = costTrackerService.checkBudget(ws.id)
-          if (budget.dailyExceeded) {
-            this.log.warn(`Budget exceeded for workspace ${ws.id} — aborting execution`)
-            this.emit('allComplete')
-            return
-          }
-        }
-      } catch (err) {
-        this.log.warn('Budget check failed (continuing execution):', err)
-      }
-    }
-
-    // Auto-checkpoint before execution
-    if (this.workspacePath && this.conversationId) {
-      try {
-        checkpointService.createPreExecutionCheckpoint({
-          conversationId: this.conversationId,
-          workspacePath: this.workspacePath,
-          tasks
-        })
-      } catch (err) {
-        this.log.warn('Failed to create pre-execution checkpoint:', err)
-      }
-    }
 
     // Initialize file-based artifact chain for inter-agent communication
     if (this.workspacePath && this.conversationId) {
@@ -545,13 +526,7 @@ export class SpecialistPoolService extends EventEmitter {
                   `[PIPELINE:allComplete-from-onDone] pending=0 active=0 completed=${this.completedTasks.size}`
                 )
                 unsubBusTrace()
-                if (this.currentRunId) {
-                  executionTracer.endRun(this.currentRunId, {
-                    tasksCompleted: this.completedTasks.size
-                  })
-                  this.currentRunId = null
-                }
-                this.emit('allComplete')
+                this.postExecutionTeardown()
                 resolve()
               } else {
                 tryStartReady()
@@ -579,11 +554,7 @@ export class SpecialistPoolService extends EventEmitter {
               `startedInRound=${startedInRound}`
           )
           unsubBusTrace()
-          if (this.currentRunId) {
-            executionTracer.endRun(this.currentRunId, { tasksCompleted: this.completedTasks.size })
-            this.currentRunId = null
-          }
-          this.emit('allComplete')
+          this.postExecutionTeardown()
           resolve()
         }
       }
@@ -1034,9 +1005,7 @@ export class SpecialistPoolService extends EventEmitter {
     await this.runTaskLoopGates(task, info, mode, gateCwd, onDone).catch(async (err) => {
       this.log.error(`Task loop gate evaluation failed for ${task.id}:`, err)
       await this.finalizeTaskCompletion(task, info)
-      this.log.info(
-        `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=gate-catch`
-      )
+      this.log.info(`[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=gate-catch`)
       onDone()
     })
   }
@@ -1221,9 +1190,7 @@ export class SpecialistPoolService extends EventEmitter {
       })
       this.emit('circuitBreakerTripped', { failures: this.consecutiveSpawnFailures })
       this.stopAll()
-      this.log.info(
-        `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=circuit-breaker`
-      )
+      this.log.info(`[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=circuit-breaker`)
       onDone() // CRITICAL: unblock the executeParallel promise
       return
     }
@@ -1233,9 +1200,7 @@ export class SpecialistPoolService extends EventEmitter {
     }
 
     // Semaphore auto-released by sem.run() — continue parallel execution
-    this.log.info(
-      `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=failure-settled`
-    )
+    this.log.info(`[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=failure-settled`)
     onDone()
   }
 
@@ -1615,6 +1580,12 @@ export class SpecialistPoolService extends EventEmitter {
         SPECIALIST_BUDGET_CAPS[
           (task.complexity?.tier ?? 'moderate') as keyof typeof SPECIALIST_BUDGET_CAPS
         ]
+      const taskBudgetTotal =
+        {
+          simple: 10_000,
+          moderate: 30_000,
+          complex: 80_000
+        }[(task.complexity?.tier ?? 'moderate') as string] ?? 30_000
 
       // Enable 1M context beta for Sonnet models
       const isSonnet = modelId.includes('sonnet')
@@ -1624,9 +1595,7 @@ export class SpecialistPoolService extends EventEmitter {
         systemPrompt,
         model: modelId,
         cwd,
-        permissionMode: mode === 'build' ? 'bypassPermissions' : 'default',
-        // Enable tool approval in build mode for destructive operations
-        enableToolApproval: mode === 'build',
+        permissionMode: mode === 'build' ? 'auto' : 'default',
         agentId: task.specialist,
         taskId: task.id,
         // Modern thinking: adaptive for opus, budget-based for others
@@ -1636,6 +1605,9 @@ export class SpecialistPoolService extends EventEmitter {
             ? { type: 'enabled' as const, budgetTokens: parseInt(thinkingBudget) }
             : undefined,
         effort: effortLevel,
+        // Specialists: omit thinking display — saves ~10-20% of streamed bytes (SDK 0.2.96+)
+        thinkingDisplay: 'omitted',
+        // taskBudget: { total: taskBudgetTotal }, // disabled until API supports beta header
         maxBudgetUsd: budgetCap,
         maxTurns: execState.maxTurns,
         abortController: execState.abortController,
@@ -1663,6 +1635,19 @@ export class SpecialistPoolService extends EventEmitter {
             }
           }
         },
+        sandbox:
+          mode === 'build'
+            ? {
+                enabled: true,
+                autoAllowBashIfSandboxed: true,
+                // macOS has sandbox-exec built-in; Linux may lack bubblewrap in CI
+                failIfUnavailable: process.platform === 'darwin',
+                allowUnsandboxedCommands: true,
+                network: {
+                  allowLocalBinding: true
+                }
+              }
+            : undefined,
         // Enable 1M context window for Sonnet specialists
         ...(isSonnet ? { betas: ['context-1m-2025-08-07'] } : {}),
         ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
@@ -2372,9 +2357,7 @@ export class SpecialistPoolService extends EventEmitter {
     // Only run task loop in build mode — plan mode doesn't produce code to validate
     if (mode !== 'build') {
       await this.finalizeTaskCompletion(task, info)
-      this.log.info(
-        `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=non-build-mode`
-      )
+      this.log.info(`[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=non-build-mode`)
       onDone()
       return
     }
@@ -2417,9 +2400,7 @@ export class SpecialistPoolService extends EventEmitter {
       }
 
       await this.finalizeTaskCompletion(task, info)
-      this.log.info(
-        `[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=gates-passed`
-      )
+      this.log.info(`[PIPELINE:onDone-called] ${task.specialist}/${task.id} path=gates-passed`)
       onDone()
       return
     }
