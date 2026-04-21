@@ -3,40 +3,14 @@ import type { HookCallback, SyncHookJSONOutput } from '@anthropic-ai/claude-agen
 
 const hookLog = log.scope('SDKHooks')
 
-const DANGEROUS_PATTERNS = [
-  'rm -rf /',
-  'rm -rf /*',
-  'rm -rf ~',
-  'rm -rf $HOME',
-  'git push --force main',
-  'git push --force master',
-  'git push --force origin main',
-  'git push --force origin master',
-  'git push -f origin main',
-  'git push -f origin master',
-  'sudo ',
-  'mkfs.',
-  'dd if=',
-  ':(){:|:&};:',
-  'chmod -R 777 /',
-  'chmod -R 777 /*',
-  'DROP DATABASE',
-  'DROP TABLE',
-  'TRUNCATE TABLE',
-  '| bash',
-  '| sh',
-  'npm publish'
-]
-
-export function isDangerousCommand(command: string): boolean {
-  const lower = command.toLowerCase()
-  return DANGEROUS_PATTERNS.some((p) => lower.includes(p.toLowerCase()))
-}
-
 /**
  * Creates a PreToolUse scope guard hook for the SDK.
- * Blocks file writes outside the allowed cwd and dangerous bash commands.
+ * Blocks file writes outside the allowed cwd.
  * Returns SDK-compatible HookCallback for use in query() hooks option.
+ *
+ * Note: With SDK 0.2.96 PermissionMode: 'auto', dangerous command detection
+ * is handled natively by the SDK's model classifier. The scope guard remains
+ * as defense-in-depth for file path containment.
  */
 export function createScopeGuard(allowedCwd: string): HookCallback {
   return async (input) => {
@@ -49,15 +23,6 @@ export function createScopeGuard(allowedCwd: string): HookCallback {
       if (filePath && !filePath.startsWith(allowedCwd)) {
         hookLog.warn(`Blocked file access outside scope: ${filePath}`)
         return { decision: 'block', reason: `File outside allowed scope: ${filePath}` }
-      }
-    }
-
-    // Dangerous command check for Bash
-    if (toolName === 'Bash') {
-      const command = toolInput?.command as string
-      if (command && isDangerousCommand(command)) {
-        hookLog.warn(`Blocked dangerous command: ${command.substring(0, 100)}`)
-        return { decision: 'block', reason: 'Dangerous command blocked by scope guard' }
       }
     }
 
@@ -207,8 +172,9 @@ export function createFileChangedHook(
 }
 
 /**
- * Creates a PreToolUse hook that requests user approval for dangerous tools.
- * Auto-approves safe tools (Read, Grep, etc.) and caches decisions for 30s.
+ * Creates a PreToolUse hook that requests user approval for tool calls.
+ * With SDK 0.2.96 PermissionMode: 'auto', this hook is only used as a
+ * fallback when canUseTool callback is not available.
  */
 export function createToolApprovalHook(agentId: string, taskId?: string): HookCallback {
   return async (input) => {
@@ -225,6 +191,24 @@ export function createToolApprovalHook(agentId: string, taskId?: string): HookCa
     }
 
     return {} // Allow
+  }
+}
+
+/**
+ * PermissionDenied hook — surfaces SDK-denied tool calls to the UI.
+ * With PermissionMode: 'auto', the SDK's model classifier may deny certain
+ * tool calls. This hook logs those denials and emits them to the renderer
+ * for transparency.
+ */
+export function createPermissionDeniedHook(
+  onDenied: (toolName: string, reason: string) => void
+): HookCallback {
+  return async (input) => {
+    const toolName = (input as Record<string, unknown>).tool_name as string
+    const reason = (input as Record<string, unknown>).reason as string | undefined
+    hookLog.info(`[PermissionDenied] ${toolName}: ${reason ?? 'no reason provided'}`)
+    onDenied(toolName, reason ?? 'Permission denied by SDK auto-classifier')
+    return {}
   }
 }
 
@@ -333,11 +317,86 @@ export function createFireAndForgetHook(): HookCallback {
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
-        updatedInput: { ...toolInput, command: bgCommand },
+        updatedInput: { ...toolInput, command: bgCommand, dangerouslyDisableSandbox: true },
         additionalContext:
-          'This long-running server command was automatically backgrounded. ' +
+          'This long-running server command was automatically backgrounded and runs outside ' +
+          'the sandbox (needs network port binding and filesystem watchers). ' +
           'The process is running and the output is being logged to a file.'
       }
     } as SyncHookJSONOutput
+  }
+}
+
+/** SubagentStart hook — fires before SubAgent stream messages arrive */
+export function createSubagentStartHook(
+  onStart: (agentId: string, description: string) => void
+): HookCallback {
+  return async (input) => {
+    const i = input as Record<string, unknown>
+    hookLog.info(`[SubagentStart] agent=${i.agent_id} desc=${i.description}`)
+    onStart(i.agent_id as string, i.description as string)
+    return {}
+  }
+}
+
+/** SubagentStop hook — fires when SubAgent completes or fails */
+export function createSubagentStopHook(
+  onStop: (agentId: string, status: string) => void
+): HookCallback {
+  return async (input) => {
+    const i = input as Record<string, unknown>
+    hookLog.info(`[SubagentStop] agent=${i.agent_id} status=${i.status}`)
+    onStop(i.agent_id as string, i.status as string)
+    return {}
+  }
+}
+
+/** TaskCreated hook — fires when a task object is created (before execution) */
+export function createTaskCreatedHook(
+  onCreated: (taskId: string, description: string) => void
+): HookCallback {
+  return async (input) => {
+    const i = input as Record<string, unknown>
+    hookLog.info(`[TaskCreated] task=${i.task_id} desc=${i.description}`)
+    onCreated(i.task_id as string, i.description as string)
+    return {}
+  }
+}
+
+/** TaskCompleted hook — fires when a task finishes execution */
+export function createTaskCompletedHook(
+  onCompleted: (taskId: string, status: string) => void
+): HookCallback {
+  return async (input) => {
+    const i = input as Record<string, unknown>
+    hookLog.info(`[TaskCompleted] task=${i.task_id} status=${i.status}`)
+    onCompleted(i.task_id as string, i.status as string)
+    return {}
+  }
+}
+
+// ── Compaction lifecycle hooks ──────────────────────────────────────────────
+
+/** PreCompact hook — fires before context compaction, receives pre-compaction token count */
+export function createPreCompactHook(onPreCompact: (preTokens: number) => void): HookCallback {
+  return async (input) => {
+    const tokens = (input as Record<string, unknown>).pre_tokens as number
+    hookLog.info(`[PreCompact] ${tokens} tokens before compaction`)
+    onPreCompact(tokens)
+    return {}
+  }
+}
+
+/** PostCompact hook — fires after context compaction, includes token delta */
+export function createPostCompactHook(
+  onPostCompact: (preTokens: number, postTokens: number) => void
+): HookCallback {
+  return async (input) => {
+    const i = input as Record<string, unknown>
+    const pre = i.pre_tokens as number
+    const post = i.post_tokens as number
+    hookLog.info(`[PostCompact] ${pre} → ${post} tokens (saved ${pre - post})`)
+    onPostCompact(pre, post)
+    return {}
   }
 }

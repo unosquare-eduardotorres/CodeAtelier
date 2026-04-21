@@ -5,6 +5,7 @@ import { registerChatLifecycleIpc } from './chat-lifecycle.ipc'
 import { initGeneralistStream } from '../services/generalist-stream.service'
 import { taskPipeline } from '../services/task-pipeline.service'
 import { specialistPoolService } from '../services/specialist-pool.service'
+import { conversationStateMachine } from '../services/conversation-state-machine'
 
 /**
  * Registers all chat-related IPC handlers.
@@ -14,10 +15,13 @@ import { specialistPoolService } from '../services/specialist-pool.service'
  * - chat-lifecycle: CRUD (conversations, rename, delete, close, complete, file changes)
  */
 export function registerChatIpc(mainWindow: BrowserWindow): void {
+  // Wire state machine → renderer IPC forwarding
+  conversationStateMachine.setMainWindow(mainWindow)
+
   // Initialize stream service with pipeline callbacks
   initGeneralistStream(mainWindow, {
-    onHandoff: (conversationId, brief) =>
-      taskPipeline.prepare({ type: 'handoff', conversationId, brief }),
+    onHandoff: (conversationId, brief, requestId) =>
+      taskPipeline.prepare({ type: 'handoff', conversationId, brief, requestId }),
     onStopPipeline: () => specialistPoolService.stopAll()
   })
 

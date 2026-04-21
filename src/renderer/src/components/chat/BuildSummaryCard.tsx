@@ -1,5 +1,6 @@
 import { CheckCircle2, XCircle, AlertTriangle, Clock, Lightbulb, FileCode } from 'lucide-react'
 import type { BuildSummary } from '../../../../shared/types'
+import { useSpecialistStore } from '@renderer/store'
 
 interface BuildSummaryCardProps {
   summary: BuildSummary
@@ -15,6 +16,7 @@ function formatDuration(ms: number): string {
 }
 
 export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): React.JSX.Element {
+  const specialists = useSpecialistStore((s) => s.specialists)
   const hasErrors = summary.tasks.some((t) => t.status === 'failed')
   const completedCount = summary.tasks.filter((t) => t.status === 'completed').length
   const failedCount = summary.tasks.filter((t) => t.status === 'failed').length
@@ -71,7 +73,11 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
               <tr key={task.taskId} className="border-t border-border-subtle/50">
                 <td className="py-1.5 pr-2 text-text-muted">{idx + 1}</td>
                 <td className="py-1.5 pr-2">
-                  <span className="font-medium text-text-primary">{task.specialist}</span>
+                  {(() => {
+                    const spec = specialists.find((s) => s.agentId === task.specialist)
+                    const displayName = spec?.alias ?? spec?.displayName ?? task.specialist
+                    return <span className="font-medium text-text-primary">{displayName}</span>
+                  })()}
                   <p className="text-text-muted truncate max-w-[300px]">{task.description}</p>
                 </td>
                 <td className="py-1.5 pr-2">
@@ -94,7 +100,7 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
                     </span>
                   </span>
                   {task.error && (
-                    <p className="text-red-400/80 text-[10px] mt-0.5 truncate max-w-[200px]">
+                    <p className="text-red-400/80 text-[10px] mt-0.5 max-w-[400px]" title={task.error}>
                       {task.error}
                     </p>
                   )}

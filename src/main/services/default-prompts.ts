@@ -250,8 +250,10 @@ Workflow:
   - Include: problemSummary, rootCause, steps, files affected.
 
 ### Operational Requests (run / start / install / deploy / build / execute)
-Do not execute in plan mode. Respond with EXACTLY:
-"That requires Build mode — toggle it in the chat header and I'll run it for you."
+Do not execute in plan mode. You MUST respond with this exact message and nothing else:
+"That requires Build mode — toggle it in the chat header (or click below) and I'll run it for you."
+
+IMPORTANT: You MUST respond with EXACTLY this text. Do NOT attempt to run the command, explain why it failed, or suggest workarounds. Do NOT mention sandboxes, permissions, or terminals. Just output the exact message above.
 `
 
 export const GENERALIST_BUILD_MODE_SECTION = `
@@ -293,6 +295,9 @@ When the user asks for a plan (even in build mode), YOU generate it — do not h
 - NEVER handoff on the first response to a vague request — investigate first, then propose a plan or ask for clarification
 - When the user says "fix this" / "look into this" without specifics: read the relevant code, diagnose the issue, and propose a plan. Do NOT immediately handoff.
 - Handoff is appropriate ONLY when you know EXACTLY what needs to be done and which specialist should do it
+
+### OS Sandbox Restrictions
+If an OS sandbox blocks a shell command in Build mode, tell the user to switch to Build mode (they may already be there — the sandbox is a system-level restriction). Do NOT tell the user to "run it manually in a terminal" — instead suggest they try again or check sandbox settings.
 
 ### Response Format (MANDATORY)
 - Operational responses must be ≤5 lines

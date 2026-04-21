@@ -22,6 +22,7 @@ import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
 import { SDKExecutor } from './sdk-executor'
 import type { SDKExecuteResult } from './sdk-executor'
+import { createBuildModeSandbox } from './sandbox-config'
 import { authProvider } from './auth-provider'
 import { vectorSearchService } from './vector-search.service'
 import { semanticSearchMcpService } from './semantic-search.tool'
@@ -522,6 +523,8 @@ export class GeneralistService extends AgentBaseService {
       allowedTools?: string[]
       disallowedTools?: string[]
     }
+    /** Session recovery recursion depth — prevents infinite retry loops */
+    recoveryDepth?: number
   }): Promise<void> {
     const {
       sdkPrompt,
@@ -532,6 +535,8 @@ export class GeneralistService extends AgentBaseService {
       isBuildMode,
       mcpResult
     } = opts
+    const recoveryDepth = opts.recoveryDepth ?? 0
+    const MAX_RECOVERY_DEPTH = 1
     const { mcpServers, allowedTools, disallowedTools } = mcpResult
     // Capture and clear pending resumeAt — consumed once per executeStream()
     const resumeAt = this.pendingResumeAt
@@ -672,18 +677,7 @@ export class GeneralistService extends AgentBaseService {
         onTaskCompleted: (taskId: string, status: string) => {
           this.log.info(`[PIPELINE:task-completed] task=${taskId} status=${status}`)
         },
-        sandbox: isBuildMode
-          ? {
-              enabled: true,
-              autoAllowBashIfSandboxed: true,
-              // macOS has sandbox-exec built-in; Linux may lack bubblewrap in CI
-              failIfUnavailable: process.platform === 'darwin',
-              allowUnsandboxedCommands: true,
-              network: {
-                allowLocalBinding: true
-              }
-            }
-          : undefined,
+        sandbox: isBuildMode ? createBuildModeSandbox() : undefined,
         ...(mcpServers ? { mcpServers } : {}),
         // Wire compaction lifecycle — auto-seed read state for recently-accessed files
         onPostCompact: async (preTokens: number, postTokens: number) => {
@@ -929,6 +923,20 @@ export class GeneralistService extends AgentBaseService {
       // ── Session recovery retry ──
       // If the stream broke out due to a stale session error, retry with a fresh session
       if (sessionRecoveryNeeded) {
+        if (recoveryDepth >= MAX_RECOVERY_DEPTH) {
+          this.log.error('[PIPELINE:session-recovery-depth-exceeded] Max recovery depth reached')
+          this.emit('chunk', {
+            type: 'session_recovery',
+            recoveryPhase: 'failed',
+            content: 'Session recovery failed (max retries). Please start a new conversation.'
+          } as StreamChunk)
+          this.currentStatus = 'failed'
+          this.flushTokenUsage()
+          this.emit('statusUpdate', this.getStatus())
+          this.emit('complete')
+          return
+        }
+
         try {
           // Re-execute without resume (sessionId is now cleared)
           await this.executeStream({
@@ -938,7 +946,8 @@ export class GeneralistService extends AgentBaseService {
             conversationId,
             turnCount,
             isBuildMode,
-            mcpResult
+            mcpResult,
+            recoveryDepth: recoveryDepth + 1
           })
           // Emit recovery completion — executeStream handles its own complete/error emission
           this.emit('chunk', {

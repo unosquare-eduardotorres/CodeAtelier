@@ -105,7 +105,7 @@ export function registerSdkControlIpc(): void {
     const query = generalistService.getActiveQuery()
     if (!query) throw new Error('No active query')
     return query.setPermissionMode(
-      args.mode as 'default' | 'plan' | 'bypassPermissions' | 'acceptEdits'
+      args.mode as 'default' | 'plan' | 'bypassPermissions' | 'acceptEdits' | 'auto' | 'dontAsk'
     )
   })
 
@@ -154,6 +154,17 @@ export function registerSdkControlIpc(): void {
     return query.reconnectMcpServer(args.serverName)
   })
 
+  // toggleMcpServer — enable/disable MCP servers mid-session
+  ipcMain.handle(
+    IPC_CHANNELS.SDK_TOGGLE_MCP_SERVER,
+    async (event, args: { serverName: string; enabled: boolean }) => {
+      validateSender(event)
+      const query = generalistService.getActiveQuery()
+      if (!query) throw new Error('No active query')
+      return query.toggleMcpServer(args.serverName, args.enabled)
+    }
+  )
+
   // TODO: Not called from renderer — could power dynamic agent discovery UI
   // supportedAgents — list runtime SubAgents
   ipcMain.handle(IPC_CHANNELS.SDK_SUPPORTED_AGENTS, async (event) => {
@@ -162,6 +173,58 @@ export function registerSdkControlIpc(): void {
     if (!query) throw new Error('No active query')
     return query.supportedAgents()
   })
+
+  // close — forceful query termination (backstop when AbortController doesn't work)
+  ipcMain.handle(IPC_CHANNELS.SDK_CLOSE_QUERY, async (event) => {
+    validateSender(event)
+    const query = generalistService.getActiveQuery()
+    if (!query) return
+    query.close()
+  })
+
+  // seedReadState — prevent "file not read" errors after context compaction
+  ipcMain.handle(
+    IPC_CHANNELS.SDK_SEED_READ_STATE,
+    async (event, args: { path: string; mtime: number }) => {
+      validateSender(event)
+      const query = generalistService.getActiveQuery()
+      if (!query) throw new Error('No active query')
+      return query.seedReadState(args.path, args.mtime)
+    }
+  )
+
+  // Elicitation response (enriched) — renderer sends user's response via elicitation.service
+  ipcMain.handle(
+    IPC_CHANNELS.SDK_ELICITATION_RESPONSE,
+    async (
+      event,
+      args: { requestId: string; action: string; content?: Record<string, unknown> }
+    ) => {
+      validateSender(event)
+      const { elicitationService } = await import('../services/elicitation.service')
+      elicitationService.resolveElicitation(args.requestId, {
+        action: args.action as 'accept' | 'decline' | 'cancel',
+        content: args.content
+      })
+    }
+  )
+
+  // listSubagents — list all SubAgents spawned during a session (SDK 0.2.96+)
+  ipcMain.handle(IPC_CHANNELS.SDK_LIST_SUBAGENTS, async (event, args: { sessionId: string }) => {
+    validateSender(event)
+    const { listSubagents } = await import('@anthropic-ai/claude-agent-sdk')
+    return listSubagents(args.sessionId)
+  })
+
+  // getSubagentMessages — get the full transcript of a SubAgent (SDK 0.2.96+)
+  ipcMain.handle(
+    IPC_CHANNELS.SDK_GET_SUBAGENT_MESSAGES,
+    async (event, args: { sessionId: string; subagentId: string }) => {
+      validateSender(event)
+      const { getSubagentMessages } = await import('@anthropic-ai/claude-agent-sdk')
+      return getSubagentMessages(args.sessionId, args.subagentId)
+    }
+  )
 
   // forkSession — branch a conversation at a specific message point
   // Used for "Branch Conversation" feature — creates a new session forked from an existing one

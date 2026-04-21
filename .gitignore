@@ -11,3 +11,7 @@ e2e/test-results/
 .repomap.tags.cache/
 description-cache.db
 chroma/
+.agentstudio/
+
+# Agent Studio worktrees
+.agent-studio/

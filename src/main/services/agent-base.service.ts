@@ -45,6 +45,7 @@ export interface StreamChunk {
     | 'session_state'
     | 'auth_status'
     | 'tool_use_summary'
+    | 'session_recovery'
   content?: string
   toolName?: string
   toolInput?: string
@@ -68,6 +69,8 @@ export interface StreamChunk {
   }
   /** Files persisted list */
   persistedFiles?: Array<{ filename: string; fileId: string }>
+  /** Session recovery phase */
+  recoveryPhase?: 'started' | 'building_context' | 'resuming' | 'completed' | 'failed'
   /** Hook lifecycle info */
   hookInfo?: {
     hookId: string
@@ -197,6 +200,13 @@ export abstract class AgentBaseService extends EventEmitter {
 
   /** Scoped logger — each subclass provides its own scope */
   protected abstract readonly log: LogFunctions
+
+  constructor() {
+    super()
+    this.on('error', (err) => {
+      this.log.error('[AgentBase:unhandled-error]', err)
+    })
+  }
 
   abstract getStatus(): AgentStatus
 

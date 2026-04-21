@@ -70,7 +70,21 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
       })
 
       // ── Delegate to stream service ──
-      await generalistStreamService.stream(conversationId, text, attachments)
+      // stream() returns a StreamHandle. We await it to get the handle (validates inputs,
+      // starts streaming), but let the `done` promise run in the background — the renderer
+      // receives progress via IPC events, not via this handler's return value.
+      const handle = await generalistStreamService.stream(conversationId, text, attachments)
+
+      // Fire-and-forget: let pipeline complete asynchronously.
+      // Errors are surfaced to the renderer via CHAT_MESSAGE_CHUNK error events.
+      handle.done.catch((err) => {
+        log.warn('[CHAT_SEND] Stream pipeline error (already surfaced via IPC):', err)
+      })
+
+      // Return the backend-generated requestId so the renderer can correlate
+      // streaming chunks. This is the SINGLE SOURCE OF TRUTH for requestId —
+      // the renderer must NOT generate its own.
+      return { requestId: handle.requestId }
     }
   )
 

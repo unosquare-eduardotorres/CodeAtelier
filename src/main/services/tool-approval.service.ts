@@ -2,7 +2,6 @@ import log from 'electron-log/main'
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { summarizeToolInput } from './agent-base.service'
-import { isDangerousCommand } from './sdk-hooks'
 
 const approvalLog = log.scope('ToolApproval')
 
@@ -12,8 +11,16 @@ const APPROVAL_CACHE_TTL_MS = 30_000
 /** Timeout before auto-approving an unresponded request (30 seconds) */
 const APPROVAL_TIMEOUT_MS = 30_000
 
-/** Session-level approval modes */
-export type ToolApprovalMode = 'prompt' | 'accept-all' | 'dangerous-only'
+/**
+ * Session-level approval modes.
+ * With SDK 0.2.96+, 'auto' mode is preferred — the SDK's model classifier
+ * handles tool safety natively. These modes are kept for the canUseTool callback
+ * path (generalist build mode).
+ *
+ * - 'dangerous-only': only prompts for truly dangerous operations (default)
+ * - 'accept-all': everything auto-approved, no prompts
+ */
+export type ToolApprovalMode = 'dangerous-only' | 'accept-all'
 
 interface PendingApproval {
   resolve: (approved: boolean) => void
@@ -36,7 +43,10 @@ export class ToolApprovalService {
    * Session-level approval mode.
    * - 'dangerous-only' (default): only prompts for dangerous Bash commands
    * - 'accept-all': everything auto-approved, no prompts
-   * - 'prompt': prompts for all non-read tools (legacy behavior)
+   *
+   * Note: with SDK 0.2.96 PermissionMode: 'auto', most tool approval is handled
+   * natively by the SDK's model classifier. This service is now primarily used
+   * by the canUseTool callback for enriched approval UX.
    */
   private sessionMode: ToolApprovalMode = 'dangerous-only'
 
@@ -71,17 +81,6 @@ export class ToolApprovalService {
 
     // Session mode: accept-all → approve everything
     if (this.sessionMode === 'accept-all') return true
-
-    // Session mode: dangerous-only → only prompt for dangerous bash commands
-    if (this.sessionMode === 'dangerous-only') {
-      if (toolName === 'Bash') {
-        const command = (toolInput?.command as string) ?? ''
-        if (!isDangerousCommand(command)) return true
-        // Fall through to prompt for dangerous commands
-      } else {
-        return true // Auto-approve all non-Bash tools (Write, Edit, etc.)
-      }
-    }
 
     // Check cache
     const cacheKey = this.buildCacheKey(toolName, toolInput)
@@ -121,6 +120,81 @@ export class ToolApprovalService {
       }
 
       // Auto-approve after timeout (don't block forever)
+      setTimeout(() => {
+        if (this.pendingApprovals.has(requestId)) {
+          approvalLog.warn(`Tool approval timed out for ${toolName}, auto-approving`)
+          this.resolveApproval(requestId, true)
+        }
+      }, APPROVAL_TIMEOUT_MS)
+    })
+  }
+
+  /**
+   * Enriched approval flow — used by canUseTool callback.
+   * Receives rich SDK context: title, displayName, description, suggestions (permission rules).
+   * Returns both approved status and optional updatedPermissions for "Always Allow".
+   */
+  async requestApprovalEnriched(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    agentId: string,
+    taskId?: string,
+    enriched?: {
+      title?: string
+      displayName?: string
+      description?: string
+      suggestions?: unknown[]
+    }
+  ): Promise<{ approved: boolean; updatedPermissions?: unknown[] }> {
+    // Auto-approve safe tools (always, regardless of mode)
+    if (this.isAutoApproved(toolName)) return { approved: true }
+
+    // Session mode: accept-all → approve everything
+    if (this.sessionMode === 'accept-all') return { approved: true }
+
+    // Check cache
+    const cacheKey = this.buildCacheKey(toolName, toolInput)
+    const cached = this.approvalCache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      return { approved: cached.approved }
+    }
+
+    const requestId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    return new Promise((resolve) => {
+      this.pendingApprovals.set(requestId, {
+        resolve: (approved: boolean) =>
+          resolve({
+            approved,
+            updatedPermissions: approved ? (enriched?.suggestions as unknown[]) : undefined
+          }),
+        toolName,
+        toolInput,
+        agentId,
+        taskId
+      })
+
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      if (win) {
+        win.webContents.send(IPC_CHANNELS.TOOL_APPROVAL_REQUEST, {
+          requestId,
+          toolName,
+          toolInput: summarizeToolInput(toolName, toolInput),
+          agentId,
+          taskId,
+          // Enriched fields from canUseTool callback — SDK 0.2.96 permission display metadata
+          title: enriched?.title,
+          displayName: enriched?.displayName,
+          description: enriched?.description,
+          hasAlwaysAllow: !!enriched?.suggestions?.length
+        })
+      } else {
+        approvalLog.warn(`No window available for tool approval — auto-approving ${toolName}`)
+        this.pendingApprovals.delete(requestId)
+        resolve({ approved: true })
+        return
+      }
+
       setTimeout(() => {
         if (this.pendingApprovals.has(requestId)) {
           approvalLog.warn(`Tool approval timed out for ${toolName}, auto-approving`)

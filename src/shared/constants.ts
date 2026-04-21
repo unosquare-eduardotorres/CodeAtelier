@@ -39,6 +39,10 @@ export const IPC_CHANNELS = {
   CHAT_EXECUTE_INVESTIGATION_FIX: 'chat:executeInvestigationFix',
   /** Direct plan-to-build: skip generalist round-trip when user clicks "Build This" on inline plan */
   CHAT_BUILD_FROM_PLAN: 'chat:buildFromPlan',
+  /** Session recovery: stale session auto-heal progress events */
+  CHAT_SESSION_RECOVERY: 'chat:sessionRecovery',
+  /** State machine transitions — renderer mirrors backend conversation state */
+  CHAT_STATE_CHANGE: 'chat:stateChange',
 
   // Agents
   AGENT_GET_STATUSES: 'agent:getStatuses',
@@ -372,8 +376,33 @@ export const IPC_CHANNELS = {
   SDK_RECONNECT_MCP: 'sdk:reconnectMcp',
   SDK_SUPPORTED_AGENTS: 'sdk:supportedAgents',
 
+  // SDK Subagent inspection (0.2.96+)
+  SDK_LIST_SUBAGENTS: 'sdk:listSubagents',
+  SDK_GET_SUBAGENT_MESSAGES: 'sdk:getSubagentMessages',
+
   // SDK Session — session mutation methods
-  SDK_FORK_SESSION: 'sdk:forkSession'
+  SDK_FORK_SESSION: 'sdk:forkSession',
+
+  // SDK Query — close + seedReadState
+  SDK_CLOSE_QUERY: 'sdk:closeQuery',
+  SDK_SEED_READ_STATE: 'sdk:seedReadState',
+  // SDK MCP lifecycle
+  SDK_TOGGLE_MCP_SERVER: 'sdk:toggleMcpServer',
+
+  // SDK Elicitation (enriched — via elicitation.service)
+  SDK_ELICITATION_REQUEST: 'sdk:elicitationRequest',
+  SDK_ELICITATION_RESPONSE: 'sdk:elicitationResponse',
+
+  // Session Management (SDK top-level functions)
+  SESSION_LIST: 'session:list',
+  SESSION_GET_INFO: 'session:getInfo',
+  SESSION_GET_MESSAGES: 'session:getMessages',
+  SESSION_RENAME: 'session:rename',
+  SESSION_TAG: 'session:tag',
+  SESSION_FORK: 'session:fork',
+
+  // Chat resume at checkpoint
+  CHAT_RESUME_AT: 'chat:resumeAt'
 } as const
 
 export const CONVERSATION_MODES = {

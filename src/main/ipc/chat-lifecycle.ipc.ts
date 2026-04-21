@@ -595,4 +595,16 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
       conversationRepository.reorderConversations(args.orderedIds)
     }
   )
+
+  // ── Resume at checkpoint — undo to a specific message point ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_RESUME_AT,
+    async (event, args: { conversationId: string; messageId: string }) => {
+      validateSender(event)
+      if (!args?.messageId || typeof args.messageId !== 'string') {
+        throw new Error('Invalid messageId')
+      }
+      await generalistService.resumeAt(args.messageId)
+    }
+  )
 }

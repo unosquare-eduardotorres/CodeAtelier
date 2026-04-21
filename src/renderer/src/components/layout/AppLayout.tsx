@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Monitor,
   Bot,
@@ -8,17 +8,14 @@ import {
   Building2,
   ClipboardList,
   Hammer,
-  Users,
+  Braces,
+  SearchCode,
   ZoomIn,
   ZoomOut,
-  CircleHelp,
-  ExternalLink,
-  ArrowLeft
+  CircleHelp
 } from 'lucide-react'
-import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
+import { Sidebar, UnifiedSidebar, BottomPanel } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
-import { AgentMonitor } from '@renderer/components/agents'
-import { PixelOfficePanel, PhaserOfficeCanvas } from '@renderer/components/pixel-office'
 import { WorkspaceSettingsContent } from '@renderer/components/workspace'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import { SettingsPage } from '@renderer/components/settings'
@@ -35,11 +32,10 @@ import {
   useAgentStore,
   useChatStore,
   useChatActions,
-  usePixelOfficeStore,
   useIdeaStore,
   useConversationSpecialistActions,
-  useConversationSpecialists,
-  useSpecialistStore
+  useSpecialistStore,
+  useBottomPanelStore
 } from '@renderer/store'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
@@ -60,8 +56,6 @@ function AgentStatusDot({ status }: { status: string }): React.JSX.Element {
 }
 
 export default function AppLayout(): React.JSX.Element {
-  const [showAgentPanel, setShowAgentPanel] = useState(false)
-  const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [view, setView] = useState<'chat' | 'app-settings' | 'help'>('chat')
   const [sidebarView, setSidebarView] = useState<'chat' | 'settings'>('chat')
@@ -74,12 +68,24 @@ export default function AppLayout(): React.JSX.Element {
   const { updateMode } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
   const { hydrateConversationSpecialists } = useConversationSpecialistActions()
-  const conversationSpecialists = useConversationSpecialists(activeConversation?.id)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const [showNewChat, setShowNewChat] = useState(false)
-  const { isVisible: showPixelOffice, isOfficeCentered, setOfficeCentered } = usePixelOfficeStore()
   const { createIdea, startGrill } = useIdeaStore()
   const [zoomFactor, setZoomFactor] = useState(1.0)
+
+  // Bottom panel store
+  const { activeTab: bottomTab, openTab, toggleTab } = useBottomPanelStore()
+
+  // MCP tools from generalist status (moved from ChatPanel header to status bar)
+  const activeMcpTools = useAgentStore((s) => {
+    const generalist = s.statuses.find((st) => st.agentType === 'generalist')
+    return generalist?.activeMcpTools
+  })
+
+  // Context usage for status bar (read from chat store)
+  const contextUsage = useChatStore((s) =>
+    s.activeConversation ? s.contextUsages[s.activeConversation.id] : undefined
+  )
   const [pendingGrill, setPendingGrill] = useState<{
     ideaId: string
     conversationId: string
@@ -118,18 +124,8 @@ export default function AppLayout(): React.JSX.Element {
   ).length
   const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
   const loadSpecialists = useSpecialistStore((state) => state.loadSpecialists)
-  const coreSpecialistIds = useMemo(
-    () => new Set(workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id)),
-    [workspaceSpecialists]
-  )
-  const activeConversationSpecialistCount = useMemo(
-    () =>
-      conversationSpecialists.filter((s) => s.isActive && !coreSpecialistIds.has(s.specialistId))
-        .length,
-    [conversationSpecialists, coreSpecialistIds]
-  )
 
-  // Ensure workspace specialists are loaded so we can identify core agents for the counter
+  // Ensure workspace specialists are loaded for downstream components
   useEffect(() => {
     if (workspaceSpecialists.length === 0) {
       void loadSpecialists().catch(() => undefined)
@@ -153,10 +149,9 @@ export default function AppLayout(): React.JSX.Element {
     prevAgentCount.current = activeAgentCount
 
     if (wasZero && activeAgentCount > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setShowAgentPanel(true)
+      openTab('agents')
     }
-  }, [activeAgentCount])
+  }, [activeAgentCount, openTab])
 
   // Navigate back — Esc key handler priority
   const navigateBack = useCallback(() => {
@@ -197,7 +192,7 @@ export default function AppLayout(): React.JSX.Element {
 
       if (isMeta && e.key === 'j') {
         e.preventDefault()
-        setShowAgentPanel((prev) => !prev)
+        toggleTab('agents')
       }
 
       if (isMeta && e.key === 'b') {
@@ -228,11 +223,7 @@ export default function AppLayout(): React.JSX.Element {
 
       if (isMeta && e.shiftKey && e.key === 'o') {
         e.preventDefault()
-        if (isOfficeCentered) {
-          setOfficeCentered(false)
-        } else {
-          setOfficeCentered(true)
-        }
+        toggleTab('office')
       }
 
       // Zoom shortcuts — ⌘+/⌘= to zoom in, ⌘- to zoom out, ⌘0 to reset
@@ -249,15 +240,7 @@ export default function AppLayout(): React.JSX.Element {
         window.api.zoomReset()
       }
     },
-    [
-      activeWorkspace,
-      isOfficeCentered,
-      setOfficeCentered,
-      activeConversation,
-      updateMode,
-      isStreaming,
-      navigateBack
-    ]
+    [activeWorkspace, activeConversation, updateMode, isStreaming, navigateBack, toggleTab]
   )
 
   useEffect(() => {
@@ -425,122 +408,12 @@ export default function AppLayout(): React.JSX.Element {
           </Sidebar>
         )}
 
-        {/* Office-centered layout: office in center, chat+agents stacked on right */}
-        {isOfficeCentered && view === 'chat' && activeWorkspace ? (
-          <>
-            {/* CENTER: Pixel Office (takes the main content area) */}
-            <div className="flex-1 min-h-0 relative flex flex-col">
-              {/* Office header bar */}
-              <div className="flex items-center justify-between px-3 py-1.5 bg-[#1a1828]/80 border-b border-[#3d3555]/50 flex-shrink-0">
-                <span className="text-xs font-medium text-gray-400 flex items-center gap-2">
-                  <span className="text-base">🏰</span>
-                  Pixel Office
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={async () => {
-                      await window.api.popoutPixelOffice()
-                    }}
-                    className="p-1 rounded hover:bg-[#2a2844] text-gray-500 hover:text-gray-300 transition-colors"
-                    title="Open in separate window"
-                    aria-label="Pop out to separate window"
-                  >
-                    <ExternalLink size={12} />
-                  </button>
-                  <button
-                    onClick={() => setOfficeCentered(false)}
-                    className="p-1 rounded hover:bg-[#2a2844] text-gray-500 hover:text-gray-300 transition-colors"
-                    title="Back to normal layout"
-                    aria-label="Close office view"
-                  >
-                    <ArrowLeft size={12} />
-                  </button>
-                </div>
-              </div>
-              {/* Phaser canvas */}
-              <div className="flex-1 min-h-0 bg-[#0a0a14]">
-                <ErrorBoundary
-                  fallback={
-                    <div className="p-4 text-sm text-danger bg-surface-raised">
-                      Pixel Office error — click to retry
-                    </div>
-                  }
-                >
-                  <PhaserOfficeCanvas />
-                </ErrorBoundary>
-              </div>
-            </div>
-
-            {/* RIGHT: Chat + Agents (collapsible bottom) */}
-            <div className="w-[420px] h-full min-h-0 flex flex-col border-l border-border-subtle flex-shrink-0">
-              {/* Chat — fills remaining space */}
-              <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                <ErrorBoundary>
-                  <ChatPanel
-                    onCreateIdea={handleCreateIdea}
-                    onStartGrillMe={handleStartGrillMe}
-                    showNewChat={showNewChat}
-                    onNewChatDismiss={() => setShowNewChat(false)}
-                  />
-                </ErrorBoundary>
-              </div>
-
-              {/* Agents — collapsible bottom */}
-              {showAgentPanel && (
-                <div className="max-h-[35%] min-h-0 border-t border-border-subtle flex-shrink-0 overflow-hidden">
-                  <ErrorBoundary
-                    fallback={
-                      <div className="flex items-center justify-center p-4 text-sm text-danger bg-surface-raised">
-                        Agent panel error — click to retry
-                      </div>
-                    }
-                  >
-                    <AgentMonitor
-                      isCollapsed={agentPanelCollapsed}
-                      onToggleCollapse={() => setAgentPanelCollapsed((prev) => !prev)}
-                      variant="bottom"
-                    />
-                  </ErrorBoundary>
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <>
-            {/* Normal layout: main content + agent panel */}
-            <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
-
-            {/* Agent monitor panel — only in chat view */}
-            {showAgentPanel && view === 'chat' && (
-              <ErrorBoundary
-                fallback={
-                  <div className="w-64 flex items-center justify-center p-4 text-sm text-danger bg-surface-raised border-l border-border-subtle">
-                    Agent panel error — click to retry
-                  </div>
-                }
-              >
-                <AgentMonitor
-                  isCollapsed={agentPanelCollapsed}
-                  onToggleCollapse={() => setAgentPanelCollapsed((prev) => !prev)}
-                />
-              </ErrorBoundary>
-            )}
-          </>
-        )}
+        {/* Main content — full width (no right panel) */}
+        <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
       </div>
 
-      {/* Pixel Office bottom panel — only in non-centered mode */}
-      {showPixelOffice && !isOfficeCentered && view === 'chat' && (
-        <ErrorBoundary
-          fallback={
-            <div className="p-4 text-sm text-danger bg-surface-raised border-t border-border-subtle">
-              Pixel Office error — click to retry
-            </div>
-          }
-        >
-          <PixelOfficePanel />
-        </ErrorBoundary>
-      )}
+      {/* Bottom panel — Agents or Office (mutually exclusive) */}
+      <BottomPanel />
 
       {/* Status bar */}
       <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-[13px]">
@@ -556,36 +429,63 @@ export default function AppLayout(): React.JSX.Element {
           )}
 
           {activeConversation && (
-            <>
-              <span
-                className={`text-xs px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
-                  activeConversation.mode === 'plan'
-                    ? 'bg-mode-plan-muted text-mode-plan-text'
-                    : 'bg-mode-build-muted text-mode-build-text'
-                }`}
-              >
-                {activeConversation.mode === 'plan' ? (
-                  <ClipboardList size={10} />
-                ) : (
-                  <Hammer size={10} />
-                )}
-                {activeConversation.mode === 'plan' ? 'Plan' : 'Build'}
-              </span>
-              <span className="text-text-muted truncate max-w-[200px]">
-                {activeConversation.title}
-              </span>
-              <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full border border-border-subtle bg-surface-overlay text-text-secondary font-medium">
-                <Users size={10} />
-                {activeConversationSpecialistCount} specialists
-              </span>
-            </>
+            <span
+              className={`text-xs px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
+                activeConversation.mode === 'plan'
+                  ? 'bg-mode-plan-muted text-mode-plan-text'
+                  : 'bg-mode-build-muted text-mode-build-text'
+              }`}
+            >
+              {activeConversation.mode === 'plan' ? (
+                <ClipboardList size={10} />
+              ) : (
+                <Hammer size={10} />
+              )}
+              {activeConversation.mode === 'plan' ? 'Plan' : 'Build'}
+            </span>
           )}
         </div>
 
         <div className="flex items-center gap-4">
+          {/* MCP tool indicators */}
+          {activeMcpTools && activeMcpTools.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              {activeMcpTools.includes('code-graph') && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400"
+                  title="Code Graph active"
+                >
+                  <Braces size={10} /> CG
+                </span>
+              )}
+              {activeMcpTools.includes('semantic-search') && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-sky-400"
+                  title="Semantic Search active"
+                >
+                  <SearchCode size={10} /> Sem
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Context + tokens merged */}
           <span className="flex items-center gap-1.5 text-text-muted">
+            {contextUsage && contextUsage.percentage > 0 && (
+              <span
+                className={
+                  contextUsage.level === 'critical' || contextUsage.level === 'red'
+                    ? 'text-danger'
+                    : contextUsage.level === 'yellow'
+                      ? 'text-warning'
+                      : 'text-text-secondary'
+                }
+              >
+                {contextUsage.percentage}%
+              </span>
+            )}
             <Zap size={11} />
-            {sessionTokens > 0 ? `${(sessionTokens / 1000).toFixed(1)}k tokens` : '0 tokens'}
+            {sessionTokens > 0 ? `${(sessionTokens / 1000).toFixed(1)}k` : '0'} tokens
           </span>
 
           {/* Zoom controls */}
@@ -616,20 +516,14 @@ export default function AppLayout(): React.JSX.Element {
           </div>
 
           <button
-            onClick={() => {
-              if (isOfficeCentered) {
-                setOfficeCentered(false)
-              } else {
-                setOfficeCentered(true)
-              }
-            }}
+            onClick={() => toggleTab('office')}
             className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-              isOfficeCentered
+              bottomTab === 'office'
                 ? 'text-primary-text bg-primary-muted'
                 : 'text-text-muted hover:text-text-secondary'
             }`}
-            aria-label={isOfficeCentered ? 'Close pixel office' : 'Open pixel office'}
-            aria-pressed={isOfficeCentered}
+            aria-label={bottomTab === 'office' ? 'Close pixel office' : 'Open pixel office'}
+            aria-pressed={bottomTab === 'office'}
             title={`Pixel Office (${isMac ? '⌘' : 'Ctrl+'}⇧O)`}
           >
             <Building2 size={12} />
@@ -637,14 +531,14 @@ export default function AppLayout(): React.JSX.Element {
           </button>
 
           <button
-            onClick={() => setShowAgentPanel(!showAgentPanel)}
+            onClick={() => toggleTab('agents')}
             className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-              showAgentPanel
+              bottomTab === 'agents'
                 ? 'text-primary-text bg-primary-muted'
                 : 'text-text-muted hover:text-text-secondary'
             }`}
-            aria-label={showAgentPanel ? 'Hide agent panel' : 'Show agent panel'}
-            aria-pressed={showAgentPanel}
+            aria-label={bottomTab === 'agents' ? 'Hide agent panel' : 'Show agent panel'}
+            aria-pressed={bottomTab === 'agents'}
             title={`Toggle Agent Panel (${isMac ? '⌘' : 'Ctrl+'}J)`}
           >
             <Monitor size={12} />

@@ -101,7 +101,7 @@ const api = {
     conversationId: string
     text: string
     attachments?: string[]
-  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_SEND, args),
+  }): Promise<{ requestId: string }> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_SEND, args),
 
   getConversations: (args: { workspaceId: string }): Promise<Conversation[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_CONVERSATIONS, args),
@@ -591,6 +591,7 @@ const api = {
       role: string
       taskId?: string
       specialist?: string
+      requestId?: string
       toolActivity?: {
         id: string
         toolName: string
@@ -616,6 +617,7 @@ const api = {
         role: string
         taskId?: string
         specialist?: string
+        requestId?: string
         toolActivity?: {
           id: string
           toolName: string
@@ -639,11 +641,23 @@ const api = {
   },
 
   onMessageComplete: (
-    callback: (data: { conversationId: string; messageId: string; taskId?: string }) => void
+    callback: (data: {
+      conversationId: string
+      messageId: string
+      taskId?: string
+      isHandoff?: boolean
+      requestId?: string
+    }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
-      data: { conversationId: string; messageId: string; taskId?: string }
+      data: {
+        conversationId: string
+        messageId: string
+        taskId?: string
+        isHandoff?: boolean
+        requestId?: string
+      }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, handler)
     return () => {
@@ -1576,6 +1590,42 @@ const api = {
     }
   },
 
+  onSessionRecovery: (
+    callback: (data: { conversationId: string; phase: string; message: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; phase: string; message: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_SESSION_RECOVERY, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_SESSION_RECOVERY, handler)
+    }
+  },
+
+  onStateChange: (
+    callback: (data: {
+      conversationId: string | null
+      from: string
+      to: string
+      event: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        conversationId: string | null
+        from: string
+        to: string
+        event: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_STATE_CHANGE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STATE_CHANGE, handler)
+    }
+  },
+
   // ── SDK Control — Query instance methods ──
   sdkGetContextUsage: (): Promise<{
     totalTokens: number
@@ -1617,6 +1667,16 @@ const api = {
 
   sdkSupportedAgents: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_AGENTS),
 
+  sdkToggleMcpServer: (args: { serverName: string; enabled: boolean }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_TOGGLE_MCP_SERVER, args),
+
+  // SDK Subagent inspection (0.2.96+)
+  sdkListSubagents: (args: { sessionId: string }): Promise<string[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_LIST_SUBAGENTS, args),
+
+  sdkGetSubagentMessages: (args: { sessionId: string; subagentId: string }): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_GET_SUBAGENT_MESSAGES, args),
+
   // Elicitation — MCP server user input requests
   elicitationRespond: (args: {
     action: string
@@ -1629,11 +1689,60 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.ELICITATION_REQUEST, handler)
   },
 
-  // Session mutation — branch a conversation
+  // SDK Query — close + seedReadState
+  sdkCloseQuery: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.SDK_CLOSE_QUERY),
+
+  sdkSeedReadState: (args: { path: string; mtime: number }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_SEED_READ_STATE, args),
+
+  // SDK Elicitation (enriched — via elicitation.service)
+  onSdkElicitationRequest: (callback: (data: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, data: unknown): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_ELICITATION_REQUEST, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.SDK_ELICITATION_REQUEST, handler)
+  },
+
+  sdkElicitationRespond: (args: {
+    requestId: string
+    action: string
+    content?: Record<string, unknown>
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.SDK_ELICITATION_RESPONSE, args),
+
+  // Session Management (SDK top-level functions)
+  sessionList: (args?: { dir?: string; limit?: number; offset?: number }): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST, args),
+
+  sessionGetInfo: (args: { sessionId: string; dir?: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_INFO, args),
+
+  sessionGetMessages: (args: {
+    sessionId: string
+    dir?: string
+    includeSystemMessages?: boolean
+  }): Promise<unknown[]> => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_MESSAGES, args),
+
+  sessionRename: (args: { sessionId: string; title: string; dir?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_RENAME, args),
+
+  sessionTag: (args: { sessionId: string; tag: string | null; dir?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_TAG, args),
+
+  sessionFork: (args: {
+    sessionId: string
+    upToMessageId?: string
+    title?: string
+    dir?: string
+  }): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC_CHANNELS.SESSION_FORK, args),
+
+  // Session mutation — branch a conversation (legacy alias)
   sdkForkSession: (args: {
     sessionId: string
     upToMessageId?: string
-  }): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC_CHANNELS.SDK_FORK_SESSION, args)
+  }): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC_CHANNELS.SDK_FORK_SESSION, args),
+
+  // Chat resume at checkpoint — undo to a specific message point
+  chatResumeAt: (args: { conversationId: string; messageId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_RESUME_AT, args)
 } as const
 
 if (process.contextIsolated) {

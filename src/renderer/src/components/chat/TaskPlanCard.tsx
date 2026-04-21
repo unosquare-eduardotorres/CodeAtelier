@@ -8,7 +8,6 @@ import {
   Lightbulb,
   Search,
   AlertTriangle,
-  Bug,
   GitBranch,
   FileCode,
   AlertCircle,
@@ -73,15 +72,6 @@ export default function TaskPlanCard({
     }
   }, [planContent])
 
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
-  const toggleSection = (key: string): void => {
-    setExpandedSections((prev) => {
-      const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
-      return next
-    })
-  }
-
   const [userClicked, setUserClicked] = useState(false)
   const hasUserChosen = isExecuting || userClicked
 
@@ -98,17 +88,17 @@ export default function TaskPlanCard({
   const headerBg = isInvestigation
     ? 'border-primary/20 bg-primary/15'
     : isInlinePlan
-      ? 'border-mode-plan-border bg-mode-plan/15'
+      ? 'border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-muted)]'
       : 'border-border-subtle bg-surface-raised'
   const headerIconBg = isInvestigation
     ? 'bg-primary-muted'
     : isInlinePlan
-      ? 'bg-mode-plan-muted'
+      ? 'bg-[rgba(14,165,233,0.2)]'
       : 'bg-primary-muted'
   const headerIconColor = isInvestigation
     ? 'text-primary-text'
     : isInlinePlan
-      ? 'text-mode-plan-text'
+      ? 'text-sky-400'
       : 'text-primary-text'
   const headerTitle = isInvestigation
     ? 'Investigation Complete'
@@ -119,7 +109,7 @@ export default function TaskPlanCard({
   return (
     <div
       data-testid="task-plan-card"
-      className={`my-3 rounded-xl border ${isInvestigation ? 'border-primary/30' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}
+      className={`my-3 rounded-xl border ${isInvestigation ? 'border-primary/30' : isInlinePlan ? 'border-[var(--color-plan-card-border)]' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}
     >
       {/* Header */}
       <div className={`flex items-center gap-3 px-4 py-3 border-b ${headerBg}`}>
@@ -233,40 +223,15 @@ export default function TaskPlanCard({
             typeof structuredPlan.problemSummary === 'string' &&
             structuredPlan.problemSummary && (
               <div className="rounded-lg border border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-muted)] overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => toggleSection('problemSummary')}
-                  className="w-full px-4 py-3 flex items-center justify-between text-left"
-                >
-                  <span className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-text)]">
-                    <AlertTriangle size={14} className="text-amber-400" />
+                <div className="px-4 py-3 flex items-center gap-2">
+                  <AlertTriangle size={14} className="text-amber-400" />
+                  <span className="text-sm font-semibold text-[var(--color-plan-card-text)]">
                     Problem Summary
                   </span>
-                  <span className="text-xs text-text-secondary">
-                    {expandedSections.has('problemSummary') ? 'Hide' : 'Show'}
-                  </span>
-                </button>
-                {expandedSections.has('problemSummary') && (
-                  <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {structuredPlan.problemSummary}
-                    </ReactMarkdown>
-                  </div>
-                )}
-              </div>
-            )}
-
-          {'rootCause' in structuredPlan &&
-            typeof structuredPlan.rootCause === 'string' &&
-            structuredPlan.rootCause && (
-              <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
-                  <Bug size={14} className="text-rose-400" />
-                  Root Cause
                 </div>
-                <div className="prose prose-sm prose-invert max-w-none">
+                <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {structuredPlan.rootCause}
+                    {structuredPlan.problemSummary}
                   </ReactMarkdown>
                 </div>
               </div>
@@ -308,55 +273,6 @@ export default function TaskPlanCard({
                 </div>
               </div>
             )}
-
-          {structuredPlan.steps && structuredPlan.steps.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-sm font-semibold text-text-primary">Execution Steps</div>
-              <ol className="space-y-2">
-                {structuredPlan.steps.map((step) => {
-                  const complexityClass =
-                    step.complexity === 'low'
-                      ? 'text-emerald-300 bg-emerald-500/20'
-                      : step.complexity === 'high'
-                        ? 'text-red-300 bg-red-500/20'
-                        : 'text-amber-300 bg-amber-500/20'
-                  return (
-                    <li
-                      key={`${step.number}-${step.title}`}
-                      className="rounded-lg border border-border-subtle bg-surface-base/40 p-3"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-sky-500/20 text-sky-300 text-xs font-semibold">
-                              {step.number}
-                            </span>
-                            <span className="text-sm font-semibold text-text-primary">
-                              {step.title}
-                            </span>
-                            {step.complexity && (
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide ${complexityClass}`}
-                              >
-                                {step.complexity}
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-1 text-sm text-text-body">{step.description}</p>
-                        </div>
-                        {step.file && (
-                          <span className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 cursor-pointer font-mono text-xs bg-sky-400/10 px-1.5 py-0.5 rounded">
-                            <FileCode size={12} />
-                            {shortenPath(step.file)}
-                          </span>
-                        )}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ol>
-            </div>
-          )}
 
           {'filesChanged' in structuredPlan &&
             Array.isArray(structuredPlan.filesChanged) &&

@@ -70,8 +70,9 @@ export class Semaphore {
     }
   }
 
-  /** Drain all queued waiters without resolving them (for abort scenarios) */
+  /** Drain all queued waiters and reset slot count (for abort scenarios) */
   drain(): void {
     this.queue.length = 0
+    this.current = 0 // Reset current count to prevent slot leak after abort
   }
 }

@@ -87,7 +87,7 @@ interface Api {
     conversationId: string
     text: string
     attachments?: string[]
-  }) => Promise<void>
+  }) => Promise<{ requestId: string }>
   getConversations: (args: { workspaceId: string }) => Promise<Conversation[]>
   createConversation: (args: {
     workspaceId: string
@@ -376,6 +376,7 @@ interface Api {
       role: string
       taskId?: string
       specialist?: string
+      requestId?: string
       toolActivity?: {
         id: string
         toolName: string
@@ -394,7 +395,13 @@ interface Api {
     }) => void
   ) => () => void
   onMessageComplete: (
-    callback: (data: { conversationId: string; messageId: string; taskId?: string }) => void
+    callback: (data: {
+      conversationId: string
+      messageId: string
+      taskId?: string
+      isHandoff?: boolean
+      requestId?: string
+    }) => void
   ) => () => void
   onHandoff: (
     callback: (data: {
@@ -698,7 +705,7 @@ interface Api {
     }) => void
   ) => () => void
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
-  setToolApprovalMode: (mode: 'prompt' | 'accept-all' | 'dangerous-only') => Promise<void>
+  setToolApprovalMode: (mode: 'dangerous-only' | 'accept-all') => Promise<void>
   getToolApprovalMode: () => Promise<string>
 
   // Checkpoint approval
@@ -814,6 +821,17 @@ interface Api {
     }) => void
   ) => () => void
   onSessionState: (callback: (data: { state: string }) => void) => () => void
+  onSessionRecovery: (
+    callback: (data: { conversationId: string; phase: string; message: string }) => void
+  ) => () => void
+  onStateChange: (
+    callback: (data: {
+      conversationId: string | null
+      from: string
+      to: string
+      event: string
+    }) => void
+  ) => () => void
 
   // SDK Control — Query instance methods
   sdkGetContextUsage: () => Promise<{
@@ -835,6 +853,47 @@ interface Api {
   sdkRewindFiles: (args: { userMessageId: string; dryRun?: boolean }) => Promise<unknown>
   sdkReconnectMcp: (args: { serverName: string }) => Promise<unknown>
   sdkSupportedAgents: () => Promise<unknown>
+  sdkToggleMcpServer: (args: { serverName: string; enabled: boolean }) => Promise<unknown>
+
+  // SDK Subagent inspection (0.2.96+)
+  sdkListSubagents: (args: { sessionId: string }) => Promise<string[]>
+  sdkGetSubagentMessages: (args: { sessionId: string; subagentId: string }) => Promise<unknown[]>
+
+  // SDK Query — close + seedReadState
+  sdkCloseQuery: () => Promise<void>
+  sdkSeedReadState: (args: { path: string; mtime: number }) => Promise<void>
+
+  // SDK Elicitation (enriched — via elicitation.service)
+  onSdkElicitationRequest: (callback: (data: unknown) => void) => () => void
+  sdkElicitationRespond: (args: {
+    requestId: string
+    action: string
+    content?: Record<string, unknown>
+  }) => Promise<void>
+
+  // Session Management (SDK top-level functions)
+  sessionList: (args?: {
+    dir?: string
+    limit?: number
+    offset?: number
+  }) => Promise<unknown[]>
+  sessionGetInfo: (args: { sessionId: string; dir?: string }) => Promise<unknown>
+  sessionGetMessages: (args: {
+    sessionId: string
+    dir?: string
+    includeSystemMessages?: boolean
+  }) => Promise<unknown[]>
+  sessionRename: (args: { sessionId: string; title: string; dir?: string }) => Promise<void>
+  sessionTag: (args: { sessionId: string; tag: string | null; dir?: string }) => Promise<void>
+  sessionFork: (args: {
+    sessionId: string
+    upToMessageId?: string
+    title?: string
+    dir?: string
+  }) => Promise<{ sessionId: string }>
+
+  // Chat resume at checkpoint
+  chatResumeAt: (args: { conversationId: string; messageId: string }) => Promise<void>
 }
 
 declare global {

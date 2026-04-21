@@ -170,6 +170,7 @@ export interface MessageBubbleActions {
 interface MessageBubbleProps {
   message: Message
   isStreaming?: boolean
+  isExecutingPlan?: boolean
   searchHighlight?: string
   toolActivities?: ToolActivity[]
   /** When true, skip rendering inline GrillQuestionCard (store-driven card in MessageList takes precedence) */
@@ -426,7 +427,7 @@ function useMessageIdentity(message: Message): {
       const personaId = activeConversation?.personaSpecialistId
       if (personaId) {
         const persona = specialists.find((s) => s.id === personaId)
-        if (persona) {
+        if (persona && persona.agentId !== 'user') {
           return {
             displayName: persona.alias ?? persona.displayName,
             subtitle: persona.alias ? persona.displayName : null,
@@ -515,6 +516,7 @@ function BubbleImage({ filePath }: { filePath: string }): React.JSX.Element {
 function MessageBubbleInner({
   message,
   isStreaming,
+  isExecutingPlan,
   toolActivities,
   suppressInlineGrillCard,
   actions
@@ -1010,6 +1012,7 @@ function MessageBubbleInner({
             <TaskPlanCard
               summary="Implementation Plan"
               mode="plan"
+              isExecuting={isExecutingPlan}
               planContent={planContent}
               onBuildNow={handleBuildNow}
               onOrchestratedBuild={handleOrchestratedBuild}
@@ -1106,10 +1109,32 @@ function MessageBubbleInner({
           <ToolActivityBlock activities={toolActivities} />
         )}
 
-        <span className="text-xs text-text-secondary mt-1 px-1">
-          {formatTime(message.createdAt)}
-          {isStreaming && ' · Streaming...'}
-        </span>
+        <div className="flex items-center gap-2 mt-1 px-1 group">
+          <span className="text-xs text-text-secondary">
+            {formatTime(message.createdAt)}
+            {isStreaming && ' · Streaming...'}
+          </span>
+          {!isUser && !isStreaming && (
+            <button
+              onClick={async () => {
+                if (message.conversationId && message.id) {
+                  try {
+                    await window.api.chatResumeAt({
+                      conversationId: message.conversationId,
+                      messageId: message.id
+                    })
+                  } catch (err) {
+                    console.error('Failed to resume at checkpoint:', err)
+                  }
+                }
+              }}
+              className="text-[10px] text-text-muted hover:text-primary-text transition-colors opacity-0 group-hover:opacity-100"
+              title="Undo to this message"
+            >
+              Undo to here
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )

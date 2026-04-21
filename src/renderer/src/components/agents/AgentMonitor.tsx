@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { useAgentStore, useSpecialistStore, useChatStore } from '@renderer/store'
 import { AgentStatusCard, BugCouncilPanel } from '@renderer/components/agents'
+import SpecialistInspector from './SpecialistInspector'
 import type { BugCouncilResult } from '../../../../shared/types'
 
 function formatTokens(count: number): string {
@@ -45,6 +46,10 @@ export default function AgentMonitor({
   >([])
   const [showCheckpoints, setShowCheckpoints] = useState(false)
   const [bugCouncilResults, setBugCouncilResults] = useState<BugCouncilResult[]>([])
+  const [inspecting, setInspecting] = useState<{
+    sessionId: string
+    subagentId: string
+  } | null>(null)
 
   // Load specialists on mount so AgentStatusCard can read metadata from DB
   useEffect(() => {
@@ -90,6 +95,24 @@ export default function AgentMonitor({
     })
     return cleanup
   }, [])
+
+  // Handle specialist inspection — open the inspector panel for a specialist
+  const handleInspect = useCallback(
+    async (agentId: string) => {
+      const sessionId = activeConversation?.claudeSessionId
+      if (!sessionId) return
+      try {
+        const subagents = await window.api.sdkListSubagents({ sessionId })
+        const match = subagents.find((s) => s.includes(agentId)) || subagents[0]
+        if (match) {
+          setInspecting({ sessionId, subagentId: match })
+        }
+      } catch (err) {
+        console.error('Failed to list subagents:', err)
+      }
+    },
+    [activeConversation?.claudeSessionId]
+  )
 
   // Fetch checkpoints when conversation changes or all agents complete
   const allComplete =
@@ -226,24 +249,39 @@ export default function AgentMonitor({
         </div>
       </div>
 
-      {/* Agent list */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {visibleStatuses.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <Monitor size={32} className="text-border-default mb-3" />
-            <p className="text-sm text-text-secondary mb-1">No agents active</p>
-            <p className="text-xs text-text-muted">Agents will appear here when processing tasks</p>
-          </div>
-        ) : (
-          visibleStatuses.map((status) => (
-            <AgentStatusCard
-              key={status.agentId}
-              status={status}
-              isSubagent={status.agentId.startsWith('subagent:')}
-            />
-          ))
-        )}
-      </div>
+      {/* Agent list or Specialist Inspector */}
+      {inspecting ? (
+        <SpecialistInspector
+          sessionId={inspecting.sessionId}
+          subagentId={inspecting.subagentId}
+          onClose={() => setInspecting(null)}
+        />
+      ) : (
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          {visibleStatuses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <Monitor size={32} className="text-border-default mb-3" />
+              <p className="text-sm text-text-secondary mb-1">No agents active</p>
+              <p className="text-xs text-text-muted">
+                Agents will appear here when processing tasks
+              </p>
+            </div>
+          ) : (
+            visibleStatuses.map((status) => (
+              <div
+                key={status.agentId}
+                onClick={() => handleInspect(status.agentId)}
+                className="cursor-pointer"
+              >
+                <AgentStatusCard
+                  status={status}
+                  isSubagent={status.agentId.startsWith('subagent:')}
+                />
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Bug Council results */}
       {bugCouncilResults.length > 0 && (

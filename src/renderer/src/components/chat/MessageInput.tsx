@@ -431,6 +431,25 @@ export default function MessageInput({
         />
       )}
 
+      {/* Prompt suggestion chip — positioned above input for visibility */}
+      {promptSuggestion && !isStreaming && (
+        <div className="mb-1.5">
+          <button
+            onClick={() => {
+              sendMessage(promptSuggestion)
+              setPromptSuggestion(null)
+            }}
+            className="text-xs text-primary-text bg-primary/10 px-3 py-1 rounded-full hover:bg-primary/20 transition-colors"
+            title={promptSuggestion}
+          >
+            💡{' '}
+            {promptSuggestion.length > 80
+              ? promptSuggestion.slice(0, 77) + '...'
+              : promptSuggestion}
+          </button>
+        </div>
+      )}
+
       <div className="relative flex-1 min-w-0 flex items-end gap-2">
         {/* Slash command autocomplete dropdown */}
         {showCommands && (
@@ -545,25 +564,6 @@ export default function MessageInput({
           <Send size={18} />
         </button>
       </div>
-
-      {/* Prompt suggestion chip — from SDK promptSuggestions */}
-      {promptSuggestion && !isStreaming && (
-        <div className="mt-1.5">
-          <button
-            onClick={() => {
-              sendMessage(promptSuggestion)
-              setPromptSuggestion(null)
-            }}
-            className="text-xs text-primary-text bg-primary/10 px-3 py-1 rounded-full hover:bg-primary/20 transition-colors"
-            title={promptSuggestion}
-          >
-            💡{' '}
-            {promptSuggestion.length > 80
-              ? promptSuggestion.slice(0, 77) + '...'
-              : promptSuggestion}
-          </button>
-        </div>
-      )}
 
       <ConfirmDialog
         isOpen={showStopConfirm}

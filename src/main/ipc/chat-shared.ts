@@ -3,7 +3,9 @@ import { fileChangeRepository } from '../db/repositories'
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
 import { IPC_CHANNELS, MCP_TOOLS } from '../../shared/constants'
+import type { ConversationPhase } from '../../shared/types'
 import { chatIpcLogger } from '../logger'
+import { createTextChunk, createToolActivityChunk, createTurnBoundary } from './chat-protocol'
 
 const log = chatIpcLogger
 
@@ -67,16 +69,24 @@ export function forwardChunkToRenderer(
   chunk: StreamChunk,
   contentAccumulator: { value: string },
   workspacePath?: string,
-  specialistMeta?: { specialist: string; taskId: string }
+  specialistMeta?: { specialist: string; taskId: string },
+  phase?: ConversationPhase,
+  requestId?: string
 ): void {
   if (chunk.type === 'text' && chunk.content) {
     contentAccumulator.value += chunk.content
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: chunk.content,
-      role,
-      ...specialistMeta
-    })
+    mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createTextChunk({
+        conversationId,
+        requestId,
+        text: chunk.content,
+        role,
+        phase,
+        specialist: specialistMeta?.specialist,
+        taskId: specialistMeta?.taskId
+      })
+    )
   } else if (chunk.type === 'tool_use') {
     // Control tools are internal — don't show as tool activity in the UI
     if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
@@ -93,19 +103,23 @@ export function forwardChunkToRenderer(
         log.warn('Failed to track file change:', e)
       }
     }
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: '',
-      role,
-      ...specialistMeta,
-      toolActivity: {
-        id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        toolName: chunk.toolName ?? 'Unknown',
-        status: 'running',
-        input: chunk.toolInput,
-        startedAt: Date.now()
-      }
-    })
+    mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createToolActivityChunk({
+        conversationId,
+        requestId,
+        role,
+        toolActivity: {
+          id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          toolName: chunk.toolName ?? 'Unknown',
+          status: 'running' as const,
+          input: chunk.toolInput,
+          startedAt: Date.now()
+        },
+        specialist: specialistMeta?.specialist,
+        taskId: specialistMeta?.taskId
+      })
+    )
   } else if (chunk.type === 'tool_result') {
     // Control tool results are internal
     if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
@@ -128,12 +142,17 @@ export function forwardChunkToRenderer(
         ) {
           const planBlock = `\n\n\`\`\`\`plan\n${parsed.content}\n\`\`\`\`\n`
           contentAccumulator.value += planBlock
-          mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-            conversationId,
-            chunk: planBlock,
-            role,
-            ...specialistMeta
-          })
+          mainWindow.webContents.send(
+            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+            createTextChunk({
+              conversationId,
+              requestId,
+              text: planBlock,
+              role,
+              specialist: specialistMeta?.specialist,
+              taskId: specialistMeta?.taskId
+            })
+          )
           log.info('Injected plan content from Write to .claude/plans/', parsed.file_path)
         }
       } catch {
@@ -154,32 +173,44 @@ export function forwardChunkToRenderer(
     if (resultSummary) {
       toolActivity.result = resultSummary
     }
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: '',
-      role,
-      ...specialistMeta,
-      toolActivity
-    })
+    mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createToolActivityChunk({
+        conversationId,
+        requestId,
+        role,
+        toolActivity: toolActivity as { id: string; toolName: string },
+        specialist: specialistMeta?.specialist,
+        taskId: specialistMeta?.taskId
+      })
+    )
   } else if (chunk.type === 'turn_boundary') {
     // Emit a mid-stream boundary signal — renderer finalizes current bubble
     // and starts accumulating into a new one
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: '',
-      role,
-      ...specialistMeta,
-      turnBoundary: true,
-      turnId: chunk.content
-    })
+    mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createTurnBoundary({
+        conversationId,
+        requestId,
+        role,
+        turnId: chunk.content ?? `turn-${Date.now()}`,
+        specialist: specialistMeta?.specialist,
+        taskId: specialistMeta?.taskId
+      })
+    )
   } else if (chunk.type === 'error') {
     contentAccumulator.value += `\n\n**Error:** ${chunk.error}`
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: `\n\n**Error:** ${chunk.error}`,
-      role,
-      ...specialistMeta
-    })
+    mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createTextChunk({
+        conversationId,
+        requestId,
+        text: `\n\n**Error:** ${chunk.error}`,
+        role,
+        specialist: specialistMeta?.specialist,
+        taskId: specialistMeta?.taskId
+      })
+    )
   } else if (chunk.type === 'status' && chunk.content) {
     // Skip internal heartbeat signals — they're for stall detection, not user-facing
     if (chunk.content === 'heartbeat') return
@@ -187,55 +218,93 @@ export function forwardChunkToRenderer(
     // Forward meaningful status messages (reconnection, rate limit fallback, etc.) as italic text
     const statusText = `\n\n_${chunk.content}_\n\n`
     contentAccumulator.value += statusText
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: statusText,
-      role,
-      ...specialistMeta
-    })
+    mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createTextChunk({
+        conversationId,
+        requestId,
+        text: statusText,
+        role,
+        specialist: specialistMeta?.specialist,
+        taskId: specialistMeta?.taskId
+      })
+    )
   } else if (chunk.type === 'tool_progress') {
     // Update running tool with elapsed time
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: '',
-      role,
-      ...specialistMeta,
-      toolActivity: {
-        id: chunk.toolId ?? `tool-${Date.now()}`,
-        toolName: chunk.toolName ?? 'Unknown',
-        status: 'running',
-        elapsedSeconds: chunk.elapsedSeconds
-      }
-    })
+    mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createToolActivityChunk({
+        conversationId,
+        requestId,
+        role,
+        toolActivity: {
+          id: chunk.toolId ?? `tool-${Date.now()}`,
+          toolName: chunk.toolName ?? 'Unknown',
+          status: 'running' as const,
+          elapsedSeconds: chunk.elapsedSeconds
+        },
+        specialist: specialistMeta?.specialist,
+        taskId: specialistMeta?.taskId
+      })
+    )
   } else if (chunk.type === 'rate_limit') {
-    mainWindow.webContents.send(IPC_CHANNELS.SDK_RATE_LIMIT, chunk.rateLimit)
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_RATE_LIMIT, {
+      ...(chunk.rateLimit ?? {}),
+      ...(requestId ? { requestId } : {})
+    })
   } else if (chunk.type === 'api_retry') {
-    mainWindow.webContents.send(IPC_CHANNELS.SDK_API_RETRY, chunk.retryInfo)
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_API_RETRY, {
+      ...(chunk.retryInfo ?? {}),
+      ...(requestId ? { requestId } : {})
+    })
   } else if (chunk.type === 'compact_boundary') {
     // Show compaction as system message in chat
     const compactText = `\n\n_⚡ ${chunk.content}_\n\n`
     contentAccumulator.value += compactText
-    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: compactText,
-      role,
-      ...specialistMeta
-    })
+    mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createTextChunk({
+        conversationId,
+        requestId,
+        text: compactText,
+        role,
+        specialist: specialistMeta?.specialist,
+        taskId: specialistMeta?.taskId
+      })
+    )
   } else if (chunk.type === 'prompt_suggestion') {
     mainWindow.webContents.send(IPC_CHANNELS.SDK_PROMPT_SUGGESTION, {
       conversationId,
-      suggestion: chunk.content
+      suggestion: chunk.content,
+      ...(requestId ? { requestId } : {})
     })
   } else if (chunk.type === 'files_persisted') {
     mainWindow.webContents.send(IPC_CHANNELS.SDK_FILES_PERSISTED, {
       conversationId,
-      files: chunk.persistedFiles
+      files: chunk.persistedFiles,
+      ...(requestId ? { requestId } : {})
     })
   } else if (chunk.type === 'hook_lifecycle') {
-    mainWindow.webContents.send(IPC_CHANNELS.SDK_HOOK_LIFECYCLE, chunk.hookInfo)
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_HOOK_LIFECYCLE, {
+      ...(chunk.hookInfo ?? {}),
+      ...(requestId ? { requestId } : {})
+    })
   } else if (chunk.type === 'session_state') {
-    mainWindow.webContents.send(IPC_CHANNELS.SDK_SESSION_STATE, { state: chunk.content })
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_SESSION_STATE, {
+      state: chunk.content,
+      ...(requestId ? { requestId } : {})
+    })
   } else if (chunk.type === 'auth_status') {
-    mainWindow.webContents.send(IPC_CHANNELS.SDK_AUTH_STATUS, { message: chunk.content })
+    mainWindow.webContents.send(IPC_CHANNELS.SDK_AUTH_STATUS, {
+      message: chunk.content,
+      ...(requestId ? { requestId } : {})
+    })
+  } else if (chunk.type === 'session_recovery') {
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_SESSION_RECOVERY, {
+      conversationId,
+      phase: chunk.recoveryPhase,
+      message: chunk.content,
+      ...(requestId ? { requestId } : {})
+    })
   }
 }

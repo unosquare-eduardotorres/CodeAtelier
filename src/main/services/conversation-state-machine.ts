@@ -1,0 +1,149 @@
+import { EventEmitter } from 'node:events'
+import type { BrowserWindow } from 'electron'
+import log from 'electron-log'
+import { IPC_CHANNELS } from '../../shared/constants'
+
+export type ConversationState =
+  | 'idle'
+  | 'generalist-streaming'
+  | 'handoff-detected'
+  | 'decomposing'
+  | 'specialist-executing'
+  | 'pipeline-complete'
+  | 'error'
+  | 'stopped'
+
+export type ConversationTransition =
+  | 'sendMessage'
+  | 'generalistComplete'
+  | 'handoffDetected'
+  | 'decompositionReady'
+  | 'executionStarted'
+  | 'allComplete'
+  | 'messageFinalised'
+  | 'streamError'
+  | 'decompositionError'
+  | 'executionError'
+  | 'userStop'
+  | 'cleanupComplete'
+  | 'errorHandled'
+
+const VALID_TRANSITIONS: Record<
+  ConversationState,
+  Partial<Record<ConversationTransition, ConversationState>>
+> = {
+  idle: {
+    sendMessage: 'generalist-streaming'
+  },
+  'generalist-streaming': {
+    generalistComplete: 'idle',
+    handoffDetected: 'handoff-detected',
+    streamError: 'error',
+    userStop: 'stopped'
+  },
+  'handoff-detected': {
+    decompositionReady: 'decomposing',
+    decompositionError: 'error'
+  },
+  decomposing: {
+    executionStarted: 'specialist-executing',
+    decompositionError: 'error'
+  },
+  'specialist-executing': {
+    allComplete: 'pipeline-complete',
+    executionError: 'error',
+    userStop: 'stopped'
+  },
+  'pipeline-complete': {
+    messageFinalised: 'idle'
+  },
+  error: {
+    errorHandled: 'idle'
+  },
+  stopped: {
+    cleanupComplete: 'idle'
+  }
+}
+
+export class ConversationStateMachine extends EventEmitter {
+  private state: ConversationState = 'idle'
+  private conversationId: string | null = null
+  private mainWindow: BrowserWindow | null = null
+
+  constructor() {
+    super()
+    this.on('error', (err) => {
+      log.error('[StateMachine:unhandled-error]', err)
+    })
+  }
+
+  /** Set the main window for IPC state forwarding to the renderer */
+  setMainWindow(win: BrowserWindow): void {
+    this.mainWindow = win
+  }
+
+  get currentState(): ConversationState {
+    return this.state
+  }
+  get activeConversationId(): string | null {
+    return this.conversationId
+  }
+
+  transition(event: ConversationTransition, conversationId?: string): boolean {
+    const nextState = VALID_TRANSITIONS[this.state]?.[event]
+    if (!nextState) {
+      log.warn(
+        `[StateMachine] Invalid transition: ${this.state} + ${event} ` +
+          `(conversation=${this.conversationId})`
+      )
+      return false
+    }
+
+    const prevState = this.state
+    this.state = nextState
+    if (conversationId) this.conversationId = conversationId
+    if (nextState === 'idle') this.conversationId = null
+
+    log.info(`[StateMachine] ${prevState} → ${nextState} (event=${event})`)
+    const statePayload = {
+      from: prevState,
+      to: nextState,
+      event,
+      conversationId: this.conversationId
+    }
+    this.emit('stateChange', statePayload)
+
+    // Forward state transitions to renderer for state mirror
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+    }
+    return true
+  }
+
+  isIdle(): boolean {
+    return this.state === 'idle'
+  }
+  isStreaming(): boolean {
+    return this.state === 'generalist-streaming'
+  }
+  isExecuting(): boolean {
+    return ['handoff-detected', 'decomposing', 'specialist-executing'].includes(this.state)
+  }
+
+  /** Force reset to idle — emergency escape hatch */
+  forceReset(): void {
+    const prevState = this.state
+    log.warn(`[StateMachine] Force reset from ${prevState}`)
+    this.state = 'idle'
+    this.conversationId = null
+    const statePayload = { from: prevState, to: 'idle' as const, event: 'forceReset', conversationId: null }
+    this.emit('stateChange', statePayload)
+
+    // Forward force reset to renderer
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+    }
+  }
+}
+
+export const conversationStateMachine = new ConversationStateMachine()

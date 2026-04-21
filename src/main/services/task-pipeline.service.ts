@@ -23,9 +23,12 @@ import type { StreamChunk } from '../services'
 import { specialistPoolService } from './specialist-pool.service'
 import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
+import { createTextChunk, createCompleteMessage } from '../ipc/chat-protocol'
 import { chatIpcLogger } from '../logger'
 import { decompositionService } from './decomposition.service'
 import { hookEngine } from './hook-engine.service'
+import { conversationStateMachine } from './conversation-state-machine'
+import { conversationLifecycle } from './conversation-lifecycle'
 
 const log = chatIpcLogger
 
@@ -54,24 +57,26 @@ function attachPoolListeners(
 // ── Pipeline Options (discriminated union) ──
 
 /** Normal handoff from generalist → specialist delegation */
-export interface HandoffPrepare {
-  type: 'handoff'
+interface BasePipelineOptions {
   conversationId: string
+  requestId?: string
+}
+
+export interface HandoffPrepare extends BasePipelineOptions {
+  type: 'handoff'
   brief: HandoffBrief
 }
 
 /** Investigation fix — auto-switch to build mode and execute fix */
-export interface InvestigationFixPrepare {
+export interface InvestigationFixPrepare extends BasePipelineOptions {
   type: 'investigationFix'
-  conversationId: string
   report: InvestigationReport
   autoExecuteStrategy: ExecutionStrategy
 }
 
 /** Direct plan execution — skip generalist round-trip when user clicks "Build This" on inline plan */
-export interface PlanExecutionPrepare {
+export interface PlanExecutionPrepare extends BasePipelineOptions {
   type: 'planExecution'
-  conversationId: string
   plan: StructuredPlan
   /** Raw plan content (JSON string) for context injection */
   planContent: string
@@ -79,8 +84,7 @@ export interface PlanExecutionPrepare {
 
 export type PrepareOptions = HandoffPrepare | InvestigationFixPrepare | PlanExecutionPrepare
 
-export interface ExecuteOptions {
-  conversationId: string
+export interface ExecuteOptions extends BasePipelineOptions {
   tasks: DecomposedTask[]
   brief?: HandoffBrief | null
   investigationDepth?: InvestigationDepth
@@ -105,7 +109,7 @@ export class TaskPipelineService {
    * Steps: logEvent → enrichMessages → sendNotifications → persistMode → decompose → sendTaskPlan
    */
   async prepare(options: PrepareOptions): Promise<void> {
-    const { conversationId } = options
+    const { conversationId, requestId } = options
 
     // ── Derive config from variant type ──
     type NotificationType = 'handoff' | 'delegation' | 'modeSwitch'
@@ -285,15 +289,15 @@ export class TaskPipelineService {
             conversationId,
             summary: brief.summary,
             specialists: brief.specialists,
-            mode: brief.mode
+            mode: brief.mode,
+            ...(requestId ? { requestId } : {})
           })
           log.info(`[PIPELINE:handoff-sent-to-renderer] conversationId=${conversationId}`)
           // Switch streaming identity to generalist during decomposition
-          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-            conversationId,
-            chunk: '',
-            role: 'generalist'
-          })
+          this.mainWindow.webContents.send(
+            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+            createTextChunk({ conversationId, requestId, text: '', role: 'generalist' })
+          )
           break
 
         case 'delegation': {
@@ -304,20 +308,28 @@ export class TaskPipelineService {
               return spec?.displayName ?? id
             })
             .join(', ')
-          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-            conversationId,
-            chunk: `Delegating to **${specialistNames}** for ${brief.mode === 'plan' ? 'review' : 'implementation'}.\n\n`,
-            role: 'generalist'
-          })
+          this.mainWindow.webContents.send(
+            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+            createTextChunk({
+              conversationId,
+              requestId,
+              text: `Delegating to **${specialistNames}** for ${brief.mode === 'plan' ? 'review' : 'implementation'}.\n\n`,
+              role: 'generalist'
+            })
+          )
           break
         }
 
         case 'modeSwitch':
-          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-            conversationId,
-            chunk: '\n> **Mode switched to Build** — executing fix plan.\n\n',
-            role: 'generalist'
-          })
+          this.mainWindow.webContents.send(
+            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+            createTextChunk({
+              conversationId,
+              requestId,
+              text: '\n> **Mode switched to Build** — executing fix plan.\n\n',
+              role: 'generalist'
+            })
+          )
           break
       }
     }
@@ -361,7 +373,8 @@ export class TaskPipelineService {
         conversationId,
         tasks: taskPlan.tasks,
         brief,
-        investigationDepth: taskPlan.investigationDepth
+        investigationDepth: taskPlan.investigationDepth,
+        requestId
       })
     } catch (error) {
       log.error('Task decomposition failed:', error)
@@ -375,15 +388,19 @@ export class TaskPipelineService {
         'generalist',
         `**Error:** Task decomposition failed.\n\n${(error as Error).message}`
       )
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        chunk: `\n\n**Error:** Task decomposition failed. ${(error as Error).message}`,
-        role: 'generalist'
-      })
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-        conversationId,
-        messageId: savedMsg.id
-      })
+      this.mainWindow.webContents.send(
+        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+        createTextChunk({
+          conversationId,
+          requestId,
+          text: `\n\n**Error:** Task decomposition failed. ${(error as Error).message}`,
+          role: 'generalist'
+        })
+      )
+      this.mainWindow.webContents.send(
+        IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+        createCompleteMessage({ conversationId, messageId: savedMsg.id, requestId })
+      )
     }
   }
 
@@ -399,9 +416,16 @@ export class TaskPipelineService {
    * 6. On error: surface to user, dispose listeners
    */
   async execute(options: ExecuteOptions): Promise<void> {
-    const { conversationId, tasks, brief = null, investigationDepth } = options
+    const { conversationId, tasks, brief = null, investigationDepth, requestId } = options
 
     log.info(`Executing plan: tasks=${tasks.length}, conversation=${conversationId}`)
+
+    // Register specialist pool cleanup with centralized lifecycle
+    conversationLifecycle.onDispose(() => {
+      specialistPoolService.stopAll().catch((e) => {
+        log.warn('[TaskPipeline] Lifecycle dispose: pool stopAll failed:', e)
+      })
+    })
 
     const startTime = Date.now()
 
@@ -414,7 +438,8 @@ export class TaskPipelineService {
     // Emit task list to renderer for progress card
     this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_BUILD_TASKS, {
       conversationId,
-      tasks
+      tasks,
+      ...(requestId ? { requestId } : {})
     })
 
     const conversation = conversationRepository.findById(conversationId)
@@ -426,7 +451,7 @@ export class TaskPipelineService {
 
     // ── Configure specialist pool ──
     const accumulatedContent = { value: '' }
-    const taskResultMap = new Map<string, { status: string; error?: string; specialist: string }>()
+    const taskResultMap = new Map<string, { status: string; error?: string; specialist: string; duration?: number }>()
 
     specialistPoolService.setWorkspacePath(workspacePath)
     const ws = workspaceRepository.findAll().find((w) => w.repoPath === workspacePath)
@@ -439,6 +464,9 @@ export class TaskPipelineService {
 
     // ── Attach disposable listener group ──
     let dispose: (() => void) | null = null
+    // Guard against double-fire of allComplete — executeParallel can resolve
+    // from both the onDone callback and the tryStartReady guard in a race.
+    let completionEmitted = false
 
     /* eslint-disable @typescript-eslint/no-explicit-any */
     const handlers: PoolEventHandlers = {
@@ -493,7 +521,9 @@ export class TaskPipelineService {
           normalizedChunk,
           accumulatedContent,
           workspacePath ?? undefined,
-          { specialist: specialistId, taskId }
+          { specialist: specialistId, taskId },
+          'specialist-executing',
+          requestId
         )
 
         // Feed Agent Monitor output panel
@@ -501,12 +531,22 @@ export class TaskPipelineService {
           this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_CHUNK, {
             agentId: specialistId,
             taskId,
-            text: normalizedChunk.content
+            text: normalizedChunk.content,
+            ...(requestId ? { requestId } : {})
           })
         }
       },
 
       allComplete: async (): Promise<void> => {
+        // Guard: prevent duplicate summary messages + CHAT_MESSAGE_COMPLETE
+        // if allComplete fires twice due to executeParallel race
+        if (completionEmitted) {
+          log.warn('[PIPELINE:allComplete-duplicate] Ignoring duplicate allComplete event')
+          return
+        }
+        completionEmitted = true
+
+        conversationStateMachine.transition('allComplete')
         const elapsed = startTime ? Date.now() - startTime : 0
         log.info(
           `[PIPELINE:allComplete-received] conversationId=${conversationId} elapsed=${elapsed}ms ` +
@@ -519,7 +559,8 @@ export class TaskPipelineService {
             mode,
             accumulatedContent,
             taskResultMap,
-            startTime
+            startTime,
+            requestId
           )
         } finally {
           dispose?.()
@@ -527,42 +568,66 @@ export class TaskPipelineService {
       },
 
       taskRetry: (retryInfo: any): void => {
-        this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_RETRY, retryInfo)
+        this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_TASK_RETRY, {
+          ...(retryInfo ?? {}),
+          ...(requestId ? { requestId } : {})
+        })
       },
 
       taskProgress: (progress: any): void => {
         const p = progress as TaskExecutionProgress
         if (p.status === 'completed' || p.status === 'failed') {
+          const duration =
+            p.startedAt && p.completedAt ? p.completedAt - p.startedAt : undefined
           taskResultMap.set(p.taskId, {
             status: p.status,
             error: p.error,
-            specialist: p.specialist
+            specialist: p.specialist,
+            duration
           })
         }
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PROGRESS, p)
+        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_TASK_PROGRESS, {
+          ...p,
+          ...(requestId ? { requestId } : {})
+        })
       },
 
       agentStatus: (agentStatus: any): void => {
         this.mainWindow.webContents.send(
           IPC_CHANNELS.AGENT_STATUS_UPDATE,
-          agentStatus as AgentStatus
+          {
+            ...(agentStatus as AgentStatus),
+            ...(requestId ? { requestId } : {})
+          }
         )
       },
 
       abandonmentDetected: (data: any): void => {
-        this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_ABANDONMENT_DETECTED, data)
+        this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_ABANDONMENT_DETECTED, {
+          ...(data ?? {}),
+          ...(requestId ? { requestId } : {})
+        })
       },
 
       gateFailure: (data: any): void => {
-        this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_GATE_FAILURE, data)
+        this.mainWindow.webContents.send(IPC_CHANNELS.AGENT_GATE_FAILURE, {
+          ...(data ?? {}),
+          ...(requestId ? { requestId } : {})
+        })
       },
 
       bugCouncilActivated: (data: any): void => {
-        this.mainWindow.webContents.send(IPC_CHANNELS.BUG_COUNCIL_ACTIVATED, data)
+        this.mainWindow.webContents.send(IPC_CHANNELS.BUG_COUNCIL_ACTIVATED, {
+          ...(data ?? {}),
+          ...(requestId ? { requestId } : {})
+        })
       },
 
       bugCouncilComplete: (data: any): void => {
-        this.mainWindow.webContents.send(IPC_CHANNELS.BUG_COUNCIL_COMPLETE, data)
+        this.mainWindow.webContents.send(IPC_CHANNELS.BUG_COUNCIL_COMPLETE, {
+          ...(data ?? {}),
+          ...(requestId ? { requestId } : {})
+        })
       }
     }
     /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -570,6 +635,7 @@ export class TaskPipelineService {
     dispose = attachPoolListeners(specialistPoolService, handlers)
 
     // ── Run execution ──
+    conversationStateMachine.transition('executionStarted')
     try {
       const hasDependencies = tasks.some((task) => (task.dependsOn?.length ?? 0) > 0)
       if (hasDependencies) {
@@ -580,6 +646,17 @@ export class TaskPipelineService {
     } catch (error) {
       dispose()
       log.error('Plan execution failed:', error)
+      conversationStateMachine.transition('executionError')
+
+      // Clear handoff state in renderer on pipeline failure
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_HANDOFF, {
+        conversationId,
+        summary: '',
+        specialists: [],
+        mode: 'plan',
+        cleared: true,
+        ...(requestId ? { requestId } : {})
+      })
 
       eventLoggerService.logPlanExecutionFailed({
         conversationId,
@@ -589,15 +666,15 @@ export class TaskPipelineService {
 
       const errorMsg = `**Execution Error:** ${(error as Error).message}`
       const savedMsg = messageRepository.create(conversationId, 'generalist', errorMsg)
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        chunk: errorMsg,
-        role: 'generalist'
-      })
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-        conversationId,
-        messageId: savedMsg.id
-      })
+      this.mainWindow.webContents.send(
+        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+        createTextChunk({ conversationId, requestId, text: errorMsg, role: 'generalist' })
+      )
+      this.mainWindow.webContents.send(
+        IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+        createCompleteMessage({ conversationId, messageId: savedMsg.id, requestId })
+      )
+      conversationStateMachine.transition('errorHandled')
     }
   }
 
@@ -610,8 +687,9 @@ export class TaskPipelineService {
     tasks: DecomposedTask[],
     mode: ConversationMode,
     accumulatedContent: { value: string },
-    taskResultMap: Map<string, { status: string; error?: string; specialist: string }>,
-    startTime?: number
+    taskResultMap: Map<string, { status: string; error?: string; specialist: string; duration?: number }>,
+    startTime?: number,
+    requestId?: string
   ): Promise<void> {
     log.info('Pipeline execution complete')
 
@@ -634,7 +712,8 @@ export class TaskPipelineService {
           specialist: task.specialist,
           description: task.description,
           status: result?.status === 'failed' ? ('failed' as const) : ('completed' as const),
-          error: result?.error
+          error: result?.error,
+          duration: result?.duration
         }
       }),
       totalDuration: startTime ? Date.now() - startTime : 0,
@@ -647,12 +726,16 @@ export class TaskPipelineService {
     // Determine primary specialist for attribution (last task's specialist, or first)
     const primarySpecialist = tasks.length > 0 ? tasks[tasks.length - 1].specialist : undefined
 
-    this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-      conversationId,
-      chunk: `\n\n${summaryBlock}\n`,
-      role: 'specialist',
-      specialist: primarySpecialist
-    })
+    this.mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createTextChunk({
+        conversationId,
+        requestId,
+        text: `\n\n${summaryBlock}\n`,
+        role: 'specialist',
+        specialist: primarySpecialist
+      })
+    )
     accumulatedContent.value += `\n\n${summaryBlock}\n`
 
     const savedMsg = messageRepository.create(
@@ -661,10 +744,10 @@ export class TaskPipelineService {
       accumulatedContent.value || '_No response from specialist execution._',
       primarySpecialist
     )
-    this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, {
-      conversationId,
-      messageId: savedMsg.id
-    })
+    this.mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+      createCompleteMessage({ conversationId, messageId: savedMsg.id, requestId })
+    )
 
     // Context injection into generalist (Strategy ι)
     try {
@@ -692,6 +775,8 @@ export class TaskPipelineService {
     } catch (e) {
       log.warn('Context injection after specialist execution failed:', e)
     }
+
+    conversationStateMachine.transition('messageFinalised')
   }
 }
 

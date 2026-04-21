@@ -46,6 +46,7 @@ import { taskArtifactService } from './task-artifact.service'
 import { PromptBuilder } from './prompt-builder'
 import { SDKExecutor } from './sdk-executor'
 import type { SDKExecuteResult } from './sdk-executor'
+import { createBuildModeSandbox } from './sandbox-config'
 import {
   topologicalSort as topologicalSortFn,
   detectConclusivePattern as detectConclusivePatternFn
@@ -248,6 +249,9 @@ export class SpecialistPoolService extends EventEmitter {
   // S9: Conclusive patterns moved to specialist/task-scheduler.ts
   // Use getConclusivePatterns() for pattern access
 
+  /** Resolve callback for the executeParallel promise — allows stopAll() to unblock it */
+  private abortResolve: (() => void) | null = null
+
   /**
    * Creates a CompositeScheduler from persisted preferences or defaults.
    * Called at construction and can be re-called to refresh weights.
@@ -307,6 +311,13 @@ export class SpecialistPoolService extends EventEmitter {
    * Key: `${specialistId}:${mode}:${budgetTier}:${skillsEnabled}`
    */
   private specialistPromptCache: Map<string, string> = new Map()
+
+  constructor() {
+    super()
+    this.on('error', (err) => {
+      this.log.error('[SpecialistPool:unhandled-error]', err)
+    })
+  }
 
   setWorkspacePath(path: string): void {
     this.workspacePath = path
@@ -482,6 +493,7 @@ export class SpecialistPoolService extends EventEmitter {
     }
 
     return new Promise<void>((resolve) => {
+      this.abortResolve = resolve
       const tryStartReady = (): void => {
         if (this.aborted) return
 
@@ -527,6 +539,7 @@ export class SpecialistPoolService extends EventEmitter {
                 )
                 unsubBusTrace()
                 this.postExecutionTeardown()
+                this.abortResolve = null
                 resolve()
               } else {
                 tryStartReady()
@@ -555,6 +568,7 @@ export class SpecialistPoolService extends EventEmitter {
           )
           unsubBusTrace()
           this.postExecutionTeardown()
+          this.abortResolve = null
           resolve()
         }
       }
@@ -1580,13 +1594,6 @@ export class SpecialistPoolService extends EventEmitter {
         SPECIALIST_BUDGET_CAPS[
           (task.complexity?.tier ?? 'moderate') as keyof typeof SPECIALIST_BUDGET_CAPS
         ]
-      const taskBudgetTotal =
-        {
-          simple: 10_000,
-          moderate: 30_000,
-          complex: 80_000
-        }[(task.complexity?.tier ?? 'moderate') as string] ?? 30_000
-
       // Enable 1M context beta for Sonnet models
       const isSonnet = modelId.includes('sonnet')
 
@@ -1635,19 +1642,7 @@ export class SpecialistPoolService extends EventEmitter {
             }
           }
         },
-        sandbox:
-          mode === 'build'
-            ? {
-                enabled: true,
-                autoAllowBashIfSandboxed: true,
-                // macOS has sandbox-exec built-in; Linux may lack bubblewrap in CI
-                failIfUnavailable: process.platform === 'darwin',
-                allowUnsandboxedCommands: true,
-                network: {
-                  allowLocalBinding: true
-                }
-              }
-            : undefined,
+        sandbox: mode === 'build' ? createBuildModeSandbox() : undefined,
         // Enable 1M context window for Sonnet specialists
         ...(isSonnet ? { betas: ['context-1m-2025-08-07'] } : {}),
         ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
@@ -2296,6 +2291,16 @@ export class SpecialistPoolService extends EventEmitter {
     }
 
     this.activeProcesses.clear()
+
+    // Resolve the executeParallel promise so it doesn't hang forever.
+    // Do NOT call postExecutionTeardown() here — it emits 'allComplete' which would
+    // trigger onExecutionComplete() with a spurious summary + duplicate CHAT_MESSAGE_COMPLETE.
+    // The generalist-stream stop() handles the user-facing stopped message.
+    // Trace ending is already handled above (endRun with aborted flag).
+    if (this.abortResolve) {
+      this.abortResolve()
+      this.abortResolve = null
+    }
   }
 
   private emitProgress(
@@ -2952,6 +2957,7 @@ export class SpecialistPoolService extends EventEmitter {
     this.skippedTasks.clear()
     this.activeProcesses.clear()
     this.aborted = false
+    this.abortResolve = null
     this.conversationBrief = null
     this.consecutiveSpawnFailures = 0
     this.investigationDepth = 'standard'

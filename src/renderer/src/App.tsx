@@ -4,10 +4,12 @@ import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
 import {
   WelcomeModal,
   ToolApprovalModal,
-  CheckpointApprovalModal
+  CheckpointApprovalModal,
+  ElicitationModal
 } from '@renderer/components/common'
 import {
   useWorkspaceStore,
+  useChatStore,
   useChatActions,
   useAgentStore,
   useUpdateStore,
@@ -15,7 +17,7 @@ import {
   useDreamStore,
   useProfileStore
 } from '@renderer/store'
-import type { ConversationMode } from '../../shared/types'
+import type { ConversationMode, ConversationPhase } from '../../shared/types'
 import { rendererLog } from '@renderer/utils/logger'
 
 // Check if this window was opened as a Pixel Office pop-out
@@ -42,7 +44,8 @@ function App(): React.JSX.Element {
     endGrillSession,
     setGrillQuestions,
     setPendingQuestions,
-    setInvestigationReport
+    setInvestigationReport,
+    setConversationState
   } = useChatActions()
 
   // Agent actions
@@ -80,6 +83,12 @@ function App(): React.JSX.Element {
 
     // Set up IPC event listeners for streaming
     const unsubChunk = window.api.onMessageChunk((data) => {
+      // Ignore chunks for non-active conversation
+      const activeConvId = useChatStore.getState().activeConversation?.id
+      if (activeConvId && data.conversationId !== activeConvId) {
+        return
+      }
+
       // Handle turn boundaries — finalize current bubble and start a new one
       if (data.turnBoundary && data.turnId) {
         finalizeTurnBubble(data.turnId)
@@ -90,7 +99,8 @@ function App(): React.JSX.Element {
           data.chunk,
           data.role as 'generalist' | 'coordinator' | 'specialist',
           data.taskId,
-          data.specialist
+          data.specialist,
+          data.requestId
         )
       }
       // Update streaming identity even on tool-only chunks (empty text)
@@ -137,13 +147,27 @@ function App(): React.JSX.Element {
     })
 
     const unsubComplete = window.api.onMessageComplete((data) => {
+      // Ignore completions for non-active conversation
+      const activeConvId = useChatStore.getState().activeConversation?.id
+      if (activeConvId && data.conversationId !== activeConvId) {
+        rendererLog.info(
+          `[finalizeStream] Ignoring complete for non-active conversation ${data.conversationId}`
+        )
+        return
+      }
       rendererLog.info(
         `[PIPELINE:renderer:message-complete] messageId=${data.messageId} taskId=${data.taskId ?? 'none'}`
       )
-      finalizeStream(data.messageId, data.taskId)
+      finalizeStream(data.messageId, data.taskId, data.isHandoff, data.requestId)
     })
 
     const unsubHandoff = window.api.onHandoff((data) => {
+      // Handle handoff-clear signal from failed pipelines
+      if ((data as { cleared?: boolean }).cleared) {
+        rendererLog.info('[PIPELINE:renderer:handoff-cleared] Pipeline error — clearing handoff')
+        useChatStore.getState().clearHandoff()
+        return
+      }
       rendererLog.info(
         `[PIPELINE:renderer:handoff-received] specialists=${data.specialists?.join(',')}`
       )
@@ -235,6 +259,28 @@ function App(): React.JSX.Element {
       onDreamProgress(progress)
     })
 
+    // Conversation state machine mirror — keep renderer in sync with backend state
+    const unsubStateChange = window.api.onStateChange((data) => {
+      // Guard: ignore state changes from a non-active conversation to prevent
+      // cross-conversation state bleed (same pattern as onMessageChunk/onMessageComplete)
+      const activeConvId = useChatStore.getState().activeConversation?.id
+      if (activeConvId && data.conversationId && data.conversationId !== activeConvId) {
+        rendererLog.info(
+          `[StateMachine:renderer] IGNORED ${data.from} → ${data.to} (conv=${data.conversationId}, active=${activeConvId})`
+        )
+        return
+      }
+      rendererLog.info(
+        `[StateMachine:renderer] ${data.from} → ${data.to} (event=${data.event})`
+      )
+      setConversationState({
+        phase: data.to as ConversationPhase | 'idle' | 'error' | 'stopped',
+        from: data.from,
+        event: data.event,
+        conversationId: data.conversationId
+      })
+    })
+
     return () => {
       unsubChunk()
       unsubComplete()
@@ -254,6 +300,7 @@ function App(): React.JSX.Element {
       unsubUpdateError()
       unsubMemoryFeed()
       unsubDreamProgress()
+      unsubStateChange()
     }
   }, [
     loadProfile,
@@ -280,7 +327,8 @@ function App(): React.JSX.Element {
     onMemoryFeedProgress,
     onDreamProgress,
     finalizeTurnBubble,
-    setDecomposedTasks
+    setDecomposedTasks,
+    setConversationState
   ])
 
   // Pop-out mode: render only the Pixel Office fullscreen
@@ -315,6 +363,7 @@ function App(): React.JSX.Element {
       <AppLayout />
       <ToolApprovalModal />
       <CheckpointApprovalModal />
+      <ElicitationModal />
     </>
   )
 }

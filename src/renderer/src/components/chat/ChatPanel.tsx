@@ -1,23 +1,22 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { Search, X, Bot, Braces, SearchCode } from 'lucide-react'
+import { Search, X, Bot } from 'lucide-react'
 import {
   useChatStore,
   useChatActions,
   useWorkspaceStore,
   useConversationSpecialists,
   useSpecialistStore,
-  useCodeChangesStore,
-  useAgentStore
+  useCodeChangesStore
 } from '@renderer/store'
 import {
   MessageList,
   MessageInput,
   AttachmentDropzone,
-  ModeToggle,
   RepoWarningBanner,
-  ContextBadge,
   RateLimitBadge
 } from '@renderer/components/chat'
+import SessionRecoveryBanner from './SessionRecoveryBanner'
+import type { SessionRecoveryPhase } from './SessionRecoveryBanner'
 import NewChatPage from './NewChatPage'
 import PersonaSelector from './PersonaSelector'
 import ChatTabButton from './ChatTabButton'
@@ -41,11 +40,8 @@ export default function ChatPanel({
   onNewChatDismiss
 }: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, agentStatus } = useWorkspaceStore()
-  const { createConversation, updateMode, sendMessage, loadContextUsage } = useChatActions()
+  const { createConversation, sendMessage, loadContextUsage } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
-  const contextUsage = useChatStore((s) =>
-    activeConversation ? s.contextUsages[activeConversation.id] : undefined
-  )
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const [attachments, setAttachments] = useState<string[]>([])
@@ -65,12 +61,6 @@ export default function ChatPanel({
   // Code changes count for tab badge
   const pendingChangesCount = useCodeChangesStore((s) => s.files.length)
 
-  // Active MCP tools from generalist status
-  const activeMcpTools = useAgentStore((s) => {
-    const generalist = s.statuses.find((st) => st.agentType === 'generalist')
-    return generalist?.activeMcpTools
-  })
-
   // Rate limit state — listens to SDK rate limit events
   const [rateLimitState, setRateLimitState] = useState<{
     status: 'allowed' | 'allowed_warning' | 'rejected'
@@ -89,6 +79,31 @@ export default function ChatPanel({
     })
     return cleanup
   }, [dismissRateLimit])
+
+  // Session recovery state
+  const sessionRecovery = useChatStore((s) => s.sessionRecovery)
+  const setSessionRecovery = useChatStore((s) => s.setSessionRecovery)
+
+  useEffect(() => {
+    const cleanup = window.api.onSessionRecovery((data) => {
+      if (data.phase === 'completed') {
+        // Auto-dismiss after 2s
+        setSessionRecovery({
+          active: true,
+          phase: 'completed',
+          message: data.message
+        })
+        setTimeout(() => setSessionRecovery(null), 2000)
+      } else {
+        setSessionRecovery({
+          active: true,
+          phase: data.phase as SessionRecoveryPhase,
+          message: data.message
+        })
+      }
+    })
+    return cleanup
+  }, [setSessionRecovery])
 
   // Load code changes when conversation changes
   const loadFiles = useCodeChangesStore((s) => s.loadFiles)
@@ -117,6 +132,18 @@ export default function ChatPanel({
       void loadContextUsage(activeConversation.id)
     }
   }, [activeConversation?.id, isStreaming, loadContextUsage])
+
+  // ⌘F / Ctrl+F toggle for search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault()
+        setShowSearch((prev) => !prev)
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
 
   const handleCreateChat = async (data: {
     title: string
@@ -161,7 +188,7 @@ export default function ChatPanel({
 
   return (
     <div className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0">
-      {/* Header with Tab Bar */}
+      {/* Header — tabs left, persona right */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-raised">
         <div className="flex items-center gap-1" role="tablist" aria-label="Chat panel tabs">
           <ChatTabButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')}>
@@ -182,49 +209,18 @@ export default function ChatPanel({
             Code Changes
           </ChatTabButton>
         </div>
-        {activeTab === 'chat' && activeMcpTools && activeMcpTools.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            {activeMcpTools.includes('code-graph') && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full">
-                <Braces size={10} /> Code Graph
-              </span>
-            )}
-            {activeMcpTools.includes('semantic-search') && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-sky-400 bg-sky-500/10 border border-sky-500/20 px-1.5 py-0.5 rounded-full">
-                <SearchCode size={10} /> Semantic
-              </span>
-            )}
-          </div>
-        )}
-        {activeTab === 'chat' && (
-          <div className="flex items-center gap-2">
-            <PersonaSelector conversation={activeConversation} />
-            {rateLimitState && rateLimitState.status !== 'allowed' && (
-              <RateLimitBadge
-                utilization={rateLimitState.utilization ?? 0}
-                status={rateLimitState.status}
-              />
-            )}
-            {contextUsage && contextUsage.percentage > 0 && (
-              <ContextBadge percentage={contextUsage.percentage} level={contextUsage.level} />
-            )}
-            <ModeToggle
-              mode={activeConversation.mode}
-              onChange={(mode) => updateMode(mode)}
-              disabled={isStreaming}
-            />
-            <button
-              onClick={() => setShowSearch((prev) => !prev)}
-              className={`p-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${showSearch ? 'bg-surface-overlay text-primary-text' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
-              aria-label="Search messages"
-              aria-pressed={showSearch}
-              title="Search messages"
-            >
-              <Search size={14} />
-            </button>
-          </div>
-        )}
+        {activeTab === 'chat' && <PersonaSelector conversation={activeConversation} />}
       </div>
+
+      {/* Rate limit warning banner — only shows during warning/rejected */}
+      {rateLimitState && rateLimitState.status !== 'allowed' && (
+        <div className="px-6 py-2 border-b border-border-subtle">
+          <RateLimitBadge
+            utilization={rateLimitState.utilization ?? 0}
+            status={rateLimitState.status}
+          />
+        </div>
+      )}
 
       {/* Tab content */}
       {activeTab === 'chat' && (
@@ -262,6 +258,14 @@ export default function ChatPanel({
 
           {/* Repo/GitHub warning banner */}
           <RepoWarningBanner />
+
+          {/* Session recovery banner */}
+          {sessionRecovery && (
+            <SessionRecoveryBanner
+              phase={sessionRecovery.phase}
+              message={sessionRecovery.message}
+            />
+          )}
 
           {/* Messages or initialization overlay */}
           {agentStatus === 'starting' ? (

@@ -1,4 +1,5 @@
 import type {
+  ConversationMode,
   ControlToolState,
   GeneralistIntent,
   GrillEvaluation,

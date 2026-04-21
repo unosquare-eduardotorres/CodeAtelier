@@ -1,6 +1,13 @@
 // ── Data Models ──
 export type ConversationMode = 'plan' | 'build'
 
+/** Tracks which phase of the conversation lifecycle is active */
+export type ConversationPhase =
+  | 'generalist-responding'
+  | 'handoff-in-progress'
+  | 'specialist-executing'
+  | 'pipeline-complete'
+
 export interface UserProfile {
   id: string
   displayName: string
@@ -438,6 +445,26 @@ export interface CompleteResult {
   prUrl?: string
 }
 
+// ── SDK Terminal Reason (0.2.96+) ──
+
+/**
+ * Why a query stopped — from SDK result.terminal_reason.
+ * Used for smarter recovery nudge, circuit breaker, and user-facing diagnostics.
+ */
+export type TerminalReason =
+  | 'blocking_limit'
+  | 'rapid_refill_breaker'
+  | 'prompt_too_long'
+  | 'image_error'
+  | 'model_error'
+  | 'aborted_streaming'
+  | 'aborted_tools'
+  | 'stop_hook_prevented'
+  | 'hook_stopped'
+  | 'tool_deferred'
+  | 'max_turns'
+  | 'completed'
+
 // ── Task Decomposition & Parallel Execution ──
 
 export type ExecutionStrategy = 'sequential' | 'parallel'
@@ -497,6 +524,8 @@ export interface DecomposedTask {
   outputSchema?: string
   /** Runtime metadata for task loop state (re-engagement, abandonment tracking, etc.) */
   metadata?: Record<string, unknown>
+  /** Fire-and-forget SubAgent — runs in background without blocking the main flow (SDK 0.2.96+) */
+  background?: boolean
 }
 
 /** The full task plan returned by the generalist decomposition step */
@@ -1496,6 +1525,48 @@ export interface IpcChannels {
   'sdk:rewindFiles': { args: { userMessageId: string; dryRun?: boolean }; return: unknown }
   'sdk:reconnectMcp': { args: { serverName: string }; return: unknown }
   'sdk:supportedAgents': { args: void; return: unknown }
+
+  // SDK Query — close + seedReadState
+  'sdk:closeQuery': { args: void; return: void }
+  'sdk:seedReadState': { args: { path: string; mtime: number }; return: void }
+  // SDK MCP lifecycle
+  'sdk:toggleMcpServer': {
+    args: { serverName: string; enabled: boolean }
+    return: unknown
+  }
+
+  // SDK Elicitation (enriched — via elicitation.service)
+  'sdk:elicitationResponse': {
+    args: { requestId: string; action: string; content?: Record<string, unknown> }
+    return: void
+  }
+
+  // SDK Subagent inspection (0.2.96+)
+  'sdk:listSubagents': { args: { sessionId: string }; return: string[] }
+  'sdk:getSubagentMessages': {
+    args: { sessionId: string; subagentId: string }
+    return: unknown[]
+  }
+
+  // Chat resume at checkpoint
+  'chat:resumeAt': {
+    args: { conversationId: string; messageId: string }
+    return: void
+  }
+
+  // Session Management (SDK top-level functions)
+  'session:list': {
+    args: { dir?: string; limit?: number; offset?: number }
+    return: unknown[]
+  }
+  'session:getInfo': { args: { sessionId: string; dir?: string }; return: unknown }
+  'session:getMessages': { args: { sessionId: string; dir?: string }; return: unknown[] }
+  'session:rename': { args: { sessionId: string; title: string; dir?: string }; return: void }
+  'session:tag': { args: { sessionId: string; tag: string | null; dir?: string }; return: void }
+  'session:fork': {
+    args: { sessionId: string; upToMessageId?: string; title?: string; dir?: string }
+    return: { sessionId: string }
+  }
 }
 
 // ── IPC Event Channels (main → renderer streaming) ──

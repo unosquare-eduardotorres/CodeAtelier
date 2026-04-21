@@ -80,7 +80,8 @@ export function parseDecompositionResult(
 
   const normalizedTasks: DecomposedTask[] = parsed.tasks.map((task, index) => ({
     id: task.id || `t${index + 1}`,
-    specialist: task.specialist as string,
+    // Reject 'user' as a valid specialist — fall back to 'generalist-developer'
+    specialist: task.specialist === 'user' ? 'generalist-developer' : (task.specialist as string),
     description: task.description as string,
     dependsOn: Array.isArray(task.dependsOn) ? task.dependsOn : [],
     complexity: task.complexity,
@@ -171,11 +172,27 @@ export function buildSubAgentDefinitions(
 
     const { systemPrompt, description } = buildAgentConfig(specialistId, specialistTasks, mode)
 
+    // Compute per-agent effort from task complexity (SDK 0.2.96+)
+    const taskComplexities = specialistTasks.map((t) => t.complexity?.tier).filter(Boolean)
+    const agentEffort: 'low' | 'medium' | 'high' = taskComplexities.includes('complex')
+      ? 'high'
+      : taskComplexities.includes('moderate')
+        ? 'medium'
+        : 'low'
+
+    // Fire-and-forget: if any task for this specialist is marked background, the SubAgent runs non-blocking
+    const isBackground = specialistTasks.some((t) => t.background)
+
     agents[specialistId] = {
       description,
       prompt: `${systemPrompt}\n\n## Your Assigned Tasks\n${taskList}`,
       tools,
       model,
+      // SDK 0.2.96+ per-agent config
+      effort: agentEffort,
+      permissionMode: mode === 'build' ? 'auto' : 'default',
+      memory: 'project',
+      ...(isBackground ? { background: true } : {}),
       ...(mcpServers ? { mcpServers } : {})
     }
   }
