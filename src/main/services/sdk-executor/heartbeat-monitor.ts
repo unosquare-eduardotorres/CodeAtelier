@@ -1,6 +1,4 @@
-import log from 'electron-log/main'
-
-const sdkLog = log.scope('SDKExecutor')
+import { sdkLog } from './index'
 
 /**
  * Heartbeat / stall detection for SDK queries.

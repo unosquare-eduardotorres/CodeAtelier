@@ -8,6 +8,7 @@ import { validateSender } from './validate-sender'
 import { agentSyncService } from '../services/agent-sync.service'
 import { fileWatcherService } from '../services/file-watcher.service'
 import { dbLogger } from '../logger'
+import { getDatabase } from '../db/index'
 
 export function registerWorkspaceIpc(): void {
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_LIST, async (event) => {
@@ -62,12 +63,39 @@ export function registerWorkspaceIpc(): void {
         // Not a repo — fine, we allow non-git directories
       }
 
-      return workspaceRepository.create(
+      const workspace = workspaceRepository.create(
         name.trim() || basename(normalizedPath),
         normalizedPath,
         gitRemoteUrl,
         isGitRepo
       )
+
+      // Phase 2 refactor: seed a pending Project Specialist row so the user
+      // can build it on first open. Idempotent — migration 66 already does
+      // this for pre-existing workspaces; this covers workspaces added
+      // AFTER the migration ran.
+      try {
+        const db = getDatabase()
+        const existing = db
+          .prepare(`SELECT id FROM specialists WHERE workspace_id = ?`)
+          .get(workspace.id) as { id: string } | undefined
+        if (!existing) {
+          db.prepare(
+            `INSERT INTO specialists (workspace_id, agent_id, display_name, icon, color,
+               prompt, priority, is_active, build_status, created_at, updated_at)
+             VALUES (?, ?, ?, '🔧', '#6366F1', '', 1, 1, 'pending', datetime('now'), datetime('now'))`
+          ).run(
+            workspace.id,
+            `workspace-specialist-${workspace.id}`,
+            `${workspace.name} Specialist`
+          )
+          dbLogger.info(`Seeded pending Project Specialist for workspace ${workspace.id}`)
+        }
+      } catch (err) {
+        dbLogger.warn('Failed to seed Project Specialist on workspace create:', err)
+      }
+
+      return workspace
     }
   )
 

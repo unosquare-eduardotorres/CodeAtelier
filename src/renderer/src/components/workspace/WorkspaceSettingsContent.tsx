@@ -10,9 +10,9 @@ import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
-import { SkillDetailPage, SpecialistMarketplace } from '@renderer/components/settings'
+import { SkillDetailPage } from '@renderer/components/settings'
+import SpecialistsListPage from '@renderer/components/settings/SpecialistsListPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
-import OfficeEditorPage from '@renderer/components/pixel-office/editor/OfficeEditorPage'
 import type { SettingsTab } from './WorkspaceSettingsPanel'
 
 interface WorkspaceSettingsContentProps {
@@ -106,7 +106,7 @@ export default function WorkspaceSettingsContent({
 
       {tab === 'team' && workspacePath && (
         <div className="flex-1 min-h-0">
-          <SpecialistMarketplace workspacePath={workspacePath} />
+          <SpecialistsListPage />
         </div>
       )}
 
@@ -152,7 +152,6 @@ export default function WorkspaceSettingsContent({
       {tab === 'documents' && <DocumentsPage />}
       {tab === 'tokens' && <TokenUsagePage />}
       {tab === 'events' && <EventLogPage />}
-      {tab === 'office' && <OfficeEditorPage />}
     </div>
   )
 }

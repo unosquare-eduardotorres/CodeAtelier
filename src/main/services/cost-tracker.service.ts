@@ -12,13 +12,15 @@ const costLogger = log.scope('CostTracker')
  * Updated model IDs should be added here as new models are released.
  */
 export const MODEL_PRICING: Record<string, { inputPer1M: number; outputPer1M: number }> = {
-  // Sonnet 4
+  // Current models
+  'claude-haiku-4-5-20251001': { inputPer1M: 1.0, outputPer1M: 5.0 },
+  'claude-sonnet-4-6': { inputPer1M: 3.0, outputPer1M: 15.0 },
+  'claude-opus-4-7': { inputPer1M: 5.0, outputPer1M: 25.0 },
+  // Legacy (kept for historical cost calculation on older sessions)
   'claude-sonnet-4-20250514': { inputPer1M: 3.0, outputPer1M: 15.0 },
-  // Opus 4
   'claude-opus-4-20250514': { inputPer1M: 15.0, outputPer1M: 75.0 },
-  // Sonnet 3.5 (legacy, may still appear in older sessions)
+  'claude-opus-4-6': { inputPer1M: 5.0, outputPer1M: 25.0 },
   'claude-3-5-sonnet-20241022': { inputPer1M: 3.0, outputPer1M: 15.0 },
-  // Haiku 3.5 (legacy)
   'claude-3-5-haiku-20241022': { inputPer1M: 0.8, outputPer1M: 4.0 }
 } as const
 

@@ -10,7 +10,6 @@ import {
   ChevronDown,
   Loader2
 } from 'lucide-react'
-import type { SchedulingWeights } from '../../../../shared/types'
 import {
   useUpdateStore,
   useSpecialistStore,
@@ -18,7 +17,7 @@ import {
   useSpecialistWarningPreferences,
   useAppPreferenceStatus
 } from '@renderer/store'
-import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
+import { Avatar } from '@renderer/components/common'
 import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 import type { Specialist } from '../../../../shared/types'
 import AISubscriptionsSection from './AISubscriptionsSection'
@@ -254,15 +253,11 @@ function SpecialistOrder(): React.JSX.Element {
           >
             <GripVertical size={14} className="text-text-muted flex-shrink-0" />
             <span className="text-xs text-text-muted w-5 font-mono">{index + 1}</span>
-            {specialist.usePixelForChat && specialist.pixelSpriteId ? (
-              <PixelSpriteAvatar spriteId={specialist.pixelSpriteId} size={24} />
-            ) : (
-              <Avatar
-                avatarKey={specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId)}
-                size="sm"
-                accentColor={specialist.color}
-              />
-            )}
+            <Avatar
+              avatarKey={specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId)}
+              size="sm"
+              accentColor={specialist.color}
+            />
             <div className="flex-1 min-w-0">
               <span className="text-sm font-medium text-text-primary">
                 {specialist.displayName}
@@ -296,109 +291,6 @@ function SpecialistOrder(): React.JSX.Element {
           <Loader2 size={10} className="animate-spin" /> Saving order...
         </p>
       )}
-    </div>
-  )
-}
-
-const WEIGHT_LABELS: Record<keyof SchedulingWeights, { label: string; description: string }> = {
-  dependencyFirst: {
-    label: 'Dependency First',
-    description: 'Prioritize tasks whose dependencies are already complete.'
-  },
-  capabilityMatch: {
-    label: 'Capability Match',
-    description: 'Assign tasks to the best-suited specialist by skill match.'
-  },
-  leastBusy: {
-    label: 'Least Busy',
-    description: 'Distribute tasks to idle specialists for better parallelism.'
-  }
-}
-
-function SchedulingStrategySection(): React.JSX.Element {
-  const [weights, setWeights] = useState<SchedulingWeights>({
-    dependencyFirst: 0.6,
-    capabilityMatch: 0.3,
-    leastBusy: 0.1
-  })
-  const [isLoading, setIsLoading] = useState(true)
-
-  useEffect(() => {
-    window.api
-      .getSchedulingWeights()
-      .then((w) => {
-        setWeights(w)
-        setIsLoading(false)
-      })
-      .catch(() => setIsLoading(false))
-  }, [])
-
-  const handleChange = useCallback(
-    (key: keyof SchedulingWeights, value: number) => {
-      const updated = { ...weights, [key]: value }
-      // Normalize: distribute remaining budget proportionally among other keys
-      const others = (Object.keys(updated) as (keyof SchedulingWeights)[]).filter((k) => k !== key)
-      const remaining = Math.max(0, 1.0 - value)
-      const otherSum = others.reduce((s, k) => s + weights[k], 0)
-      for (const k of others) {
-        updated[k] = otherSum > 0 ? (weights[k] / otherSum) * remaining : remaining / others.length
-      }
-      // Round to 2 decimal places to avoid floating point drift
-      for (const k of Object.keys(updated) as (keyof SchedulingWeights)[]) {
-        updated[k] = Math.round(updated[k] * 100) / 100
-      }
-      setWeights(updated)
-      window.api.setSchedulingWeights(updated).catch((err) => {
-        console.error('Failed to save scheduling weights:', err)
-      })
-    },
-    [weights]
-  )
-
-  return (
-    <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
-      <div>
-        <h4 className="text-sm font-medium text-text-primary">Scheduling Strategy</h4>
-        <p className="text-xs text-text-secondary mt-0.5">
-          Adjust how tasks are prioritized and assigned to specialists. Weights auto-normalize to
-          100%.
-        </p>
-      </div>
-
-      <div className="mt-4 space-y-3">
-        {isLoading ? (
-          <div className="text-xs text-text-muted flex items-center gap-1.5">
-            <Loader2 size={12} className="animate-spin" />
-            Loading weights...
-          </div>
-        ) : (
-          (Object.keys(WEIGHT_LABELS) as (keyof SchedulingWeights)[]).map((key) => (
-            <div
-              key={key}
-              className="rounded-lg border border-border-subtle bg-surface-base px-3 py-2.5"
-            >
-              <div className="flex items-center justify-between mb-1">
-                <div className="min-w-0">
-                  <p className="text-sm text-text-body">{WEIGHT_LABELS[key].label}</p>
-                  <p className="text-xs text-text-secondary">{WEIGHT_LABELS[key].description}</p>
-                </div>
-                <span className="text-xs font-mono text-text-muted ml-3 whitespace-nowrap">
-                  {Math.round(weights[key] * 100)}%
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={Math.round(weights[key] * 100)}
-                onChange={(e) => handleChange(key, Number(e.target.value) / 100)}
-                className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-primary bg-surface-float"
-              />
-            </div>
-          ))
-        )}
-      </div>
     </div>
   )
 }
@@ -437,9 +329,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
 
             {/* Specialist warning preferences */}
             <SpecialistWarningPreferencesSection />
-
-            {/* Scheduling Strategy Weights */}
-            <SchedulingStrategySection />
 
             {/* Specialist Priority Order */}
             <SpecialistOrder />

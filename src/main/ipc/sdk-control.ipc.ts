@@ -1,242 +1,151 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { generalistService } from '../services'
+import { chatAgentService } from '../services'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString, optionalString } from './validate-args'
 
 /**
  * SDK Control IPC handlers — bridges renderer requests to the active
- * Query reference held by the generalist's SDKExecutor.
+ * Query reference held by the generalist's SDKExecutor, or to top-level SDK
+ * functions that operate on persisted sessions.
  *
- * These methods require an active SDK query() session. They throw if
- * called when no query is in progress.
+ * ─── Active handlers (wired to renderer) ───────────────────────────────────
  *
- * STATUS: Most of these handlers are wired but NOT called from the renderer.
- * Only `sdkStopTask` is actively used (AgentStatusCard.tsx).
- * The rest are available for future UI features or can be removed in a cleanup pass.
+ *   ELICITATION_RESPONSE       — generalist MCP elicitation flow
+ *   SDK_ELICITATION_RESPONSE   — elicitation.service enriched flow (SDK 0.2.96+)
+ *   SDK_STOP_TASK              — stop an individual SubAgent (AgentStatusCard)
+ *   SDK_SUPPORTED_MODELS       — list available models (ModelConfigTab)
+ *   SDK_LIST_SUBAGENTS         — enumerate SubAgents in a session (SDK 0.2.96+)
+ *   SDK_GET_SUBAGENT_MESSAGES  — fetch a SubAgent transcript (SDK 0.2.96+)
+ *   SDK_FORK_SESSION           — branch a conversation at a message boundary
  *
- * NOT YET WIRED (exist on Query but have no IPC handler):
- * - toggleMcpServer(name, enabled) — enable/disable MCP servers
- * - seedReadState(path, mtime) — prevent "file not read" errors after context snip
- * - reloadPlugins() — hot-reload plugins, commands, agents
- * - initializationResult() — get full init config (replaces accountInfo + supportedModels)
- * - supportedCommands() — list available slash commands
- * - setMaxThinkingTokens() — dynamic thinking budget (deprecated, use thinking option)
- * - close() — forceful query termination (we use AbortController instead)
+ * ─── Reserved handlers (deliberately not wired yet) ────────────────────────
+ *
+ * The SDK Query interface exposes additional control methods we have
+ * intentionally NOT surfaced. If you find yourself about to add one of these
+ * handlers, check first whether the feature is better implemented elsewhere:
+ *
+ *   - getContextUsage()        → use chatAgentService.getContextUsage() directly
+ *   - interrupt() / close()    → use conversationLifecycle.abort() (AbortController)
+ *   - accountInfo()            → no subscription UI yet — defer until needed
+ *   - setModel()               → model is pinned at execute() time via modelConfigService
+ *   - setPermissionMode()      → chat-lifecycle.ipc.ts switchMode already covers this
+ *   - applyFlagSettings()      → no mid-session settings UI; settings rebuild the query
+ *   - setMcpServers()          → MCP servers are configured at query creation time
+ *   - toggleMcpServer()        → same — restart the query to change MCP set
+ *   - mcpServerStatus()        → no health dashboard yet
+ *   - reconnectMcpServer()     → same — no MCP health UI
+ *   - rewindFiles()            → no undo UI yet
+ *   - seedReadState()          → handled inside the SDKExecutor on context snip
+ *   - supportedAgents()        → SubAgent set is static per session config
+ *
+ * Adding a handler here is cheap; adding a feature that depends on an unstable
+ * Query reference is expensive. Prefer routing through a service that owns the
+ * lifecycle (chatAgentService, conversationLifecycle, modelConfigService).
  */
 export function registerSdkControlIpc(): void {
-  // Elicitation response — renderer sends user's response to MCP elicitation request
-  ipcMain.handle(
-    IPC_CHANNELS.ELICITATION_RESPONSE,
-    async (event, args: { action: string; content?: Record<string, unknown> }) => {
-      validateSender(event)
-      generalistService.emit('elicitationResponse', {
-        action: args.action as 'accept' | 'decline' | 'cancel',
-        content: args.content
-      })
+  // ── Elicitation ────────────────────────────────────────────────────────
+
+  // Generalist MCP elicitation response — forwarded to the generalist's
+  // active session via an event emitter.
+  ipcMain.handle(IPC_CHANNELS.ELICITATION_RESPONSE, async (event, args: unknown) => {
+    validateSender(event)
+    const channel = IPC_CHANNELS.ELICITATION_RESPONSE
+    const obj = requireObject(args, channel)
+    const action = requireString(obj, 'action', channel)
+    if (action !== 'accept' && action !== 'decline' && action !== 'cancel') {
+      throw new Error(`${channel}: field 'action' must be 'accept' | 'decline' | 'cancel'`)
     }
-  )
-
-  // TODO: Not called from renderer — generalist.service.ts uses SDK directly for context usage
-  // getContextUsage — native context window breakdown
-  ipcMain.handle(IPC_CHANNELS.SDK_GET_CONTEXT_USAGE, async (event) => {
-    validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
-    return query.getContextUsage()
+    const content =
+      obj.content === undefined
+        ? undefined
+        : (() => {
+            if (obj.content === null || typeof obj.content !== 'object' || Array.isArray(obj.content)) {
+              throw new Error(`${channel}: field 'content' must be an object when provided`)
+            }
+            return obj.content as Record<string, unknown>
+          })()
+    chatAgentService.emit('elicitationResponse', { action, content })
   })
 
-  // stopTask — stop individual SubAgent
-  ipcMain.handle(IPC_CHANNELS.SDK_STOP_TASK, async (event, args: { taskId: string }) => {
+  // Enriched elicitation response (SDK 0.2.96+) — routed through
+  // ElicitationService so the pending Promise resolves for the specific
+  // requestId that originated the prompt.
+  ipcMain.handle(IPC_CHANNELS.SDK_ELICITATION_RESPONSE, async (event, args: unknown) => {
     validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
-    return query.stopTask(args.taskId)
+    const channel = IPC_CHANNELS.SDK_ELICITATION_RESPONSE
+    const obj = requireObject(args, channel)
+    const requestId = requireString(obj, 'requestId', channel)
+    const action = requireString(obj, 'action', channel)
+    if (action !== 'accept' && action !== 'decline' && action !== 'cancel') {
+      throw new Error(`${channel}: field 'action' must be 'accept' | 'decline' | 'cancel'`)
+    }
+    const content =
+      obj.content === undefined
+        ? undefined
+        : (() => {
+            if (obj.content === null || typeof obj.content !== 'object' || Array.isArray(obj.content)) {
+              throw new Error(`${channel}: field 'content' must be an object when provided`)
+            }
+            return obj.content as Record<string, unknown>
+          })()
+    const { elicitationService } = await import('../services/elicitation.service')
+    elicitationService.resolveElicitation(requestId, { action, content })
   })
 
-  // TODO: Not called from renderer — we use cancelCurrentQuery() with AbortController instead
-  // interrupt — clean interruption preserving session
-  ipcMain.handle(IPC_CHANNELS.SDK_INTERRUPT, async (event) => {
+  // ── Active Query controls (require an in-flight query) ───────────────────
+
+  // Stop an individual SubAgent mid-execution (AgentStatusCard "stop" button).
+  ipcMain.handle(IPC_CHANNELS.SDK_STOP_TASK, async (event, args: unknown) => {
     validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
-    return query.interrupt()
+    const channel = IPC_CHANNELS.SDK_STOP_TASK
+    const obj = requireObject(args, channel)
+    const taskId = requireString(obj, 'taskId', channel)
+    const query = chatAgentService.getActiveQuery()
+    if (!query) throw new Error(`${channel}: no active query`)
+    return query.stopTask(taskId)
   })
 
-  // TODO: Not called from renderer — could power a subscription status UI
-  // accountInfo — subscription details
-  ipcMain.handle(IPC_CHANNELS.SDK_ACCOUNT_INFO, async (event) => {
-    validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
-    return query.accountInfo()
-  })
-
-  // TODO: Not called from renderer — could power a model picker UI
-  // supportedModels — available models list
+  // Supported-models list for ModelConfigTab — reads from the live Query
+  // rather than a static config so account-dependent models appear correctly.
   ipcMain.handle(IPC_CHANNELS.SDK_SUPPORTED_MODELS, async (event) => {
     validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
+    const query = chatAgentService.getActiveQuery()
+    if (!query) throw new Error(`${IPC_CHANNELS.SDK_SUPPORTED_MODELS}: no active query`)
     return query.supportedModels()
   })
 
-  // TODO: Not called from renderer — could power MCP health dashboard
-  // mcpServerStatus — MCP server health
-  ipcMain.handle(IPC_CHANNELS.SDK_MCP_SERVER_STATUS, async (event) => {
+  // ── SubAgent inspection (SDK 0.2.96+) — operate on persisted sessions ────
+
+  ipcMain.handle(IPC_CHANNELS.SDK_LIST_SUBAGENTS, async (event, args: unknown) => {
     validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
-    return query.mcpServerStatus()
-  })
-
-  // TODO: Not called from renderer — model is set at execute() time via modelConfigService
-  // setModel — dynamic model switching
-  ipcMain.handle(IPC_CHANNELS.SDK_SET_MODEL, async (event, args: { model?: string }) => {
-    validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
-    return query.setModel(args.model)
-  })
-
-  // TODO: Not called from renderer — switchMode() now calls setPermissionMode() directly
-  // setPermissionMode — switch plan/build without restart
-  ipcMain.handle(IPC_CHANNELS.SDK_SET_PERMISSION_MODE, async (event, args: { mode: string }) => {
-    validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
-    return query.setPermissionMode(
-      args.mode as 'default' | 'plan' | 'bypassPermissions' | 'acceptEdits' | 'auto' | 'dontAsk'
-    )
-  })
-
-  // TODO: Not called from renderer — no settings UI uses mid-session flag changes
-  // applyFlagSettings — push settings mid-session
-  ipcMain.handle(
-    IPC_CHANNELS.SDK_APPLY_FLAG_SETTINGS,
-    async (event, args: { settings: Record<string, unknown> }) => {
-      validateSender(event)
-      const query = generalistService.getActiveQuery()
-      if (!query) throw new Error('No active query')
-      return query.applyFlagSettings(args.settings as Parameters<typeof query.applyFlagSettings>[0])
-    }
-  )
-
-  // TODO: Not called from renderer — MCP servers are configured at query creation time
-  // setMcpServers — hot-reload MCP servers
-  ipcMain.handle(
-    IPC_CHANNELS.SDK_SET_MCP_SERVERS,
-    async (event, args: { servers: Record<string, unknown> }) => {
-      validateSender(event)
-      const query = generalistService.getActiveQuery()
-      if (!query) throw new Error('No active query')
-      return query.setMcpServers(args.servers as Parameters<typeof query.setMcpServers>[0])
-    }
-  )
-
-  // TODO: Not called from renderer — could power an undo/rollback UI
-  // rewindFiles — native file rollback
-  ipcMain.handle(
-    IPC_CHANNELS.SDK_REWIND_FILES,
-    async (event, args: { userMessageId: string; dryRun?: boolean }) => {
-      validateSender(event)
-      const query = generalistService.getActiveQuery()
-      if (!query) throw new Error('No active query')
-      return query.rewindFiles(args.userMessageId, { dryRun: args.dryRun })
-    }
-  )
-
-  // TODO: Not called from renderer — could power MCP health recovery UI
-  // reconnectMcpServer — recover from MCP crashes
-  ipcMain.handle(IPC_CHANNELS.SDK_RECONNECT_MCP, async (event, args: { serverName: string }) => {
-    validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
-    return query.reconnectMcpServer(args.serverName)
-  })
-
-  // toggleMcpServer — enable/disable MCP servers mid-session
-  ipcMain.handle(
-    IPC_CHANNELS.SDK_TOGGLE_MCP_SERVER,
-    async (event, args: { serverName: string; enabled: boolean }) => {
-      validateSender(event)
-      const query = generalistService.getActiveQuery()
-      if (!query) throw new Error('No active query')
-      return query.toggleMcpServer(args.serverName, args.enabled)
-    }
-  )
-
-  // TODO: Not called from renderer — could power dynamic agent discovery UI
-  // supportedAgents — list runtime SubAgents
-  ipcMain.handle(IPC_CHANNELS.SDK_SUPPORTED_AGENTS, async (event) => {
-    validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) throw new Error('No active query')
-    return query.supportedAgents()
-  })
-
-  // close — forceful query termination (backstop when AbortController doesn't work)
-  ipcMain.handle(IPC_CHANNELS.SDK_CLOSE_QUERY, async (event) => {
-    validateSender(event)
-    const query = generalistService.getActiveQuery()
-    if (!query) return
-    query.close()
-  })
-
-  // seedReadState — prevent "file not read" errors after context compaction
-  ipcMain.handle(
-    IPC_CHANNELS.SDK_SEED_READ_STATE,
-    async (event, args: { path: string; mtime: number }) => {
-      validateSender(event)
-      const query = generalistService.getActiveQuery()
-      if (!query) throw new Error('No active query')
-      return query.seedReadState(args.path, args.mtime)
-    }
-  )
-
-  // Elicitation response (enriched) — renderer sends user's response via elicitation.service
-  ipcMain.handle(
-    IPC_CHANNELS.SDK_ELICITATION_RESPONSE,
-    async (
-      event,
-      args: { requestId: string; action: string; content?: Record<string, unknown> }
-    ) => {
-      validateSender(event)
-      const { elicitationService } = await import('../services/elicitation.service')
-      elicitationService.resolveElicitation(args.requestId, {
-        action: args.action as 'accept' | 'decline' | 'cancel',
-        content: args.content
-      })
-    }
-  )
-
-  // listSubagents — list all SubAgents spawned during a session (SDK 0.2.96+)
-  ipcMain.handle(IPC_CHANNELS.SDK_LIST_SUBAGENTS, async (event, args: { sessionId: string }) => {
-    validateSender(event)
+    const channel = IPC_CHANNELS.SDK_LIST_SUBAGENTS
+    const obj = requireObject(args, channel)
+    const sessionId = requireString(obj, 'sessionId', channel)
     const { listSubagents } = await import('@anthropic-ai/claude-agent-sdk')
-    return listSubagents(args.sessionId)
+    return listSubagents(sessionId)
   })
 
-  // getSubagentMessages — get the full transcript of a SubAgent (SDK 0.2.96+)
-  ipcMain.handle(
-    IPC_CHANNELS.SDK_GET_SUBAGENT_MESSAGES,
-    async (event, args: { sessionId: string; subagentId: string }) => {
-      validateSender(event)
-      const { getSubagentMessages } = await import('@anthropic-ai/claude-agent-sdk')
-      return getSubagentMessages(args.sessionId, args.subagentId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.SDK_GET_SUBAGENT_MESSAGES, async (event, args: unknown) => {
+    validateSender(event)
+    const channel = IPC_CHANNELS.SDK_GET_SUBAGENT_MESSAGES
+    const obj = requireObject(args, channel)
+    const sessionId = requireString(obj, 'sessionId', channel)
+    const subagentId = requireString(obj, 'subagentId', channel)
+    const { getSubagentMessages } = await import('@anthropic-ai/claude-agent-sdk')
+    return getSubagentMessages(sessionId, subagentId)
+  })
 
-  // forkSession — branch a conversation at a specific message point
-  // Used for "Branch Conversation" feature — creates a new session forked from an existing one
-  ipcMain.handle(
-    IPC_CHANNELS.SDK_FORK_SESSION,
-    async (event, args: { sessionId: string; upToMessageId?: string }) => {
-      validateSender(event)
-      const { forkSession } = await import('@anthropic-ai/claude-agent-sdk')
-      return forkSession(
-        args.sessionId,
-        args.upToMessageId ? { upToMessageId: args.upToMessageId } : undefined
-      )
-    }
-  )
+  // ── Session branching ────────────────────────────────────────────────────
+
+  // Fork a conversation at a message boundary — "Branch Conversation" feature.
+  ipcMain.handle(IPC_CHANNELS.SDK_FORK_SESSION, async (event, args: unknown) => {
+    validateSender(event)
+    const channel = IPC_CHANNELS.SDK_FORK_SESSION
+    const obj = requireObject(args, channel)
+    const sessionId = requireString(obj, 'sessionId', channel)
+    const upToMessageId = optionalString(obj, 'upToMessageId', channel)
+    const { forkSession } = await import('@anthropic-ai/claude-agent-sdk')
+    return forkSession(sessionId, upToMessageId ? { upToMessageId } : undefined)
+  })
 }

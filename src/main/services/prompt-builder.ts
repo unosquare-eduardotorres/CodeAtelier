@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import type { BudgetTier, ConversationMode, HandoffBrief, Skill } from '../../shared/types'
+import type { BudgetTier, ConversationMode, Skill } from '../../shared/types'
 import { promptBuilderLogger } from '../logger'
 import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.repository'
 import { skillRepository } from '../db/repositories/skill.repository'
@@ -43,8 +43,6 @@ interface PromptBuildOptions {
   workspacePath?: string
   /** Include auto memory context (generalist only) */
   memoryContext?: string
-  /** Conversation brief context from handoff (specialist only) */
-  brief?: HandoffBrief
   /** Feedback memories for this specialist */
   feedbackContext?: string
   /** Dependency task outputs for context (specialist only) */
@@ -156,126 +154,153 @@ export class PromptBuilder {
     const layers: string[] = []
     const budgetTier = options.budgetTier ?? 'standard'
 
-    // ── Layer 0: Persona specialist identity + skills ──
-    // Injected BEFORE the generalist role prompt so the LLM sees itself
-    // as the specialist first, with orchestration/delegation powers second.
-    if (options.role === 'generalist' && options.personaSpecialistId && options.personaPrompt) {
-      layers.push(
-        `## Your Specialized Identity\n\n` +
-          `You are operating with the following domain expertise. ` +
-          `Apply it to all conversations and analyses.\n\n` +
-          options.personaPrompt
+    this.appendPersonaLayer(layers, options, budgetTier)
+    this.appendRoleAndIdentityLayers(layers, options, budgetTier)
+    this.appendSkillContentLayer(layers, options, budgetTier)
+    this.appendProjectContextLayer(layers, options, budgetTier)
+    this.appendMemoryContextLayer(layers, options)
+
+    // Strategy 8: Brief + feedback live in buildDynamicContext(), not here — keeps system prompt
+    // stable across tasks for maximum Claude prompt cache hits (90% discount).
+    return layers.join('\n\n---\n\n')
+  }
+
+  /**
+   * Layer 0: Persona specialist identity + skills (generalist only).
+   * Injected BEFORE the generalist role prompt so the LLM sees itself as the specialist first.
+   */
+  private appendPersonaLayer(
+    layers: string[],
+    options: PromptBuildOptions,
+    budgetTier: BudgetTier
+  ): void {
+    if (options.role !== 'generalist' || !options.personaSpecialistId || !options.personaPrompt) {
+      return
+    }
+    layers.push(
+      `## Your Specialized Identity\n\n` +
+        `You are operating with the following domain expertise. ` +
+        `Apply it to all conversations and analyses.\n\n` +
+        options.personaPrompt
+    )
+    if (options.personaSkills && options.personaSkills.length > 0) {
+      const filtered = this.filterAssignedSkills(
+        options.personaSkills,
+        options.personaSkillOverrides
       )
-      if (options.personaSkills && options.personaSkills.length > 0) {
-        const filtered = this.filterAssignedSkills(
-          options.personaSkills,
-          options.personaSkillOverrides
-        )
-        if (filtered.length > 0) {
-          const content = this.buildSkillContent(filtered, budgetTier)
-          if (content) layers.push(`## Domain Skills\n\n${content}`)
-        }
+      if (filtered.length > 0) {
+        const content = this.buildSkillContent(filtered, budgetTier)
+        if (content) layers.push(`## Domain Skills\n\n${content}`)
       }
     }
+  }
 
-    // Layer 1: Base role prompt (micro prompt for minimal-budget specialists)
-    // Specialist MCP guidance is conditionally assembled based on enabledMcpServers flags
+  /**
+   * Layers 1-2c: Role prompt, specialist identity, persona prompt, deep persona, Opus appendix.
+   */
+  private appendRoleAndIdentityLayers(
+    layers: string[],
+    options: PromptBuildOptions,
+    budgetTier: BudgetTier
+  ): void {
+    // Layer 1: Base role prompt
     layers.push(
       this.getRolePrompt(options.role, options.mode, budgetTier, options.enabledMcpServers)
     )
 
-    // Layer 2: Specialist identity (skip for minimal-budget haiku tasks — just the micro prompt + task is enough)
-    if (options.role === 'specialist' && options.specialistId && budgetTier !== 'minimal') {
+    if (options.role !== 'specialist' || budgetTier === 'minimal') {
+      return
+    }
+
+    // Layer 2: Specialist identity header
+    if (options.specialistId) {
       layers.push(`## Specialist: ${options.specialistId}`)
     }
 
-    // Layer 2b: Specialist persona prompt from YAML/DB — always injected (even when skills are disabled).
-    // Strategy A: This gives the LLM role context like "You are the .NET architect" without the
-    // full SKILL.md implementation guide. Skipped for minimal-budget haiku tasks.
-    if (options.role === 'specialist' && options.specialistPrompt && budgetTier !== 'minimal') {
+    // Layer 2b: Specialist persona prompt from YAML/DB
+    if (options.specialistPrompt) {
       layers.push(`## Role\n\n${options.specialistPrompt}`)
     }
 
-    // Layer 2b2: Deep persona enrichment (Phase 10A) — war stories, red flags, philosophy.
-    // Adds ~300 tokens of experienced-sounding judgment. Only for standard/full budgets.
-    if (options.role === 'specialist' && options.specialistId && budgetTier !== 'minimal') {
+    // Layer 2b2: Deep persona enrichment (Phase 10A)
+    if (options.specialistId) {
       const persona = getDeepPersona(options.specialistId)
       if (persona) {
         layers.push(persona)
       }
     }
 
-    // Layer 2c: Self-critique appendix for Opus-tier BUILD tasks (not needed for investigations)
-    if (options.role === 'specialist' && options.mode === 'build' && budgetTier === 'full') {
+    // Layer 2c: Self-critique appendix for Opus-tier BUILD tasks
+    if (options.mode === 'build' && budgetTier === 'full') {
       layers.push(OPUS_SPECIALIST_APPENDIX)
     }
+  }
 
-    // Layer 3: Skill content — for specialists in BUILD or PLAN mode, ONLY their assigned skills
-    // Plan-mode specialists get skills at minimal budget tier for grounded analysis
-    // Strategy 3: Tiered skill loading with budget-aware truncation
-    // Strategy 8: Selective loading — pass task context for relevance ranking
-    // Strategy A: When skillsEnabled=false (no active specialists), skip SKILL.md entirely
-    if (options.role === 'specialist' && options.skillsEnabled === false) {
+  /**
+   * Layer 3: Skill content (SKILL.md files) for specialists.
+   * Plan-mode specialists get skills at minimal budget tier for grounded analysis.
+   */
+  private appendSkillContentLayer(
+    layers: string[],
+    options: PromptBuildOptions,
+    budgetTier: BudgetTier
+  ): void {
+    if (options.role !== 'specialist') return
+
+    if (options.skillsEnabled === false) {
       log.info(
         `Skill-free mode: specialist=${options.specialistId} — persona-only, no SKILL.md content (saves ~400-1,140 tokens)`
       )
-    }
-    if (
-      options.role === 'specialist' &&
-      options.assignedSkills &&
-      options.skillsEnabled !== false
-    ) {
-      // Plan-mode specialists get skills at minimal budget tier for lighter analysis context
-      const effectiveBudgetTier = options.mode === 'plan' ? ('minimal' as BudgetTier) : budgetTier
-      const assignedSkills = this.filterAssignedSkills(
-        options.assignedSkills,
-        options.skillOverrides
-      )
-      if (assignedSkills.length > 0) {
-        const taskContext = options.brief?.summary || options.specialistPrompt || ''
-        const skillContent = this.buildSkillContent(
-          assignedSkills,
-          effectiveBudgetTier,
-          taskContext
-        )
-        if (skillContent) {
-          layers.push(skillContent)
-        }
-      }
+      return
     }
 
-    // Layer 4: Workspace project context (CLAUDE.md — project sections only)
-    // Strategy 1: Progressive CLAUDE.md by role:
-    // - Generalist build: slim project sections only
-    // - Generalist plan: ultra-light sections for investigation/Q&A
-    // - Specialist: essential sections with explicit heavy-section skips
-    // Strategy 4: Minimal tier skips CLAUDE.md for specialists (haiku tasks)
-    // Strategy 5: Minimal tier generalist gets a micro-summary (turn 5+, already has full CLAUDE.md in history)
-    if (options.workspacePath && !(budgetTier === 'minimal' && options.role === 'specialist')) {
-      const projectContext = this.readProjectContext(
-        options.workspacePath,
-        options.role,
-        options.mode,
-        budgetTier
-      )
-      if (projectContext) {
-        layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`)
-      }
-    }
+    if (!options.assignedSkills) return
 
-    // Layer 5: Auto Memory context (generalist only)
+    const effectiveBudgetTier = options.mode === 'plan' ? ('minimal' as BudgetTier) : budgetTier
+    const assignedSkills = this.filterAssignedSkills(
+      options.assignedSkills,
+      options.skillOverrides
+    )
+    if (assignedSkills.length === 0) return
+
+    const taskContext = options.specialistPrompt || ''
+    const skillContent = this.buildSkillContent(assignedSkills, effectiveBudgetTier, taskContext)
+    if (skillContent) {
+      layers.push(skillContent)
+    }
+  }
+
+  /**
+   * Layer 4: Workspace project context (CLAUDE.md — project sections only).
+   * Progressive by role: generalist-build slim, generalist-plan ultra-light, specialist essentials.
+   * Strategy 4: Minimal tier skips CLAUDE.md for specialists (haiku tasks).
+   */
+  private appendProjectContextLayer(
+    layers: string[],
+    options: PromptBuildOptions,
+    budgetTier: BudgetTier
+  ): void {
+    if (!options.workspacePath) return
+    if (budgetTier === 'minimal' && options.role === 'specialist') return
+
+    const projectContext = this.readProjectContext(
+      options.workspacePath,
+      options.role,
+      options.mode,
+      budgetTier
+    )
+    if (projectContext) {
+      layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`)
+    }
+  }
+
+  /**
+   * Layer 5: Auto Memory context (generalist only).
+   */
+  private appendMemoryContextLayer(layers: string[], options: PromptBuildOptions): void {
     if (options.role === 'generalist' && options.memoryContext) {
       layers.push(`## Auto Memory\n\n${options.memoryContext}`)
     }
-
-    // Strategy 8: Layers 6 & 7 (brief, feedback) moved to buildDynamicContext() for specialists.
-    // The system prompt now contains only STATIC content (role + identity + persona + skills + CLAUDE.md)
-    // which is identical for all tasks of the same specialist → maximizes Claude prompt cache hits (90% discount).
-    // Dynamic per-task content (brief + feedback) is prepended to the user prompt instead.
-    //
-    // For generalist: brief and feedback don't apply (generalist has its own memory system).
-
-    return layers.join('\n\n---\n\n')
   }
 
   /**
@@ -286,17 +311,12 @@ export class PromptBuilder {
    * Returns an empty string if no dynamic context is needed.
    */
   buildDynamicContext(
-    options: Pick<PromptBuildOptions, 'role' | 'brief' | 'feedbackContext' | 'budgetTier'>
+    options: Pick<PromptBuildOptions, 'role' | 'feedbackContext' | 'budgetTier'>
   ): string {
     const budgetTier = options.budgetTier ?? 'standard'
     if (options.role !== 'specialist' || budgetTier === 'minimal') return ''
 
     const sections: string[] = []
-
-    // Brief context (from handoff)
-    if (options.brief) {
-      sections.push(this.buildBriefContext(options.brief))
-    }
 
     // Feedback memories
     if (options.feedbackContext) {
@@ -793,25 +813,6 @@ Never: require() in renderer, disable contextIsolation, use remote module, strin
     }
 
     return result.join('\n').trim()
-  }
-
-  /**
-   * Build conversation brief context from a handoff.
-   */
-  private buildBriefContext(brief: HandoffBrief): string {
-    let context = `## Conversation Context\n\nSummary: ${brief.summary}`
-
-    if (brief.decisions.length > 0) {
-      context += `\n\nDecisions made:\n${brief.decisions.map((d) => `- ${d}`).join('\n')}`
-    }
-    if (brief.constraints.length > 0) {
-      context += `\n\nConstraints:\n${brief.constraints.map((c) => `- ${c}`).join('\n')}`
-    }
-    if (brief.filesDiscussed.length > 0) {
-      context += `\n\nFiles discussed:\n${brief.filesDiscussed.map((f) => `- ${f}`).join('\n')}`
-    }
-
-    return context
   }
 
   // ── Prompt Size Estimation (Strategy: prevent context overflow) ──

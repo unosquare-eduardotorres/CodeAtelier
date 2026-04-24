@@ -3,17 +3,15 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageSquarePlus } from 'lucide-react'
 import { useChatStore, useChatActions, useSpecialistStore } from '@renderer/store'
 import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
-import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 import {
   MessageBubble,
-  HandoffIndicator,
   TaskPlanCard,
   GrillQuestionCard,
   BuildProgressCard
 } from '@renderer/components/chat'
 // InvestigationReportCard has been merged into TaskPlanCard (unified card)
 import IdeaPopover from './IdeaPopover'
-import { Avatar, PixelSpriteAvatar, CompactContextModal } from '@renderer/components/common'
+import { Avatar, CompactContextModal } from '@renderer/components/common'
 import type { MessageBubbleActions } from './MessageBubble'
 import type { StructuredPlan } from '../../../../shared/types'
 import AutoModeSwitchPill from './AutoModeSwitchPill'
@@ -30,7 +28,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const streamingRole = useChatStore((s) => s.streamingRole)
   const streamingSpecialist = useChatStore((s) => s.streamingSpecialist)
   const isStreaming = useChatStore((s) => s.isStreaming)
-  const activeHandoff = useChatStore((s) => s.activeHandoff)
   const toolActivities = useChatStore((s) => s.toolActivities)
   const isExecutingPlan = useChatStore((s) => s.isExecutingPlan)
   const decomposedTasks = useChatStore((s) => s.decomposedTasks)
@@ -65,20 +62,21 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
   const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
 
-  /** Direct plan-to-build: skip generalist round-trip when structured plan is available */
+  /**
+   * "Build this" button — switches to Build mode and sends the plan to the
+   * Project Specialist as a regular chat message. Post-migration 66 there is
+   * no multi-specialist pipeline to orchestrate; the workspace's Project
+   * Specialist executes the plan as a standard build-mode turn.
+   */
   const handleBuildFromPlan = useCallback(
-    async (plan: StructuredPlan, planContent: string): Promise<void> => {
+    async (_plan: StructuredPlan, planContent: string): Promise<void> => {
       if (!activeConversationId) return
-      // Switch to build mode first (optimistic update)
       await updateMode('build')
-      // Call the direct execution path — no generalist round-trip
-      await window.api.buildFromPlan({
-        conversationId: activeConversationId,
-        plan,
-        planContent
-      })
+      await sendMessage(
+        `Please execute the following plan, step by step, with file edits and tests:\n\n${planContent}`
+      )
     },
-    [activeConversationId, updateMode]
+    [activeConversationId, updateMode, sendMessage]
   )
 
   const bubbleActions: MessageBubbleActions = useMemo(
@@ -127,11 +125,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       : null
   )
 
-  // Look up generalist specialist record for pixel sprite
-  const generalistSpecialist = useSpecialistStore(
-    (s) => s.specialists.find((sp) => sp.agentId === 'generalist') ?? null
-  )
-
   // Compute thinking indicator identity based on streamingRole
   const thinkingIdentity = useMemo(() => {
     if (streamingRole === 'coordinator') {
@@ -139,9 +132,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       return {
         name: coordinatorAlias,
         avatarKey: coordinatorAvatarKey,
-        accentColor: CORE_AGENT_DEFAULTS.generalist.color,
-        pixelSpriteId:
-          generalistSpec?.pixelSpriteId ?? getSpriteAssignment('generalist').pixelSpriteId ?? null
+        accentColor: CORE_AGENT_DEFAULTS.generalist.color
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialistData) {
@@ -150,11 +141,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         avatarKey:
           streamingSpecialistData.avatarUrl ??
           getDefaultAvatarForRole(streamingSpecialistData.agentId),
-        accentColor: streamingSpecialistData.color ?? '#F59E0B',
-        pixelSpriteId:
-          streamingSpecialistData.pixelSpriteId ??
-          getSpriteAssignment(streamingSpecialistData.agentId).pixelSpriteId ??
-          null
+        accentColor: streamingSpecialistData.color ?? '#F59E0B'
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialist) {
@@ -162,19 +149,14 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       return {
         name: streamingSpecialist,
         avatarKey: getDefaultAvatarForRole(streamingSpecialist),
-        accentColor: '#F59E0B',
-        pixelSpriteId: getSpriteAssignment(streamingSpecialist).pixelSpriteId ?? null
+        accentColor: '#F59E0B'
       }
     }
     // Default: generalist (Da Vinci)
     return {
       name: generalistAlias,
       avatarKey: thinkingAvatarKey,
-      accentColor: thinkingAccentColor,
-      pixelSpriteId:
-        generalistSpecialist?.pixelSpriteId ??
-        getSpriteAssignment('generalist').pixelSpriteId ??
-        null
+      accentColor: thinkingAccentColor
     }
   }, [
     streamingRole,
@@ -184,9 +166,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     thinkingAvatarKey,
     thinkingAccentColor,
     coordinatorAlias,
-    coordinatorAvatarKey,
-    generalistSpec,
-    generalistSpecialist
+    coordinatorAvatarKey
   ])
 
   const userName = useSpecialistStore((s) => {
@@ -396,15 +376,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         {/* Auto mode switch pill (e.g., build → plan on investigation prompts) */}
         <AutoModeSwitchPill />
 
-        {/* Handoff indicator — shown when generalist triggers a handoff */}
-        {activeHandoff && (
-          <HandoffIndicator
-            summary={activeHandoff.summary}
-            specialists={activeHandoff.specialists}
-            mode={activeHandoff.mode}
-          />
-        )}
-
         {/* Investigation report — rendered via unified TaskPlanCard */}
         {investigationReport && (
           <TaskPlanCard
@@ -492,16 +463,12 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           <div className="flex gap-3 flex-row">
             {/* Avatar — matches MessageBubble layout */}
             <div className="flex-shrink-0 mt-0.5">
-              {thinkingIdentity.pixelSpriteId ? (
-                <PixelSpriteAvatar spriteId={thinkingIdentity.pixelSpriteId} size={54} />
-              ) : (
-                <Avatar
-                  avatarKey={thinkingIdentity.avatarKey}
-                  size="xl"
-                  accentColor={thinkingIdentity.accentColor}
-                  fallbackInitials={thinkingIdentity.name}
-                />
-              )}
+              <Avatar
+                avatarKey={thinkingIdentity.avatarKey}
+                size="xl"
+                accentColor={thinkingIdentity.accentColor}
+                fallbackInitials={thinkingIdentity.name}
+              />
             </div>
             <div className="flex flex-col max-w-[85%] items-start">
               <div className="flex flex-col mb-1 px-1 items-start">
@@ -531,9 +498,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                     />
                   </svg>
-                  <span className="text-sm text-text-secondary">
-                    {activeHandoff ? 'Working on it...' : 'Thinking...'}
-                  </span>
+                  <span className="text-sm text-text-secondary">Thinking...</span>
                 </div>
                 {toolActivities.some((a) => a.status === 'running') && (
                   <div className="space-y-1 border-l-2 border-border-subtle pl-3 ml-1">
@@ -561,24 +526,26 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           </div>
         )}
 
-        {/* Streaming message bubble */}
+        {/* Streaming message bubble — content arrives sentence-by-sentence via SentenceBuffer */}
         {isStreaming && streamingContent && (
-          <MessageBubble
-            message={{
-              id: 'streaming',
-              conversationId: '',
-              role: streamingRole,
-              ...(streamingRole === 'specialist' && streamingSpecialist
-                ? { agentId: streamingSpecialist }
-                : {}),
-              contentMd: streamingContent,
-              attachmentsJson: '[]',
-              createdAt: new Date().toISOString()
-            }}
-            isStreaming
-            toolActivities={toolActivities}
-            actions={bubbleActions}
-          />
+          <div className="animate-sentence-reveal streaming-bubble-content">
+            <MessageBubble
+              message={{
+                id: 'streaming',
+                conversationId: '',
+                role: streamingRole,
+                ...(streamingRole === 'specialist' && streamingSpecialist
+                  ? { agentId: streamingSpecialist }
+                  : {}),
+                contentMd: streamingContent,
+                attachmentsJson: '[]',
+                createdAt: new Date().toISOString()
+              }}
+              isStreaming
+              toolActivities={toolActivities}
+              actions={bubbleActions}
+            />
+          </div>
         )}
       </div>
       <ScrollToBottomButton visible={!isAtBottom} onClick={scrollToBottom} />

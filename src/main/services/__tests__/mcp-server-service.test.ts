@@ -10,9 +10,9 @@ import { parseRepomapFiles, enrichFilesDiscussed } from '../mcp-server.service'
 
 describe('parseRepomapFiles', () => {
   test('parses standard repomap output with file paths', () => {
-    const mapText = `src/main/services/generalist.service.ts:
+    const mapText = `src/main/services/chat-agent.service.ts:
 (Rank value: 0.42)
-│   class GeneralistService
+│   class ChatAgentService
 │   method start
 │   method send
 
@@ -22,7 +22,7 @@ src/shared/constants.ts:
 │   AGENT_IDS`
 
     const files = parseRepomapFiles(mapText)
-    assert.deepEqual(files, ['src/main/services/generalist.service.ts', 'src/shared/constants.ts'])
+    assert.deepEqual(files, ['src/main/services/chat-agent.service.ts', 'src/shared/constants.ts'])
   })
 
   test('filters out non-file lines (no / or .)', () => {

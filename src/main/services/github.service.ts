@@ -196,7 +196,8 @@ export class GitHubService {
     const octokit = this.getOctokit(workspaceId)
     const { owner, repo } = await this.parseRemoteUrl(repoPath)
 
-    const params: Record<string, unknown> = {
+    type ListForRepoParams = Parameters<typeof octokit.rest.issues.listForRepo>[0]
+    const params: ListForRepoParams = {
       owner,
       repo,
       state: opts.state ?? 'open',
@@ -206,7 +207,6 @@ export class GitHubService {
     }
     if (opts.labels) params.labels = opts.labels
 
-    // @ts-expect-error — TODO: params built dynamically, Octokit expects strict shape
     const response = await octokit.rest.issues.listForRepo(params)
 
     // Filter out pull requests (GitHub API returns PRs as issues too)

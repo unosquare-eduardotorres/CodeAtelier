@@ -1,14 +1,12 @@
 export { AgentBaseService, summarizeToolInput } from './agent-base.service'
 export type { StreamChunk } from './agent-base.service'
-export { GeneralistService, generalistService } from './generalist.service'
+export { ChatAgentService, chatAgentService } from './chat-agent.service'
 export { FileService, fileService } from './file.service'
 export { SkillService, skillService } from './skill.service'
 
 // Prompt assembly — centralized in PromptBuilder
 export { PromptBuilder, promptBuilder } from './prompt-builder'
 
-export { SpecialistPoolService, specialistPoolService } from './specialist-pool.service'
-export { GitWorktreeService, gitWorktreeService } from './git-worktree.service'
 
 export { WorkspaceDeployService, workspaceDeployService } from './workspace-deploy.service'
 export { memoryService } from './memory.service'
@@ -39,30 +37,21 @@ export { authProvider } from './auth-provider'
 export type { AuthProvider } from './auth-provider'
 export { sdkExecutor, SDKExecutor } from './sdk-executor'
 
-// Task pipeline — consolidated prepare/execute for handoff, plan execution, investigation fix
-export { taskPipeline, initTaskPipeline, TaskPipelineService } from './task-pipeline.service'
-export type {
-  HandoffPrepare,
-  InvestigationFixPrepare,
-  PrepareOptions,
-  ExecuteOptions
-} from './task-pipeline.service'
-// Generalist streaming lifecycle — owns stream/stop/compact + event forwarding
+// Chat streaming lifecycle — owns stream/stop/compact + event forwarding
 export {
-  generalistStreamService,
-  initGeneralistStream,
-  GeneralistStreamService
-} from './generalist-stream.service'
-export type { PipelineCallbacks } from './generalist-stream.service'
+  chatStreamService,
+  initChatStream,
+  ChatStreamService
+} from './chat-stream.service'
+export type { PipelineCallbacks } from './chat-stream.service'
 
 // Intent detection + routing — replaces scattered detect*() methods and EventEmitter forwarders
 export { IntentDetector, intentDetector } from './intent-detector'
 export { IntentRouter } from './intent-router'
 
 // Extracted generalist sub-services (Phase 5-9 decomposition)
-export { GeneralistTokenTracker } from './generalist-token-tracker'
-export type { TurnBreakdownEntry, CacheEfficiencyReport } from './generalist-token-tracker'
-export { GeneralistCircuitBreaker } from './generalist-circuit-breaker'
-export { GeneralistMcpConfig } from './generalist-mcp-config'
-export type { McpFeatureFlags, McpConfigResult } from './generalist-mcp-config'
-export { DecompositionService, decompositionService } from './decomposition.service'
+export { AgentTokenTracker } from './agent-token-tracker'
+export type { TurnBreakdownEntry, CacheEfficiencyReport } from './agent-token-tracker'
+export { AgentCircuitBreaker } from './agent-circuit-breaker'
+export { DaVinciMcpConfig } from './da-vinci-mcp-config'
+export type { McpFeatureFlags, McpConfigResult } from './da-vinci-mcp-config'

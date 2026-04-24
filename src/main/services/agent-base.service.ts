@@ -6,9 +6,6 @@ import { MCP_TOOLS } from '../../shared/constants'
 import { buildEnvWithPath } from './env-utils'
 import { agentSessionRepository } from '../db/repositories'
 
-/** Circuit breaker — prevent infinite tool-calling loops (inspired by DevTeam's max_iterations) */
-const MAX_TOOL_CALLS_PER_INTERACTION = 75
-
 /** Detect if Write content is a structured plan the LLM should have emitted inline */
 function isPlanContent(content: string): boolean {
   try {

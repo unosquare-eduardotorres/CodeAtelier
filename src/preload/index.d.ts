@@ -6,8 +6,6 @@ import type {
   AgentStatus,
   Specialist,
   ConversationSpecialist,
-  SpecialistConversationAction,
-  SpecialistConversationHistoryEntry,
   Skill,
   CreateSpecialistInput,
   UpdateSpecialistInput,
@@ -25,8 +23,6 @@ import type {
   InvestigationReport,
   FileChange,
   CompleteResult,
-  AgentWorktree,
-  MergeAllResult,
   GrillProposedTask,
   GrillQuestion,
   GrillTrackId,
@@ -45,7 +41,7 @@ import type {
   UserProfile,
   CoreAgentAlias,
   CoreAgentPrompt,
-  MarketplaceSpecialist,
+
   SubscriptionCheckResult,
   AutoConfigureResult,
   SpecialistTokenEstimate,
@@ -54,12 +50,12 @@ import type {
   PullProgress,
   IndexingState,
   CodeGraphIndexingState,
-  SchedulingWeights,
   ContextUsage,
   StructuredPlan,
   BugCouncilResult,
   BugCouncilActivatedEvent,
-  BugCouncilCompleteEvent
+  BugCouncilCompleteEvent,
+  BugRecord
 } from '../shared/types'
 
 interface Api {
@@ -108,24 +104,6 @@ interface Api {
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
   stopGeneration: () => Promise<void>
   compactConversation: () => Promise<void>
-  executePlan: (args: {
-    conversationId: string
-    strategy: ExecutionStrategy
-    tasks: DecomposedTask[]
-    investigationDepth?: InvestigationDepth
-  }) => Promise<void>
-  executeInvestigationFix: (args: {
-    conversationId: string
-    strategy: ExecutionStrategy
-    report: InvestigationReport
-  }) => Promise<void>
-
-  /** Direct plan-to-build: skip generalist round-trip when user clicks "Build This" on inline plan */
-  buildFromPlan: (args: {
-    conversationId: string
-    plan: StructuredPlan
-    planContent: string
-  }) => Promise<void>
 
   // Chat commands
   completeConversation: (args: {
@@ -170,31 +148,6 @@ interface Api {
   assignSkillToSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
   removeSkillFromSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
   reorderSpecialists: (args: { orderedIds: string[] }) => Promise<void>
-  getConversationSpecialists: (args: {
-    conversationId: string
-  }) => Promise<ConversationSpecialist[]>
-  addConversationSpecialist: (args: {
-    conversationId: string
-    specialistId: string
-  }) => Promise<ConversationSpecialist>
-  removeConversationSpecialist: (args: {
-    conversationId: string
-    specialistId: string
-  }) => Promise<void>
-  replaceConversationSpecialists: (args: {
-    conversationId: string
-    specialistIds: string[]
-  }) => Promise<ConversationSpecialist[]>
-  getConversationHistory: (args: {
-    conversationId: string
-    limit?: number
-  }) => Promise<SpecialistConversationHistoryEntry[]>
-  addConversationHistoryEntry: (args: {
-    conversationId: string
-    specialistId: string
-    action: SpecialistConversationAction
-  }) => Promise<SpecialistConversationHistoryEntry>
-  clearConversationHistory: (args: { conversationId: string }) => Promise<void>
 
   // Conversation Specialist Activation (skill gating)
   listConvSpecialists: (args: { conversationId: string }) => Promise<ConversationSpecialist[]>
@@ -213,29 +166,42 @@ interface Api {
   getAppPreferences: () => Promise<AppPreferences>
   setAppPreference: (args: { key: string; value: string }) => Promise<void>
 
-  // Specialist Marketplace
-  deploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
-  undeploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
-  updateSpecialistConfig: (args: {
-    id: string
-    displayName?: string
-    icon?: string
-    color?: string
-    alias?: string | null
-    avatarUrl?: string | null
-    priority?: number
-  }) => Promise<Specialist>
-  getMarketplace: (args: { workspacePath: string }) => Promise<MarketplaceSpecialist[]>
-
-  // Cache metrics (Strategy 15)
-  getCacheMetrics: () => Promise<{
-    totalInputTokens: number
-    totalOutputTokens: number
-    cacheReadTokens: number
-    cacheCreationTokens: number
-    cacheHitRate: number
-    taskCount: number
-  }>
+  // Project Specialist (Phase 2 refactor)
+  getProjectSpecialist: (args: { workspaceId: string }) => Promise<unknown | null>
+  buildProjectSpecialist: (args: { workspaceId: string }) => Promise<unknown>
+  rebuildProjectSpecialistPrompt: (args: { specialistId: string }) => Promise<unknown>
+  rebuildProjectSpecialistSkills: (args: { specialistId: string }) => Promise<unknown>
+  updateProjectSpecialistPrompt: (args: {
+    specialistId: string
+    prompt: string
+  }) => Promise<{ ok: true }>
+  toggleProjectSpecialistSkill: (args: {
+    specialistId: string
+    skillId: string
+    enabled: boolean
+  }) => Promise<{ ok: true }>
+  attachProjectSpecialistSkill: (args: {
+    specialistId: string
+    skillId: string
+  }) => Promise<{ ok: true }>
+  detachProjectSpecialistSkill: (args: {
+    specialistId: string
+    skillId: string
+  }) => Promise<{ ok: true }>
+  toggleProjectSpecialistMcp: (args: {
+    specialistId: string
+    mcpId: string
+    enabled: boolean
+  }) => Promise<{ ok: true }>
+  getProjectSpecialistDrift: (args: { workspaceId: string }) => Promise<unknown | null>
+  onProjectSpecialistBuildProgress: (
+    callback: (data: {
+      specialistId: string
+      phase: string
+      message: string
+      at: string
+    }) => void
+  ) => () => void
 
   // Skills
   listSkills: () => Promise<Skill[]>
@@ -274,22 +240,6 @@ interface Api {
 
   // Deploy all (inactive) to workspace
   deployAll: (args: { workspacePath: string }) => Promise<{ agents: number; skills: number }>
-
-  // Worktrees
-  listWorktrees: (args: { conversationId: string }) => Promise<AgentWorktree[]>
-  getWorktreeDiff: (args: { worktreeId: string }) => Promise<string>
-  mergeWorktree: (args: {
-    worktreeId: string
-  }) => Promise<{ success: boolean; conflictedFiles?: string[] }>
-  mergeAllWorktrees: (args: { conversationId: string }) => Promise<MergeAllResult>
-  abandonWorktree: (args: { worktreeId: string }) => Promise<void>
-
-  // Pixel Office
-  popoutPixelOffice: () => Promise<void>
-  saveOfficeLayout: (args: { layout: string }) => Promise<{ success: boolean }>
-  loadOfficeLayout: () => Promise<{ layout: string | null }>
-  exportOfficeLayout: (args: { layout: string }) => Promise<{ success: boolean; path?: string }>
-  importOfficeLayout: () => Promise<{ layout: string | null }>
 
   // Memory (auto memory system)
   listMemories: (args: { workspaceId: string }) => Promise<Memory[]>
@@ -401,14 +351,6 @@ interface Api {
       taskId?: string
       isHandoff?: boolean
       requestId?: string
-    }) => void
-  ) => () => void
-  onHandoff: (
-    callback: (data: {
-      conversationId: string
-      summary: string
-      specialists: string[]
-      mode: string
     }) => void
   ) => () => void
   onGrillComplete: (
@@ -667,31 +609,9 @@ interface Api {
     }[]
   >
 
-  // Gate results
-  getGateResults: (args: { conversationId: string }) => Promise<
-    {
-      id: string
-      sessionId: string | null
-      conversationId: string | null
-      taskId: string | null
-      agentId: string | null
-      gateType: string
-      passed: boolean
-      summary: string
-      createdAt: string
-    }[]
-  >
-
-  // Agent events (specialist pool)
+  // Agent events
   onAbandonmentDetected: (
     callback: (data: { taskId: string; specialist: string; pattern: string }) => void
-  ) => () => void
-  onGateFailure: (
-    callback: (data: {
-      taskId: string
-      specialist: string
-      gate: { type: string; passed: boolean; summary: string }
-    }) => void
   ) => () => void
 
   // Tool approval
@@ -784,10 +704,6 @@ interface Api {
   codeGraphHasIndex: (args: { workspaceId: string }) => Promise<boolean>
   onCodeGraphProgress: (callback: (state: CodeGraphIndexingState) => void) => () => void
 
-  // Scheduling Strategy
-  getSchedulingWeights: () => Promise<SchedulingWeights>
-  setSchedulingWeights: (weights: SchedulingWeights) => Promise<void>
-
   // Context Usage
   getContextUsage: (args: { conversationId: string }) => Promise<ContextUsage>
 
@@ -824,6 +740,17 @@ interface Api {
   onSessionRecovery: (
     callback: (data: { conversationId: string; phase: string; message: string }) => void
   ) => () => void
+  onAuthStatus: (callback: (data: { message: string; requestId?: string }) => void) => () => void
+  onFilesPersisted: (
+    callback: (data: {
+      conversationId: string
+      files: string[]
+      requestId?: string
+    }) => void
+  ) => () => void
+  onHookLifecycle: (
+    callback: (data: { hookName?: string; hookState?: string; requestId?: string }) => void
+  ) => () => void
   onStateChange: (
     callback: (data: {
       conversationId: string | null
@@ -834,34 +761,12 @@ interface Api {
   ) => () => void
 
   // SDK Control — Query instance methods
-  sdkGetContextUsage: () => Promise<{
-    totalTokens: number
-    maxTokens: number
-    percentage: number
-    model: string
-    categories: { name: string; tokens: number; color: string }[]
-  } | null>
   sdkStopTask: (args: { taskId: string }) => Promise<unknown>
-  sdkInterrupt: () => Promise<unknown>
-  sdkAccountInfo: () => Promise<unknown>
   sdkSupportedModels: () => Promise<unknown>
-  sdkMcpServerStatus: () => Promise<unknown>
-  sdkSetModel: (args: { model?: string }) => Promise<unknown>
-  sdkSetPermissionMode: (args: { mode: string }) => Promise<unknown>
-  sdkApplyFlagSettings: (args: { settings: Record<string, unknown> }) => Promise<unknown>
-  sdkSetMcpServers: (args: { servers: Record<string, unknown> }) => Promise<unknown>
-  sdkRewindFiles: (args: { userMessageId: string; dryRun?: boolean }) => Promise<unknown>
-  sdkReconnectMcp: (args: { serverName: string }) => Promise<unknown>
-  sdkSupportedAgents: () => Promise<unknown>
-  sdkToggleMcpServer: (args: { serverName: string; enabled: boolean }) => Promise<unknown>
 
   // SDK Subagent inspection (0.2.96+)
   sdkListSubagents: (args: { sessionId: string }) => Promise<string[]>
   sdkGetSubagentMessages: (args: { sessionId: string; subagentId: string }) => Promise<unknown[]>
-
-  // SDK Query — close + seedReadState
-  sdkCloseQuery: () => Promise<void>
-  sdkSeedReadState: (args: { path: string; mtime: number }) => Promise<void>
 
   // SDK Elicitation (enriched — via elicitation.service)
   onSdkElicitationRequest: (callback: (data: unknown) => void) => () => void
@@ -894,6 +799,37 @@ interface Api {
 
   // Chat resume at checkpoint
   chatResumeAt: (args: { conversationId: string; messageId: string }) => Promise<void>
+
+  // Bug Tracker
+  reportBug: (input: {
+    process: 'main' | 'renderer' | 'preload'
+    severity: 'error' | 'fatal'
+    errorMessage: string
+    stackTrace?: string
+    sourceFile?: string
+    sourceLine?: number
+    sourceColumn?: number
+    componentName?: string
+    activeView?: string
+    workspaceId?: string
+    agentId?: string
+    appVersion: string
+    osInfo?: string
+  }) => Promise<{ isNew: boolean; bugId: string }>
+  getBugs: (filters?: {
+    process?: 'main' | 'renderer' | 'preload'
+    isResolved?: boolean
+    workspaceId?: string
+    sortBy?: 'last_seen_at' | 'occurrence_count' | 'severity'
+    sortDir?: 'asc' | 'desc'
+  }) => Promise<BugRecord[]>
+  getBug: (args: { id: string }) => Promise<BugRecord | null>
+  resolveBug: (args: { id: string }) => Promise<void>
+  unresolveBug: (args: { id: string }) => Promise<void>
+  deleteBug: (args: { id: string }) => Promise<void>
+  updateBugNote: (args: { id: string; note: string }) => Promise<void>
+  getBugCount: () => Promise<number>
+  onNewBug: (callback: (bug: BugRecord) => void) => () => void
 }
 
 declare global {

@@ -1,3 +1,8 @@
+import log from 'electron-log/main'
+
+/** Shared scoped logger for all sdk-executor modules */
+export const sdkLog = log.scope('SDKExecutor')
+
 export { HeartbeatMonitor } from './heartbeat-monitor'
 export { TokenAccountant } from './token-accountant'
 export type { TokenUsage } from './token-accountant'

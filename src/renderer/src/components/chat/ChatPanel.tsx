@@ -1,13 +1,12 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { Search, X, Bot } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Search, X, Bot, Settings } from 'lucide-react'
 import {
   useChatStore,
   useChatActions,
   useWorkspaceStore,
-  useConversationSpecialists,
-  useSpecialistStore,
   useCodeChangesStore
 } from '@renderer/store'
+import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
 import {
   MessageList,
   MessageInput,
@@ -20,11 +19,15 @@ import type { SessionRecoveryPhase } from './SessionRecoveryBanner'
 import NewChatPage from './NewChatPage'
 import PersonaSelector from './PersonaSelector'
 import ChatTabButton from './ChatTabButton'
-import SpecialistsTable from './SpecialistsTable'
 import CodeChangesPanel from './CodeChangesPanel'
+import {
+  SpecialistSlideOver,
+  StackDriftBanner,
+  BuildProgressInline
+} from '@renderer/components/specialist'
 import type { ConversationMode } from '../../../../shared/types'
 
-type ChatTab = 'chat' | 'specialists' | 'code-changes'
+type ChatTab = 'chat' | 'code-changes'
 
 interface ChatPanelProps {
   onCreateIdea?: (data: { title: string; description?: string }) => void
@@ -48,15 +51,17 @@ export default function ChatPanel({
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [activeTab, setActiveTab] = useState<ChatTab>('chat')
+  const [specialistPanelOpen, setSpecialistPanelOpen] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
-  // Specialist count for tab badge
-  const conversationSpecialists = useConversationSpecialists(activeConversation?.id ?? '')
-  const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
-  const activeSpecialistCount = useMemo(() => {
-    const coreIds = new Set(workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id))
-    return conversationSpecialists.filter((s) => s.isActive && !coreIds.has(s.specialistId)).length
-  }, [conversationSpecialists, workspaceSpecialists])
+  // Load Project Specialist on workspace change
+  const loadProjectSpecialist = useProjectSpecialistStore((s) => s.loadForWorkspace)
+  const projectSpecialist = useProjectSpecialistStore((s) =>
+    activeWorkspace?.id ? s.byWorkspace[activeWorkspace.id] : null
+  )
+  useEffect(() => {
+    if (activeWorkspace?.id) void loadProjectSpecialist(activeWorkspace.id)
+  }, [activeWorkspace?.id, loadProjectSpecialist])
 
   // Code changes count for tab badge
   const pendingChangesCount = useCodeChangesStore((s) => s.files.length)
@@ -195,13 +200,6 @@ export default function ChatPanel({
             Chat
           </ChatTabButton>
           <ChatTabButton
-            active={activeTab === 'specialists'}
-            onClick={() => setActiveTab('specialists')}
-            badge={activeSpecialistCount}
-          >
-            Specialists
-          </ChatTabButton>
-          <ChatTabButton
             active={activeTab === 'code-changes'}
             onClick={() => setActiveTab('code-changes')}
             badge={pendingChangesCount}
@@ -209,8 +207,37 @@ export default function ChatPanel({
             Code Changes
           </ChatTabButton>
         </div>
-        {activeTab === 'chat' && <PersonaSelector conversation={activeConversation} />}
+        {activeTab === 'chat' && (
+          <div className="flex items-center gap-2">
+            <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
+            <button
+              type="button"
+              onClick={() => setSpecialistPanelOpen(true)}
+              title="Open specialist settings"
+              aria-label="Specialist settings"
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-body"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              <span>Specialist</span>
+            </button>
+            <PersonaSelector conversation={activeConversation} />
+          </div>
+        )}
       </div>
+
+      {/* Stack drift banner — non-intrusive, only shown when drifted */}
+      {activeTab === 'chat' && activeWorkspace?.id && (
+        <div className="px-6 pt-2">
+          <StackDriftBanner workspaceId={activeWorkspace.id} />
+        </div>
+      )}
+
+      {/* Specialist slide-over panel */}
+      <SpecialistSlideOver
+        open={specialistPanelOpen}
+        onClose={() => setSpecialistPanelOpen(false)}
+        workspaceId={activeWorkspace?.id ?? null}
+      />
 
       {/* Rate limit warning banner — only shows during warning/rejected */}
       {rateLimitState && rateLimitState.status !== 'allowed' && (
@@ -311,8 +338,6 @@ export default function ChatPanel({
           </div>
         </>
       )}
-
-      {activeTab === 'specialists' && <SpecialistsTable conversationId={activeConversation.id} />}
 
       {activeTab === 'code-changes' && <CodeChangesPanel conversationId={activeConversation.id} />}
     </div>

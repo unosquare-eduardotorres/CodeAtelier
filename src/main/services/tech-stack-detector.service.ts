@@ -6,7 +6,16 @@ const detectLogger = log.scope('tech-stack-detector')
 
 export interface TechStackResult {
   detectedTechs: string[]
+  /**
+   * @deprecated App-global specialists were removed in migration 66. The field
+   * is preserved so legacy callers compile; it now always returns an empty
+   * array. New callers should use `recommendedSkills` and `recommendedMcps`.
+   */
   recommendedSpecialists: string[]
+  /** Skill IDs the Project Specialist should auto-attach (all start disabled). */
+  recommendedSkills: string[]
+  /** MCP server IDs the Project Specialist should enable by default. */
+  recommendedMcps: string[]
   confidence: Record<string, number>
 }
 
@@ -84,32 +93,57 @@ const TECH_MARKERS: TechMarker[] = [
 ]
 
 /**
- * Maps detected techs to specialist agentId values.
- * These should match agent_id values in the specialists table.
+ * Maps detected techs to skill filenames/IDs the Project Specialist should
+ * auto-attach (starting disabled — user enables from the Skills tab).
+ * Values must match `skills.filename` (or whatever stable key the skill
+ * repository exposes) so the builder can look them up.
  */
-const TECH_TO_SPECIALIST: Record<string, string[]> = {
-  react: ['frontend-architect', 'design-specialist'],
-  vue: ['frontend-architect', 'design-specialist'],
-  angular: ['frontend-architect', 'design-specialist'],
-  svelte: ['frontend-architect', 'design-specialist'],
-  typescript: ['generalist-developer'],
-  'node-backend': ['platform-engineer', 'generalist-developer'],
-  tailwind: ['design-specialist'],
-  electron: ['platform-architect', 'platform-engineer', 'frontend-architect'],
+export const TECH_TO_SKILL: Record<string, string[]> = {
+  react: ['ui-ux-pro-max', 'design-system'],
+  vue: ['ui-ux-pro-max'],
+  angular: ['ui-ux-pro-max'],
+  svelte: ['ui-ux-pro-max'],
+  typescript: ['general-dev'],
+  'node-backend': ['general-dev'],
+  tailwind: ['design-system', 'design'],
+  electron: ['electron-pro', 'ipc-patterns'],
   dotnet: ['dotnet-architect'],
-  python: ['generalist-developer'],
-  'python-web': ['generalist-developer', 'platform-engineer'],
-  rust: ['generalist-developer'],
-  go: ['generalist-developer'],
-  java: ['generalist-developer'],
-  ruby: ['generalist-developer'],
-  php: ['generalist-developer'],
-  sqlite: ['data-architect'],
-  database: ['data-architect'],
-  supabase: ['data-architect'],
-  docker: ['platform-engineer'],
-  terraform: ['platform-engineer'],
+  python: ['general-dev'],
+  'python-web': ['general-dev'],
+  rust: ['general-dev'],
+  go: ['general-dev'],
+  java: ['general-dev'],
+  ruby: ['general-dev'],
+  php: ['general-dev'],
+  sqlite: ['sqlite-patterns'],
+  database: ['sqlite-patterns'],
+  supabase: ['supabase-architect'],
+  docker: ['infrastructure'],
+  terraform: ['infrastructure'],
   testing: ['testing-specialist']
+}
+
+/**
+ * Maps detected techs to MCP server IDs that should be composed into
+ * specialists.mcp_config by the McpComposer.
+ */
+export const TECH_TO_MCP: Record<string, string[]> = {
+  // Code-graph and semantic search are universally useful for code navigation.
+  typescript: ['code-graph', 'semantic-search'],
+  react: ['code-graph', 'semantic-search'],
+  vue: ['code-graph', 'semantic-search'],
+  angular: ['code-graph', 'semantic-search'],
+  svelte: ['code-graph', 'semantic-search'],
+  'node-backend': ['code-graph', 'semantic-search'],
+  electron: ['code-graph', 'semantic-search'],
+  dotnet: ['code-graph'],
+  python: ['code-graph', 'semantic-search'],
+  'python-web': ['code-graph', 'semantic-search'],
+  rust: ['code-graph'],
+  go: ['code-graph'],
+  java: ['code-graph'],
+  ruby: ['code-graph'],
+  php: ['code-graph']
 }
 
 function filePatternExists(workspacePath: string, pattern: string): boolean {
@@ -183,23 +217,25 @@ export function detectTechStack(workspacePath: string): TechStackResult {
     confidence[tech] = conf
   }
 
-  // Deduplicate recommended specialists
-  const specialistSet = new Set<string>()
+  // Project-Specialist world: we no longer recommend app-global specialists.
+  // Keep the field as an empty array for backward compatibility.
+  const skillSet = new Set<string>()
+  const mcpSet = new Set<string>()
   for (const tech of detectedTechs) {
-    const specialists = TECH_TO_SPECIALIST[tech]
-    if (specialists) {
-      for (const s of specialists) specialistSet.add(s)
-    }
+    for (const s of TECH_TO_SKILL[tech] ?? []) skillSet.add(s)
+    for (const m of TECH_TO_MCP[tech] ?? []) mcpSet.add(m)
   }
 
   const result: TechStackResult = {
     detectedTechs,
-    recommendedSpecialists: Array.from(specialistSet),
+    recommendedSpecialists: [],
+    recommendedSkills: Array.from(skillSet),
+    recommendedMcps: Array.from(mcpSet),
     confidence
   }
 
   detectLogger.info(
-    `Detected techs: ${detectedTechs.join(', ')} → recommended specialists: ${result.recommendedSpecialists.join(', ')}`
+    `Detected techs: ${detectedTechs.join(', ')} → skills: [${result.recommendedSkills.join(', ')}] mcps: [${result.recommendedMcps.join(', ')}]`
   )
 
   return result

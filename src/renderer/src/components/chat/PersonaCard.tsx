@@ -1,6 +1,4 @@
 import { Check } from 'lucide-react'
-import { PixelSpriteAvatar } from '@renderer/components/common'
-import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 import type { Specialist } from '../../../../shared/types'
 
 interface PersonaCardProps {
@@ -20,9 +18,6 @@ export default function PersonaCard({
   disabled,
   onSelect
 }: PersonaCardProps): React.JSX.Element {
-  const spriteId =
-    specialist.pixelSpriteId ?? getSpriteAssignment(specialist.agentId).pixelSpriteId ?? null
-
   return (
     <button
       onClick={onSelect}
@@ -56,11 +51,7 @@ export default function PersonaCard({
         }`}
         style={{ backgroundColor: `${specialist.color}20` }}
       >
-        {spriteId ? (
-          <PixelSpriteAvatar spriteId={spriteId} size={36} />
-        ) : (
-          <span className="text-2xl">{specialist.icon}</span>
-        )}
+        <span className="text-2xl">{specialist.icon}</span>
       </div>
 
       {/* Name */}

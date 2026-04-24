@@ -90,6 +90,19 @@ export class ConversationStateMachine extends EventEmitter {
   }
 
   transition(event: ConversationTransition, conversationId?: string): boolean {
+    // Idempotent transitions — if already idle, treat finalizing events as no-ops.
+    // Prevents race conditions when multiple services finalize concurrently.
+    const IDEMPOTENT_WHEN_IDLE: ConversationTransition[] = [
+      'messageFinalised',
+      'errorHandled',
+      'cleanupComplete',
+      'generalistComplete'
+    ]
+    if (this.state === 'idle' && IDEMPOTENT_WHEN_IDLE.includes(event)) {
+      log.info(`[StateMachine] ${event} already idle — no-op`)
+      return true
+    }
+
     const nextState = VALID_TRANSITIONS[this.state]?.[event]
     if (!nextState) {
       log.warn(
@@ -136,7 +149,12 @@ export class ConversationStateMachine extends EventEmitter {
     log.warn(`[StateMachine] Force reset from ${prevState}`)
     this.state = 'idle'
     this.conversationId = null
-    const statePayload = { from: prevState, to: 'idle' as const, event: 'forceReset', conversationId: null }
+    const statePayload = {
+      from: prevState,
+      to: 'idle' as const,
+      event: 'forceReset',
+      conversationId: null
+    }
     this.emit('stateChange', statePayload)
 
     // Forward force reset to renderer

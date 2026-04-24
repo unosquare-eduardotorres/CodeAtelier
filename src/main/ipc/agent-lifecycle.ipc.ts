@@ -1,7 +1,7 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { mainLogger } from '../logger'
-import { generalistService } from '../services'
+import { chatAgentService } from '../services'
 import { validateSender } from './validate-sender'
 
 const log = mainLogger
@@ -24,21 +24,26 @@ export function registerAgentLifecycleIpc(mainWindow: BrowserWindow): void {
 
     // Already running for this workspace — re-send ready event so the renderer
     // transitions out of 'starting' state (fixes Home → re-select same workspace)
-    if (generalistService.isRunning() && generalistService.getWorkspacePath() === workspacePath) {
-      log.info('Generalist already running for:', workspacePath, '— re-sending ready')
+    if (chatAgentService.isRunning() && chatAgentService.getWorkspacePath() === workspacePath) {
+      log.info(
+        'Chat agent already running for:',
+        workspacePath,
+        '— re-sending ready (role=' + chatAgentService.getActiveRole() + ')'
+      )
       mainWindow.webContents.send(IPC_CHANNELS.AGENT_READY)
       return
     }
 
     startingWorkspace = workspacePath
     try {
-      // Start generalist (SDK session) — initializes workspace context, no process spawned
-      await generalistService.start(workspacePath)
-      log.info('Generalist initialized for:', workspacePath)
-
-      // SDK-based generalist is ready immediately after start() — no process spawn needed.
-      // Notify the renderer right away so the chat UI is shown.
-      log.info('Generalist ready (SDK mode) for:', workspacePath)
+      // Start the chat agent (SDK session) — picks Da Vinci or the workspace's
+      // Project Specialist depending on build_status. No process spawned.
+      await chatAgentService.start(workspacePath)
+      log.info(
+        'Chat agent ready (SDK mode) for:',
+        workspacePath,
+        '— role=' + chatAgentService.getActiveRole()
+      )
       mainWindow.webContents.send(IPC_CHANNELS.AGENT_READY)
     } catch (error) {
       log.error('Failed to start services:', error)

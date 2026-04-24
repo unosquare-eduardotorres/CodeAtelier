@@ -43,8 +43,6 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
             id: userSpec.id,
             displayName: userSpec.alias ?? userSpec.displayName,
             avatarKey: userSpec.avatarUrl ?? 'business-man',
-            pixelSpriteId: userSpec.pixelSpriteId ?? null,
-            usePixelForChat: userSpec.usePixelForChat ?? false,
             createdAt: userSpec.createdAt,
             updatedAt: userSpec.updatedAt
           },
@@ -55,7 +53,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         // Fallback to legacy user_profile table
         const profile = await window.api.getUserProfile()
         set({
-          profile: profile ? { ...profile, pixelSpriteId: null, usePixelForChat: false } : null,
+          profile,
           hasCompletedWelcome: profile !== null,
           isLoading: false
         })

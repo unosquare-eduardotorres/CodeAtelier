@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { checkpointService } from '../services/checkpoint.service'
-import { generalistService } from '../services'
+import { chatAgentService } from '../services'
 import { validateSender } from './validate-sender'
 
 export function registerCheckpointIpc(): void {
@@ -15,7 +15,7 @@ export function registerCheckpointIpc(): void {
     validateSender(event)
     if (!args?.checkpointId) throw new Error('checkpointId is required')
 
-    const workspacePath = generalistService.getWorkspacePath()
+    const workspacePath = chatAgentService.getWorkspacePath()
     if (!workspacePath) {
       throw new Error('No workspace path — generalist not started')
     }

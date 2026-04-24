@@ -1,10 +1,24 @@
 // ── Data Models ──
 export type ConversationMode = 'plan' | 'build'
 
+/**
+ * Which agent role is driving an AgentSessionService.
+ * - 'da-vinci' — the default Specialist (home-screen concierge, plan-only,
+ *   app-level help). Called "Da Vinci" in the UI.
+ * - 'project-specialist' — workspace-bound Specialist tailored to the repo.
+ *
+ * Introduced for the Project Specialist refactor (see
+ * docs/architecture/project-specialist-refactor.md).
+ *
+ * NOTE: The historical DB value for the Da Vinci specialist is still
+ * `agent_id = 'generalist'`; that migration (Layer 2) will be a separate PR.
+ * Until then, `DA_VINCI_AGENT_ID` aliases `'generalist'` in shared/constants.
+ */
+export type AgentRole = 'da-vinci' | 'project-specialist'
+
 /** Tracks which phase of the conversation lifecycle is active */
 export type ConversationPhase =
-  | 'generalist-responding'
-  | 'handoff-in-progress'
+  | 'da-vinci-responding'
   | 'specialist-executing'
   | 'pipeline-complete'
 
@@ -12,10 +26,6 @@ export interface UserProfile {
   id: string
   displayName: string
   avatarKey: string
-  /** Optional — only present when pixel sprite is configured for this user */
-  pixelSpriteId?: string | null
-  /** Optional — only present when pixel chat mode is configured */
-  usePixelForChat?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -100,17 +110,6 @@ export interface Message {
   parentMessageId?: string
 }
 
-export interface Attachment {
-  id: string
-  conversationId: string
-  filename: string
-  mimeType?: string
-  filePath: string
-  extractedText?: string
-  tokenCount: number
-  createdAt: string
-}
-
 export interface AgentStatus {
   agentId: string
   agentType: string
@@ -130,91 +129,6 @@ export interface AgentStatus {
   complexityTier?: ComplexityTier
   // Active MCP tool servers — populated by generalist to indicate which intelligence tools are enabled
   activeMcpTools?: string[]
-}
-
-// ── Typed Stream Events (discriminated union for compile-time exhaustiveness) ──
-
-/** Token usage reported per SDK turn */
-export interface TurnTokenUsage {
-  input: number
-  output: number
-  cacheReadInputTokens: number
-  cacheCreationInputTokens: number
-}
-
-/**
- * Discriminated union of all stream events emitted by agents.
- * Replaces string-based `type` switching with compile-time exhaustiveness checking.
- */
-export type StreamEvent =
-  | { type: 'assistant'; message: AssistantMessage }
-  | { type: 'content_block_start'; block: ContentBlock }
-  | { type: 'content_block_delta'; delta: TextDelta | ToolInputDelta }
-  | { type: 'content_block_stop'; index: number }
-  | { type: 'message_stop'; usage: TurnTokenUsage }
-  | { type: 'user'; message: UserToolResult }
-  | { type: 'error'; error: string }
-
-/** Content within an assistant message */
-export interface AssistantMessage {
-  content: ContentBlock[]
-}
-
-export type ContentBlock =
-  | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input?: Record<string, unknown> }
-
-export interface TextDelta {
-  type: 'text_delta'
-  text: string
-}
-
-export interface ToolInputDelta {
-  type: 'input_json_delta'
-  partial_json: string
-}
-
-export interface UserToolResult {
-  content: { type: 'tool_result'; tool_use_id: string; content?: string }[]
-}
-
-// ── Structured Agent Errors (discriminated union for typed error handling) ──
-
-/**
- * Typed error hierarchy for agent errors.
- * Enables pattern-matching recovery and better user-facing messages.
- */
-export type AgentError =
-  | { kind: 'timeout'; elapsedMs: number; toolCallCount: number }
-  | { kind: 'circuit_breaker'; toolCallCount: number; limit: number }
-  | { kind: 'api_error'; statusCode: number; message: string; retryable: boolean }
-  | { kind: 'budget_exceeded'; currentCents: number; limitCents: number }
-  | { kind: 'abort'; reason: 'user' | 'timeout' | 'system' }
-  | { kind: 'stream_incomplete'; lastEventType: string }
-  | { kind: 'parse_error'; rawData: string; message: string }
-
-/**
- * Maps an AgentError to a human-readable message for the UI.
- */
-export function agentErrorMessage(error: AgentError): string {
-  switch (error.kind) {
-    case 'timeout':
-      return `Response exceeded maximum time after ${error.toolCallCount} tool calls. The agent may be stuck. Try simplifying your request.`
-    case 'circuit_breaker':
-      return `The agent made ${error.toolCallCount} tool calls (limit: ${error.limit}), which suggests it got stuck in a loop. Try rephrasing your request.`
-    case 'api_error':
-      return error.retryable
-        ? `API error (${error.statusCode}): ${error.message}. Retrying...`
-        : `API error (${error.statusCode}): ${error.message}`
-    case 'budget_exceeded':
-      return `Budget exceeded: $${(error.currentCents / 100).toFixed(2)} > $${(error.limitCents / 100).toFixed(2)}`
-    case 'abort':
-      return error.reason === 'user' ? 'Request cancelled.' : `Request aborted: ${error.reason}`
-    case 'stream_incomplete':
-      return `Stream ended unexpectedly (last event: ${error.lastEventType}). The response may be incomplete.`
-    case 'parse_error':
-      return `Failed to parse agent response: ${error.message}`
-  }
 }
 
 // ── Tool Activity ──
@@ -245,8 +159,6 @@ export interface Specialist {
   sourceYaml: string | null
   alias: string | null
   avatarUrl: string | null
-  pixelSpriteId: string | null
-  usePixelForChat: boolean
   isCore: boolean
   skills?: Skill[]
   createdAt: string
@@ -296,8 +208,6 @@ export interface UpdateSpecialistInput {
   isActive?: boolean
   alias?: string | null
   avatarUrl?: string | null
-  pixelSpriteId?: string | null
-  usePixelForChat?: boolean
 }
 
 export interface ConversationSpecialist {
@@ -327,38 +237,6 @@ export interface AppPreferences {
   specialistWarningBuild: boolean
   specialistWarningPlan: boolean
   specialistWarningAlways: boolean
-}
-
-export type SpecialistConversationAction = 'activated' | 'deactivated'
-
-export interface SpecialistConversationHistoryEntry {
-  id: string
-  conversationId: string
-  specialistId: string
-  action: SpecialistConversationAction
-  createdAt: string
-}
-
-// ── Marketplace Models ──
-
-export interface MarketplaceSpecialist {
-  id: string
-  agentId: string
-  displayName: string
-  description: string
-  icon: string
-  color: string
-  model: string
-  tools: string[]
-  skills: Skill[]
-  isActive: boolean
-  isDeployed: boolean
-  alias: string | null
-  avatarUrl: string | null
-  pixelSpriteId?: string | null
-  usePixelForChat?: boolean
-  priority: number
-  isCore: boolean
 }
 
 // ── Workspace Deploy Models ──
@@ -465,10 +343,6 @@ export type TerminalReason =
   | 'max_turns'
   | 'completed'
 
-// ── Task Decomposition & Parallel Execution ──
-
-export type ExecutionStrategy = 'sequential' | 'parallel'
-
 // ── Complexity Scoring ──
 
 export interface ComplexityScore {
@@ -487,15 +361,36 @@ export type CostPreference = 'economy' | 'balanced' | 'power'
 /** Budget tier controls how much context is included in system prompts (Strategy 4) */
 export type BudgetTier = 'minimal' | 'standard' | 'full'
 
-/** Investigation depth controls specialist turn/tool budgets (S6) */
-export type InvestigationDepth = 'quick' | 'standard' | 'deep'
-
 export type ComplexityTier = ComplexityScore['tier']
+
+/**
+ * A decomposed sub-task. Post-handoff-removal this shape is still used by
+ * checkpointing + task-progress events, but the `specialist` assignment is
+ * purely informational (everything now runs inside the workspace's Project
+ * Specialist session — no delegation).
+ */
+export interface DecomposedTask {
+  id: string
+  specialist: string
+  description: string
+  dependsOn: string[]
+  complexity?: ComplexityScore
+  model?: ModelTier
+  verificationCommand?: string
+  outputSchema?: string
+  metadata?: Record<string, unknown>
+  background?: boolean
+}
 export type ModelTier = ComplexityScore['model']
 
 /** Actions that consume a Claude model — each can be independently configured */
 export type ModelAction =
   | 'generalist'
+  | 'generalist:plan'
+  | 'generalist:build'
+  | 'project-specialist'
+  | 'project-specialist:plan'
+  | 'project-specialist:build'
   | 'specialist:simple'
   | 'specialist:moderate'
   | 'specialist:complex'
@@ -507,39 +402,6 @@ export type ModelAction =
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
   [key: string]: string // ModelAction → model ID string
-}
-
-/** A single decomposed sub-task assigned to a specialist */
-export interface DecomposedTask {
-  id: string
-  specialist: string
-  description: string
-  dependsOn: string[]
-  // Populated by combined decompose+score call
-  complexity?: ComplexityScore
-  model?: ModelTier
-  /** Optional verification command to run after task completion (e.g. "npm run lint", "npm test") */
-  verificationCommand?: string
-  /** Optional Zod schema name for structured output validation (R3: open-multi-agent pattern) */
-  outputSchema?: string
-  /** Runtime metadata for task loop state (re-engagement, abandonment tracking, etc.) */
-  metadata?: Record<string, unknown>
-  /** Fire-and-forget SubAgent — runs in background without blocking the main flow (SDK 0.2.96+) */
-  background?: boolean
-}
-
-/** The full task plan returned by the generalist decomposition step */
-export interface TaskPlan {
-  conversationId: string
-  summary: string
-  mode: ConversationMode
-  tasks: DecomposedTask[]
-  /** Preserved enriched handoff context for specialist injection */
-  brief?: HandoffBrief
-  /** When set, the renderer auto-executes via CHAT_EXECUTE_PLAN with this strategy */
-  autoExecute?: ExecutionStrategy
-  /** User-selected investigation depth — controls specialist turn/tool budgets (S6) */
-  investigationDepth?: InvestigationDepth
 }
 
 /** Progress event for an individual specialist task */
@@ -580,12 +442,6 @@ export interface AgentWorktree {
   status: WorktreeStatus
   createdAt: string
   mergedAt: string | null
-}
-
-export interface MergeConflict {
-  agentId: string
-  taskId: string
-  conflictedFiles: string[]
 }
 
 export interface MergeAllResult {
@@ -631,11 +487,6 @@ export interface SyncResult {
 export interface GrillProposedTask {
   title: string
   description: string
-}
-
-export interface GrillSummary {
-  summary: string
-  proposedTasks: GrillProposedTask[]
 }
 
 export interface GrillQuestionOption {
@@ -743,28 +594,27 @@ export interface PlanDetectedEvent {
  */
 export interface ControlToolState {
   plan: boolean
-  handoff: boolean
   askUser: boolean
   memory: boolean
   /** MCP-emitted plan intent (set by onPlan callback) */
-  planIntent?: GeneralistIntent & { type: 'plan' }
-  /** MCP-emitted handoff intent (set by onHandoff callback) */
-  handoffIntent?: GeneralistIntent & { type: 'handoff' }
+  planIntent?: AgentIntent & { type: 'plan' }
   /** MCP-emitted askUser intent (set by onAskUser callback) */
-  askUserIntent?: GeneralistIntent & { type: 'askUser' }
+  askUserIntent?: AgentIntent & { type: 'askUser' }
 }
 
 /**
- * The generalist's decision after processing a user message.
+ * The chat agent's decision after processing a user message.
  *
  * Discriminated union that collapses the previously fragmented event system
  * (5 string-based emit() calls, 3 detect*() methods, 3 MCP callbacks) into
  * a single typed output. Each variant maps to one UI action.
+ *
+ * Emitted by both Da Vinci (default specialist) and Project Specialist
+ * adapters via AgentSessionService.
  */
-export type GeneralistIntent =
+export type AgentIntent =
   | { type: 'response'; content: string }
   | { type: 'plan'; plan: PlanDetectedEvent }
-  | { type: 'handoff'; brief: HandoffBrief }
   | { type: 'askUser'; questions: GrillQuestion[] }
   | { type: 'grillQuestion'; questions: GrillQuestion[] }
   | {
@@ -774,6 +624,8 @@ export type GeneralistIntent =
     }
   | { type: 'grillEvaluation'; evaluation: GrillEvaluation }
   | { type: 'error'; message: string }
+
+
 
 // ── Build Summary Type ──
 export interface BuildSummary {
@@ -884,24 +736,6 @@ export interface MemoryFeedResult {
   error?: string
 }
 
-/** Structured handoff context built by generalist before delegation */
-export interface HandoffBrief {
-  /** LLM-generated summary of what needs to be done */
-  summary: string
-  /** Key decisions made during the conversation */
-  decisions: string[]
-  /** Constraints identified (tech constraints, time, compatibility, etc.) */
-  constraints: string[]
-  /** File paths discussed or referenced in conversation */
-  filesDiscussed: string[]
-  /** The last N user+assistant message pairs for full context */
-  recentMessages: Array<{ role: string; content: string }>
-  /** Specialist IDs suggested by generalist */
-  specialists: string[]
-  /** Conversation mode (plan or build) */
-  mode: ConversationMode
-}
-
 /** Structured investigation report produced by specialist in plan mode */
 export interface InvestigationReport {
   problem: string
@@ -963,6 +797,12 @@ export interface SubscriptionCheckResult {
   claudeAuth: { authenticated: boolean; accountEmail: string | null; error: string | null }
   claudeMax: { active: boolean; plan: string | null; error: string | null }
   codexCli: { installed: boolean; version: string | null; error: string | null }
+  sdkHealth?: {
+    sdkVersion: string | null
+    modelsAvailable: string[]
+    opus47Available: boolean
+    error: string | null
+  }
 }
 
 export interface AutoConfigureResult {
@@ -1033,12 +873,6 @@ export interface SemanticSearchResult {
   metadata: Record<string, unknown>
 }
 
-export interface SchedulingWeights {
-  dependencyFirst: number // 0-1, default 0.6
-  capabilityMatch: number // 0-1, default 0.3
-  leastBusy: number // 0-1, default 0.1
-}
-
 // ── Bug Council (Phase 10B) ──
 
 /** Perspective from a single diagnostic agent in the Bug Council */
@@ -1100,559 +934,32 @@ export interface BugCouncilCompleteEvent {
   result: BugCouncilResult
 }
 
-// ── IPC Channel Map (type-safe) ──
-export interface IpcChannels {
-  'workspace:list': { args: void; return: Workspace[] }
-  'workspace:create': { args: { name: string; repoPath: string }; return: Workspace }
-  'workspace:open': { args: { id: string }; return: Workspace }
-  'workspace:delete': { args: { id: string }; return: void }
-  'workspace:get-settings': { args: { workspaceId: string }; return: Record<string, unknown> }
-  'workspace:update-settings': {
-    args: { workspaceId: string; settings: Record<string, unknown> }
-    return: void
-  }
-  'chat:sendMessage': {
-    args: { conversationId: string; text: string; attachments?: string[] }
-    return: void
-  }
-  'chat:getConversations': { args: { workspaceId: string }; return: Conversation[] }
-  'chat:createConversation': {
-    args: {
-      workspaceId: string
-      title?: string
-      mode?: ConversationMode
-      personaSpecialistId?: string
-    }
-    return: Conversation
-  }
-  'chat:updatePersona': {
-    args: { conversationId: string; personaSpecialistId: string | null }
-    return: Conversation
-  }
-  'chat:getMessages': { args: { conversationId: string }; return: Message[] }
-  'chat:deleteConversation': { args: { conversationId: string }; return: void }
-  'chat:renameConversation': {
-    args: { conversationId: string; title: string }
-    return: Conversation
-  }
-  'chat:updateMode': {
-    args: { conversationId: string; mode: ConversationMode }
-    return: Conversation
-  }
-  'agent:getStatuses': { args: void; return: AgentStatus[] }
-
-  // Specialists
-  'specialist:list': { args: void; return: Specialist[] }
-  'specialist:get': { args: { id: string }; return: Specialist }
-  'specialist:create': { args: CreateSpecialistInput; return: Specialist }
-  'specialist:update': { args: { id: string } & UpdateSpecialistInput; return: Specialist }
-  'specialist:delete': { args: { id: string }; return: void }
-  'specialist:assignSkill': { args: { specialistId: string; skillId: string }; return: void }
-  'specialist:removeSkill': { args: { specialistId: string; skillId: string }; return: void }
-  'specialist:reorder': { args: { orderedIds: string[] }; return: void }
-  'specialist:getConversationSpecialists': {
-    args: { conversationId: string }
-    return: ConversationSpecialist[]
-  }
-  'specialist:addConversationSpecialist': {
-    args: { conversationId: string; specialistId: string }
-    return: ConversationSpecialist
-  }
-  'specialist:removeConversationSpecialist': {
-    args: { conversationId: string; specialistId: string }
-    return: void
-  }
-  'specialist:replaceConversationSpecialists': {
-    args: { conversationId: string; specialistIds: string[] }
-    return: ConversationSpecialist[]
-  }
-  'specialist:getConversationHistory': {
-    args: { conversationId: string; limit?: number }
-    return: SpecialistConversationHistoryEntry[]
-  }
-  'specialist:addConversationHistoryEntry': {
-    args: { conversationId: string; specialistId: string; action: SpecialistConversationAction }
-    return: SpecialistConversationHistoryEntry
-  }
-  'specialist:clearConversationHistory': {
-    args: { conversationId: string }
-    return: void
-  }
-
-  // Conversation Specialist Activation (with skill gating)
-  'convSpecialist:list': {
-    args: { conversationId: string }
-    return: ConversationSpecialist[]
-  }
-  'convSpecialist:upsert': {
-    args: {
-      conversationId: string
-      specialistId: string
-      isActive?: boolean
-      skillsEnabled?: boolean
-      skillOverrides?: string[] | null
-    }
-    return: void
-  }
-  'convSpecialist:remove': {
-    args: { conversationId: string; specialistId: string }
-    return: void
-  }
-  'convSpecialist:reset': {
-    args: { conversationId: string }
-    return: void
-  }
-  'convSpecialist:estimate': {
-    args: { conversationId: string }
-    return: SpecialistTokenEstimate[]
-  }
-
-  // App Preferences
-  'appPreference:getAll': { args: void; return: AppPreferences }
-  'appPreference:set': { args: { key: string; value: string }; return: void }
-
-  // Specialist Marketplace
-  'specialist:deploy': {
-    args: { workspacePath: string; specialistId: string }
-    return: void
-  }
-  'specialist:undeploy': {
-    args: { workspacePath: string; specialistId: string }
-    return: void
-  }
-  'specialist:updateConfig': {
-    args: {
-      id: string
-      displayName?: string
-      icon?: string
-      color?: string
-      alias?: string | null
-      avatarUrl?: string | null
-      priority?: number
-    }
-    return: Specialist
-  }
-  'specialist:getMarketplace': {
-    args: { workspacePath: string }
-    return: MarketplaceSpecialist[]
-  }
-
-  // Skills
-  'skill:list': { args: void; return: Skill[] }
-  'skill:get': { args: { id: string }; return: Skill }
-  'skill:import': { args: { filePath: string }; return: Skill }
-  'skill:update': { args: { id: string; name?: string; description?: string }; return: Skill }
-  'skill:delete': { args: { id: string }; return: void }
-  'skill:activate': { args: { id: string }; return: Skill }
-  'skill:deactivate': { args: { id: string }; return: Skill }
-  'skill:selectFile': { args: void; return: string | null }
-  'dialog:saveClipboardImage': { args: { dataUrl: string; conversationId: string }; return: string }
-  'dialog:readImageBase64': { args: { filePath: string }; return: string }
-
-  // Workspace Deploy
-  'workspace:scanClaude': { args: { workspacePath: string }; return: WorkspaceClaudeStatus }
-  'workspace:activateAgents': { args: { workspacePath: string }; return: ActivationResult }
-  'workspace:readFile': { args: { filePath: string }; return: string }
-  'workspace:writeFile': { args: { filePath: string; content: string }; return: void }
-  'workspace:scanSkills': { args: { workspacePath: string }; return: DiscoveredSkill[] }
-  'workspace:scanAgents': { args: { workspacePath: string }; return: DiscoveredAgent[] }
-  'workspace:cancelActivation': { args: void; return: void }
-  'workspace:cleanActivation': {
-    args: { workspacePath: string; removeClaudeMd?: boolean }
-    return: void
-  }
-
-  // Agent/Skill individual delete & sync
-  'agent:deleteFromWorkspace': {
-    args: { workspacePath: string; filename: string }
-    return: void
-  }
-  'agent:syncToWorkspace': {
-    args: { workspacePath: string; filename: string }
-    return: void
-  }
-  'skill:deleteFromWorkspace': {
-    args: { workspacePath: string; skillName: string }
-    return: void
-  }
-  'skill:syncToWorkspace': {
-    args: { workspacePath: string; skillName: string }
-    return: void
-  }
-
-  // Agent activate/deactivate
-  'agent:activate': { args: { workspacePath: string; agentName: string }; return: void }
-  'agent:deactivate': { args: { workspacePath: string; agentName: string }; return: void }
-
-  // Bulk delete all agents/skills
-  'workspace:deleteAllAgents': { args: { workspacePath: string }; return: void }
-  'workspace:deleteAllSkills': { args: { workspacePath: string }; return: void }
-
-  // Deploy all (inactive) to workspace
-  'workspace:deployAll': {
-    args: { workspacePath: string }
-    return: { agents: number; skills: number }
-  }
-
-  // Task Execution
-  'chat:executePlan': {
-    args: {
-      conversationId: string
-      strategy: ExecutionStrategy
-      tasks: DecomposedTask[]
-      investigationDepth?: InvestigationDepth
-    }
-    return: void
-  }
-  'chat:executeInvestigationFix': {
-    args: { conversationId: string; strategy: ExecutionStrategy; report: InvestigationReport }
-    return: void
-  }
-
-  // Chat Commands
-  'chat:complete': {
-    args: { conversationId: string; branchName: string; commitMessage: string; description: string }
-    return: CompleteResult
-  }
-  'chat:close': { args: { conversationId: string }; return: void }
-  'chat:getFileChanges': { args: { conversationId: string }; return: FileChange[] }
-  'chat:generatePrDescription': {
-    args: { conversationId: string }
-    return: { description: string }
-  }
-
-  // GitHub Integration
-  'github:saveToken': { args: { workspaceId: string; token: string }; return: { login: string } }
-  'github:validateToken': {
-    args: { token: string }
-    return: { valid: boolean; login: string; scopes: string[] }
-  }
-  'github:getStatus': {
-    args: { workspaceId: string }
-    return: { configured: boolean; login?: string }
-  }
-  'github:removeToken': { args: { workspaceId: string }; return: void }
-
-  // Repository Management
-  'repo:init': { args: { workspaceId: string }; return: void }
-  'repo:setRemote': { args: { workspaceId: string; remoteUrl: string }; return: void }
-  'repo:getInfo': { args: { workspaceId: string }; return: RepoInfo }
-  'repo:hasUnsavedChanges': {
-    args: { conversationId: string }
-    return: { hasChanges: boolean; fileCount: number; files: string[] }
-  }
-
-  // Worktrees
-  'worktree:list': { args: { conversationId: string }; return: AgentWorktree[] }
-  'worktree:getDiff': { args: { worktreeId: string }; return: string }
-  'worktree:merge': {
-    args: { worktreeId: string }
-    return: { success: boolean; conflictedFiles?: string[] }
-  }
-  'worktree:mergeAll': { args: { conversationId: string }; return: MergeAllResult }
-  'worktree:abandon': { args: { worktreeId: string }; return: void }
-
-  // Agent Sync
-  'sync:computeDiff': { args: { workspacePath: string }; return: SyncDiff }
-  'sync:apply': { args: { workspacePath: string; skipRemoved?: boolean }; return: SyncResult }
-
-  // Memory (auto memory system)
-  'memory:list': { args: { workspaceId: string }; return: Memory[] }
-  'memory:search': { args: { workspaceId: string; query: string }; return: Memory[] }
-  'memory:create': {
-    args: {
-      workspaceId: string | null
-      type: MemoryType
-      title: string
-      content: string
-      tags?: string[]
-      importance?: number
-    }
-    return: Memory
-  }
-  'memory:update': {
-    args: { id: string; title?: string; content?: string; tags?: string[]; importance?: number }
-    return: Memory
-  }
-  'memory:delete': { args: { id: string }; return: void }
-  'memory:updateSetting': { args: { workspaceId: string; memoryEnabled: boolean }; return: void }
-
-  // Memory feed (ingest sources into memories)
-  'memory:feedClaudeMd': { args: { workspacePath: string }; return: MemoryFeedResult }
-  'memory:feedCodebase': { args: { workspacePath: string }; return: MemoryFeedResult }
-  'memory:feedDocument': {
-    args: { workspacePath: string; filePath: string }
-    return: MemoryFeedResult
-  }
-  'memory:feedCancel': { args: void; return: void }
-  'memory:selectDocument': { args: void; return: string | null }
-  'memory:getFeedTimestamps': {
-    args: { workspaceId: string }
-    return: WorkspaceFeedTimestamps
-  }
-  'memory:regenerateClaudeMd': {
-    args: { workspacePath: string }
-    return: { success: boolean; content: string; existing: string | null; error?: string }
-  }
-
-  // Dream (auto consolidation)
-  'dream:trigger': { args: { workspaceId: string }; return: DreamRun }
-  'dream:cancel': { args: { workspaceId: string }; return: void }
-  'dream:getStatus': { args: { workspaceId: string }; return: DreamRun | null }
-  'dream:getHistory': { args: { workspaceId: string; limit?: number }; return: DreamRun[] }
-
-  // Tokens
-  'token:getWorkspaceSummary': { args: { workspaceId: string }; return: TokenSummary }
-  'token:getConversationSummary': { args: { conversationId: string }; return: TokenSummary }
-  'token:getRecentSessions': {
-    args: { workspaceId: string; limit?: number }
-    return: AgentSessionRecord[]
-  }
-
-  // Ideas
-  'idea:list': { args: { workspaceId: string }; return: Idea[] }
-  'idea:create': {
-    args: { workspaceId: string; title: string; description: string }
-    return: Idea
-  }
-  'idea:update': {
-    args: { id: string; title?: string; description?: string }
-    return: Idea
-  }
-  'idea:delete': { args: { id: string }; return: void }
-  'idea:startGrill': {
-    args: { ideaId: string; workspaceId: string }
-    return: { idea: Idea; conversation: Conversation }
-  }
-  'idea:convertDirect': {
-    args: { ideaId: string; workspaceId: string }
-    return: { idea: Idea; conversation: Conversation }
-  }
-  'idea:completeFromGrill': {
-    args: { conversationId: string; summary?: string }
-    return: Idea | null
-  }
-
-  // User Profile
-  'user:getProfile': { args: void; return: UserProfile | null }
-  'user:upsertProfile': {
-    args: { displayName: string; avatarKey: string }
-    return: UserProfile
-  }
-
-  // Core Agent Aliases
-  'coreAgent:list': { args: void; return: CoreAgentAlias[] }
-  'coreAgent:upsert': {
-    args: {
-      agentRole: 'generalist' | 'coordinator'
-      alias: string | null
-      avatarKey: string | null
-    }
-    return: CoreAgentAlias
-  }
-
-  // Core Agent Prompts
-  'coreAgentPrompt:list': { args: void; return: CoreAgentPrompt[] }
-  'coreAgentPrompt:get': {
-    args: { agentRole: 'generalist'; mode: 'plan' | 'build' }
-    return: CoreAgentPrompt | undefined
-  }
-  'coreAgentPrompt:upsert': {
-    args: { agentRole: 'generalist'; mode: 'plan' | 'build'; promptText: string }
-    return: CoreAgentPrompt
-  }
-  'coreAgentPrompt:reset': {
-    args: { agentRole: 'generalist'; mode: 'plan' | 'build' }
-    return: CoreAgentPrompt
-  }
-
-  // AI Subscriptions
-  'subscription:validateAll': { args: void; return: SubscriptionCheckResult }
-  'subscription:checkClaudeCli': {
-    args: void
-    return: { installed: boolean; version: string | null; error: string | null }
-  }
-  'subscription:autoConfigure': { args: void; return: AutoConfigureResult }
-
-  // Ollama
-  'ollama:checkStatus': { args: void; return: OllamaStatus }
-  'ollama:pullModel': { args: { model: string }; return: void }
-  'ollama:removeModel': { args: { model: string }; return: void }
-  'ollama:cancelPull': { args: void; return: void }
-  'ollama:start': { args: void; return: boolean }
-
-  // Indexing / Semantic Search
-  'indexing:start': { args: { workspaceId: string }; return: void }
-  'indexing:pause': { args: { workspaceId: string }; return: void }
-  'indexing:resume': { args: { workspaceId: string }; return: void }
-  'indexing:cancel': { args: { workspaceId: string }; return: void }
-  'indexing:getStatus': { args: { workspaceId: string }; return: IndexingState }
-  'indexing:loadPersisted': {
-    args: { workspaceId: string }
-    return: { loaded: boolean; status: string; symbolCount?: number }
-  }
-  'semanticSearch:query': {
-    args: {
-      workspaceId: string
-      query: string
-      language?: string
-      directory?: string
-      nResults?: number
-    }
-    return: SemanticSearchResult[]
-  }
-
-  // Code Graph (persisted repomap)
-  'codeGraph:indexStart': { args: { workspaceId: string }; return: void }
-  'codeGraph:getStatus': { args: { workspaceId: string }; return: CodeGraphIndexingState }
-  'codeGraph:hasIndex': { args: { workspaceId: string }; return: boolean }
-
-  // Bug Council
-  'bugCouncil:getSession': { args: { sessionId: string }; return: BugCouncilResult | null }
-  'bugCouncil:listSessions': { args: { conversationId: string }; return: BugCouncilResult[] }
-
-  // SDK Control — Query instance methods
-  'sdk:getContextUsage': { args: void; return: unknown }
-  'sdk:stopTask': { args: { taskId: string }; return: unknown }
-  'sdk:interrupt': { args: void; return: unknown }
-  'sdk:accountInfo': { args: void; return: unknown }
-  'sdk:supportedModels': { args: void; return: unknown }
-  'sdk:mcpServerStatus': { args: void; return: unknown }
-  'sdk:setModel': { args: { model?: string }; return: unknown }
-  'sdk:setPermissionMode': { args: { mode: string }; return: unknown }
-  'sdk:applyFlagSettings': { args: { settings: Record<string, unknown> }; return: unknown }
-  'sdk:setMcpServers': { args: { servers: Record<string, unknown> }; return: unknown }
-  'sdk:rewindFiles': { args: { userMessageId: string; dryRun?: boolean }; return: unknown }
-  'sdk:reconnectMcp': { args: { serverName: string }; return: unknown }
-  'sdk:supportedAgents': { args: void; return: unknown }
-
-  // SDK Query — close + seedReadState
-  'sdk:closeQuery': { args: void; return: void }
-  'sdk:seedReadState': { args: { path: string; mtime: number }; return: void }
-  // SDK MCP lifecycle
-  'sdk:toggleMcpServer': {
-    args: { serverName: string; enabled: boolean }
-    return: unknown
-  }
-
-  // SDK Elicitation (enriched — via elicitation.service)
-  'sdk:elicitationResponse': {
-    args: { requestId: string; action: string; content?: Record<string, unknown> }
-    return: void
-  }
-
-  // SDK Subagent inspection (0.2.96+)
-  'sdk:listSubagents': { args: { sessionId: string }; return: string[] }
-  'sdk:getSubagentMessages': {
-    args: { sessionId: string; subagentId: string }
-    return: unknown[]
-  }
-
-  // Chat resume at checkpoint
-  'chat:resumeAt': {
-    args: { conversationId: string; messageId: string }
-    return: void
-  }
-
-  // Session Management (SDK top-level functions)
-  'session:list': {
-    args: { dir?: string; limit?: number; offset?: number }
-    return: unknown[]
-  }
-  'session:getInfo': { args: { sessionId: string; dir?: string }; return: unknown }
-  'session:getMessages': { args: { sessionId: string; dir?: string }; return: unknown[] }
-  'session:rename': { args: { sessionId: string; title: string; dir?: string }; return: void }
-  'session:tag': { args: { sessionId: string; tag: string | null; dir?: string }; return: void }
-  'session:fork': {
-    args: { sessionId: string; upToMessageId?: string; title?: string; dir?: string }
-    return: { sessionId: string }
-  }
-}
-
-// ── IPC Event Channels (main → renderer streaming) ──
-export interface IpcEvents {
-  'chat:messageChunk': { conversationId: string; chunk: string; role: 'coordinator' | 'generalist' }
-  'chat:messageComplete': { conversationId: string; messageId: string }
-  'chat:handoff': {
-    conversationId: string
-    summary: string
-    specialists: string[]
-    mode: ConversationMode
-  }
-  'chat:grillComplete': {
-    conversationId: string
-    summary: string
-    proposedTasks: GrillProposedTask[]
-  }
-  'chat:investigationReport': {
-    conversationId: string
-    taskId: string
-    specialist: string
-    report: InvestigationReport
-  }
-  'chat:taskPlan': TaskPlan
-  'chat:taskProgress': TaskExecutionProgress
-  'agent:statusUpdate': AgentStatus
-  'agent:taskChunk': { agentId: string; taskId: string; text: string }
-  'agent:taskRetry': {
-    taskId: string
-    specialist: string
-    attempt: number
-    maxRetries: number
-    /** Model escalation info (present when model was escalated on this retry) */
-    escalation?: {
-      fromModel: string
-      toModel: string
-    }
-    /** Human-readable reason for the retry */
-    reason: string
-  }
-  'workspace:activationProgress': ActivationProgressEvent
-  'memory:feedProgress': MemoryFeedProgress
-  'dream:progress': DreamProgress
-  'indexing:progress': IndexingState
-  'codeGraph:progress': CodeGraphIndexingState
-  'ollama:pullProgress': PullProgress
-  'ollama:pullComplete': string
-  'ollama:pullError': string
-
-  // Bug Council
-  'bugCouncil:activated': BugCouncilActivatedEvent
-  'bugCouncil:complete': BugCouncilCompleteEvent
-
-  // SDK Events
-  'sdk:rateLimit': {
-    status: string
-    utilization?: number
-    resetsAt?: number
-    rateLimitType?: string
-  }
-  'sdk:toolProgress': { toolId: string; toolName: string; elapsedSeconds: number }
-  'sdk:apiRetry': {
-    attempt: number
-    maxRetries: number
-    retryDelayMs: number
-    errorStatus: number | null
-  }
-  'sdk:compactBoundary': { trigger: string; preTokens: number }
-  'sdk:promptSuggestion': { conversationId: string; suggestion: string }
-  'sdk:filesPersisted': {
-    conversationId: string
-    files: Array<{ filename: string; fileId: string }>
-  }
-  'sdk:hookLifecycle': {
-    hookId: string
-    hookName: string
-    hookEvent: string
-    phase: string
-    output?: string
-    outcome?: string
-  }
-  'sdk:sessionState': { state: string }
-  'sdk:authStatus': { message: string }
-}
-
 // ── Elicitation (MCP server user input requests) ──
+
+/** Bug Tracker record — shared between main and renderer */
+export interface BugRecord {
+  id: string
+  fingerprint: string
+  timestamp: string
+  lastSeenAt: string
+  process: 'main' | 'renderer' | 'preload'
+  severity: 'error' | 'fatal'
+  errorMessage: string
+  stackTrace: string | null
+  sourceFile: string | null
+  sourceLine: number | null
+  sourceColumn: number | null
+  componentName: string | null
+  activeView: string | null
+  workspaceId: string | null
+  agentId: string | null
+  appVersion: string
+  osInfo: string | null
+  isResolved: boolean
+  occurrenceCount: number
+  note: string | null
+  createdAt: string
+}
 
 /** Elicitation request emitted to the renderer when an MCP server requests user input */
 export interface ElicitationEvent {
@@ -1664,8 +971,4 @@ export interface ElicitationEvent {
   elicitationId?: string
 }
 
-/** Elicitation response sent from the renderer back to the main process */
-export interface ElicitationResponsePayload {
-  action: 'accept' | 'decline' | 'cancel'
-  content?: Record<string, unknown>
-}
+

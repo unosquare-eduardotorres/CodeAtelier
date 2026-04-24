@@ -3,7 +3,18 @@ import { join } from 'node:path'
 import log from 'electron-log/main'
 import type { DecomposedTask, ConversationMode } from '../../shared/types'
 import type { QualityGateResult } from './abandonment-detector.service'
-import type { TaskLoopState } from './task-loop.service'
+/**
+ * Minimal inline replacement for the deleted TaskLoopState interface.
+ * Kept because writeGateResults() persists loop-state metadata even though
+ * no live code path currently reaches it. If the feature is fully retired
+ * this type and its caller can go away.
+ */
+type TaskLoopState = {
+  currentAttempt?: number
+  totalAttempts?: number
+  lastError?: string
+  [key: string]: unknown
+}
 
 const artifactLog = log.scope('TaskArtifact')
 

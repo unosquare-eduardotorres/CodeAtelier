@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
 import { detectPlanIntent } from '@renderer/utils/plan-intent-detector'
+import { SentenceBuffer } from '@renderer/utils/sentence-buffer'
 import type {
   CompleteResult,
   ContextUsage,
@@ -19,44 +20,77 @@ import type {
   ToolActivity
 } from '../../../shared/types'
 
-/** Safety timer — force-resets isStreaming if stuck for 2 minutes (e.g., process dies without emitting complete) */
-let streamingSafetyTimer: ReturnType<typeof setTimeout> | null = null
-
-/** Lazy-bound references — set once inside the Zustand create() closure */
-let _storeGet: (() => ChatState) | null = null
-let _storeSet: ((partial: Partial<ChatState>) => void) | null = null
-
 /**
- * Resets the streaming safety timer — call on any sign of backend activity
- * (text chunks, tool starts, tool completions). This prevents the timer from
- * killing active-but-slow streams (e.g., agent running multiple Bash tools).
+ * Encapsulates non-reactive internal state for the chat store.
+ * These are operational concerns (timers, buffers) that shouldn't trigger
+ * React re-renders or pollute module scope with mutable lets.
  */
-function resetStreamingSafetyTimer(): void {
-  if (streamingSafetyTimer) clearTimeout(streamingSafetyTimer)
-  streamingSafetyTimer = setTimeout(
-    () => {
-      if (_storeGet?.().isStreaming) {
-        rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
-        // Unblock the UI and reset conversationState to idle for consistency.
-        // Preserve streamingContent and toolActivities so that
-        // finalizeStream can still use them when CHAT_MESSAGE_COMPLETE eventually arrives.
-        // This prevents data loss when the safety timer fires during long tool runs.
-        _storeSet?.({
-          isStreaming: false,
-          conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
-        })
-      }
-      streamingSafetyTimer = null
-    },
-    2 * 60 * 1000
-  )
+class ChatStreamingInternals {
+  private safetyTimer: ReturnType<typeof setTimeout> | null = null
+  private buffer: SentenceBuffer | null = null
+  private storeGet: (() => ChatState) | null = null
+  private storeSet: ((partial: Partial<ChatState>) => void) | null = null
+
+  /** Bind the Zustand get/set refs — called once during store creation */
+  bind(get: () => ChatState, set: (partial: Partial<ChatState>) => void): void {
+    this.storeGet = get
+    this.storeSet = set
+  }
+
+  getOrCreateBuffer(): SentenceBuffer {
+    if (!this.buffer) {
+      this.buffer = new SentenceBuffer((sentences: string) => {
+        const current = this.storeGet?.()
+        if (current) {
+          this.storeSet?.({ streamingContent: current.streamingContent + sentences })
+        }
+      })
+    }
+    return this.buffer
+  }
+
+  resetBuffer(): void {
+    this.buffer?.reset()
+  }
+
+  /** Flush whatever's currently buffered without creating a buffer if none exists. */
+  flushBuffer(): void {
+    this.buffer?.flush()
+  }
+
+  /** Stop the safety timer if one is running. */
+  clearSafetyTimer(): void {
+    if (this.safetyTimer) {
+      clearTimeout(this.safetyTimer)
+      this.safetyTimer = null
+    }
+  }
+
+  /**
+   * Resets the streaming safety timer — call on any sign of backend activity
+   * (text chunks, tool starts, tool completions). This prevents the timer from
+   * killing active-but-slow streams (e.g., agent running multiple Bash tools).
+   */
+  resetSafetyTimer(): void {
+    if (this.safetyTimer) clearTimeout(this.safetyTimer)
+    this.safetyTimer = setTimeout(
+      () => {
+        if (this.storeGet?.().isStreaming) {
+          rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
+          this.storeSet?.({
+            isStreaming: false,
+            conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
+          })
+        }
+        this.safetyTimer = null
+      },
+      2 * 60 * 1000
+    )
+  }
 }
 
-interface HandoffState {
-  summary: string
-  specialists: string[]
-  mode: ConversationMode
-}
+/** Singleton internals — encapsulates timers and buffers outside reactive state */
+const internals = new ChatStreamingInternals()
 
 interface GrillSessionState {
   active: boolean
@@ -78,7 +112,6 @@ interface ChatState {
   activeRequestId: string | null
   /** Conversation phase — more precise than isStreaming boolean */
   streamingPhase: ConversationPhase | null
-  activeHandoff: HandoffState | null
   toolActivities: ToolActivity[]
 
   /** Backend state machine mirror — single source of truth for conversation lifecycle state */
@@ -145,8 +178,6 @@ interface ChatState {
   finalizeTurnBubble: (turnId: string) => void
   addToolActivity: (activity: ToolActivity) => void
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => void
-  setHandoff: (handoff: HandoffState) => void
-  clearHandoff: () => void
 
   // Slash command actions
   clearDisplay: () => void
@@ -236,7 +267,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: previousChatState?.isStreaming ?? false,
   activeRequestId: previousChatState?.activeRequestId ?? null,
   streamingPhase: previousChatState?.streamingPhase ?? null,
-  activeHandoff: previousChatState?.activeHandoff ?? null,
   toolActivities: previousChatState?.toolActivities ?? [],
   taskProgress: previousChatState?.taskProgress ?? new Map(),
   isExecutingPlan: previousChatState?.isExecutingPlan ?? false,
@@ -256,10 +286,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   draftTexts: previousChatState?.draftTexts ?? {},
   contextUsages: previousChatState?.contextUsages ?? {},
 
-  // Bind lazy refs for the safety timer helper (runs once on store creation)
+  // Bind internals refs for safety timer + sentence buffer (runs once on store creation)
   ...(() => {
-    _storeGet = get
-    _storeSet = set
+    internals.bind(get, set)
     return {}
   })(),
 
@@ -329,9 +358,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Show mode switch pill for any direction
     set({ autoModeSwitchPill: { from: previousMode, to: mode } })
     setTimeout(() => {
-      const current = _storeGet?.()
+      const current = get()
       if (current?.autoModeSwitchPill?.to === mode) {
-        _storeSet?.({ autoModeSwitchPill: null })
+        set({ autoModeSwitchPill: null })
       }
     }, 5000)
 
@@ -377,7 +406,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isExecutingPlan: false,
       decomposedTasks: [],
       investigationReport: null,
-      activeHandoff: null,
       toolActivities: [],
       grillSession: null,
       compactSuggestion: null,
@@ -403,6 +431,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   stopGeneration: async () => {
+    // Flush any remaining buffered content before stopping
+    internals.flushBuffer()
+    internals.resetBuffer()
+
     const { streamingContent, streamingRole, streamingSpecialist, activeConversation } = get()
 
     try {
@@ -493,8 +525,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeRequestId: null
     }))
 
+    // Reset sentence buffer for new message
+    internals.resetBuffer()
+
     // Safety: force-reset if streaming state gets stuck (e.g., process dies without emitting complete)
-    resetStreamingSafetyTimer()
+    internals.resetSafetyTimer()
 
     try {
       // Backend is the single source of truth for requestId — it generates the ID
@@ -508,10 +543,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ activeRequestId: result.requestId })
     } catch (error) {
       rendererLog.error('Failed to send message:', error)
-      if (streamingSafetyTimer) {
-        clearTimeout(streamingSafetyTimer)
-        streamingSafetyTimer = null
-      }
+      internals.clearSafetyTimer()
       set({
         isStreaming: false,
         conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
@@ -530,20 +562,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (activeRequestId && requestId && requestId !== activeRequestId) return
 
     // Reset safety timer — backend is still alive
-    resetStreamingSafetyTimer()
+    internals.resetSafetyTimer()
     if (!chunk) return // Skip empty chunks (tool-only messages)
-    set((state) => {
-      // If taskId changed, a new specialist is streaming — start fresh content
-      const isNewTask = taskId != null && taskId !== state.streamingTaskId
-      return {
-        isStreaming: true, // Ensure streaming bubble renders for specialist chunks
-        streamingPhase: role === 'specialist' ? 'specialist-executing' : 'generalist-responding',
-        streamingContent: isNewTask ? chunk : state.streamingContent + chunk,
-        streamingRole: role ?? state.streamingRole,
-        streamingSpecialist: specialist ?? state.streamingSpecialist,
-        streamingTaskId: taskId ?? state.streamingTaskId
-      }
-    })
+
+    const isNewTask = taskId != null && taskId !== get().streamingTaskId
+
+    // If task changed, flush old buffer and reset
+    if (isNewTask) {
+      internals.flushBuffer()
+      internals.resetBuffer()
+    }
+
+    // Update streaming metadata (non-content state) immediately
+    set((state) => ({
+      isStreaming: true, // Ensure streaming bubble renders for specialist chunks
+      streamingPhase: role === 'specialist' ? 'specialist-executing' : 'da-vinci-responding',
+      streamingContent: isNewTask ? '' : state.streamingContent,
+      streamingRole: role ?? state.streamingRole,
+      streamingSpecialist: specialist ?? state.streamingSpecialist,
+      streamingTaskId: taskId ?? state.streamingTaskId
+    }))
+
+    // Push chunk into sentence buffer (will auto-flush on sentence boundaries)
+    internals.getOrCreateBuffer().append(chunk)
   },
 
   updateStreamingIdentity: (role, taskId?, specialist?) => {
@@ -556,7 +597,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   addToolActivity: (activity: ToolActivity) => {
     // Reset safety timer — tool started, backend is active
-    resetStreamingSafetyTimer()
+    internals.resetSafetyTimer()
     set((state) => ({
       toolActivities: [...state.toolActivities, activity]
     }))
@@ -564,7 +605,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string; id?: string }) => {
     // Reset safety timer — tool completed, backend is active
-    resetStreamingSafetyTimer()
+    internals.resetSafetyTimer()
     set((state) => {
       // Find matching activity — by ID first (reliable), then by toolName (legacy fallback)
       const activities = [...state.toolActivities]
@@ -593,13 +634,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   finalizeStream: (messageId: string, taskId?: string, isHandoff?: boolean, requestId?: string) => {
+    // Force-flush any remaining buffered content before finalizing
+    internals.flushBuffer()
+    internals.resetBuffer()
+
     const activeRequestId = get().activeRequestId
     if (activeRequestId && requestId && requestId !== activeRequestId) return
 
     // Clear safety timer on normal stream completion (only on final complete, not per-task)
-    if (!taskId && streamingSafetyTimer) {
-      clearTimeout(streamingSafetyTimer)
-      streamingSafetyTimer = null
+    if (!taskId) {
+      internals.clearSafetyTimer()
     }
 
     const { streamingContent, streamingRole, streamingSpecialist, activeConversation } = get()
@@ -647,9 +691,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingPhase: taskId ? state.streamingPhase : null,
         toolActivities: taskId ? state.toolActivities : [],
         streamingTaskId: null,
-        streamingSpecialist: taskId ? state.streamingSpecialist : null,
-        // Clear handoff indicator on final complete (B8 fix)
-        activeHandoff: taskId ? state.activeHandoff : null
+        streamingSpecialist: taskId ? state.streamingSpecialist : null
       }))
     } else if (taskId) {
       // Per-task complete with no accumulated content — just reset task tracking
@@ -662,15 +704,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .then((dbMessages) => {
           // Guard: don't replace existing messages with empty DB result
           // This prevents data loss from DB lock contention or timing issues
-          const currentMessages = _storeGet?.()?.messages ?? []
+          const currentMessages = get()?.messages ?? []
           set({
             messages: dbMessages.length > 0 ? dbMessages : currentMessages,
             streamingContent: '',
             isStreaming: false,
             activeRequestId: null,
             toolActivities: [],
-            streamingTaskId: null,
-            activeHandoff: null
+            streamingTaskId: null
           })
         })
         .catch((error) => {
@@ -680,8 +721,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             isStreaming: false,
             activeRequestId: null,
             toolActivities: [],
-            streamingTaskId: null,
-            activeHandoff: null
+            streamingTaskId: null
           })
         })
     } else {
@@ -690,8 +730,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isStreaming: false,
         activeRequestId: null,
         toolActivities: [],
-        streamingTaskId: null,
-        activeHandoff: null
+        streamingTaskId: null
       })
     }
   },
@@ -738,14 +777,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  setHandoff: (handoff: HandoffState) => {
-    set({ activeHandoff: handoff })
-  },
-
-  clearHandoff: () => {
-    set({ activeHandoff: null })
-  },
-
   setDecomposedTasks: (tasks: DecomposedTask[]) => {
     set({ decomposedTasks: tasks, isExecutingPlan: tasks.length > 0 })
   },
@@ -783,23 +814,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ conversationState: data })
   },
 
-  executeInvestigationFix: async (strategy) => {
+  executeInvestigationFix: async (_strategy) => {
     const { investigationReport, activeConversation } = get()
     if (!investigationReport || !activeConversation) return
 
-    // Set executing state — buttons will be hidden, loading indicator shown
+    // Post-migration 66: no multi-specialist pipeline. Send the investigation
+    // report to the Project Specialist as a build-mode message to fix directly.
     set({ isExecutingPlan: true })
-
     try {
-      await window.api.executeInvestigationFix({
+      const reportText = JSON.stringify(investigationReport.report, null, 2)
+      await window.api.updateConversationMode({
         conversationId: activeConversation.id,
-        strategy,
-        report: investigationReport.report
+        mode: 'build'
       })
-      // Don't clear investigationReport here — isExecutingPlan will be cleared
-      // when task progress events arrive marking all tasks as done
+      await window.api.sendMessage({
+        conversationId: activeConversation.id,
+        text: `Please fix the issues described in this investigation report:\n\n\`\`\`json\n${reportText}\n\`\`\``
+      })
     } catch (error) {
       rendererLog.error('Failed to execute investigation fix:', error)
+    } finally {
       set({ isExecutingPlan: false })
     }
   },
@@ -1085,7 +1119,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSpecialist: null,
       isStreaming: false,
       activeRequestId: null,
-      activeHandoff: null,
       toolActivities: [],
       taskProgress: new Map(),
       isExecutingPlan: false,
@@ -1135,8 +1168,6 @@ export const useChatActions = (): Pick<
   | 'finalizeTurnBubble'
   | 'addToolActivity'
   | 'updateToolActivity'
-  | 'setHandoff'
-  | 'clearHandoff'
   | 'setPendingQuestions'
   | 'submitQuestionAnswers'
   | 'skipAllQuestions'
@@ -1180,8 +1211,6 @@ export const useChatActions = (): Pick<
       finalizeTurnBubble: s.finalizeTurnBubble,
       addToolActivity: s.addToolActivity,
       updateToolActivity: s.updateToolActivity,
-      setHandoff: s.setHandoff,
-      clearHandoff: s.clearHandoff,
       setPendingQuestions: s.setPendingQuestions,
       submitQuestionAnswers: s.submitQuestionAnswers,
       skipAllQuestions: s.skipAllQuestions,

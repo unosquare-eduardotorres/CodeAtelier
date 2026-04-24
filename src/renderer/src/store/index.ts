@@ -4,17 +4,15 @@ export { useWorkspaceStore } from './workspace.store'
 export { useSpecialistStore } from './specialist.store'
 export { useSkillStore } from './skill.store'
 export { useSettingsStore } from './settings.store'
-export { usePixelOfficeStore } from './pixelOffice.store'
 export { useIdeaStore } from './idea.store'
 export { useUpdateStore } from './update.store'
 export { useMemoryStore } from './memory.store'
 export { useDreamStore } from './dream.store'
 export { useDocsStore } from './docs.store'
 export { useProfileStore } from './profile.store'
-export { useMarketplaceStore } from './marketplace.store'
+
 export { useHelpStore } from './help.store'
 export {
-  useConversationSpecialistStore,
   useConversationSpecialistActions,
   useConversationSpecialists,
   useConversationTokenEstimates,
@@ -28,4 +26,5 @@ export {
 } from './app-preference.store'
 export { useCodeChangesStore } from './code-changes.store'
 export type { FileChangeDetail } from './code-changes.store'
-export { useBottomPanelStore } from './bottom-panel.store'
+export { useToastStore } from './toast.store'
+export { useBugStore } from './bug.store'

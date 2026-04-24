@@ -21,6 +21,43 @@ export class ErrorBoundary extends Component<Props, State> {
     // electron-log's initialize() auto-captures renderer errors,
     // but we log explicitly for component stack traces
     console.error('[ErrorBoundary] React component error:', error, info.componentStack)
+
+    // Report to bug tracker
+    try {
+      // Extract component name from component stack
+      const componentName = info.componentStack
+        ?.match(/at (\w+)/)?.[1] ?? undefined
+
+      // Parse source file/line from error stack
+      let sourceFile: string | undefined
+      let sourceLine: number | undefined
+      let sourceColumn: number | undefined
+      if (error.stack) {
+        const match = error.stack.match(/at .+\((.+):(\d+):(\d+)\)/)
+          || error.stack.match(/at (.+):(\d+):(\d+)/)
+        if (match) {
+          sourceFile = match[1]
+          sourceLine = parseInt(match[2], 10)
+          sourceColumn = parseInt(match[3], 10)
+        }
+      }
+
+      window.api.reportBug({
+        process: 'renderer',
+        severity: 'error',
+        errorMessage: error.message,
+        stackTrace: error.stack,
+        sourceFile,
+        sourceLine,
+        sourceColumn,
+        componentName,
+        activeView: document.title || undefined,
+        appVersion: navigator.userAgent.match(/CodeAtelier\/([\d.]+)/)?.[1] ?? 'unknown',
+        osInfo: navigator.userAgent
+      })
+    } catch {
+      // Don't let bug reporting crash the error boundary
+    }
   }
 
   render(): ReactNode {

@@ -49,11 +49,6 @@ export interface CompactNeededMessage extends BaseChunkMessage {
   compactNeeded: { level: string; inputTokens: number }
 }
 
-/** Error chunk */
-export interface ErrorChunkMessage extends BaseChunkMessage {
-  chunk: string
-}
-
 /** Message complete signal */
 export interface CompleteMessage {
   conversationId: string
@@ -63,15 +58,6 @@ export interface CompleteMessage {
   isHandoff?: boolean
   phase?: ConversationPhase
 }
-
-// ── Union of all chunk message types ──
-
-export type ChunkMessage =
-  | TextChunkMessage
-  | ToolActivityChunkMessage
-  | TurnBoundaryMessage
-  | CompactNeededMessage
-  | ErrorChunkMessage
 
 // ── Builder Functions ──
 

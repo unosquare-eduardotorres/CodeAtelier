@@ -67,7 +67,9 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   complexity_tier TEXT
 );
 
--- Specialists: dynamic agent definitions (app-global)
+-- Specialists: per-workspace Project Specialists + the app-global Generalist row.
+-- After migration 66: workspace_id is nullable (only the Generalist row leaves it NULL).
+-- Every other specialist is bound to exactly one workspace via the unique index below.
 CREATE TABLE IF NOT EXISTS specialists (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   agent_id TEXT NOT NULL UNIQUE,
@@ -80,12 +82,23 @@ CREATE TABLE IF NOT EXISTS specialists (
   source_yaml TEXT DEFAULT NULL,
   alias TEXT DEFAULT NULL,
   avatar_url TEXT DEFAULT NULL,
-  pixel_sprite_id TEXT DEFAULT NULL,
-  use_pixel_for_chat INTEGER NOT NULL DEFAULT 0,
   is_core INTEGER NOT NULL DEFAULT 0,
+  -- Project Specialist columns (nullable on the Generalist row)
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  build_status TEXT NOT NULL DEFAULT 'ready' CHECK (build_status IN ('pending', 'building', 'ready', 'failed')),
+  stack_fingerprint TEXT,
+  detected_techs TEXT DEFAULT '[]' CHECK (json_valid(detected_techs)),
+  mcp_config TEXT DEFAULT '{}' CHECK (json_valid(mcp_config)),
+  mcp_overrides TEXT DEFAULT '{}' CHECK (json_valid(mcp_overrides)),
+  last_built_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- A workspace has at most one Project Specialist. The Generalist row has workspace_id=NULL
+-- and is excluded from this constraint by the partial index.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_specialists_workspace_unique
+  ON specialists(workspace_id) WHERE workspace_id IS NOT NULL;
 
 -- Skills: importable .MD skill files (app-global)
 CREATE TABLE IF NOT EXISTS skills (
@@ -100,10 +113,13 @@ CREATE TABLE IF NOT EXISTS skills (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Junction: many-to-many specialists <-> skills
+-- Junction: many-to-many specialists <-> skills.
+-- is_enabled controls whether a skill is currently contributing to the specialist's
+-- prompt/MCP. After migration 66 every attached skill starts disabled (is_enabled=0).
 CREATE TABLE IF NOT EXISTS specialist_skills (
   specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
   skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+  is_enabled INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (specialist_id, skill_id)
 );
 

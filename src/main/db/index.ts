@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { dbLogger } from '../logger'
 import { DEFAULT_PROMPTS } from '../services/default-prompts'
+import { runProjectSpecialistMigration } from './migrations/project-specialist-migration'
 
 let db: Database.Database | null = null
 
@@ -12,7 +13,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 64
+const CURRENT_SCHEMA_VERSION = 67
 
 interface Migration {
   version: number
@@ -799,7 +800,6 @@ const migrations: Migration[] = [
         const { existsSync } = require('node:fs') as typeof import('node:fs')
 
         if (existsSync(oldDbPath)) {
-          // @ts-expect-error — better-sqlite3 CJS import shape doesn't match namespace type
           // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import in migration
           const OldDatabase = require('better-sqlite3') as typeof import('better-sqlite3').default
           const oldDb = new OldDatabase(oldDbPath, { readonly: true })
@@ -1423,6 +1423,69 @@ const migrations: Migration[] = [
         }
       }
     }
+  },
+  {
+    version: 65,
+    name: 'create-bugs-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS bugs (
+          id TEXT PRIMARY KEY,
+          fingerprint TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          process TEXT NOT NULL CHECK(process IN ('main', 'renderer', 'preload')),
+          severity TEXT NOT NULL DEFAULT 'error' CHECK(severity IN ('error', 'fatal')),
+          error_message TEXT NOT NULL,
+          stack_trace TEXT,
+          source_file TEXT,
+          source_line INTEGER,
+          source_column INTEGER,
+          component_name TEXT,
+          active_view TEXT,
+          workspace_id TEXT,
+          agent_id TEXT,
+          app_version TEXT NOT NULL,
+          os_info TEXT,
+          is_resolved INTEGER NOT NULL DEFAULT 0,
+          occurrence_count INTEGER NOT NULL DEFAULT 1,
+          note TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bugs_fingerprint ON bugs(fingerprint);
+        CREATE INDEX IF NOT EXISTS idx_bugs_is_resolved ON bugs(is_resolved);
+        CREATE INDEX IF NOT EXISTS idx_bugs_process ON bugs(process);
+        CREATE INDEX IF NOT EXISTS idx_bugs_workspace_id ON bugs(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_bugs_last_seen_at ON bugs(last_seen_at);
+      `)
+    }
+  },
+  {
+    version: 66,
+    name: 'project-specialist-architecture',
+    up: (db) => {
+      runProjectSpecialistMigration(db)
+    }
+  },
+  {
+    version: 67,
+    name: 'drop-specialist-pixel-columns',
+    up: (db) => {
+      // SQLite ≥3.35 supports ALTER TABLE … DROP COLUMN (bundled with better-sqlite3).
+      // Uses try/catch guards so re-running on schemas where the columns are
+      // already missing (e.g. dev databases predating this code) stays idempotent.
+      try {
+        db.exec('ALTER TABLE specialists DROP COLUMN pixel_sprite_id')
+      } catch (err) {
+        dbLogger.warn(`Skipping DROP COLUMN pixel_sprite_id: ${(err as Error).message}`)
+      }
+      try {
+        db.exec('ALTER TABLE specialists DROP COLUMN use_pixel_for_chat')
+      } catch (err) {
+        dbLogger.warn(`Skipping DROP COLUMN use_pixel_for_chat: ${(err as Error).message}`)
+      }
+    }
   }
 ]
 
@@ -1528,8 +1591,8 @@ function seedDefaultSpecialists(database: Database.Database): void {
   if (count.cnt > 0) return
 
   const insert = database.prepare(`
-    INSERT INTO specialists (agent_id, display_name, icon, color, priority, pixel_sprite_id)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO specialists (agent_id, display_name, icon, color, priority)
+    VALUES (?, ?, ?, ?, ?)
   `)
 
   const defaults = [
@@ -1538,110 +1601,97 @@ function seedDefaultSpecialists(database: Database.Database): void {
       displayName: 'Da Vinci',
       icon: '🎨',
       color: '#D97706',
-      priority: 0,
-      pixelSpriteId: 'male-07-1'
+      priority: 0
     },
     {
       agentId: 'react-architect',
       displayName: 'React Architect',
       icon: '⚛️',
       color: '#61DAFB',
-      priority: 2,
-      pixelSpriteId: 'female-07-1'
+      priority: 2
     },
     {
       agentId: 'dotnet-architect',
       displayName: '.NET Architect',
       icon: '🟣',
       color: '#512BD4',
-      priority: 3,
-      pixelSpriteId: 'male-03-2'
+      priority: 3
     },
     {
       agentId: 'electron-architect',
       displayName: 'Electron Architect',
       icon: '⚡',
       color: '#47848F',
-      priority: 4,
-      pixelSpriteId: 'male-18-1'
+      priority: 4
     },
     {
       agentId: 'agentic-architect',
       displayName: 'Agentic Architect',
       icon: '🤖',
       color: '#D97706',
-      priority: 5,
-      pixelSpriteId: 'female-05-2'
+      priority: 5
     },
     {
       agentId: 'db-architect',
       displayName: 'DB Architect',
       icon: '🗄️',
       color: '#336791',
-      priority: 6,
-      pixelSpriteId: 'male-15-1'
+      priority: 6
     },
     {
       agentId: 'ux-ui-specialist',
       displayName: 'UX/UI Specialist',
       icon: '🎨',
       color: '#DB2777',
-      priority: 7,
-      pixelSpriteId: 'female-15-1'
+      priority: 7
     },
     {
       agentId: 'git-github-specialist',
       displayName: 'Git/GitHub Specialist',
       icon: '🔀',
       color: '#64748B',
-      priority: 8,
-      pixelSpriteId: 'male-01-3'
+      priority: 8
     },
     {
       agentId: 'requirements-specialist',
       displayName: 'Requirements Specialist',
       icon: '📋',
       color: '#059669',
-      priority: 9,
-      pixelSpriteId: 'female-09-2'
+      priority: 9
     },
     {
       agentId: 'code-planner',
       displayName: 'Code Planner',
       icon: '📝',
       color: '#475569',
-      priority: 10,
-      pixelSpriteId: 'male-05-4'
+      priority: 10
     },
     {
       agentId: 'execution-planner',
       displayName: 'Execution Planner',
       icon: '📅',
       color: '#DC6843',
-      priority: 11,
-      pixelSpriteId: 'female-02-3'
+      priority: 11
     },
     {
       agentId: 'cicd-devops',
       displayName: 'CI/CD DevOps',
       icon: '🚀',
       color: '#DC2626',
-      priority: 12,
-      pixelSpriteId: 'male-12-1'
+      priority: 12
     },
     {
       agentId: 'cloud-infrastructure',
       displayName: 'Cloud Infrastructure',
       icon: '☁️',
       color: '#0D9488',
-      priority: 13,
-      pixelSpriteId: 'male-10-3'
+      priority: 13
     }
   ]
 
   const tx = database.transaction(() => {
     for (const s of defaults) {
-      insert.run(s.agentId, s.displayName, s.icon, s.color, s.priority, s.pixelSpriteId)
+      insert.run(s.agentId, s.displayName, s.icon, s.color, s.priority)
     }
   })
   tx()

@@ -6,7 +6,6 @@ import assert from 'node:assert/strict'
 import { test, describe } from './test-harness'
 import {
   planSchema,
-  handoffSchema,
   askUserSchema,
   emitMemorySchema,
   createControlActionsMcpServer
@@ -79,41 +78,6 @@ describe('planSchema', () => {
         risks: [{ risk: 'x', severity: 'critical' }]
       })
     )
-  })
-})
-
-describe('handoffSchema', () => {
-  test('accepts minimal handoff', () => {
-    const result = handoffSchema.parse({
-      specialist: 'platform-architect',
-      summary: 'Fix IPC'
-    })
-    assert.equal(result.specialist, 'platform-architect')
-  })
-
-  test('accepts handoff with all fields', () => {
-    const result = handoffSchema.parse({
-      specialist: 'frontend-architect',
-      summary: 'Refactor chat UI',
-      mode: 'build',
-      decisions: ['Use Zustand'],
-      constraints: ['No breaking changes'],
-      filesDiscussed: ['src/renderer/src/components/chat/ChatPanel.tsx']
-    })
-    assert.equal(result.mode, 'build')
-    assert.equal(result.filesDiscussed?.length, 1)
-  })
-
-  test('rejects invalid mode', () => {
-    assert.throws(() => handoffSchema.parse({ specialist: 'x', summary: 'y', mode: 'invalid' }))
-  })
-
-  test('rejects missing specialist', () => {
-    assert.throws(() => handoffSchema.parse({ summary: 'No specialist' }))
-  })
-
-  test('rejects missing summary', () => {
-    assert.throws(() => handoffSchema.parse({ specialist: 'x' }))
   })
 })
 
@@ -196,33 +160,17 @@ describe('emitMemorySchema', () => {
   })
 })
 
-// -- Mode-based tool availability tests --
+// -- Tool registration tests --
 
-describe('Mode-based tool availability', () => {
+describe('Control actions MCP server', () => {
   const noopCallbacks: ControlActionCallbacks = {
     onPlan: () => {},
-    onHandoff: () => {},
     onAskUser: () => {},
     onMemory: () => {}
   }
 
-  test('plan mode: creates control-actions MCP server', () => {
-    const config = createControlActionsMcpServer('plan', noopCallbacks, true)
-    assert.ok(config['control-actions'], 'control-actions server should exist')
-  })
-
-  test('build mode + investigation ON: creates control-actions MCP server', () => {
-    const config = createControlActionsMcpServer('build', noopCallbacks, true)
-    assert.ok(config['control-actions'], 'control-actions server should exist')
-  })
-
-  test('build mode + investigation OFF: creates control-actions MCP server', () => {
-    const config = createControlActionsMcpServer('build', noopCallbacks, false)
-    assert.ok(config['control-actions'], 'control-actions server should exist')
-  })
-
-  test('plan mode + investigation ON: creates control-actions MCP server', () => {
-    const config = createControlActionsMcpServer('plan', noopCallbacks, true)
+  test('creates control-actions MCP server with all tools', () => {
+    const config = createControlActionsMcpServer(noopCallbacks)
     assert.ok(config['control-actions'], 'control-actions server should exist')
   })
 })
@@ -236,7 +184,6 @@ describe('Control action callbacks', () => {
       onPlan: (plan) => {
         receivedPlan = plan
       },
-      onHandoff: () => {},
       onAskUser: () => {},
       onMemory: () => {}
     }
@@ -247,36 +194,10 @@ describe('Control action callbacks', () => {
     assert.equal((receivedPlan as Record<string, unknown>).summary, 'Plan summary')
   })
 
-  test('onHandoff callback receives HandoffBrief-shaped data', () => {
-    let receivedBrief: unknown = null
-    const callbacks: ControlActionCallbacks = {
-      onPlan: () => {},
-      onHandoff: (brief) => {
-        receivedBrief = brief
-      },
-      onAskUser: () => {},
-      onMemory: () => {}
-    }
-    const brief = handoffSchema.parse({
-      specialist: 'dx-specialist',
-      summary: 'Write docs',
-      recentMessages: [],
-      specialists: ['dx-specialist'],
-      decisions: [],
-      constraints: [],
-      filesDiscussed: [],
-      mode: 'build'
-    })
-    callbacks.onHandoff(brief as unknown as Parameters<ControlActionCallbacks['onHandoff']>[0])
-    assert.ok(receivedBrief)
-    assert.equal((receivedBrief as Record<string, unknown>).specialist, 'dx-specialist')
-  })
-
   test('onAskUser callback receives question array', () => {
     let receivedQuestions: unknown = null
     const callbacks: ControlActionCallbacks = {
       onPlan: () => {},
-      onHandoff: () => {},
       onAskUser: (questions) => {
         receivedQuestions = questions
       },
@@ -294,7 +215,6 @@ describe('Control action callbacks', () => {
     let receivedMemory: unknown = null
     const callbacks: ControlActionCallbacks = {
       onPlan: () => {},
-      onHandoff: () => {},
       onAskUser: () => {},
       onMemory: (memory) => {
         receivedMemory = memory

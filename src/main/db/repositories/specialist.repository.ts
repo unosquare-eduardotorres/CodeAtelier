@@ -14,8 +14,6 @@ interface SpecialistRow {
   source_yaml: string | null
   alias: string | null
   avatar_url: string | null
-  pixel_sprite_id: string | null
-  use_pixel_for_chat: number
   is_core: number
   created_at: string
   updated_at: string
@@ -53,8 +51,6 @@ function mapRow(row: SpecialistRow): Specialist {
     sourceYaml: row.source_yaml ?? null,
     alias: row.alias ?? null,
     avatarUrl: row.avatar_url ?? null,
-    pixelSpriteId: row.pixel_sprite_id ?? null,
-    usePixelForChat: row.use_pixel_for_chat === 1,
     isCore: row.is_core === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -104,8 +100,6 @@ export interface UpdateSpecialistInput {
   sourceYaml?: string | null
   alias?: string | null
   avatarUrl?: string | null
-  pixelSpriteId?: string | null
-  usePixelForChat?: boolean
 }
 
 export class SpecialistRepository {
@@ -209,14 +203,6 @@ export class SpecialistRepository {
     if (data.avatarUrl !== undefined) {
       sets.push('avatar_url = ?')
       values.push(data.avatarUrl)
-    }
-    if (data.pixelSpriteId !== undefined) {
-      sets.push('pixel_sprite_id = ?')
-      values.push(data.pixelSpriteId)
-    }
-    if (data.usePixelForChat !== undefined) {
-      sets.push('use_pixel_for_chat = ?')
-      values.push(data.usePixelForChat ? 1 : 0)
     }
 
     if (sets.length === 0) {

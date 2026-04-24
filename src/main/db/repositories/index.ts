@@ -8,20 +8,10 @@ export {
   conversationSpecialistRepository
 } from './conversation-specialist.repository'
 export { AppPreferenceRepository, appPreferenceRepository } from './app-preference.repository'
-export {
-  SpecialistConversationHistoryRepository,
-  specialistConversationHistoryRepository
-} from './specialist-conversation-history.repository'
-export type {
-  SpecialistConversationHistoryAction,
-  SpecialistConversationHistoryRecord
-} from './specialist-conversation-history.repository'
 export { SkillRepository, skillRepository } from './skill.repository'
 export type { CreateSkillInput, UpdateSkillInput } from './skill.repository'
 export { FileChangeRepository, fileChangeRepository } from './file-change.repository'
 export type { FileChange } from './file-change.repository'
-export { WorktreeRepository, worktreeRepository } from './worktree.repository'
-export type { AgentWorktree, WorktreeStatus } from './worktree.repository'
 export { AgentSessionRepository, agentSessionRepository } from './agent-session.repository'
 export type { AgentSession, TokenSummary } from './agent-session.repository'
 export { IdeaRepository, ideaRepository } from './idea.repository'
@@ -36,9 +26,7 @@ export {
 export { EventRepository, eventRepository } from './event.repository'
 export type { EventRecord, EventCategory } from './event.repository'
 export { CheckpointRepository, checkpointRepository } from './checkpoint.repository'
-export type { CheckpointRecord } from './checkpoint.repository'
-export { GateResultRepository, gateResultRepository } from './gate-result.repository'
-export type { GateResultRecord, GateType } from './gate-result.repository'
+
 export { CodeChunkRepository, codeChunkRepository } from './code-chunk.repository'
 export {
   ChunkEmbeddingRepository,
@@ -50,10 +38,9 @@ export type { EmbeddingEntry } from './chunk-embedding.repository'
 export { CodeGraphEdgeRepository, codeGraphEdgeRepository } from './code-graph-edge.repository'
 export type { CodeGraphEdge, EdgeType } from './code-graph-edge.repository'
 export { CodeGraphTagRepository, codeGraphTagRepository } from './code-graph-tag.repository'
-export type { CodeGraphTagRow, RepomapTag } from './code-graph-tag.repository'
+export type { RepomapTag } from './code-graph-tag.repository'
 export { CodeGraphRankRepository, codeGraphRankRepository } from './code-graph-rank.repository'
-export { AgentMessageRepository, agentMessageRepository } from './agent-message.repository'
-export { AgentContextRepository, agentContextRepository } from './agent-context.repository'
-export type { AgentContextRecord, AgentContextType } from './agent-context.repository'
+
 export { TurnUsageRepository, turnUsageRepository } from './turn-usage.repository'
 export type { TurnUsage } from './turn-usage.repository'
+export { BugCouncilRepository, bugCouncilRepository } from './bug-council.repository'

@@ -13,9 +13,7 @@ import { summarizeToolInput } from '../agent-base.service'
 import type { SDKExecuteResult, TerminalReason } from '../sdk-executor'
 import type { ToolTracker } from './tool-tracker'
 import type { TokenAccountant } from './token-accountant'
-import log from 'electron-log/main'
-
-const sdkLog = log.scope('SDKExecutor')
+import { sdkLog } from './index'
 
 /** Mutable state that accumulates across the stream */
 export interface StreamState {

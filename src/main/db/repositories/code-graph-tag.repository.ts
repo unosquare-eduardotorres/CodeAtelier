@@ -1,6 +1,6 @@
 import { getDatabase } from '../index'
 
-export interface CodeGraphTagRow {
+interface CodeGraphTagRow {
   id: number
   workspace_id: string
   rel_fname: string

@@ -13,9 +13,8 @@ import {
 import type { AgentStatus, ModelTier, ComplexityTier } from '../../../../shared/types'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
 import { useSpecialistStore, useAgentStore } from '@renderer/store'
-import { Avatar, PixelSpriteAvatar } from '@renderer/components/common'
+import { Avatar } from '@renderer/components/common'
 import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
-import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 
 // Model tier badge config
 const MODEL_BADGE: Record<ModelTier, { label: string; bg: string; text: string }> = {
@@ -159,20 +158,11 @@ export default function AgentStatusCard({
         }}
       >
         <div className="flex items-center gap-2">
-          {specialist?.pixelSpriteId || getSpriteAssignment(status.agentType).pixelSpriteId ? (
-            <PixelSpriteAvatar
-              spriteId={
-                specialist?.pixelSpriteId ?? getSpriteAssignment(status.agentType).pixelSpriteId!
-              }
-              size={20}
-            />
-          ) : (
-            <Avatar
-              avatarKey={specialist?.avatarUrl ?? getDefaultAvatarForRole(status.agentType)}
-              size="sm"
-              accentColor={meta?.color ?? '#B8976A'}
-            />
-          )}
+          <Avatar
+            avatarKey={specialist?.avatarUrl ?? getDefaultAvatarForRole(status.agentType)}
+            size="sm"
+            accentColor={meta?.color ?? '#B8976A'}
+          />
           <div className="flex flex-col">
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-medium text-text-primary">

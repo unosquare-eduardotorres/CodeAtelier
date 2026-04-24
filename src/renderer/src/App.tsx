@@ -1,6 +1,6 @@
 import { useEffect, useCallback } from 'react'
+import { useBugCapture } from '@renderer/hooks/useBugCapture'
 import { AppLayout } from '@renderer/components/layout'
-import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
 import {
   WelcomeModal,
   ToolApprovalModal,
@@ -17,14 +17,13 @@ import {
   useDreamStore,
   useProfileStore
 } from '@renderer/store'
-import type { ConversationMode, ConversationPhase } from '../../shared/types'
+import type { ConversationPhase } from '../../shared/types'
 import { rendererLog } from '@renderer/utils/logger'
 
-// Check if this window was opened as a Pixel Office pop-out
-const isPixelOfficePopout =
-  new URLSearchParams(window.location.search).get('view') === 'pixel-office'
-
 function App(): React.JSX.Element {
+  // Global error capture → bug tracker
+  useBugCapture()
+
   // Workspace actions (stable refs — individual selectors prevent full-store re-renders)
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces)
   const setAgentReady = useWorkspaceStore((s) => s.setAgentReady)
@@ -35,7 +34,6 @@ function App(): React.JSX.Element {
     updateStreamingIdentity,
     finalizeStream,
     finalizeTurnBubble,
-    setHandoff,
     addToolActivity,
     updateToolActivity,
     updateTaskProgress,
@@ -161,23 +159,6 @@ function App(): React.JSX.Element {
       finalizeStream(data.messageId, data.taskId, data.isHandoff, data.requestId)
     })
 
-    const unsubHandoff = window.api.onHandoff((data) => {
-      // Handle handoff-clear signal from failed pipelines
-      if ((data as { cleared?: boolean }).cleared) {
-        rendererLog.info('[PIPELINE:renderer:handoff-cleared] Pipeline error — clearing handoff')
-        useChatStore.getState().clearHandoff()
-        return
-      }
-      rendererLog.info(
-        `[PIPELINE:renderer:handoff-received] specialists=${data.specialists?.join(',')}`
-      )
-      setHandoff({
-        summary: data.summary,
-        specialists: data.specialists,
-        mode: data.mode as ConversationMode
-      })
-    })
-
     const unsubGrillComplete = window.api.onGrillComplete((data) => {
       endGrillSession(data.summary, data.proposedTasks)
     })
@@ -284,7 +265,6 @@ function App(): React.JSX.Element {
     return () => {
       unsubChunk()
       unsubComplete()
-      unsubHandoff()
       unsubGrillComplete()
       unsubGrillQuestion()
       unsubAskQuestion()
@@ -308,7 +288,6 @@ function App(): React.JSX.Element {
     appendStreamChunk,
     updateStreamingIdentity,
     finalizeStream,
-    setHandoff,
     updateTaskProgress,
     addToolActivity,
     updateToolActivity,
@@ -330,11 +309,6 @@ function App(): React.JSX.Element {
     setDecomposedTasks,
     setConversationState
   ])
-
-  // Pop-out mode: render only the Pixel Office fullscreen
-  if (isPixelOfficePopout) {
-    return <PixelOfficeFullscreen />
-  }
 
   // Brief loading state while profile loads
   if (isProfileLoading) {

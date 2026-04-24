@@ -1,20 +1,19 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
-  Monitor,
   Bot,
   Zap,
   Home,
   Sliders,
-  Building2,
   ClipboardList,
   Hammer,
   Braces,
   SearchCode,
   ZoomIn,
   ZoomOut,
-  CircleHelp
+  CircleHelp,
+  Bug
 } from 'lucide-react'
-import { Sidebar, UnifiedSidebar, BottomPanel } from '@renderer/components/layout'
+import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
 import { WorkspaceSettingsContent } from '@renderer/components/workspace'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
@@ -25,8 +24,10 @@ import {
   UpdateBanner,
   MemoryFeedBanner,
   BudgetWarningBanner,
-  ErrorBoundary
+  ErrorBoundary,
+  ToastContainer
 } from '@renderer/components/common'
+import { BugTrackerPage } from '@renderer/components/bugs'
 import {
   useWorkspaceStore,
   useAgentStore,
@@ -35,7 +36,8 @@ import {
   useIdeaStore,
   useConversationSpecialistActions,
   useSpecialistStore,
-  useBottomPanelStore
+  useToastStore,
+  useBugStore
 } from '@renderer/store'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
@@ -57,13 +59,12 @@ function AgentStatusDot({ status }: { status: string }): React.JSX.Element {
 
 export default function AppLayout(): React.JSX.Element {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [view, setView] = useState<'chat' | 'app-settings' | 'help'>('chat')
+  const [view, setView] = useState<'chat' | 'app-settings' | 'help' | 'bugs'>('chat')
   const [sidebarView, setSidebarView] = useState<'chat' | 'settings'>('chat')
   const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('ideas')
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const agentStatus = useWorkspaceStore((s) => s.agentStatus)
   const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
-  const statuses = useAgentStore((s) => s.statuses)
   const sessionTokens = useAgentStore((s) => s.sessionTokens)
   const { updateMode } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
@@ -73,8 +74,10 @@ export default function AppLayout(): React.JSX.Element {
   const { createIdea, startGrill } = useIdeaStore()
   const [zoomFactor, setZoomFactor] = useState(1.0)
 
-  // Bottom panel store
-  const { activeTab: bottomTab, openTab, toggleTab } = useBottomPanelStore()
+  // Bug tracker + toast
+  const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
+  const fetchBugCount = useBugStore((s) => s.fetchCount)
+  const addToast = useToastStore((s) => s.addToast)
 
   // MCP tools from generalist status (moved from ChatPanel header to status bar)
   const activeMcpTools = useAgentStore((s) => {
@@ -102,6 +105,16 @@ export default function AppLayout(): React.JSX.Element {
     }
   }, [activeConversation])
 
+  // Bug tracker: fetch count + listen for new bugs
+  useEffect(() => {
+    fetchBugCount()
+    const unsub = window.api.onNewBug(() => {
+      addToast({ message: 'A new bug was created', type: 'bug', onClickNavigate: 'bugs' })
+      fetchBugCount()
+    })
+    return unsub
+  }, [fetchBugCount, addToast])
+
   // Load initial zoom and subscribe to changes
   useEffect(() => {
     window.api.zoomGet().then(setZoomFactor).catch(console.error)
@@ -119,9 +132,6 @@ export default function AppLayout(): React.JSX.Element {
     window.api.zoomReset()
   }, [])
 
-  const activeAgentCount = statuses.filter(
-    (s) => s.status === 'thinking' || s.status === 'writing' || s.status === 'reviewing'
-  ).length
   const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
   const loadSpecialists = useSpecialistStore((state) => state.loadSpecialists)
 
@@ -141,17 +151,6 @@ export default function AppLayout(): React.JSX.Element {
       console.error('[AppLayout] Failed to hydrate conversation specialists:', error)
     })
   }, [activeConversation?.id, hydrateConversationSpecialists])
-
-  // #7 - Auto-open agent panel when agents activate
-  const prevAgentCount = useRef(0)
-  useEffect(() => {
-    const wasZero = prevAgentCount.current === 0
-    prevAgentCount.current = activeAgentCount
-
-    if (wasZero && activeAgentCount > 0) {
-      openTab('agents')
-    }
-  }, [activeAgentCount, openTab])
 
   // Navigate back — Esc key handler priority
   const navigateBack = useCallback(() => {
@@ -190,11 +189,6 @@ export default function AppLayout(): React.JSX.Element {
         return
       }
 
-      if (isMeta && e.key === 'j') {
-        e.preventDefault()
-        toggleTab('agents')
-      }
-
       if (isMeta && e.key === 'b') {
         e.preventDefault()
         setSidebarCollapsed((prev) => !prev)
@@ -221,11 +215,6 @@ export default function AppLayout(): React.JSX.Element {
         setView((prev) => (prev === 'help' ? 'chat' : 'help'))
       }
 
-      if (isMeta && e.shiftKey && e.key === 'o') {
-        e.preventDefault()
-        toggleTab('office')
-      }
-
       // Zoom shortcuts — ⌘+/⌘= to zoom in, ⌘- to zoom out, ⌘0 to reset
       if (isMeta && (e.key === '=' || e.key === '+')) {
         e.preventDefault()
@@ -240,7 +229,7 @@ export default function AppLayout(): React.JSX.Element {
         window.api.zoomReset()
       }
     },
-    [activeWorkspace, activeConversation, updateMode, isStreaming, navigateBack, toggleTab]
+    [activeWorkspace, activeConversation, updateMode, isStreaming, navigateBack]
   )
 
   useEffect(() => {
@@ -299,6 +288,10 @@ export default function AppLayout(): React.JSX.Element {
   }
 
   const renderMainContent = (): React.JSX.Element => {
+    if (view === 'bugs') {
+      return <BugTrackerPage onBack={() => setView('chat')} />
+    }
+
     if (view === 'help') {
       return <HelpView onBack={() => setView('chat')} />
     }
@@ -372,6 +365,19 @@ export default function AppLayout(): React.JSX.Element {
             <Sliders size={16} />
           </button>
           <button
+            onClick={() => setView(view === 'bugs' ? 'chat' : 'bugs')}
+            className={`relative p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'bugs' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
+            title="Bug Tracker"
+            aria-label="Bug Tracker"
+          >
+            <Bug size={16} />
+            {unresolvedBugCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[14px] h-[14px] px-0.5 text-[9px] font-bold bg-red-500 text-white rounded-full">
+                {unresolvedBugCount > 99 ? '99+' : unresolvedBugCount}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setView(view === 'help' ? 'chat' : 'help')}
             className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'help' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
@@ -412,8 +418,8 @@ export default function AppLayout(): React.JSX.Element {
         <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
       </div>
 
-      {/* Bottom panel — Agents or Office (mutually exclusive) */}
-      <BottomPanel />
+      {/* Toast notifications */}
+      <ToastContainer onNavigate={(target) => setView(target as typeof view)} />
 
       {/* Status bar */}
       <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-[13px]">
@@ -515,35 +521,6 @@ export default function AppLayout(): React.JSX.Element {
             </button>
           </div>
 
-          <button
-            onClick={() => toggleTab('office')}
-            className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-              bottomTab === 'office'
-                ? 'text-primary-text bg-primary-muted'
-                : 'text-text-muted hover:text-text-secondary'
-            }`}
-            aria-label={bottomTab === 'office' ? 'Close pixel office' : 'Open pixel office'}
-            aria-pressed={bottomTab === 'office'}
-            title={`Pixel Office (${isMac ? '⌘' : 'Ctrl+'}⇧O)`}
-          >
-            <Building2 size={12} />
-            <span>Office</span>
-          </button>
-
-          <button
-            onClick={() => toggleTab('agents')}
-            className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-              bottomTab === 'agents'
-                ? 'text-primary-text bg-primary-muted'
-                : 'text-text-muted hover:text-text-secondary'
-            }`}
-            aria-label={bottomTab === 'agents' ? 'Hide agent panel' : 'Show agent panel'}
-            aria-pressed={bottomTab === 'agents'}
-            title={`Toggle Agent Panel (${isMac ? '⌘' : 'Ctrl+'}J)`}
-          >
-            <Monitor size={12} />
-            <span>Agents{activeAgentCount > 0 ? ` (${activeAgentCount})` : ''}</span>
-          </button>
         </div>
       </div>
     </div>

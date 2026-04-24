@@ -1,6 +1,7 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
+import { validateSender } from './validate-sender'
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 2.0
@@ -16,11 +17,13 @@ export function registerZoomIpc(mainWindow: BrowserWindow): void {
     mainWindow.webContents.send(IPC_CHANNELS.ZOOM_CHANGED, factor)
   }
 
-  ipcMain.handle(IPC_CHANNELS.ZOOM_GET, () => {
+  ipcMain.handle(IPC_CHANNELS.ZOOM_GET, (event) => {
+    validateSender(event)
     return clamp(mainWindow.webContents.getZoomFactor())
   })
 
-  ipcMain.handle(IPC_CHANNELS.ZOOM_IN, () => {
+  ipcMain.handle(IPC_CHANNELS.ZOOM_IN, (event) => {
+    validateSender(event)
     const current = mainWindow.webContents.getZoomFactor()
     const next = clamp(current + ZOOM_STEP)
     mainWindow.webContents.setZoomFactor(next)
@@ -28,7 +31,8 @@ export function registerZoomIpc(mainWindow: BrowserWindow): void {
     return next
   })
 
-  ipcMain.handle(IPC_CHANNELS.ZOOM_OUT, () => {
+  ipcMain.handle(IPC_CHANNELS.ZOOM_OUT, (event) => {
+    validateSender(event)
     const current = mainWindow.webContents.getZoomFactor()
     const next = clamp(current - ZOOM_STEP)
     mainWindow.webContents.setZoomFactor(next)
@@ -36,13 +40,15 @@ export function registerZoomIpc(mainWindow: BrowserWindow): void {
     return next
   })
 
-  ipcMain.handle(IPC_CHANNELS.ZOOM_RESET, () => {
+  ipcMain.handle(IPC_CHANNELS.ZOOM_RESET, (event) => {
+    validateSender(event)
     mainWindow.webContents.setZoomFactor(1.0)
     notifyRenderer(1.0)
     return 1.0
   })
 
-  ipcMain.handle(IPC_CHANNELS.ZOOM_SET, (_event, factor: number) => {
+  ipcMain.handle(IPC_CHANNELS.ZOOM_SET, (event, factor: number) => {
+    validateSender(event)
     const clamped = clamp(factor)
     mainWindow.webContents.setZoomFactor(clamped)
     notifyRenderer(clamped)

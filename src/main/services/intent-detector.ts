@@ -1,13 +1,13 @@
 import type {
   ConversationMode,
   ControlToolState,
-  GeneralistIntent,
+  AgentIntent,
   GrillEvaluation,
   GrillQuestion
 } from '../../shared/types'
-import { generalistLogger } from '../logger'
+import { chatAgentLogger } from '../logger'
 
-const log = generalistLogger
+const log = chatAgentLogger
 
 /** Regex to detect grill-summary blocks emitted by the generalist. */
 const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
@@ -37,17 +37,13 @@ export class IntentDetector {
     controlToolState: ControlToolState,
     _mode: ConversationMode,
     _investigationModeEnabled: boolean
-  ): GeneralistIntent[] {
-    const intents: GeneralistIntent[] = []
+  ): AgentIntent[] {
+    const intents: AgentIntent[] = []
 
     // ── MCP tool intents (single source of truth for action types) ──
 
     if (controlToolState.plan && controlToolState.planIntent) {
       intents.push(controlToolState.planIntent)
-    }
-
-    if (controlToolState.handoff && controlToolState.handoffIntent) {
-      intents.push(controlToolState.handoffIntent)
     }
 
     if (controlToolState.askUser && controlToolState.askUserIntent) {
@@ -70,7 +66,7 @@ export class IntentDetector {
 
   // ── Private detection methods (grill events only) ──
 
-  private detectGrillSummary(accumulatedText: string): GeneralistIntent | null {
+  private detectGrillSummary(accumulatedText: string): AgentIntent | null {
     const match = accumulatedText.match(GRILL_SUMMARY_REGEX)
     if (!match) return null
 
@@ -91,7 +87,7 @@ export class IntentDetector {
     return null
   }
 
-  private detectGrillQuestion(accumulatedText: string): GeneralistIntent | null {
+  private detectGrillQuestion(accumulatedText: string): AgentIntent | null {
     const matches = [...accumulatedText.matchAll(GRILL_QUESTION_REGEX)]
     if (matches.length === 0) return null
 
@@ -113,11 +109,11 @@ export class IntentDetector {
     return { type: 'grillQuestion', questions: allQuestions }
   }
 
-  private detectGrillEvaluation(accumulatedText: string): GeneralistIntent[] {
+  private detectGrillEvaluation(accumulatedText: string): AgentIntent[] {
     const matches = [...accumulatedText.matchAll(GRILL_EVAL_REGEX)]
     if (matches.length === 0) return []
 
-    const intents: GeneralistIntent[] = []
+    const intents: AgentIntent[] = []
     for (const match of matches) {
       try {
         const data = JSON.parse(match[1].trim())

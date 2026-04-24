@@ -25,21 +25,20 @@ import {
   createPostCompactHook
 } from './sdk-hooks'
 import { app } from 'electron'
-import log from 'electron-log/main'
+// electron-log imported via sdkLog from sdk-executor barrel
 import {
   HeartbeatMonitor,
   TokenAccountant,
   TelemetryRecorder,
   ToolTracker,
-  normalizeMessage
+  normalizeMessage,
+  sdkLog
 } from './sdk-executor/index'
 import type { StreamState } from './sdk-executor/index'
 
 // Re-export middleware types for external consumers
 export type { TelemetryEntry } from './sdk-executor/telemetry-recorder'
 export type { TokenUsage } from './sdk-executor/token-accountant'
-
-const sdkLog = log.scope('SDKExecutor')
 
 /**
  * Terminal reason — why a query stopped. SDK 0.2.96+.
@@ -72,7 +71,7 @@ export interface SDKAgentDefinition {
   background?: boolean
   /** Auto-load memory files for the SubAgent (SDK 0.2.96+) */
   memory?: 'project' | 'user' | 'local'
-  /** Effort level per SubAgent — simple tasks get 'low', complex get 'high' (SDK 0.2.96+) */
+  /** Effort level per SubAgent — simple tasks get 'low', complex get 'high'/'max' (SDK 0.2.96+) */
   effort?: 'low' | 'medium' | 'high' | 'max'
   /** Permission mode per SubAgent — investigation = 'default', implementation = 'auto' (SDK 0.2.96+) */
   permissionMode?: 'default' | 'plan' | 'bypassPermissions' | 'acceptEdits' | 'auto' | 'dontAsk'
@@ -448,9 +447,7 @@ export class SDKExecutor {
           ...(options.fallbackModel ? { fallbackModel: options.fallbackModel } : {}),
           ...(options.canUseTool ? { canUseTool: options.canUseTool } : {}),
           // Multi-org login support (SDK 0.2.96+ — accepts string | string[])
-          ...(options.forceLoginOrgUUID
-            ? { forceLoginOrgUUID: options.forceLoginOrgUUID }
-            : {}),
+          ...(options.forceLoginOrgUUID ? { forceLoginOrgUUID: options.forceLoginOrgUUID } : {}),
           env: {
             ...process.env,
             CLAUDE_AGENT_SDK_CLIENT_APP: `agent-studio/${app.getVersion()}`

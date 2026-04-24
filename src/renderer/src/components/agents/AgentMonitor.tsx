@@ -72,13 +72,8 @@ export default function AgentMonitor({
     return cleanup
   }, [handleTaskChunk])
 
-  // Listen for gate failure events
-  useEffect(() => {
-    const cleanup = window.api.onGateFailure((data) => {
-      addGateResult(data.specialist, data.gate)
-    })
-    return cleanup
-  }, [addGateResult])
+  // Gate failure events removed post-migration-66 (specialist-pool deleted).
+  // Abandonment detection events are still wired below for legacy display.
 
   // Listen for abandonment detection events
   useEffect(() => {

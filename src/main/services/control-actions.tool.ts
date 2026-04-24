@@ -3,17 +3,17 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import log from 'electron-log/main'
 import { MCP_TOOLS } from '../../shared/constants'
-import type { StructuredPlan, HandoffBrief, GrillQuestion, MemoryType } from '../../shared/types'
+import type { StructuredPlan, GrillQuestion, MemoryType } from '../../shared/types'
 
 const controlLog = log.scope('ControlActions')
 
 /**
  * Event callback signatures for control tool actions.
- * The generalist service registers handlers for these.
+ * Registered by the chat-agent adapter layer. Post-migration-66 there is
+ * no handoff callback — specialists don't delegate, they execute directly.
  */
 export interface ControlActionCallbacks {
   onPlan: (plan: StructuredPlan) => void
-  onHandoff: (brief: HandoffBrief) => void
   onAskUser: (questions: GrillQuestion[]) => void
   onMemory: (memory: { type: MemoryType; title: string; content: string }) => void
 }
@@ -90,15 +90,6 @@ export const planSchema = z.object({
     .optional()
 })
 
-export const handoffSchema = z.object({
-  specialist: z.string().describe('The specialist ID to hand off to (e.g. "platform-architect")'),
-  summary: z.string().describe('What the specialist should do — actionable description'),
-  mode: z.enum(['plan', 'build']).optional().describe('Execution mode (default: current mode)'),
-  decisions: z.array(z.string()).optional().describe('Key decisions already made'),
-  constraints: z.array(z.string()).optional().describe('Constraints the specialist must follow'),
-  filesDiscussed: z.array(z.string()).optional().describe('Files already read/discussed')
-})
-
 export const emitMemorySchema = z.object({
   type: z
     .enum(['user', 'feedback', 'project', 'reference'])
@@ -132,14 +123,13 @@ export const askUserSchema = z.object({
 /**
  * Creates the control-actions MCP server config.
  *
- * @param mode Current conversation mode — determines which tools are available
+ * Post-migration-66: no handoff tool, no mode gating needed — the remaining
+ * tools (emit_plan / ask_user / emit_memory) are available in both modes.
+ *
  * @param callbacks Event handlers called when the LLM invokes a control tool
- * @param investigationModeEnabled Whether specialist handoffs are enabled
  */
 export function createControlActionsMcpServer(
-  mode: 'plan' | 'build',
-  callbacks: ControlActionCallbacks,
-  investigationModeEnabled: boolean
+  callbacks: ControlActionCallbacks
 ): Record<string, McpServerConfig> {
   const tools: Array<{
     name: string
@@ -174,43 +164,6 @@ export function createControlActionsMcpServer(
       }
     }
   })
-
-  // request_handoff — ONLY in build mode AND investigation mode enabled
-  if (mode === 'build' && investigationModeEnabled) {
-    tools.push({
-      name: MCP_TOOLS.CONTROL_ACTIONS.REQUEST_HANDOFF.tool,
-      description:
-        'Hand off a task to a specialist agent for code changes, deep investigation, or execution. ' +
-        'Only use when the task requires specialist expertise. ' +
-        'For simple questions, answer directly without handing off.',
-      inputSchema: handoffSchema.shape as unknown as Record<string, z.ZodType>,
-      handler: async (args) => {
-        const parsed = handoffSchema.parse(args)
-        controlLog.info(
-          `[control:request_handoff] specialist="${parsed.specialist}" summary="${parsed.summary.substring(0, 80)}"`
-        )
-        // Map singular schema fields to HandoffBrief array fields
-        const brief: HandoffBrief = {
-          summary: parsed.summary,
-          specialists: [parsed.specialist],
-          mode: parsed.mode ?? (mode as 'plan' | 'build'),
-          decisions: parsed.decisions ?? [],
-          constraints: parsed.constraints ?? [],
-          filesDiscussed: parsed.filesDiscussed ?? [],
-          recentMessages: []
-        }
-        callbacks.onHandoff(brief)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Handoff to ${parsed.specialist} initiated.`
-            }
-          ]
-        }
-      }
-    })
-  }
 
   // ask_user — available in BOTH modes
   tools.push({

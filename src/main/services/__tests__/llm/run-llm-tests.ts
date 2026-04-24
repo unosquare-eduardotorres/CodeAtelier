@@ -1,6 +1,11 @@
 // LLM test runner (costs money — opt-in only)
 // Run: npx tsx src/main/services/__tests__/llm/run-llm-tests.ts
 // Or:  npm run test:llm
+//
+// Post-migration-66: all LLM tests in this directory tested the removed
+// decomposition/handoff flows. The runner is retained for future LLM
+// contract tests (Project Specialist prompt quality, skill activation
+// correctness, etc.) but is currently a no-op.
 
 import { execSync } from 'node:child_process'
 
@@ -20,17 +25,5 @@ if (!process.env.ANTHROPIC_API_KEY && !isClaudeCliAvailable()) {
   process.exit(1)
 }
 
-console.log('🤖 Running LLM test suite (costs ~$0.10-0.25 per run)\n')
-
-async function main(): Promise<void> {
-  const { run: runPromptContracts } = await import('./prompt-contracts.test')
-  await runPromptContracts()
-
-  const { run: runHandoffRoundtrip } = await import('./handoff-roundtrip.test')
-  await runHandoffRoundtrip()
-
-  // Force exit — stalled SDK calls from timed-out tests may keep the event loop alive
-  setTimeout(() => process.exit(process.exitCode ?? 0), 1000)
-}
-
-main()
+console.log('🤖 LLM test suite — currently empty (handoff/decomposition tests removed).')
+process.exit(0)

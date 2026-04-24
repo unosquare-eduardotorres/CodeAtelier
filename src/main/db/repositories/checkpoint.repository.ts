@@ -1,6 +1,6 @@
 import { getDatabase } from '../index'
 
-export interface CheckpointRecord {
+interface CheckpointRecord {
   id: string
   conversationId: string
   workspaceId: string | null

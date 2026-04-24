@@ -16,12 +16,11 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
 import { registerAllIpcHandlers } from './ipc'
-import { generalistService, skillService } from './services'
+import { chatAgentService, skillService } from './services'
 import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
-import { bridgeTracerToEventLogger } from './services/specialist/trace-bridge'
-import { bridgeBusToPersistence } from './services/specialist/bus-persistence'
+
 import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
 
@@ -34,19 +33,67 @@ process.on('uncaughtException', (error) => {
   log.error('[Process] Uncaught exception:', error)
   // Don't exit — let the app continue running if possible
   // The user may see degraded functionality but won't lose their work
+  reportMainProcessBug(error, 'fatal')
 })
 
 process.on('unhandledRejection', (reason) => {
   log.error('[Process] Unhandled rejection:', reason)
   // Same safety — log but don't crash
+  reportMainProcessBug(reason instanceof Error ? reason : new Error(String(reason)), 'error')
 })
 
-// Bridge execution tracer events to the persistent event logger
-// Single point of truth — trace spans automatically log agent started/completed/failed
-bridgeTracerToEventLogger()
+/** Report a main-process error to the bug tracker DB + notify renderer */
+function reportMainProcessBug(error: Error, severity: 'error' | 'fatal'): void {
+  try {
+    // Lazy import to avoid circular deps during early bootstrap
+    const { bugRepository } = require('./db/repositories/bug.repository')
+    const { BrowserWindow } = require('electron') as typeof import('electron')
+    const os = require('node:os')
 
-// Bridge message bus to persistent DB storage for crash recovery and audit
-bridgeBusToPersistence()
+    // Parse source file/line from stack trace
+    let sourceFile: string | undefined
+    let sourceLine: number | undefined
+    let sourceColumn: number | undefined
+    if (error.stack) {
+      const match = error.stack.match(/at .+\((.+):(\d+):(\d+)\)/)
+      if (match) {
+        sourceFile = match[1]
+        sourceLine = parseInt(match[2], 10)
+        sourceColumn = parseInt(match[3], 10)
+      }
+    }
+
+    const result = bugRepository.upsertBug({
+      process: 'main' as const,
+      severity,
+      errorMessage: error.message,
+      stackTrace: error.stack,
+      sourceFile,
+      sourceLine,
+      sourceColumn,
+      appVersion: app.getVersion(),
+      osInfo: `${process.platform} ${os.release()}`
+    })
+
+    if (result.isNew) {
+      const bug = bugRepository.getById(result.bugId)
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          win.webContents.send('bug:new', bug)
+        } catch {
+          // Window may be destroyed
+        }
+      }
+    }
+  } catch {
+    // Bug tracker itself failed — don't crash the crash handler
+    log.error('[BugTracker] Failed to report main process error to bug tracker')
+  }
+}
+
+// Tracer / message-bus bridges were removed with the specialist-pool deletion
+// (migration 66 onward): no multi-agent pipeline means no cross-agent trace
+// spans or message-bus events to persist.
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
@@ -348,7 +395,7 @@ app.on('before-quit', async (event) => {
 
   // Cleanup generalist (long-lived interactive claude process)
   try {
-    await generalistService.stop()
+    await chatAgentService.stop()
   } catch (e) {
     log.debug('Generalist shutdown error (expected during quit):', e)
   }

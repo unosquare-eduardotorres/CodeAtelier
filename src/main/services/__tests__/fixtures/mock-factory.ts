@@ -19,7 +19,7 @@ export function createMockMainWindow(): MockMainWindow {
   }
 }
 
-export interface MockGeneralistService extends EventEmitter {
+export interface MockChatAgentService extends EventEmitter {
   decompose: (...args: unknown[]) => Promise<unknown>
   switchMode: (mode: string) => void
   getWorkspacePath: () => string
@@ -28,8 +28,8 @@ export interface MockGeneralistService extends EventEmitter {
   removeListener: (event: string, fn: (...args: unknown[]) => void) => this
 }
 
-export function createMockGeneralistService(): MockGeneralistService {
-  const emitter = new EventEmitter() as MockGeneralistService
+export function createMockChatAgentService(): MockChatAgentService {
+  const emitter = new EventEmitter() as MockChatAgentService
   emitter.decompose = async () => ({ conversationId: '', summary: '', mode: 'plan', tasks: [] })
   emitter.switchMode = () => {}
   emitter.getWorkspacePath = () => '/test/workspace'

@@ -1,7 +1,5 @@
-import log from 'electron-log/main'
 import type { TokenUsage } from './token-accountant'
-
-const sdkLog = log.scope('SDKExecutor')
+import { sdkLog } from './index'
 
 let requestCounter = 0
 

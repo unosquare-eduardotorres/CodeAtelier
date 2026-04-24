@@ -1,5 +1,5 @@
 /**
- * Tests for GeneralistPromptAssembler turn count logic.
+ * Tests for DaVinciPromptAssembler turn count logic.
  * Validates that resumed sessions skip turn-1-only injections.
  */
 import assert from 'node:assert/strict'
@@ -84,7 +84,7 @@ describe('Turn count — resumed session (seedTurnCountForResume)', () => {
     const sessionId = 'faa47d3d-7f08-41c4-b32a-d25f740287ef'
     const conversationId = 'conv-resumed'
 
-    // This is what generalist.service.ts now does:
+    // This is what chat-agent.service.ts now does:
     if (sessionId) {
       tc.seed(conversationId)
     }
@@ -117,4 +117,6 @@ describe('Turn count — resumed session (seedTurnCountForResume)', () => {
   })
 })
 
-summary()
+if (import.meta.url === `file://${process.argv[1]}`) {
+  summary()
+}

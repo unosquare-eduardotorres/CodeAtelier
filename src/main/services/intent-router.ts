@@ -1,15 +1,15 @@
 import type { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { GeneralistIntent } from '../../shared/types'
+import type { AgentIntent } from '../../shared/types'
 import { eventLoggerService } from './event-logger.service'
-import { generalistLogger } from '../logger'
+import { chatAgentLogger } from '../logger'
 
-const log = generalistLogger
+const log = chatAgentLogger
 
 /**
- * Routes GeneralistIntent values to the appropriate IPC channel.
+ * Routes AgentIntent values to the appropriate IPC channel.
  *
- * This replaces the inline event listeners in GeneralistStreamService.registerEventForwarders()
+ * This replaces the inline event listeners in ChatStreamService.registerEventForwarders()
  * that previously forwarded 5+ string-based EventEmitter events to the renderer.
  *
  * Each intent type maps to exactly one IPC send — trivially testable without EventEmitter,
@@ -25,7 +25,7 @@ export class IntentRouter {
    *          or undefined for all other intent types. This allows the caller to
    *          chain handoff execution without separate event listeners.
    */
-  route(conversationId: string, intent: GeneralistIntent): void {
+  route(conversationId: string, intent: AgentIntent): void {
     switch (intent.type) {
       case 'response':
         // Response intents are a no-op here — text is already streamed chunk-by-chunk
@@ -45,15 +45,6 @@ export class IntentRouter {
           conversationId,
           ...intent.plan
         })
-        break
-
-      case 'handoff':
-        log.info(
-          `[IntentRouter:handoff] conversationId=${conversationId} summary="${intent.brief.summary.substring(0, 80)}"`
-        )
-        // Handoff is handled by the caller (GeneralistStreamService) via the pipeline callbacks.
-        // The intent is emitted so the stream service can trigger the handoff pipeline.
-        // No IPC send here — the pipeline sends its own progress events.
         break
 
       case 'askUser':
@@ -102,23 +93,4 @@ export class IntentRouter {
     }
   }
 
-  /**
-   * Route multiple intents (from IntentDetector.detectAll()) in order.
-   * Returns the first handoff intent found, if any, so the caller can trigger the pipeline.
-   */
-  routeAll(
-    conversationId: string,
-    intents: GeneralistIntent[]
-  ): (GeneralistIntent & { type: 'handoff' }) | undefined {
-    let handoffIntent: (GeneralistIntent & { type: 'handoff' }) | undefined
-
-    for (const intent of intents) {
-      this.route(conversationId, intent)
-      if (intent.type === 'handoff' && !handoffIntent) {
-        handoffIntent = intent
-      }
-    }
-
-    return handoffIntent
-  }
 }

@@ -602,6 +602,29 @@ body::after {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   Sentence reveal animation — streaming chat content appears sentence-by-sentence
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes sentence-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-sentence-reveal {
+  animation: sentence-reveal 0.25s var(--ease-out) forwards;
+}
+
+/* Smooth height expansion for streaming message bubbles */
+.streaming-bubble-content {
+  transition: max-height 0.2s var(--ease-out);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    Skeleton / Shimmer loading animation
    ═══════════════════════════════════════════════════════════════════════════ */
 @keyframes shimmer {

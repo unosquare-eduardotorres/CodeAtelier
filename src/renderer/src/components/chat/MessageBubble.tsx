@@ -1,155 +1,30 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
-import type { Plugin } from 'unified'
-import type { Root, Text, PhrasingContent, Html, RootContent } from 'mdast'
-import { visit } from 'unist-util-visit'
-import { Copy, Check, Paperclip, Flame, Lightbulb, FileText } from 'lucide-react'
+import { Paperclip, Flame, Lightbulb, FileText } from 'lucide-react'
+import { remarkEmojiSpan, remarkHighlightQuestions, remarkHighlightNextSteps } from './remark-plugins'
+import { CodeBlock } from './CodeBlock'
 import type {
   Message,
   ToolActivity,
-  GrillProposedTask,
-  GrillQuestion,
   GrillAnswerPayload,
   ConversationMode,
-  BuildSummary,
   StructuredPlan
 } from '../../../../shared/types'
-import TaskPlanCard from './TaskPlanCard'
-import BuildSummaryCard from './BuildSummaryCard'
-import GrillEvaluationCard from './GrillEvaluationCard'
-import GrillResultCard from './GrillResultCard'
-import GrillQuestionCard from './GrillQuestionCard'
 import ToolActivityBlock from './ToolActivityBlock'
+import MessageCardRenderer from './MessageCardRenderer'
+import { useMessageContent } from './useMessageContent'
 import { useSpecialistStore, useChatStore } from '@renderer/store'
 import {
-  MermaidDiagram,
   Avatar,
   ImageLightbox,
-  Skeleton,
-  PixelSpriteAvatar
+  Skeleton
 } from '@renderer/components/common'
 import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
-import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 
-/**
- * Remark plugin: wraps emoji characters inside headings with a styled <span class="emoji">
- * so CSS can normalize their size and alignment.
- */
-const remarkEmojiSpan: Plugin<[], Root> = () => {
-  // Matches common emoji: symbols, dingbats, emoticons, flags, skin-tone modifiers, ZWJ sequences
-  const emojiRegex =
-    /(\p{Emoji_Presentation}|\p{Extended_Pictographic})(\u200D(\p{Emoji_Presentation}|\p{Extended_Pictographic}))*/gu
 
-  return (tree) => {
-    visit(tree, 'heading', (node) => {
-      const newChildren: PhrasingContent[] = []
-      for (const child of node.children) {
-        if (child.type !== 'text') {
-          newChildren.push(child)
-          continue
-        }
-        const text = (child as Text).value
-        let lastIndex = 0
-        let match: RegExpExecArray | null
-
-        emojiRegex.lastIndex = 0
-        while ((match = emojiRegex.exec(text)) !== null) {
-          // Text before the emoji
-          if (match.index > lastIndex) {
-            newChildren.push({ type: 'text', value: text.slice(lastIndex, match.index) })
-          }
-          // Wrap emoji in an html node that renders as <span class="emoji">
-          newChildren.push({
-            type: 'html',
-            value: `<span class="emoji">${match[0]}</span>`
-          })
-          lastIndex = match.index + match[0].length
-        }
-        // If no emoji was found, keep original child unchanged
-        if (lastIndex === 0) {
-          newChildren.push(child)
-        } else if (lastIndex < text.length) {
-          // Remainder text after the last emoji
-          newChildren.push({ type: 'text', value: text.slice(lastIndex) })
-        }
-      }
-      node.children = newChildren
-    })
-  }
-}
-
-/**
- * Remark plugin: wraps the last paragraph ending with '?' in a styled
- * <div class="agent-question"> so questions stand out visually in chat.
- */
-const remarkHighlightQuestions: Plugin<[], Root> = () => {
-  return (tree) => {
-    let lastQuestionIndex: number | null = null
-
-    tree.children.forEach((node, index) => {
-      if (node.type !== 'paragraph') return
-      const textContent = (node as { children: Array<{ value?: string }> }).children
-        .map((c) => c.value ?? '')
-        .join('')
-        .trim()
-      if (textContent.endsWith('?')) {
-        lastQuestionIndex = index
-      }
-    })
-
-    if (lastQuestionIndex !== null) {
-      const node = tree.children[lastQuestionIndex]
-      tree.children.splice(
-        lastQuestionIndex,
-        1,
-        { type: 'html', value: '<div class="agent-question">' } as Html as RootContent,
-        node,
-        { type: 'html', value: '</div>' } as Html as RootContent
-      )
-    }
-  }
-}
-
-/**
- * Remark plugin: wraps "Next Steps" headings and their following content in a styled
- * <div class="agent-next-steps"> so actionable next-step blocks stand out visually.
- */
-const remarkHighlightNextSteps: Plugin<[], Root> = () => {
-  return (tree) => {
-    const children = tree.children
-    let i = 0
-    while (i < children.length) {
-      const node = children[i]
-      if (node.type === 'heading') {
-        const textContent = (node as { children: Array<{ value?: string }> }).children
-          .map((c) => c.value ?? '')
-          .join('')
-          .trim()
-        if (/next\s+steps?/i.test(textContent)) {
-          // Collect the heading + all nodes until the next heading or end
-          let end = i + 1
-          while (end < children.length && children[end].type !== 'heading') {
-            end++
-          }
-          const wrapped = children.slice(i, end)
-          const openTag = {
-            type: 'html',
-            value: '<div class="agent-next-steps">'
-          } as Html as RootContent
-          const closeTag = { type: 'html', value: '</div>' } as Html as RootContent
-          // Replace the range [i..end) with open + wrapped nodes + close
-          children.splice(i, end - i, openTag, ...wrapped, closeTag)
-          i += wrapped.length + 2 // skip past the inserted wrapper
-          continue
-        }
-      }
-      i++
-    }
-  }
-}
 
 /** Chat actions needed by MessageBubble — passed as props to avoid N×useShallow subscriptions */
 export interface MessageBubbleActions {
@@ -216,75 +91,7 @@ const REMARK_PLUGINS = [
 ]
 const REHYPE_PLUGINS = [rehypeRaw]
 
-function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Element {
-  const [copied, setCopied] = useState(false)
 
-  // Extract language and code text from children
-  const codeChild = React.Children.toArray(children).find(
-    (child): child is React.ReactElement =>
-      React.isValidElement(child) && (child as React.ReactElement).type === 'code'
-  )
-
-  const className = (codeChild?.props as { className?: string })?.className || ''
-  const language = className.replace('language-', '')
-  const codeText = String(
-    (codeChild?.props as { children?: React.ReactNode })?.children || ''
-  ).replace(/\n$/, '')
-
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(codeText)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // Fallback for non-secure contexts
-      console.error('Failed to copy to clipboard')
-    }
-  }, [codeText])
-
-  // ── Mermaid: render as interactive diagram ──
-  if (language === 'mermaid') {
-    return (
-      <div className="my-2 rounded-lg overflow-hidden border border-border-subtle">
-        <div className="flex items-center justify-between px-3 py-1.5 bg-surface-base border-b border-border-subtle">
-          <span className="text-xs text-primary-text font-mono">mermaid diagram</span>
-        </div>
-        <MermaidDiagram definition={codeText} />
-      </div>
-    )
-  }
-
-  return (
-    <div className="relative group my-2 rounded-lg overflow-hidden border border-border-subtle">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-surface-raised border-b border-border-default">
-        <span className="text-xs text-primary/70 font-mono tracking-wide uppercase">
-          {language || 'code'}
-        </span>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1 text-xs text-text-secondary hover:text-primary-text transition-colors px-1.5 py-0.5 rounded hover:bg-primary-muted"
-          aria-label={copied ? 'Copied!' : 'Copy code'}
-          title={copied ? 'Copied!' : 'Copy code'}
-        >
-          {copied ? (
-            <>
-              <Check size={12} className="text-success" />
-              <span className="text-success">Copied</span>
-            </>
-          ) : (
-            <>
-              <Copy size={12} />
-              <span>Copy</span>
-            </>
-          )}
-        </button>
-      </div>
-      <pre className="bg-surface-base p-3 overflow-x-auto text-sm whitespace-pre-wrap break-words">
-        {children}
-      </pre>
-    </div>
-  )
-}
 
 /** Strip stray backtick text nodes from React children (left over after markdown inline-code parsing) */
 function stripStrayBackticks(children: React.ReactNode): React.ReactNode[] | null | undefined {
@@ -394,7 +201,6 @@ function useMessageIdentity(message: Message): {
   subtitle: string | null
   avatarKey: string
   accentColor: string
-  pixelSpriteId: string | null
 } {
   const specialists = useSpecialistStore((s) => s.specialists)
   const activeConversation = useChatStore((s) => s.activeConversation)
@@ -407,8 +213,7 @@ function useMessageIdentity(message: Message): {
         displayName: userSpec?.alias ?? userSpec?.displayName ?? 'You',
         subtitle: null,
         avatarKey: userSpec?.avatarUrl ?? 'business-man',
-        accentColor: 'var(--color-primary, #6366F1)',
-        pixelSpriteId: userSpec?.pixelSpriteId ?? null
+        accentColor: 'var(--color-primary, #6366F1)'
       }
     }
 
@@ -432,9 +237,7 @@ function useMessageIdentity(message: Message): {
             displayName: persona.alias ?? persona.displayName,
             subtitle: persona.alias ? persona.displayName : null,
             avatarKey: persona.avatarUrl ?? getDefaultAvatarForRole(persona.agentId),
-            accentColor: persona.color ?? '#F59E0B',
-            pixelSpriteId:
-              persona.pixelSpriteId ?? getSpriteAssignment(persona.agentId).pixelSpriteId ?? null
+            accentColor: persona.color ?? '#F59E0B'
           }
         }
       }
@@ -446,9 +249,7 @@ function useMessageIdentity(message: Message): {
         displayName: coreSpec?.alias ?? coreSpec?.displayName ?? defaults?.displayName ?? coreRole,
         subtitle: coreSpec?.alias ? (coreSpec?.displayName ?? defaults?.displayName ?? null) : null,
         avatarKey: coreSpec?.avatarUrl ?? defaults?.avatarKey ?? 'renaissance-alchemist',
-        accentColor: coreSpec?.color ?? defaults?.color ?? '#6366F1',
-        pixelSpriteId:
-          coreSpec?.pixelSpriteId ?? getSpriteAssignment(coreRole).pixelSpriteId ?? null
+        accentColor: coreSpec?.color ?? defaults?.color ?? '#6366F1'
       }
     }
 
@@ -459,9 +260,7 @@ function useMessageIdentity(message: Message): {
         displayName: specialist.alias ?? specialist.displayName,
         subtitle: specialist.alias ? specialist.displayName : null,
         avatarKey: specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId),
-        accentColor: specialist.color ?? '#F59E0B',
-        pixelSpriteId:
-          specialist.pixelSpriteId ?? getSpriteAssignment(specialist.agentId).pixelSpriteId ?? null
+        accentColor: specialist.color ?? '#F59E0B'
       }
     }
 
@@ -470,8 +269,7 @@ function useMessageIdentity(message: Message): {
       displayName: message.agentId ?? message.role,
       subtitle: null,
       avatarKey: getDefaultAvatarForRole(message.agentId ?? message.role),
-      accentColor: '#6366F1',
-      pixelSpriteId: null
+      accentColor: '#6366F1'
     }
   }, [message.role, message.agentId, specialists, activeConversation?.personaSpecialistId])
 }
@@ -535,7 +333,13 @@ function MessageBubbleInner({
   } = actions!
   const identity = useMessageIdentity(message)
 
-  // Memoize all regex matching, JSON parsing, and content splitting to avoid redundant work on re-render
+  // Extracted hook: parses message content to detect structured blocks
+  const content = useMessageContent(
+    message.contentMd,
+    message.attachmentsJson,
+    isUser,
+    suppressInlineGrillCard
+  )
   const {
     imageAttachments,
     fileAttachments,
@@ -544,191 +348,21 @@ function MessageBubbleInner({
     displayContent,
     planContent,
     structuredPlan,
-    beforePlan,
-    afterPlan,
-    grillSummary,
-    grillProposedTasks,
-    beforeGrill,
-    afterGrill,
-    grillQuestionMatch,
     grillQuestions,
-    beforeGrillQuestion,
-    afterGrillQuestion,
+    grillQuestionMatch,
+    grillSummary,
     grillEvalData,
-    beforeGrillEval,
-    afterGrillEval,
-    handoffMatch,
-    beforeHandoff,
-    afterHandoff,
-    buildSummaryData,
-    beforeBuildSummary,
-    afterBuildSummary
-  } = useMemo(() => {
-    // Parse attachments
-    let parsedAttachments: string[] = []
-    try {
-      const parsed = JSON.parse(message.attachmentsJson || '[]')
-      parsedAttachments = Array.isArray(parsed) ? parsed : []
-    } catch {
-      /* noop */
-    }
-    const imageAtts = parsedAttachments.filter((p) => /\.(png|jpg|jpeg|gif|webp)$/i.test(p))
-    const fileAtts = parsedAttachments.filter((p) => !/\.(png|jpg|jpeg|gif|webp)$/i.test(p))
+    buildSummaryData
+  } = content
 
-    // Grill activation detection
-    const grillActivation = isUser && message.contentMd.startsWith('[GRILL MODE ACTIVATED]')
-    const ideaMatch = grillActivation
-      ? message.contentMd.match(/## Idea to Refine\n\*\*(.+?)\*\*/)
-      : null
-
-    // Clean display content for grill messages
-    let dispContent = message.contentMd
-    if (grillActivation) {
-      dispContent = message.contentMd.replace(/^\[GRILL MODE ACTIVATED\]\s*/, '')
-      if (ideaMatch) {
-        dispContent = dispContent.replace(/## Idea to Refine\n\*\*.+?\*\*\n*/, '')
-      }
-      dispContent = dispContent.trim()
-    }
-
-    // Detect plan blocks
-    const pMatch = !isUser ? message.contentMd.match(/`{3,4}plan\n([\s\S]*?)`{3,4}/) : null
-    const pContent = pMatch ? pMatch[1] : null
-    const bPlan = pMatch ? message.contentMd.substring(0, pMatch.index!) : null
-    const aPlan = pMatch ? message.contentMd.substring(pMatch.index! + pMatch[0].length) : null
-
-    // Try to parse planContent as structured plan for direct execution path
-    let sPlan: StructuredPlan | null = null
-    if (pContent) {
-      try {
-        const parsed = JSON.parse(pContent)
-        if (parsed && typeof parsed === 'object' && typeof parsed.title === 'string') {
-          sPlan = parsed as StructuredPlan
-        }
-      } catch {
-        /* noop — raw markdown plan, will use fallback generalist path */
-      }
-    }
-
-    // Detect grill-summary blocks
-    const gMatch = !isUser ? message.contentMd.match(/```grill-summary\n([\s\S]*?)```/) : null
-    let gSummary: string | null = null
-    let gProposedTasks: GrillProposedTask[] = []
-    if (gMatch) {
-      try {
-        const parsed = JSON.parse(gMatch[1].trim())
-        gSummary = parsed.summary || null
-        gProposedTasks = Array.isArray(parsed.proposedTasks) ? parsed.proposedTasks : []
-      } catch {
-        /* noop */
-      }
-    }
-    const bGrill = gMatch ? message.contentMd.substring(0, gMatch.index!) : null
-    const aGrill = gMatch ? message.contentMd.substring(gMatch.index! + gMatch[0].length) : null
-
-    // Detect grill-question blocks
-    const gqMatch = !isUser ? message.contentMd.match(/```grill-question\n([\s\S]*?)```/) : null
-    let gQuestions: GrillQuestion[] = []
-    if (gqMatch && !suppressInlineGrillCard) {
-      try {
-        const parsed = JSON.parse(gqMatch[1].trim())
-        if (parsed.questions && Array.isArray(parsed.questions)) {
-          gQuestions = parsed.questions
-        }
-      } catch {
-        /* noop */
-      }
-    }
-    const bGrillQ = gqMatch ? message.contentMd.substring(0, gqMatch.index!) : null
-    const aGrillQ = gqMatch ? message.contentMd.substring(gqMatch.index! + gqMatch[0].length) : null
-
-    // Detect grill-evaluation blocks
-    const geMatch = !isUser ? message.contentMd.match(/```grill-evaluation\n([\s\S]*?)```/) : null
-    let geData: {
-      score: number
-      scoreLabel: string
-      feedback: string
-      questions: GrillQuestion[]
-    } | null = null
-    if (geMatch) {
-      try {
-        const parsed = JSON.parse(geMatch[1].trim())
-        if (typeof parsed.score === 'number' && Array.isArray(parsed.questions)) {
-          geData = {
-            score: parsed.score,
-            scoreLabel: parsed.scoreLabel ?? '',
-            feedback: parsed.feedback ?? '',
-            questions: parsed.questions
-          }
-        }
-      } catch {
-        /* noop */
-      }
-    }
-    const bGrillEval = geMatch ? message.contentMd.substring(0, geMatch.index!) : null
-    const aGrillEval = geMatch
-      ? message.contentMd.substring(geMatch.index! + geMatch[0].length)
-      : null
-
-    // Detect handoff blocks — strip from display (HandoffIndicator renders separately in MessageList)
-    const hMatch = !isUser
-      ? (message.contentMd.match(/```handoff\n([\s\S]*?)```/) ??
-        message.contentMd.match(
-          /```(?:json)?\n(\{[\s\S]*?"action"\s*:\s*"handoff"[\s\S]*?\})\n```/
-        ))
-      : null
-    const bHandoff = hMatch ? message.contentMd.substring(0, hMatch.index!) : null
-    const aHandoff = hMatch ? message.contentMd.substring(hMatch.index! + hMatch[0].length) : null
-
-    // Detect build-summary blocks
-    const bsMatch = !isUser ? message.contentMd.match(/```build-summary\n([\s\S]*?)```/) : null
-    let bsData: BuildSummary | null = null
-    if (bsMatch) {
-      try {
-        bsData = JSON.parse(bsMatch[1].trim()) as BuildSummary
-      } catch {
-        /* noop */
-      }
-    }
-    const bBuildSummary = bsMatch ? message.contentMd.substring(0, bsMatch.index!) : null
-    const aBuildSummary = bsMatch
-      ? message.contentMd.substring(bsMatch.index! + bsMatch[0].length)
-      : null
-
-    return {
-      attachments: parsedAttachments,
-      imageAttachments: imageAtts,
-      fileAttachments: fileAtts,
-      isGrillActivation: grillActivation,
-      ideaToRefineMatch: ideaMatch,
-      displayContent: dispContent,
-      planMatch: pMatch,
-      planContent: pContent,
-      structuredPlan: sPlan,
-      beforePlan: bPlan,
-      afterPlan: aPlan,
-      grillMatch: gMatch,
-      grillSummary: gSummary,
-      grillProposedTasks: gProposedTasks,
-      beforeGrill: bGrill,
-      afterGrill: aGrill,
-      grillQuestionMatch: gqMatch,
-      grillQuestions: gQuestions,
-      beforeGrillQuestion: bGrillQ,
-      afterGrillQuestion: aGrillQ,
-      grillEvalMatch: geMatch,
-      grillEvalData: geData,
-      beforeGrillEval: bGrillEval,
-      afterGrillEval: aGrillEval,
-      handoffMatch: hMatch,
-      beforeHandoff: bHandoff,
-      afterHandoff: aHandoff,
-      buildSummaryMatch: bsMatch,
-      buildSummaryData: bsData,
-      beforeBuildSummary: bBuildSummary,
-      afterBuildSummary: aBuildSummary
-    }
-  }, [message.contentMd, message.attachmentsJson, isUser, suppressInlineGrillCard])
+  /** True when the message contains a structured block that MessageCardRenderer handles */
+  const hasStructuredContent =
+    grillQuestions.length > 0 ||
+    (grillQuestionMatch != null && suppressInlineGrillCard) ||
+    grillSummary != null ||
+    grillEvalData != null ||
+    buildSummaryData != null ||
+    planContent != null
 
   const handleBuildNow = (): void => {
     // Direct path: skip generalist round-trip when structured plan is available
@@ -801,16 +435,12 @@ function MessageBubbleInner({
     >
       {/* Avatar */}
       <div className="flex-shrink-0 mt-0.5">
-        {identity.pixelSpriteId ? (
-          <PixelSpriteAvatar spriteId={identity.pixelSpriteId} size={54} />
-        ) : (
-          <Avatar
-            avatarKey={identity.avatarKey}
-            size="xl"
-            accentColor={identity.accentColor}
-            fallbackInitials={identity.displayName}
-          />
-        )}
+        <Avatar
+          avatarKey={identity.avatarKey}
+          size="xl"
+          accentColor={identity.accentColor}
+          fallbackInitials={identity.displayName}
+        />
       </div>
 
       {/* Content */}
@@ -826,214 +456,28 @@ function MessageBubbleInner({
           )}
         </div>
 
-        {grillQuestions.length > 0 ? (
-          /* Message with a grill-question block — split into before/questions/after */
-          <div className="space-y-3 max-w-full">
-            {beforeGrillQuestion?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {beforeGrillQuestion}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-            <GrillQuestionCard
-              questions={grillQuestions}
-              onSubmit={submitGrillAnswers}
-              onSkipAll={skipAllGrillQuestions}
-            />
-            {afterGrillQuestion?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {afterGrillQuestion}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : grillQuestionMatch && suppressInlineGrillCard ? (
-          /* Grill-question block detected but suppressed (store-driven card active) — render surrounding text only, hide JSON */
-          <div className={aiBubbleClass}>
-            <div className="prose max-w-none">
-              <ReactMarkdown
-                remarkPlugins={REMARK_PLUGINS}
-                rehypePlugins={REHYPE_PLUGINS}
-                components={markdownComponents}
-              >
-                {[beforeGrillQuestion?.trim(), afterGrillQuestion?.trim()]
-                  .filter(Boolean)
-                  .join('\n\n')}
-              </ReactMarkdown>
-            </div>
-          </div>
-        ) : grillSummary ? (
-          /* Message with a grill-summary block — split into before/grill/after */
-          <div className="space-y-3 max-w-full">
-            {beforeGrill?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {beforeGrill}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-            <GrillResultCard
-              summary={grillSummary}
-              proposedTasks={grillProposedTasks}
-              onKeepIterating={handleGrillKeepIterating}
-              onCreatePlan={handleGrillCreatePlan}
-              onCreateItems={handleGrillCreateItems}
-            />
-            {afterGrill?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {afterGrill}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : grillEvalData ? (
-          /* Message with a grill-evaluation block — split into before/eval/after */
-          <div className="space-y-3 max-w-full">
-            {beforeGrillEval?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {beforeGrillEval}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-            <GrillEvaluationCard
-              score={grillEvalData.score}
-              scoreLabel={grillEvalData.scoreLabel}
-              feedback={grillEvalData.feedback}
-              questions={grillEvalData.questions}
-            />
-            {afterGrillEval?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {afterGrillEval}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : handoffMatch ? (
-          /* Message with a handoff block — strip the JSON, show only surrounding text */
-          <div className={aiBubbleClass}>
-            <div className="prose max-w-none">
-              <ReactMarkdown
-                remarkPlugins={REMARK_PLUGINS}
-                rehypePlugins={REHYPE_PLUGINS}
-                components={markdownComponents}
-              >
-                {[beforeHandoff?.trim(), afterHandoff?.trim()].filter(Boolean).join('\n\n')}
-              </ReactMarkdown>
-            </div>
-          </div>
-        ) : buildSummaryData ? (
-          /* Message with a build-summary block — split into before/summary/after */
-          <div className="space-y-3 max-w-full">
-            {beforeBuildSummary?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {beforeBuildSummary}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-            <BuildSummaryCard summary={buildSummaryData} />
-            {afterBuildSummary?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {afterBuildSummary}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : planContent ? (
-          /* Message with a plan block — split into before/plan/after */
-          <div className="space-y-3 max-w-full">
-            {beforePlan?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {beforePlan}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-            <TaskPlanCard
-              summary="Implementation Plan"
-              mode="plan"
-              isExecuting={isExecutingPlan}
-              planContent={planContent}
-              onBuildNow={handleBuildNow}
-              onOrchestratedBuild={handleOrchestratedBuild}
-              onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
-              onRefine={handleRefine}
-            />
-            {afterPlan?.trim() && (
-              <div className={aiBubbleClass}>
-                <div className="prose max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={REMARK_PLUGINS}
-                    rehypePlugins={REHYPE_PLUGINS}
-                    components={markdownComponents}
-                  >
-                    {afterPlan}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
-          </div>
+        {/* Structured card rendering (grill, plan, build summary, handoff) — extracted to reduce complexity */}
+        {hasStructuredContent ? (
+          <MessageCardRenderer
+            content={content}
+            isExecutingPlan={isExecutingPlan}
+            aiBubbleClass={aiBubbleClass}
+            remarkPlugins={REMARK_PLUGINS}
+            rehypePlugins={REHYPE_PLUGINS}
+            markdownComponents={markdownComponents}
+            suppressInlineGrillCard={suppressInlineGrillCard}
+            onBuildNow={handleBuildNow}
+            onRefine={handleRefine}
+            onOrchestratedBuild={handleOrchestratedBuild}
+            onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
+            onGrillKeepIterating={handleGrillKeepIterating}
+            onGrillCreatePlan={handleGrillCreatePlan}
+            onGrillCreateItems={handleGrillCreateItems}
+            submitGrillAnswers={submitGrillAnswers}
+            skipAllGrillQuestions={skipAllGrillQuestions}
+          />
         ) : (
+          /* Default: plain message bubble (no structured block detected) */
           <div
             className={`rounded shadow-sm ${
               isUser

@@ -11,7 +11,7 @@ import {
   turnUsageRepository,
   specialistRepository
 } from '../db/repositories'
-import { generalistService, gitWorktreeService, fileService } from '../services'
+import { chatAgentService, fileService } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { ConversationMode, ContextUsageLevel } from '../../shared/types'
 import { githubService } from '../services/github.service'
@@ -20,7 +20,11 @@ import { validateSender } from './validate-sender'
 
 const log = chatIpcLogger
 
-export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Conversation CRUD — create, delete, rename, reorder, list, get messages
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function registerConversationCrudIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.CHAT_GET_CONVERSATIONS,
     async (event, args: { workspaceId: string }) => {
@@ -74,23 +78,21 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
       )
       conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 
-      // Auto-activate specialists based on detected tech stack
+      // Auto-attach the workspace's Project Specialist (if one exists).
+      // After migration 66 there's exactly one per workspace, so we just
+      // upsert it into conversation_specialists to keep per-conversation
+      // activation tracking intact.
       try {
-        const workspace = workspaceRepository.findById(args.workspaceId)
-        if (workspace?.repoPath) {
-          const { detectTechStack } = await import('../services/tech-stack-detector.service')
-          const techResult = detectTechStack(workspace.repoPath)
-          for (const agentId of techResult.recommendedSpecialists) {
-            const specialist = specialistRepository.findByAgentId(agentId)
-            if (specialist) {
-              conversationSpecialistRepository.upsert(conversation.id, specialist.id, {
-                isActive: true
-              })
-            }
-          }
+        const projectSpecialist = specialistRepository.findByAgentId(
+          `workspace-specialist-${args.workspaceId}`
+        )
+        if (projectSpecialist) {
+          conversationSpecialistRepository.upsert(conversation.id, projectSpecialist.id, {
+            isActive: true
+          })
         }
       } catch (e) {
-        log.warn('Tech-stack auto-activation failed:', e)
+        log.warn('Project Specialist auto-attach failed:', e)
       }
 
       return conversation
@@ -130,12 +132,77 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
       const { conversationId } = args
 
       // Same cleanup as /close — stop agents and clear all data
-      generalistService.clearSession(conversationId)
+      chatAgentService.clearSession(conversationId)
 
       conversationRepository.delete(conversationId)
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_RENAME,
+    async (event, args: { conversationId: string; title: string }) => {
+      validateSender(event)
+
+      if (
+        !args ||
+        typeof args.conversationId !== 'string' ||
+        args.conversationId.trim().length === 0
+      ) {
+        throw new Error('Invalid conversation ID')
+      }
+      if (typeof args.title !== 'string' || args.title.trim().length === 0) {
+        throw new Error('Title cannot be empty')
+      }
+      if (args.title.length > 500) {
+        throw new Error('Title too long (max 500 chars)')
+      }
+
+      const updated = conversationRepository.updateTitle(args.conversationId, args.title.trim())
+      if (!updated) throw new Error('Conversation not found')
+      return updated
+    }
+  )
+
+  // ── Get file changes tracked for a conversation ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_GET_FILE_CHANGES,
+    async (event, args: { conversationId: string }) => {
+      validateSender(event)
+      if (!args?.conversationId) throw new Error('Invalid conversation ID')
+      return fileChangeRepository.findByConversation(args.conversationId)
+    }
+  )
+
+  // ── Reorder conversations ──
+  ipcMain.handle(
+    IPC_CHANNELS.CONVERSATION_REORDER,
+    async (event, args: { orderedIds: string[] }) => {
+      validateSender(event)
+      if (!args?.orderedIds || !Array.isArray(args.orderedIds)) {
+        throw new Error('Invalid orderedIds')
+      }
+      conversationRepository.reorderConversations(args.orderedIds)
+    }
+  )
+
+  // ── Resume at checkpoint — undo to a specific message point ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_RESUME_AT,
+    async (event, args: { conversationId: string; messageId: string }) => {
+      validateSender(event)
+      if (!args?.messageId || typeof args.messageId !== 'string') {
+        throw new Error('Invalid messageId')
+      }
+      await chatAgentService.resumeAt(args.messageId)
+    }
+  )
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Chat Mode — mode switching, persona, context usage
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function registerChatModeIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.CHAT_UPDATE_MODE,
     async (event, args: { conversationId: string; mode: ConversationMode }) => {
@@ -178,47 +245,121 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
       )
       if (!updated) throw new Error('Conversation not found')
 
-      await generalistService.switchPersona(args.personaSpecialistId, args.conversationId)
+      await chatAgentService.switchPersona(args.personaSpecialistId, args.conversationId)
       log.info(`Persona → "${args.personaSpecialistId ?? 'Da Vinci'}" for ${args.conversationId}`)
       return updated
     }
   )
 
+  // ── Context usage: return token consumption for a conversation ──
+  // Strategy: SDK-first (accurate, live) → DB fallback (historical/idle)
   ipcMain.handle(
-    IPC_CHANNELS.CHAT_RENAME,
-    async (event, args: { conversationId: string; title: string }) => {
-      validateSender(event)
-
-      if (
-        !args ||
-        typeof args.conversationId !== 'string' ||
-        args.conversationId.trim().length === 0
-      ) {
-        throw new Error('Invalid conversation ID')
-      }
-      if (typeof args.title !== 'string' || args.title.trim().length === 0) {
-        throw new Error('Title cannot be empty')
-      }
-      if (args.title.length > 500) {
-        throw new Error('Title too long (max 500 chars)')
-      }
-
-      const updated = conversationRepository.updateTitle(args.conversationId, args.title.trim())
-      if (!updated) throw new Error('Conversation not found')
-      return updated
-    }
-  )
-
-  // ── Get file changes tracked for a conversation ──
-  ipcMain.handle(
-    IPC_CHANNELS.CHAT_GET_FILE_CHANGES,
+    IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE,
     async (event, args: { conversationId: string }) => {
       validateSender(event)
       if (!args?.conversationId) throw new Error('Invalid conversation ID')
-      return fileChangeRepository.findByConversation(args.conversationId)
+
+      // ── Strategy 1: Use SDK native context usage (accurate, live) ──
+      const activeQuery = chatAgentService.getActiveQuery()
+      const currentConvId = chatAgentService.getCurrentConversationId()
+
+      if (activeQuery && currentConvId === args.conversationId) {
+        try {
+          const sdkUsage = await activeQuery.getContextUsage()
+          if (sdkUsage && typeof sdkUsage === 'object' && 'totalTokens' in sdkUsage) {
+            const sdk = sdkUsage as {
+              totalTokens: number
+              maxTokens: number
+              percentage?: number
+              model?: string
+              categories?: { name: string; tokens: number; color: string }[]
+            }
+            const percentage = sdk.percentage ?? Math.round((sdk.totalTokens / sdk.maxTokens) * 100)
+            // Quality window scales with context window: 50% of max, capped at 500K
+            // For 1M context: 500K quality window. For 200K context: 100K quality window.
+            const effectiveQualityWindow = Math.min(Math.round(sdk.maxTokens * 0.5), 500_000)
+            const qualityPercentage = Math.round((sdk.totalTokens / effectiveQualityWindow) * 100)
+            const level: ContextUsageLevel =
+              qualityPercentage > 80
+                ? 'critical'
+                : qualityPercentage > 60
+                  ? 'red'
+                  : qualityPercentage > 40
+                    ? 'yellow'
+                    : 'green'
+            const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
+              qualityPercentage <= 40
+                ? 'excellent'
+                : qualityPercentage <= 60
+                  ? 'good'
+                  : qualityPercentage <= 80
+                    ? 'moderate'
+                    : 'low'
+
+            return {
+              conversationId: args.conversationId,
+              inputTokens: sdk.totalTokens,
+              contextWindowSize: sdk.maxTokens,
+              percentage,
+              level,
+              qualityLevel,
+              categories: sdk.categories,
+              model: sdk.model,
+              source: 'sdk' as const
+            }
+          }
+        } catch (err) {
+          log.warn('SDK getContextUsage failed, falling back to DB:', err)
+          // Fall through to DB-based calculation
+        }
+      }
+
+      // ── Strategy 2: DB fallback (historical/idle conversations) ──
+      const lastTurn = turnUsageRepository.getLastTurn(args.conversationId)
+      const inputTokens =
+        (lastTurn?.inputTokens ?? 0) +
+        (lastTurn?.cacheReadTokens ?? 0) +
+        (lastTurn?.cacheCreationTokens ?? 0)
+      const contextWindowSize = 1_000_000
+      // Quality window scales with context window: 50% of max, capped at 500K
+      const effectiveQualityWindow = Math.min(Math.round(contextWindowSize * 0.5), 500_000)
+      const percentage = Math.round((inputTokens / contextWindowSize) * 100)
+      const qualityPercentage = Math.round((inputTokens / effectiveQualityWindow) * 100)
+      const level: ContextUsageLevel =
+        qualityPercentage > 80
+          ? 'critical'
+          : qualityPercentage > 60
+            ? 'red'
+            : qualityPercentage > 40
+              ? 'yellow'
+              : 'green'
+      const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
+        qualityPercentage <= 40
+          ? 'excellent'
+          : qualityPercentage <= 60
+            ? 'good'
+            : qualityPercentage <= 80
+              ? 'moderate'
+              : 'low'
+
+      return {
+        conversationId: args.conversationId,
+        inputTokens,
+        contextWindowSize,
+        percentage,
+        level,
+        qualityLevel,
+        source: 'db' as const
+      }
     }
   )
+}
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Chat Completion & Images — close, complete, clipboard images, image reading
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function registerChatCompletionIpc(): void {
   // ── /close: delete conversation and all associated data ──
   ipcMain.handle(IPC_CHANNELS.CHAT_CLOSE, async (event, args: { conversationId: string }) => {
     validateSender(event)
@@ -227,17 +368,7 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
     const { conversationId } = args
 
     // Stop running agents for this conversation
-    generalistService.clearSession(conversationId)
-
-    // Clean up worktrees for this conversation
-    const workspacePath = generalistService.getWorkspacePath()
-    if (workspacePath) {
-      try {
-        await gitWorktreeService.pruneAll(workspacePath)
-      } catch (error) {
-        log.warn('Failed to prune worktrees on close:', error)
-      }
-    }
+    chatAgentService.clearSession(conversationId)
 
     // Clean up branches (local + remote if PR was merged)
     try {
@@ -303,21 +434,10 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
 
       const git = simpleGit(workspace.repoPath)
 
-      // 1b. Merge any remaining active worktrees before committing
+      // Post-migration-66: no worktrees to merge (specialist-pool deleted).
+      // Direct git flow commits against the workspace repo.
       try {
-        const mergeResult = await gitWorktreeService.mergeAll(conversationId)
-        if (mergeResult.conflicted) {
-          log.warn(
-            `Merge conflict during /complete for agent ${mergeResult.conflicted.agentId}:`,
-            mergeResult.conflicted.files
-          )
-          throw new Error(
-            `Merge conflict from agent "${mergeResult.conflicted.agentId}" on files: ${mergeResult.conflicted.files.join(', ')}. Resolve conflicts before completing.`
-          )
-        }
-        if (mergeResult.merged.length > 0) {
-          log.info(`Merged ${mergeResult.merged.length} worktrees during /complete`)
-        }
+        log.debug(`No worktrees to merge for conversation ${conversationId}`)
       } catch (error) {
         if ((error as Error).message.includes('Merge conflict')) {
           throw error
@@ -407,7 +527,7 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
         }
 
         // 8. Cleanup: stop agents, clear DB data, delete conversation
-        generalistService.clearSession(conversationId)
+        chatAgentService.clearSession(conversationId)
         fileChangeRepository.clearByConversation(conversationId)
         conversationRepository.delete(conversationId)
 
@@ -477,134 +597,14 @@ export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
     const { base64, mimeType } = fileService.readImageAsBase64(resolved)
     return `data:${mimeType};base64,${base64}`
   })
+}
 
-  // ── Context usage: return token consumption for a conversation ──
-  // Strategy: SDK-first (accurate, live) → DB fallback (historical/idle)
-  ipcMain.handle(
-    IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE,
-    async (event, args: { conversationId: string }) => {
-      validateSender(event)
-      if (!args?.conversationId) throw new Error('Invalid conversation ID')
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Main entry point — orchestrates all chat lifecycle IPC registrations
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-      // ── Strategy 1: Use SDK native context usage (accurate, live) ──
-      const activeQuery = generalistService.getActiveQuery()
-      const currentConvId = generalistService.getCurrentConversationId()
-
-      if (activeQuery && currentConvId === args.conversationId) {
-        try {
-          const sdkUsage = await activeQuery.getContextUsage()
-          if (sdkUsage && typeof sdkUsage === 'object' && 'totalTokens' in sdkUsage) {
-            const sdk = sdkUsage as {
-              totalTokens: number
-              maxTokens: number
-              percentage?: number
-              model?: string
-              categories?: { name: string; tokens: number; color: string }[]
-            }
-            const percentage =
-              sdk.percentage ?? Math.round((sdk.totalTokens / sdk.maxTokens) * 100)
-            // Quality window scales with context window: 50% of max, capped at 500K
-            // For 1M context: 500K quality window. For 200K context: 100K quality window.
-            const effectiveQualityWindow = Math.min(Math.round(sdk.maxTokens * 0.5), 500_000)
-            const qualityPercentage = Math.round(
-              (sdk.totalTokens / effectiveQualityWindow) * 100
-            )
-            const level: ContextUsageLevel =
-              qualityPercentage > 80
-                ? 'critical'
-                : qualityPercentage > 60
-                  ? 'red'
-                  : qualityPercentage > 40
-                    ? 'yellow'
-                    : 'green'
-            const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
-              qualityPercentage <= 40
-                ? 'excellent'
-                : qualityPercentage <= 60
-                  ? 'good'
-                  : qualityPercentage <= 80
-                    ? 'moderate'
-                    : 'low'
-
-            return {
-              conversationId: args.conversationId,
-              inputTokens: sdk.totalTokens,
-              contextWindowSize: sdk.maxTokens,
-              percentage,
-              level,
-              qualityLevel,
-              categories: sdk.categories,
-              model: sdk.model,
-              source: 'sdk' as const
-            }
-          }
-        } catch (err) {
-          log.warn('SDK getContextUsage failed, falling back to DB:', err)
-          // Fall through to DB-based calculation
-        }
-      }
-
-      // ── Strategy 2: DB fallback (historical/idle conversations) ──
-      const lastTurn = turnUsageRepository.getLastTurn(args.conversationId)
-      const inputTokens =
-        (lastTurn?.inputTokens ?? 0) +
-        (lastTurn?.cacheReadTokens ?? 0) +
-        (lastTurn?.cacheCreationTokens ?? 0)
-      const contextWindowSize = 1_000_000
-      // Quality window scales with context window: 50% of max, capped at 500K
-      const effectiveQualityWindow = Math.min(Math.round(contextWindowSize * 0.5), 500_000)
-      const percentage = Math.round((inputTokens / contextWindowSize) * 100)
-      const qualityPercentage = Math.round((inputTokens / effectiveQualityWindow) * 100)
-      const level: ContextUsageLevel =
-        qualityPercentage > 80
-          ? 'critical'
-          : qualityPercentage > 60
-            ? 'red'
-            : qualityPercentage > 40
-              ? 'yellow'
-              : 'green'
-      const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
-        qualityPercentage <= 40
-          ? 'excellent'
-          : qualityPercentage <= 60
-            ? 'good'
-            : qualityPercentage <= 80
-              ? 'moderate'
-              : 'low'
-
-      return {
-        conversationId: args.conversationId,
-        inputTokens,
-        contextWindowSize,
-        percentage,
-        level,
-        qualityLevel,
-        source: 'db' as const
-      }
-    }
-  )
-
-  // ── Reorder conversations ──
-  ipcMain.handle(
-    IPC_CHANNELS.CONVERSATION_REORDER,
-    async (event, args: { orderedIds: string[] }) => {
-      validateSender(event)
-      if (!args?.orderedIds || !Array.isArray(args.orderedIds)) {
-        throw new Error('Invalid orderedIds')
-      }
-      conversationRepository.reorderConversations(args.orderedIds)
-    }
-  )
-
-  // ── Resume at checkpoint — undo to a specific message point ──
-  ipcMain.handle(
-    IPC_CHANNELS.CHAT_RESUME_AT,
-    async (event, args: { conversationId: string; messageId: string }) => {
-      validateSender(event)
-      if (!args?.messageId || typeof args.messageId !== 'string') {
-        throw new Error('Invalid messageId')
-      }
-      await generalistService.resumeAt(args.messageId)
-    }
-  )
+export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
+  registerConversationCrudIpc()
+  registerChatModeIpc()
+  registerChatCompletionIpc()
 }

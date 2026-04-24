@@ -322,14 +322,6 @@ async function main(): Promise<void> {
       await sleep(400)
     }
 
-    // ── 8. Pixel Office Panel ──────────────────────────────────
-    if (await clickLabel('Show pixel office')) {
-      await sleep(800)
-      await snap('07-pixel-office')
-      await clickLabel('Hide pixel office')
-      await sleep(400)
-    }
-
     // ── 9. Workspace Settings — all tabs ───────────────────────
     if (hasWorkspace && (await clickLabel('Workspace Settings'))) {
       await sleep(800)
@@ -367,8 +359,6 @@ async function main(): Promise<void> {
 
     // ── 11. Full layout with all panels ────────────────────────
     await clickLabel('Show agent panel')
-    await sleep(300)
-    await clickLabel('Show pixel office')
     await sleep(800)
     await snap('17-full-layout-all-panels')
 

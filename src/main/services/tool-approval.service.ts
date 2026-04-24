@@ -101,8 +101,12 @@ export class ToolApprovalService {
         taskId
       })
 
-      // Send to renderer via focused window
-      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      // Send to renderer via focused window. Guard against BrowserWindow being
+      // undefined in non-Electron environments (e.g., unit tests under tsx/node).
+      const win =
+        typeof BrowserWindow !== 'undefined'
+          ? (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])
+          : undefined
       if (win) {
         win.webContents.send(IPC_CHANNELS.TOOL_APPROVAL_REQUEST, {
           requestId,
@@ -174,7 +178,11 @@ export class ToolApprovalService {
         taskId
       })
 
-      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      // Same guard as requestApproval — tolerate non-Electron environments.
+      const win =
+        typeof BrowserWindow !== 'undefined'
+          ? (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])
+          : undefined
       if (win) {
         win.webContents.send(IPC_CHANNELS.TOOL_APPROVAL_REQUEST, {
           requestId,

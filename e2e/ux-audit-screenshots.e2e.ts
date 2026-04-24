@@ -232,14 +232,6 @@ test.describe('UX Audit Screenshots', () => {
       await page.waitForTimeout(400)
     }
 
-    // ── 8. Pixel Office Panel ────────────────────────────────────
-    if (await clickLabel(page, 'Show pixel office')) {
-      await page.waitForTimeout(800)
-      await snap(page, '07-pixel-office')
-      await clickLabel(page, 'Hide pixel office')
-      await page.waitForTimeout(400)
-    }
-
     // ── 9. Workspace Settings — all tabs ─────────────────────────
     if (hasWorkspace && (await clickLabel(page, 'Workspace Settings'))) {
       await page.waitForTimeout(800)
@@ -283,8 +275,6 @@ test.describe('UX Audit Screenshots', () => {
 
     // ── 11. Full layout with all panels open ─────────────────────
     await clickLabel(page, 'Show agent panel')
-    await page.waitForTimeout(300)
-    await clickLabel(page, 'Show pixel office')
     await page.waitForTimeout(800)
     await snap(page, '17-full-layout-all-panels')
 

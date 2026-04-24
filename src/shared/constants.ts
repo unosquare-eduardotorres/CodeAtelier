@@ -1,4 +1,4 @@
-import type { GrillTrackId, GrillTrack } from './types'
+import type { AgentRole, GrillTrackId, GrillTrack, ModelAction } from './types'
 
 export const IPC_CHANNELS = {
   // Workspace
@@ -23,22 +23,17 @@ export const IPC_CHANNELS = {
   CHAT_RENAME: 'chat:renameConversation',
   CHAT_STOP: 'chat:stop',
   CHAT_COMPACT: 'chat:compact',
-  CHAT_HANDOFF: 'chat:handoff',
   CHAT_GRILL_COMPLETE: 'chat:grillComplete',
   CHAT_GRILL_QUESTION: 'chat:grillQuestion',
   CHAT_GRILL_EVALUATION: 'chat:grillEvaluation',
   CHAT_ASK_QUESTION: 'chat:askQuestion',
   CHAT_PLAN: 'chat:plan',
-  CHAT_EXECUTE_PLAN: 'chat:executePlan',
   CHAT_TASK_PROGRESS: 'chat:taskProgress',
   CHAT_BUILD_TASKS: 'chat:buildTasks',
   CHAT_COMPLETE: 'chat:complete',
   CHAT_CLOSE: 'chat:close',
   CHAT_GET_FILE_CHANGES: 'chat:getFileChanges',
   CHAT_INVESTIGATION_REPORT: 'chat:investigationReport',
-  CHAT_EXECUTE_INVESTIGATION_FIX: 'chat:executeInvestigationFix',
-  /** Direct plan-to-build: skip generalist round-trip when user clicks "Build This" on inline plan */
-  CHAT_BUILD_FROM_PLAN: 'chat:buildFromPlan',
   /** Session recovery: stale session auto-heal progress events */
   CHAT_SESSION_RECOVERY: 'chat:sessionRecovery',
   /** State machine transitions — renderer mirrors backend conversation state */
@@ -69,15 +64,8 @@ export const IPC_CHANNELS = {
   SPECIALIST_ASSIGN_SKILL: 'specialist:assignSkill',
   SPECIALIST_REMOVE_SKILL: 'specialist:removeSkill',
   SPECIALIST_REORDER: 'specialist:reorder',
-  SPECIALIST_GET_CONVERSATION_SPECIALISTS: 'specialist:getConversationSpecialists',
-  SPECIALIST_ADD_CONVERSATION_SPECIALIST: 'specialist:addConversationSpecialist',
-  SPECIALIST_REMOVE_CONVERSATION_SPECIALIST: 'specialist:removeConversationSpecialist',
-  SPECIALIST_REPLACE_CONVERSATION_SPECIALISTS: 'specialist:replaceConversationSpecialists',
-  SPECIALIST_GET_CONVERSATION_HISTORY: 'specialist:getConversationHistory',
-  SPECIALIST_ADD_CONVERSATION_HISTORY_ENTRY: 'specialist:addConversationHistoryEntry',
-  SPECIALIST_CLEAR_CONVERSATION_HISTORY: 'specialist:clearConversationHistory',
 
-  // Conversation Specialist Activation (with skill gating)
+  // Conversation Specialist Activation (with skill gating) — single row per conversation post-migration 66
   CONV_SPECIALIST_LIST: 'convSpecialist:list',
   CONV_SPECIALIST_UPSERT: 'convSpecialist:upsert',
   CONV_SPECIALIST_REMOVE: 'convSpecialist:remove',
@@ -88,14 +76,18 @@ export const IPC_CHANNELS = {
   APP_PREFERENCE_GET_ALL: 'appPreference:getAll',
   APP_PREFERENCE_SET: 'appPreference:set',
 
-  // Specialist Marketplace
-  SPECIALIST_DEPLOY: 'specialist:deploy',
-  SPECIALIST_UNDEPLOY: 'specialist:undeploy',
-  SPECIALIST_UPDATE_CONFIG: 'specialist:updateConfig',
-  SPECIALIST_GET_MARKETPLACE: 'specialist:getMarketplace',
-
-  // Cache metrics (Strategy 15)
-  SPECIALIST_CACHE_METRICS: 'specialist:getCacheMetrics',
+  // Project Specialist (Phase 2 of the Project Specialist refactor)
+  PROJECT_SPECIALIST_GET: 'project-specialist:get',
+  PROJECT_SPECIALIST_BUILD: 'project-specialist:build',
+  PROJECT_SPECIALIST_REBUILD_PROMPT: 'project-specialist:rebuild-prompt',
+  PROJECT_SPECIALIST_REBUILD_SKILLS: 'project-specialist:rebuild-skills',
+  PROJECT_SPECIALIST_UPDATE_PROMPT: 'project-specialist:update-prompt',
+  PROJECT_SPECIALIST_TOGGLE_SKILL: 'project-specialist:toggle-skill',
+  PROJECT_SPECIALIST_ATTACH_SKILL: 'project-specialist:attach-skill',
+  PROJECT_SPECIALIST_DETACH_SKILL: 'project-specialist:detach-skill',
+  PROJECT_SPECIALIST_TOGGLE_MCP: 'project-specialist:toggle-mcp',
+  PROJECT_SPECIALIST_GET_DRIFT: 'project-specialist:get-drift',
+  PROJECT_SPECIALIST_BUILD_PROGRESS: 'project-specialist:build-progress',
 
   // Skills
   SKILL_LIST: 'skill:list',
@@ -135,20 +127,6 @@ export const IPC_CHANNELS = {
 
   // Deploy all (inactive) to workspace
   WORKSPACE_DEPLOY_ALL: 'workspace:deployAll',
-
-  // Pixel Office
-  PIXEL_OFFICE_POPOUT: 'pixelOffice:popout',
-  PIXEL_OFFICE_SAVE_LAYOUT: 'pixelOffice:saveLayout',
-  PIXEL_OFFICE_LOAD_LAYOUT: 'pixelOffice:loadLayout',
-  PIXEL_OFFICE_EXPORT_LAYOUT: 'pixelOffice:exportLayout',
-  PIXEL_OFFICE_IMPORT_LAYOUT: 'pixelOffice:importLayout',
-
-  // Worktrees
-  WORKTREE_LIST: 'worktree:list',
-  WORKTREE_GET_DIFF: 'worktree:getDiff',
-  WORKTREE_MERGE: 'worktree:merge',
-  WORKTREE_MERGE_ALL: 'worktree:mergeAll',
-  WORKTREE_ABANDON: 'worktree:abandon',
 
   // Agent Task Chunks (for Agent Monitor live output)
   AGENT_TASK_CHUNK: 'agent:taskChunk',
@@ -281,12 +259,8 @@ export const IPC_CHANNELS = {
   EVENTS_GET_RECENT: 'events:getRecent',
   EVENTS_GET_BY_CONVERSATION: 'events:getByConversation',
 
-  // Gate results
-  GATE_RESULTS_GET: 'gate:getResults',
-
   // Agent events (new from audit)
   AGENT_ABANDONMENT_DETECTED: 'agent:abandonmentDetected',
-  AGENT_GATE_FAILURE: 'agent:gateFailure',
 
   // Tool approval
   TOOL_APPROVAL_REQUEST: 'tool:approvalRequest',
@@ -330,10 +304,6 @@ export const IPC_CHANNELS = {
   CODE_GRAPH_HAS_INDEX: 'codeGraph:hasIndex',
   CODE_GRAPH_PROGRESS: 'codeGraph:progress',
 
-  // Scheduling Strategy
-  SCHEDULING_GET_WEIGHTS: 'scheduling:getWeights',
-  SCHEDULING_SET_WEIGHTS: 'scheduling:setWeights',
-
   // Conversation reordering
   CONVERSATION_REORDER: 'conversation:reorder',
 
@@ -362,19 +332,8 @@ export const IPC_CHANNELS = {
   ELICITATION_RESPONSE: 'elicitation:response',
 
   // SDK Control — Query instance methods
-  SDK_GET_CONTEXT_USAGE: 'sdk:getContextUsage',
   SDK_STOP_TASK: 'sdk:stopTask',
-  SDK_INTERRUPT: 'sdk:interrupt',
-  SDK_ACCOUNT_INFO: 'sdk:accountInfo',
   SDK_SUPPORTED_MODELS: 'sdk:supportedModels',
-  SDK_MCP_SERVER_STATUS: 'sdk:mcpServerStatus',
-  SDK_SET_MODEL: 'sdk:setModel',
-  SDK_SET_PERMISSION_MODE: 'sdk:setPermissionMode',
-  SDK_APPLY_FLAG_SETTINGS: 'sdk:applyFlagSettings',
-  SDK_SET_MCP_SERVERS: 'sdk:setMcpServers',
-  SDK_REWIND_FILES: 'sdk:rewindFiles',
-  SDK_RECONNECT_MCP: 'sdk:reconnectMcp',
-  SDK_SUPPORTED_AGENTS: 'sdk:supportedAgents',
 
   // SDK Subagent inspection (0.2.96+)
   SDK_LIST_SUBAGENTS: 'sdk:listSubagents',
@@ -382,12 +341,6 @@ export const IPC_CHANNELS = {
 
   // SDK Session — session mutation methods
   SDK_FORK_SESSION: 'sdk:forkSession',
-
-  // SDK Query — close + seedReadState
-  SDK_CLOSE_QUERY: 'sdk:closeQuery',
-  SDK_SEED_READ_STATE: 'sdk:seedReadState',
-  // SDK MCP lifecycle
-  SDK_TOGGLE_MCP_SERVER: 'sdk:toggleMcpServer',
 
   // SDK Elicitation (enriched — via elicitation.service)
   SDK_ELICITATION_REQUEST: 'sdk:elicitationRequest',
@@ -402,53 +355,38 @@ export const IPC_CHANNELS = {
   SESSION_FORK: 'session:fork',
 
   // Chat resume at checkpoint
-  CHAT_RESUME_AT: 'chat:resumeAt'
-} as const
+  CHAT_RESUME_AT: 'chat:resumeAt',
 
-export const CONVERSATION_MODES = {
-  plan: {
-    icon: '📋',
-    label: 'Plan',
-    color: '#8B5CF6',
-    description: 'Analyze code, brainstorm ideas, create plans (read-only)'
-  },
-  build: {
-    icon: '🔨',
-    label: 'Build',
-    color: '#F59E0B',
-    description: 'Make changes, write code, run commands (full access)'
-  }
+  // Bug Tracker
+  BUG_REPORT: 'bug:report',
+  BUG_LIST: 'bug:list',
+  BUG_GET: 'bug:get',
+  BUG_RESOLVE: 'bug:resolve',
+  BUG_UNRESOLVE: 'bug:unresolve',
+  BUG_DELETE: 'bug:delete',
+  BUG_UPDATE_NOTE: 'bug:updateNote',
+  BUG_COUNT: 'bug:count',
+  BUG_NEW: 'bug:new'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
 export const ACTIVATION_MODEL_ID = 'claude-haiku-4-5-20251001' as const
 
-/** Fast model used for memory feed summarization tasks (structured extraction — Haiku-tier) */
-export const MEMORY_FEED_MODEL_ID = 'claude-haiku-4-5-20251001' as const
-
-/** Model used for dream consolidation cycles (background summarization — Haiku-tier) */
-export const DREAM_MODEL_ID = 'claude-haiku-4-5-20251001' as const
-
-/** Model IDs per complexity tier — used for specialist routing */
-export const MODEL_TIER_IDS = {
-  haiku: 'claude-haiku-4-5-20251001',
-  sonnet: 'claude-sonnet-4-6',
-  opus: 'claude-opus-4-6'
-} as const
-
-/** Complexity score thresholds for tier assignment */
-export const COMPLEXITY_THRESHOLDS = {
-  simple: { min: 0, max: 4 },
-  moderate: { min: 5, max: 8 },
-  complex: { min: 9, max: 14 }
-} as const
+/**
+ * The well-known agent ID for the **Da Vinci** (default Specialist) agent.
+ *
+ * The string value is still `'generalist'` because that is the historical DB
+ * value (`specialists.agent_id`, `messages.role`). A future migration
+ * (Layer 2) will rewrite rows to `'da-vinci'` and then this constant will be
+ * updated to the new wire value.
+ */
+export const DA_VINCI_AGENT_ID = 'generalist' as const
 
 /**
- * @deprecated Use database-backed agent IDs instead.
- * Kept temporarily for backward compatibility in generalist services.
+ * @deprecated Use DA_VINCI_AGENT_ID or database-backed agent IDs instead.
  */
 export const AGENT_IDS = {
-  GENERALIST: 'generalist'
+  DA_VINCI: DA_VINCI_AGENT_ID
 } as const
 
 /** Default cost preference for new workspaces */
@@ -469,8 +407,8 @@ export const AVAILABLE_MODELS = [
     description: 'Balanced performance'
   },
   {
-    id: 'claude-opus-4-6',
-    label: 'Opus 4.6',
+    id: 'claude-opus-4-7',
+    label: 'Opus 4.7',
     tier: 'opus' as const,
     description: 'Most capable'
   }
@@ -478,10 +416,15 @@ export const AVAILABLE_MODELS = [
 
 /** Default model for each configurable action */
 export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string> = {
-  generalist: 'claude-sonnet-4-6',
+  generalist: 'claude-opus-4-7',
+  'generalist:plan': 'claude-opus-4-7',
+  'generalist:build': 'claude-sonnet-4-6',
+  'project-specialist': 'claude-opus-4-7',
+  'project-specialist:plan': 'claude-opus-4-7',
+  'project-specialist:build': 'claude-sonnet-4-6',
   'specialist:simple': 'claude-haiku-4-5-20251001',
   'specialist:moderate': 'claude-sonnet-4-6',
-  'specialist:complex': 'claude-opus-4-6',
+  'specialist:complex': 'claude-opus-4-7',
   dream: 'claude-haiku-4-5-20251001',
   memoryFeed: 'claude-haiku-4-5-20251001',
   activation: 'claude-haiku-4-5-20251001',
@@ -502,6 +445,36 @@ export const MODEL_ACTIONS_META: Record<
     label: 'Generalist',
     description: 'Main chat agent that handles conversations',
     icon: '💬',
+    section: 'agent'
+  },
+  'generalist:plan': {
+    label: 'Generalist (Plan Mode)',
+    description: 'Model for thinking, planning, and general Q&A',
+    icon: '🧠',
+    section: 'agent'
+  },
+  'generalist:build': {
+    label: 'Generalist (Build Mode)',
+    description: 'Model for code writing and execution orchestration',
+    icon: '🔨',
+    section: 'agent'
+  },
+  'project-specialist': {
+    label: 'Project Specialist',
+    description: 'Per-workspace specialist tailored to the project\u2019s stack',
+    icon: '🔧',
+    section: 'agent'
+  },
+  'project-specialist:plan': {
+    label: 'Project Specialist (Plan Mode)',
+    description: 'Per-workspace specialist — planning & analysis',
+    icon: '🧠',
+    section: 'agent'
+  },
+  'project-specialist:build': {
+    label: 'Project Specialist (Build Mode)',
+    description: 'Per-workspace specialist — code writing & execution',
+    icon: '🔨',
     section: 'agent'
   },
   'specialist:simple': {
@@ -557,7 +530,7 @@ export const MODEL_ACTIONS_META: Record<
 export const THINKING_BUDGETS = {
   haiku: '5000',
   sonnet: '10000',
-  opus: '31999'
+  opus: '' // empty = adaptive-only (Opus 4.7 removed budget_tokens — 400 error if passed)
 } as const
 
 /**
@@ -567,7 +540,7 @@ export const THINKING_BUDGETS = {
 export const COMPLEXITY_TO_EFFORT = {
   simple: 'low',
   moderate: 'medium',
-  complex: 'high'
+  complex: 'max' // Opus 4.7 recommends max effort for complex coding tasks
 } as const satisfies Record<string, 'low' | 'medium' | 'high' | 'max'>
 
 /**
@@ -580,37 +553,30 @@ export const SPECIALIST_BUDGET_CAPS = {
   complex: 2.0
 } as const satisfies Record<string, number>
 
-/** Generalist per-turn budget — higher because coordinator handles full conversations */
-export const GENERALIST_BUDGET_CAP = 1.5
+/** Chat agent per-turn budget — higher because it handles full conversations (Da Vinci or Project Specialist). */
+export const CHAT_AGENT_BUDGET_CAP = 1.5
+
+/**
+ * Maps an `AgentRole` + mode into the canonical `ModelAction` key used by
+ * `DEFAULT_MODEL_CONFIG` / `workspace.settings.modelOverrides`.
+ *
+ * Da Vinci historically uses `'generalist:*'` keys (stable DB contract); the
+ * function centralizes that mapping so adapters can think in AgentRole terms
+ * without knowing about the legacy labels. Project Specialists use the
+ * `'project-specialist:*'` keys that were added for the Phase 2 refactor.
+ */
+export function getModelActionForRole(
+  role: AgentRole,
+  mode: 'plan' | 'build'
+): ModelAction {
+  if (role === 'da-vinci') {
+    return mode === 'build' ? 'generalist:build' : 'generalist:plan'
+  }
+  return mode === 'build' ? 'project-specialist:build' : 'project-specialist:plan'
+}
 
 /** Maximum skill file size in bytes (500 KB) */
 export const SKILL_MAX_FILE_SIZE_BYTES = 512000 as const // 500 * 1024
-
-/**
- * Model pricing table — $/1M tokens for input and output.
- * Used for estimated cost calculations in the cost tracker service.
- * Based on Claude pricing as of March 2026.
- */
-export const MODEL_PRICING_TABLE = {
-  // Current models
-  'claude-haiku-4-5-20251001': { inputPer1M: 1.0, outputPer1M: 5.0 },
-  'claude-sonnet-4-6': { inputPer1M: 3.0, outputPer1M: 15.0 },
-  'claude-opus-4-6': { inputPer1M: 5.0, outputPer1M: 25.0 },
-  // Legacy (kept for historical cost calculation on older sessions)
-  'claude-sonnet-4-20250514': { inputPer1M: 3.0, outputPer1M: 15.0 },
-  'claude-opus-4-20250514': { inputPer1M: 15.0, outputPer1M: 75.0 },
-  'claude-3-5-sonnet-20241022': { inputPer1M: 3.0, outputPer1M: 15.0 },
-  'claude-3-5-haiku-20241022': { inputPer1M: 0.8, outputPer1M: 4.0 }
-} as const
-
-/**
- * Model escalation chain for failure-based retries.
- * Maps current tier → escalated tier. 'opus' has no further escalation.
- */
-export const MODEL_ESCALATION_CHAIN = {
-  haiku: 'sonnet',
-  sonnet: 'opus'
-} as const
 
 // ── Grill Tracks ──
 

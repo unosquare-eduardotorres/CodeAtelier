@@ -827,11 +827,9 @@ ${skillRows}`)
     const { agentSyncService } = await import('./agent-sync.service')
     agentSyncService.autoSyncNewEntries(workspacePath)
 
-    // Actually activate all inactive specialists
-    const { specialistDeployService } = await import('./specialist-deploy.service')
-    specialistDeployService.deployAll(workspacePath)
-
-    // Count how many were activated
+    // Post-migration-66: specialist deployment to YAML files is no longer a thing —
+    // every workspace has a single Project Specialist managed via SpecialistBuilder.
+    // Return a count of the workspace's specialists purely for UI feedback.
     const { specialistRepository: specRepo } =
       await import('../db/repositories/specialist.repository')
     const allSpecialists = specRepo.findAll()

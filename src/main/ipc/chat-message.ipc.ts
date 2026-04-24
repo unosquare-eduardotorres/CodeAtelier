@@ -1,8 +1,8 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { extname } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { generalistStreamService } from '../services/generalist-stream.service'
-import { specialistPoolService } from '../services/specialist-pool.service'
+import { chatStreamService } from '../services/chat-stream.service'
+
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 
@@ -73,7 +73,7 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
       // stream() returns a StreamHandle. We await it to get the handle (validates inputs,
       // starts streaming), but let the `done` promise run in the background — the renderer
       // receives progress via IPC events, not via this handler's return value.
-      const handle = await generalistStreamService.stream(conversationId, text, attachments)
+      const handle = await chatStreamService.stream(conversationId, text, attachments)
 
       // Fire-and-forget: let pipeline complete asynchronously.
       // Errors are surfaced to the renderer via CHAT_MESSAGE_CHUNK error events.
@@ -92,18 +92,13 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.CHAT_COMPACT, async (event, args?: { extractNuance?: boolean }) => {
     validateSender(event)
     const extractNuance = args?.extractNuance ?? false
-    await generalistStreamService.compact(extractNuance)
+    await chatStreamService.compact(extractNuance)
   })
 
   // ── Stop generation ──
   ipcMain.handle(IPC_CHANNELS.CHAT_STOP, async (event) => {
     validateSender(event)
-    await generalistStreamService.stop()
-    // Also stop any running specialist pool execution
-    try {
-      await specialistPoolService.stopAll()
-    } catch (error) {
-      log.warn('Failed to stop specialist pool:', error)
-    }
+    await chatStreamService.stop()
+    // Specialist pool removed in migration 66 — nothing else to stop.
   })
 }

@@ -1,6 +1,6 @@
 import log from 'electron-log/main'
 import type { BugCouncilPerspective, BugCouncilResult } from '../../shared/types'
-import { getDatabase } from '../db/index'
+import { bugCouncilRepository } from '../db/repositories/bug-council.repository'
 import { SDKExecutor } from './sdk-executor'
 import { modelConfigService } from './model-config.service'
 
@@ -393,10 +393,7 @@ export class BugCouncilService {
    */
   updateFinalAttemptResult(sessionId: string, succeeded: boolean): void {
     try {
-      const db = getDatabase()
-      db.prepare(
-        `UPDATE bug_council_sessions SET final_attempt_succeeded = ?, completed_at = datetime('now') WHERE id = ?`
-      ).run(succeeded ? 1 : 0, sessionId)
+      bugCouncilRepository.updateFinalAttemptResult(sessionId, succeeded)
     } catch (err) {
       councilLog.warn('Failed to update final attempt result:', err)
     }
@@ -407,11 +404,7 @@ export class BugCouncilService {
    */
   getSession(sessionId: string): BugCouncilResult | null {
     try {
-      const db = getDatabase()
-      const row = db.prepare('SELECT * FROM bug_council_sessions WHERE id = ?').get(sessionId) as
-        | BugCouncilSessionRow
-        | undefined
-      return row ? this.mapRow(row) : null
+      return bugCouncilRepository.findById(sessionId)
     } catch (err) {
       councilLog.warn('Failed to get council session:', err)
       return null
@@ -423,20 +416,14 @@ export class BugCouncilService {
    */
   listSessions(conversationId: string): BugCouncilResult[] {
     try {
-      const db = getDatabase()
-      const rows = db
-        .prepare(
-          'SELECT * FROM bug_council_sessions WHERE conversation_id = ? ORDER BY created_at DESC'
-        )
-        .all(conversationId) as BugCouncilSessionRow[]
-      return rows.map((r) => this.mapRow(r))
+      return bugCouncilRepository.findByConversation(conversationId)
     } catch (err) {
       councilLog.warn('Failed to list council sessions:', err)
       return []
     }
   }
 
-  // ── DB Helpers ──
+  // ── DB Helpers (delegate to bug-council.repository) ──
 
   private createSession(params: {
     taskId: string
@@ -445,84 +432,23 @@ export class BugCouncilService {
     failureHistory: string[]
     conversationId?: string
   }): string {
-    const db = getDatabase()
-    const row = db
-      .prepare(
-        `INSERT INTO bug_council_sessions (task_id, agent_id, task_description, failure_history_json, conversation_id)
-         VALUES (?, ?, ?, ?, ?)
-         RETURNING id`
-      )
-      .get(
-        params.taskId,
-        params.agentId,
-        params.taskDescription,
-        JSON.stringify(params.failureHistory),
-        params.conversationId ?? null
-      ) as { id: string }
-    return row.id
+    return bugCouncilRepository.createSession(params)
   }
 
   private updateSessionStatus(sessionId: string, status: string): void {
-    const db = getDatabase()
-    db.prepare('UPDATE bug_council_sessions SET status = ? WHERE id = ?').run(status, sessionId)
+    bugCouncilRepository.updateStatus(sessionId, status)
   }
 
   private updateSessionPerspectives(
     sessionId: string,
     perspectives: BugCouncilPerspective[]
   ): void {
-    const db = getDatabase()
-    db.prepare('UPDATE bug_council_sessions SET perspectives_json = ? WHERE id = ?').run(
-      JSON.stringify(perspectives),
-      sessionId
-    )
+    bugCouncilRepository.updatePerspectives(sessionId, perspectives)
   }
 
   private updateSessionComplete(sessionId: string, solution: string, riskAssessment: string): void {
-    const db = getDatabase()
-    db.prepare(
-      `UPDATE bug_council_sessions SET
-        synthesized_solution = ?,
-        risk_assessment = ?,
-        status = 'complete',
-        completed_at = datetime('now')
-       WHERE id = ?`
-    ).run(solution, riskAssessment, sessionId)
+    bugCouncilRepository.updateComplete(sessionId, solution, riskAssessment)
   }
-
-  private mapRow(row: BugCouncilSessionRow): BugCouncilResult {
-    return {
-      sessionId: row.id,
-      taskId: row.task_id,
-      agentId: row.agent_id,
-      taskDescription: row.task_description,
-      failureHistory: JSON.parse(row.failure_history_json || '[]'),
-      perspectives: JSON.parse(row.perspectives_json || '[]'),
-      synthesizedSolution: row.synthesized_solution || '',
-      riskAssessment: row.risk_assessment || '',
-      finalAttemptSucceeded:
-        row.final_attempt_succeeded === null ? null : row.final_attempt_succeeded === 1,
-      status: row.status as BugCouncilResult['status'],
-      createdAt: row.created_at,
-      completedAt: row.completed_at
-    }
-  }
-}
-
-interface BugCouncilSessionRow {
-  id: string
-  conversation_id: string | null
-  task_id: string
-  agent_id: string
-  task_description: string
-  failure_history_json: string
-  perspectives_json: string
-  synthesized_solution: string | null
-  risk_assessment: string | null
-  final_attempt_succeeded: number | null
-  status: string
-  created_at: string
-  completed_at: string | null
 }
 
 export const bugCouncilService = new BugCouncilService()

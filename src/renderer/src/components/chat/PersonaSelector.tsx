@@ -1,16 +1,10 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { ChevronDown, Check } from 'lucide-react'
 import { useSpecialistStore, useChatActions } from '@renderer/store'
-import { PixelSpriteAvatar } from '@renderer/components/common'
-import { getSpriteAssignment } from '@renderer/components/pixel-office/agentMapping'
 import type { Conversation, Specialist } from '../../../../shared/types'
 
 interface PersonaSelectorProps {
   conversation: Conversation
-}
-
-function getPersonaSprite(specialist: Specialist): string | null {
-  return specialist.pixelSpriteId ?? getSpriteAssignment(specialist.agentId).pixelSpriteId ?? null
 }
 
 export default function PersonaSelector({ conversation }: PersonaSelectorProps): React.JSX.Element {
@@ -68,8 +62,6 @@ export default function PersonaSelector({ conversation }: PersonaSelectorProps):
     void switchPersona(specialistId)
   }
 
-  const spriteId = currentPersona ? getPersonaSprite(currentPersona) : null
-
   return (
     <div className="relative" ref={dropdownRef}>
       {/* Trigger button */}
@@ -85,11 +77,7 @@ export default function PersonaSelector({ conversation }: PersonaSelectorProps):
           className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
           style={{ backgroundColor: `${currentPersona?.color ?? '#6366F1'}20` }}
         >
-          {spriteId ? (
-            <PixelSpriteAvatar spriteId={spriteId} size={20} />
-          ) : (
-            <span className="text-xs">{currentPersona?.icon ?? '🎨'}</span>
-          )}
+          <span className="text-xs">{currentPersona?.icon ?? '🎨'}</span>
         </div>
         <span className="text-xs font-medium text-text-primary max-w-[100px] truncate">
           {currentPersona?.alias ?? currentPersona?.displayName ?? 'Da Vinci'}
@@ -179,8 +167,6 @@ function DropdownItem({
   badge?: string
   onClick: () => void
 }): React.JSX.Element {
-  const spriteId = getPersonaSprite(specialist)
-
   return (
     <button
       onClick={onClick}
@@ -203,11 +189,7 @@ function DropdownItem({
         className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
         style={{ backgroundColor: `${specialist.color}20` }}
       >
-        {spriteId ? (
-          <PixelSpriteAvatar spriteId={spriteId} size={22} />
-        ) : (
-          <span className="text-sm">{specialist.icon}</span>
-        )}
+        <span className="text-sm">{specialist.icon}</span>
       </div>
 
       {/* Name + description */}

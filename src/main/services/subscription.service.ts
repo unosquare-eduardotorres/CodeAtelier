@@ -28,15 +28,22 @@ class SubscriptionService {
       plan: null,
       error: 'Claude CLI not installed'
     }
+    let sdkHealth: SubscriptionCheckResult['sdkHealth'] = {
+      sdkVersion: null,
+      modelsAvailable: [],
+      opus47Available: false,
+      error: 'CLI not installed'
+    }
 
     if (claudeCli.installed) {
-      ;[claudeAuth, claudeMax] = await Promise.all([
+      ;[claudeAuth, claudeMax, sdkHealth] = await Promise.all([
         this.checkClaudeAuth(),
-        this.checkClaudeMaxSubscription()
+        this.checkClaudeMaxSubscription(),
+        this.checkSdkHealth()
       ])
     }
 
-    return { claudeCli, claudeAuth, claudeMax, codexCli }
+    return { claudeCli, claudeAuth, claudeMax, codexCli, sdkHealth }
   }
 
   /** Check if `claude` binary is available and get its version */
@@ -143,6 +150,37 @@ class SubscriptionService {
       const message = err instanceof Error ? err.message : String(err)
       logger.warn(`Codex CLI not found: ${message}`)
       return { installed: false, version: null, error: message }
+    }
+  }
+
+  /** Verify SDK can execute and Opus 4.7 is available */
+  async checkSdkHealth(): Promise<NonNullable<SubscriptionCheckResult['sdkHealth']>> {
+    try {
+      const env = buildEnvWithPath()
+      const { stdout: versionOut } = await execFileAsync('claude', ['--version'], {
+        env,
+        timeout: this.timeout
+      })
+      const sdkVersion = versionOut.trim()
+
+      // Check if opus 4.7 is reachable (via a minimal one-shot query)
+      const { stdout: modelsOut } = await execFileAsync(
+        'claude',
+        ['-p', 'reply with OK', '--model', 'claude-opus-4-7', '--output-format', 'text'],
+        { env, timeout: 30_000 }
+      )
+      const opus47Available = modelsOut.toLowerCase().includes('ok')
+
+      return {
+        sdkVersion,
+        modelsAvailable: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+        opus47Available,
+        error: null
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      logger.warn(`SDK health check failed: ${message}`)
+      return { sdkVersion: null, modelsAvailable: [], opus47Available: false, error: message }
     }
   }
 

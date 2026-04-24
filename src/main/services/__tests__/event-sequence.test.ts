@@ -2,30 +2,11 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { test, describe } from './test-harness'
 
+/**
+ * EventEmitter lifecycle patterns used by AgentSessionService + ChatStreamService.
+ * Pre-4b this suite also tested the HandoffBrief event shape; that's gone.
+ */
 describe('Suite 9: Event sequence', () => {
-  test('handoff event carries correct HandoffBrief shape', () => {
-    const emitter = new EventEmitter()
-    let received: unknown = null
-
-    emitter.on('handoff', (brief) => {
-      received = brief
-    })
-
-    const brief = {
-      summary: 'Investigate authentication handoff behavior',
-      decisions: ['Use targeted investigation first'],
-      constraints: ['No schema changes'],
-      filesDiscussed: ['src/main/services/generalist.service.ts'],
-      recentMessages: [{ role: 'user', content: 'Find why handoff fails' }],
-      specialists: ['dotnet-architect'],
-      mode: 'plan' as const
-    }
-
-    emitter.emit('handoff', brief)
-
-    assert.deepEqual(received, brief)
-  })
-
   test('subAgentsComplete is emitted even after error path', () => {
     const emitter = new EventEmitter()
     const sequence: string[] = []
@@ -70,26 +51,26 @@ describe('Suite 10: Listener lifecycle', () => {
     const first = () => undefined
     const second = () => undefined
 
-    emitter.on('handoff', first)
-    emitter.on('handoff', second)
-    assert.equal(emitter.listenerCount('handoff'), 2)
+    emitter.on('complete', first)
+    emitter.on('complete', second)
+    assert.equal(emitter.listenerCount('complete'), 2)
 
-    emitter.removeListener('handoff', first)
-    assert.equal(emitter.listenerCount('handoff'), 1)
+    emitter.removeListener('complete', first)
+    assert.equal(emitter.listenerCount('complete'), 1)
   })
 
-  test('one-shot handoff behavior via removeListener', () => {
+  test('one-shot behavior via removeListener', () => {
     const emitter = new EventEmitter()
     let calls = 0
 
-    const handoffHandler = () => {
+    const handler = () => {
       calls++
-      emitter.removeListener('handoff', handoffHandler)
+      emitter.removeListener('intent', handler)
     }
 
-    emitter.on('handoff', handoffHandler)
-    emitter.emit('handoff', { summary: 'first' })
-    emitter.emit('handoff', { summary: 'second' })
+    emitter.on('intent', handler)
+    emitter.emit('intent', { type: 'first' })
+    emitter.emit('intent', { type: 'second' })
 
     assert.equal(calls, 1)
   })

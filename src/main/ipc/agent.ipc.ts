@@ -1,5 +1,5 @@
 import { ipcMain, type BrowserWindow } from 'electron'
-import { generalistService } from '../services'
+import { chatAgentService } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { AgentStatus } from '../../shared/types'
 import { agentIpcLogger } from '../logger'
@@ -11,7 +11,7 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.AGENT_GET_STATUSES, async (event) => {
     validateSender(event)
 
-    return [generalistService.getStatus()]
+    return [chatAgentService.getStatus()]
   })
 
   ipcMain.handle(IPC_CHANNELS.AGENT_STOP_ALL, async (event) => {
@@ -23,8 +23,8 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
 
     // Stop generalist (long-lived interactive process)
     try {
-      if (generalistService.isRunning()) {
-        await generalistService.stop()
+      if (chatAgentService.isRunning()) {
+        await chatAgentService.stop()
         results.push('Generalist stopped')
       }
     } catch (error) {
@@ -33,7 +33,7 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
     }
 
     // Broadcast updated statuses to renderer
-    mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, generalistService.getStatus())
+    mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, chatAgentService.getStatus())
 
     log.info('Stop all results:', results)
     return results
@@ -42,11 +42,11 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
   // Strategy M: Cache efficiency metrics for dashboard
   ipcMain.handle(IPC_CHANNELS.AGENT_CACHE_EFFICIENCY, async (event) => {
     validateSender(event)
-    return generalistService.getCacheEfficiency()
+    return chatAgentService.getCacheEfficiency()
   })
 
   // Forward status updates from generalist
-  generalistService.on('statusUpdate', (status: AgentStatus) => {
+  chatAgentService.on('statusUpdate', (status: AgentStatus) => {
     mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, status)
   })
 }

@@ -1,0 +1,315 @@
+/**
+ * ChatAgentService — the single long-lived chat session facade.
+ *
+ * After Phase 2 of the Project Specialist refactor this class is a router:
+ *   - Workspace has a **ready** Project Specialist → start an
+ *     AgentSessionService backed by ProjectSpecialistRoleAdapter.
+ *   - Workspace has no specialist (or it is still pending/failed) → fall
+ *     back to DaVinciRoleAdapter (the legacy concierge behavior).
+ *
+ * Both paths share the same EventEmitter surface (chunk, statusUpdate,
+ * complete, intent, handoff, plan, askQuestion, promptSuggestion,
+ * compactNeeded, elicitation) so every existing consumer
+ * (chat-stream.service.ts, agent.ipc.ts, sdk-control.ipc.ts,
+ * chat-lifecycle.ipc.ts, checkpoint.ipc.ts, agent-lifecycle.ipc.ts,
+ * task-pipeline.service.ts, tests) keeps working unchanged.
+ *
+ * See docs/architecture/project-specialist-refactor.md.
+ */
+
+import { EventEmitter } from 'node:events'
+import type {
+  AgentRole,
+  AgentStatus,
+  ConversationMode,
+  ImageAttachment,
+  Specialist
+} from '../../shared/types'
+import { chatAgentLogger } from '../logger'
+import { AgentSessionService } from './agent-session.service'
+import { DaVinciRoleAdapter } from './role-adapters/da-vinci.adapter'
+import { ProjectSpecialistRoleAdapter } from './role-adapters/project-specialist.adapter'
+import type { AgentRoleAdapter } from './agent-session.types'
+import type { CacheEfficiencyReport } from './agent-token-tracker'
+import { specialistRepository, workspaceRepository } from '../db/repositories'
+import { getDatabase } from '../db/index'
+
+/** Events forwarded session → this facade. */
+const FORWARDED_EVENTS = [
+  'chunk',
+  'statusUpdate',
+  'complete',
+  'intent',
+  'handoff',
+  'plan',
+  'askQuestion',
+  'promptSuggestion',
+  'compactNeeded',
+  'elicitation'
+] as const
+
+export class ChatAgentService extends EventEmitter {
+  private readonly log = chatAgentLogger
+
+  /** Owning adapter + session. Rebuilt on each start() to pick the right adapter. */
+  private adapter: AgentRoleAdapter
+  private session: AgentSessionService
+  /** Cleanup functions for the currently-wired forwarders. */
+  private forwarderCleanups: Array<() => void> = []
+
+  /** The DaVinciRoleAdapter is always alive for home / persona lookups. */
+  private readonly generalistAdapter: DaVinciRoleAdapter
+
+  constructor() {
+    super()
+    this.setMaxListeners(100)
+
+    this.generalistAdapter = new DaVinciRoleAdapter()
+    this.adapter = this.generalistAdapter
+    this.session = new AgentSessionService(this.adapter)
+    this.wireSessionForwarders()
+
+    // Outside code emits elicitationResponse on us — relay to the session.
+    this.on('elicitationResponse', (payload: unknown) => {
+      this.session.emit('elicitationResponse', payload)
+    })
+  }
+
+  private wireSessionForwarders(): void {
+    for (const evt of FORWARDED_EVENTS) {
+      const handler = (...args: unknown[]): void => {
+        this.emit(evt, ...args)
+      }
+      this.session.on(evt, handler)
+      this.forwarderCleanups.push(() => this.session.off(evt, handler))
+    }
+  }
+
+  private teardownSessionForwarders(): void {
+    for (const off of this.forwarderCleanups) off()
+    this.forwarderCleanups = []
+  }
+
+  /**
+   * Pick the right adapter for the given workspace path.
+   * Returns the workspace's ProjectSpecialistRoleAdapter when a specialist
+   * row exists AND its build_status is 'ready'. Otherwise falls back to the
+   * shared DaVinciRoleAdapter.
+   */
+  private resolveAdapter(workspacePath: string): AgentRoleAdapter {
+    try {
+      const workspace = workspaceRepository.findByPath(workspacePath)
+      if (!workspace) return this.generalistAdapter
+      const db = getDatabase()
+      const row = db
+        .prepare(
+          `SELECT id, build_status FROM specialists WHERE workspace_id = ?`
+        )
+        .get(workspace.id) as { id: string; build_status: string } | undefined
+      if (row?.build_status === 'ready') {
+        this.log.info(
+          `[adapter-swap] Using ProjectSpecialistRoleAdapter for workspace=${workspace.id}`
+        )
+        return new ProjectSpecialistRoleAdapter({ workspaceId: workspace.id })
+      }
+    } catch (err) {
+      this.log.warn('[adapter-swap] resolveAdapter failed, falling back to Generalist:', err)
+    }
+    return this.generalistAdapter
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────────────
+
+  async start(
+    workspacePath: string,
+    mode?: ConversationMode,
+    resumeSessionId?: string
+  ): Promise<void> {
+    const nextAdapter = this.resolveAdapter(workspacePath)
+    const adapterChanged = nextAdapter !== this.adapter
+
+    if (adapterChanged) {
+      // Stop + dispose the existing session so we don't leak listeners.
+      try {
+        await this.session.stop()
+      } catch {
+        /* ignore — session may not have been started yet */
+      }
+      this.teardownSessionForwarders()
+      this.adapter = nextAdapter
+      this.session = new AgentSessionService(this.adapter)
+      this.wireSessionForwarders()
+    }
+
+    return this.session.start(workspacePath, mode, resumeSessionId)
+  }
+
+  async send(message: string, conversationId: string, images?: ImageAttachment[]): Promise<void> {
+    return this.session.send(message, conversationId, images)
+  }
+
+  async stop(): Promise<void> {
+    return this.session.stop()
+  }
+
+  cancelCurrentQuery(): void {
+    this.session.cancelCurrentQuery()
+  }
+
+  async switchMode(mode: ConversationMode): Promise<void> {
+    if (mode === this.session.getMode()) return
+    // Only the Generalist adapter carries mode-switch prefix state.
+    if (this.adapter === this.generalistAdapter) {
+      this.generalistAdapter.setPendingModeSwitch(this.session.getMode(), mode)
+    }
+    return this.session.switchMode(mode)
+  }
+
+  async switchPersona(personaSpecialistId: string | null, conversationId: string): Promise<void> {
+    // Persona is a Generalist-only concept; if the Project Specialist is active,
+    // persona switches are ignored (warning logged).
+    if (this.adapter !== this.generalistAdapter) {
+      this.log.warn(
+        '[persona-switch] Ignored — Project Specialist is active for this workspace'
+      )
+      return
+    }
+    if (personaSpecialistId === this.generalistAdapter.getPersona().id) return
+    if (!this.session.getWorkspacePath()) return
+
+    this.log.info(
+      `[PIPELINE:persona-switch] ${this.generalistAdapter.getPersona().id ?? 'Da Vinci'} → ${personaSpecialistId ?? 'Da Vinci'}`
+    )
+
+    this.generalistAdapter.setPersona(personaSpecialistId)
+
+    if (this.session.isRunning()) {
+      this.generalistAdapter.setPendingCompaction(
+        conversationId,
+        'Summarize the conversation so far — a persona change is about to happen.'
+      )
+    }
+  }
+
+  async injectContext(context: string, conversationId: string): Promise<void> {
+    if (!this.session.getWorkspacePath()) {
+      this.log.warn('Cannot inject context — agent not started')
+      return
+    }
+    // Only the Generalist adapter caches pending context; the Project Specialist
+    // writes a simpler prompt and doesn't need the lazy-inject mechanism.
+    if (this.adapter !== this.generalistAdapter) return
+
+    const existingSize = this.generalistAdapter.getPendingContextSize(conversationId)
+    this.generalistAdapter.addPendingContext(conversationId, context)
+    if (existingSize > 0) {
+      this.log.info(
+        `Appended to pending context injection for conversation ${conversationId} (${context.length} chars added, total: ${existingSize + context.length + 2} chars)`
+      )
+    } else {
+      this.log.info(
+        `Stored pending context injection for conversation ${conversationId} (${context.length} chars — will prepend to next send())`
+      )
+    }
+  }
+
+  async compact(extractNuance = false): Promise<void> {
+    const workspacePath = this.session.getWorkspacePath()
+    const conversationId = this.session.getCurrentConversationId()
+    if (!workspacePath || !conversationId) {
+      throw new Error('Agent not running — nothing to compact')
+    }
+
+    const sessionId = this.session.getSessionId(conversationId)
+    if (!sessionId) {
+      throw new Error('No session to compact')
+    }
+
+    this.log.info(`Starting native SDK compaction (nuance=${extractNuance})`)
+
+    // Pending compaction prefix is only wired on the Generalist adapter; for
+    // the Project Specialist we simply delegate to the session's compact.
+    if (this.adapter === this.generalistAdapter) {
+      if (extractNuance) {
+        this.generalistAdapter.setPendingCompaction(
+          conversationId,
+          '/compact Extract nuance: preserve ALL decisions, preferences, file paths, specialist reports verbatim. Keep recent 3-4 turns verbatim.'
+        )
+      } else {
+        this.generalistAdapter.setPendingCompaction(conversationId, '/compact')
+      }
+    }
+    await this.session.compact()
+  }
+
+  async resumeAt(messageId: string): Promise<void> {
+    return this.session.resumeAt(messageId)
+  }
+
+  // ── Accessors ─────────────────────────────────────────────────────
+
+  getStatus(): AgentStatus {
+    return this.session.getStatus()
+  }
+
+  isRunning(): boolean {
+    return this.session.isRunning()
+  }
+
+  getActiveQuery(): import('@anthropic-ai/claude-agent-sdk').Query | null {
+    return this.session.getActiveQuery()
+  }
+
+  getWorkspacePath(): string | null {
+    return this.session.getWorkspacePath()
+  }
+
+  getCurrentConversationId(): string | null {
+    return this.session.getCurrentConversationId()
+  }
+
+  getStreamedContent(): string {
+    return this.session.getStreamedContent()
+  }
+
+  getMode(): ConversationMode {
+    return this.session.getMode()
+  }
+
+  getCacheEfficiency(): CacheEfficiencyReport {
+    return this.session.getCacheEfficiency()
+  }
+
+  getSessionId(conversationId: string): string | undefined {
+    return this.session.getSessionId(conversationId)
+  }
+
+  clearSession(conversationId: string): void {
+    this.session.clearSession(conversationId)
+    if (this.adapter === this.generalistAdapter) {
+      this.generalistAdapter.clearConversation(conversationId)
+    }
+  }
+
+  /** Which role is currently driving the session. */
+  getActiveRole(): AgentRole {
+    return this.adapter.role
+  }
+
+  /** Access the current persona specialist (Generalist adapter only; null otherwise). */
+  getPersonaSpecialist(): Specialist | null {
+    return this.adapter === this.generalistAdapter
+      ? this.generalistAdapter.getPersona().data
+      : null
+  }
+
+  /**
+   * @deprecated Legacy helper retained for call-sites that predate the
+   * Project Specialist refactor.
+   */
+  resolvePersonaData(personaSpecialistId: string): Specialist | null {
+    return specialistRepository.findById(personaSpecialistId) ?? null
+  }
+}
+
+export const chatAgentService = new ChatAgentService()
