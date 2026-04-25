@@ -128,36 +128,46 @@ export default function ToolApprovalModal(): React.JSX.Element | null {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center justify-end gap-2.5 px-5 py-4 border-t border-border-default/60 bg-surface-overlay/50">
+        <div
+          className={`grid gap-2 px-5 py-4 border-t border-border-default/60 bg-surface-overlay/50 ${
+            current.hasAlwaysAllow ? 'grid-cols-2' : 'grid-cols-3'
+          }`}
+        >
+          {/* Deny — destructive */}
           <button
             onClick={() => handleRespond(current.requestId, false)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+            className="flex items-center justify-center gap-1.5 h-9 px-3 text-xs font-medium whitespace-nowrap text-red-300 bg-red-500/10 hover:bg-red-500/20 ring-1 ring-inset ring-red-500/20 hover:ring-red-500/40 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
             aria-label="Deny tool execution"
           >
             <X size={14} />
             Deny
           </button>
+
           {current.hasAlwaysAllow && (
             <button
               onClick={() => handleRespond(current.requestId, true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-400 bg-violet-500/10 hover:bg-violet-500/20 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+              className="flex items-center justify-center gap-1.5 h-9 px-3 text-xs font-medium whitespace-nowrap text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 ring-1 ring-inset ring-violet-500/20 hover:ring-violet-500/40 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
               aria-label="Always allow this tool"
             >
               <ShieldCheck size={14} />
               Always Allow
             </button>
           )}
+
+          {/* Accept All — secondary */}
           <button
             onClick={handleAcceptAll}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            className="flex items-center justify-center gap-1.5 h-9 px-3 text-xs font-medium whitespace-nowrap text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 ring-1 ring-inset ring-blue-500/20 hover:ring-blue-500/40 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
             aria-label="Accept all tools for this session"
           >
             <CheckCheck size={14} />
             Accept All
           </button>
+
+          {/* Approve — primary action (filled / bolder) */}
           <button
             onClick={() => handleRespond(current.requestId, true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            className="flex items-center justify-center gap-1.5 h-9 px-3 text-xs font-semibold whitespace-nowrap text-white bg-emerald-500/80 hover:bg-emerald-500 ring-1 ring-inset ring-emerald-400/40 hover:ring-emerald-300/60 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 shadow-sm shadow-emerald-500/20"
             aria-label="Approve tool execution"
           >
             <Check size={14} />
