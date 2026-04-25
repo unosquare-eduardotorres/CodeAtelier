@@ -303,88 +303,7 @@ class EventLoggerService {
     )
   }
 
-  // ── Decomposition / Agent Events ──
-
-  logDecompositionStarted(opts: {
-    conversationId: string
-    workspaceId?: string
-    summary: string
-    specialists: string[]
-  }): void {
-    this.log(
-      'decomposition.started',
-      'agent',
-      `Decomposing task for ${opts.specialists.length} specialist(s): ${opts.summary.substring(0, 120)}`,
-      {
-        ...opts,
-        agentId: 'generalist',
-        data: {
-          summary: opts.summary,
-          specialists: opts.specialists
-        }
-      }
-    )
-  }
-
-  logDecompositionCompleted(opts: {
-    conversationId: string
-    workspaceId?: string
-    taskCount: number
-    tasks: { id: string; specialist: string; model?: string }[]
-  }): void {
-    this.log(
-      'decomposition.completed',
-      'agent',
-      `Decomposition produced ${opts.taskCount} task(s)`,
-      {
-        ...opts,
-        agentId: 'generalist',
-        data: {
-          taskCount: opts.taskCount,
-          tasks: opts.tasks
-        }
-      }
-    )
-  }
-
-  logDecompositionFailed(opts: {
-    conversationId: string
-    workspaceId?: string
-    error: string
-    fallback: 'legacy' | 'abort' | 'none'
-  }): void {
-    this.log(
-      'decomposition.failed',
-      'error',
-      `Decomposition failed: ${opts.error} — fallback: ${opts.fallback}`,
-      {
-        ...opts,
-        agentId: 'generalist',
-        data: {
-          error: opts.error,
-          fallback: opts.fallback
-        }
-      }
-    )
-  }
-
-  logHandoffDetected(opts: {
-    conversationId: string
-    workspaceId?: string
-    summary: string
-    specialists: string[]
-    mode?: string
-  }): void {
-    this.log('handoff.detected', 'agent', `Handoff detected: ${opts.summary.substring(0, 120)}`, {
-      ...opts,
-      agentId: 'generalist',
-      data: {
-        summary: opts.summary,
-        specialists: opts.specialists,
-        mode: opts.mode
-      }
-    })
-  }
+  // ── Agent Events ──
 
   logPlanDetected(opts: {
     conversationId: string
@@ -399,74 +318,11 @@ class EventLoggerService {
       `Plan detected via ${opts.detectionPath} (structured=${opts.structured}, ${opts.contentLength} chars)`,
       {
         ...opts,
-        agentId: 'generalist',
+        agentId: 'da-vinci',
         data: {
           detectionPath: opts.detectionPath,
           structured: opts.structured,
           contentLength: opts.contentLength
-        }
-      }
-    )
-  }
-
-  logPlanExecutionStarted(opts: {
-    conversationId: string
-    workspaceId?: string
-    strategy: string
-    taskCount: number
-  }): void {
-    this.log(
-      'plan.execution.started',
-      'agent',
-      `Plan execution started: ${opts.strategy}, ${opts.taskCount} task(s)`,
-      {
-        ...opts,
-        agentId: 'generalist',
-        data: {
-          strategy: opts.strategy,
-          taskCount: opts.taskCount
-        }
-      }
-    )
-  }
-
-  logPlanExecutionCompleted(opts: {
-    conversationId: string
-    workspaceId?: string
-    strategy: string
-    taskCount: number
-  }): void {
-    this.log(
-      'plan.execution.completed',
-      'agent',
-      `Plan execution completed: ${opts.strategy}, ${opts.taskCount} task(s)`,
-      {
-        ...opts,
-        agentId: 'generalist',
-        data: {
-          strategy: opts.strategy,
-          taskCount: opts.taskCount
-        }
-      }
-    )
-  }
-
-  logPlanExecutionFailed(opts: {
-    conversationId: string
-    workspaceId?: string
-    strategy: string
-    error: string
-  }): void {
-    this.log(
-      'plan.execution.failed',
-      'error',
-      `Plan execution failed (${opts.strategy}): ${opts.error}`,
-      {
-        ...opts,
-        agentId: 'generalist',
-        data: {
-          strategy: opts.strategy,
-          error: opts.error
         }
       }
     )
@@ -547,45 +403,6 @@ class EventLoggerService {
         conversationId: opts.conversationId,
         agentId: opts.agentId,
         data: { taskId: opts.taskId, reason: opts.reason }
-      }
-    )
-  }
-
-  // ── Investigation Pipeline ──
-
-  logInvestigationReportDetected(opts: {
-    conversationId?: string
-    agentId: string
-    taskId: string
-    impact?: string
-    filesAffected?: number
-  }): void {
-    this.log(
-      'investigation.report_detected',
-      'agent',
-      `Investigation report detected from ${opts.agentId}/${opts.taskId}`,
-      {
-        conversationId: opts.conversationId,
-        agentId: opts.agentId,
-        data: { taskId: opts.taskId, impact: opts.impact, filesAffected: opts.filesAffected }
-      }
-    )
-  }
-
-  logInvestigationReportMissing(opts: {
-    conversationId?: string
-    agentId: string
-    taskId: string
-    outputLength: number
-  }): void {
-    this.log(
-      'investigation.report_missing',
-      'agent',
-      `Investigation task ${opts.agentId}/${opts.taskId} completed without structured report`,
-      {
-        conversationId: opts.conversationId,
-        agentId: opts.agentId,
-        data: { taskId: opts.taskId, outputLength: opts.outputLength }
       }
     )
   }

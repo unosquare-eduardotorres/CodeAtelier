@@ -21,7 +21,7 @@ const GRILL_EVAL_REGEX = /```grill-evaluation\n([\s\S]*?)```/g
 /**
  * Stateless intent detector — extracts the generalist's intent from control tool state.
  *
- * MCP tools are the single source of truth for all action-type intents (plan, handoff, askUser).
+ * MCP tools are the single source of truth for all action-type intents (plan, askUser).
  * Regex detection for these intents has been eliminated — no dual-path, no races.
  * Grill events remain regex-based (no MCP tool equivalent).
  */
@@ -35,8 +35,7 @@ export class IntentDetector {
   detectAll(
     accumulatedText: string,
     controlToolState: ControlToolState,
-    _mode: ConversationMode,
-    _investigationModeEnabled: boolean
+    _mode: ConversationMode
   ): AgentIntent[] {
     const intents: AgentIntent[] = []
 

@@ -119,13 +119,13 @@ describe('AgentSessionService', () => {
     assert.equal(status.tokenUsage, 0)
   })
 
-  test('getStatus_reports_generalist_agentType_for_da_vinci_role', () => {
+  test('getStatus_reports_da_vinci_agentType_for_da_vinci_role', () => {
     const { adapter } = createTestAdapter({
       role: 'da-vinci',
-      agentId: 'generalist'
+      agentId: 'da-vinci'
     })
     const session = new AgentSessionService(adapter)
-    assert.equal(session.getStatus().agentType, 'generalist')
+    assert.equal(session.getStatus().agentType, 'da-vinci')
   })
 
   test('emits_forwarded_events_as_EventEmitter', () => {
@@ -177,7 +177,6 @@ describe('AgentSessionService', () => {
       'statusUpdate',
       'complete',
       'intent',
-      'handoff',
       'plan',
       'askQuestion',
       'promptSuggestion',

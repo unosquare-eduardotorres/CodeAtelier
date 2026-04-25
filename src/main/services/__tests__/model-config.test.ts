@@ -4,17 +4,17 @@ import { test, describe, summary } from './test-harness'
 import { DEFAULT_MODEL_CONFIG } from '../../../shared/constants'
 
 describe('ModelConfigService', () => {
-  describe('Mode-aware generalist model', () => {
-    test('generalist:plan defaults to opus-4-7', () => {
-      assert.equal(DEFAULT_MODEL_CONFIG['generalist:plan'], 'claude-opus-4-7')
+  describe('Mode-aware Da Vinci model', () => {
+    test('da-vinci:plan defaults to opus-4-7', () => {
+      assert.equal(DEFAULT_MODEL_CONFIG['da-vinci:plan'], 'claude-opus-4-7')
     })
 
-    test('generalist:build defaults to sonnet-4-6', () => {
-      assert.equal(DEFAULT_MODEL_CONFIG['generalist:build'], 'claude-sonnet-4-6')
+    test('da-vinci:build defaults to sonnet-4-6', () => {
+      assert.equal(DEFAULT_MODEL_CONFIG['da-vinci:build'], 'claude-sonnet-4-6')
     })
 
-    test('generalist (base) defaults to opus-4-7', () => {
-      assert.equal(DEFAULT_MODEL_CONFIG['generalist'], 'claude-opus-4-7')
+    test('da-vinci (base) defaults to opus-4-7', () => {
+      assert.equal(DEFAULT_MODEL_CONFIG['da-vinci'], 'claude-opus-4-7')
     })
 
     test('specialist:complex defaults to opus-4-7', () => {
@@ -25,8 +25,8 @@ describe('ModelConfigService', () => {
   describe('Fallback resolution', () => {
     test('unknown sub-action falls back to base action', () => {
       // The ModelConfigService.fallbackAction splits on ':'
-      const base = 'generalist:plan'.split(':')[0]
-      assert.equal(base, 'generalist')
+      const base = 'da-vinci:plan'.split(':')[0]
+      assert.equal(base, 'da-vinci')
     })
   })
 })

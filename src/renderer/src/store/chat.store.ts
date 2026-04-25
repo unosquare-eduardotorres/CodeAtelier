@@ -3,20 +3,17 @@ import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
 import { detectPlanIntent } from '@renderer/utils/plan-intent-detector'
 import { SentenceBuffer } from '@renderer/utils/sentence-buffer'
+import { useWorkspaceStore } from './workspace.store'
 import type {
   CompleteResult,
   ContextUsage,
   Conversation,
   ConversationMode,
   ConversationPhase,
-  ExecutionStrategy,
   GrillAnswerPayload,
   GrillProposedTask,
   GrillQuestion,
-  InvestigationReport,
   Message,
-  DecomposedTask,
-  TaskExecutionProgress,
   ToolActivity
 } from '../../../shared/types'
 
@@ -105,7 +102,7 @@ interface ChatState {
   activeConversation: Conversation | null
   messages: Message[]
   streamingContent: string
-  streamingRole: 'generalist' | 'coordinator' | 'specialist'
+  streamingRole: 'da-vinci' | 'specialist'
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
@@ -122,11 +119,6 @@ interface ChatState {
     conversationId: string | null
   }
 
-  // Task plan state
-  taskProgress: Map<string, TaskExecutionProgress>
-  isExecutingPlan: boolean
-  decomposedTasks: DecomposedTask[]
-
   // Compact suggestion state
   compactSuggestion: { level: string; inputTokens: number } | null
 
@@ -135,13 +127,13 @@ interface ChatState {
 
   // General chat pending questions (ask_user tool)
   pendingQuestions: GrillQuestion[] | null
-
-  // Investigation report state
-  investigationReport: {
-    specialist: string
-    taskId: string
-    report: InvestigationReport
-  } | null
+  /**
+   * Programmatic action tag emitted alongside pendingQuestions (e.g.
+   * "swap-to-specialist"). When the user accepts the first option on an
+   * action-tagged question, submitQuestionAnswers maps the action to an IPC
+   * call (e.g. swapToSpecialist) instead of sending a plain-text answer.
+   */
+  pendingQuestionAction: string | null
 
   loadConversations: (workspaceId: string) => Promise<void>
   createConversation: (
@@ -159,20 +151,19 @@ interface ChatState {
   sendMessage: (text: string, attachments?: string[]) => Promise<void>
   appendStreamChunk: (
     chunk: string,
-    role?: 'generalist' | 'coordinator' | 'specialist',
+    role?: 'da-vinci' | 'specialist',
     taskId?: string,
     specialist?: string,
     requestId?: string
   ) => void
   updateStreamingIdentity: (
-    role: 'generalist' | 'coordinator' | 'specialist',
+    role: 'da-vinci' | 'specialist',
     taskId?: string,
     specialist?: string
   ) => void
   finalizeStream: (
     messageId: string,
     taskId?: string,
-    isHandoff?: boolean,
     requestId?: string
   ) => void
   finalizeTurnBubble: (turnId: string) => void
@@ -186,10 +177,6 @@ interface ChatState {
   // Compact suggestion
   setCompactSuggestion: (data: { level: string; inputTokens: number } | null) => void
 
-  // Task plan actions
-  setDecomposedTasks: (tasks: DecomposedTask[]) => void
-  updateTaskProgress: (progress: TaskExecutionProgress) => void
-
   // Grill session actions
   startGrillSession: () => void
   endGrillSession: (summary: string, proposedTasks: GrillProposedTask[]) => void
@@ -202,17 +189,9 @@ interface ChatState {
   ) => Promise<void>
 
   // General chat question actions
-  setPendingQuestions: (questions: GrillQuestion[]) => void
+  setPendingQuestions: (questions: GrillQuestion[], action?: string) => void
   submitQuestionAnswers: (answers: GrillAnswerPayload[]) => void
   skipAllQuestions: () => void
-
-  setInvestigationReport: (data: {
-    specialist: string
-    taskId: string
-    report: InvestigationReport
-  }) => void
-  executeInvestigationFix: (strategy: ExecutionStrategy) => Promise<void>
-  clearInvestigationReport: () => void
 
   // Auto mode switch pill (e.g., build → plan on investigation prompts)
   autoModeSwitchPill: { from: ConversationMode; to: ConversationMode } | null
@@ -261,20 +240,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeConversation: previousChatState?.activeConversation ?? null,
   messages: previousChatState?.messages ?? [],
   streamingContent: previousChatState?.streamingContent ?? '',
-  streamingRole: previousChatState?.streamingRole ?? ('generalist' as const),
+  streamingRole: previousChatState?.streamingRole ?? ('da-vinci' as const),
   streamingSpecialist: previousChatState?.streamingSpecialist ?? null,
   streamingTaskId: previousChatState?.streamingTaskId ?? null,
   isStreaming: previousChatState?.isStreaming ?? false,
   activeRequestId: previousChatState?.activeRequestId ?? null,
   streamingPhase: previousChatState?.streamingPhase ?? null,
   toolActivities: previousChatState?.toolActivities ?? [],
-  taskProgress: previousChatState?.taskProgress ?? new Map(),
-  isExecutingPlan: previousChatState?.isExecutingPlan ?? false,
-  decomposedTasks: previousChatState?.decomposedTasks ?? [],
   compactSuggestion: previousChatState?.compactSuggestion ?? null,
   grillSession: previousChatState?.grillSession ?? null,
   pendingQuestions: previousChatState?.pendingQuestions ?? null,
-  investigationReport: null,
+  pendingQuestionAction: previousChatState?.pendingQuestionAction ?? null,
   autoModeSwitchPill: null,
   sessionRecovery: null,
   conversationState: previousChatState?.conversationState ?? {
@@ -402,14 +378,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: '',
       isStreaming: false,
       // Clear ephemeral UI state from previous conversation
-      taskProgress: new Map(),
-      isExecutingPlan: false,
-      decomposedTasks: [],
-      investigationReport: null,
       toolActivities: [],
       grillSession: null,
       compactSuggestion: null,
       pendingQuestions: null,
+      pendingQuestionAction: null,
       activeRequestId: null,
       // Reset state machine mirror — prevents stale phase from previous conversation
       conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
@@ -443,9 +416,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       rendererLog.error('Failed to stop generation:', error)
     }
 
-    // Clear build execution state so progress card dismisses
-    set({ isExecutingPlan: false })
-
     // Preserve partial streaming content as a message with a "stopped" suffix
     if (streamingContent && activeConversation) {
       const stoppedMessage: Message = {
@@ -472,7 +442,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const stoppedMessage: Message = {
         id: `stopped-${Date.now()}`,
         conversationId: activeConversation.id,
-        role: 'generalist',
+        role: 'da-vinci',
         contentMd: '⏹ *Generation stopped by user.*',
         attachmentsJson: '[]',
         createdAt: new Date().toISOString()
@@ -553,7 +523,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   appendStreamChunk: (
     chunk: string,
-    role?: 'generalist' | 'coordinator' | 'specialist',
+    role?: 'da-vinci' | 'specialist',
     taskId?: string,
     specialist?: string,
     requestId?: string
@@ -633,7 +603,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  finalizeStream: (messageId: string, taskId?: string, isHandoff?: boolean, requestId?: string) => {
+  finalizeStream: (messageId: string, taskId?: string, requestId?: string) => {
     // Force-flush any remaining buffered content before finalizing
     internals.flushBuffer()
     internals.resetBuffer()
@@ -647,13 +617,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const { streamingContent, streamingRole, streamingSpecialist, activeConversation } = get()
-
-    // Guard: if this is a generalist complete with active handoff, don't finalize —
-    // more content is coming from specialists. Uses explicit isHandoff flag from backend.
-    if (isHandoff && !taskId) {
-      rendererLog.info('[finalizeStream] Generalist complete with handoff — skipping (specialists pending)')
-      return
-    }
 
     // Guard: generalist's CHAT_MESSAGE_COMPLETE arrived while specialist is mid-stream.
     // Skip finalization so specialist content isn't captured under the wrong identity.
@@ -777,31 +740,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  setDecomposedTasks: (tasks: DecomposedTask[]) => {
-    set({ decomposedTasks: tasks, isExecutingPlan: tasks.length > 0 })
-  },
-
-  updateTaskProgress: (progress: TaskExecutionProgress) => {
-    set((state) => {
-      const updated = new Map(state.taskProgress)
-      updated.set(progress.taskId, progress)
-
-      // Check if all tracked tasks are done
-      const allDone = Array.from(updated.values()).every(
-        (p) => p.status === 'completed' || p.status === 'failed'
-      )
-
-      return {
-        taskProgress: updated,
-        isExecutingPlan: !allDone
-      }
-    })
-  },
-
-  setInvestigationReport: (data) => set({ investigationReport: data }),
-
-  clearInvestigationReport: () => set({ investigationReport: null }),
-
   clearAutoModeSwitchPill: () => set({ autoModeSwitchPill: null }),
 
   setSessionRecovery: (data) => set({ sessionRecovery: data }),
@@ -812,30 +750,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // which have direct knowledge of streaming lifecycle. Deriving from async state machine
     // events causes races (e.g., delayed phase IPC re-enables isStreaming after stop).
     set({ conversationState: data })
-  },
-
-  executeInvestigationFix: async (_strategy) => {
-    const { investigationReport, activeConversation } = get()
-    if (!investigationReport || !activeConversation) return
-
-    // Post-migration 66: no multi-specialist pipeline. Send the investigation
-    // report to the Project Specialist as a build-mode message to fix directly.
-    set({ isExecutingPlan: true })
-    try {
-      const reportText = JSON.stringify(investigationReport.report, null, 2)
-      await window.api.updateConversationMode({
-        conversationId: activeConversation.id,
-        mode: 'build'
-      })
-      await window.api.sendMessage({
-        conversationId: activeConversation.id,
-        text: `Please fix the issues described in this investigation report:\n\n\`\`\`json\n${reportText}\n\`\`\``
-      })
-    } catch (error) {
-      rendererLog.error('Failed to execute investigation fix:', error)
-    } finally {
-      set({ isExecutingPlan: false })
-    }
   },
 
   completeConversation: async (branchName: string, commitMessage: string, description: string) => {
@@ -857,10 +771,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       streamingContent: '',
       isStreaming: false,
-      toolActivities: [],
-      taskProgress: new Map(),
-      isExecutingPlan: false,
-      decomposedTasks: []
+      toolActivities: []
     })
 
     return result
@@ -1012,11 +923,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   // General chat question actions (ask_user tool)
-  setPendingQuestions: (questions) => {
-    set({ pendingQuestions: questions })
+  setPendingQuestions: (questions, action) => {
+    set({ pendingQuestions: questions, pendingQuestionAction: action ?? null })
   },
 
   submitQuestionAnswers: (answers) => {
+    const action = get().pendingQuestionAction
+
+    // Programmatic action: "swap-to-specialist" — the renderer handles the
+    // swap directly via IPC instead of echoing an answer back to DaVinci.
+    // The tool-emitted proposal always has the "accept" option as the first
+    // option label ("Swap now"). If the user selected it, invoke the IPC.
+    if (action === 'swap-to-specialist') {
+      const firstQuestion = get().pendingQuestions?.[0]
+      const firstAnswer = answers.find((a) => a.questionId === firstQuestion?.id)
+      const acceptLabel = firstQuestion?.options?.[0]?.label
+      const accepted =
+        !!firstAnswer &&
+        !firstAnswer.skipped &&
+        !!acceptLabel &&
+        firstAnswer.selectedOptions.includes(acceptLabel)
+
+      set({ pendingQuestions: null, pendingQuestionAction: null })
+
+      if (accepted) {
+        const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
+        if (workspaceId) {
+          window.api
+            .swapToSpecialist({ workspaceId })
+            .catch((err) => rendererLog.error('swapToSpecialist failed:', err))
+        } else {
+          rendererLog.warn('swap-to-specialist: no active workspace — skipping IPC call')
+        }
+      } else {
+        // User declined — let DaVinci know so it doesn't re-propose immediately.
+        get().sendMessage("I'll keep DaVinci for now.")
+      }
+      return
+    }
+
     const lines: string[] = ['Here are my answers:\n']
     for (const answer of answers) {
       const question = get().pendingQuestions?.find((q) => q.id === answer.questionId)
@@ -1029,12 +974,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         lines.push(`**${header}**: ${selected}${other}`)
       }
     }
-    set({ pendingQuestions: null })
+    set({ pendingQuestions: null, pendingQuestionAction: null })
     get().sendMessage(lines.join('\n'))
   },
 
   skipAllQuestions: () => {
-    set({ pendingQuestions: null })
+    set({ pendingQuestions: null, pendingQuestionAction: null })
     get().sendMessage("I'll skip these questions for now — let's continue.")
   },
 
@@ -1051,7 +996,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const localMessage: Message = {
       id: `local-${Date.now()}`,
       conversationId: activeConversation.id,
-      role: 'generalist',
+      role: 'da-vinci',
       contentMd: content,
       attachmentsJson: '[]',
       createdAt: new Date().toISOString()
@@ -1115,17 +1060,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeConversation: null,
       messages: [],
       streamingContent: '',
-      streamingRole: 'generalist' as const,
+      streamingRole: 'da-vinci' as const,
       streamingSpecialist: null,
       isStreaming: false,
       activeRequestId: null,
       toolActivities: [],
-      taskProgress: new Map(),
-      isExecutingPlan: false,
-      decomposedTasks: [],
       compactSuggestion: null,
       grillSession: null,
-      investigationReport: null,
+      pendingQuestions: null,
+      pendingQuestionAction: null,
       draftTexts: {},
       contextUsages: {},
       conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
@@ -1158,8 +1101,6 @@ export const useChatActions = (): Pick<
   | 'skipAllGrillQuestions'
   | 'createItemsFromGrill'
   | 'setCompactSuggestion'
-  | 'setDecomposedTasks'
-  | 'updateTaskProgress'
   | 'setGrillQuestions'
   | 'endGrillSession'
   | 'appendStreamChunk'
@@ -1171,9 +1112,6 @@ export const useChatActions = (): Pick<
   | 'setPendingQuestions'
   | 'submitQuestionAnswers'
   | 'skipAllQuestions'
-  | 'setInvestigationReport'
-  | 'executeInvestigationFix'
-  | 'clearInvestigationReport'
   | 'setDraftText'
   | 'clearDraftText'
   | 'loadContextUsage'
@@ -1201,8 +1139,6 @@ export const useChatActions = (): Pick<
       skipAllGrillQuestions: s.skipAllGrillQuestions,
       createItemsFromGrill: s.createItemsFromGrill,
       setCompactSuggestion: s.setCompactSuggestion,
-      setDecomposedTasks: s.setDecomposedTasks,
-      updateTaskProgress: s.updateTaskProgress,
       setGrillQuestions: s.setGrillQuestions,
       endGrillSession: s.endGrillSession,
       appendStreamChunk: s.appendStreamChunk,
@@ -1214,9 +1150,6 @@ export const useChatActions = (): Pick<
       setPendingQuestions: s.setPendingQuestions,
       submitQuestionAnswers: s.submitQuestionAnswers,
       skipAllQuestions: s.skipAllQuestions,
-      setInvestigationReport: s.setInvestigationReport,
-      executeInvestigationFix: s.executeInvestigationFix,
-      clearInvestigationReport: s.clearInvestigationReport,
       setDraftText: s.setDraftText,
       clearDraftText: s.clearDraftText,
       loadContextUsage: s.loadContextUsage,

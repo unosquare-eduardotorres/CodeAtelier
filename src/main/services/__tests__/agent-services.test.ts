@@ -310,39 +310,4 @@ describe('Topological sort', () => {
   })
 })
 
-// ── tierToModelAction (pure function) ──────────────────
-
-describe('tierToModelAction', () => {
-  // Replicated from specialist-pool.service.ts since it's module-private
-  function tierToModelAction(tier: string): string {
-    switch (tier) {
-      case 'haiku':
-        return 'specialist:simple'
-      case 'sonnet':
-        return 'specialist:moderate'
-      case 'opus':
-        return 'specialist:complex'
-      default:
-        return 'specialist:moderate'
-    }
-  }
-
-  test('haiku maps to specialist:simple', () => {
-    assert.equal(tierToModelAction('haiku'), 'specialist:simple')
-  })
-
-  test('sonnet maps to specialist:moderate', () => {
-    assert.equal(tierToModelAction('sonnet'), 'specialist:moderate')
-  })
-
-  test('opus maps to specialist:complex', () => {
-    assert.equal(tierToModelAction('opus'), 'specialist:complex')
-  })
-
-  test('unknown tier defaults to specialist:moderate', () => {
-    assert.equal(tierToModelAction('unknown'), 'specialist:moderate')
-    assert.equal(tierToModelAction(''), 'specialist:moderate')
-  })
-})
-
 // Report handled by test runner

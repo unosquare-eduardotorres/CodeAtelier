@@ -23,7 +23,8 @@ import CodeChangesPanel from './CodeChangesPanel'
 import {
   SpecialistSlideOver,
   StackDriftBanner,
-  BuildProgressInline
+  BuildProgressInline,
+  GenerateSpecialistModal
 } from '@renderer/components/specialist'
 import type { ConversationMode } from '../../../../shared/types'
 
@@ -62,6 +63,32 @@ export default function ChatPanel({
   useEffect(() => {
     if (activeWorkspace?.id) void loadProjectSpecialist(activeWorkspace.id)
   }, [activeWorkspace?.id, loadProjectSpecialist])
+
+  // Generate-Specialist modal — auto-opens for pending/failed specialists,
+  // session-dismissed Set prevents re-opening after "Maybe later".
+  const [generateModalOpen, setGenerateModalOpen] = useState(false)
+  const [dismissedWorkspaces] = useState<Set<string>>(() => new Set())
+
+  useEffect(() => {
+    const wsId = activeWorkspace?.id
+    if (!wsId || !projectSpecialist) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- close modal when workspace unloads
+      setGenerateModalOpen(false)
+      return
+    }
+    if (dismissedWorkspaces.has(wsId)) return
+    if (projectSpecialist.buildStatus === 'pending' || projectSpecialist.buildStatus === 'failed') {
+      setGenerateModalOpen(true)
+    } else {
+      setGenerateModalOpen(false)
+    }
+  }, [activeWorkspace?.id, projectSpecialist, dismissedWorkspaces])
+
+  const handleDismissGenerate = useCallback(() => {
+    const wsId = activeWorkspace?.id
+    if (wsId) dismissedWorkspaces.add(wsId)
+    setGenerateModalOpen(false)
+  }, [activeWorkspace, dismissedWorkspaces])
 
   // Code changes count for tab badge
   const pendingChangesCount = useCodeChangesStore((s) => s.files.length)
@@ -171,18 +198,37 @@ export default function ChatPanel({
     }
   }
 
+  // Generate-Specialist modal — lifted above early returns so it overlays the
+  // empty state and NewChatPage as well as the main chat render.
+  const generateModal = activeWorkspace ? (
+    <GenerateSpecialistModal
+      open={generateModalOpen}
+      workspaceId={activeWorkspace.id}
+      workspaceName={activeWorkspace.name}
+      onDismiss={handleDismissGenerate}
+    />
+  ) : null
+
   // Workspace selected but no active conversation
   if (!activeConversation) {
     if (showNewChat) {
-      return <NewChatPage onCreateChat={handleCreateChat} onCreateIdea={onCreateIdea} />
+      return (
+        <>
+          {generateModal}
+          <NewChatPage onCreateChat={handleCreateChat} onCreateIdea={onCreateIdea} />
+        </>
+      )
     }
     // Empty state — no auto-show of NewChatPage
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
-        <p className="text-sm text-text-secondary">
-          Select a conversation from the sidebar or start a new one.
-        </p>
-      </div>
+      <>
+        {generateModal}
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
+          <p className="text-sm text-text-secondary">
+            Select a conversation from the sidebar or start a new one.
+          </p>
+        </div>
+      </>
     )
   }
 
@@ -192,154 +238,159 @@ export default function ChatPanel({
     : []
 
   return (
-    <div className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0">
-      {/* Header — tabs left, persona right */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-raised">
-        <div className="flex items-center gap-1" role="tablist" aria-label="Chat panel tabs">
-          <ChatTabButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')}>
-            Chat
-          </ChatTabButton>
-          <ChatTabButton
-            active={activeTab === 'code-changes'}
-            onClick={() => setActiveTab('code-changes')}
-            badge={pendingChangesCount}
-          >
-            Code Changes
-          </ChatTabButton>
-        </div>
-        {activeTab === 'chat' && (
-          <div className="flex items-center gap-2">
-            <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
-            <button
-              type="button"
-              onClick={() => setSpecialistPanelOpen(true)}
-              title="Open specialist settings"
-              aria-label="Specialist settings"
-              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-body"
+    <>
+      {generateModal}
+      <div className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0">
+        {/* Header — tabs left, persona right */}
+        <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-raised">
+          <div className="flex items-center gap-1" role="tablist" aria-label="Chat panel tabs">
+            <ChatTabButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')}>
+              Chat
+            </ChatTabButton>
+            <ChatTabButton
+              active={activeTab === 'code-changes'}
+              onClick={() => setActiveTab('code-changes')}
+              badge={pendingChangesCount}
             >
-              <Settings className="h-3.5 w-3.5" />
-              <span>Specialist</span>
-            </button>
-            <PersonaSelector conversation={activeConversation} />
+              Code Changes
+            </ChatTabButton>
+          </div>
+          {activeTab === 'chat' && (
+            <div className="flex items-center gap-2">
+              <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
+              <button
+                type="button"
+                onClick={() => setSpecialistPanelOpen(true)}
+                title="Open specialist settings"
+                aria-label="Specialist settings"
+                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-body"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                <span>Specialist</span>
+              </button>
+              <PersonaSelector conversation={activeConversation} />
+            </div>
+          )}
+        </div>
+
+        {/* Stack drift banner — non-intrusive, only shown when drifted */}
+        {activeTab === 'chat' && activeWorkspace?.id && (
+          <div className="px-6 pt-2">
+            <StackDriftBanner workspaceId={activeWorkspace.id} />
           </div>
         )}
-      </div>
 
-      {/* Stack drift banner — non-intrusive, only shown when drifted */}
-      {activeTab === 'chat' && activeWorkspace?.id && (
-        <div className="px-6 pt-2">
-          <StackDriftBanner workspaceId={activeWorkspace.id} />
-        </div>
-      )}
+        {/* Specialist slide-over panel */}
+        <SpecialistSlideOver
+          open={specialistPanelOpen}
+          onClose={() => setSpecialistPanelOpen(false)}
+          workspaceId={activeWorkspace?.id ?? null}
+        />
 
-      {/* Specialist slide-over panel */}
-      <SpecialistSlideOver
-        open={specialistPanelOpen}
-        onClose={() => setSpecialistPanelOpen(false)}
-        workspaceId={activeWorkspace?.id ?? null}
-      />
-
-      {/* Rate limit warning banner — only shows during warning/rejected */}
-      {rateLimitState && rateLimitState.status !== 'allowed' && (
-        <div className="px-6 py-2 border-b border-border-subtle">
-          <RateLimitBadge
-            utilization={rateLimitState.utilization ?? 0}
-            status={rateLimitState.status}
-          />
-        </div>
-      )}
-
-      {/* Tab content */}
-      {activeTab === 'chat' && (
-        <>
-          {/* Search bar */}
-          {showSearch && (
-            <div className="flex items-center gap-2 px-6 py-2 border-b border-border-subtle bg-surface-overlay/60">
-              <Search size={14} className="text-text-muted" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search messages..."
-                className="flex-1 bg-transparent text-sm text-text-body placeholder-text-muted outline-none"
-                aria-label="Search messages"
-              />
-              {searchQuery && (
-                <span className="text-xs text-text-secondary">
-                  {filteredMessages.length} result{filteredMessages.length !== 1 ? 's' : ''}
-                </span>
-              )}
-              <button
-                onClick={() => {
-                  setShowSearch(false)
-                  setSearchQuery('')
-                }}
-                className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
-                aria-label="Close search"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          )}
-
-          {/* Repo/GitHub warning banner */}
-          <RepoWarningBanner />
-
-          {/* Session recovery banner */}
-          {sessionRecovery && (
-            <SessionRecoveryBanner
-              phase={sessionRecovery.phase}
-              message={sessionRecovery.message}
+        {/* Rate limit warning banner — only shows during warning/rejected */}
+        {rateLimitState && rateLimitState.status !== 'allowed' && (
+          <div className="px-6 py-2 border-b border-border-subtle">
+            <RateLimitBadge
+              utilization={rateLimitState.utilization ?? 0}
+              status={rateLimitState.status}
             />
-          )}
+          </div>
+        )}
 
-          {/* Messages or initialization overlay */}
-          {agentStatus === 'starting' ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
-              <div className="relative mb-6">
-                <div className="w-16 h-16 rounded-full border-2 border-primary/30 animate-ping absolute inset-0" />
-                <div className="w-16 h-16 rounded-full bg-primary-muted border border-primary/40 flex items-center justify-center relative">
-                  <Bot size={28} className="text-primary-text animate-pulse" />
+        {/* Tab content */}
+        {activeTab === 'chat' && (
+          <>
+            {/* Search bar */}
+            {showSearch && (
+              <div className="flex items-center gap-2 px-6 py-2 border-b border-border-subtle bg-surface-overlay/60">
+                <Search size={14} className="text-text-muted" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search messages..."
+                  className="flex-1 bg-transparent text-sm text-text-body placeholder-text-muted outline-none"
+                  aria-label="Search messages"
+                />
+                {searchQuery && (
+                  <span className="text-xs text-text-secondary">
+                    {filteredMessages.length} result{filteredMessages.length !== 1 ? 's' : ''}
+                  </span>
+                )}
+                <button
+                  onClick={() => {
+                    setShowSearch(false)
+                    setSearchQuery('')
+                  }}
+                  className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+                  aria-label="Close search"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+
+            {/* Repo/GitHub warning banner */}
+            <RepoWarningBanner />
+
+            {/* Session recovery banner */}
+            {sessionRecovery && (
+              <SessionRecoveryBanner
+                phase={sessionRecovery.phase}
+                message={sessionRecovery.message}
+              />
+            )}
+
+            {/* Messages or initialization overlay */}
+            {agentStatus === 'starting' ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
+                <div className="relative mb-6">
+                  <div className="w-16 h-16 rounded-full border-2 border-primary/30 animate-ping absolute inset-0" />
+                  <div className="w-16 h-16 rounded-full bg-primary-muted border border-primary/40 flex items-center justify-center relative">
+                    <Bot size={28} className="text-primary-text animate-pulse" />
+                  </div>
+                </div>
+                <h3 className="text-lg font-medium text-text-primary mb-2">
+                  Initializing AI Agent...
+                </h3>
+                <p className="text-sm text-text-secondary max-w-sm">
+                  Setting up the workspace context and initializing the AI agent. This may take a
+                  few seconds.
+                </p>
+                <div className="mt-4 flex items-center gap-2">
+                  <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.3s]" />
+                  <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.15s]" />
+                  <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce" />
                 </div>
               </div>
-              <h3 className="text-lg font-medium text-text-primary mb-2">
-                Initializing AI Agent...
-              </h3>
-              <p className="text-sm text-text-secondary max-w-sm">
-                Setting up the workspace context and initializing the AI agent. This may take a few
-                seconds.
-              </p>
-              <div className="mt-4 flex items-center gap-2">
-                <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.3s]" />
-                <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.15s]" />
-                <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce" />
+            ) : (
+              <div className="flex-1 flex flex-col min-h-0">
+                <MessageList searchQuery={searchQuery} />
               </div>
-            </div>
-          ) : (
-            <div className="flex-1 flex flex-col min-h-0">
-              <MessageList searchQuery={searchQuery} />
-            </div>
-          )}
+            )}
 
-          {/* Input - pinned to bottom */}
-          <div className="flex-shrink-0 px-6 pb-4 pt-2">
-            <AttachmentDropzone
-              attachments={attachments}
-              onAttachmentsChange={setAttachments}
-              conversationId={activeConversation.id}
-            >
-              <MessageInput
+            {/* Input - pinned to bottom */}
+            <div className="flex-shrink-0 px-6 pb-4 pt-2">
+              <AttachmentDropzone
                 attachments={attachments}
-                onClearAttachments={() => setAttachments([])}
-                onStartGrillMe={onStartGrillMe}
-              />
-            </AttachmentDropzone>
-          </div>
-        </>
-      )}
+                onAttachmentsChange={setAttachments}
+                conversationId={activeConversation.id}
+              >
+                <MessageInput
+                  attachments={attachments}
+                  onClearAttachments={() => setAttachments([])}
+                  onStartGrillMe={onStartGrillMe}
+                />
+              </AttachmentDropzone>
+            </div>
+          </>
+        )}
 
-      {activeTab === 'code-changes' && <CodeChangesPanel conversationId={activeConversation.id} />}
-    </div>
+        {activeTab === 'code-changes' && (
+          <CodeChangesPanel conversationId={activeConversation.id} />
+        )}
+      </div>
+    </>
   )
 }

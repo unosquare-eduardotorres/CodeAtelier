@@ -18,14 +18,14 @@ export default function PersonaSelector({ conversation }: PersonaSelectorProps):
     if (conversation.personaSpecialistId) {
       return specialists.find((s) => s.id === conversation.personaSpecialistId) ?? null
     }
-    return specialists.find((s) => s.agentId === 'generalist') ?? null
+    return specialists.find((s) => s.agentId === 'da-vinci') ?? null
   }, [conversation.personaSpecialistId, specialists])
 
   const isDaVinci = !conversation.personaSpecialistId
 
   // Categorize for dropdown
   const { daVinci, activeItems, inactiveItems } = useMemo(() => {
-    const dv = specialists.find((s) => s.agentId === 'generalist')
+    const dv = specialists.find((s) => s.agentId === 'da-vinci')
     const active = specialists
       .filter((s) => !s.isCore && s.isActive)
       .sort((a, b) => a.priority - b.priority)

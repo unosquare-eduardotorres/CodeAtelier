@@ -153,7 +153,7 @@ describe('ConversationLifecycle — abort behaviour', () => {
     const lc = freshLifecycle()
     // Drive the state machine forward so forceReset has something to reset
     conversationStateMachine.transition('sendMessage', 'conv-1')
-    assert.equal(conversationStateMachine.currentState, 'generalist-streaming')
+    assert.equal(conversationStateMachine.currentState, 'chat-agent-streaming')
 
     lc.begin('conv-1')
     lc.abort('executionError')

@@ -1,21 +1,19 @@
 /**
  * SpecialistSlideOver — the ⚙️ Specialist panel that slides in from the right
- * when a user clicks the chat-header button. Hosts four tabs:
+ * when a user clicks the chat-header button. Hosts three tabs:
  *
  *   - Prompt  (read/edit the LLM-tailored prompt + rebuild)
  *   - Skills  (attached + enable/disable + library picker)
- *   - Tools   (MCP config + overrides)
  *   - History (last built / last tailored / drift trail)
  *
- * Each tab is an independent component so the slide-over stays under the
- * 150-line component budget.
+ * MCP tool configuration is workspace-level (via workspace settings), not
+ * per-specialist — there is no Tools tab.
  */
 import { useState } from 'react'
 import { X } from 'lucide-react'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
 import SpecialistPromptTab from './SpecialistPromptTab'
 import SpecialistSkillsTab from './SpecialistSkillsTab'
-import SpecialistToolsTab from './SpecialistToolsTab'
 import SpecialistHistoryTab from './SpecialistHistoryTab'
 
 interface SpecialistSlideOverProps {
@@ -24,12 +22,11 @@ interface SpecialistSlideOverProps {
   workspaceId: string | null
 }
 
-type Tab = 'prompt' | 'skills' | 'tools' | 'history'
+type Tab = 'prompt' | 'skills' | 'history'
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'prompt', label: 'Prompt' },
   { id: 'skills', label: 'Skills' },
-  { id: 'tools', label: 'Tools' },
   { id: 'history', label: 'History' }
 ]
 
@@ -48,11 +45,7 @@ export default function SpecialistSlideOver({
   return (
     <>
       {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-40 bg-black/30"
-        onClick={onClose}
-        aria-hidden="true"
-      />
+      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} aria-hidden="true" />
       {/* Panel */}
       <aside
         role="dialog"
@@ -103,15 +96,8 @@ export default function SpecialistSlideOver({
         </nav>
 
         <section className="flex-1 overflow-y-auto p-4">
-          {activeTab === 'prompt' && specialist && (
-            <SpecialistPromptTab specialist={specialist} />
-          )}
-          {activeTab === 'skills' && specialist && (
-            <SpecialistSkillsTab specialist={specialist} />
-          )}
-          {activeTab === 'tools' && specialist && (
-            <SpecialistToolsTab specialist={specialist} />
-          )}
+          {activeTab === 'prompt' && specialist && <SpecialistPromptTab specialist={specialist} />}
+          {activeTab === 'skills' && specialist && <SpecialistSkillsTab specialist={specialist} />}
           {activeTab === 'history' && specialist && (
             <SpecialistHistoryTab specialist={specialist} />
           )}

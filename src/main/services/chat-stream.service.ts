@@ -24,10 +24,9 @@ const log = chatIpcLogger
 
 // ── Pipeline Callbacks (strategy object) ──
 //
-// Post-migration-66: no handoff, no specialist pool. The pipeline callbacks
-// interface is kept to satisfy the legacy initChatStream(mainWindow, callbacks)
-// signature but is effectively empty. Remove in a future cleanup if no new
-// lifecycle callbacks are added.
+// The pipeline callbacks interface is kept to satisfy the legacy
+// initChatStream(mainWindow, callbacks) signature but is effectively empty.
+// Remove in a future cleanup if no new lifecycle callbacks are added.
 
 export interface PipelineCallbacks {
   onStopPipeline: () => Promise<void>
@@ -73,7 +72,7 @@ export class ChatStreamService {
   /**
    * Register once-at-startup event forwarders from generalist → renderer.
    *
-   * The typed 'intent' event handles all control actions (plan, handoff, askUser,
+   * The typed 'intent' event handles all control actions (plan, askUser,
    * grill events) via IntentRouter. Legacy events (plan, grillQuestion,
    * grillComplete, grillEvaluation) are still emitted by the MCP control callbacks
    * for backward compat — their forwarders remain to handle the immediate MCP path.
@@ -89,7 +88,7 @@ export class ChatStreamService {
         createCompactNeeded({
           conversationId: chatAgentService.getCurrentConversationId() || '',
           requestId: this.activeRequestId ?? undefined,
-          role: 'generalist',
+          role: 'da-vinci',
           compactNeeded: data
         })
       )
@@ -97,10 +96,11 @@ export class ChatStreamService {
 
     // Legacy forwarders for MCP-triggered events (fire during streaming)
     // These handle the immediate path when control tools fire via MCP callbacks.
-    chatAgentService.on('askQuestion', (data: { questions: GrillQuestion[] }) => {
+    chatAgentService.on('askQuestion', (data: { questions: GrillQuestion[]; action?: string }) => {
       this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
-        questions: data.questions
+        questions: data.questions,
+        action: data.action
       })
     })
 
@@ -119,12 +119,12 @@ export class ChatStreamService {
     // for regex-fallback detected plans.
 
     // Typed intent handler — routes post-stream intents (regex fallback + grill events)
-    // via IntentRouter. Skips plan/askUser/handoff if they were already sent by MCP forwarders above.
+    // via IntentRouter. Skips plan/askUser if they were already sent by MCP forwarders above.
     chatAgentService.on('intent', (intent: AgentIntent) => {
       const conversationId = chatAgentService.getCurrentConversationId() || ''
 
       // Skip types that were already forwarded by MCP legacy listeners
-      // (plan, askUser, handoff are emitted both by MCP callbacks and post-stream detection,
+      // (plan, askUser are emitted both by MCP callbacks and post-stream detection,
       // but IntentDetector.detectAll() already filters out MCP-fired types, so these
       // intents only arrive here when they're regex-fallback detected)
       this.intentRouter.route(conversationId, intent)
@@ -174,13 +174,11 @@ export class ChatStreamService {
       chatAgentService.removeListener('intent', onIntent)
       chatAgentService.removeListener('plan', onPlanEvent)
     })
-    // Ensure specialist pool is stopped on abort — covers the timing gap between
-    // stream() returning and execute() registering its own pool disposer.
-    // If execute() never starts (abort before handoff), this is the only disposer.
-    // If execute() does start, stopAll() is idempotent so the duplicate call is harmless.
+    // Invoke caller-supplied stop pipeline hook on lifecycle dispose.
+    // onStopPipeline is required to be idempotent — the duplicate call is harmless.
     conversationLifecycle.onDispose(() => {
       this.callbacks.onStopPipeline().catch((e) => {
-        log.warn('[STREAM] Lifecycle dispose: pool stopAll failed:', e)
+        log.warn('[STREAM] Lifecycle dispose: onStopPipeline failed:', e)
       })
     })
 
@@ -233,7 +231,7 @@ export class ChatStreamService {
         forwardChunkToRenderer(
           this.mainWindow,
           conversationId,
-          'generalist',
+          'da-vinci',
           chunk,
           streamedContent,
           workspacePath,
@@ -254,10 +252,7 @@ export class ChatStreamService {
       }
 
       const finalize = async (): Promise<void> => {
-        // ── Save generalist message FIRST — before waiting for handoff ──
-        // This prevents specialist chunks from overwriting generalist content
-        // in the renderer's streaming state (fixes B3: specialist replaces bubble,
-        // B7: final message shows wrong agent).
+        // Persist the generalist response to the DB before finishing the turn.
         try {
           log.info('Agent complete — saving to DB:', {
             contentLen: streamedContent.value.length
@@ -270,7 +265,7 @@ export class ChatStreamService {
 
           const savedMessage = messageRepository.create(
             conversationId,
-            'generalist',
+            'da-vinci',
             cleanedContent ||
               '_No response received. The agent may have encountered an issue while processing. Try sending your message again._'
           )
@@ -285,7 +280,7 @@ export class ChatStreamService {
               const memoriesCreated = memoryService.processMemoryBlocks(
                 streamedContent.value,
                 conversationId,
-                'generalist',
+                'da-vinci',
                 workspace.id
               )
               if (memoriesCreated > 0) {
@@ -315,7 +310,7 @@ export class ChatStreamService {
               conversationId,
               requestId,
               text: `\n\n**Error saving response:** ${(error as Error).message}`,
-              role: 'generalist'
+              role: 'da-vinci'
             })
           )
           this.mainWindow.webContents.send(
@@ -328,7 +323,7 @@ export class ChatStreamService {
           )
         }
 
-        conversationStateMachine.transition('generalistComplete')
+        conversationStateMachine.transition('chatAgentComplete')
 
         cleanupListeners()
         resolveDone()
@@ -341,8 +336,8 @@ export class ChatStreamService {
       })
     }
 
-    // Post-handoff-removal: the 'intent' event handler simply forwards plan/askUser
-    // intents; nothing to do here since IntentRouter handles those via its own listener.
+    // 'intent' events are forwarded by IntentRouter's persistent listener;
+    // no per-stream handling is required here.
     const onIntent = async (_intent: AgentIntent): Promise<void> => {
       // No-op.
     }
@@ -360,7 +355,7 @@ export class ChatStreamService {
           conversationId,
           requestId,
           text: planBlock,
-          role: 'generalist'
+          role: 'da-vinci'
         })
       )
       log.info(
@@ -400,13 +395,13 @@ export class ChatStreamService {
 
       eventLoggerService.logSessionFailed({
         conversationId,
-        agentId: 'generalist',
+        agentId: 'da-vinci',
         error: (error as Error).message
       })
 
       log.error('Generalist send failed:', (error as Error).message)
       const errorMsg = `**Generalist Error:** ${(error as Error).message}\n\nMake sure Claude CLI is installed and a workspace is open.`
-      const savedMessage = messageRepository.create(conversationId, 'generalist', errorMsg)
+      const savedMessage = messageRepository.create(conversationId, 'da-vinci', errorMsg)
 
       this.mainWindow.webContents.send(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
@@ -414,7 +409,7 @@ export class ChatStreamService {
           conversationId,
           requestId,
           text: errorMsg,
-          role: 'generalist'
+          role: 'da-vinci'
         })
       )
       this.mainWindow.webContents.send(
@@ -453,7 +448,7 @@ export class ChatStreamService {
           ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
           : '⏹ *Generation stopped by user.*'
 
-        const savedMessage = messageRepository.create(conversationId, 'generalist', contentToSave)
+        const savedMessage = messageRepository.create(conversationId, 'da-vinci', contentToSave)
         log.info('Stopped message saved to DB, id:', savedMessage.id)
 
         this.mainWindow.webContents.send(

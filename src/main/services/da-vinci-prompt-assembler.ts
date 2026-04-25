@@ -1,27 +1,15 @@
 import type { ConversationMode, CostPreference, Specialist } from '../../shared/types'
 import { chatAgentLogger } from '../logger'
 import { PromptBuilder, promptBuilder } from './prompt-builder'
-import {
-  ASK_QUESTION_PROMPT,
-  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
-  DIRECT_ANSWER_BOOST_PROMPT,
-  GIT_CONTEXT_GUIDANCE_PROMPT,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT,
-  IMAGE_ATTACHMENTS_PROMPT,
-  MEMORY_PROTOCOL_PROMPT,
-  REPOMAP_GUIDANCE_PROMPT,
-  SEMANTIC_SEARCH_GUIDANCE_PROMPT,
-  TASK_CONTEXT_GUIDANCE_PROMPT
-} from './default-prompts'
 import { memoryService } from './memory.service'
 import { conversationSpecialistRepository, specialistRepository } from '../db/repositories'
+import {
+  appendMcpToolGuidance,
+  buildConditionalPrefix,
+  type PromptFeatureFlags
+} from './prompt-assembly-helpers'
 
-/** Feature flags that affect prompt assembly */
-export interface PromptFeatureFlags {
-  repomapEnabled: boolean
-  semanticSearchEnabled: boolean
-  githubConfigured: boolean
-}
+export type { PromptFeatureFlags }
 
 /** Options for building the system prompt for a turn */
 export interface BuildSystemPromptOptions {
@@ -34,7 +22,6 @@ export interface BuildSystemPromptOptions {
   mode: ConversationMode
   featureFlags: PromptFeatureFlags
   costPreference: CostPreference
-  investigationModeEnabled: boolean
   /** Persona specialist ID for generalist impersonation (null = Da Vinci default) */
   personaSpecialistId?: string | null
   /** Cached persona specialist data for prompt building */
@@ -49,31 +36,22 @@ export interface BuildEffectiveMessageOptions {
   turnCount: number
   sessionId: string | undefined
   mode: ConversationMode
-  investigationModeEnabled: boolean
 }
 
 /**
  * Assembles all prompts for the ChatAgentService — system prompt, user message prefix,
- * conditional sections, MCP tool guidance, and specialist roster.
+ * conditional sections, and MCP tool guidance.
  *
  * This class owns the prompt-related state that was previously scattered across
- * ChatAgentService fields (memoryContext, specialistRoster, pendingModeSwitch, etc.).
- * These fields don't interact with the stream loop — they're set before send() enters
- * the stream and never read during streaming.
- *
- * ~300 LOC, 7 methods, combined complexity ~45.
+ * ChatAgentService fields (memoryContext, pendingModeSwitch, etc.). These fields
+ * don't interact with the stream loop — they're set before send() enters the
+ * stream and never read during streaming.
  */
 export class DaVinciPromptAssembler {
   private readonly log = chatAgentLogger
 
   /** Memory context string, cached for switchMode() rebuilds */
   private memoryContext: string | undefined
-
-  /**
-   * Strategy β: Specialist roster string, built once per turn by buildSystemPromptForTurn()
-   * and injected into the user message on turn 1 only. Removed from system prompt entirely.
-   */
-  private specialistRoster: string | null = null
 
   /**
    * Strategy ζ: Cached system prompt snapshot. Rebuilt only when mode changes,
@@ -106,6 +84,15 @@ export class DaVinciPromptAssembler {
 
   /** Pending persona switch — when set, the next buildEffectiveMessage() prefixes the message with persona-change context */
   private pendingPersonaSwitch: { specialistId: string | null } | null = null
+
+  /**
+   * One-shot signal indicating a Project Specialist has become "ready" for this
+   * workspace mid-session. When set, the next buildEffectiveMessage() prepends
+   * `[PROJECT SPECIALIST READY: <name>]` so DaVinci can propose the swap via
+   * ask_user. Cleared after injection so the proposal fires only once per
+   * readiness transition.
+   */
+  private pendingSpecialistReadySignal: string | null = null
 
   // ── Turn Count ──
 
@@ -178,7 +165,7 @@ export class DaVinciPromptAssembler {
       )
     } else {
       const basePrompt = promptBuilder.build({
-        role: 'generalist',
+        role: 'da-vinci',
         mode: opts.mode,
         workspacePath: opts.workspacePath,
         // Strategy C: memoryContext is NO LONGER passed here — it goes into the user prompt
@@ -197,12 +184,7 @@ export class DaVinciPromptAssembler {
       })
 
       // Strategy δ: MCP tool guidance sections on turn 1 only.
-      promptWithMcpGuidance = this.appendMcpToolGuidance(
-        basePrompt,
-        opts.turnCount,
-        opts.conversationId,
-        opts.featureFlags
-      )
+      promptWithMcpGuidance = appendMcpToolGuidance(basePrompt, opts.turnCount, opts.featureFlags)
 
       // Cache the snapshot for reuse on subsequent turns
       this.systemPromptSnapshot = promptWithMcpGuidance
@@ -210,11 +192,8 @@ export class DaVinciPromptAssembler {
       this.systemPromptSnapshotConversationId = opts.conversationId
     }
 
-    // Strategy β: Specialist roster is now injected into the user prompt on turn 1 only.
-    this.specialistRoster = this.buildSpecialistRoster(opts.conversationId)
-
     this.log.info(
-      `[PIPELINE:prompt-adaptive] conversationId=${opts.conversationId} turn=${opts.turnCount} budget=${budgetTier} rosterSize=${this.specialistRoster ? this.specialistRoster.split('\n').length : 0}`
+      `[PIPELINE:prompt-adaptive] conversationId=${opts.conversationId} turn=${opts.turnCount} budget=${budgetTier}`
     )
 
     // S8: Prompt size check — warn if approaching model context limits
@@ -288,26 +267,28 @@ export class DaVinciPromptAssembler {
       this.pendingPersonaSwitch = null
     }
 
+    // Specialist-ready signal — one-shot injection consumed after first use.
+    // DaVinci's prompt instructs it to call ask_user with a swap proposal when
+    // it sees this sentinel. Fires only once per readiness transition.
+    if (this.pendingSpecialistReadySignal) {
+      effectiveMessage = `[PROJECT SPECIALIST READY: ${this.pendingSpecialistReadySignal}]\n\n${effectiveMessage}`
+      this.pendingSpecialistReadySignal = null
+    }
+
     // Mode indicator for resumed sessions.
     if (opts.sessionId) {
       effectiveMessage = `[Current mode: ${opts.mode.toUpperCase()}]\n\n${effectiveMessage}`
     }
 
     // Strategy α: Conditional prefix (toggles per message content).
-    const conditionalPrefix = this.buildConditionalPrefix(
-      opts.message,
-      opts.hasImages,
-      opts.mode,
-      opts.investigationModeEnabled,
-      opts.turnCount
-    )
+    const conditionalPrefix = buildConditionalPrefix({
+      message: opts.message,
+      hasImages: opts.hasImages,
+      mode: opts.mode,
+      turnCount: opts.turnCount
+    })
     if (conditionalPrefix) {
       effectiveMessage = `${conditionalPrefix}\n\n---\n\n${effectiveMessage}`
-    }
-
-    // Strategy β: Specialist roster on turn 1 only — already in history on turns 2+.
-    if (opts.turnCount <= 1 && this.specialistRoster) {
-      effectiveMessage = `${this.specialistRoster}\n\n---\n\n${effectiveMessage}`
     }
 
     // Strategy C: Memory context in user prompt (not system prompt) for cache stability.
@@ -369,6 +350,15 @@ export class DaVinciPromptAssembler {
     this.pendingPersonaSwitch = { specialistId }
   }
 
+  /**
+   * Arm (or clear) the one-shot specialist-ready signal. When armed with a
+   * non-null name, the next buildEffectiveMessage() prepends the sentinel line
+   * `[PROJECT SPECIALIST READY: <name>]` and clears the flag.
+   */
+  setPendingSpecialistReadySignal(specialistName: string | null): void {
+    this.pendingSpecialistReadySignal = specialistName
+  }
+
   /** Set memory context (called during start()) */
   setMemoryContext(ctx: string | undefined): void {
     this.memoryContext = ctx
@@ -377,13 +367,13 @@ export class DaVinciPromptAssembler {
   /** Reset all state for a new session */
   resetSession(): void {
     this.memoryContext = undefined
-    this.specialistRoster = null
     this.systemPromptSnapshot = null
     this.systemPromptSnapshotMode = null
     this.systemPromptSnapshotConversationId = null
     this.turnCountMap.clear()
     this.pendingModeSwitch = null
     this.pendingPersonaSwitch = null
+    this.pendingSpecialistReadySignal = null
     this.pendingContextInjection.clear()
     this.pendingCompaction.clear()
   }
@@ -436,164 +426,5 @@ export class DaVinciPromptAssembler {
       return feedbackMatch[1].trim()
     }
     return null
-  }
-
-  /**
-   * Strategy α: Build a conditional prefix for the user message.
-   * These sections toggle based on the user's message content. Moving them to the user prompt
-   * makes the system prompt 100% deterministic per mode → 90% cache discount on every turn.
-   */
-  private buildConditionalPrefix(
-    message: string,
-    hasImages: boolean,
-    mode: ConversationMode,
-    investigationModeEnabled: boolean,
-    turnCount: number = 1
-  ): string {
-    const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages)
-    const sections: string[] = []
-
-    // Skip ask question prompt on turns 2+ — already in history from turn 1
-    if (conditionalSections.includeAskQuestionPrompt && turnCount <= 1) {
-      sections.push(ASK_QUESTION_PROMPT)
-    }
-
-    // Skip memory protocol prompt on turns 2+ — already in history from turn 1
-    if (conditionalSections.includeMemoryProtocolPrompt && turnCount <= 1) {
-      sections.push(MEMORY_PROTOCOL_PROMPT)
-    }
-
-    if (conditionalSections.includeImageAttachmentsPrompt) {
-      sections.push(IMAGE_ATTACHMENTS_PROMPT)
-    }
-
-    // Strategy N: Direct Answer Boost — only inject on turn 3+ when there's conversation
-    // history to reference (irrelevant on early turns)
-    if (conditionalSections.includeDirectAnswerBoost && turnCount >= 3) {
-      sections.push(DIRECT_ANSWER_BOOST_PROMPT)
-    }
-
-    // Strategy ζ: Plan Output Reinforcement
-    // In plan mode, ALWAYS remind about emit_plan — every plan-mode response should use it.
-    // In build mode, only remind when message explicitly requests a plan.
-    const isPlanGenerationRequest =
-      /\b(create a plan|draft a plan|propose a plan|make a plan|write a plan|design a plan|plan for|plan to (implement|build|add|create|fix|refactor)|how (would|should|can) (I|we|you)|what('s| is) the (best|right) (way|approach)|investigate|diagnose|audit|analyze|what.*(wrong|broken|failing|issue)|assess|evaluate)\b/i.test(
-        message
-      )
-    const planReminderInjected = mode === 'plan' || isPlanGenerationRequest
-
-    if (planReminderInjected) {
-      sections.push(
-        turnCount <= 1
-          ? `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards.]`
-          : `[Use emit_plan for plans.]`
-      )
-    }
-
-    // Strategy γ: When investigation mode is OFF, inject NO HANDOFF directive.
-    // The generalist must answer everything directly — no specialist delegation.
-    // This explicitly grants Write/Edit permission, overriding the system-prompt
-    // "What Requires Handoff" section that assumes specialists are available.
-    if (!investigationModeEnabled) {
-      sections.push(
-        `## NO HANDOFF MODE (Investigation Mode OFF)\n\n` +
-          `Do NOT hand off to specialists — none are active. You are the sole agent.\n` +
-          `You CAN and SHOULD write source code directly when the user asks for changes.\n` +
-          `The "What Requires Handoff" section does NOT apply — you handle everything:\n` +
-          `source files (.ts/.tsx/.js/.jsx/.css/.sql), tests, configs, docs, and commands.\n` +
-          `Target ≤10 tool calls per request. For tasks affecting 20+ files, suggest the user\n` +
-          `enable Investigation Mode for parallel specialist execution.`
-      )
-    }
-
-    this.log.info(
-      `[PIPELINE:conditional-prefix] ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost} investigationMode=${investigationModeEnabled} planReminder=${planReminderInjected}`
-    )
-
-    return sections.length > 0
-      ? `[Contextual guidelines for this message]\n\n${sections.join('\n\n')}`
-      : ''
-  }
-
-  /**
-   * Strategy δ: Append MCP tool guidance sections to system prompt — turn 1 only.
-   * These are workspace-stable (don't toggle between turns) so they are safe in the system prompt.
-   */
-  private appendMcpToolGuidance(
-    basePrompt: string,
-    turnCount: number,
-    conversationId: string | null,
-    featureFlags: PromptFeatureFlags
-  ): string {
-    // Strategy δ: Only inject MCP guidance on turn 1.
-    if (turnCount > 1) return basePrompt
-
-    const appendSections: string[] = []
-
-    if (featureFlags.repomapEnabled && !basePrompt.includes('## Code Graph Tools')) {
-      appendSections.push(REPOMAP_GUIDANCE_PROMPT)
-    }
-
-    if (featureFlags.semanticSearchEnabled && !basePrompt.includes('## Semantic Search')) {
-      appendSections.push(SEMANTIC_SEARCH_GUIDANCE_PROMPT)
-    }
-
-    if (!basePrompt.includes('## Git Context Tools')) {
-      appendSections.push(GIT_CONTEXT_GUIDANCE_PROMPT)
-    }
-
-    if (conversationId && !basePrompt.includes('## Task Context Tools')) {
-      appendSections.push(TASK_CONTEXT_GUIDANCE_PROMPT)
-    }
-
-    if (!basePrompt.includes('## Checkpoint Tools')) {
-      appendSections.push(CHECKPOINT_CONTEXT_GUIDANCE_PROMPT)
-    }
-
-    if (featureFlags.githubConfigured && !basePrompt.includes('## GitHub Tools')) {
-      appendSections.push(GITHUB_CONTEXT_GUIDANCE_PROMPT)
-    }
-
-    if (appendSections.length === 0) return basePrompt
-    return `${basePrompt}\n\n---\n\n${appendSections.join('\n\n---\n\n')}`
-  }
-
-  /**
-   * Strategy β: Build specialist roster string for user prompt injection.
-   *
-   * After the Project Specialist refactor (migration 66) there are NO
-   * app-global specialists other than the Generalist itself — every other
-   * specialist is workspace-bound and not eligible for cross-workspace
-   * delegation. This method preserves its signature for backward compat but
-   * filters out workspace-bound rows and core names, so the roster is
-   * effectively empty for modern installs.
-   *
-   * Kept (rather than deleted) so old unit tests targeting this helper
-   * continue to compile; will be removed in a subsequent cleanup pass once
-   * the entire handoff codepath is retired.
-   */
-  private buildSpecialistRoster(conversationId: string | null): string | null {
-    let activeSpecialists = specialistRepository.findActive()
-
-    if (conversationId) {
-      const overrides = conversationSpecialistRepository.findByConversation(conversationId)
-      if (overrides.length > 0) {
-        const activeSpecialistIds = new Set(
-          overrides.filter((o) => o.isActive).map((o) => o.specialistId)
-        )
-        activeSpecialists = activeSpecialists.filter((s) => activeSpecialistIds.has(s.id))
-      }
-    }
-
-    const nonCoreSpecialists = activeSpecialists.filter(
-      (s) =>
-        !['generalist', 'generalist-agent', 'user'].includes(s.agentId) &&
-        // Exclude workspace-bound Project Specialists (agent_id pattern)
-        !s.agentId.startsWith('workspace-specialist-')
-    )
-
-    if (nonCoreSpecialists.length === 0) return null
-
-    return `Available specialists: ${nonCoreSpecialists.map((s) => s.agentId).join(', ')}`
   }
 }

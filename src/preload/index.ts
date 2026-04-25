@@ -14,9 +14,6 @@ import type {
   ActivationProgressEvent,
   DiscoveredSkill,
   DiscoveredAgent,
-  DecomposedTask,
-  TaskExecutionProgress,
-  InvestigationReport,
   FileChange,
   CompleteResult,
   SyncDiff,
@@ -46,10 +43,7 @@ import type {
   IndexingState,
   CodeGraphIndexingState,
   ContextUsage,
-  StructuredPlan,
-  BugCouncilResult,
-  BugCouncilActivatedEvent,
-  BugCouncilCompleteEvent
+  StructuredPlan
 } from '../shared/types'
 
 const api = {
@@ -127,6 +121,15 @@ const api = {
   stopGeneration: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_STOP),
 
   compactConversation: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT),
+
+  /**
+   * Accept DaVinci's specialist-swap proposal — tears down the DaVinci session
+   * and rebuilds as the workspace's ready Project Specialist.
+   */
+  swapToSpecialist: (args: {
+    workspaceId?: string
+    workspacePath?: string
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_SWAP_TO_SPECIALIST, args),
 
   // Chat commands
   completeConversation: (args: {
@@ -267,13 +270,6 @@ const api = {
     skillId: string
   }): Promise<{ ok: true }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_DETACH_SKILL, args),
-
-  toggleProjectSpecialistMcp: (args: {
-    specialistId: string
-    mcpId: string
-    enabled: boolean
-  }): Promise<{ ok: true }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_TOGGLE_MCP, args),
 
   getProjectSpecialistDrift: (args: { workspaceId: string }): Promise<unknown | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_GET_DRIFT, args),
@@ -583,7 +579,6 @@ const api = {
       conversationId: string
       messageId: string
       taskId?: string
-      isHandoff?: boolean
       requestId?: string
     }) => void
   ): (() => void) => {
@@ -593,7 +588,6 @@ const api = {
         conversationId: string
         messageId: string
         taskId?: string
-        isHandoff?: boolean
         requestId?: string
       }
     ): void => callback(data)
@@ -638,11 +632,15 @@ const api = {
   },
 
   onAskQuestion: (
-    callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
+    callback: (data: {
+      conversationId: string
+      questions: GrillQuestion[]
+      action?: string
+    }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
-      data: { conversationId: string; questions: GrillQuestion[] }
+      data: { conversationId: string; questions: GrillQuestion[]; action?: string }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_ASK_QUESTION, handler)
     return () => {
@@ -701,51 +699,6 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.CHAT_GRILL_EVALUATION, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.CHAT_GRILL_EVALUATION, handler)
-    }
-  },
-
-  onInvestigationReport: (
-    callback: (data: {
-      conversationId: string
-      taskId: string
-      specialist: string
-      report: InvestigationReport
-    }) => void
-  ): (() => void) => {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      data: {
-        conversationId: string
-        taskId: string
-        specialist: string
-        report: InvestigationReport
-      }
-    ): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.CHAT_INVESTIGATION_REPORT, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_INVESTIGATION_REPORT, handler)
-    }
-  },
-
-  onTaskProgress: (callback: (data: TaskExecutionProgress) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: TaskExecutionProgress): void =>
-      callback(data)
-    ipcRenderer.on(IPC_CHANNELS.CHAT_TASK_PROGRESS, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_TASK_PROGRESS, handler)
-    }
-  },
-
-  onBuildTasks: (
-    callback: (data: { conversationId: string; tasks: DecomposedTask[] }) => void
-  ): (() => void) => {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      data: { conversationId: string; tasks: DecomposedTask[] }
-    ): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.CHAT_BUILD_TASKS, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_BUILD_TASKS, handler)
     }
   },
 
@@ -977,7 +930,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_LIST),
 
   upsertCoreAgentAlias: (args: {
-    agentRole: 'generalist' | 'coordinator'
+    agentRole: 'da-vinci'
     alias: string | null
     avatarKey: string | null
   }): Promise<CoreAgentAlias> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_UPSERT, args),
@@ -987,19 +940,19 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_LIST),
 
   getCoreAgentPrompt: (args: {
-    agentRole: 'generalist'
+    agentRole: 'da-vinci'
     mode: 'plan' | 'build'
   }): Promise<CoreAgentPrompt | undefined> =>
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_GET, args),
 
   upsertCoreAgentPrompt: (args: {
-    agentRole: 'generalist'
+    agentRole: 'da-vinci'
     mode: 'plan' | 'build'
     promptText: string
   }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT, args),
 
   resetCoreAgentPrompt: (args: {
-    agentRole: 'generalist'
+    agentRole: 'da-vinci'
     mode: 'plan' | 'build'
   }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_RESET, args),
 
@@ -1370,31 +1323,6 @@ const api = {
   // ── Conversation Reorder ──
   reorderConversations: (args: { orderedIds: string[] }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_REORDER, args),
-
-  // ── Bug Council ──
-  getBugCouncilSession: (args: { sessionId: string }): Promise<BugCouncilResult | null> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BUG_COUNCIL_GET_SESSION, args),
-
-  listBugCouncilSessions: (args: { conversationId: string }): Promise<BugCouncilResult[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BUG_COUNCIL_LIST_SESSIONS, args),
-
-  onBugCouncilActivated: (callback: (data: BugCouncilActivatedEvent) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: BugCouncilActivatedEvent): void =>
-      callback(data)
-    ipcRenderer.on(IPC_CHANNELS.BUG_COUNCIL_ACTIVATED, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.BUG_COUNCIL_ACTIVATED, handler)
-    }
-  },
-
-  onBugCouncilComplete: (callback: (data: BugCouncilCompleteEvent) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: BugCouncilCompleteEvent): void =>
-      callback(data)
-    ipcRenderer.on(IPC_CHANNELS.BUG_COUNCIL_COMPLETE, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.BUG_COUNCIL_COMPLETE, handler)
-    }
-  },
 
   // ── SDK Events ──
   onRateLimitEvent: (

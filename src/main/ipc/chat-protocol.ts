@@ -17,7 +17,7 @@ import type { ConversationPhase, ToolActivity } from '../../shared/types'
 export interface BaseChunkMessage {
   conversationId: string
   requestId?: string
-  role: 'generalist' | 'specialist'
+  role: 'da-vinci' | 'specialist'
   phase?: ConversationPhase
 }
 
@@ -55,7 +55,6 @@ export interface CompleteMessage {
   requestId?: string
   messageId: string
   taskId?: string
-  isHandoff?: boolean
   phase?: ConversationPhase
 }
 
@@ -68,7 +67,7 @@ export function createTextChunk(opts: {
   conversationId: string
   requestId?: string
   text: string
-  role: 'generalist' | 'specialist'
+  role: 'da-vinci' | 'specialist'
   phase?: ConversationPhase
   specialist?: string
   taskId?: string
@@ -90,7 +89,7 @@ export function createTextChunk(opts: {
 export function createToolActivityChunk(opts: {
   conversationId: string
   requestId?: string
-  role: 'generalist' | 'specialist'
+  role: 'da-vinci' | 'specialist'
   toolActivity: Partial<ToolActivity> & { id: string; toolName: string }
   specialist?: string
   taskId?: string
@@ -112,7 +111,7 @@ export function createToolActivityChunk(opts: {
 export function createTurnBoundary(opts: {
   conversationId: string
   requestId?: string
-  role: 'generalist' | 'specialist'
+  role: 'da-vinci' | 'specialist'
   turnId: string
   specialist?: string
   taskId?: string
@@ -135,7 +134,7 @@ export function createTurnBoundary(opts: {
 export function createCompactNeeded(opts: {
   conversationId: string
   requestId?: string
-  role: 'generalist' | 'specialist'
+  role: 'da-vinci' | 'specialist'
   compactNeeded: { level: string; inputTokens: number }
 }): CompactNeededMessage {
   return {
@@ -156,14 +155,12 @@ export function createCompleteMessage(opts: {
   messageId: string
   phase?: ConversationPhase
   taskId?: string
-  isHandoff?: boolean
 }): CompleteMessage {
   return {
     conversationId: opts.conversationId,
     messageId: opts.messageId,
     ...(opts.requestId ? { requestId: opts.requestId } : {}),
     ...(opts.phase ? { phase: opts.phase } : {}),
-    ...(opts.taskId ? { taskId: opts.taskId } : {}),
-    ...(opts.isHandoff !== undefined ? { isHandoff: opts.isHandoff } : {})
+    ...(opts.taskId ? { taskId: opts.taskId } : {})
   }
 }

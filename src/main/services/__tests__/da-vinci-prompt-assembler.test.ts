@@ -6,8 +6,8 @@
  * clearConversation, invalidateSnapshot, buildEffectiveMessage with various
  * injection strategies, and memory budget scaling.
  *
- * DB-dependent methods (buildSystemPromptForTurn, buildSpecialistRoster) are
- * excluded — they require live DB and are P2/integration tier.
+ * DB-dependent methods (buildSystemPromptForTurn) are excluded — they require
+ * live DB and are P2/integration tier.
  *
  * Pure logic: no filesystem, no network, no real Electron dependencies.
  */
@@ -23,7 +23,6 @@ function defaultMessageOpts(overrides?: Partial<{
   turnCount: number
   sessionId: string | undefined
   mode: string
-  investigationModeEnabled: boolean
 }>) {
   return {
     message: overrides?.message ?? 'Hello world',
@@ -31,8 +30,7 @@ function defaultMessageOpts(overrides?: Partial<{
     hasImages: overrides?.hasImages ?? false,
     turnCount: overrides?.turnCount ?? 1,
     sessionId: overrides?.sessionId ?? undefined,
-    mode: (overrides?.mode ?? 'plan') as 'plan' | 'build',
-    investigationModeEnabled: overrides?.investigationModeEnabled ?? false
+    mode: (overrides?.mode ?? 'plan') as 'plan' | 'build'
   }
 }
 
@@ -193,5 +191,46 @@ describe('DaVinciPromptAssembler', () => {
     const turn4 = assembler.buildEffectiveMessage(defaultMessageOpts({ turnCount: 4 }))
     assert.ok(!turn4.includes('User likes dark mode'), 'Turn 4: no preferences section')
     assert.ok(turn4.includes('Always use strict mode'), 'Turn 4: feedback section preserved')
+  })
+
+  test('setPendingSpecialistReadySignal_injects_sentinel_and_is_one_shot', () => {
+    const { assembler } = createPromptAssembler()
+    assembler.setPendingSpecialistReadySignal('Payments Specialist')
+
+    const first = assembler.buildEffectiveMessage(defaultMessageOpts({ turnCount: 5 }))
+    assert.ok(
+      first.includes('[PROJECT SPECIALIST READY: Payments Specialist]'),
+      'first call should include the sentinel'
+    )
+    assert.ok(first.includes('Hello world'), 'sentinel should be prefix, user message preserved')
+
+    // One-shot: the second call must not include the sentinel.
+    const second = assembler.buildEffectiveMessage(defaultMessageOpts({ turnCount: 6 }))
+    assert.ok(
+      !second.includes('[PROJECT SPECIALIST READY'),
+      'signal should be consumed after first buildEffectiveMessage'
+    )
+  })
+
+  test('setPendingSpecialistReadySignal_null_is_noop', () => {
+    const { assembler } = createPromptAssembler()
+    assembler.setPendingSpecialistReadySignal(null)
+    const result = assembler.buildEffectiveMessage(defaultMessageOpts())
+    assert.ok(
+      !result.includes('[PROJECT SPECIALIST READY'),
+      'null signal should not inject anything'
+    )
+  })
+
+  test('resetSession_clears_pending_specialist_ready_signal', () => {
+    const { assembler } = createPromptAssembler()
+    assembler.setPendingSpecialistReadySignal('ShouldBeCleared')
+    assembler.resetSession()
+
+    const result = assembler.buildEffectiveMessage(defaultMessageOpts())
+    assert.ok(
+      !result.includes('[PROJECT SPECIALIST READY'),
+      'resetSession should clear armed signal'
+    )
   })
 })

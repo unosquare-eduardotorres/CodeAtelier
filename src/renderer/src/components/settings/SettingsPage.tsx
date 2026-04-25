@@ -15,10 +15,11 @@ import {
   useSpecialistStore,
   useAppPreferenceActions,
   useSpecialistWarningPreferences,
-  useAppPreferenceStatus
+  useAppPreferenceStatus,
+  useWorkspaceStore
 } from '@renderer/store'
 import { Avatar } from '@renderer/components/common'
-import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
+import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 import type { Specialist } from '../../../../shared/types'
 import AISubscriptionsSection from './AISubscriptionsSection'
 
@@ -173,6 +174,9 @@ function SpecialistWarningPreferencesSection(): React.JSX.Element {
 
 function SpecialistOrder(): React.JSX.Element {
   const { specialists, reorderSpecialists } = useSpecialistStore()
+  const activeWs = useWorkspaceStore((s) => s.activeWorkspace)
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
+  const mannequinKey = activeWs ? getWorkspaceMannequin(activeWs.id, workspaces) : 'mannequin-main'
   const [orderedList, setOrderedList] = useState<Specialist[]>([])
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -254,7 +258,7 @@ function SpecialistOrder(): React.JSX.Element {
             <GripVertical size={14} className="text-text-muted flex-shrink-0" />
             <span className="text-xs text-text-muted w-5 font-mono">{index + 1}</span>
             <Avatar
-              avatarKey={specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId)}
+              avatarKey={specialist.agentId === 'user' ? 'user' : mannequinKey}
               size="sm"
               accentColor={specialist.color}
             />

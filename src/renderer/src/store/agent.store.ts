@@ -2,19 +2,12 @@ import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
 import type { AgentStatus } from '../../../shared/types'
 
-interface GateResult {
-  type: string
-  passed: boolean
-  summary: string
-}
-
 interface AgentState {
   statuses: AgentStatus[]
   isStopping: boolean
   sessionTokens: number
   lastKnownTokens: Record<string, number>
   agentOutputs: Record<string, string>
-  gateResults: Record<string, GateResult[]>
   abandonments: Record<string, { pattern: string }>
 
   updateStatus: (status: AgentStatus) => void
@@ -22,7 +15,6 @@ interface AgentState {
   stopAllAgents: () => Promise<void>
   appendOutput: (agentId: string, text: string) => void
   clearOutputs: () => void
-  addGateResult: (agentId: string, gate: GateResult) => void
   markAbandonment: (agentId: string, pattern: string) => void
   clearGateData: () => void
 }
@@ -36,7 +28,6 @@ export const useAgentStore = create<AgentState>((set) => ({
   sessionTokens: previousAgentState?.sessionTokens ?? 0,
   lastKnownTokens: previousAgentState?.lastKnownTokens ?? {},
   agentOutputs: previousAgentState?.agentOutputs ?? {},
-  gateResults: previousAgentState?.gateResults ?? {},
   abandonments: previousAgentState?.abandonments ?? {},
 
   updateStatus: (status: AgentStatus) => {
@@ -105,18 +96,6 @@ export const useAgentStore = create<AgentState>((set) => ({
     set({ agentOutputs: {} })
   },
 
-  addGateResult: (agentId: string, gate: GateResult) => {
-    set((state) => {
-      const existing = state.gateResults[agentId] ?? []
-      return {
-        gateResults: {
-          ...state.gateResults,
-          [agentId]: [...existing, gate]
-        }
-      }
-    })
-  },
-
   markAbandonment: (agentId: string, pattern: string) => {
     set((state) => ({
       abandonments: {
@@ -127,7 +106,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   },
 
   clearGateData: () => {
-    set({ gateResults: {}, abandonments: {} })
+    set({ abandonments: {} })
   }
 }))
 

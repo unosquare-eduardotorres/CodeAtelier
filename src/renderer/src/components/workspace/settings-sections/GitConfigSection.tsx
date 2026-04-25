@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { GitBranch, Check, Pencil, Loader2 } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
 import type { RepoInfo } from '../../../../../shared/types'
@@ -33,7 +33,6 @@ export default function GitConfigSection({
   onInitRepo
 }: GitConfigSectionProps): React.JSX.Element {
   const hasRemote = localRepoInfo?.hasRemote && localRepoInfo?.remoteUrl
-  const showRemoteInput = isEditingRemote || !hasRemote
 
   return (
     <section>

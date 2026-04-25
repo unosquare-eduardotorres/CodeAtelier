@@ -42,10 +42,10 @@ class ModelConfigService {
     return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
   }
 
-  /** Fallback: 'generalist:plan' → 'generalist' */
+  /** Fallback: 'da-vinci:plan' → 'da-vinci' */
   private fallbackAction(action: ModelAction): string {
     const base = action.split(':')[0] as ModelAction
-    return DEFAULT_MODEL_CONFIG[base] ?? DEFAULT_MODEL_CONFIG.generalist
+    return DEFAULT_MODEL_CONFIG[base] ?? DEFAULT_MODEL_CONFIG['da-vinci']
   }
 }
 

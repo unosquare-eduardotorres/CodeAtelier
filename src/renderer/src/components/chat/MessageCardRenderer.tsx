@@ -43,7 +43,6 @@ function MarkdownSection({
 /** Props for the conditional card rendering extracted from MessageBubbleInner */
 export interface MessageCardRendererProps {
   content: MessageContentData
-  isExecutingPlan?: boolean
   aiBubbleClass: string
   remarkPlugins: PluggableList
   rehypePlugins: PluggableList
@@ -52,7 +51,6 @@ export interface MessageCardRendererProps {
   // Plan action handlers
   onBuildNow: () => void
   onRefine: () => void
-  onOrchestratedBuild: () => void
   onSaveAsIdea?: () => void
   // Grill action handlers
   onGrillKeepIterating: () => void
@@ -70,7 +68,6 @@ export interface MessageCardRendererProps {
  */
 export default function MessageCardRenderer({
   content,
-  isExecutingPlan,
   aiBubbleClass,
   remarkPlugins,
   rehypePlugins,
@@ -78,7 +75,6 @@ export default function MessageCardRenderer({
   suppressInlineGrillCard,
   onBuildNow,
   onRefine,
-  onOrchestratedBuild,
   onSaveAsIdea,
   onGrillKeepIterating,
   onGrillCreatePlan,
@@ -246,10 +242,8 @@ export default function MessageCardRenderer({
         <TaskPlanCard
           summary="Implementation Plan"
           mode="plan"
-          isExecuting={isExecutingPlan}
           planContent={planContent}
           onBuildNow={onBuildNow}
-          onOrchestratedBuild={onOrchestratedBuild}
           onSaveAsIdea={onSaveAsIdea}
           onRefine={onRefine}
         />

@@ -1,108 +1,63 @@
-import { useMemo } from 'react'
-import { AVATAR_MAP } from './AvatarLibrary'
+import { AVATAR_IMAGES, type AvatarKey } from '@renderer/assets/avatars'
+import { rendererLog } from '@renderer/utils/logger'
 
 interface AvatarProps {
   avatarKey: string
   size?: 'sm' | 'md' | 'lg' | 'xl'
-  fallbackInitials?: string
   className?: string
   accentColor?: string
 }
 
+// Sizes bumped across the board. xl (chat bubble) grows from 54 → 80.
 const SIZE_MAP = {
-  sm: 24,
-  md: 36,
-  lg: 48,
-  xl: 54
+  sm: 32,
+  md: 48,
+  lg: 64,
+  xl: 80
 } as const
 
 /**
- * Renders a built-in SVG avatar from the avatar library.
- * Falls back to initials in a colored circle if the key isn't found.
- *
- * Multi-color rendering: Injects CSS custom properties (--av-bg, --av-skin,
- * --av-hair, --av-clothing, --av-accessory, --av-eyes) from the avatar's
- * palette so each character has distinct, vibrant colors.
- *
- * Follows UI/UX Pro Max guidelines:
- * - Touch targets ≥ 44px when interactive (handled by parent)
- * - Smooth transitions on avatar changes
- * - Accessible with aria-hidden (decorative image)
+ * Renders a bundled portrait image by key. No SVG, no initials fallback.
+ * If the key is unknown (should never happen via our resolution chain),
+ * renders a neutral placeholder circle and logs a warning.
  */
 export default function Avatar({
   avatarKey,
   size = 'md',
-  fallbackInitials,
   className = '',
   accentColor
 }: AvatarProps): React.JSX.Element {
   const px = SIZE_MAP[size]
-  const definition = AVATAR_MAP[avatarKey]
+  const src = AVATAR_IMAGES[avatarKey as AvatarKey]
 
-  const initials = useMemo(() => {
-    if (fallbackInitials) {
-      return fallbackInitials
-        .split(' ')
-        .map((w) => w[0])
-        .join('')
-        .toUpperCase()
-        .slice(0, 2)
-    }
-    return avatarKey.charAt(0).toUpperCase()
-  }, [fallbackInitials, avatarKey])
+  const baseStyle: React.CSSProperties = {
+    width: px,
+    height: px,
+    minWidth: px,
+    minHeight: px,
+    ...(accentColor ? { outline: `2px solid ${accentColor}`, outlineOffset: 2 } : {})
+  }
 
-  const colorStyle = accentColor ? { color: accentColor } : undefined
-
-  if (!definition) {
-    // Fallback: initials in a colored circle
+  if (!src) {
+    rendererLog.warn(`Avatar: unknown key "${avatarKey}"`)
     return (
       <div
-        className={`inline-flex items-center justify-center rounded-full bg-surface-overlay transition-all duration-150 ${className}`}
-        style={{
-          width: px,
-          height: px,
-          minWidth: px,
-          minHeight: px,
-          ...colorStyle
-        }}
+        className={`inline-block rounded-full bg-surface-overlay ${className}`}
+        style={baseStyle}
         aria-hidden="true"
-      >
-        <span
-          className="font-semibold text-text-primary select-none"
-          style={{ fontSize: px * 0.38 }}
-        >
-          {initials}
-        </span>
-      </div>
+      />
     )
   }
 
-  // Build CSS variables from palette for multi-color rendering
-  const palette = definition.palette
-  const style: React.CSSProperties = {
-    minWidth: px,
-    minHeight: px,
-    // Legacy: keep color for any remaining currentColor references
-    color: accentColor ?? definition.defaultColor,
-    // Palette variables consumed by SVG content
-    '--av-bg': definition.bgColor,
-    '--av-skin': palette.skin,
-    '--av-hair': palette.hair,
-    '--av-clothing': palette.clothing,
-    '--av-accessory': palette.accessory,
-    '--av-eyes': palette.eyes
-  } as React.CSSProperties
-
   return (
-    <svg
-      viewBox="0 0 48 48"
+    <img
+      src={src}
       width={px}
       height={px}
-      className={`inline-block rounded-full transition-all duration-150 ${className}`}
-      style={style}
+      className={`inline-block rounded-full object-cover transition-all duration-150 ${className}`}
+      style={baseStyle}
+      alt=""
       aria-hidden="true"
-      role="img"
-      dangerouslySetInnerHTML={{ __html: definition.svgContent }}
     />
   )
 }

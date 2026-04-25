@@ -48,7 +48,7 @@ if (!env) {
     test('findByConversation() returns messages in chronological order', () => {
       const convId2 = seedConversation(db, wsId, 'Conv 2')
       messageRepository.create(convId2, 'user', 'First')
-      messageRepository.create(convId2, 'coordinator', 'Second')
+      messageRepository.create(convId2, 'da-vinci', 'Second')
       messageRepository.create(convId2, 'specialist', 'Third')
 
       const messages = messageRepository.findByConversation(convId2)

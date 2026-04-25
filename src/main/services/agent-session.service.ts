@@ -41,7 +41,6 @@ import { semanticSearchMcpService } from './semantic-search.tool'
 import { codeGraphMcpService } from './code-graph.tool'
 import {
   conversationRepository,
-  messageRepository,
   turnUsageRepository,
   workspaceRepository
 } from '../db/repositories'
@@ -400,7 +399,7 @@ export class AgentSessionService extends AgentBaseService {
 
     return {
       agentId: this.adapter.agentId,
-      agentType: this.adapter.role === 'da-vinci' ? 'generalist' : 'specialist',
+      agentType: this.adapter.role === 'da-vinci' ? 'da-vinci' : 'specialist',
       status: this.currentStatus,
       elapsedMs: isActive && this.messageStartedAt ? Date.now() - this.messageStartedAt : 0,
       tokenUsage: this.tokenUsage,
@@ -506,11 +505,11 @@ export class AgentSessionService extends AgentBaseService {
     }
 
     const origAsk = cb.onAskUser
-    cb.onAskUser = (questions) => {
+    cb.onAskUser = (questions, action) => {
       this.controlToolState.askUser = true
-      this.controlToolState.askUserIntent = { type: 'askUser', questions }
-      this.emit('askQuestion', { questions })
-      origAsk(questions)
+      this.controlToolState.askUserIntent = { type: 'askUser', questions, action }
+      this.emit('askQuestion', { questions, action })
+      origAsk(questions, action)
     }
 
     const origMemory = cb.onMemory
@@ -1178,25 +1177,4 @@ export class AgentSessionService extends AgentBaseService {
     }
   }
 
-  // ── Debug helpers (read-only) ─────────────────────────────────────
-
-  protected buildRecentMessagesSummary(conversationId: string, limit = 20): string {
-    const messages = messageRepository.findByConversation(conversationId)
-    const recent = messages.slice(-limit)
-    const lines = recent.map((m) => {
-      const role = m.role === 'user' ? 'User' : 'Assistant'
-      const content =
-        m.contentMd.length > 2000 ? m.contentMd.slice(0, 2000) + '...[truncated]' : m.contentMd
-      return `[${role}]: ${content}`
-    })
-    return [
-      '--- SESSION RECOVERY CONTEXT ---',
-      'The previous session was lost. Here is a summary of the recent conversation:',
-      '',
-      ...lines,
-      '',
-      '--- END RECOVERY CONTEXT ---',
-      'Continue the conversation naturally from where we left off.'
-    ].join('\n')
-  }
 }

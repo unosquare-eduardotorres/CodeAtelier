@@ -1,12 +1,9 @@
 import { useMemo, useState } from 'react'
 import {
-  Users,
-  Loader2,
   Hammer,
   RefreshCw,
   ClipboardList,
   Lightbulb,
-  Search,
   AlertTriangle,
   GitBranch,
   FileCode,
@@ -16,7 +13,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { InvestigationReport, StructuredPlan } from '../../../../shared/types'
+import type { StructuredPlan } from '../../../../shared/types'
 import { MermaidDiagram } from '@renderer/components/common'
 
 function shortenPath(filePath: string): string {
@@ -27,18 +24,12 @@ function shortenPath(filePath: string): string {
 interface TaskPlanCardProps {
   summary: string
   mode: 'plan' | 'build'
-  isExecuting?: boolean
 
   // Inline plan content (from ```plan block in generalist output)
   planContent?: string
 
-  // Investigation report content (merged into unified card)
-  investigation?: InvestigationReport
-  investigationSpecialist?: string
-
   // Unified action callbacks
   onBuildNow?: () => void
-  onOrchestratedBuild?: () => void
   onSaveAsIdea?: () => void
   onRefine?: () => void
 }
@@ -46,17 +37,13 @@ interface TaskPlanCardProps {
 export default function TaskPlanCard({
   summary,
   mode,
-  isExecuting = false,
   planContent,
-  investigation,
   onBuildNow,
-  onOrchestratedBuild,
   onSaveAsIdea,
   onRefine
 }: TaskPlanCardProps): React.JSX.Element {
   // ── Content type detection ──
   const isInlinePlan = !!planContent
-  const isInvestigation = !!investigation
 
   // Try to parse planContent as structured plan JSON
   const structuredPlan = useMemo<StructuredPlan | null>(() => {
@@ -73,64 +60,30 @@ export default function TaskPlanCard({
   }, [planContent])
 
   const [userClicked, setUserClicked] = useState(false)
-  const hasUserChosen = isExecuting || userClicked
-
-  // Impact badge styling for investigation content
-  const impactStyles: Record<string, string> = {
-    'very-low': 'text-text-muted bg-surface-overlay',
-    low: 'text-info bg-info-muted',
-    medium: 'text-warning bg-warning-muted',
-    high: 'text-danger bg-danger-muted',
-    critical: 'text-white bg-danger'
-  }
+  const hasUserChosen = userClicked
 
   // Header styling varies by content type
-  const headerBg = isInvestigation
-    ? 'border-primary/20 bg-primary/15'
-    : isInlinePlan
-      ? 'border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-muted)]'
-      : 'border-border-subtle bg-surface-raised'
-  const headerIconBg = isInvestigation
-    ? 'bg-primary-muted'
-    : isInlinePlan
-      ? 'bg-[rgba(14,165,233,0.2)]'
-      : 'bg-primary-muted'
-  const headerIconColor = isInvestigation
-    ? 'text-primary-text'
-    : isInlinePlan
-      ? 'text-sky-400'
-      : 'text-primary-text'
-  const headerTitle = isInvestigation
-    ? 'Investigation Complete'
-    : isInlinePlan
-      ? 'Implementation Plan'
-      : 'Task Plan'
+  const headerBg = isInlinePlan
+    ? 'border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-muted)]'
+    : 'border-border-subtle bg-surface-raised'
+  const headerIconBg = isInlinePlan ? 'bg-[rgba(14,165,233,0.2)]' : 'bg-primary-muted'
+  const headerIconColor = isInlinePlan ? 'text-sky-400' : 'text-primary-text'
+  const headerTitle = isInlinePlan ? 'Implementation Plan' : 'Task Plan'
 
   return (
     <div
       data-testid="task-plan-card"
-      className={`my-3 rounded-xl border ${isInvestigation ? 'border-primary/30' : isInlinePlan ? 'border-[var(--color-plan-card-border)]' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}
+      className={`my-3 rounded-xl border ${isInlinePlan ? 'border-[var(--color-plan-card-border)]' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}
     >
       {/* Header */}
       <div className={`flex items-center gap-3 px-4 py-3 border-b ${headerBg}`}>
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${headerIconBg}`}>
-          {isInvestigation ? (
-            <Search size={16} className={headerIconColor} />
-          ) : (
-            <ClipboardList size={16} className={headerIconColor} />
-          )}
+          <ClipboardList size={16} className={headerIconColor} />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-text-primary">{headerTitle}</p>
           <p className="text-xs text-text-secondary truncate">{summary}</p>
         </div>
-        {isInvestigation && investigation && (
-          <span
-            className={`px-2 py-0.5 rounded-full text-xs font-medium ${impactStyles[investigation.impact] ?? impactStyles.medium}`}
-          >
-            {investigation.impact} impact
-          </span>
-        )}
         <span
           className={`text-[10px] px-2 py-0.5 rounded-full ${
             mode === 'build'
@@ -141,67 +94,6 @@ export default function TaskPlanCard({
           {mode}
         </span>
       </div>
-
-      {/* ── Investigation report content ── */}
-      {isInvestigation && investigation && (
-        <div>
-          {/* Problem */}
-          <div className="px-5 py-3 border-b border-border-subtle">
-            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
-              Problem
-            </span>
-            <div className="mt-1 prose prose-sm prose-invert max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{investigation.problem}</ReactMarkdown>
-            </div>
-          </div>
-
-          {/* Root Cause */}
-          <div className="px-5 py-3 border-b border-border-subtle">
-            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
-              Root Cause
-            </span>
-            <div className="mt-1 prose prose-sm prose-invert max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{investigation.rootCause}</ReactMarkdown>
-            </div>
-          </div>
-
-          {/* Proposed Fix */}
-          <div className="px-5 py-3 border-b border-border-subtle">
-            <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
-              How to Fix
-            </span>
-            <div className="mt-1 prose prose-sm prose-invert max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{investigation.proposedFix}</ReactMarkdown>
-            </div>
-          </div>
-
-          {/* Files Affected */}
-          {investigation.filesAffected.length > 0 && (
-            <div className="px-5 py-3 border-b border-border-subtle">
-              <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
-                Files Affected
-              </span>
-              <div className="mt-2 space-y-1">
-                {investigation.filesAffected.map((file, idx) => (
-                  <div key={idx} className="flex items-start gap-2 text-sm">
-                    <code className="text-xs font-mono text-primary-text bg-surface-overlay px-1.5 py-0.5 rounded shrink-0">
-                      {file.path}
-                    </code>
-                    <span className="text-text-secondary">{file.reason}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Impact reason */}
-          {investigation.impactReason && (
-            <div className="px-5 py-2 text-xs text-text-muted">
-              <strong>Impact:</strong> {investigation.impactReason}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── Inline plan content (from ```plan block) ── */}
       {isInlinePlan && structuredPlan && (
@@ -463,7 +355,7 @@ export default function TaskPlanCard({
       )}
 
       {/* ── Unified action buttons ── */}
-      {!hasUserChosen && (onBuildNow || onOrchestratedBuild || onSaveAsIdea || onRefine) && (
+      {!hasUserChosen && (onBuildNow || onSaveAsIdea || onRefine) && (
         <div className="flex items-center gap-2 px-4 py-3 border-t border-border-subtle bg-surface-base/50">
           {onBuildNow && (
             <button
@@ -475,18 +367,6 @@ export default function TaskPlanCard({
             >
               <Hammer size={14} />
               Build Now
-            </button>
-          )}
-          {onOrchestratedBuild && (
-            <button
-              onClick={() => {
-                setUserClicked(true)
-                onOrchestratedBuild()
-              }}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
-            >
-              <Users size={14} />
-              Orchestrated Build
             </button>
           )}
           {onSaveAsIdea && (
@@ -516,13 +396,6 @@ export default function TaskPlanCard({
         </div>
       )}
 
-      {/* Executing indicator for investigation content */}
-      {isInvestigation && isExecuting && (
-        <div className="flex items-center gap-2 px-4 py-3 border-t border-primary/20 bg-primary-muted text-text-muted text-sm">
-          <Loader2 size={14} className="animate-spin" />
-          Preparing fix plan...
-        </div>
-      )}
     </div>
   )
 }

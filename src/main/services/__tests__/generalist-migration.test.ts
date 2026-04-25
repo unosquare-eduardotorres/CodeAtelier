@@ -1,13 +1,8 @@
 /**
  * Migration-era contract tests.
  *
- * Before the Project Specialist refactor this suite also mirrored the
- * decomposition + handoff helpers to prove the regexes + SDK-options builder
- * were stable. Those helpers and their consumers are gone post-4a, so only
- * the runtime-contract group remains: ensures DEFAULT_MODEL_CONFIG,
- * DEFAULT_PROMPTS, and AGENT_IDS still expose the expected keys for the
- * Da Vinci agent (the historical 'generalist' DB value — Layer 2 rename
- * migration will update this).
+ * Ensures DEFAULT_MODEL_CONFIG + DEFAULT_PROMPTS expose the expected keys for
+ * the Da Vinci agent and DA_VINCI_AGENT_ID is stable.
  */
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
@@ -42,7 +37,7 @@ function describe(name: string, fn: () => void) {
 const require = createRequire(import.meta.url)
 
 type RuntimeContracts = {
-  AGENT_IDS: Record<string, string>
+  DA_VINCI_AGENT_ID: string
   DEFAULT_MODEL_CONFIG: Record<string, string>
   DEFAULT_PROMPTS: Record<string, Record<string, string>>
 }
@@ -52,14 +47,14 @@ let runtimeContractError: string | null = null
 
 try {
   const constants = require('../../../shared/constants') as {
-    AGENT_IDS: Record<string, string>
+    DA_VINCI_AGENT_ID: string
     DEFAULT_MODEL_CONFIG: Record<string, string>
   }
   const prompts = require('../default-prompts') as {
     DEFAULT_PROMPTS: Record<string, Record<string, string>>
   }
   runtimeContracts = {
-    AGENT_IDS: constants.AGENT_IDS,
+    DA_VINCI_AGENT_ID: constants.DA_VINCI_AGENT_ID,
     DEFAULT_MODEL_CONFIG: constants.DEFAULT_MODEL_CONFIG,
     DEFAULT_PROMPTS: prompts.DEFAULT_PROMPTS
   }
@@ -73,32 +68,32 @@ describe('IPC contract compatibility', () => {
     : undefined
 
   test(
-    'exposes AGENT_IDS.DA_VINCI constant',
+    'exposes DA_VINCI_AGENT_ID constant',
     () => {
       assert.ok(runtimeContracts)
-      assert.equal(runtimeContracts.AGENT_IDS.DA_VINCI, 'generalist')
+      assert.equal(runtimeContracts.DA_VINCI_AGENT_ID, 'da-vinci')
     },
     { skipReason }
   )
 
   test(
-    'exposes DEFAULT_MODEL_CONFIG.generalist as a string',
+    'exposes DEFAULT_MODEL_CONFIG["da-vinci"] as a string',
     () => {
       assert.ok(runtimeContracts)
-      assert.equal(typeof runtimeContracts.DEFAULT_MODEL_CONFIG.generalist, 'string')
-      assert.ok(runtimeContracts.DEFAULT_MODEL_CONFIG.generalist.length > 0)
+      assert.equal(typeof runtimeContracts.DEFAULT_MODEL_CONFIG['da-vinci'], 'string')
+      assert.ok(runtimeContracts.DEFAULT_MODEL_CONFIG['da-vinci'].length > 0)
     },
     { skipReason }
   )
 
   test(
-    'exposes DEFAULT_PROMPTS.generalist plan/build prompts',
+    'exposes DEFAULT_PROMPTS["da-vinci"] plan/build prompts',
     () => {
       assert.ok(runtimeContracts)
-      assert.equal(typeof runtimeContracts.DEFAULT_PROMPTS.generalist.plan, 'string')
-      assert.equal(typeof runtimeContracts.DEFAULT_PROMPTS.generalist.build, 'string')
-      assert.ok(runtimeContracts.DEFAULT_PROMPTS.generalist.plan.length > 0)
-      assert.ok(runtimeContracts.DEFAULT_PROMPTS.generalist.build.length > 0)
+      assert.equal(typeof runtimeContracts.DEFAULT_PROMPTS['da-vinci'].plan, 'string')
+      assert.equal(typeof runtimeContracts.DEFAULT_PROMPTS['da-vinci'].build, 'string')
+      assert.ok(runtimeContracts.DEFAULT_PROMPTS['da-vinci'].plan.length > 0)
+      assert.ok(runtimeContracts.DEFAULT_PROMPTS['da-vinci'].build.length > 0)
     },
     { skipReason }
   )

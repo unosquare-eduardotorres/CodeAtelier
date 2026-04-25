@@ -227,6 +227,35 @@ function registerChatModeIpc(): void {
     }
   )
 
+  // ── Swap DaVinci → ready Project Specialist ──
+  // Triggered when the user accepts an ask_user { action: 'swap-to-specialist' }
+  // proposal. Re-runs chatAgentService.start() so resolveAdapter() picks the
+  // ProjectSpecialistRoleAdapter (build_status is now 'ready'), which tears
+  // down the DaVinci session and rebuilds as the specialist.
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_SWAP_TO_SPECIALIST,
+    async (event, args: { workspaceId?: string; workspacePath?: string }) => {
+      validateSender(event)
+      if (!args || (typeof args.workspaceId !== 'string' && typeof args.workspacePath !== 'string')) {
+        throw new Error('Invalid swap args — workspaceId or workspacePath required')
+      }
+
+      let workspacePath = args.workspacePath
+      if (!workspacePath && args.workspaceId) {
+        const ws = workspaceRepository.findById(args.workspaceId)
+        if (!ws) throw new Error('Workspace not found')
+        workspacePath = ws.repoPath
+      }
+      if (!workspacePath) throw new Error('Workspace path could not be resolved')
+
+      // Start with no resumeSessionId — resolveAdapter() picks the
+      // ProjectSpecialistRoleAdapter now that build_status = 'ready', and the
+      // adapterChanged branch in start() tears down the DaVinci session.
+      await chatAgentService.start(workspacePath)
+      log.info(`[chat:swap] Swapped adapter for workspacePath=${workspacePath}`)
+    }
+  )
+
   // ── Update generalist persona (mid-conversation persona switch) ──
   ipcMain.handle(
     IPC_CHANNELS.CHAT_UPDATE_PERSONA,
@@ -371,6 +400,7 @@ function registerChatCompletionIpc(): void {
     chatAgentService.clearSession(conversationId)
 
     // Clean up branches (local + remote if PR was merged)
+    const workspacePath = chatAgentService.getWorkspacePath()
     try {
       const conv = conversationRepository.findById(conversationId)
       if (conv?.branchName && workspacePath) {

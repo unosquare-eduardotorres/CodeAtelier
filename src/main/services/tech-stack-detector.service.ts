@@ -1,17 +1,11 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import log from 'electron-log'
 
 const detectLogger = log.scope('tech-stack-detector')
 
 export interface TechStackResult {
   detectedTechs: string[]
-  /**
-   * @deprecated App-global specialists were removed in migration 66. The field
-   * is preserved so legacy callers compile; it now always returns an empty
-   * array. New callers should use `recommendedSkills` and `recommendedMcps`.
-   */
-  recommendedSpecialists: string[]
   /** Skill IDs the Project Specialist should auto-attach (all start disabled). */
   recommendedSkills: string[]
   /** MCP server IDs the Project Specialist should enable by default. */
@@ -35,6 +29,10 @@ const TECH_MARKERS: TechMarker[] = [
   { files: ['package.json'], deps: ['express', 'fastify', 'koa', 'hono'], tech: 'node-backend' },
   { files: ['package.json'], deps: ['tailwindcss', '@tailwindcss/typography'], tech: 'tailwind' },
 
+  // Vite / Next.js (config-file driven, also useful for monorepo subdir detection)
+  { files: ['vite.config.ts', 'vite.config.mts', 'vite.config.js'], tech: 'vite' },
+  { files: ['next.config.mjs', 'next.config.ts', 'next.config.js'], tech: 'nextjs' },
+
   // Electron
   {
     files: ['electron-builder.yml', 'electron.vite.config.ts', 'electron.vite.config.mts'],
@@ -43,7 +41,7 @@ const TECH_MARKERS: TechMarker[] = [
   { files: ['package.json'], deps: ['electron'], tech: 'electron' },
 
   // .NET
-  { files: ['*.csproj', '*.sln', 'global.json'], tech: 'dotnet' },
+  { files: ['*.csproj', '*.sln', '*.slnx', 'global.json'], tech: 'dotnet' },
 
   // Python
   {
@@ -89,6 +87,12 @@ const TECH_MARKERS: TechMarker[] = [
     files: ['package.json'],
     deps: ['jest', 'vitest', '@playwright/test', 'mocha', 'cypress'],
     tech: 'testing'
+  },
+  // Playwright — config file alone is a strong signal; deps optional.
+  {
+    files: ['playwright.config.ts', 'playwright.config.js'],
+    deps: ['@playwright/test', 'playwright'],
+    tech: 'playwright'
   }
 ]
 
@@ -120,12 +124,16 @@ export const TECH_TO_SKILL: Record<string, string[]> = {
   supabase: ['supabase-architect'],
   docker: ['infrastructure'],
   terraform: ['infrastructure'],
-  testing: ['testing-specialist']
+  testing: ['testing-specialist'],
+  vite: ['general-dev'],
+  nextjs: ['general-dev', 'ui-ux-pro-max'],
+  playwright: ['testing-specialist']
 }
 
 /**
- * Maps detected techs to MCP server IDs that should be composed into
- * specialists.mcp_config by the McpComposer.
+ * Maps detected techs to MCP server IDs. Surfaced as non-binding
+ * recommendations on the workspace-settings UI — the workspace still
+ * decides which MCPs are enabled via its feature flags.
  */
 export const TECH_TO_MCP: Record<string, string[]> = {
   // Code-graph and semantic search are universally useful for code navigation.
@@ -146,25 +154,137 @@ export const TECH_TO_MCP: Record<string, string[]> = {
   php: ['code-graph']
 }
 
-function filePatternExists(workspacePath: string, pattern: string): boolean {
+// ── Candidate-directory scanning (monorepo-aware) ──────────────────
+
+/** Convention dirs we always probe at depth 1 when present. */
+const CONVENTION_DIRS = [
+  'frontend',
+  'backend',
+  'web',
+  'api',
+  'client',
+  'server',
+  'src',
+  'app',
+  'electron',
+  'services',
+  'ui',
+  'desktop',
+  'mobile'
+] as const
+
+/** Container dirs whose direct children are individually scanned (monorepo apps/packages). */
+const MONOREPO_CONTAINER_DIRS = ['apps', 'packages'] as const
+
+/** Directory names that must NEVER be scanned, even at the workspace root. */
+const DIR_DENYLIST = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  'bin',
+  'obj',
+  '.next',
+  '.cache',
+  '.output',
+  'coverage',
+  'target',
+  'vendor'
+])
+
+/** Hard cap on total candidate dirs scanned per workspace — keeps detection fast. */
+const MAX_CANDIDATE_DIRS = 30
+/** Cap per monorepo container (apps/, packages/) — protects against gigantic monorepos. */
+const MAX_PER_CONTAINER = 12
+
+/**
+ * Build the list of candidate directories to probe for tech-stack markers.
+ *
+ * - Always includes the workspace root.
+ * - Includes one-level convention dirs (frontend, backend, web, …) when present.
+ * - Includes each direct child of monorepo containers (apps/, packages/), capped at 12 per container.
+ * - Skips anything in DIR_DENYLIST (node_modules, dist, .git, …).
+ * - Hard-caps the returned list at 30 dirs.
+ *
+ * Exported for unit-test inspection.
+ */
+export function collectCandidateDirs(workspacePath: string): string[] {
+  const root = resolve(workspacePath)
+  const dirs: string[] = [root]
+
+  const isUsableDir = (abs: string, name: string): boolean => {
+    if (DIR_DENYLIST.has(name)) return false
+    try {
+      return statSync(abs).isDirectory()
+    } catch {
+      return false
+    }
+  }
+
+  // 1. Convention dirs at depth 1.
+  for (const name of CONVENTION_DIRS) {
+    const abs = join(root, name)
+    if (isUsableDir(abs, name)) dirs.push(abs)
+  }
+
+  // 2. Monorepo containers (apps/, packages/) — include each direct child.
+  for (const container of MONOREPO_CONTAINER_DIRS) {
+    const containerAbs = join(root, container)
+    if (!isUsableDir(containerAbs, container)) continue
+    let children: string[]
+    try {
+      children = readdirSync(containerAbs)
+    } catch {
+      continue
+    }
+    let added = 0
+    for (const child of children) {
+      if (added >= MAX_PER_CONTAINER) break
+      const childAbs = join(containerAbs, child)
+      if (isUsableDir(childAbs, child)) {
+        dirs.push(childAbs)
+        added++
+      }
+    }
+  }
+
+  // 3. Hard cap.
+  if (dirs.length > MAX_CANDIDATE_DIRS) {
+    detectLogger.info(
+      `Candidate dirs capped: ${dirs.length} → ${MAX_CANDIDATE_DIRS} (workspace=${root})`
+    )
+    return dirs.slice(0, MAX_CANDIDATE_DIRS)
+  }
+  return dirs
+}
+
+function filePatternExists(dirPath: string, pattern: string): boolean {
   if (pattern.includes('*')) {
-    // Glob pattern — check if any matching files exist in the root
+    // Glob pattern — check if any matching files exist in this dir.
     const ext = pattern.replace('*', '')
     try {
-      const entries = readdirSync(workspacePath)
+      const entries = readdirSync(dirPath)
       return entries.some((e) => e.endsWith(ext))
     } catch {
       return false
     }
   }
 
-  // Check root-level file or directory
-  return existsSync(join(workspacePath, pattern))
+  // Check file or directory directly under this dir.
+  return existsSync(join(dirPath, pattern))
 }
 
-function readPackageJsonDeps(workspacePath: string): Set<string> {
-  const pkgPath = join(workspacePath, 'package.json')
-  if (!existsSync(pkgPath)) return new Set()
+/** Per-dir cache for package.json deps so each dir is parsed at most once per detection. */
+function readPackageJsonDeps(dirPath: string, cache: Map<string, Set<string>>): Set<string> {
+  const cached = cache.get(dirPath)
+  if (cached) return cached
+
+  const pkgPath = join(dirPath, 'package.json')
+  if (!existsSync(pkgPath)) {
+    const empty = new Set<string>()
+    cache.set(dirPath, empty)
+    return empty
+  }
 
   try {
     const raw = readFileSync(pkgPath, 'utf-8')
@@ -175,39 +295,49 @@ function readPackageJsonDeps(workspacePath: string): Set<string> {
     const allDeps = new Set<string>()
     for (const dep of Object.keys(pkg.dependencies ?? {})) allDeps.add(dep)
     for (const dep of Object.keys(pkg.devDependencies ?? {})) allDeps.add(dep)
+    cache.set(dirPath, allDeps)
     return allDeps
   } catch {
-    return new Set()
+    const empty = new Set<string>()
+    cache.set(dirPath, empty)
+    return empty
   }
 }
 
 export function detectTechStack(workspacePath: string): TechStackResult {
   const detected = new Map<string, number>()
-  let packageDeps: Set<string> | null = null
+  const depsCache = new Map<string, Set<string>>()
+  const candidates = collectCandidateDirs(workspacePath)
 
-  for (const marker of TECH_MARKERS) {
-    let fileMatch = false
-    for (const filePattern of marker.files) {
-      if (filePatternExists(workspacePath, filePattern)) {
-        fileMatch = true
-        break
+  for (const dir of candidates) {
+    const perDirHits: string[] = []
+    for (const marker of TECH_MARKERS) {
+      let fileMatch = false
+      for (const filePattern of marker.files) {
+        if (filePatternExists(dir, filePattern)) {
+          fileMatch = true
+          break
+        }
+      }
+
+      if (!fileMatch) continue
+
+      // If marker requires checking deps inside package.json
+      if (marker.deps && marker.deps.length > 0) {
+        const deps = readPackageJsonDeps(dir, depsCache)
+        const matchedDep = marker.deps.some((dep) => deps.has(dep))
+        if (!matchedDep) continue
+        // Higher confidence if dep explicitly found
+        detected.set(marker.tech, Math.max(detected.get(marker.tech) ?? 0, 0.9))
+        perDirHits.push(marker.tech)
+      } else {
+        // File marker only — slightly lower confidence
+        detected.set(marker.tech, Math.max(detected.get(marker.tech) ?? 0, 0.7))
+        perDirHits.push(marker.tech)
       }
     }
-
-    if (!fileMatch) continue
-
-    // If marker requires checking deps inside package.json
-    if (marker.deps && marker.deps.length > 0) {
-      if (packageDeps === null) {
-        packageDeps = readPackageJsonDeps(workspacePath)
-      }
-      const matchedDep = marker.deps.some((dep) => packageDeps!.has(dep))
-      if (!matchedDep) continue
-      // Higher confidence if dep explicitly found
-      detected.set(marker.tech, Math.max(detected.get(marker.tech) ?? 0, 0.9))
-    } else {
-      // File marker only — slightly lower confidence
-      detected.set(marker.tech, Math.max(detected.get(marker.tech) ?? 0, 0.7))
+    if (perDirHits.length > 0) {
+      detectLogger.debug(`[detect] ${dir} → ${perDirHits.join(', ')}`)
     }
   }
 
@@ -217,8 +347,7 @@ export function detectTechStack(workspacePath: string): TechStackResult {
     confidence[tech] = conf
   }
 
-  // Project-Specialist world: we no longer recommend app-global specialists.
-  // Keep the field as an empty array for backward compatibility.
+  // Project-Specialist world: recommend skills + MCPs scoped to the detected tech stack.
   const skillSet = new Set<string>()
   const mcpSet = new Set<string>()
   for (const tech of detectedTechs) {
@@ -228,14 +357,13 @@ export function detectTechStack(workspacePath: string): TechStackResult {
 
   const result: TechStackResult = {
     detectedTechs,
-    recommendedSpecialists: [],
     recommendedSkills: Array.from(skillSet),
     recommendedMcps: Array.from(mcpSet),
     confidence
   }
 
   detectLogger.info(
-    `Detected techs: ${detectedTechs.join(', ')} → skills: [${result.recommendedSkills.join(', ')}] mcps: [${result.recommendedMcps.join(', ')}]`
+    `Detected techs: ${detectedTechs.join(', ')} → skills: [${result.recommendedSkills.join(', ')}] mcps: [${result.recommendedMcps.join(', ')}] (scanned ${candidates.length} dirs)`
   )
 
   return result

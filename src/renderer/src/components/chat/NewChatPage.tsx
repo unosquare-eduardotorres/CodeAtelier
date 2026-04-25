@@ -43,7 +43,7 @@ export default function NewChatPage({
 
   // Categorize specialists for the persona grid
   const { daVinci, activeSpecialists, inactiveSpecialists } = useMemo(() => {
-    const dv = specialists.find((s) => s.agentId === 'generalist')
+    const dv = specialists.find((s) => s.agentId === 'da-vinci')
     const active = specialists
       .filter((s) => !s.isCore && s.isActive && s.agentId !== 'orchestrator')
       .sort((a, b) => a.priority - b.priority)

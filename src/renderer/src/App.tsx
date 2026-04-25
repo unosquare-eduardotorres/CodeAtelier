@@ -36,13 +36,10 @@ function App(): React.JSX.Element {
     finalizeTurnBubble,
     addToolActivity,
     updateToolActivity,
-    updateTaskProgress,
-    setDecomposedTasks,
     setCompactSuggestion,
     endGrillSession,
     setGrillQuestions,
     setPendingQuestions,
-    setInvestigationReport,
     setConversationState
   } = useChatActions()
 
@@ -95,7 +92,7 @@ function App(): React.JSX.Element {
       if (data.chunk) {
         appendStreamChunk(
           data.chunk,
-          data.role as 'generalist' | 'coordinator' | 'specialist',
+          data.role as 'da-vinci' | 'specialist',
           data.taskId,
           data.specialist,
           data.requestId
@@ -105,7 +102,7 @@ function App(): React.JSX.Element {
       // so the thinking indicator shows the correct agent name
       if (!data.chunk && data.role) {
         updateStreamingIdentity(
-          data.role as 'generalist' | 'coordinator' | 'specialist',
+          data.role as 'da-vinci' | 'specialist',
           data.taskId,
           data.specialist
         )
@@ -156,7 +153,7 @@ function App(): React.JSX.Element {
       rendererLog.info(
         `[PIPELINE:renderer:message-complete] messageId=${data.messageId} taskId=${data.taskId ?? 'none'}`
       )
-      finalizeStream(data.messageId, data.taskId, data.isHandoff, data.requestId)
+      finalizeStream(data.messageId, data.taskId, data.requestId)
     })
 
     const unsubGrillComplete = window.api.onGrillComplete((data) => {
@@ -168,25 +165,7 @@ function App(): React.JSX.Element {
     })
 
     const unsubAskQuestion = window.api.onAskQuestion((data) => {
-      setPendingQuestions(data.questions)
-    })
-
-    const unsubTaskProgress = window.api.onTaskProgress((data) => {
-      if (data.status === 'completed' || data.status === 'failed') {
-        rendererLog.info(`[PIPELINE:renderer:task-${data.status}] taskId=${data.taskId}`)
-      }
-      updateTaskProgress(data)
-    })
-
-    const unsubBuildTasks = window.api.onBuildTasks((data) => {
-      setDecomposedTasks(data.tasks)
-    })
-
-    const unsubInvestigationReport = window.api.onInvestigationReport((data) => {
-      rendererLog.info(
-        `[PIPELINE:renderer:investigation-report-received] taskId=${data.taskId} specialist=${data.specialist}`
-      )
-      setInvestigationReport(data)
+      setPendingQuestions(data.questions, data.action)
     })
 
     const unsubReady = window.api.onAgentReady(() => {
@@ -268,9 +247,6 @@ function App(): React.JSX.Element {
       unsubGrillComplete()
       unsubGrillQuestion()
       unsubAskQuestion()
-      unsubTaskProgress()
-      unsubBuildTasks()
-      unsubInvestigationReport()
       unsubReady()
       unsubAgent()
       unsubUpdateAvailable()
@@ -288,7 +264,6 @@ function App(): React.JSX.Element {
     appendStreamChunk,
     updateStreamingIdentity,
     finalizeStream,
-    updateTaskProgress,
     addToolActivity,
     updateToolActivity,
     updateStatus,
@@ -297,7 +272,6 @@ function App(): React.JSX.Element {
     endGrillSession,
     setGrillQuestions,
     setPendingQuestions,
-    setInvestigationReport,
     setAvailable,
     setNotAvailable,
     setDownloaded,
@@ -306,7 +280,6 @@ function App(): React.JSX.Element {
     onMemoryFeedProgress,
     onDreamProgress,
     finalizeTurnBubble,
-    setDecomposedTasks,
     setConversationState
   ])
 

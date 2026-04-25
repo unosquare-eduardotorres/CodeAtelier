@@ -1,13 +1,16 @@
 /**
  * IPC handlers for Project Specialist management.
  *
- * Phase 2 of the Project Specialist refactor. Surfaces:
+ * Surfaces:
  *   - Get / List (one per workspace, plus a list call for Settings)
  *   - Build / Rebuild prompt / Rebuild skills (LLM-driven + fast paths)
  *   - Update prompt (manual edit from the slide-over Prompt tab)
  *   - Toggle skill enabled/disabled + attach/detach skill
- *   - Toggle MCP enabled/disabled (via mcp_overrides)
  *   - Get stack drift (non-blocking banner)
+ *
+ * MCP tool availability is a workspace-level concern (configured from the
+ * workspace settings UI) and is NOT per-specialist — there is no toggle-MCP
+ * handler here.
  *
  * The BUILD_PROGRESS channel is an event channel (main → renderer) used to
  * stream build status updates into the inline BuildProgress UI.
@@ -19,7 +22,6 @@ import { getDatabase } from '../db/index'
 import { specialistRepository } from '../db/repositories'
 import { specialistBuilderService } from '../services/specialist-builder.service'
 import { stackDriftDetectorService } from '../services/stack-drift-detector.service'
-import { mcpComposerService } from '../services/mcp-composer.service'
 import { validateSender } from './validate-sender'
 import log from 'electron-log'
 
@@ -36,8 +38,6 @@ interface ProjectSpecialistRow {
   build_status: 'pending' | 'building' | 'ready' | 'failed'
   stack_fingerprint: string | null
   detected_techs: string
-  mcp_config: string
-  mcp_overrides: string
   last_built_at: string | null
   created_at: string
   updated_at: string
@@ -59,7 +59,7 @@ function loadRow(workspaceId: string): ProjectSpecialistRow | undefined {
   return db
     .prepare(
       `SELECT id, workspace_id, agent_id, display_name, icon, color, prompt, build_status,
-              stack_fingerprint, detected_techs, mcp_config, mcp_overrides, last_built_at,
+              stack_fingerprint, detected_techs, last_built_at,
               created_at, updated_at
          FROM specialists WHERE workspace_id = ?`
     )
@@ -84,8 +84,6 @@ function serializeRow(row: ProjectSpecialistRow): Record<string, unknown> {
     buildStatus: row.build_status,
     stackFingerprint: row.stack_fingerprint,
     detectedTechs,
-    mcpConfig: mcpComposerService.parseConfig(row.mcp_config),
-    mcpOverrides: mcpComposerService.parseOverrides(row.mcp_overrides),
     lastBuiltAt: row.last_built_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -228,25 +226,6 @@ export function registerProjectSpecialistIpc(): void {
       validateSender(event)
       if (!args?.specialistId || !args?.skillId) throw new Error('Invalid args')
       specialistRepository.removeSkill(args.specialistId, args.skillId)
-      return { ok: true }
-    }
-  )
-
-  ipcMain.handle(
-    IPC_CHANNELS.PROJECT_SPECIALIST_TOGGLE_MCP,
-    async (event, args: { specialistId: string; mcpId: string; enabled: boolean }) => {
-      validateSender(event)
-      if (!args?.specialistId || !args?.mcpId) throw new Error('Invalid args')
-      const db = getDatabase()
-      const row = db
-        .prepare(`SELECT mcp_overrides FROM specialists WHERE id = ?`)
-        .get(args.specialistId) as { mcp_overrides: string } | undefined
-      if (!row) throw new Error(`Specialist ${args.specialistId} not found`)
-      const overrides = mcpComposerService.parseOverrides(row.mcp_overrides)
-      overrides[args.mcpId] = { enabled: args.enabled }
-      db.prepare(
-        `UPDATE specialists SET mcp_overrides = ?, updated_at = datetime('now') WHERE id = ?`
-      ).run(mcpComposerService.serializeOverrides(overrides), args.specialistId)
       return { ok: true }
     }
   )

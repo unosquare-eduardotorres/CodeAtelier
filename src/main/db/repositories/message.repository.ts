@@ -4,7 +4,7 @@ import type { Message } from '../../../shared/types'
 interface MessageRow {
   id: string
   conversation_id: string
-  role: 'user' | 'coordinator' | 'specialist' | 'generalist'
+  role: 'user' | 'specialist' | 'da-vinci'
   agent_id: string | null
   content_md: string
   attachments_json: string
@@ -28,7 +28,7 @@ function mapRow(row: MessageRow): Message {
 export class MessageRepository {
   create(
     conversationId: string,
-    role: 'user' | 'coordinator' | 'specialist' | 'generalist',
+    role: 'user' | 'specialist' | 'da-vinci',
     contentMd: string,
     agentId?: string,
     attachmentsJson?: string
@@ -62,7 +62,7 @@ export class MessageRepository {
   createTurnBubble(
     conversationId: string,
     parentMessageId: string,
-    role: 'user' | 'coordinator' | 'specialist' | 'generalist',
+    role: 'user' | 'specialist' | 'da-vinci',
     contentMd: string,
     agentId?: string,
     attachmentsJson?: string

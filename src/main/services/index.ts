@@ -13,12 +13,6 @@ export { memoryService } from './memory.service'
 export { memoryFeedService } from './memory-feed.service'
 export { dreamService } from './dream.service'
 export { idleService } from './idle.service'
-export {
-  validateComplexityScore,
-  getTierFromScore,
-  resolveModel,
-  enrichTasksWithComplexity
-} from './complexity-scorer.service'
 export { GitHubService, githubService } from './github.service'
 export { RepoService, repoService } from './repo.service'
 
@@ -53,5 +47,5 @@ export { IntentRouter } from './intent-router'
 export { AgentTokenTracker } from './agent-token-tracker'
 export type { TurnBreakdownEntry, CacheEfficiencyReport } from './agent-token-tracker'
 export { AgentCircuitBreaker } from './agent-circuit-breaker'
-export { DaVinciMcpConfig } from './da-vinci-mcp-config'
-export type { McpFeatureFlags, McpConfigResult } from './da-vinci-mcp-config'
+export { buildWorkspaceMcpConfig } from './workspace-mcp-config'
+export type { McpFeatureFlags, McpConfigResult } from './workspace-mcp-config'

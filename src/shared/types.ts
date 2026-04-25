@@ -4,23 +4,18 @@ export type ConversationMode = 'plan' | 'build'
 /**
  * Which agent role is driving an AgentSessionService.
  * - 'da-vinci' — the default Specialist (home-screen concierge, plan-only,
- *   app-level help). Called "Da Vinci" in the UI.
+ *   app-level help).
  * - 'project-specialist' — workspace-bound Specialist tailored to the repo.
  *
  * Introduced for the Project Specialist refactor (see
- * docs/architecture/project-specialist-refactor.md).
- *
- * NOTE: The historical DB value for the Da Vinci specialist is still
- * `agent_id = 'generalist'`; that migration (Layer 2) will be a separate PR.
- * Until then, `DA_VINCI_AGENT_ID` aliases `'generalist'` in shared/constants.
+ * docs/architecture/project-specialist-refactor.md). Layer 2 (migration 69)
+ * rewrote persisted values from `'generalist'` to `'da-vinci'` so the DB and
+ * the type line up.
  */
 export type AgentRole = 'da-vinci' | 'project-specialist'
 
 /** Tracks which phase of the conversation lifecycle is active */
-export type ConversationPhase =
-  | 'da-vinci-responding'
-  | 'specialist-executing'
-  | 'pipeline-complete'
+export type ConversationPhase = 'da-vinci-responding' | 'specialist-executing'
 
 export interface UserProfile {
   id: string
@@ -31,7 +26,7 @@ export interface UserProfile {
 }
 
 export interface CoreAgentAlias {
-  agentRole: 'generalist' | 'coordinator'
+  agentRole: 'da-vinci'
   alias: string | null
   avatarKey: string | null
   updatedAt: string
@@ -39,7 +34,7 @@ export interface CoreAgentAlias {
 
 export interface CoreAgentPrompt {
   id: string
-  agentRole: 'generalist'
+  agentRole: 'da-vinci'
   mode: 'plan' | 'build'
   promptText: string
   defaultPromptText: string
@@ -100,7 +95,7 @@ export interface ContextUsage {
 export interface Message {
   id: string
   conversationId: string
-  role: 'user' | 'coordinator' | 'specialist' | 'generalist'
+  role: 'user' | 'specialist' | 'da-vinci'
   agentId?: string
   contentMd: string
   attachmentsJson: string
@@ -297,7 +292,6 @@ export interface ActivationResult {
   claudeMdWritten: boolean
   // Tech-stack detection results
   detectedTechs?: string[]
-  recommendedSpecialists?: string[]
 }
 
 /** Progress event during Opus activation */
@@ -363,31 +357,13 @@ export type BudgetTier = 'minimal' | 'standard' | 'full'
 
 export type ComplexityTier = ComplexityScore['tier']
 
-/**
- * A decomposed sub-task. Post-handoff-removal this shape is still used by
- * checkpointing + task-progress events, but the `specialist` assignment is
- * purely informational (everything now runs inside the workspace's Project
- * Specialist session — no delegation).
- */
-export interface DecomposedTask {
-  id: string
-  specialist: string
-  description: string
-  dependsOn: string[]
-  complexity?: ComplexityScore
-  model?: ModelTier
-  verificationCommand?: string
-  outputSchema?: string
-  metadata?: Record<string, unknown>
-  background?: boolean
-}
 export type ModelTier = ComplexityScore['model']
 
 /** Actions that consume a Claude model — each can be independently configured */
 export type ModelAction =
-  | 'generalist'
-  | 'generalist:plan'
-  | 'generalist:build'
+  | 'da-vinci'
+  | 'da-vinci:plan'
+  | 'da-vinci:build'
   | 'project-specialist'
   | 'project-specialist:plan'
   | 'project-specialist:build'
@@ -402,55 +378,6 @@ export type ModelAction =
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
   [key: string]: string // ModelAction → model ID string
-}
-
-/** Progress event for an individual specialist task */
-export interface TaskExecutionProgress {
-  taskId: string
-  specialist: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
-  output?: string
-  error?: string
-  // Complexity scoring
-  model?: ModelTier
-  complexityTier?: ComplexityTier
-  // Live execution visibility
-  /** Currently running tool name (e.g., "Read", "Edit", "Grep") */
-  currentTool?: string
-  /** Human-readable description of what the tool is doing */
-  currentToolSummary?: string
-  /** Number of tool calls made so far */
-  toolCallCount?: number
-  /** Timestamp when task started running */
-  startedAt?: number
-  /** Timestamp when task completed/failed */
-  completedAt?: number
-}
-
-// ── Git Worktree Models ──
-
-export type WorktreeStatus = 'active' | 'merging' | 'merged' | 'conflict' | 'abandoned' | 'pruned'
-
-export interface AgentWorktree {
-  id: string
-  conversationId: string
-  agentId: string
-  taskId: string
-  worktreePath: string
-  branchName: string
-  baseBranch: string
-  status: WorktreeStatus
-  createdAt: string
-  mergedAt: string | null
-}
-
-export interface MergeAllResult {
-  merged: string[]
-  conflicted?: {
-    agentId: string
-    files: string[]
-  }
-  pending: string[]
 }
 
 // ── YAML ↔ DB Sync Models ──
@@ -615,7 +542,7 @@ export interface ControlToolState {
 export type AgentIntent =
   | { type: 'response'; content: string }
   | { type: 'plan'; plan: PlanDetectedEvent }
-  | { type: 'askUser'; questions: GrillQuestion[] }
+  | { type: 'askUser'; questions: GrillQuestion[]; action?: string }
   | { type: 'grillQuestion'; questions: GrillQuestion[] }
   | {
       type: 'grillComplete'
@@ -873,67 +800,6 @@ export interface SemanticSearchResult {
   metadata: Record<string, unknown>
 }
 
-// ── Bug Council (Phase 10B) ──
-
-/** Perspective from a single diagnostic agent in the Bug Council */
-export interface BugCouncilPerspective {
-  /** Agent role identifier */
-  role:
-    | 'root-cause-analyst'
-    | 'code-archaeologist'
-    | 'pattern-matcher'
-    | 'systems-thinker'
-    | 'adversarial-tester'
-  /** Human-readable agent name */
-  displayName: string
-  /** Icon for UI display */
-  icon: string
-  /** The diagnostic finding from this agent */
-  finding: string
-  /** Confidence level (0-1) */
-  confidence: number
-}
-
-/** Result from a Bug Council session */
-export interface BugCouncilResult {
-  /** Unique session ID */
-  sessionId: string
-  /** The task that triggered the council */
-  taskId: string
-  /** The specialist that was failing */
-  agentId: string
-  /** Original task description */
-  taskDescription: string
-  /** History of failures that triggered the council */
-  failureHistory: string[]
-  /** Individual perspective findings from 5 diagnostic agents */
-  perspectives: BugCouncilPerspective[]
-  /** Synthesized actionable solution from all perspectives */
-  synthesizedSolution: string
-  /** Risk assessment of the proposed solution */
-  riskAssessment: string
-  /** Whether the final attempt (with council guidance) succeeded */
-  finalAttemptSucceeded: boolean | null
-  /** Council session status */
-  status: 'active' | 'analyzing' | 'synthesizing' | 'complete' | 'failed'
-  /** Timestamp */
-  createdAt: string
-  completedAt: string | null
-}
-
-/** Event emitted when Bug Council is activated */
-export interface BugCouncilActivatedEvent {
-  sessionId: string
-  taskId: string
-  agentId: string
-  taskDescription: string
-}
-
-/** Event emitted when Bug Council analysis is complete */
-export interface BugCouncilCompleteEvent {
-  result: BugCouncilResult
-}
-
 // ── Elicitation (MCP server user input requests) ──
 
 /** Bug Tracker record — shared between main and renderer */
@@ -970,5 +836,3 @@ export interface ElicitationEvent {
   url?: string
   elicitationId?: string
 }
-
-

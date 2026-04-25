@@ -23,7 +23,6 @@ import './da-vinci-prompt-assembler.test'
 // Run 4 — P1 targets
 import './cost-tracker.test'
 import './agent-token-tracker.test'
-import './complexity-scorer.test'
 import './elicitation.test'
 // Run 5 — P1 expansion
 import './abandonment-detector.test'
@@ -37,10 +36,14 @@ import './conversation-lifecycle.test'
 import './agent-session.service.test'
 import './da-vinci-adapter.test'
 // Run 6c — Project Specialist refactor (Phase 2)
-import './mcp-composer.test'
+import './prompt-assembly-helpers.test'
 import './project-specialist-prompt-template.test'
 import './project-specialist-adapter.test'
 import './stack-drift-detector.test'
+import './tech-stack-detector.test'
+import './specialist-builder-meta-prompt.test'
+// Run 6d — Phase 4 cleanup
+import './layer2-rename-migration.test'
 // Run 7 — IPC protocol + input validation (in ../../ipc/__tests__/)
 import '../../ipc/__tests__/chat-protocol.test'
 import '../../ipc/__tests__/validate-args.test'

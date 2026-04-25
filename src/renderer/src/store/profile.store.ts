@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
+import { USER_AVATAR_KEY } from '@renderer/utils/agentIdentity'
 import type { UserProfile, CoreAgentPrompt } from '../../../shared/types'
 
 interface ProfileState {
@@ -14,15 +15,12 @@ interface ProfileState {
   // Core Agent Prompts
   loadCoreAgentPrompts: () => Promise<void>
   saveCoreAgentPrompt: (
-    agentRole: 'generalist',
+    agentRole: 'da-vinci',
     mode: 'plan' | 'build',
     promptText: string
   ) => Promise<void>
-  resetCoreAgentPrompt: (agentRole: 'generalist', mode: 'plan' | 'build') => Promise<void>
-  getCoreAgentPrompt: (
-    agentRole: 'generalist',
-    mode: 'plan' | 'build'
-  ) => CoreAgentPrompt | undefined
+  resetCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build') => Promise<void>
+  getCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build') => CoreAgentPrompt | undefined
 }
 
 export const useProfileStore = create<ProfileState>((set, get) => ({
@@ -42,7 +40,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
           profile: {
             id: userSpec.id,
             displayName: userSpec.alias ?? userSpec.displayName,
-            avatarKey: userSpec.avatarUrl ?? 'business-man',
+            avatarKey: USER_AVATAR_KEY,
             createdAt: userSpec.createdAt,
             updatedAt: userSpec.updatedAt
           },
@@ -99,7 +97,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   },
 
   saveCoreAgentPrompt: async (
-    agentRole: 'generalist',
+    agentRole: 'da-vinci',
     mode: 'plan' | 'build',
     promptText: string
   ) => {
@@ -117,7 +115,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     }
   },
 
-  resetCoreAgentPrompt: async (agentRole: 'generalist', mode: 'plan' | 'build') => {
+  resetCoreAgentPrompt: async (agentRole: 'da-vinci', mode: 'plan' | 'build') => {
     try {
       const updated = await window.api.resetCoreAgentPrompt({ agentRole, mode })
       set((state) => ({
@@ -132,7 +130,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     }
   },
 
-  getCoreAgentPrompt: (agentRole: 'generalist', mode: 'plan' | 'build') => {
+  getCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build') => {
     return get().coreAgentPrompts.find((p) => p.agentRole === agentRole && p.mode === mode)
   }
 }))

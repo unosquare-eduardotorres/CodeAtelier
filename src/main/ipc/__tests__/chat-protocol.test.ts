@@ -26,12 +26,12 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: 'hello',
-      role: 'generalist'
+      role: 'da-vinci'
     })
     assert.deepEqual(msg, {
       conversationId: 'c1',
       chunk: 'hello',
-      role: 'generalist'
+      role: 'da-vinci'
     })
     assert.equal('requestId' in msg, false)
     assert.equal('phase' in msg, false)
@@ -43,7 +43,7 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: 'hi',
-      role: 'generalist',
+      role: 'da-vinci',
       requestId: 'req-9'
     })
     assert.equal(msg.requestId, 'req-9')
@@ -53,7 +53,7 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: 'hi',
-      role: 'generalist',
+      role: 'da-vinci',
       phase: 'da-vinci-responding'
     })
     assert.equal(msg.phase, 'da-vinci-responding')
@@ -76,7 +76,7 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: '',
-      role: 'generalist'
+      role: 'da-vinci'
     })
     assert.equal(msg.chunk, '', 'empty text is preserved — caller decides semantics')
   })
@@ -85,7 +85,7 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: 'x',
-      role: 'generalist',
+      role: 'da-vinci',
       requestId: ''
     })
     assert.equal('requestId' in msg, false, 'falsy requestId treated as absent')
@@ -96,7 +96,7 @@ describe('createToolActivityChunk', () => {
   test('always sets chunk to empty string', () => {
     const msg = createToolActivityChunk({
       conversationId: 'c1',
-      role: 'generalist',
+      role: 'da-vinci',
       toolActivity: { id: 'tool-1', toolName: 'Read' }
     })
     assert.equal(msg.chunk, '')
@@ -119,7 +119,7 @@ describe('createToolActivityChunk', () => {
   test('omits optionals when not provided', () => {
     const msg = createToolActivityChunk({
       conversationId: 'c1',
-      role: 'generalist',
+      role: 'da-vinci',
       toolActivity: { id: 't', toolName: 'Read' }
     })
     assert.equal('specialist' in msg, false)
@@ -132,7 +132,7 @@ describe('createTurnBoundary', () => {
   test('sets turnBoundary: true and chunk: empty string', () => {
     const msg = createTurnBoundary({
       conversationId: 'c1',
-      role: 'generalist',
+      role: 'da-vinci',
       turnId: 'turn-5'
     })
     assert.equal(msg.turnBoundary, true)
@@ -165,7 +165,7 @@ describe('createCompactNeeded', () => {
   test('wraps compactNeeded payload and leaves chunk empty', () => {
     const msg = createCompactNeeded({
       conversationId: 'c1',
-      role: 'generalist',
+      role: 'da-vinci',
       compactNeeded: { level: 'warning', inputTokens: 120000 }
     })
     assert.equal(msg.chunk, '')
@@ -175,7 +175,7 @@ describe('createCompactNeeded', () => {
   test('includes requestId when provided', () => {
     const msg = createCompactNeeded({
       conversationId: 'c1',
-      role: 'generalist',
+      role: 'da-vinci',
       requestId: 'req-77',
       compactNeeded: { level: 'critical', inputTokens: 180000 }
     })
@@ -193,7 +193,6 @@ describe('createCompleteMessage', () => {
     assert.equal('requestId' in msg, false)
     assert.equal('phase' in msg, false)
     assert.equal('taskId' in msg, false)
-    assert.equal('isHandoff' in msg, false)
   })
 
   test('propagates all optional fields when provided', () => {
@@ -201,35 +200,14 @@ describe('createCompleteMessage', () => {
       conversationId: 'c1',
       messageId: 'm-1',
       requestId: 'req-1',
-      phase: 'pipeline-complete',
-      taskId: 'task-2',
-      isHandoff: true
+      phase: 'specialist-executing',
+      taskId: 'task-2'
     })
     assert.equal(msg.conversationId, 'c1')
     assert.equal(msg.messageId, 'm-1')
     assert.equal(msg.requestId, 'req-1')
-    assert.equal(msg.phase, 'pipeline-complete')
+    assert.equal(msg.phase, 'specialist-executing')
     assert.equal(msg.taskId, 'task-2')
-    assert.equal(msg.isHandoff, true)
-  })
-
-  test('isHandoff=false is preserved (not treated as "unset")', () => {
-    const msg = createCompleteMessage({
-      conversationId: 'c1',
-      messageId: 'm-1',
-      isHandoff: false
-    })
-    assert.equal(msg.isHandoff, false)
-    assert.equal('isHandoff' in msg, true, 'explicit false must round-trip')
-  })
-
-  test('isHandoff=undefined is omitted entirely', () => {
-    const msg = createCompleteMessage({
-      conversationId: 'c1',
-      messageId: 'm-1',
-      isHandoff: undefined
-    })
-    assert.equal('isHandoff' in msg, false)
   })
 })
 
@@ -255,16 +233,16 @@ describe('ChatProtocol — cross-cutting invariants', () => {
 
   test('conversationId is always present', () => {
     const builders = [
-      createTextChunk({ conversationId: 'c', text: '', role: 'generalist' }),
+      createTextChunk({ conversationId: 'c', text: '', role: 'da-vinci' }),
       createToolActivityChunk({
         conversationId: 'c',
-        role: 'generalist',
+        role: 'da-vinci',
         toolActivity: { id: '1', toolName: 'Read' }
       }),
-      createTurnBoundary({ conversationId: 'c', role: 'generalist', turnId: 't1' }),
+      createTurnBoundary({ conversationId: 'c', role: 'da-vinci', turnId: 't1' }),
       createCompactNeeded({
         conversationId: 'c',
-        role: 'generalist',
+        role: 'da-vinci',
         compactNeeded: { level: 'warning', inputTokens: 1 }
       }),
       createCompleteMessage({ conversationId: 'c', messageId: 'm' })

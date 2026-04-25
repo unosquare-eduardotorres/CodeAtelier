@@ -16,11 +16,8 @@ import type {
   DiscoveredAgent,
   SyncDiff,
   SyncResult,
-  DecomposedTask,
   ExecutionStrategy,
   InvestigationDepth,
-  TaskExecutionProgress,
-  InvestigationReport,
   FileChange,
   CompleteResult,
   GrillProposedTask,
@@ -52,9 +49,6 @@ import type {
   CodeGraphIndexingState,
   ContextUsage,
   StructuredPlan,
-  BugCouncilResult,
-  BugCouncilActivatedEvent,
-  BugCouncilCompleteEvent,
   BugRecord
 } from '../shared/types'
 
@@ -104,6 +98,8 @@ interface Api {
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
   stopGeneration: () => Promise<void>
   compactConversation: () => Promise<void>
+  /** Accept DaVinci's specialist-swap proposal — rebuilds the session as the Project Specialist. */
+  swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }) => Promise<void>
 
   // Chat commands
   completeConversation: (args: {
@@ -187,11 +183,6 @@ interface Api {
   detachProjectSpecialistSkill: (args: {
     specialistId: string
     skillId: string
-  }) => Promise<{ ok: true }>
-  toggleProjectSpecialistMcp: (args: {
-    specialistId: string
-    mcpId: string
-    enabled: boolean
   }) => Promise<{ ok: true }>
   getProjectSpecialistDrift: (args: { workspaceId: string }) => Promise<unknown | null>
   onProjectSpecialistBuildProgress: (
@@ -349,7 +340,6 @@ interface Api {
       conversationId: string
       messageId: string
       taskId?: string
-      isHandoff?: boolean
       requestId?: string
     }) => void
   ) => () => void
@@ -364,7 +354,11 @@ interface Api {
     callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
   ) => () => void
   onAskQuestion: (
-    callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
+    callback: (data: {
+      conversationId: string
+      questions: GrillQuestion[]
+      action?: string
+    }) => void
   ) => () => void
   onGrillEvaluation: (
     callback: (data: {
@@ -376,18 +370,6 @@ interface Api {
       questions: GrillQuestion[]
       suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
     }) => void
-  ) => () => void
-  onInvestigationReport: (
-    callback: (data: {
-      conversationId: string
-      taskId: string
-      specialist: string
-      report: InvestigationReport
-    }) => void
-  ) => () => void
-  onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void
-  onBuildTasks: (
-    callback: (data: { conversationId: string; tasks: DecomposedTask[] }) => void
   ) => () => void
   onTaskRetry: (
     callback: (data: {
@@ -494,7 +476,7 @@ interface Api {
   // Core Agent Aliases
   listCoreAgentAliases: () => Promise<CoreAgentAlias[]>
   upsertCoreAgentAlias: (args: {
-    agentRole: 'generalist' | 'coordinator'
+    agentRole: 'da-vinci'
     alias: string | null
     avatarKey: string | null
   }) => Promise<CoreAgentAlias>
@@ -502,16 +484,16 @@ interface Api {
   // Core Agent Prompts
   listCoreAgentPrompts: () => Promise<CoreAgentPrompt[]>
   getCoreAgentPrompt: (args: {
-    agentRole: 'generalist'
+    agentRole: 'da-vinci'
     mode: 'plan' | 'build'
   }) => Promise<CoreAgentPrompt | undefined>
   upsertCoreAgentPrompt: (args: {
-    agentRole: 'generalist'
+    agentRole: 'da-vinci'
     mode: 'plan' | 'build'
     promptText: string
   }) => Promise<CoreAgentPrompt>
   resetCoreAgentPrompt: (args: {
-    agentRole: 'generalist'
+    agentRole: 'da-vinci'
     mode: 'plan' | 'build'
   }) => Promise<CoreAgentPrompt>
 
@@ -709,12 +691,6 @@ interface Api {
 
   // Conversation Reorder
   reorderConversations: (args: { orderedIds: string[] }) => Promise<void>
-
-  // Bug Council
-  getBugCouncilSession: (args: { sessionId: string }) => Promise<BugCouncilResult | null>
-  listBugCouncilSessions: (args: { conversationId: string }) => Promise<BugCouncilResult[]>
-  onBugCouncilActivated: (callback: (data: BugCouncilActivatedEvent) => void) => () => void
-  onBugCouncilComplete: (callback: (data: BugCouncilCompleteEvent) => void) => () => void
 
   // SDK Events
   onRateLimitEvent: (

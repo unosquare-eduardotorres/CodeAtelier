@@ -6,6 +6,13 @@ import { MCP_TOOLS } from '../../shared/constants'
 import { buildEnvWithPath } from './env-utils'
 import { agentSessionRepository } from '../db/repositories'
 
+/**
+ * Hard ceiling on the number of tool invocations a single agent interaction
+ * may issue before the circuit breaker aborts the stream. Prevents runaway
+ * loops (~50 tool calls typically indicates a stuck agent).
+ */
+const MAX_TOOL_CALLS_PER_INTERACTION = 50
+
 /** Detect if Write content is a structured plan the LLM should have emitted inline */
 function isPlanContent(content: string): boolean {
   try {
@@ -136,12 +143,6 @@ export function summarizeToolInput(
       return `git diff${input.path ? ` ${toRelativePath(input.path as string, workspacePath)}` : ''}`
     case MCP_TOOLS.GIT_CONTEXT.GIT_BLAME.name:
       return `git blame ${toRelativePath((input.path as string) || '', workspacePath)}`
-
-    // ── MCP tools: Task Context ──
-    case MCP_TOOLS.TASK_CONTEXT.LIST_TASKS.name:
-      return 'list tasks'
-    case MCP_TOOLS.TASK_CONTEXT.GET_TASK_OUTPUT.name:
-      return `task output ${(input.taskId as string)?.slice(0, 7) ?? ''}…`
 
     // ── MCP tools: Checkpoint Context ──
     case MCP_TOOLS.CHECKPOINT_CONTEXT.LIST_CHECKPOINTS.name:

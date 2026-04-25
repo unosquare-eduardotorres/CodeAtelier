@@ -22,8 +22,7 @@ import type {
   AgentRole,
   AgentStatus,
   ConversationMode,
-  ImageAttachment,
-  Specialist
+  ImageAttachment
 } from '../../shared/types'
 import { chatAgentLogger } from '../logger'
 import { AgentSessionService } from './agent-session.service'
@@ -31,7 +30,7 @@ import { DaVinciRoleAdapter } from './role-adapters/da-vinci.adapter'
 import { ProjectSpecialistRoleAdapter } from './role-adapters/project-specialist.adapter'
 import type { AgentRoleAdapter } from './agent-session.types'
 import type { CacheEfficiencyReport } from './agent-token-tracker'
-import { specialistRepository, workspaceRepository } from '../db/repositories'
+import { workspaceRepository } from '../db/repositories'
 import { getDatabase } from '../db/index'
 
 /** Events forwarded session → this facade. */
@@ -40,7 +39,6 @@ const FORWARDED_EVENTS = [
   'statusUpdate',
   'complete',
   'intent',
-  'handoff',
   'plan',
   'askQuestion',
   'promptSuggestion',
@@ -58,14 +56,14 @@ export class ChatAgentService extends EventEmitter {
   private forwarderCleanups: Array<() => void> = []
 
   /** The DaVinciRoleAdapter is always alive for home / persona lookups. */
-  private readonly generalistAdapter: DaVinciRoleAdapter
+  private readonly daVinciAdapter: DaVinciRoleAdapter
 
   constructor() {
     super()
     this.setMaxListeners(100)
 
-    this.generalistAdapter = new DaVinciRoleAdapter()
-    this.adapter = this.generalistAdapter
+    this.daVinciAdapter = new DaVinciRoleAdapter()
+    this.adapter = this.daVinciAdapter
     this.session = new AgentSessionService(this.adapter)
     this.wireSessionForwarders()
 
@@ -99,7 +97,7 @@ export class ChatAgentService extends EventEmitter {
   private resolveAdapter(workspacePath: string): AgentRoleAdapter {
     try {
       const workspace = workspaceRepository.findByPath(workspacePath)
-      if (!workspace) return this.generalistAdapter
+      if (!workspace) return this.daVinciAdapter
       const db = getDatabase()
       const row = db
         .prepare(
@@ -115,7 +113,7 @@ export class ChatAgentService extends EventEmitter {
     } catch (err) {
       this.log.warn('[adapter-swap] resolveAdapter failed, falling back to Generalist:', err)
     }
-    return this.generalistAdapter
+    return this.daVinciAdapter
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────
@@ -159,8 +157,8 @@ export class ChatAgentService extends EventEmitter {
   async switchMode(mode: ConversationMode): Promise<void> {
     if (mode === this.session.getMode()) return
     // Only the Generalist adapter carries mode-switch prefix state.
-    if (this.adapter === this.generalistAdapter) {
-      this.generalistAdapter.setPendingModeSwitch(this.session.getMode(), mode)
+    if (this.adapter === this.daVinciAdapter) {
+      this.daVinciAdapter.setPendingModeSwitch(this.session.getMode(), mode)
     }
     return this.session.switchMode(mode)
   }
@@ -168,23 +166,23 @@ export class ChatAgentService extends EventEmitter {
   async switchPersona(personaSpecialistId: string | null, conversationId: string): Promise<void> {
     // Persona is a Generalist-only concept; if the Project Specialist is active,
     // persona switches are ignored (warning logged).
-    if (this.adapter !== this.generalistAdapter) {
+    if (this.adapter !== this.daVinciAdapter) {
       this.log.warn(
         '[persona-switch] Ignored — Project Specialist is active for this workspace'
       )
       return
     }
-    if (personaSpecialistId === this.generalistAdapter.getPersona().id) return
+    if (personaSpecialistId === this.daVinciAdapter.getPersona().id) return
     if (!this.session.getWorkspacePath()) return
 
     this.log.info(
-      `[PIPELINE:persona-switch] ${this.generalistAdapter.getPersona().id ?? 'Da Vinci'} → ${personaSpecialistId ?? 'Da Vinci'}`
+      `[PIPELINE:persona-switch] ${this.daVinciAdapter.getPersona().id ?? 'Da Vinci'} → ${personaSpecialistId ?? 'Da Vinci'}`
     )
 
-    this.generalistAdapter.setPersona(personaSpecialistId)
+    this.daVinciAdapter.setPersona(personaSpecialistId)
 
     if (this.session.isRunning()) {
-      this.generalistAdapter.setPendingCompaction(
+      this.daVinciAdapter.setPendingCompaction(
         conversationId,
         'Summarize the conversation so far — a persona change is about to happen.'
       )
@@ -198,10 +196,10 @@ export class ChatAgentService extends EventEmitter {
     }
     // Only the Generalist adapter caches pending context; the Project Specialist
     // writes a simpler prompt and doesn't need the lazy-inject mechanism.
-    if (this.adapter !== this.generalistAdapter) return
+    if (this.adapter !== this.daVinciAdapter) return
 
-    const existingSize = this.generalistAdapter.getPendingContextSize(conversationId)
-    this.generalistAdapter.addPendingContext(conversationId, context)
+    const existingSize = this.daVinciAdapter.getPendingContextSize(conversationId)
+    this.daVinciAdapter.addPendingContext(conversationId, context)
     if (existingSize > 0) {
       this.log.info(
         `Appended to pending context injection for conversation ${conversationId} (${context.length} chars added, total: ${existingSize + context.length + 2} chars)`
@@ -229,14 +227,14 @@ export class ChatAgentService extends EventEmitter {
 
     // Pending compaction prefix is only wired on the Generalist adapter; for
     // the Project Specialist we simply delegate to the session's compact.
-    if (this.adapter === this.generalistAdapter) {
+    if (this.adapter === this.daVinciAdapter) {
       if (extractNuance) {
-        this.generalistAdapter.setPendingCompaction(
+        this.daVinciAdapter.setPendingCompaction(
           conversationId,
           '/compact Extract nuance: preserve ALL decisions, preferences, file paths, specialist reports verbatim. Keep recent 3-4 turns verbatim.'
         )
       } else {
-        this.generalistAdapter.setPendingCompaction(conversationId, '/compact')
+        this.daVinciAdapter.setPendingCompaction(conversationId, '/compact')
       }
     }
     await this.session.compact()
@@ -286,29 +284,14 @@ export class ChatAgentService extends EventEmitter {
 
   clearSession(conversationId: string): void {
     this.session.clearSession(conversationId)
-    if (this.adapter === this.generalistAdapter) {
-      this.generalistAdapter.clearConversation(conversationId)
+    if (this.adapter === this.daVinciAdapter) {
+      this.daVinciAdapter.clearConversation(conversationId)
     }
   }
 
   /** Which role is currently driving the session. */
   getActiveRole(): AgentRole {
     return this.adapter.role
-  }
-
-  /** Access the current persona specialist (Generalist adapter only; null otherwise). */
-  getPersonaSpecialist(): Specialist | null {
-    return this.adapter === this.generalistAdapter
-      ? this.generalistAdapter.getPersona().data
-      : null
-  }
-
-  /**
-   * @deprecated Legacy helper retained for call-sites that predate the
-   * Project Specialist refactor.
-   */
-  resolvePersonaData(personaSpecialistId: string): Specialist | null {
-    return specialistRepository.findById(personaSpecialistId) ?? null
   }
 }
 

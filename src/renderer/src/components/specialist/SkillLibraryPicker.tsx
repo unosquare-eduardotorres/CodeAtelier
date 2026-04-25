@@ -10,7 +10,7 @@ interface Props {
   onAttach?: (skillId: string) => void
 }
 
-export default function SkillLibraryPicker({ specialist }: Props): React.JSX.Element {
+export default function SkillLibraryPicker(_props: Props): React.JSX.Element {
   return (
     <div className="text-sm text-slate-500">
       Skill library picker — attached skills managed inline in the Skills tab.

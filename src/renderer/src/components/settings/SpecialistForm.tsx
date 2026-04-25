@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
-import { useSpecialistStore } from '@renderer/store'
-import { Avatar, AvatarPicker } from '@renderer/components/common'
-import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
+import { useSpecialistStore, useWorkspaceStore } from '@renderer/store'
+import { Avatar } from '@renderer/components/common'
+import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 import type { Specialist, Skill } from '../../../../shared/types'
 
 interface SpecialistFormProps {
@@ -25,15 +25,17 @@ export default function SpecialistForm({
   const [prompt, setPrompt] = useState(specialist?.prompt ?? '')
   const [priority, setPriority] = useState(specialist?.priority ?? 100)
   const [alias, setAlias] = useState(specialist?.alias ?? '')
-  const [avatarUrl, setAvatarUrl] = useState(
-    specialist?.avatarUrl ?? (specialist ? getDefaultAvatarForRole(specialist.agentId) : 'robot')
-  )
-  const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
     new Set(specialist?.skills?.map((s) => s.id) ?? [])
   )
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Avatars are no longer user-choosable per specialist — show the active
+  // workspace's mannequin as a read-only preview.
+  const activeWs = useWorkspaceStore((s) => s.activeWorkspace)
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
+  const mannequinKey = activeWs ? getWorkspaceMannequin(activeWs.id, workspaces) : 'mannequin-main'
 
   const isEditing = specialist !== null
 
@@ -83,8 +85,7 @@ export default function SpecialistForm({
           color,
           prompt,
           priority,
-          alias: alias.trim() || null,
-          avatarUrl: avatarUrl || null
+          alias: alias.trim() || null
         })
 
         // Sync skills
@@ -177,24 +178,13 @@ export default function SpecialistForm({
             </p>
           </div>
 
-          {/* Avatar */}
+          {/* Avatar (read-only — one mannequin per workspace) */}
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Avatar</label>
-            <div className="flex items-center gap-3">
-              <Avatar avatarKey={avatarUrl} size="lg" accentColor={color} />
-              <button
-                type="button"
-                onClick={() => setShowAvatarPicker(!showAvatarPicker)}
-                className="px-3 py-1.5 text-xs font-medium text-text-body hover:text-text-primary bg-surface-base border border-border-subtle hover:bg-surface-overlay rounded-lg transition-colors"
-              >
-                {showAvatarPicker ? 'Hide Avatars' : 'Change Avatar'}
-              </button>
-            </div>
-            {showAvatarPicker && (
-              <div className="mt-3">
-                <AvatarPicker value={avatarUrl} onChange={setAvatarUrl} columns={8} size="md" />
-              </div>
-            )}
+            <Avatar avatarKey={mannequinKey} size="lg" accentColor={color} />
+            <p className="text-xs text-text-muted mt-2">
+              Specialist avatars are assigned automatically per workspace.
+            </p>
           </div>
 
           {/* Agent ID */}

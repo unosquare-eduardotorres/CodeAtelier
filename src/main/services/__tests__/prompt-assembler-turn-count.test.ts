@@ -90,12 +90,13 @@ describe('Turn count — resumed session (seedTurnCountForResume)', () => {
     }
     const turnCount = tc.increment(conversationId)
 
-    // Turn-1-only injections should NOT fire
-    const shouldInjectRoster = turnCount <= 1
+    // Turn-1-only injections (MCP guidance, ask/memory protocol prompts)
+    // should NOT fire when the session was resumed from a persisted sessionId.
+    const shouldInjectTurn1Only = turnCount <= 1
     assert.equal(
-      shouldInjectRoster,
+      shouldInjectTurn1Only,
       false,
-      'Specialist roster should NOT be injected on resumed session'
+      'Turn-1-only guidance should NOT be injected on resumed session'
     )
     assert.equal(turnCount, 2)
   })
@@ -111,8 +112,12 @@ describe('Turn count — resumed session (seedTurnCountForResume)', () => {
     }
     const turnCount = tc.increment(conversationId)
 
-    const shouldInjectRoster = turnCount <= 1
-    assert.equal(shouldInjectRoster, true, 'Specialist roster SHOULD be injected on fresh session')
+    const shouldInjectTurn1Only = turnCount <= 1
+    assert.equal(
+      shouldInjectTurn1Only,
+      true,
+      'Turn-1-only guidance SHOULD be injected on fresh session'
+    )
     assert.equal(turnCount, 1)
   })
 })

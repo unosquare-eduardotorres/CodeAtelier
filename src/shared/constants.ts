@@ -23,17 +23,16 @@ export const IPC_CHANNELS = {
   CHAT_RENAME: 'chat:renameConversation',
   CHAT_STOP: 'chat:stop',
   CHAT_COMPACT: 'chat:compact',
+  /** Swap DaVinci out for the workspace's ready Project Specialist — triggered by user accepting the swap proposal */
+  CHAT_SWAP_TO_SPECIALIST: 'chat:swapToSpecialist',
   CHAT_GRILL_COMPLETE: 'chat:grillComplete',
   CHAT_GRILL_QUESTION: 'chat:grillQuestion',
   CHAT_GRILL_EVALUATION: 'chat:grillEvaluation',
   CHAT_ASK_QUESTION: 'chat:askQuestion',
   CHAT_PLAN: 'chat:plan',
-  CHAT_TASK_PROGRESS: 'chat:taskProgress',
-  CHAT_BUILD_TASKS: 'chat:buildTasks',
   CHAT_COMPLETE: 'chat:complete',
   CHAT_CLOSE: 'chat:close',
   CHAT_GET_FILE_CHANGES: 'chat:getFileChanges',
-  CHAT_INVESTIGATION_REPORT: 'chat:investigationReport',
   /** Session recovery: stale session auto-heal progress events */
   CHAT_SESSION_RECOVERY: 'chat:sessionRecovery',
   /** State machine transitions — renderer mirrors backend conversation state */
@@ -85,7 +84,6 @@ export const IPC_CHANNELS = {
   PROJECT_SPECIALIST_TOGGLE_SKILL: 'project-specialist:toggle-skill',
   PROJECT_SPECIALIST_ATTACH_SKILL: 'project-specialist:attach-skill',
   PROJECT_SPECIALIST_DETACH_SKILL: 'project-specialist:detach-skill',
-  PROJECT_SPECIALIST_TOGGLE_MCP: 'project-specialist:toggle-mcp',
   PROJECT_SPECIALIST_GET_DRIFT: 'project-specialist:get-drift',
   PROJECT_SPECIALIST_BUILD_PROGRESS: 'project-specialist:build-progress',
 
@@ -310,17 +308,9 @@ export const IPC_CHANNELS = {
   // Context usage
   CONVERSATION_GET_CONTEXT_USAGE: 'conversation:getContextUsage',
 
-  // Bug Council (Phase 10B)
-  BUG_COUNCIL_ACTIVATED: 'bugCouncil:activated',
-  BUG_COUNCIL_COMPLETE: 'bugCouncil:complete',
-  BUG_COUNCIL_GET_SESSION: 'bugCouncil:getSession',
-  BUG_COUNCIL_LIST_SESSIONS: 'bugCouncil:listSessions',
-
   // SDK Events — new message types from Agent SDK
   SDK_RATE_LIMIT: 'sdk:rateLimit',
-  SDK_TOOL_PROGRESS: 'sdk:toolProgress',
   SDK_API_RETRY: 'sdk:apiRetry',
-  SDK_COMPACT_BOUNDARY: 'sdk:compactBoundary',
   SDK_PROMPT_SUGGESTION: 'sdk:promptSuggestion',
   SDK_FILES_PERSISTED: 'sdk:filesPersisted',
   SDK_HOOK_LIFECYCLE: 'sdk:hookLifecycle',
@@ -375,19 +365,10 @@ export const ACTIVATION_MODEL_ID = 'claude-haiku-4-5-20251001' as const
 /**
  * The well-known agent ID for the **Da Vinci** (default Specialist) agent.
  *
- * The string value is still `'generalist'` because that is the historical DB
- * value (`specialists.agent_id`, `messages.role`). A future migration
- * (Layer 2) will rewrite rows to `'da-vinci'` and then this constant will be
- * updated to the new wire value.
+ * Layer 2 (migration 69) rewrote all persisted `'generalist'` values to
+ * `'da-vinci'`; the constant now matches.
  */
-export const DA_VINCI_AGENT_ID = 'generalist' as const
-
-/**
- * @deprecated Use DA_VINCI_AGENT_ID or database-backed agent IDs instead.
- */
-export const AGENT_IDS = {
-  DA_VINCI: DA_VINCI_AGENT_ID
-} as const
+export const DA_VINCI_AGENT_ID = 'da-vinci' as const
 
 /** Default cost preference for new workspaces */
 export const DEFAULT_COST_PREFERENCE = 'balanced' as const
@@ -416,9 +397,9 @@ export const AVAILABLE_MODELS = [
 
 /** Default model for each configurable action */
 export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string> = {
-  generalist: 'claude-opus-4-7',
-  'generalist:plan': 'claude-opus-4-7',
-  'generalist:build': 'claude-sonnet-4-6',
+  'da-vinci': 'claude-opus-4-7',
+  'da-vinci:plan': 'claude-opus-4-7',
+  'da-vinci:build': 'claude-sonnet-4-6',
   'project-specialist': 'claude-opus-4-7',
   'project-specialist:plan': 'claude-opus-4-7',
   'project-specialist:build': 'claude-sonnet-4-6',
@@ -441,20 +422,20 @@ export const MODEL_ACTIONS_META: Record<
     section: 'agent' | 'specialist' | 'background'
   }
 > = {
-  generalist: {
-    label: 'Generalist',
-    description: 'Main chat agent that handles conversations',
+  'da-vinci': {
+    label: 'Da Vinci',
+    description: 'Default chat agent that handles conversations',
     icon: '💬',
     section: 'agent'
   },
-  'generalist:plan': {
-    label: 'Generalist (Plan Mode)',
+  'da-vinci:plan': {
+    label: 'Da Vinci (Plan Mode)',
     description: 'Model for thinking, planning, and general Q&A',
     icon: '🧠',
     section: 'agent'
   },
-  'generalist:build': {
-    label: 'Generalist (Build Mode)',
+  'da-vinci:build': {
+    label: 'Da Vinci (Build Mode)',
     description: 'Model for code writing and execution orchestration',
     icon: '🔨',
     section: 'agent'
@@ -570,7 +551,7 @@ export function getModelActionForRole(
   mode: 'plan' | 'build'
 ): ModelAction {
   if (role === 'da-vinci') {
-    return mode === 'build' ? 'generalist:build' : 'generalist:plan'
+    return mode === 'build' ? 'da-vinci:build' : 'da-vinci:plan'
   }
   return mode === 'build' ? 'project-specialist:build' : 'project-specialist:plan'
 }
@@ -747,10 +728,6 @@ export const MCP_TOOLS = {
     GIT_DIFF: mcpTool('git-context', 'git_diff', 'Git · diff'),
     GIT_BLAME: mcpTool('git-context', 'git_blame', 'Git · blame')
   }),
-  TASK_CONTEXT: mcpServer('task-context', {
-    LIST_TASKS: mcpTool('task-context', 'list_tasks', 'Tasks · list'),
-    GET_TASK_OUTPUT: mcpTool('task-context', 'get_task_output', 'Tasks · output')
-  }),
   CHECKPOINT_CONTEXT: mcpServer('checkpoint-context', {
     LIST_CHECKPOINTS: mcpTool('checkpoint-context', 'list_checkpoints', 'Checkpoints · list'),
     GET_CHECKPOINT: mcpTool('checkpoint-context', 'get_checkpoint', 'Checkpoints · get')
@@ -762,16 +739,8 @@ export const MCP_TOOLS = {
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
-    REQUEST_HANDOFF: mcpTool('control-actions', 'request_handoff', 'Control · request_handoff'),
     ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user'),
     EMIT_MEMORY: mcpTool('control-actions', 'emit_memory', 'Control · emit_memory')
-  }),
-  SPECIALIST_CONTROL: mcpServer('specialist-control', {
-    EMIT_INVESTIGATION_REPORT: mcpTool(
-      'specialist-control',
-      'emit_investigation_report',
-      'Specialist · report'
-    )
   })
 } as const
 

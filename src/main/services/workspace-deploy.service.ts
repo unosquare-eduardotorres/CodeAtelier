@@ -654,15 +654,13 @@ export class WorkspaceDeployService {
       referencedSkills
     )
 
-    // ── STEP 3: Detect tech stack and recommend specialists ──
+    // ── STEP 3: Detect tech stack ──
     emit('status', 'Detecting tech stack...')
     let detectedTechs: string[] | undefined
-    let recommendedSpecialists: string[] | undefined
     try {
       const { detectTechStack } = await import('./tech-stack-detector.service')
       const techResult = detectTechStack(workspacePath)
       detectedTechs = techResult.detectedTechs
-      recommendedSpecialists = techResult.recommendedSpecialists
       if (detectedTechs.length > 0) {
         emit('status', `Detected: ${detectedTechs.join(', ')}`)
       }
@@ -678,8 +676,7 @@ export class WorkspaceDeployService {
       existingClaudeMd,
       proposedClaudeMd: mergedClaudeMd,
       claudeMdWritten: false,
-      detectedTechs,
-      recommendedSpecialists
+      detectedTechs
     }
   }
 

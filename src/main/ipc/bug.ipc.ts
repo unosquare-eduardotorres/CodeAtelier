@@ -4,7 +4,7 @@ import { bugRepository } from '../db/repositories/bug.repository'
 import type { CreateBugInput, BugFilters } from '../db/repositories/bug.repository'
 import { validateSender } from './validate-sender'
 
-export function registerBugIpc(mainWindow: BrowserWindow): void {
+export function registerBugIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.BUG_REPORT, (event, input: CreateBugInput) => {
     validateSender(event)
     if (!input?.errorMessage) throw new Error('errorMessage is required')

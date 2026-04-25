@@ -77,7 +77,7 @@ export class AgentCircuitBreaker {
         `Generalist circuit breaker: ${this._toolCallCount} tool calls exceeded ${opts.isBuildMode ? 'build' : 'plan'} limit of ${toolCallLimit}`
       )
       eventLoggerService.logAgentToolCall({
-        agentId: 'generalist',
+        agentId: 'da-vinci',
         conversationId: opts.conversationId,
         toolName: '__circuit_breaker__',
         toolCallNumber: this._toolCallCount
@@ -101,7 +101,7 @@ export class AgentCircuitBreaker {
   /** Log a tool call to event log (for non-control tools) */
   logToolCall(conversationId: string, toolName: string): void {
     eventLoggerService.logAgentToolCall({
-      agentId: 'generalist',
+      agentId: 'da-vinci',
       conversationId,
       toolName,
       toolCallNumber: this._toolCallCount

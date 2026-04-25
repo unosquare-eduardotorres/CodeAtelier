@@ -9,12 +9,17 @@ const controlLog = log.scope('ControlActions')
 
 /**
  * Event callback signatures for control tool actions.
- * Registered by the chat-agent adapter layer. Post-migration-66 there is
- * no handoff callback — specialists don't delegate, they execute directly.
+ * Registered by the chat-agent adapter layer. There is no handoff callback —
+ * specialists don't delegate, they execute directly.
  */
 export interface ControlActionCallbacks {
   onPlan: (plan: StructuredPlan) => void
-  onAskUser: (questions: GrillQuestion[]) => void
+  /**
+   * `action` is an optional programmatic tag emitted by the ask_user tool
+   * (e.g. "swap-to-specialist"). The renderer maps known action tags to IPC
+   * calls when the user accepts the proposal. Undefined for plain Q&A.
+   */
+  onAskUser: (questions: GrillQuestion[], action?: string) => void
   onMemory: (memory: { type: MemoryType; title: string; content: string }) => void
 }
 
@@ -117,14 +122,23 @@ export const askUserSchema = z.object({
           .describe('Multiple choice options (omit for free-form)')
       })
     )
-    .describe('One or more clarifying questions')
+    .describe('One or more clarifying questions'),
+  action: z
+    .string()
+    .optional()
+    .describe(
+      'Optional programmatic action tag for the renderer. Known values: ' +
+        '"swap-to-specialist" — when the user picks the first option, the ' +
+        'renderer will swap the workspace adapter to the ready Project ' +
+        'Specialist. Omit for plain clarifying questions.'
+    )
 })
 
 /**
  * Creates the control-actions MCP server config.
  *
- * Post-migration-66: no handoff tool, no mode gating needed — the remaining
- * tools (emit_plan / ask_user / emit_memory) are available in both modes.
+ * No handoff tool and no mode gating — the remaining tools
+ * (emit_plan / ask_user / emit_memory) are available in both modes.
  *
  * @param callbacks Event handlers called when the LLM invokes a control tool
  */
@@ -174,9 +188,11 @@ export function createControlActionsMcpServer(
       'Use when the request is ambiguous or multiple valid approaches exist.',
     inputSchema: askUserSchema.shape as unknown as Record<string, z.ZodType>,
     handler: async (args) => {
-      const { questions } = askUserSchema.parse(args)
-      controlLog.info(`[control:ask_user] questionCount=${questions.length}`)
-      callbacks.onAskUser(questions as GrillQuestion[])
+      const { questions, action } = askUserSchema.parse(args)
+      controlLog.info(
+        `[control:ask_user] questionCount=${questions.length} action=${action ?? 'none'}`
+      )
+      callbacks.onAskUser(questions as GrillQuestion[], action)
       return {
         content: [
           {

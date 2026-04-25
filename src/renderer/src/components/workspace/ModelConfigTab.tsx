@@ -66,7 +66,7 @@ const SECTIONS: { key: string; label: string; description: string; actions: Mode
     key: 'agent',
     label: 'Agent Models',
     description: 'Configure which model powers each agent type',
-    actions: ['generalist']
+    actions: ['da-vinci']
   },
   {
     key: 'specialist',

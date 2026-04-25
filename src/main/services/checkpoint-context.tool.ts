@@ -12,7 +12,6 @@ const cpLog = log.scope('CheckpointContext')
  * tools to the Claude Agent SDK. All tools are read-only — does NOT expose restoreGitState
  * (that's a destructive action that goes through UI/IPC).
  *
- * Used by: Generalist only (only the orchestrator should decide rollback).
  * Keyed by conversationId.
  */
 class CheckpointContextMcpService {

@@ -9,9 +9,8 @@ import {
   RotateCcw
 } from 'lucide-react'
 import { useAgentStore, useSpecialistStore, useChatStore } from '@renderer/store'
-import { AgentStatusCard, BugCouncilPanel } from '@renderer/components/agents'
+import { AgentStatusCard } from '@renderer/components/agents'
 import SpecialistInspector from './SpecialistInspector'
-import type { BugCouncilResult } from '../../../../shared/types'
 
 function formatTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
@@ -35,7 +34,6 @@ export default function AgentMonitor({
   const isStopping = useAgentStore((s) => s.isStopping)
   const sessionTokens = useAgentStore((s) => s.sessionTokens)
   const appendOutput = useAgentStore((s) => s.appendOutput)
-  const addGateResult = useAgentStore((s) => s.addGateResult)
   const markAbandonment = useAgentStore((s) => s.markAbandonment)
   const specialists = useSpecialistStore((s) => s.specialists)
   const loadSpecialists = useSpecialistStore((s) => s.loadSpecialists)
@@ -45,7 +43,6 @@ export default function AgentMonitor({
     { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
   >([])
   const [showCheckpoints, setShowCheckpoints] = useState(false)
-  const [bugCouncilResults, setBugCouncilResults] = useState<BugCouncilResult[]>([])
   const [inspecting, setInspecting] = useState<{
     sessionId: string
     subagentId: string
@@ -82,14 +79,6 @@ export default function AgentMonitor({
     })
     return cleanup
   }, [markAbandonment])
-
-  // Listen for Bug Council completion events
-  useEffect(() => {
-    const cleanup = window.api.onBugCouncilComplete((data) => {
-      setBugCouncilResults((prev) => [data.result, ...prev])
-    })
-    return cleanup
-  }, [])
 
   // Handle specialist inspection — open the inspector panel for a specialist
   const handleInspect = useCallback(
@@ -275,15 +264,6 @@ export default function AgentMonitor({
               </div>
             ))
           )}
-        </div>
-      )}
-
-      {/* Bug Council results */}
-      {bugCouncilResults.length > 0 && (
-        <div className="px-3 py-2 space-y-2 border-t border-border-subtle">
-          {bugCouncilResults.map((result) => (
-            <BugCouncilPanel key={result.sessionId} result={result} />
-          ))}
         </div>
       )}
 

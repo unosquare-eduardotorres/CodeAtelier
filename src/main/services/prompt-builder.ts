@@ -4,53 +4,23 @@ import type { BudgetTier, ConversationMode, Skill } from '../../shared/types'
 import { promptBuilderLogger } from '../logger'
 import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.repository'
 import { skillRepository } from '../db/repositories/skill.repository'
-import {
-  buildDecompositionPrompt,
-  buildSpecialistMcpGuidance,
-  DEFAULT_PROMPTS,
-  getDeepPersona,
-  OPUS_SPECIALIST_APPENDIX,
-  SPECIALIST_MICRO_PROMPT,
-  SPECIALIST_TASK_SYSTEM_PROMPT
-} from './default-prompts'
-import type { SpecialistMcpFlags } from './default-prompts'
-
-// ── Specialist behavioral prompts consolidated ──
-// All prompt constants now live in default-prompts.ts (single source of truth).
-// Specialist MCP guidance is assembled conditionally via buildSpecialistMcpGuidance()
-// to avoid injecting guidance for unconfigured MCP servers.
+import { DEFAULT_PROMPTS } from './default-prompts'
 
 // ── Prompt Builder Types ──
 
-type PromptRole = 'generalist' | 'specialist'
+type PromptRole = 'da-vinci'
 
 interface PromptBuildOptions {
-  /** Which agent role is this prompt for */
+  /** Which agent role is this prompt for (currently always 'da-vinci') */
   role: PromptRole
   /** Conversation mode (plan or build) */
   mode: ConversationMode
-  /** Specialist agentId — required when role is 'specialist' */
-  specialistId?: string
-  /** Specialist prompt from DB/YAML — injected for specialists */
-  specialistPrompt?: string
-  /** Skills assigned to this specialist (pre-resolved, no LLM needed) */
-  assignedSkills?: Skill[]
-  /** Whether specialist skills should be injected for this prompt (defaults to true) */
-  skillsEnabled?: boolean
-  /** Optional per-conversation skill override list (filters assignedSkills when provided) */
-  skillOverrides?: string[]
   /** Workspace path for CLAUDE.md project context injection */
   workspacePath?: string
   /** Include auto memory context (generalist only) */
   memoryContext?: string
-  /** Feedback memories for this specialist */
-  feedbackContext?: string
-  /** Dependency task outputs for context (specialist only) */
-  dependencyOutputs?: Map<string, string>
   /** Budget tier — controls context size for model-aware prompt budgeting (Strategy 4) */
   budgetTier?: BudgetTier
-  /** Which MCP servers are active — controls conditional tool guidance injection */
-  enabledMcpServers?: SpecialistMcpFlags
   /** Persona specialist ID for generalist impersonation (null = no persona) */
   personaSpecialistId?: string | null
   /** Persona specialist prompt content (from specialist.prompt field) */
@@ -65,7 +35,7 @@ export interface GeneralistConditionalSections {
   includeAskQuestionPrompt: boolean
   includeMemoryProtocolPrompt: boolean
   includeImageAttachmentsPrompt: boolean
-  /** Strategy 3: Nudge generalist to answer directly for simple questions (saves ~10K tokens by skipping handoff) */
+  /** Strategy 3: Nudge generalist to answer directly for simple questions */
   includeDirectAnswerBoost: boolean
 }
 
@@ -74,14 +44,13 @@ export interface GeneralistConditionalSections {
 const log = promptBuilderLogger
 
 /**
- * Centralized prompt assembly — single place to build system prompts for all agent roles.
+ * Centralized prompt assembly for the DaVinci generalist.
  *
- * Design rules:
- * - **Generalist** gets: role prompt + CLAUDE.md (project context) + auto memory. NO skill content.
- * - **Specialist** gets: role prompt + specialist prompt + assigned skills only + CLAUDE.md (project context) + brief + feedback.
+ * Assembles: optional persona overlay (when impersonating a specialist) + base role prompt
+ * + CLAUDE.md project context + auto memory context.
  *
- * CLAUDE.md is injected as **project context only** — agent/skill listings are NOT included
- * (those are handled by the DB specialist/skill registry and PromptBuilder layers).
+ * Note: Project Specialists use their own dedicated adapter (project-specialist.adapter.ts)
+ * that reads `specialists.prompt` directly — they do not go through this builder.
  */
 export class PromptBuilder {
   /**
@@ -93,7 +62,7 @@ export class PromptBuilder {
   /**
    * Strategy O: In-memory skill file cache with mtime invalidation.
    * SKILL.md files rarely change during a session — cache them to eliminate
-   * per-specialist-task readFileSync() calls and truncation overhead.
+   * per-turn readFileSync() calls and truncation overhead.
    */
   private skillFileCache: Map<string, { content: string; mtimeMs: number }> = new Map()
 
@@ -124,7 +93,7 @@ export class PromptBuilder {
         normalized
       )
 
-    // Strategy 3: Direct Answer Boost — classify simple questions that don't need specialist handoff.
+    // Strategy 3: Direct Answer Boost — classify simple questions that can be answered directly.
     // Simple questions are short, use interrogative verbs, and DON'T request code mutations.
     // Analysis verbs (investigate, diagnose, audit, review) do NOT suppress the boost —
     // they're questions the generalist can often answer directly from context.
@@ -147,34 +116,53 @@ export class PromptBuilder {
   }
 
   /**
-   * Build a complete system prompt for any agent role.
-   * Composes prompt from layers, deduplicating skill content.
+   * Build a complete system prompt for the DaVinci generalist role.
+   * Composes prompt from layers (persona overlay, role, project context, memory).
    */
   build(options: PromptBuildOptions): string {
     const layers: string[] = []
     const budgetTier = options.budgetTier ?? 'standard'
 
     this.appendPersonaLayer(layers, options, budgetTier)
-    this.appendRoleAndIdentityLayers(layers, options, budgetTier)
-    this.appendSkillContentLayer(layers, options, budgetTier)
+    this.appendRoleAndIdentityLayers(layers, options)
     this.appendProjectContextLayer(layers, options, budgetTier)
     this.appendMemoryContextLayer(layers, options)
 
-    // Strategy 8: Brief + feedback live in buildDynamicContext(), not here — keeps system prompt
-    // stable across tasks for maximum Claude prompt cache hits (90% discount).
     return layers.join('\n\n---\n\n')
   }
 
   /**
-   * Layer 0: Persona specialist identity + skills (generalist only).
-   * Injected BEFORE the generalist role prompt so the LLM sees itself as the specialist first.
+   * Build the CLAUDE.md project-context layer as a standalone string.
+   *
+   * Used by ProjectSpecialistRoleAdapter — specialists assemble their own
+   * system prompt (mode + identity + CLAUDE.md + MCP guidance) instead of
+   * going through `build()`. The mtime-based `claudeMdCache` shared with
+   * the generalist path keeps disk reads cheap.
+   *
+   * Returns the formatted block (`## Workspace Project Context (from CLAUDE.md)\n\n<extracted>`)
+   * or an empty string when no CLAUDE.md exists or the workspace is unset.
+   */
+  buildClaudeMdLayer(
+    workspacePath: string,
+    mode: ConversationMode,
+    budgetTier: BudgetTier = 'standard'
+  ): string {
+    if (!workspacePath) return ''
+    const projectContext = this.readProjectContext(workspacePath, 'da-vinci', mode, budgetTier)
+    if (!projectContext) return ''
+    return `## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`
+  }
+
+  /**
+   * Layer 0: Persona specialist identity + skills.
+   * Injected BEFORE the DaVinci role prompt so the LLM sees itself as the specialist first.
    */
   private appendPersonaLayer(
     layers: string[],
     options: PromptBuildOptions,
     budgetTier: BudgetTier
   ): void {
-    if (options.role !== 'generalist' || !options.personaSpecialistId || !options.personaPrompt) {
+    if (!options.personaSpecialistId || !options.personaPrompt) {
       return
     }
     layers.push(
@@ -196,84 +184,15 @@ export class PromptBuilder {
   }
 
   /**
-   * Layers 1-2c: Role prompt, specialist identity, persona prompt, deep persona, Opus appendix.
+   * Layer 1: Base role prompt (from DB, user-editable).
    */
-  private appendRoleAndIdentityLayers(
-    layers: string[],
-    options: PromptBuildOptions,
-    budgetTier: BudgetTier
-  ): void {
-    // Layer 1: Base role prompt
-    layers.push(
-      this.getRolePrompt(options.role, options.mode, budgetTier, options.enabledMcpServers)
-    )
-
-    if (options.role !== 'specialist' || budgetTier === 'minimal') {
-      return
-    }
-
-    // Layer 2: Specialist identity header
-    if (options.specialistId) {
-      layers.push(`## Specialist: ${options.specialistId}`)
-    }
-
-    // Layer 2b: Specialist persona prompt from YAML/DB
-    if (options.specialistPrompt) {
-      layers.push(`## Role\n\n${options.specialistPrompt}`)
-    }
-
-    // Layer 2b2: Deep persona enrichment (Phase 10A)
-    if (options.specialistId) {
-      const persona = getDeepPersona(options.specialistId)
-      if (persona) {
-        layers.push(persona)
-      }
-    }
-
-    // Layer 2c: Self-critique appendix for Opus-tier BUILD tasks
-    if (options.mode === 'build' && budgetTier === 'full') {
-      layers.push(OPUS_SPECIALIST_APPENDIX)
-    }
-  }
-
-  /**
-   * Layer 3: Skill content (SKILL.md files) for specialists.
-   * Plan-mode specialists get skills at minimal budget tier for grounded analysis.
-   */
-  private appendSkillContentLayer(
-    layers: string[],
-    options: PromptBuildOptions,
-    budgetTier: BudgetTier
-  ): void {
-    if (options.role !== 'specialist') return
-
-    if (options.skillsEnabled === false) {
-      log.info(
-        `Skill-free mode: specialist=${options.specialistId} — persona-only, no SKILL.md content (saves ~400-1,140 tokens)`
-      )
-      return
-    }
-
-    if (!options.assignedSkills) return
-
-    const effectiveBudgetTier = options.mode === 'plan' ? ('minimal' as BudgetTier) : budgetTier
-    const assignedSkills = this.filterAssignedSkills(
-      options.assignedSkills,
-      options.skillOverrides
-    )
-    if (assignedSkills.length === 0) return
-
-    const taskContext = options.specialistPrompt || ''
-    const skillContent = this.buildSkillContent(assignedSkills, effectiveBudgetTier, taskContext)
-    if (skillContent) {
-      layers.push(skillContent)
-    }
+  private appendRoleAndIdentityLayers(layers: string[], options: PromptBuildOptions): void {
+    layers.push(this.getRolePrompt(options.role, options.mode))
   }
 
   /**
    * Layer 4: Workspace project context (CLAUDE.md — project sections only).
-   * Progressive by role: generalist-build slim, generalist-plan ultra-light, specialist essentials.
-   * Strategy 4: Minimal tier skips CLAUDE.md for specialists (haiku tasks).
+   * Progressive by mode: build slim, plan ultra-light.
    */
   private appendProjectContextLayer(
     layers: string[],
@@ -281,7 +200,6 @@ export class PromptBuilder {
     budgetTier: BudgetTier
   ): void {
     if (!options.workspacePath) return
-    if (budgetTier === 'minimal' && options.role === 'specialist') return
 
     const projectContext = this.readProjectContext(
       options.workspacePath,
@@ -295,70 +213,22 @@ export class PromptBuilder {
   }
 
   /**
-   * Layer 5: Auto Memory context (generalist only).
+   * Layer 5: Auto Memory context.
    */
   private appendMemoryContextLayer(layers: string[], options: PromptBuildOptions): void {
-    if (options.role === 'generalist' && options.memoryContext) {
+    if (options.memoryContext) {
       layers.push(`## Auto Memory\n\n${options.memoryContext}`)
     }
   }
 
-  /**
-   * Strategy 8: Build dynamic per-task context that varies between specialist tasks.
-   * This content is prepended to the user prompt (NOT the system prompt) so that
-   * the system prompt stays stable across tasks and benefits from Claude's prompt caching.
-   *
-   * Returns an empty string if no dynamic context is needed.
-   */
-  buildDynamicContext(
-    options: Pick<PromptBuildOptions, 'role' | 'feedbackContext' | 'budgetTier'>
-  ): string {
-    const budgetTier = options.budgetTier ?? 'standard'
-    if (options.role !== 'specialist' || budgetTier === 'minimal') return ''
-
-    const sections: string[] = []
-
-    // Feedback memories
-    if (options.feedbackContext) {
-      sections.push(options.feedbackContext)
-    }
-
-    if (sections.length === 0) return ''
-    return `## Context\n\n${sections.join('\n\n')}\n\n## Task\n\n`
-  }
-
-  /**
-   * Get the decomposition system prompt (used by generalist.decompose()).
-   * This is a standalone prompt, not composed with layers.
-   * Mode-aware: plan-mode decomposition produces investigation tasks,
-   * build-mode produces implementation tasks.
-   */
-  getDecompositionPrompt(mode: ConversationMode = 'build'): string {
-    return buildDecompositionPrompt(mode)
-  }
-
   // ── Private layer builders ──
 
-  private getRolePrompt(
-    role: PromptRole,
-    mode: ConversationMode,
-    budgetTier?: BudgetTier,
-    mcpFlags?: SpecialistMcpFlags
-  ): string {
-    if (role === 'generalist') {
-      // Read from DB (user-editable). Falls back to defaults if DB is empty.
-      const dbPrompt = coreAgentPromptRepository.findByRoleAndMode(role, mode)
-      if (dbPrompt) return dbPrompt.promptText
-      // Fallback to defaults (safety net for fresh installs before migration runs)
-      return DEFAULT_PROMPTS[role]?.[mode] ?? SPECIALIST_TASK_SYSTEM_PROMPT
-    }
-    // Assemble specialist MCP guidance conditionally (only active servers)
-    const mcpGuidance = buildSpecialistMcpGuidance(mcpFlags)
-    // Minimal-budget specialists (haiku-tier, complexity 0-4) get a micro prompt
-    // to save ~400 tokens on simple tasks like quick reads and investigations
-    const basePrompt =
-      budgetTier === 'minimal' ? SPECIALIST_MICRO_PROMPT : SPECIALIST_TASK_SYSTEM_PROMPT
-    return basePrompt + mcpGuidance
+  private getRolePrompt(role: PromptRole, mode: ConversationMode): string {
+    // Read from DB (user-editable). Falls back to defaults if DB is empty.
+    const dbPrompt = coreAgentPromptRepository.findByRoleAndMode(role, mode)
+    if (dbPrompt) return dbPrompt.promptText
+    // Fallback to defaults (safety net for fresh installs before migration runs)
+    return DEFAULT_PROMPTS[role]?.[mode] ?? ''
   }
 
   /**
@@ -616,26 +486,18 @@ export class PromptBuilder {
   }
 
   /**
-   * Read workspace CLAUDE.md as project context.
+   * Read workspace CLAUDE.md as project context for the generalist.
    *
    * Strategy 1: Progressive CLAUDE.md injection
-   * - Generalist build: slim core project sections only
-   * - Generalist plan: ultra-light context for investigation/Q&A
-   * - Specialist: essential sections with explicit skip list for heavy metadata
+   * - Build mode: slim core project sections only
+   * - Plan mode: ultra-light context for investigation/Q&A
    */
   private readProjectContext(
     workspacePath: string,
-    role: PromptRole = 'generalist',
+    _role: PromptRole = 'da-vinci',
     mode: ConversationMode = 'build',
     budgetTier: BudgetTier = 'standard'
   ): string {
-    // Dynamic specialist CLAUDE.md extraction: try reading CLAUDE.md for the workspace
-    // and extracting the sections most relevant to specialists. Falls back to a hardcoded
-    // inline summary if CLAUDE.md is unavailable.
-    if (role === 'specialist') {
-      return this.extractSpecialistClaudeMd(workspacePath)
-    }
-
     // Strategy 5: Minimal-budget generalist (turn 5+) already has CLAUDE.md in history —
     // send a micro-summary instead of re-extracting sections (~600 tokens saved per turn)
     if (budgetTier === 'minimal') {
@@ -709,77 +571,6 @@ export class PromptBuilder {
       `CLAUDE.md progressive injection: ${content.length} → ${extracted.length} chars for ${profile}`
     )
     return extracted
-  }
-
-  /**
-   * Extracts a specialist-focused CLAUDE.md slice.
-   * Specialists need conventions, error handling, and key commands — not project overview
-   * or architecture notes (those are covered by the specialist persona + skills).
-   * Falls back to a hardcoded inline summary if CLAUDE.md is unavailable.
-   */
-  private extractSpecialistClaudeMd(workspacePath: string): string {
-    const INLINE_FALLBACK = `Tech: Electron 40, React 19, TypeScript 5.9 strict, Tailwind CSS 4, better-sqlite3 (raw SQL, no ORM), Zustand 5.
-Conventions: ES modules with type-only imports, @renderer/ alias, kebab-case.service.ts for services, PascalCase.tsx for components.
-IPC: ipcRenderer.invoke/ipcMain.handle only. Channels defined in src/shared/constants.ts (IPC_CHANNELS). Never use sendSync or expose raw ipcRenderer.
-DB: Repository pattern in src/main/db/repositories/. Raw SQL via better-sqlite3. No ORM.
-Errors: throw in IPC handlers (propagates to renderer). try-catch + log.error() in services.
-Never: require() in renderer, disable contextIsolation, use remote module, string-concat SQL.`
-
-    try {
-      const claudeMdPath = join(workspacePath, 'CLAUDE.md')
-
-      // Reuse mtime cache from generalist extraction
-      const cached = this.claudeMdCache.get(claudeMdPath)
-      let content: string
-
-      try {
-        const stat = statSync(claudeMdPath)
-        if (cached && cached.mtimeMs === stat.mtimeMs) {
-          content = cached.content
-        } else {
-          content = readFileSync(claudeMdPath, 'utf-8')
-          this.claudeMdCache.set(claudeMdPath, { content, mtimeMs: stat.mtimeMs })
-        }
-      } catch {
-        content = readFileSync(claudeMdPath, 'utf-8')
-      }
-
-      const specialistHeadings = [
-        'tech stack',
-        'conventions',
-        'key commands',
-        'what not to do',
-        'error handling'
-      ]
-      const specialistSkipHeadings = [
-        'overview',
-        'skills',
-        'available skills',
-        'electron skill trigger',
-        'deprecation notes',
-        'electron documentation',
-        'architecture notes',
-        'agents',
-        'design system',
-        'project structure'
-      ]
-
-      const extracted = this.extractClaudeMdSections(
-        content,
-        specialistHeadings,
-        specialistSkipHeadings,
-        false
-      )
-
-      if (extracted.length > 100) {
-        log.info(`CLAUDE.md specialist extraction: ${content.length} → ${extracted.length} chars`)
-        return extracted
-      }
-    } catch {
-      // CLAUDE.md not found or unreadable — fall back
-    }
-
-    return INLINE_FALLBACK
   }
 
   /**

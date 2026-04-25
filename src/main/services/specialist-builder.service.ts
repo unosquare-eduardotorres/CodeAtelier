@@ -1,6 +1,6 @@
 /**
  * SpecialistBuilder — constructs a Project Specialist's prompt + stack
- * fingerprint + MCP config for a given workspace.
+ * fingerprint for a given workspace.
  *
  * Phase 2 of the Project Specialist refactor. The builder runs:
  *
@@ -11,9 +11,11 @@
  *   4. OPTIONAL — one-shot Claude CLI build call (`claude -p`) to tailor the
  *      prompt for this project. Falls back to the unhydrated skeleton on
  *      failure so the specialist is always usable.
- *   5. Compose the MCP config via McpComposerService.
- *   6. Persist the result to the specialists row (prompt, stack_fingerprint,
- *      detected_techs, mcp_config, last_built_at, build_status='ready').
+ *   5. Persist the result to the specialists row (prompt, stack_fingerprint,
+ *      detected_techs, last_built_at, build_status='ready').
+ *
+ * MCP availability is decided at runtime by `buildWorkspaceMcpConfig` based
+ * on workspace-level feature flags — not persisted per-specialist.
  *
  * Builds are exclusive per specialist (guarded by build_status='building').
  * Failures flip build_status='failed' and the error is logged.
@@ -26,11 +28,7 @@ import log from 'electron-log'
 import { getDatabase } from '../db/index'
 import { detectTechStack } from './tech-stack-detector.service'
 import type { TechStackResult } from './tech-stack-detector.service'
-import {
-  renderTemplate,
-  type PromptSlotValues
-} from './project-specialist-prompt-template'
-import { mcpComposerService, type ComposedMcpConfig } from './mcp-composer.service'
+import { renderTemplate, type PromptSlotValues } from './project-specialist-prompt-template'
 import { buildEnvWithPath } from './env-utils'
 import { modelConfigService } from './model-config.service'
 
@@ -40,7 +38,6 @@ export interface BuildResult {
   specialistId: string
   stackFingerprint: string
   detectedTechs: string[]
-  mcpConfig: ComposedMcpConfig
   promptLength: number
   usedLLM: boolean
 }
@@ -61,8 +58,6 @@ interface SpecialistRow {
   build_status: 'pending' | 'building' | 'ready' | 'failed'
   stack_fingerprint: string | null
   detected_techs: string
-  mcp_config: string
-  mcp_overrides: string
 }
 
 interface WorkspaceRow {
@@ -94,13 +89,13 @@ export class SpecialistBuilderService {
     return this.runBuild(specialist, workspace, options)
   }
 
-  /** Rebuild an existing Project Specialist's prompt (keep MCP + skills intact). */
+  /** Rebuild an existing Project Specialist's prompt (keep skills intact). */
   async rebuildPrompt(specialistId: string, options: BuildOptions = {}): Promise<BuildResult> {
     const db = getDatabase()
     const specialist = db
       .prepare(
         `SELECT id, workspace_id, agent_id, display_name, prompt, build_status,
-                stack_fingerprint, detected_techs, mcp_config, mcp_overrides
+                stack_fingerprint, detected_techs
            FROM specialists WHERE id = ?`
       )
       .get(specialistId) as SpecialistRow | undefined
@@ -116,13 +111,13 @@ export class SpecialistBuilderService {
     return this.runBuild(specialist, workspace, { ...options, mode: 'prompt-only' })
   }
 
-  /** Rebuild MCP config and skill recommendations only — no prompt LLM call. */
+  /** Re-detect stack and skill recommendations only — no prompt LLM call. */
   async rebuildSkills(specialistId: string): Promise<BuildResult> {
     const db = getDatabase()
     const specialist = db
       .prepare(
         `SELECT id, workspace_id, agent_id, display_name, prompt, build_status,
-                stack_fingerprint, detected_techs, mcp_config, mcp_overrides
+                stack_fingerprint, detected_techs
            FROM specialists WHERE id = ?`
       )
       .get(specialistId) as SpecialistRow | undefined
@@ -145,7 +140,7 @@ export class SpecialistBuilderService {
     return db
       .prepare(
         `SELECT id, workspace_id, agent_id, display_name, prompt, build_status,
-                stack_fingerprint, detected_techs, mcp_config, mcp_overrides
+                stack_fingerprint, detected_techs
            FROM specialists WHERE workspace_id = ?`
       )
       .get(workspaceId) as SpecialistRow | undefined
@@ -169,17 +164,7 @@ export class SpecialistBuilderService {
       const techResult = detectTechStack(workspace.repo_path)
       const fingerprint = this.fingerprintStack(techResult)
 
-      // 2. Compose MCP config (always refresh)
-      const overrides = mcpComposerService.parseOverrides(specialist.mcp_overrides)
-      const composedMcp = mcpComposerService.compose({
-        mode: 'plan',
-        detectedTechs: techResult.detectedTechs,
-        overrides,
-        semanticSearchAvailable: true,
-        githubAvailable: true
-      })
-
-      // 3. Optionally rebuild prompt
+      // 2. Optionally rebuild prompt
       let newPrompt = specialist.prompt ?? ''
       let usedLLM = false
       if (mode !== 'skills-only') {
@@ -190,6 +175,8 @@ export class SpecialistBuilderService {
             const tailored = await this.invokeLLM(
               skeleton,
               workspace.repo_path,
+              workspace.name,
+              techResult.detectedTechs,
               options.llmTimeoutMs ?? 60_000
             )
             if (tailored && tailored.trim().length > skeleton.length * 0.5) {
@@ -208,24 +195,17 @@ export class SpecialistBuilderService {
         }
       }
 
-      // 4. Persist
+      // 3. Persist
       db.prepare(
         `UPDATE specialists
             SET prompt = ?,
                 stack_fingerprint = ?,
                 detected_techs = ?,
-                mcp_config = ?,
                 last_built_at = datetime('now'),
                 build_status = 'ready',
                 updated_at = datetime('now')
           WHERE id = ?`
-      ).run(
-        newPrompt,
-        fingerprint,
-        JSON.stringify(techResult.detectedTechs),
-        mcpComposerService.serialize(composedMcp),
-        specialist.id
-      )
+      ).run(newPrompt, fingerprint, JSON.stringify(techResult.detectedTechs), specialist.id)
 
       buildLog.info(
         `✓ Built Project Specialist ${specialist.id} (workspace=${workspace.name}, techs=${techResult.detectedTechs.length}, usedLLM=${usedLLM})`
@@ -235,7 +215,6 @@ export class SpecialistBuilderService {
         specialistId: specialist.id,
         stackFingerprint: fingerprint,
         detectedTechs: techResult.detectedTechs,
-        mcpConfig: composedMcp,
         promptLength: newPrompt.length,
         usedLLM
       }
@@ -252,21 +231,16 @@ export class SpecialistBuilderService {
     workspace: WorkspaceRow,
     techResult: TechStackResult
   ): Partial<PromptSlotValues> {
-    const claudeMdDigest = this.readClaudeMd(workspace.repo_path)
     const stackSummary =
       techResult.detectedTechs.length > 0
-        ? `Detected stack: ${techResult.detectedTechs.join(', ')}.`
-        : 'No specific tech stack detected.'
-    const commonCommands = this.detectCommonCommands(workspace.repo_path)
+        ? techResult.detectedTechs.join(', ')
+        : 'no specific tech stack detected'
     const enabledSkills = this.readEnabledSkills(specialist.id)
 
     return {
       workspaceName: workspace.name,
       stackSummary,
-      claudeMdDigest,
-      enabledSkills,
-      commonCommands,
-      antiPatterns: '(none specified — refine over time)'
+      enabledSkills
     }
   }
 
@@ -296,15 +270,19 @@ export class SpecialistBuilderService {
       .join('\n')
   }
 
-  private readClaudeMd(workspacePath: string): string {
+  /**
+   * Reads CLAUDE.md (or .claude/CLAUDE.md) and returns it trimmed to `maxBytes`.
+   * No longer fed into a slot — used only by `invokeLLM` as a REFERENCE excerpt
+   * for the meta-prompt so the LLM can infer DOMAIN context (not enrich content).
+   */
+  private readClaudeMd(workspacePath: string, maxBytes = 6_000): string {
     const candidates = ['CLAUDE.md', '.claude/CLAUDE.md']
     for (const rel of candidates) {
       const abs = join(workspacePath, rel)
       if (existsSync(abs)) {
         try {
           const raw = readFileSync(abs, 'utf8')
-          // Trim to ~6 KB to keep the prompt lean.
-          return raw.length > 6_000 ? raw.slice(0, 6_000) + '\n\n…(truncated)' : raw
+          return raw.length > maxBytes ? raw.slice(0, maxBytes) + '\n\n…(truncated)' : raw
         } catch {
           /* fall through */
         }
@@ -313,57 +291,85 @@ export class SpecialistBuilderService {
     return '(no CLAUDE.md found in this repo)'
   }
 
-  private detectCommonCommands(workspacePath: string): string {
-    // Best-effort: extract `scripts` from package.json.
-    const pkgPath = join(workspacePath, 'package.json')
-    if (!existsSync(pkgPath)) return '(no package.json — commands not auto-detected)'
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as {
-        scripts?: Record<string, string>
-      }
-      if (!pkg.scripts || Object.keys(pkg.scripts).length === 0) {
-        return '(no npm scripts detected)'
-      }
-      const lines: string[] = []
-      const prioritized = ['dev', 'build', 'test', 'lint', 'typecheck', 'format']
-      for (const name of prioritized) {
-        if (pkg.scripts[name]) lines.push(`- \`npm run ${name}\` — ${pkg.scripts[name]}`)
-      }
-      // Append any remaining scripts (up to 5)
-      for (const [name, cmd] of Object.entries(pkg.scripts)) {
-        if (lines.length >= 12) break
-        if (prioritized.includes(name)) continue
-        lines.push(`- \`npm run ${name}\` — ${cmd}`)
-      }
-      return lines.join('\n')
-    } catch {
-      return '(package.json parse failed)'
-    }
-  }
-
   private fingerprintStack(result: TechStackResult): string {
     const sorted = [...result.detectedTechs].sort()
     return createHash('sha256').update(sorted.join('|')).digest('hex').slice(0, 16)
   }
 
-  private async invokeLLM(skeleton: string, workspacePath: string, timeoutMs: number): Promise<string> {
+  /** Build the meta-prompt sent to `claude -p` for persona tailoring. Exposed for tests. */
+  buildMetaPrompt(params: {
+    workspaceName: string
+    detectedTechs: string[]
+    claudeMdReference: string
+    skeleton: string
+  }): string {
+    const techList =
+      params.detectedTechs.length > 0 ? params.detectedTechs.join(', ') : '(none detected)'
+
+    return [
+      `You are writing the system prompt for a "Project Specialist" — an opinionated senior engineer`,
+      `persona who will work on "${params.workspaceName}".`,
+      '',
+      `DETECTED STACK: ${techList}`,
+      '',
+      `REFERENCE (for DOMAIN inference only — DO NOT quote, paraphrase, list, or reproduce structure):`,
+      `---`,
+      params.claudeMdReference,
+      `---`,
+      '',
+      `Write a first-person identity prompt with EXACTLY these sections, in order, and nothing else:`,
+      '',
+      `## Your identity`,
+      `3-5 sentences. Who this engineer is. Their seniority and concrete experience with each detected`,
+      `tech. The domain they operate in (infer from the reference — e.g. "healthcare SaaS", "devtools",`,
+      `"fintech"). Their default stance (opinionated, pragmatic, security-aware, test-driven, etc.).`,
+      '',
+      `## Your tech-stack stance`,
+      `2-5 bullet points with CONCRETE opinions about the detected techs. Shape: "I prefer X over Y`,
+      `because Z", "I never Y — instead I Z." Opinions MUST be specific to the detected stack. No`,
+      `generic software-engineering platitudes.`,
+      '',
+      `## Domain context`,
+      `1-2 sentences: what this project does and who its users are. Infer from the reference. Nothing`,
+      `invented.`,
+      '',
+      `## Output style`,
+      `Keep the existing "clean markdown / repo-relative paths / numbered plan steps" bullets verbatim`,
+      `from the skeleton.`,
+      '',
+      `HARD RULES:`,
+      `- No directory trees.`,
+      `- No bulleted lists of other agents, skills, or commands.`,
+      `- No absolute file paths or command transcripts.`,
+      `- Under 400 words total.`,
+      `- Identity is FIRST PERSON ("I am…", "I prefer…", "I push back on…").`,
+      `- Return the FINAL prompt verbatim — no preamble, no fences, no trailing commentary.`,
+      '',
+      `SKELETON (fallback only, if you truly cannot produce a better version):`,
+      `---`,
+      params.skeleton,
+      `---`,
+      '',
+      `Final expert-persona prompt:`
+    ].join('\n')
+  }
+
+  private async invokeLLM(
+    skeleton: string,
+    workspacePath: string,
+    workspaceName: string,
+    detectedTechs: string[],
+    timeoutMs: number
+  ): Promise<string> {
     const { spawn } = await import('node:child_process')
 
-    const metaPrompt = [
-      'You are tailoring a system prompt for a Project Specialist agent.',
-      'Below is the SKELETON prompt for a workspace. Return a refined version that:',
-      '- Keeps the role framing + Plan/Build mode rules unchanged.',
-      '- Enriches the project-specific sections (stack, conventions, commands) with ONLY what you can infer from the text provided.',
-      '- Does NOT invent frameworks, files, or conventions that are not evident.',
-      '- Stays under 1500 words.',
-      '- Returns the FINAL prompt verbatim — no preamble, no explanation.',
-      '',
-      '--- SKELETON ---',
-      skeleton,
-      '--- END SKELETON ---',
-      '',
-      'Final tailored prompt:'
-    ].join('\n')
+    const claudeMdReference = this.readClaudeMd(workspacePath, 3_000)
+    const metaPrompt = this.buildMetaPrompt({
+      workspaceName,
+      detectedTechs,
+      claudeMdReference,
+      skeleton
+    })
 
     const resolvedModel = modelConfigService.getModel(workspacePath, 'project-specialist:plan')
 

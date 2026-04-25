@@ -17,7 +17,7 @@ function emptyControlState(): ControlToolState {
 describe('IntentDetector', () => {
   test('returns_empty_array_when_no_intents_detected', () => {
     const { detector } = createIntentDetector()
-    const result = detector.detectAll('Hello, how can I help?', emptyControlState(), 'plan', false)
+    const result = detector.detectAll('Hello, how can I help?', emptyControlState(), 'plan')
     assert.deepEqual(result, [])
   })
 
@@ -38,7 +38,7 @@ describe('IntentDetector', () => {
       planIntent
     }
 
-    const result = detector.detectAll('some text', controlState, 'plan', false)
+    const result = detector.detectAll('some text', controlState, 'plan')
     assert.equal(result.length, 1)
     assert.equal(result[0].type, 'plan')
   })
@@ -57,7 +57,7 @@ describe('IntentDetector', () => {
       askUserIntent
     }
 
-    const result = detector.detectAll('asking...', controlState, 'plan', false)
+    const result = detector.detectAll('asking...', controlState, 'plan')
     assert.equal(result.length, 1)
     assert.equal(result[0].type, 'askUser')
   })
@@ -66,7 +66,7 @@ describe('IntentDetector', () => {
     const { detector } = createIntentDetector()
     const text = 'Some preamble\n```grill-summary\n{"summary": "All good", "proposedTasks": [{"title": "T1", "description": "D1"}]}\n```\nAfter'
 
-    const result = detector.detectAll(text, emptyControlState(), 'plan', false)
+    const result = detector.detectAll(text, emptyControlState(), 'plan')
     assert.equal(result.length, 1)
     assert.equal(result[0].type, 'grillComplete')
     const intent = result[0] as AgentIntent & { type: 'grillComplete' }
@@ -79,7 +79,7 @@ describe('IntentDetector', () => {
     const { detector } = createIntentDetector()
     const text = '```grill-question\n{"questions": [{"id": "q1", "question": "What stack?", "options": [{"label": "React"}]}]}\n```'
 
-    const result = detector.detectAll(text, emptyControlState(), 'plan', false)
+    const result = detector.detectAll(text, emptyControlState(), 'plan')
     assert.equal(result.length, 1)
     assert.equal(result[0].type, 'grillQuestion')
     const intent = result[0] as AgentIntent & { type: 'grillQuestion' }
@@ -91,7 +91,7 @@ describe('IntentDetector', () => {
     const { detector } = createIntentDetector()
     const text = '```grill-evaluation\n{"score": 8, "scoreLabel": "Great", "feedback": "Nice work", "questions": [{"id": "q1", "question": "Next?", "options": []}]}\n```'
 
-    const result = detector.detectAll(text, emptyControlState(), 'plan', false)
+    const result = detector.detectAll(text, emptyControlState(), 'plan')
     assert.equal(result.length, 1)
     assert.equal(result[0].type, 'grillEvaluation')
     const intent = result[0] as AgentIntent & { type: 'grillEvaluation' }
@@ -104,7 +104,7 @@ describe('IntentDetector', () => {
     const { detector } = createIntentDetector()
     const text = '```grill-summary\n{invalid json here}\n```'
 
-    const result = detector.detectAll(text, emptyControlState(), 'plan', false)
+    const result = detector.detectAll(text, emptyControlState(), 'plan')
     assert.deepEqual(result, [], 'malformed JSON should not crash, returns empty')
   })
 
@@ -121,7 +121,7 @@ describe('IntentDetector', () => {
     }
     const text = '```grill-question\n{"questions": [{"id": "q1", "question": "Confirm?", "options": []}]}\n```'
 
-    const result = detector.detectAll(text, controlState, 'plan', false)
+    const result = detector.detectAll(text, controlState, 'plan')
     assert.equal(result.length, 2, 'should have plan + grillQuestion')
     const types = result.map((i) => i.type)
     assert.ok(types.includes('plan'), 'should include plan')
@@ -134,7 +134,7 @@ describe('IntentDetector', () => {
     const block2 = '```grill-evaluation\n{"score": 9, "scoreLabel": "Excellent", "feedback": "Perfect", "questions": [{"id": "q2", "question": "B?", "options": []}]}\n```'
     const text = `First block:\n${block1}\nSecond block:\n${block2}`
 
-    const result = detector.detectAll(text, emptyControlState(), 'plan', false)
+    const result = detector.detectAll(text, emptyControlState(), 'plan')
     const evals = result.filter((i) => i.type === 'grillEvaluation')
     assert.equal(evals.length, 2, 'should detect both grill-evaluation blocks')
     const eval1 = (evals[0] as AgentIntent & { type: 'grillEvaluation' }).evaluation

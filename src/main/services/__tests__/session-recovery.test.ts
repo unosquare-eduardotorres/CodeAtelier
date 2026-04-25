@@ -25,7 +25,7 @@ describe('Session Recovery - buildRecoverySummary', () => {
   test('builds summary from recent messages', () => {
     const messages = [
       { role: 'user', contentMd: 'Hello' },
-      { role: 'generalist', contentMd: 'Hi there!' }
+      { role: 'da-vinci', contentMd: 'Hi there!' }
     ]
     const summaryText = buildRecoverySummary(messages)
     assert.ok(summaryText.includes('[User]: Hello'))
@@ -43,7 +43,7 @@ describe('Session Recovery - buildRecoverySummary', () => {
 
   test('takes only last 20 messages', () => {
     const messages = Array.from({ length: 30 }, (_, i) => ({
-      role: i % 2 === 0 ? 'user' : 'generalist',
+      role: i % 2 === 0 ? 'user' : 'da-vinci',
       contentMd: `Message ${i}`
     }))
     const summaryText = buildRecoverySummary(messages)

@@ -84,7 +84,6 @@ export type AgentSessionEventName =
   | 'statusUpdate'
   | 'complete'
   | 'intent'
-  | 'handoff'
   | 'plan'
   | 'askQuestion'
   | 'promptSuggestion'
@@ -133,7 +132,7 @@ export interface AgentRoleAdapter {
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult
 
   /**
-   * Wire control-tool callbacks (plan/handoff/askUser/memory).
+   * Wire control-tool callbacks (plan/askUser/memory).
    * Adapters without control tools may return no-op callbacks.
    */
   buildControlCallbacks(params: {

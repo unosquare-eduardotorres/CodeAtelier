@@ -3,6 +3,15 @@ import log from 'electron-log/main'
 const abandonmentLogger = log.scope('Abandonment')
 
 /**
+ * Result of checking a specialist's output for abandonment patterns.
+ */
+export interface AbandonmentResult {
+  detected: boolean
+  pattern?: string
+  context?: string
+}
+
+/**
  * Patterns that indicate a specialist is "giving up" rather than completing the task.
  * These are checked against the final accumulated output of a specialist process.
  */

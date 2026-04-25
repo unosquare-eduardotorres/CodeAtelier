@@ -34,7 +34,6 @@ import { registerIndexingIpc } from './indexing.ipc'
 import { registerCodeGraphIpc } from './code-graph.ipc'
 import { registerCodeChangesIpc } from './code-changes.ipc'
 import { registerHooksIpc } from './hooks.ipc'
-import { registerBugCouncilIpc } from './bug-council.ipc'
 import { registerSdkControlIpc } from './sdk-control.ipc'
 import { registerSessionIpc } from './session.ipc'
 import { registerBugIpc } from './bug.ipc'
@@ -76,7 +75,6 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerCodeGraphIpc(mainWindow)
   registerCodeChangesIpc()
   registerHooksIpc()
-  registerBugCouncilIpc()
   registerSdkControlIpc()
   registerSessionIpc()
   registerBugIpc(mainWindow)

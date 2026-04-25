@@ -4,7 +4,11 @@ import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
 import { Paperclip, Flame, Lightbulb, FileText } from 'lucide-react'
-import { remarkEmojiSpan, remarkHighlightQuestions, remarkHighlightNextSteps } from './remark-plugins'
+import {
+  remarkEmojiSpan,
+  remarkHighlightQuestions,
+  remarkHighlightNextSteps
+} from './remark-plugins'
 import { CodeBlock } from './CodeBlock'
 import type {
   Message,
@@ -16,15 +20,10 @@ import type {
 import ToolActivityBlock from './ToolActivityBlock'
 import MessageCardRenderer from './MessageCardRenderer'
 import { useMessageContent } from './useMessageContent'
-import { useSpecialistStore, useChatStore } from '@renderer/store'
-import {
-  Avatar,
-  ImageLightbox,
-  Skeleton
-} from '@renderer/components/common'
-import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
-
-
+import { useSpecialistStore, useChatStore, useWorkspaceStore } from '@renderer/store'
+import { Avatar, ImageLightbox, Skeleton } from '@renderer/components/common'
+import { CORE_AGENT_DEFAULTS, USER_AVATAR_KEY } from '@renderer/utils/agentIdentity'
+import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 
 /** Chat actions needed by MessageBubble — passed as props to avoid N×useShallow subscriptions */
 export interface MessageBubbleActions {
@@ -45,7 +44,6 @@ export interface MessageBubbleActions {
 interface MessageBubbleProps {
   message: Message
   isStreaming?: boolean
-  isExecutingPlan?: boolean
   searchHighlight?: string
   toolActivities?: ToolActivity[]
   /** When true, skip rendering inline GrillQuestionCard (store-driven card in MessageList takes precedence) */
@@ -84,14 +82,8 @@ function shortenFilePath(filePath: string): string {
 
 // Module-level constants — stable references, never recreated on render
 const REMARK_PLUGINS_BASE = [remarkGfm, remarkBreaks, remarkEmojiSpan]
-const REMARK_PLUGINS = [
-  ...REMARK_PLUGINS_BASE,
-  remarkHighlightQuestions,
-  remarkHighlightNextSteps
-]
+const REMARK_PLUGINS = [...REMARK_PLUGINS_BASE, remarkHighlightQuestions, remarkHighlightNextSteps]
 const REHYPE_PLUGINS = [rehypeRaw]
-
-
 
 /** Strip stray backtick text nodes from React children (left over after markdown inline-code parsing) */
 function stripStrayBackticks(children: React.ReactNode): React.ReactNode[] | null | undefined {
@@ -204,31 +196,34 @@ function useMessageIdentity(message: Message): {
 } {
   const specialists = useSpecialistStore((s) => s.specialists)
   const activeConversation = useChatStore((s) => s.activeConversation)
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
 
   return useMemo(() => {
+    // Resolve mannequin for the active conversation's workspace (used by
+    // specialists and by the persona override below).
+    const workspaceId = activeConversation?.workspaceId
+    const mannequinKey = workspaceId
+      ? getWorkspaceMannequin(workspaceId, workspaces)
+      : 'mannequin-main'
+
     // For user messages — find the 'user' specialist
     if (message.role === 'user') {
       const userSpec = specialists.find((s) => s.agentId === 'user')
       return {
         displayName: userSpec?.alias ?? userSpec?.displayName ?? 'You',
         subtitle: null,
-        avatarKey: userSpec?.avatarUrl ?? 'business-man',
+        avatarKey: USER_AVATAR_KEY,
         accentColor: 'var(--color-primary, #6366F1)'
       }
     }
 
-    // For core agents (generalist/coordinator) — find their specialist record
-    // Coordinator role is deprecated — map to generalist identity (Da Vinci)
-    const coreRole =
-      message.role === 'generalist'
-        ? 'generalist'
-        : message.role === 'coordinator'
-          ? 'generalist'
-          : null
+    // For core agents — Da Vinci is the single default identity.
+    const coreRole = message.role === 'da-vinci' ? 'da-vinci' : null
 
     if (coreRole) {
       // Persona override — when conversation has a persona, generalist messages
-      // show that persona's identity (full visual swap)
+      // show that persona's identity (full visual swap). Personas are
+      // specialist-backed, so they inherit the workspace mannequin.
       const personaId = activeConversation?.personaSpecialistId
       if (personaId) {
         const persona = specialists.find((s) => s.id === personaId)
@@ -236,7 +231,7 @@ function useMessageIdentity(message: Message): {
           return {
             displayName: persona.alias ?? persona.displayName,
             subtitle: persona.alias ? persona.displayName : null,
-            avatarKey: persona.avatarUrl ?? getDefaultAvatarForRole(persona.agentId),
+            avatarKey: mannequinKey,
             accentColor: persona.color ?? '#F59E0B'
           }
         }
@@ -248,7 +243,7 @@ function useMessageIdentity(message: Message): {
       return {
         displayName: coreSpec?.alias ?? coreSpec?.displayName ?? defaults?.displayName ?? coreRole,
         subtitle: coreSpec?.alias ? (coreSpec?.displayName ?? defaults?.displayName ?? null) : null,
-        avatarKey: coreSpec?.avatarUrl ?? defaults?.avatarKey ?? 'renaissance-alchemist',
+        avatarKey: defaults?.avatarKey ?? 'da-vinci',
         accentColor: coreSpec?.color ?? defaults?.color ?? '#6366F1'
       }
     }
@@ -259,19 +254,26 @@ function useMessageIdentity(message: Message): {
       return {
         displayName: specialist.alias ?? specialist.displayName,
         subtitle: specialist.alias ? specialist.displayName : null,
-        avatarKey: specialist.avatarUrl ?? getDefaultAvatarForRole(specialist.agentId),
+        avatarKey: mannequinKey,
         accentColor: specialist.color ?? '#F59E0B'
       }
     }
 
-    // Fallback for unknown agent
+    // Fallback for unknown agent — still show the workspace mannequin
     return {
       displayName: message.agentId ?? message.role,
       subtitle: null,
-      avatarKey: getDefaultAvatarForRole(message.agentId ?? message.role),
+      avatarKey: mannequinKey,
       accentColor: '#6366F1'
     }
-  }, [message.role, message.agentId, specialists, activeConversation?.personaSpecialistId])
+  }, [
+    message.role,
+    message.agentId,
+    specialists,
+    activeConversation?.personaSpecialistId,
+    activeConversation?.workspaceId,
+    workspaces
+  ])
 }
 
 /** Renders a single image attachment inside a message bubble using data URIs */
@@ -314,7 +316,6 @@ function BubbleImage({ filePath }: { filePath: string }): React.JSX.Element {
 function MessageBubbleInner({
   message,
   isStreaming,
-  isExecutingPlan,
   toolActivities,
   suppressInlineGrillCard,
   actions
@@ -352,6 +353,7 @@ function MessageBubbleInner({
     grillQuestionMatch,
     grillSummary,
     grillEvalData,
+    grillProposedTasks,
     buildSummaryData
   } = content
 
@@ -379,19 +381,6 @@ function MessageBubbleInner({
 
   const handleRefine = (): void => {
     appendLocalMessage("Refine this plan — tell me what to change and I'll update it.")
-  }
-
-  const handleOrchestratedBuild = (): void => {
-    // Direct path: skip generalist round-trip when structured plan is available
-    if (structuredPlan && planContent && buildFromPlan) {
-      buildFromPlan(structuredPlan, planContent)
-      return
-    }
-    // Fallback: raw markdown plan — go through generalist
-    updateMode('build')
-    sendMessage(
-      'Implement the plan we just discussed using multiple specialists in parallel where possible.'
-    )
   }
 
   const handleSaveAsIdea = (): void => {
@@ -435,12 +424,7 @@ function MessageBubbleInner({
     >
       {/* Avatar */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar
-          avatarKey={identity.avatarKey}
-          size="xl"
-          accentColor={identity.accentColor}
-          fallbackInitials={identity.displayName}
-        />
+        <Avatar avatarKey={identity.avatarKey} size="xl" accentColor={identity.accentColor} />
       </div>
 
       {/* Content */}
@@ -460,7 +444,6 @@ function MessageBubbleInner({
         {hasStructuredContent ? (
           <MessageCardRenderer
             content={content}
-            isExecutingPlan={isExecutingPlan}
             aiBubbleClass={aiBubbleClass}
             remarkPlugins={REMARK_PLUGINS}
             rehypePlugins={REHYPE_PLUGINS}
@@ -468,7 +451,6 @@ function MessageBubbleInner({
             suppressInlineGrillCard={suppressInlineGrillCard}
             onBuildNow={handleBuildNow}
             onRefine={handleRefine}
-            onOrchestratedBuild={handleOrchestratedBuild}
             onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
             onGrillKeepIterating={handleGrillKeepIterating}
             onGrillCreatePlan={handleGrillCreatePlan}

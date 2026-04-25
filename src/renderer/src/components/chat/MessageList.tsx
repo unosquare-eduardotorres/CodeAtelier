@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { MessageSquarePlus } from 'lucide-react'
-import { useChatStore, useChatActions, useSpecialistStore } from '@renderer/store'
-import { CORE_AGENT_DEFAULTS, getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
 import {
-  MessageBubble,
-  TaskPlanCard,
-  GrillQuestionCard,
-  BuildProgressCard
-} from '@renderer/components/chat'
-// InvestigationReportCard has been merged into TaskPlanCard (unified card)
+  useChatStore,
+  useChatActions,
+  useSpecialistStore,
+  useWorkspaceStore
+} from '@renderer/store'
+import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
+import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
+import { MessageBubble, GrillQuestionCard } from '@renderer/components/chat'
 import IdeaPopover from './IdeaPopover'
 import { Avatar, CompactContextModal } from '@renderer/components/common'
 import type { MessageBubbleActions } from './MessageBubble'
@@ -29,16 +29,12 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const streamingSpecialist = useChatStore((s) => s.streamingSpecialist)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const toolActivities = useChatStore((s) => s.toolActivities)
-  const isExecutingPlan = useChatStore((s) => s.isExecutingPlan)
-  const decomposedTasks = useChatStore((s) => s.decomposedTasks)
-  const taskProgress = useChatStore((s) => s.taskProgress)
   const compactSuggestion = useChatStore((s) => s.compactSuggestion)
   const contextUsages = useChatStore((s) => s.contextUsages)
   const pendingGrillQuestions = useChatStore((s) => s.grillSession?.pendingQuestions ?? null)
   const hasPendingGrillQuestions = (pendingGrillQuestions?.length ?? 0) > 0
   const pendingQuestions = useChatStore((s) => s.pendingQuestions)
   const hasPendingQuestions = (pendingQuestions?.length ?? 0) > 0
-  const investigationReport = useChatStore((s) => s.investigationReport)
 
   const {
     setCompactSuggestion,
@@ -50,8 +46,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     updateMode,
     appendLocalMessage,
     clearGrillSession,
-    createItemsFromGrill,
-    executeInvestigationFix
+    createItemsFromGrill
   } = useChatActions()
 
   // Single actions object passed to all MessageBubbles — avoids N×useShallow subscriptions
@@ -64,9 +59,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
   /**
    * "Build this" button — switches to Build mode and sends the plan to the
-   * Project Specialist as a regular chat message. Post-migration 66 there is
-   * no multi-specialist pipeline to orchestrate; the workspace's Project
-   * Specialist executes the plan as a standard build-mode turn.
+   * Project Specialist as a regular chat message. There is no multi-specialist
+   * pipeline to orchestrate; the workspace's Project Specialist executes the
+   * plan as a standard build-mode turn.
    */
   const handleBuildFromPlan = useCallback(
     async (_plan: StructuredPlan, planContent: string): Promise<void> => {
@@ -105,18 +100,14 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   )
 
   const generalistSpec = useSpecialistStore(
-    (s) => s.specialists.find((sp) => sp.agentId === 'generalist') ?? null
+    (s) => s.specialists.find((sp) => sp.agentId === 'da-vinci') ?? null
   )
   const generalistAlias =
     generalistSpec?.alias ??
     generalistSpec?.displayName ??
-    CORE_AGENT_DEFAULTS.generalist.displayName
-  const thinkingAvatarKey = generalistSpec?.avatarUrl ?? CORE_AGENT_DEFAULTS.generalist.avatarKey
-  const thinkingAccentColor = generalistSpec?.color ?? CORE_AGENT_DEFAULTS.generalist.color
-
-  // Coordinator role is deprecated — map to generalist identity (Da Vinci)
-  const coordinatorAlias = generalistAlias
-  const coordinatorAvatarKey = thinkingAvatarKey
+    CORE_AGENT_DEFAULTS['da-vinci'].displayName
+  const thinkingAvatarKey = CORE_AGENT_DEFAULTS['da-vinci'].avatarKey
+  const thinkingAccentColor = generalistSpec?.color ?? CORE_AGENT_DEFAULTS['da-vinci'].color
 
   // Resolve specialist identity from the store
   const streamingSpecialistData = useSpecialistStore((s) =>
@@ -125,30 +116,33 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       : null
   )
 
+  // Resolve mannequin for the active conversation's workspace
+  const activeConversationWorkspaceId = useChatStore(
+    (s) => s.activeConversation?.workspaceId ?? null
+  )
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
+  const specialistMannequinKey = useMemo(
+    () =>
+      activeConversationWorkspaceId
+        ? getWorkspaceMannequin(activeConversationWorkspaceId, workspaces)
+        : 'mannequin-main',
+    [activeConversationWorkspaceId, workspaces]
+  )
+
   // Compute thinking indicator identity based on streamingRole
   const thinkingIdentity = useMemo(() => {
-    if (streamingRole === 'coordinator') {
-      // Coordinator role deprecated — use generalist identity (Da Vinci)
-      return {
-        name: coordinatorAlias,
-        avatarKey: coordinatorAvatarKey,
-        accentColor: CORE_AGENT_DEFAULTS.generalist.color
-      }
-    }
     if (streamingRole === 'specialist' && streamingSpecialistData) {
       return {
         name: streamingSpecialistData.alias ?? streamingSpecialistData.displayName,
-        avatarKey:
-          streamingSpecialistData.avatarUrl ??
-          getDefaultAvatarForRole(streamingSpecialistData.agentId),
+        avatarKey: specialistMannequinKey,
         accentColor: streamingSpecialistData.color ?? '#F59E0B'
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialist) {
-      // Fallback for unknown specialist
+      // Fallback for unknown specialist — still show the workspace mannequin
       return {
         name: streamingSpecialist,
-        avatarKey: getDefaultAvatarForRole(streamingSpecialist),
+        avatarKey: specialistMannequinKey,
         accentColor: '#F59E0B'
       }
     }
@@ -162,11 +156,10 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     streamingRole,
     streamingSpecialistData,
     streamingSpecialist,
+    specialistMannequinKey,
     generalistAlias,
     thinkingAvatarKey,
-    thinkingAccentColor,
-    coordinatorAlias,
-    coordinatorAvatarKey
+    thinkingAccentColor
   ])
 
   const userName = useSpecialistStore((s) => {
@@ -187,29 +180,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     title: string
     description: string
   } | null>(null)
-
-  const handleReviseInvestigation = useCallback((): void => {
-    // Don't clear investigationReport — card stays visible with buttons hidden
-    // (TaskPlanCard's internal userClicked state hides the buttons after click)
-    appendLocalMessage("Refine this investigation — tell me what to re-analyze and I'll update it.")
-  }, [appendLocalMessage])
-
-  const handleSaveInvestigationAsIdea = useCallback((): void => {
-    if (!investigationReport) return
-    const { report } = investigationReport
-    const title =
-      report.problem.length > 60 ? report.problem.substring(0, 57) + '...' : report.problem
-    const description = [
-      `## Problem\n${report.problem}`,
-      `## Root Cause\n${report.rootCause}`,
-      `## Proposed Fix\n${report.proposedFix}`,
-      `## Files Affected`,
-      report.filesAffected.map((f) => `- \`${f.path}\`: ${f.reason}`).join('\n'),
-      `## Impact: ${report.impact}\n${report.impactReason}`
-    ].join('\n\n')
-    setIdeaPopoverData({ title, description })
-    setShowIdeaPopover(true)
-  }, [investigationReport])
 
   // Force scroll to bottom when switching conversations
   useEffect(() => {
@@ -269,7 +239,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         }
       })
     }
-  }, [messages.length, streamingContent, investigationReport, decomposedTasks.length])
+  }, [messages.length, streamingContent])
 
   // Scroll-to-bottom handler for the floating button
   // Two-step approach: first tell virtualizer to render bottom items,
@@ -355,7 +325,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                 <div className="pb-4">
                   <MessageBubble
                     message={msg}
-                    isExecutingPlan={isExecutingPlan}
                     toolActivities={msg.toolActivities}
                     searchHighlight={searchQuery}
                     actions={bubbleActions}
@@ -376,32 +345,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         {/* Auto mode switch pill (e.g., build → plan on investigation prompts) */}
         <AutoModeSwitchPill />
 
-        {/* Investigation report — rendered via unified TaskPlanCard */}
-        {investigationReport && (
-          <TaskPlanCard
-            summary={investigationReport.report.problem}
-            mode="plan"
-            investigation={investigationReport.report}
-            investigationSpecialist={investigationReport.specialist}
-            isExecuting={isExecutingPlan}
-            onBuildNow={() => executeInvestigationFix('sequential')}
-            onOrchestratedBuild={() => executeInvestigationFix('parallel')}
-            onRefine={handleReviseInvestigation}
-            onSaveAsIdea={handleSaveInvestigationAsIdea}
-          />
-        )}
-
-        {/* Build progress card — live task checklist during execution */}
-        {isExecutingPlan && decomposedTasks.length > 0 && (
-          <div className="px-4">
-            <BuildProgressCard
-              tasks={decomposedTasks}
-              taskProgress={taskProgress}
-              isExecuting={isExecutingPlan}
-            />
-          </div>
-        )}
-
         {showIdeaPopover && ideaPopoverData && (
           <div className="relative px-4 mt-2">
             <IdeaPopover
@@ -420,7 +363,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           isOpen={!!compactSuggestion}
           inputTokens={compactSuggestion?.inputTokens ?? 0}
           level={compactSuggestion?.level ?? 'suggest'}
-          categories={activeConversationId ? contextUsages[activeConversationId]?.categories : undefined}
+          categories={
+            activeConversationId ? contextUsages[activeConversationId]?.categories : undefined
+          }
           onExtractNuance={() => {
             setCompactSuggestion(null)
             sendMessage('/compact --nuance')
@@ -467,7 +412,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                 avatarKey={thinkingIdentity.avatarKey}
                 size="xl"
                 accentColor={thinkingIdentity.accentColor}
-                fallbackInitials={thinkingIdentity.name}
               />
             </div>
             <div className="flex flex-col max-w-[85%] items-start">

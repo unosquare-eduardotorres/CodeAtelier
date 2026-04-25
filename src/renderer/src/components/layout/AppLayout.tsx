@@ -79,10 +79,10 @@ export default function AppLayout(): React.JSX.Element {
   const fetchBugCount = useBugStore((s) => s.fetchCount)
   const addToast = useToastStore((s) => s.addToast)
 
-  // MCP tools from generalist status (moved from ChatPanel header to status bar)
+  // MCP tools from Da Vinci status (moved from ChatPanel header to status bar)
   const activeMcpTools = useAgentStore((s) => {
-    const generalist = s.statuses.find((st) => st.agentType === 'generalist')
-    return generalist?.activeMcpTools
+    const davinci = s.statuses.find((st) => st.agentType === 'da-vinci')
+    return davinci?.activeMcpTools
   })
 
   // Context usage for status bar (read from chat store)

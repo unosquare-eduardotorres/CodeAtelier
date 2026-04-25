@@ -3,7 +3,7 @@ import type { CoreAgentPrompt } from '../../../shared/types'
 
 interface CoreAgentPromptRow {
   id: string
-  agent_role: 'generalist'
+  agent_role: 'da-vinci'
   mode: 'plan' | 'build'
   prompt_text: string
   default_prompt_text: string
@@ -32,7 +32,7 @@ export class CoreAgentPromptRepository {
     return rows.map(mapRow)
   }
 
-  findByRoleAndMode(agentRole: 'generalist', mode: 'plan' | 'build'): CoreAgentPrompt | undefined {
+  findByRoleAndMode(agentRole: 'da-vinci', mode: 'plan' | 'build'): CoreAgentPrompt | undefined {
     const db = getDatabase()
     const row = db
       .prepare('SELECT * FROM core_agent_prompts WHERE agent_role = ? AND mode = ?')
@@ -40,7 +40,7 @@ export class CoreAgentPromptRepository {
     return row ? mapRow(row) : undefined
   }
 
-  upsert(agentRole: 'generalist', mode: 'plan' | 'build', promptText: string): CoreAgentPrompt {
+  upsert(agentRole: 'da-vinci', mode: 'plan' | 'build', promptText: string): CoreAgentPrompt {
     const db = getDatabase()
     const row = db
       .prepare(
@@ -61,7 +61,7 @@ export class CoreAgentPromptRepository {
     return mapRow(row)
   }
 
-  resetToDefault(agentRole: 'generalist', mode: 'plan' | 'build'): CoreAgentPrompt {
+  resetToDefault(agentRole: 'da-vinci', mode: 'plan' | 'build'): CoreAgentPrompt {
     const db = getDatabase()
     const row = db
       .prepare(

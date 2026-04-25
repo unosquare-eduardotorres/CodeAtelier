@@ -9,18 +9,19 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { DaVinciRoleAdapter } from '../role-adapters/da-vinci.adapter'
+import { specialistRepository } from '../../db/repositories'
 import type {
   AdapterIntentContext,
   AgentSessionEventName
 } from '../agent-session.types'
-import type { ControlToolState } from '../../../shared/types'
+import type { ControlToolState, Specialist } from '../../../shared/types'
 
 describe('DaVinciRoleAdapter', () => {
   test('role_and_agentId_are_correct', () => {
     const adapter = new DaVinciRoleAdapter()
     assert.equal(adapter.role, 'da-vinci')
-    // agent_id string stays 'generalist' — that's the DB value (Layer 2 migration territory)
-    assert.equal(adapter.agentId, 'generalist')
+    // agent_id matches the role after Layer 2 migration (#69) rename.
+    assert.equal(adapter.agentId, 'da-vinci')
   })
 
   test('getPersona_returns_null_by_default', () => {
@@ -123,6 +124,134 @@ describe('DaVinciRoleAdapter', () => {
     adapter.onSessionStop()
     assert.equal(adapter.getPersona().id, null)
     assert.equal(adapter.getPersona().data, null)
+  })
+
+  // ── Specialist-swap proposal detection ──
+
+  function stubReadySpecialist(ready: Specialist | null): () => void {
+    const orig = specialistRepository.findReadyByWorkspace.bind(specialistRepository)
+    specialistRepository.findReadyByWorkspace = () => ready
+    return () => {
+      specialistRepository.findReadyByWorkspace = orig
+    }
+  }
+
+  function makeSpecialist(id: string, name: string): Specialist {
+    return {
+      id,
+      agentId: `workspace-specialist-${id}`,
+      displayName: name,
+      description: '',
+      icon: '🤖',
+      color: '#000',
+      prompt: '',
+      priority: 100,
+      isActive: true,
+      sourceYaml: null,
+      alias: null,
+      avatarUrl: null,
+      isCore: false,
+      createdAt: '',
+      updatedAt: ''
+    }
+  }
+
+  test('refreshFeatureFlags_arms_signal_when_specialist_becomes_ready', () => {
+    const adapter = new DaVinciRoleAdapter()
+    const restore = stubReadySpecialist(makeSpecialist('spec-a', 'Payments Specialist'))
+    try {
+      adapter.refreshFeatureFlags({
+        workspacePath: '/tmp',
+        workspaceId: 'ws-1',
+        conversationId: null
+      })
+      // The assembler should now have the signal armed.
+      const msg = adapter
+        .getPromptAssembler()
+        .buildEffectiveMessage({
+          message: 'hi',
+          conversationId: 'c1',
+          hasImages: false,
+          turnCount: 5,
+          sessionId: undefined,
+          mode: 'plan'
+        })
+      assert.ok(
+        msg.includes('[PROJECT SPECIALIST READY: Payments Specialist]'),
+        'sentinel should be injected once'
+      )
+    } finally {
+      restore()
+    }
+  })
+
+  test('refreshFeatureFlags_does_not_re_arm_for_same_specialist_on_subsequent_turns', () => {
+    const adapter = new DaVinciRoleAdapter()
+    const restore = stubReadySpecialist(makeSpecialist('spec-a', 'Payments Specialist'))
+    try {
+      // First turn — signal fires.
+      adapter.refreshFeatureFlags({
+        workspacePath: '/tmp',
+        workspaceId: 'ws-1',
+        conversationId: null
+      })
+      adapter.getPromptAssembler().buildEffectiveMessage({
+        message: 'hi',
+        conversationId: 'c1',
+        hasImages: false,
+        turnCount: 1,
+        sessionId: undefined,
+        mode: 'plan'
+      })
+
+      // Second turn — same specialist still ready, but lastAnnouncedSpecialistId
+      // prevents re-arming, so buildEffectiveMessage should not see the sentinel.
+      adapter.refreshFeatureFlags({
+        workspacePath: '/tmp',
+        workspaceId: 'ws-1',
+        conversationId: null
+      })
+      const msg2 = adapter.getPromptAssembler().buildEffectiveMessage({
+        message: 'hi again',
+        conversationId: 'c1',
+        hasImages: false,
+        turnCount: 2,
+        sessionId: undefined,
+        mode: 'plan'
+      })
+      assert.ok(
+        !msg2.includes('[PROJECT SPECIALIST READY'),
+        'should NOT re-prompt for same specialist on subsequent turns'
+      )
+    } finally {
+      restore()
+    }
+  })
+
+  test('refreshFeatureFlags_no_ready_specialist_does_not_arm_signal', () => {
+    const adapter = new DaVinciRoleAdapter()
+    const restore = stubReadySpecialist(null)
+    try {
+      adapter.refreshFeatureFlags({
+        workspacePath: '/tmp',
+        workspaceId: 'ws-1',
+        conversationId: null
+      })
+      const msg = adapter.getPromptAssembler().buildEffectiveMessage({
+        message: 'hi',
+        conversationId: 'c1',
+        hasImages: false,
+        turnCount: 5,
+        sessionId: undefined,
+        mode: 'plan'
+      })
+      assert.ok(
+        !msg.includes('[PROJECT SPECIALIST READY'),
+        'no signal should fire when no specialist is ready'
+      )
+    } finally {
+      restore()
+    }
   })
 })
 

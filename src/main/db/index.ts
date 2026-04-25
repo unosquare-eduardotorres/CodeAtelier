@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { dbLogger } from '../logger'
 import { DEFAULT_PROMPTS } from '../services/default-prompts'
 import { runProjectSpecialistMigration } from './migrations/project-specialist-migration'
+import { runDropSpecialistMcpColumnsMigration } from './migrations/drop-specialist-mcp-columns-migration'
 
 let db: Database.Database | null = null
 
@@ -13,7 +14,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 67
+const CURRENT_SCHEMA_VERSION = 72
 
 interface Migration {
   version: number
@@ -801,7 +802,7 @@ const migrations: Migration[] = [
 
         if (existsSync(oldDbPath)) {
           // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import in migration
-          const OldDatabase = require('better-sqlite3') as typeof import('better-sqlite3').default
+          const OldDatabase = require('better-sqlite3') as typeof Database
           const oldDb = new OldDatabase(oldDbPath, { readonly: true })
 
           try {
@@ -886,7 +887,7 @@ const migrations: Migration[] = [
     version: 42,
     name: 'update-build-prompt-always-report-outcomes',
     up: (db) => {
-      const newBuildPrompt = DEFAULT_PROMPTS.generalist.build
+      const newBuildPrompt = DEFAULT_PROMPTS['da-vinci'].build
 
       // Update default_prompt_text always.
       // Update prompt_text ONLY if user hasn't customized it (is_custom = 0).
@@ -1068,7 +1069,7 @@ const migrations: Migration[] = [
     version: 49,
     name: 'update-plan-prompt-no-write-tool',
     up: (db) => {
-      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
 
       // Update default_prompt_text always.
       // Update prompt_text ONLY if user hasn't customized it (is_custom = 0).
@@ -1149,8 +1150,8 @@ const migrations: Migration[] = [
       //   extracted into base prompt to eliminate ~800 tokens of duplication
       // - Plan block format now includes a concrete example
       // - MCP tool names use full mcp__code-graph__* format for consistency
-      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
-      const newBuildPrompt = DEFAULT_PROMPTS.generalist.build
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
+      const newBuildPrompt = DEFAULT_PROMPTS['da-vinci'].build
 
       // Update plan prompt
       db.prepare(
@@ -1181,7 +1182,7 @@ const migrations: Migration[] = [
     up: (db) => {
       // Sync updated plan-mode prompt with strengthened plan quality requirements,
       // depth expectations, and unified card button labels (Build Now / Orchestrated Build / etc.)
-      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
 
       db.prepare(
         `
@@ -1201,7 +1202,7 @@ const migrations: Migration[] = [
       // Sync updated plan-mode prompt with reinforced plan-block format instructions:
       // - Reordered base prompt (plan format at end for recency bias)
       // - Added FINAL RULE closing reinforcement to plan-mode section
-      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
 
       db.prepare(
         `
@@ -1221,8 +1222,8 @@ const migrations: Migration[] = [
       // Enforce generalist-only plan generation: plan-mode handoffs are now blocked,
       // plan-mode prompt explicitly forbids handoff, build-mode prompt adds plan-generation rule,
       // specialist prompts no longer have plan-card instructions.
-      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
-      const newBuildPrompt = DEFAULT_PROMPTS.generalist.build
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
+      const newBuildPrompt = DEFAULT_PROMPTS['da-vinci'].build
 
       // Update plan mode prompt
       db.prepare(
@@ -1253,7 +1254,7 @@ const migrations: Migration[] = [
     up: (db) => {
       // Deduplicate plan enforcement: trimmed GENERALIST_PLAN_MODE_SECTION,
       // removed redundant anti-handoff line from base prompt. ~295 tokens saved per turn.
-      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
 
       db.prepare(
         `
@@ -1272,8 +1273,8 @@ const migrations: Migration[] = [
     up: (db) => {
       // Updated prompts: plan format instructions replaced with control tool guidance,
       // anti-handoff prompts removed (tool availability enforces mode constraints).
-      const newPlanPrompt = DEFAULT_PROMPTS.generalist.plan
-      const newBuildPrompt = DEFAULT_PROMPTS.generalist.build
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
+      const newBuildPrompt = DEFAULT_PROMPTS['da-vinci'].build
 
       db.prepare(
         `
@@ -1485,6 +1486,367 @@ const migrations: Migration[] = [
       } catch (err) {
         dbLogger.warn(`Skipping DROP COLUMN use_pixel_for_chat: ${(err as Error).message}`)
       }
+    }
+  },
+  {
+    version: 68,
+    name: 'drop-orphan-tables-from-removed-specialist-pool',
+    up: (db) => {
+      // Drop tables backing services deleted in the Phase 4 cleanup:
+      //   - agent_messages — inter-agent message bus (deleted)
+      //   - agent_context — per-conversation agent context cache (deleted)
+      //   - gate_results — quality gate outcomes (deleted)
+      //   - specialist_conversation_history — activation timeline (deleted)
+      //   - agent_worktrees — per-specialist git worktrees (deleted)
+      //
+      // Also drop two conversation_specialists columns no longer referenced:
+      //   - skill_overrides — per-conversation skill override list
+      //   - skills_enabled — boolean gate for conversation-level skill gating
+      //
+      // All drops are guarded so re-runs or partial states don't fail.
+      const dropTable = (name: string): void => {
+        try {
+          db.exec(`DROP TABLE IF EXISTS ${name}`)
+          dbLogger.info(`✓ Dropped table ${name}`)
+        } catch (err) {
+          dbLogger.warn(`Skipping DROP TABLE ${name}: ${(err as Error).message}`)
+        }
+      }
+
+      dropTable('agent_messages')
+      dropTable('agent_context')
+      dropTable('gate_results')
+      dropTable('specialist_conversation_history')
+      dropTable('agent_worktrees')
+
+      const dropColumn = (table: string, column: string): void => {
+        try {
+          db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
+          dbLogger.info(`✓ Dropped column ${table}.${column}`)
+        } catch (err) {
+          dbLogger.warn(
+            `Skipping DROP COLUMN ${table}.${column}: ${(err as Error).message}`
+          )
+        }
+      }
+
+      dropColumn('conversation_specialists', 'skill_overrides')
+      dropColumn('conversation_specialists', 'skills_enabled')
+    }
+  },
+  {
+    version: 69,
+    name: 'layer-2-rename-generalist-to-da-vinci',
+    up: (db) => {
+      // Layer 2 DB rename (see Phase 4d in docs/architecture/project-specialist-refactor.md).
+      //
+      // Renames every persisted occurrence of `'generalist'` to `'da-vinci'`:
+      //   1. messages.role: rebuild the table with the new CHECK constraint
+      //      (SQLite can't ALTER a CHECK in place) and rewrite rows.
+      //   2. specialists.agent_id = 'generalist' → 'da-vinci' (single row).
+      //   3. core_agent_aliases.agent_role: rebuild with new CHECK, drop
+      //      'coordinator' (dead role), rename 'generalist' → 'da-vinci'.
+      //   4. core_agent_prompts.agent_role: same pattern.
+      //   5. ModelAction keys in workspace settings JSON (modelOverrides):
+      //      rename keys 'generalist*' → 'da-vinci*' for every workspace.
+      //
+      // All steps are idempotent — re-running on already-migrated rows is a no-op.
+      dbLogger.info('[migration-69] Starting Layer 2 rename generalist → da-vinci')
+
+      // ── 1. messages.role ──
+      // Rebuild the table first with a permissive CHECK that accepts BOTH old + new
+      // values, THEN rewrite rows. Otherwise the UPDATE would trip the old CHECK
+      // that doesn't yet include 'da-vinci'.
+      const messageRoleCheck = db
+        .prepare(
+          `SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'`
+        )
+        .get() as { sql: string } | undefined
+      if (messageRoleCheck && !messageRoleCheck.sql.includes("'da-vinci'")) {
+        // Transitional CHECK includes all legacy values so existing rows copy in.
+        db.exec(`
+          CREATE TABLE messages_new (
+            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            role TEXT NOT NULL CHECK (role IN ('user', 'specialist', 'da-vinci', 'generalist', 'coordinator')),
+            agent_id TEXT,
+            content_md TEXT NOT NULL,
+            attachments_json TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            parent_message_id TEXT REFERENCES messages_new(id)
+          );
+          INSERT INTO messages_new SELECT * FROM messages;
+          DROP TABLE messages;
+          ALTER TABLE messages_new RENAME TO messages;
+          CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+          CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id);
+        `)
+        dbLogger.info('[migration-69] ✓ messages.role CHECK rebuilt (transitional)')
+      }
+      // Now rewrite rows under the transitional CHECK.
+      db.exec(`UPDATE messages SET role = 'da-vinci' WHERE role = 'generalist'`)
+      db.exec(`UPDATE messages SET role = 'specialist' WHERE role = 'coordinator'`)
+
+      // ── 2. specialists.agent_id ──
+      db.exec(
+        `UPDATE specialists SET agent_id = 'da-vinci' WHERE agent_id = 'generalist'`
+      )
+      dbLogger.info('[migration-69] ✓ specialists.agent_id renamed')
+
+      // ── 3. core_agent_aliases.agent_role ──
+      // Same pattern: rebuild with permissive CHECK accepting both values, delete
+      // dead 'coordinator' rows, then rewrite 'generalist' → 'da-vinci'.
+      const aliasCheck = db
+        .prepare(
+          `SELECT sql FROM sqlite_master WHERE type='table' AND name='core_agent_aliases'`
+        )
+        .get() as { sql: string } | undefined
+      if (aliasCheck && !aliasCheck.sql.includes("'da-vinci'")) {
+        db.exec(`
+          CREATE TABLE core_agent_aliases_new (
+            agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('da-vinci', 'generalist')),
+            alias TEXT,
+            avatar_key TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          INSERT INTO core_agent_aliases_new
+            SELECT agent_role, alias, avatar_key, updated_at
+              FROM core_agent_aliases
+             WHERE agent_role != 'coordinator';
+          DROP TABLE core_agent_aliases;
+          ALTER TABLE core_agent_aliases_new RENAME TO core_agent_aliases;
+        `)
+        dbLogger.info('[migration-69] ✓ core_agent_aliases CHECK rebuilt (permissive)')
+      }
+      db.exec(
+        `UPDATE core_agent_aliases SET agent_role = 'da-vinci' WHERE agent_role = 'generalist'`
+      )
+
+      // ── 4. core_agent_prompts.agent_role ──
+      // Same permissive-rebuild-first pattern.
+      const promptCheck = db
+        .prepare(
+          `SELECT sql FROM sqlite_master WHERE type='table' AND name='core_agent_prompts'`
+        )
+        .get() as { sql: string } | undefined
+      if (promptCheck && !promptCheck.sql.includes("'da-vinci'")) {
+        // Preserve existing columns (some older schemas may or may not have default_prompt_text).
+        const existingCols = (
+          db.prepare(`PRAGMA table_info(core_agent_prompts)`).all() as Array<{
+            name: string
+          }>
+        ).map((c) => c.name)
+        const hasDefault = existingCols.includes('default_prompt_text')
+
+        db.exec(
+          `CREATE TABLE core_agent_prompts_new (
+            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+            agent_role TEXT NOT NULL CHECK (agent_role IN ('da-vinci', 'generalist')),
+            mode TEXT NOT NULL CHECK (mode IN ('plan', 'build')),
+            prompt_text TEXT NOT NULL,
+            ${hasDefault ? 'default_prompt_text TEXT NOT NULL,' : ''}
+            is_custom INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(agent_role, mode)
+          )`
+        )
+        const cols = existingCols.join(', ')
+        db.exec(
+          `INSERT INTO core_agent_prompts_new (${cols}) SELECT ${cols} FROM core_agent_prompts;`
+        )
+        db.exec(`DROP TABLE core_agent_prompts`)
+        db.exec(`ALTER TABLE core_agent_prompts_new RENAME TO core_agent_prompts`)
+        dbLogger.info('[migration-69] ✓ core_agent_prompts CHECK rebuilt (permissive)')
+      }
+      db.exec(
+        `UPDATE core_agent_prompts SET agent_role = 'da-vinci' WHERE agent_role = 'generalist'`
+      )
+
+      // ── 5. ModelAction keys in workspace settings JSON ──
+      const workspaces = db
+        .prepare(`SELECT id, settings_json FROM workspaces`)
+        .all() as Array<{ id: string; settings_json: string }>
+
+      const updateSettings = db.prepare(
+        `UPDATE workspaces SET settings_json = ? WHERE id = ?`
+      )
+      for (const ws of workspaces) {
+        try {
+          const parsed = JSON.parse(ws.settings_json || '{}') as {
+            modelOverrides?: Record<string, string>
+          }
+          if (!parsed.modelOverrides) continue
+
+          let changed = false
+          const next: Record<string, string> = {}
+          for (const [key, val] of Object.entries(parsed.modelOverrides)) {
+            if (key === 'generalist') {
+              next['da-vinci'] = val
+              changed = true
+            } else if (key.startsWith('generalist:')) {
+              next[`da-vinci:${key.slice('generalist:'.length)}`] = val
+              changed = true
+            } else {
+              next[key] = val
+            }
+          }
+          if (changed) {
+            parsed.modelOverrides = next
+            updateSettings.run(JSON.stringify(parsed), ws.id)
+          }
+        } catch (err) {
+          dbLogger.warn(
+            `[migration-69] Could not migrate workspace ${ws.id} modelOverrides: ${(err as Error).message}`
+          )
+        }
+      }
+      dbLogger.info(
+        `[migration-69] ✓ Walked ${workspaces.length} workspaces for modelOverrides rename`
+      )
+
+      dbLogger.info('[migration-69] ✓ Layer 2 rename complete')
+    }
+  },
+  {
+    version: 70,
+    name: 'tighten-check-constraints-post-rename',
+    up: (db) => {
+      // Phase 5c — now that migration 69 has moved all rows to 'da-vinci',
+      // tighten every CHECK constraint that still admits the transitional
+      // legacy values. Uses the same rebuild-and-copy pattern as migration 69
+      // because SQLite can't ALTER an existing CHECK in place.
+      dbLogger.info('[migration-70] Tightening CHECK constraints post Layer 2 rename')
+
+      // Defensive second pass — if anything slipped through migration 69 we
+      // still want the INSERT into the new table to succeed.
+      db.exec(`UPDATE messages SET role = 'da-vinci' WHERE role IN ('generalist', 'coordinator')`)
+      db.exec(
+        `UPDATE core_agent_aliases SET agent_role = 'da-vinci' WHERE agent_role IN ('generalist', 'coordinator')`
+      )
+      db.exec(
+        `UPDATE core_agent_prompts SET agent_role = 'da-vinci' WHERE agent_role IN ('generalist', 'coordinator')`
+      )
+
+      // ── 1. messages.role → tight CHECK (user | specialist | da-vinci) ──
+      const messagesCheck = db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'`)
+        .get() as { sql: string } | undefined
+      if (messagesCheck && messagesCheck.sql.includes("'generalist'")) {
+        db.exec(`
+          CREATE TABLE messages_new (
+            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            role TEXT NOT NULL CHECK (role IN ('user', 'specialist', 'da-vinci')),
+            agent_id TEXT,
+            content_md TEXT NOT NULL,
+            attachments_json TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            parent_message_id TEXT REFERENCES messages_new(id)
+          );
+          INSERT INTO messages_new SELECT * FROM messages;
+          DROP TABLE messages;
+          ALTER TABLE messages_new RENAME TO messages;
+          CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+          CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id);
+        `)
+        dbLogger.info('[migration-70] ✓ messages.role CHECK tightened')
+      }
+
+      // ── 2. core_agent_aliases.agent_role → tight CHECK (da-vinci only) ──
+      const aliasCheck = db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='core_agent_aliases'`)
+        .get() as { sql: string } | undefined
+      if (aliasCheck && aliasCheck.sql.includes("'generalist'")) {
+        db.exec(`
+          CREATE TABLE core_agent_aliases_new (
+            agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('da-vinci')),
+            alias TEXT,
+            avatar_key TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          INSERT INTO core_agent_aliases_new SELECT * FROM core_agent_aliases;
+          DROP TABLE core_agent_aliases;
+          ALTER TABLE core_agent_aliases_new RENAME TO core_agent_aliases;
+        `)
+        dbLogger.info('[migration-70] ✓ core_agent_aliases.agent_role CHECK tightened')
+      }
+
+      // ── 3. core_agent_prompts.agent_role → tight CHECK (da-vinci only) ──
+      const promptCheck = db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='core_agent_prompts'`)
+        .get() as { sql: string } | undefined
+      if (promptCheck && promptCheck.sql.includes("'generalist'")) {
+        const existingCols = (
+          db.prepare(`PRAGMA table_info(core_agent_prompts)`).all() as Array<{ name: string }>
+        ).map((c) => c.name)
+        const hasDefault = existingCols.includes('default_prompt_text')
+
+        db.exec(
+          `CREATE TABLE core_agent_prompts_new (
+            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+            agent_role TEXT NOT NULL CHECK (agent_role IN ('da-vinci')),
+            mode TEXT NOT NULL CHECK (mode IN ('plan', 'build')),
+            prompt_text TEXT NOT NULL,
+            ${hasDefault ? 'default_prompt_text TEXT NOT NULL,' : ''}
+            is_custom INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(agent_role, mode)
+          )`
+        )
+        const cols = existingCols.join(', ')
+        db.exec(
+          `INSERT INTO core_agent_prompts_new (${cols}) SELECT ${cols} FROM core_agent_prompts;`
+        )
+        db.exec(`DROP TABLE core_agent_prompts`)
+        db.exec(`ALTER TABLE core_agent_prompts_new RENAME TO core_agent_prompts`)
+        dbLogger.info('[migration-70] ✓ core_agent_prompts.agent_role CHECK tightened')
+      }
+
+      dbLogger.info('[migration-70] ✓ CHECK constraints tightened')
+    }
+  },
+  {
+    version: 71,
+    name: 'davinci-solo-developer-prompt-redesign',
+    up: (db) => {
+      // DaVinci prompt redesign: strip all handoff content, rewrite as pure
+      // Solo Developer, add specialist-swap proposal instructions.
+      // Only overwrite prompt_text for uncustomized rows (is_custom = 0).
+      // Users with customized prompts keep their text and get the updated
+      // default_prompt_text so they can diff in the settings UI.
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
+      const newBuildPrompt = DEFAULT_PROMPTS['da-vinci'].build
+
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'da-vinci' AND mode = 'plan'
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
+
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'da-vinci' AND mode = 'build'
+      `
+      ).run(newBuildPrompt, newBuildPrompt)
+
+      dbLogger.info(
+        '[migration-71] ✓ DaVinci plan + build prompts refreshed (solo-developer redesign)'
+      )
+    }
+  },
+  {
+    version: 72,
+    name: 'drop-specialist-mcp-columns',
+    up: (db) => {
+      runDropSpecialistMcpColumnsMigration(db)
     }
   }
 ]

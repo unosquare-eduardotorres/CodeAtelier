@@ -1,4 +1,4 @@
-import { Bug, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import type { BugRecord } from '../../../../shared/types'
 
 interface BugCardProps {

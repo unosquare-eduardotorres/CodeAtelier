@@ -2,22 +2,18 @@
  * ProjectSpecialistRoleAdapter — drives AgentSessionService for a single
  * workspace's Project Specialist.
  *
- * Phase 2 of the Project Specialist refactor.
- *
  * Key differences vs. DaVinciRoleAdapter:
  *   - Bound to exactly one workspace (+ its Project Specialist row).
- *   - No handoff support: specialists never delegate.
- *   - Prompt comes from specialists.prompt (the LLM-tailored build output),
- *     not from a roster / MCP-guidance assembler.
- *   - MCP config comes from specialists.mcp_config (composed by McpComposer)
- *     + skill-declared MCPs (future — currently empty map).
- *   - No control-actions MCP beyond plan + askUser (no handoff, no memory
- *     batching — specialists write memories directly via the Memory tool in
- *     Build mode).
- *   - No persona overlay.
+ *   - Prompt identity comes from specialists.prompt (LLM-tailored by the
+ *     builder), not from the DA_VINCI_IDENTITY_PROMPT default.
+ *   - No persona overlay (specialists ARE the "persona").
+ *   - No specialist-ready swap signal (specialists are the target, not
+ *     the announcer).
+ * Everything else (MCP mounting, allow/disallow lists, memory persistence,
+ * intent detection) is identical to DaVinciRoleAdapter.
  */
 
-import type { ConversationMode } from '../../../shared/types'
+import type { AgentIntent, ConversationMode, MemoryType } from '../../../shared/types'
 import type {
   AdapterIntentContext,
   AdapterMcpContext,
@@ -31,14 +27,13 @@ import type {
 import type { ControlActionCallbacks } from '../control-actions.tool'
 import { getDatabase } from '../../db/index'
 import { chatAgentLogger } from '../../logger'
-import { mcpComposerService, type ComposedMcpConfig } from '../mcp-composer.service'
-import { createControlActionsMcpServer } from '../control-actions.tool'
-import { codeGraphMcpService } from '../code-graph.tool'
-import { semanticSearchMcpService } from '../semantic-search.tool'
-import { gitContextMcpService } from '../git-context.tool'
-import { taskContextMcpService } from '../task-context.tool'
-import { checkpointContextMcpService } from '../checkpoint-context.tool'
-import { gitHubContextMcpService } from '../github-context.tool'
+import { memoryRepository, workspaceRepository } from '../../db/repositories'
+import { githubService } from '../github.service'
+import { intentDetector } from '../intent-detector'
+import { appendMcpToolGuidance, buildConditionalPrefix } from '../prompt-assembly-helpers'
+import { buildWorkspaceMcpConfig } from '../workspace-mcp-config'
+import { BUILD_MODE_SECTION, PLAN_MODE_SECTION } from '../default-prompts'
+import { promptBuilder } from '../prompt-builder'
 
 interface SpecialistSnapshot {
   id: string
@@ -46,7 +41,6 @@ interface SpecialistSnapshot {
   displayName: string
   prompt: string
   buildStatus: string
-  mcpConfig: ComposedMcpConfig | null
 }
 
 export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
@@ -57,23 +51,53 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
   private readonly workspaceId: string
   private snapshot: SpecialistSnapshot | null = null
 
+  /** Feature flags refreshed from workspace settings each send(). */
+  private repomapEnabled = false
+  private semanticSearchEnabled = false
+  private githubConfigured = false
+
+  /**
+   * Cached system-prompt assembly (mode + identity + CLAUDE.md + MCP guidance).
+   * Mirrors DaVinciPromptAssembler: rebuild on turn 1, reuse on turns 2+ when
+   * (conversationId, mode) match. Invalidated on conversation switch, mode
+   * switch, and session stop.
+   */
+  private systemPromptSnapshot: string | null = null
+  private systemPromptSnapshotMode: ConversationMode | null = null
+  private systemPromptSnapshotConversationId: string | null = null
+
   constructor(params: { workspaceId: string; agentId?: string }) {
     this.workspaceId = params.workspaceId
     this.agentId = params.agentId ?? `workspace-specialist-${params.workspaceId}`
   }
 
-  async onSessionStart(_ctx: AdapterSessionLifecycleCtx): Promise<void> {
+  async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
     this.loadSnapshot()
+    this.refreshWorkspaceFlags(ctx.workspaceId)
   }
 
-  refreshFeatureFlags(_ctx: AdapterSessionLifecycleCtx): void {
-    // Re-read the snapshot — the builder may have updated prompt/mcp_config
-    // between sends (skills toggled, prompt rebuilt).
+  refreshFeatureFlags(ctx: AdapterSessionLifecycleCtx): void {
+    // Re-read the snapshot — the builder may have updated prompt between sends
+    // (skills toggled, prompt rebuilt). Also refresh workspace feature flags.
     this.loadSnapshot()
+    this.refreshWorkspaceFlags(ctx.workspaceId)
   }
 
   onConversationSwitch(_conversationId: string): void {
-    // Prompt is static per send() — nothing to invalidate. Kept for contract.
+    // Drop the cached system-prompt — the next buildPrompts() will rebuild
+    // with the new conversation context (and re-read CLAUDE.md if it changed).
+    this.invalidateSnapshot()
+  }
+
+  /**
+   * Drop the cached system-prompt assembly. Called by onConversationSwitch
+   * and exposed publicly so the session layer can force a rebuild on
+   * mode switches or other lifecycle events.
+   */
+  invalidateSnapshot(): void {
+    this.systemPromptSnapshot = null
+    this.systemPromptSnapshotMode = null
+    this.systemPromptSnapshotConversationId = null
   }
 
   buildPrompts(ctx: AdapterPromptContext): AdapterPromptResult {
@@ -94,84 +118,72 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       return { systemPrompt: msg, effectiveMessage: ctx.message }
     }
 
-    return {
-      systemPrompt: this.snapshot.prompt,
-      effectiveMessage: ctx.message
+    // ── System-prompt assembly with snapshot cache ─────────────────
+    // Layering mirrors DaVinci:
+    //   [MODE SECTION] → [specialists.prompt — identity] → [CLAUDE.md layer] →
+    //   [MCP guidance turn 1 only]
+    //
+    // Always rebuild on turn 1 to pick up fresh CLAUDE.md and prompt edits.
+    // On turns 2+ reuse when (conversationId, mode) match the cached snapshot.
+    const cacheValid =
+      ctx.turnCount > 1 &&
+      this.systemPromptSnapshot !== null &&
+      this.systemPromptSnapshotMode === ctx.mode &&
+      this.systemPromptSnapshotConversationId === ctx.conversationId
+
+    let systemPrompt: string
+    if (cacheValid) {
+      systemPrompt = this.systemPromptSnapshot as string
+    } else {
+      const modeSection = ctx.mode === 'build' ? BUILD_MODE_SECTION : PLAN_MODE_SECTION
+      const claudeMdLayer = ctx.workspacePath
+        ? promptBuilder.buildClaudeMdLayer(ctx.workspacePath, ctx.mode)
+        : ''
+      const layers = [modeSection, this.snapshot.prompt]
+      if (claudeMdLayer) layers.push(claudeMdLayer)
+      const basePrompt = layers.join('\n\n')
+      systemPrompt = appendMcpToolGuidance(basePrompt, ctx.turnCount, {
+        repomapEnabled: this.repomapEnabled,
+        semanticSearchEnabled: this.semanticSearchEnabled,
+        githubConfigured: this.githubConfigured
+      })
+      this.systemPromptSnapshot = systemPrompt
+      this.systemPromptSnapshotMode = ctx.mode
+      this.systemPromptSnapshotConversationId = ctx.conversationId
     }
+
+    // User-turn prefix (ASK + MEMORY + IMAGE + DIRECT + plan reminder).
+    const conditionalPrefix = buildConditionalPrefix({
+      message: ctx.message,
+      hasImages: ctx.hasImages,
+      mode: ctx.mode,
+      turnCount: ctx.turnCount
+    })
+    const effectiveMessage = conditionalPrefix
+      ? `${conditionalPrefix}\n\n---\n\n${ctx.message}`
+      : ctx.message
+
+    return { systemPrompt, effectiveMessage }
   }
 
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
     if (!this.snapshot) this.loadSnapshot()
 
-    const isBuildMode = ctx.mode === 'build'
-    const enabled = new Set(this.snapshot?.mcpConfig?.enabled ?? [])
-
-    // Allow / disallow lists — plan mode is read-only, build mode allows edits.
-    // Concrete tool names mirror DaVinciMcpConfig so the SDK recognises them.
-    const allowedTools = isBuildMode
-      ? undefined
-      : [
-          'Read',
-          'Glob',
-          'Grep',
-          'WebSearch',
-          'WebFetch',
-          'mcp__control-actions__emit_plan',
-          'mcp__control-actions__ask_user',
-          'mcp__control-actions__emit_memory'
-        ]
-
-    const disallowedTools = isBuildMode
-      ? ['Agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion']
-      : ['Write', 'Edit', 'ExitPlanMode', 'AskUserQuestion', 'ToolSearch']
-
-    // Always include the control-actions MCP (with handoff disabled for specialists).
-    const mcpServers: Record<string, unknown> = {
-      ...createControlActionsMcpServer(ctx.controlCallbacks)
-    }
-
-    // Add MCPs from the composed snapshot — the builder stored the composed
-    // set in specialists.mcp_config. Honoring it here makes user toggles +
-    // tech recommendations actually take effect at runtime.
-    if (ctx.workspaceId) {
-      if (enabled.has('code-graph')) {
-        Object.assign(
-          mcpServers,
-          codeGraphMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
-        )
-      }
-      if (enabled.has('semantic-search')) {
-        Object.assign(mcpServers, semanticSearchMcpService.getMcpServersConfig(ctx.workspaceId))
-      }
-      if (enabled.has('github-context')) {
-        Object.assign(
-          mcpServers,
-          gitHubContextMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
-        )
-      }
-    }
-    if (enabled.has('git-context')) {
-      Object.assign(mcpServers, gitContextMcpService.getMcpServersConfig(ctx.workspacePath))
-    }
-    if (ctx.conversationId) {
-      if (enabled.has('task-context')) {
-        Object.assign(
-          mcpServers,
-          taskContextMcpService.getMcpServersConfig(ctx.conversationId, ctx.workspacePath)
-        )
-      }
-      if (enabled.has('checkpoint-context')) {
-        Object.assign(
-          mcpServers,
-          checkpointContextMcpService.getMcpServersConfig(ctx.conversationId)
-        )
-      }
-    }
-
-    return { mcpServers, allowedTools, disallowedTools }
+    return buildWorkspaceMcpConfig({
+      mode: ctx.mode,
+      workspacePath: ctx.workspacePath,
+      workspaceId: ctx.workspaceId,
+      conversationId: ctx.conversationId,
+      featureFlags: {
+        repomapEnabled: this.repomapEnabled,
+        semanticSearchEnabled: this.semanticSearchEnabled,
+        githubConfigured: this.githubConfigured
+      },
+      controlCallbacks: ctx.controlCallbacks
+    })
   }
 
-  buildControlCallbacks(_params: {
+  buildControlCallbacks(params: {
     conversationId: string | null
     emit: (event: AgentSessionEventName, payload: unknown) => void
     getAccumulatedText: () => string
@@ -183,29 +195,66 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       onAskUser: () => {
         /* wrapped by session */
       },
-      onMemory: (memory) => {
-        // Project Specialists persist memories through the same MCP memory tool,
-        // but we no-op here — the memory tool writes directly via its own
-        // SDK-side handler.
-        this.log.debug(
-          `[project-specialist] memory hook fired: [${memory.type}] ${memory.title}`
-        )
+      onMemory: (memory: { type: MemoryType; title: string; content: string }) => {
+        // Persist immediately — identical to DaVinciRoleAdapter. The workspace
+        // is already known via this.workspaceId, so no need to scan all workspaces.
+        try {
+          const workspace = workspaceRepository.findById(this.workspaceId)
+          const memWorkspaceId =
+            memory.type === 'user' || memory.type === 'feedback' ? null : (workspace?.id ?? null)
+          const mem = memoryRepository.createIfNotDuplicate({
+            workspaceId: memWorkspaceId,
+            type: memory.type,
+            title: memory.title,
+            content: memory.content,
+            tags: [],
+            sourceConversationId: params.conversationId ?? undefined,
+            sourceAgentId: this.agentId,
+            importance: 5
+          })
+          if (mem) {
+            this.log.info(`[specialist] Memory created: [${memory.type}] ${memory.title}`)
+          } else {
+            this.log.info(
+              `[specialist] Memory skipped (duplicate): [${memory.type}] ${memory.title}`
+            )
+          }
+        } catch (err) {
+          this.log.warn('[specialist] Failed to persist tool-emitted memory:', err)
+        }
       }
     }
   }
 
   emitDetectedIntents(ctx: AdapterIntentContext): void {
-    // Specialists never emit handoff/askUser/plan via the legacy regex path —
-    // only control-tool MCP events. We simply emit a 'response' intent with the
-    // accumulated text so the chat UI has something to persist.
-    ctx.emit('intent', {
-      type: 'response',
-      content: ctx.accumulatedText
-    })
+    // Same intent-detection path as DaVinci: grill / askUser / plan are surfaced
+    // via control-tool MCP events, plus a fallback 'response' intent if nothing
+    // else fired.
+    const detectedIntents = intentDetector.detectAll(
+      ctx.accumulatedText,
+      ctx.controlToolState,
+      ctx.mode
+    )
+
+    for (const intent of detectedIntents) {
+      ctx.emit('intent', intent)
+    }
+
+    if (detectedIntents.length === 0) {
+      this.log.info(`[PIPELINE:response-path] no-action textLen=${ctx.accumulatedText.length}`)
+      ctx.emit('intent', {
+        type: 'response',
+        content: ctx.accumulatedText
+      } as AgentIntent)
+    }
   }
 
   onSessionStop(): void {
     this.snapshot = null
+    this.repomapEnabled = false
+    this.semanticSearchEnabled = false
+    this.githubConfigured = false
+    this.invalidateSnapshot()
   }
 
   /** Refresh the cached specialist row from the DB. */
@@ -214,7 +263,7 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       const db = getDatabase()
       const row = db
         .prepare(
-          `SELECT id, agent_id, display_name, prompt, build_status, mcp_config
+          `SELECT id, agent_id, display_name, prompt, build_status
              FROM specialists WHERE workspace_id = ?`
         )
         .get(this.workspaceId) as
@@ -224,7 +273,6 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
             display_name: string
             prompt: string
             build_status: string
-            mcp_config: string
           }
         | undefined
       if (!row) {
@@ -236,12 +284,35 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
         agentId: row.agent_id,
         displayName: row.display_name,
         prompt: row.prompt ?? '',
-        buildStatus: row.build_status,
-        mcpConfig: mcpComposerService.parseConfig(row.mcp_config)
+        buildStatus: row.build_status
       }
     } catch (err) {
       this.log.warn('Failed to load Project Specialist snapshot:', err)
       this.snapshot = null
+    }
+  }
+
+  /**
+   * Read workspace settings for repomap / semantic-search / github flags.
+   * Mirrors DaVinciRoleAdapter.refreshFeatureFlags so both roles honor the
+   * same workspace-level MCP toggles.
+   */
+  private refreshWorkspaceFlags(workspaceId: string | null): void {
+    if (!workspaceId) {
+      this.repomapEnabled = false
+      this.semanticSearchEnabled = false
+      this.githubConfigured = false
+      return
+    }
+    try {
+      const workspace = workspaceRepository.findById(workspaceId)
+      if (!workspace) return
+      const settings = JSON.parse(workspace.settingsJson || '{}')
+      this.repomapEnabled = !!settings.repomapEnabled
+      this.semanticSearchEnabled = !!settings.semanticSearchEnabled
+      this.githubConfigured = githubService.isConfigured(workspaceId)
+    } catch {
+      /* non-fatal */
     }
   }
 

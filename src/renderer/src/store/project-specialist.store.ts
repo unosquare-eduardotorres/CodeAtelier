@@ -24,8 +24,6 @@ export interface ProjectSpecialist {
   buildStatus: 'pending' | 'building' | 'ready' | 'failed'
   stackFingerprint: string | null
   detectedTechs: string[]
-  mcpConfig: { enabled: string[]; disabled: string[] } | null
-  mcpOverrides: Record<string, { enabled: boolean }>
   lastBuiltAt: string | null
   createdAt: string
   updatedAt: string
@@ -68,7 +66,6 @@ interface ProjectSpecialistState {
   toggleSkill: (specialistId: string, skillId: string, enabled: boolean) => Promise<void>
   attachSkill: (specialistId: string, skillId: string) => Promise<void>
   detachSkill: (specialistId: string, skillId: string) => Promise<void>
-  toggleMcp: (specialistId: string, mcpId: string, enabled: boolean) => Promise<void>
   checkDrift: (workspaceId: string) => Promise<void>
   clearError: () => void
 }
@@ -185,15 +182,6 @@ export const useProjectSpecialistStore = create<ProjectSpecialistState>((set, ge
       await window.api.detachProjectSpecialistSkill({ specialistId, skillId })
     } catch (error) {
       rendererLog.error('Detach skill failed:', error)
-      throw error
-    }
-  },
-
-  toggleMcp: async (specialistId, mcpId, enabled) => {
-    try {
-      await window.api.toggleProjectSpecialistMcp({ specialistId, mcpId, enabled })
-    } catch (error) {
-      rendererLog.error('Toggle MCP failed:', error)
       throw error
     }
   },

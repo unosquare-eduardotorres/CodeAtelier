@@ -14,15 +14,15 @@ export function registerCoreAgentPromptIpc(): void {
     (
       event,
       args: {
-        agentRole: 'generalist'
+        agentRole: 'da-vinci'
         mode: 'plan' | 'build'
       }
     ) => {
       validateSender(event)
       if (!args?.agentRole) throw new Error('agentRole is required')
       if (!args?.mode) throw new Error('mode is required')
-      if (args.agentRole !== 'generalist') {
-        throw new Error('agentRole must be "generalist"')
+      if (args.agentRole !== 'da-vinci') {
+        throw new Error('agentRole must be "da-vinci"')
       }
       if (!['plan', 'build'].includes(args.mode)) {
         throw new Error('mode must be "plan" or "build"')
@@ -36,7 +36,7 @@ export function registerCoreAgentPromptIpc(): void {
     (
       event,
       args: {
-        agentRole: 'generalist'
+        agentRole: 'da-vinci'
         mode: 'plan' | 'build'
         promptText: string
       }
@@ -45,8 +45,8 @@ export function registerCoreAgentPromptIpc(): void {
       if (!args?.agentRole) throw new Error('agentRole is required')
       if (!args?.mode) throw new Error('mode is required')
       if (!args?.promptText?.trim()) throw new Error('promptText cannot be empty')
-      if (args.agentRole !== 'generalist') {
-        throw new Error('agentRole must be "generalist"')
+      if (args.agentRole !== 'da-vinci') {
+        throw new Error('agentRole must be "da-vinci"')
       }
       if (!['plan', 'build'].includes(args.mode)) {
         throw new Error('mode must be "plan" or "build"')
@@ -60,15 +60,15 @@ export function registerCoreAgentPromptIpc(): void {
     (
       event,
       args: {
-        agentRole: 'generalist'
+        agentRole: 'da-vinci'
         mode: 'plan' | 'build'
       }
     ) => {
       validateSender(event)
       if (!args?.agentRole) throw new Error('agentRole is required')
       if (!args?.mode) throw new Error('mode is required')
-      if (args.agentRole !== 'generalist') {
-        throw new Error('agentRole must be "generalist"')
+      if (args.agentRole !== 'da-vinci') {
+        throw new Error('agentRole must be "da-vinci"')
       }
       if (!['plan', 'build'].includes(args.mode)) {
         throw new Error('mode must be "plan" or "build"')

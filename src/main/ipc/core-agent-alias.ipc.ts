@@ -14,15 +14,15 @@ export function registerCoreAgentAliasIpc(): void {
     (
       event,
       args: {
-        agentRole: 'generalist' | 'coordinator'
+        agentRole: 'da-vinci'
         alias: string | null
         avatarKey: string | null
       }
     ) => {
       validateSender(event)
       if (!args?.agentRole) throw new Error('agentRole is required')
-      if (!['generalist', 'coordinator'].includes(args.agentRole)) {
-        throw new Error('agentRole must be "generalist" or "coordinator"')
+      if (args.agentRole !== 'da-vinci') {
+        throw new Error('agentRole must be "da-vinci"')
       }
       return coreAgentAliasRepository.upsert(
         args.agentRole,

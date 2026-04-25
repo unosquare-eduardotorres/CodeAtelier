@@ -95,16 +95,6 @@ export default function CodeIntelligenceSection({
           )}
         </div>
 
-        {/* Investigation Mode */}
-        <div className="py-3 first:pt-0 last:pb-0">
-          <ToggleRow
-            label="Investigation Mode"
-            description="When enabled, the generalist can delegate to specialists. When disabled, it always answers directly (saves tokens)."
-            checked={settings.investigationModeEnabled !== false}
-            onChange={(v) => onToggle('investigationModeEnabled', v)}
-          />
-        </div>
-
         {/* Semantic Search */}
         <div className="py-3 first:pt-0 last:pb-0">
           <ToggleRow

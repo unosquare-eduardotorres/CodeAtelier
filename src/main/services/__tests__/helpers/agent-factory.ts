@@ -11,9 +11,6 @@
  *   const { router, sentMessages } = createIntentRouter()
  */
 
-import { EventEmitter } from 'node:events'
-import type { ScriptedClaudeClient } from './claude-mock'
-
 // ── Mock BrowserWindow ──
 
 export interface MockWebContents {

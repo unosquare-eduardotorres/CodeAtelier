@@ -4,7 +4,6 @@ import { test, describe } from './test-harness'
 
 /**
  * EventEmitter lifecycle patterns used by AgentSessionService + ChatStreamService.
- * Pre-4b this suite also tested the HandoffBrief event shape; that's gone.
  */
 describe('Suite 9: Event sequence', () => {
   test('subAgentsComplete is emitted even after error path', () => {

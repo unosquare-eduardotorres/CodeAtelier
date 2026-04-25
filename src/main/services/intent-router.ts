@@ -20,10 +20,6 @@ export class IntentRouter {
 
   /**
    * Route a single generalist intent to the appropriate IPC channel.
-   *
-   * @returns A Promise that resolves to a handoff brief if the intent was a handoff,
-   *          or undefined for all other intent types. This allows the caller to
-   *          chain handoff execution without separate event listeners.
    */
   route(conversationId: string, intent: AgentIntent): void {
     switch (intent.type) {
@@ -49,11 +45,12 @@ export class IntentRouter {
 
       case 'askUser':
         log.info(
-          `[IntentRouter:askUser] conversationId=${conversationId} questions=${intent.questions.length}`
+          `[IntentRouter:askUser] conversationId=${conversationId} questions=${intent.questions.length} action=${intent.action ?? 'none'}`
         )
         this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
           conversationId,
-          questions: intent.questions
+          questions: intent.questions,
+          action: intent.action
         })
         break
 

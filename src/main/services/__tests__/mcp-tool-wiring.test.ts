@@ -4,7 +4,6 @@
  *
  * NOTE: We only test services that can be imported without Electron runtime deps.
  * - git-context.tool.ts: ✅ (only needs child_process)
- * - task-context.tool.ts: ⚠️ imports taskArtifactService (may need DB) — tested if import succeeds
  * - checkpoint-context.tool.ts: ⚠️ imports checkpointService (needs DB) — tested if import succeeds
  * - github-context.tool.ts: ❌ requires Electron safeStorage — skipped
  */
@@ -71,12 +70,10 @@ describe('git-context MCP wiring', () => {
 // ── MCP tool name convention ──
 
 describe('MCP tool name convention (from MCP_TOOLS registry)', () => {
-  // Exclude control-actions from the "expected tools" list — they're internal-only
-  // and not exposed to specialists. ALL_MCP_TOOL_NAMES includes all tools from the registry.
+  // Exclude control-actions from the "expected tools" list — they're internal-only.
+  // ALL_MCP_TOOL_NAMES includes all tools from the registry.
   const EXPECTED_MCP_TOOLS = ALL_MCP_TOOL_NAMES.filter(
-    (name) =>
-      !name.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX) &&
-      !name.startsWith(MCP_TOOLS.SPECIALIST_CONTROL._PREFIX)
+    (name) => !name.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)
   )
 
   test('all MCP tool names follow mcp__{server}__{tool} convention', () => {
@@ -106,57 +103,14 @@ describe('MCP tool name convention (from MCP_TOOLS registry)', () => {
 
   test('expected server count is correct', () => {
     const servers = new Set(EXPECTED_MCP_TOOLS.map((n) => n.split('__')[1]))
-    // code-graph, semantic-search, git-context, task-context, checkpoint-context, github-context
-    assert.equal(servers.size, 6, `Expected 6 MCP servers, got ${servers.size}`)
+    // code-graph, semantic-search, git-context, checkpoint-context, github-context
+    assert.equal(servers.size, 5, `Expected 5 MCP servers, got ${servers.size}`)
   })
 
-  test('registry includes all 8 MCP servers (including control-actions + specialist-control)', () => {
+  test('registry includes all 6 MCP servers (including control-actions)', () => {
     const allServers = new Set(ALL_MCP_TOOL_NAMES.map((n) => n.split('__')[1]))
-    assert.equal(allServers.size, 8, `Expected 8 MCP servers, got ${allServers.size}`)
+    assert.equal(allServers.size, 6, `Expected 6 MCP servers, got ${allServers.size}`)
   })
-})
-
-// ── task-context MCP wiring (may fail if DB deps aren't available) ──
-
-describe('task-context MCP wiring', () => {
-  let taskContextMcpService: {
-    getMcpServersConfig: (cid: string, wp: string) => Record<string, unknown>
-    dispose: (cid: string, wp: string) => void
-  } | null = null
-
-  try {
-    taskContextMcpService = require('../task-context.tool').taskContextMcpService
-  } catch {
-    // DB dependency not available in test env — skip these tests
-  }
-
-  if (taskContextMcpService) {
-    test('getMcpServersConfig returns config keyed "task-context"', () => {
-      const config = taskContextMcpService!.getMcpServersConfig('conv-1', '/tmp/test')
-      assert.ok(config['task-context'], 'Should have task-context key')
-    })
-
-    test('keys by conversationId:workspacePath', () => {
-      const c1 = taskContextMcpService!.getMcpServersConfig('conv-a', '/tmp/ws1')
-      const c2 = taskContextMcpService!.getMcpServersConfig('conv-a', '/tmp/ws2')
-      assert.notStrictEqual(
-        c1['task-context'],
-        c2['task-context'],
-        'Different workspace paths should produce different configs'
-      )
-    })
-
-    test('dispose clears cached config', () => {
-      taskContextMcpService!.getMcpServersConfig('conv-dispose', '/tmp/dispose')
-      taskContextMcpService!.dispose('conv-dispose', '/tmp/dispose')
-      const fresh = taskContextMcpService!.getMcpServersConfig('conv-dispose', '/tmp/dispose')
-      assert.ok(fresh['task-context'], 'Should create fresh config after dispose')
-    })
-  } else {
-    test('SKIPPED — task-context requires DB deps not available in test', () => {
-      // Intentional skip — still counts as passed
-    })
-  }
 })
 
 // ── checkpoint-context MCP wiring (may fail if DB deps aren't available) ──

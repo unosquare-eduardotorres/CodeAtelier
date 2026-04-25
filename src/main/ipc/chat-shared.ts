@@ -65,7 +65,7 @@ function extractResultSummary(toolName: string, content: string | undefined): st
 export function forwardChunkToRenderer(
   mainWindow: BrowserWindow,
   conversationId: string,
-  role: 'generalist' | 'specialist',
+  role: 'da-vinci' | 'specialist',
   chunk: StreamChunk,
   contentAccumulator: { value: string },
   workspacePath?: string,

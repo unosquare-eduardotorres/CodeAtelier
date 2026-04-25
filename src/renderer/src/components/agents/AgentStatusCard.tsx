@@ -12,9 +12,10 @@ import {
 } from 'lucide-react'
 import type { AgentStatus, ModelTier, ComplexityTier } from '../../../../shared/types'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
-import { useSpecialistStore, useAgentStore } from '@renderer/store'
+import { useSpecialistStore, useAgentStore, useWorkspaceStore } from '@renderer/store'
 import { Avatar } from '@renderer/components/common'
-import { getDefaultAvatarForRole } from '@renderer/utils/agentIdentity'
+import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
+import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 
 // Model tier badge config
 const MODEL_BADGE: Record<ModelTier, { label: string; bg: string; text: string }> = {
@@ -107,12 +108,21 @@ export default function AgentStatusCard({
   const config = STATUS_CONFIG[status.status] || STATUS_CONFIG.idle
   const { specialists } = useSpecialistStore()
   const agentOutput = useAgentStore((s) => s.agentOutputs[status.agentId] ?? '')
-  const gates = useAgentStore((s) => s.gateResults[status.agentId]) ?? []
   const abandonment = useAgentStore((s) => s.abandonments[status.agentId])
+  const activeWs = useWorkspaceStore((s) => s.activeWorkspace)
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
 
   // Look up metadata from DB-backed specialists
   const meta = getAgentMeta(status.agentType, specialists)
-  const specialist = specialists.find((s) => s.agentId === status.agentType)
+
+  // Resolve avatar key: Da Vinci uses its dedicated portrait, everyone else
+  // (specialists + unknown agents) inherits the active workspace mannequin.
+  const avatarKey =
+    status.agentType === 'da-vinci'
+      ? CORE_AGENT_DEFAULTS['da-vinci'].avatarKey
+      : activeWs
+        ? getWorkspaceMannequin(activeWs.id, workspaces)
+        : 'mannequin-main'
 
   const isActive =
     status.status === 'thinking' || status.status === 'writing' || status.status === 'reviewing'
@@ -158,11 +168,7 @@ export default function AgentStatusCard({
         }}
       >
         <div className="flex items-center gap-2">
-          <Avatar
-            avatarKey={specialist?.avatarUrl ?? getDefaultAvatarForRole(status.agentType)}
-            size="sm"
-            accentColor={meta?.color ?? '#B8976A'}
-          />
+          <Avatar avatarKey={avatarKey} size="sm" accentColor={meta?.color ?? '#B8976A'} />
           <div className="flex flex-col">
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-medium text-text-primary">
@@ -238,23 +244,6 @@ export default function AgentStatusCard({
           </button>
         )}
       </div>
-
-      {/* Gate results badges */}
-      {gates.length > 0 && (
-        <div className="flex items-center gap-1 mt-1 flex-wrap">
-          {gates.map((g, i) => (
-            <span
-              key={i}
-              className={`text-[10px] px-1.5 py-0.5 rounded ${
-                g.passed ? 'bg-success-muted text-success' : 'bg-danger-muted text-danger'
-              }`}
-              title={g.summary}
-            >
-              {g.passed ? '✓' : '✗'} {g.type}
-            </span>
-          ))}
-        </div>
-      )}
 
       {/* Abandonment warning */}
       {abandonment && (

@@ -89,7 +89,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
     if (!activeWorkspace) return
     setIsInitializingRepo(true)
     try {
-      await window.api.gitInit({ workspacePath: activeWorkspace.repoPath })
+      await window.api.initRepo({ workspaceId: activeWorkspace.id })
       await loadRepoInfo(activeWorkspace.id)
     } catch (err) {
       console.error('Failed to init repo:', err)
@@ -101,9 +101,9 @@ export default function RepositorySettingsTab(): React.JSX.Element {
     if (!activeWorkspace || !remoteUrl.trim()) return
     setIsSavingRemote(true)
     try {
-      await window.api.gitSetRemote({
-        workspacePath: activeWorkspace.repoPath,
-        url: remoteUrl.trim()
+      await window.api.setRepoRemote({
+        workspaceId: activeWorkspace.id,
+        remoteUrl: remoteUrl.trim()
       })
       await loadRepoInfo(activeWorkspace.id)
       setIsEditingRemote(false)
@@ -121,7 +121,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
     setTokenError(null)
     setTokenSuccess(null)
     try {
-      await window.api.githubSaveToken({
+      await window.api.saveGitHubToken({
         workspaceId: activeWorkspace.id,
         token: token.trim()
       })
@@ -137,7 +137,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
   const handleDisconnectGitHub = async (): Promise<void> => {
     if (!activeWorkspace) return
     try {
-      await window.api.githubDisconnect({ workspaceId: activeWorkspace.id })
+      await window.api.removeGitHubToken({ workspaceId: activeWorkspace.id })
       await loadGitHubStatus(activeWorkspace.id)
     } catch (err) {
       console.error('Failed to disconnect GitHub:', err)

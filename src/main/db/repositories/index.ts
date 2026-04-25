@@ -43,4 +43,3 @@ export { CodeGraphRankRepository, codeGraphRankRepository } from './code-graph-r
 
 export { TurnUsageRepository, turnUsageRepository } from './turn-usage.repository'
 export type { TurnUsage } from './turn-usage.repository'
-export { BugCouncilRepository, bugCouncilRepository } from './bug-council.repository'

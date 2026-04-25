@@ -5,7 +5,7 @@
  * docs/architecture/project-specialist-refactor.md).
  *
  * This adapter keeps the Generalist's behavior 100% intact by delegating to
- * the existing helper services (DaVinciPromptAssembler, DaVinciMcpConfig,
+ * the existing helper services (DaVinciPromptAssembler, buildWorkspaceMcpConfig,
  * IntentDetector, memoryService, specialistRepository, etc.). The goal is zero
  * functional drift — only structural reorganization.
  */
@@ -30,7 +30,7 @@ import type {
 import type { ControlActionCallbacks } from '../control-actions.tool'
 import { DA_VINCI_AGENT_ID } from '../../../shared/constants'
 import { DaVinciPromptAssembler } from '../da-vinci-prompt-assembler'
-import { DaVinciMcpConfig } from '../da-vinci-mcp-config'
+import { buildWorkspaceMcpConfig } from '../workspace-mcp-config'
 import { githubService } from '../github.service'
 import { memoryService } from '../memory.service'
 import { memoryRepository, specialistRepository, workspaceRepository } from '../../db/repositories'
@@ -43,23 +43,22 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
 
   private readonly log = chatAgentLogger
   private readonly promptAssembler = new DaVinciPromptAssembler()
-  private readonly mcpConfig = new DaVinciMcpConfig()
 
   /** Feature flags refreshed from workspace settings each send(). */
   private repomapEnabled = false
   private semanticSearchEnabled = false
   private githubConfigured = false
-  /**
-   * Post-handoff-removal: investigation mode no longer gates a request_handoff
-   * tool (the tool is gone). Hardcoded to `false` so the prompt assembler
-   * trims investigation-related sections. The workspace settings toggle is
-   * kept for UI-level compatibility but has no runtime effect.
-   */
-  private investigationModeEnabled = false
 
   /** Persona overlay — null = Da Vinci default. */
   private currentPersonaSpecialistId: string | null = null
   private currentPersonaData: Specialist | null = null
+
+  /**
+   * Tracks the last specialist id we surfaced a "ready" signal for, so we
+   * don't re-prompt every turn after the first readiness transition. Cleared
+   * on session end and on workspace change.
+   */
+  private lastAnnouncedSpecialistId: string | null = null
 
   async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
     this.promptAssembler.resetSession()
@@ -77,7 +76,6 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
 
       this.repomapEnabled = !!settings.repomapEnabled
       this.semanticSearchEnabled = !!settings.semanticSearchEnabled
-      // investigationModeEnabled ignored — see field doc
       this.githubConfigured = ctx.workspaceId ? githubService.isConfigured(ctx.workspaceId) : false
     } catch {
       /* non-fatal — keep defaults */
@@ -98,9 +96,26 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       this.repomapEnabled = !!settings.repomapEnabled
       this.semanticSearchEnabled = !!settings.semanticSearchEnabled
       this.githubConfigured = githubService.isConfigured(ctx.workspaceId)
-      // investigationModeEnabled ignored — see field doc
     } catch {
       /* non-fatal */
+    }
+
+    // Detect if a Project Specialist has become ready for this workspace
+    // since the last send(). If so, arm the one-shot signal so the next
+    // buildEffectiveMessage injects the "[PROJECT SPECIALIST READY: <name>]"
+    // sentinel into the user message — DaVinci's prompt instructs it to
+    // respond with an ask_user swap proposal.
+    try {
+      const readySpecialist = specialistRepository.findReadyByWorkspace(ctx.workspaceId)
+      if (readySpecialist && readySpecialist.id !== this.lastAnnouncedSpecialistId) {
+        this.promptAssembler.setPendingSpecialistReadySignal(readySpecialist.displayName)
+        this.lastAnnouncedSpecialistId = readySpecialist.id
+        this.log.info(
+          `[adapter:specialist-ready] Armed swap proposal for workspace=${ctx.workspaceId} specialist=${readySpecialist.displayName}`
+        )
+      }
+    } catch {
+      /* non-fatal — detection is best-effort */
     }
   }
 
@@ -124,7 +139,6 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
         githubConfigured: this.githubConfigured
       },
       costPreference: ctx.costPreference,
-      investigationModeEnabled: this.investigationModeEnabled,
       personaSpecialistId: this.currentPersonaSpecialistId,
       personaData: this.currentPersonaData
     })
@@ -135,15 +149,14 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       hasImages: ctx.hasImages,
       turnCount: ctx.turnCount,
       sessionId: ctx.sessionId,
-      mode: ctx.mode,
-      investigationModeEnabled: this.investigationModeEnabled
+      mode: ctx.mode
     })
 
     return { systemPrompt, effectiveMessage }
   }
 
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
-    return this.mcpConfig.build({
+    return buildWorkspaceMcpConfig({
       mode: ctx.mode,
       workspacePath: ctx.workspacePath,
       workspaceId: ctx.workspaceId,
@@ -153,8 +166,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
         semanticSearchEnabled: this.semanticSearchEnabled,
         githubConfigured: this.githubConfigured
       },
-      controlCallbacks: ctx.controlCallbacks,
-      investigationModeEnabled: this.investigationModeEnabled
+      controlCallbacks: ctx.controlCallbacks
     })
   }
 
@@ -184,7 +196,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
             content: memory.content,
             tags: [],
             sourceConversationId: params.conversationId ?? undefined,
-            sourceAgentId: 'generalist',
+            sourceAgentId: DA_VINCI_AGENT_ID,
             importance: 5
           })
           if (mem) {
@@ -203,8 +215,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
     const detectedIntents = intentDetector.detectAll(
       ctx.accumulatedText,
       ctx.controlToolState,
-      ctx.mode,
-      this.investigationModeEnabled
+      ctx.mode
     )
 
     for (const intent of detectedIntents) {
@@ -227,6 +238,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
     this.githubConfigured = false
     this.currentPersonaSpecialistId = null
     this.currentPersonaData = null
+    this.lastAnnouncedSpecialistId = null
   }
 
   // ── Generalist-specific helpers used by the thin ChatAgentService wrapper ──

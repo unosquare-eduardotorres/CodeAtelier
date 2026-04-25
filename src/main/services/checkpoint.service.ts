@@ -4,7 +4,6 @@ import log from 'electron-log/main'
 import { checkpointRepository } from '../db/repositories/checkpoint.repository'
 import { eventLoggerService } from './event-logger.service'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { DecomposedTask, TaskExecutionProgress } from '../../shared/types'
 
 const checkpointLogger = log.scope('Checkpoint')
 
@@ -28,26 +27,24 @@ interface PendingCheckpointApproval {
   checkpoint: CheckpointApprovalRequest
 }
 
+/**
+ * Shape of a checkpoint's saved state as read by checkpoint-context.tool.ts.
+ * Checkpoints are now produced by the destructive-action confirmation flow only —
+ * the old pre-execution multi-specialist snapshot path was removed.
+ */
 interface CheckpointState {
-  /** Active task IDs at time of checkpoint */
   activeTaskIds: string[]
-  /** Completed task IDs at time of checkpoint */
   completedTaskIds: string[]
-  /** Task results (taskId → output summary) */
   taskResults: Record<string, string>
-  /** Task statuses */
-  taskStatuses: Record<string, TaskExecutionProgress['status']>
-  /** Full task plan for re-execution */
-  tasks?: DecomposedTask[]
-  /** Any additional metadata */
+  taskStatuses: Record<string, 'pending' | 'running' | 'completed' | 'failed' | 'skipped'>
   metadata?: Record<string, unknown>
 }
 
 /**
- * Checkpoint service — snapshots orchestration state before risky operations
- * (parallel execution, multi-specialist tasks) to enable rollback on failure.
- *
- * Saves: git state (branch + commit SHA), task progress, and task plan.
+ * Checkpoint service — exposes read-only access to previously-saved checkpoint
+ * snapshots (see checkpoint-context.tool.ts) and a destructive `restoreGitState`
+ * action driven from the UI. Write-path checkpoint creation lives with the
+ * callers that still need it (currently: none in the live code path).
  */
 class CheckpointService {
   private pendingApprovals = new Map<string, PendingCheckpointApproval>()
@@ -121,90 +118,6 @@ class CheckpointService {
       })
 
     pending.resolve(approved)
-  }
-
-  /**
-   * Creates a checkpoint before execution begins.
-   * Captures git state and task plan for potential rollback.
-   */
-  createCheckpoint(opts: {
-    conversationId: string
-    workspaceId?: string
-    workspacePath: string
-    label: string
-    state: CheckpointState
-  }): string {
-    let gitBranch: string | undefined
-    let gitCommitSha: string | undefined
-
-    try {
-      gitBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-        cwd: opts.workspacePath,
-        encoding: 'utf-8',
-        timeout: 5000
-      }).trim()
-
-      gitCommitSha = execSync('git rev-parse HEAD', {
-        cwd: opts.workspacePath,
-        encoding: 'utf-8',
-        timeout: 5000
-      }).trim()
-    } catch (err) {
-      checkpointLogger.warn('Failed to capture git state for checkpoint:', err)
-    }
-
-    const checkpoint = checkpointRepository.create({
-      conversationId: opts.conversationId,
-      workspaceId: opts.workspaceId,
-      label: opts.label,
-      state: opts.state as unknown as Record<string, unknown>,
-      gitBranch,
-      gitCommitSha,
-      activeTaskIds: opts.state.activeTaskIds
-    })
-
-    eventLoggerService.logCheckpointCreated({
-      conversationId: opts.conversationId,
-      workspaceId: opts.workspaceId,
-      checkpointId: checkpoint.id,
-      label: opts.label
-    })
-
-    checkpointLogger.info(
-      `Checkpoint "${opts.label}" created: ${checkpoint.id} (git: ${gitBranch}@${gitCommitSha?.slice(0, 7) ?? 'unknown'})`
-    )
-
-    // Prune old checkpoints — keep last 5 per conversation
-    checkpointRepository.pruneKeepRecent(opts.conversationId, 5)
-
-    return checkpoint.id
-  }
-
-  /**
-   * Creates a pre-execution checkpoint automatically before parallel/sequential execution.
-   */
-  createPreExecutionCheckpoint(opts: {
-    conversationId: string
-    workspaceId?: string
-    workspacePath: string
-    tasks: DecomposedTask[]
-  }): string {
-    const taskCount = opts.tasks.length
-    const specialistNames = [...new Set(opts.tasks.map((t) => t.specialist))].join(', ')
-
-    return this.createCheckpoint({
-      conversationId: opts.conversationId,
-      workspaceId: opts.workspaceId,
-      workspacePath: opts.workspacePath,
-      label: `Pre-execution: ${taskCount} tasks (${specialistNames})`,
-      state: {
-        activeTaskIds: [],
-        completedTaskIds: [],
-        taskResults: {},
-        taskStatuses: Object.fromEntries(opts.tasks.map((t) => [t.id, 'pending' as const])),
-        tasks: opts.tasks
-      }
-    })
   }
 
   /**

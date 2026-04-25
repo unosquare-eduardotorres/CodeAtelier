@@ -2,11 +2,7 @@
 
 ## Overview
 
-Agent Studio is an Electron desktop application that provides an AI-powered team of specialist agents,
-coordinated by a generalist that spawns specialist SubAgents, running locally on the developer's machine.
-It leverages the Claude Max subscription through Claude CLI, requiring no API keys or proxy servers.
-
-Architecture details are documented in `CLAUDE.md` sections below and agent YAMLs in `.claude/agents/`.
+Agent Studio is an Electron desktop application. Each workspace runs exactly one of two equivalent AI roles — **DaVinci** (the default expert partner) or a **Project Specialist** (an LLM-tailored expert built from the workspace's stack and CLAUDE.md). Both roles share the same execution pipeline — same MCP toolbox, same plan/build mode rules, same memory + intent pipelines. Only the identity prompt differs. Everything runs locally via Claude CLI backed by a Claude Max subscription; no API keys, no proxy servers.
 
 ## Tech stack
 
@@ -17,7 +13,7 @@ Architecture details are documented in `CLAUDE.md` sections below and agent YAML
 - **Packaging**: electron-builder 26
 - **State management**: Zustand 5
 - **Database**: better-sqlite3 (local SQLite)
-- **Testing**: Jest (unit)
+- **Testing**: tsx test-runner (custom harness, node:assert/strict) + Playwright (E2E)
 - **Linting**: ESLint 9 + Prettier
 
 ## Conventions
@@ -39,8 +35,10 @@ src/
 ├── main/           # Main process (Node.js) — app lifecycle, IPC handlers, services, DB
 │   ├── index.ts    # Entry point — window creation, app lifecycle
 │   ├── ipc/        # IPC handler registrations (agent, chat, workspace, etc.)
-│   ├── services/   # Business logic (generalist, specialist-pool, file, brain)
+│   ├── services/   # Business logic (role adapters, prompt assembly, MCP config, specialist builder)
+│   │   └── role-adapters/ # DaVinciRoleAdapter, ProjectSpecialistRoleAdapter
 │   └── db/         # SQLite via better-sqlite3 (schema.sql, repositories/)
+│       └── migrations/ # Extracted complex migrations (project-specialist, drop-mcp-columns)
 ├── preload/        # contextBridge only (index.ts + index.d.ts)
 ├── renderer/src/   # React frontend — no Node.js access
 │   ├── components/ # By feature: agents/, chat/, common/, layout/, workspace/
@@ -49,38 +47,37 @@ src/
 └── shared/         # Cross-process types (types.ts) + IPC channels (constants.ts)
 
 .claude/
-├── agents/         # 15 agent YAMLs (generalist + 14 specialists)
-└── skills/         # 17 skill directories (SKILL.md + optional references/)
+└── skills/         # SKILL.md directories (each may include references/)
 ```
 
 ## Skills
 
 ### Available skills
 
-| Skill                | Path                                         | Used by agents                                            |
-| -------------------- | -------------------------------------------- | --------------------------------------------------------- |
-| `electron-pro`       | `.claude/skills/electron-pro/SKILL.md`       | platform-architect, platform-engineer, frontend-architect |
-| `dotnet-architect`   | `.claude/skills/dotnet-architect/SKILL.md`   | dotnet-architect                                          |
-| `claude-code-cli`    | `.claude/skills/claude-cli/SKILL.md`         | platform-architect, generalist-agent                      |
-| `claude-architect`   | `.claude/skills/claude-architect/SKILL.md`   | platform-architect                                        |
-| `agent-sdk-patterns` | `.claude/skills/agent-sdk-patterns/SKILL.md` | platform-architect                                        |
-| `sqlite-patterns`    | `.claude/skills/sqlite-patterns/SKILL.md`    | data-architect                                            |
-| `supabase-architect` | `.claude/skills/supabase-architect/SKILL.md` | data-architect (external projects only)                   |
-| `ui-ux-pro-max`      | `.claude/skills/ui-ux-pro-max/SKILL.md`      | design-specialist                                         |
-| `design`             | `.claude/skills/design/SKILL.md`             | design-specialist                                         |
-| `design-system`      | `.claude/skills/design-system/SKILL.md`      | design-specialist                                         |
-| `brand`              | `.claude/skills/brand/SKILL.md`              | design-specialist                                         |
-| `banner-design`      | `.claude/skills/banner-design/SKILL.md`      | design-specialist                                         |
-| `slides`             | `.claude/skills/slides/SKILL.md`             | design-specialist                                         |
-| `git-workflow`       | `.claude/skills/git-workflow/SKILL.md`       | dx-specialist                                             |
-| `ipc-patterns`       | `.claude/skills/ipc-patterns/SKILL.md`       | platform-architect, frontend-architect                    |
-| `mermaid-diagrams`   | `.claude/skills/mermaid-diagrams/SKILL.md`   | dx-specialist                                             |
-| `design-docs`        | `.claude/skills/design-docs/SKILL.md`        | dx-specialist                                             |
-| `general-dev`        | `.claude/skills/general-dev/SKILL.md`        | generalist-developer, dx-specialist                       |
-| `testing-specialist` | `.claude/skills/testing-specialist/SKILL.md` | testing-specialist                                        |
-| `planner`            | `.claude/skills/planner/SKILL.md`            | planner                                                   |
-| `security`           | `.claude/skills/security/SKILL.md`           | platform-architect                                        |
-| `infrastructure`     | `.claude/skills/infrastructure/SKILL.md`     | platform-engineer                                         |
+| Skill                | Path                                         | Purpose                                                          |
+| -------------------- | -------------------------------------------- | ---------------------------------------------------------------- |
+| `electron-pro`       | `.claude/skills/electron-pro/SKILL.md`       | Electron 40 IPC, security model, windowing, packaging            |
+| `dotnet-architect`   | `.claude/skills/dotnet-architect/SKILL.md`   | .NET solution layout, project conventions, common patterns       |
+| `claude-code-cli`    | `.claude/skills/claude-cli/SKILL.md`         | Claude CLI flags, modes, output streams, exit codes              |
+| `claude-architect`   | `.claude/skills/claude-architect/SKILL.md`   | High-level Claude integration patterns                           |
+| `agent-sdk-patterns` | `.claude/skills/agent-sdk-patterns/SKILL.md` | Claude Agent SDK control flow, MCP server wiring, tool callbacks |
+| `sqlite-patterns`    | `.claude/skills/sqlite-patterns/SKILL.md`    | better-sqlite3 schema design, migrations, transactional queries  |
+| `supabase-architect` | `.claude/skills/supabase-architect/SKILL.md` | Supabase RLS, edge functions, auth flows (external workspaces)   |
+| `ui-ux-pro-max`      | `.claude/skills/ui-ux-pro-max/SKILL.md`      | UX heuristics, interaction design, accessibility checks          |
+| `design`             | `.claude/skills/design/SKILL.md`             | Visual hierarchy, typography, color, spacing                     |
+| `design-system`      | `.claude/skills/design-system/SKILL.md`      | Token systems, component contracts, theming                      |
+| `brand`              | `.claude/skills/brand/SKILL.md`              | Brand voice, identity, tone of voice                             |
+| `banner-design`      | `.claude/skills/banner-design/SKILL.md`      | Hero / banner / promo layout patterns                            |
+| `slides`             | `.claude/skills/slides/SKILL.md`             | Slide deck structure, narrative arcs, density rules              |
+| `git-workflow`       | `.claude/skills/git-workflow/SKILL.md`       | Branching, PR conventions, conventional commits                  |
+| `ipc-patterns`       | `.claude/skills/ipc-patterns/SKILL.md`       | Electron IPC contract design, channel naming, error propagation  |
+| `mermaid-diagrams`   | `.claude/skills/mermaid-diagrams/SKILL.md`   | Mermaid syntax for architecture, sequence, state diagrams        |
+| `design-docs`        | `.claude/skills/design-docs/SKILL.md`        | Design-doc structure, decision records, diagrams-as-code         |
+| `general-dev`        | `.claude/skills/general-dev/SKILL.md`        | General software-engineering practices for any stack             |
+| `testing-specialist` | `.claude/skills/testing-specialist/SKILL.md` | Test strategy, harness usage, coverage targets                   |
+| `planner`            | `.claude/skills/planner/SKILL.md`            | Plan-mode framing, breakdown patterns, scoping discipline        |
+| `security`           | `.claude/skills/security/SKILL.md`           | Threat modeling, secret handling, supply-chain hygiene           |
+| `infrastructure`     | `.claude/skills/infrastructure/SKILL.md`     | Containerization, Terraform, CI/CD, deployment topology          |
 
 ### Electron skill trigger
 
@@ -124,15 +121,16 @@ npm run format        # Prettier
 
 ## Architecture notes
 
-- **Generalist-first**: User ↔ Generalist → Specialists (SDK SubAgents)
-- **Generalist**: Long-lived Claude CLI session, read-only (`--permission-mode plan`). Detects handoffs.
-- **15 agents**: 1 generalist + 14 specialists — SubAgents spawned via SDK agents parameter
-- **IPC**: `window.api.invoke()` → preload `ipcRenderer.invoke` → main `ipcMain.handle`
-- **Streaming**: `ipcRenderer.on` with cleanup functions from `window.api.on()`
-- **Database**: SQLite, schema in `schema.sql`, repository pattern in `repositories/`
-- **State**: Zustand stores — one per domain (agent, chat, workspace)
-- **Fast mode**: Affects generalist only (long-lived session). Specialists are one-shot `claude -p`.
-- **Thinking budgets**: `MAX_THINKING_TOKENS` env var per specialist (Opus=31999, Sonnet=10000, Haiku=0)
+- **Two role adapters, one execution pipeline**
+  - `DaVinciRoleAdapter` — default per workspace, long-lived AgentSession.
+  - `ProjectSpecialistRoleAdapter` — bound to one workspace, LLM-tailored system prompt.
+  - Both share `buildWorkspaceMcpConfig`, `intentDetector.detectAll`, `memoryRepository`, `prompt-assembly-helpers`.
+- **No handoffs, no orchestrator, no SDK sub-agents.** `Agent` and `ToolSearch` tools are blocked globally.
+- **IPC**: `window.api.invoke()` → preload `ipcRenderer.invoke` → main `ipcMain.handle`.
+- **Streaming**: `ipcRenderer.on` with cleanup functions from `window.api.on()`.
+- **Database**: SQLite, `schema.sql`, 72 versioned migrations, repository pattern.
+- **State**: Zustand stores, one per domain.
+- **MCP toolbox** (workspace-scoped, flag-gated): code-graph, semantic-search, git-context, checkpoint-context, github-context, control-actions.
 
 ## Error handling patterns
 
@@ -147,6 +145,8 @@ npm run format        # Prettier
 
 - `AGENT_IDS` and `AGENT_META` in `src/shared/constants.ts` — `@deprecated`, use DB specialists
 - Do not add new references to these deprecated constants
+- `specialists.mcp_config` / `specialists.mcp_overrides` — dropped in schema v72. MCP availability is workspace-scoped now (`workspace.settingsJson` flags).
+- SDK SubAgents / `Agent` tool — blocked globally; the architecture no longer delegates.
 
 ## Electron documentation
 

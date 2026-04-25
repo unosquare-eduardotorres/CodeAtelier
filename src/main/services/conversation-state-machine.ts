@@ -5,25 +5,15 @@ import { IPC_CHANNELS } from '../../shared/constants'
 
 export type ConversationState =
   | 'idle'
-  | 'generalist-streaming'
-  | 'handoff-detected'
-  | 'decomposing'
-  | 'specialist-executing'
-  | 'pipeline-complete'
+  | 'chat-agent-streaming'
   | 'error'
   | 'stopped'
 
 export type ConversationTransition =
   | 'sendMessage'
-  | 'generalistComplete'
-  | 'handoffDetected'
-  | 'decompositionReady'
-  | 'executionStarted'
-  | 'allComplete'
+  | 'chatAgentComplete'
   | 'messageFinalised'
   | 'streamError'
-  | 'decompositionError'
-  | 'executionError'
   | 'userStop'
   | 'cleanupComplete'
   | 'errorHandled'
@@ -33,29 +23,13 @@ const VALID_TRANSITIONS: Record<
   Partial<Record<ConversationTransition, ConversationState>>
 > = {
   idle: {
-    sendMessage: 'generalist-streaming'
+    sendMessage: 'chat-agent-streaming'
   },
-  'generalist-streaming': {
-    generalistComplete: 'idle',
-    handoffDetected: 'handoff-detected',
+  'chat-agent-streaming': {
+    chatAgentComplete: 'idle',
+    messageFinalised: 'idle',
     streamError: 'error',
     userStop: 'stopped'
-  },
-  'handoff-detected': {
-    decompositionReady: 'decomposing',
-    decompositionError: 'error'
-  },
-  decomposing: {
-    executionStarted: 'specialist-executing',
-    decompositionError: 'error'
-  },
-  'specialist-executing': {
-    allComplete: 'pipeline-complete',
-    executionError: 'error',
-    userStop: 'stopped'
-  },
-  'pipeline-complete': {
-    messageFinalised: 'idle'
   },
   error: {
     errorHandled: 'idle'
@@ -96,7 +70,7 @@ export class ConversationStateMachine extends EventEmitter {
       'messageFinalised',
       'errorHandled',
       'cleanupComplete',
-      'generalistComplete'
+      'chatAgentComplete'
     ]
     if (this.state === 'idle' && IDEMPOTENT_WHEN_IDLE.includes(event)) {
       log.info(`[StateMachine] ${event} already idle — no-op`)
@@ -137,10 +111,7 @@ export class ConversationStateMachine extends EventEmitter {
     return this.state === 'idle'
   }
   isStreaming(): boolean {
-    return this.state === 'generalist-streaming'
-  }
-  isExecuting(): boolean {
-    return ['handoff-detected', 'decomposing', 'specialist-executing'].includes(this.state)
+    return this.state === 'chat-agent-streaming'
   }
 
   /** Force reset to idle — emergency escape hatch */

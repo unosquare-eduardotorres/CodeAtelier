@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('user', 'coordinator', 'specialist', 'generalist')),
+  -- Layer 2 (migration 69): new canonical value is 'da-vinci'. Legacy
+  -- 'generalist' accepted so historical migrations (2, 31, …) replay cleanly
+  -- on fresh installs; migration 69 rewrites any surviving 'generalist' rows.
+  role TEXT NOT NULL CHECK (role IN ('user', 'specialist', 'da-vinci', 'generalist')),
   agent_id TEXT,
   content_md TEXT NOT NULL,
   attachments_json TEXT DEFAULT '[]',
@@ -88,8 +91,6 @@ CREATE TABLE IF NOT EXISTS specialists (
   build_status TEXT NOT NULL DEFAULT 'ready' CHECK (build_status IN ('pending', 'building', 'ready', 'failed')),
   stack_fingerprint TEXT,
   detected_techs TEXT DEFAULT '[]' CHECK (json_valid(detected_techs)),
-  mcp_config TEXT DEFAULT '{}' CHECK (json_valid(mcp_config)),
-  mcp_overrides TEXT DEFAULT '{}' CHECK (json_valid(mcp_overrides)),
   last_built_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -123,26 +124,17 @@ CREATE TABLE IF NOT EXISTS specialist_skills (
   PRIMARY KEY (specialist_id, skill_id)
 );
 
--- Conversation specialist activation: per-conversation active specialist set with skill gating
+-- Conversation specialist activation: one row per conversation pointing to
+-- the workspace's Project Specialist. Nearly vestigial today (single row per
+-- conv); kept for UI history + skill-enablement semantics.
 CREATE TABLE IF NOT EXISTS conversation_specialists (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
   is_active INTEGER NOT NULL DEFAULT 1,
-  skills_enabled INTEGER NOT NULL DEFAULT 1,
-  skill_overrides TEXT DEFAULT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(conversation_id, specialist_id)
-);
-
--- Conversation specialist history: activation/deactivation timeline
-CREATE TABLE IF NOT EXISTS specialist_conversation_history (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
-  action TEXT NOT NULL CHECK (action IN ('activated', 'deactivated')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- File changes tracked per conversation (for selective git commit)
@@ -154,24 +146,6 @@ CREATE TABLE IF NOT EXISTS conversation_file_changes (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(conversation_id, file_path)
 );
-
--- Git worktrees for agent isolation during parallel execution
-CREATE TABLE IF NOT EXISTS agent_worktrees (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  agent_id TEXT NOT NULL,
-  task_id TEXT NOT NULL,
-  worktree_path TEXT NOT NULL,
-  branch_name TEXT NOT NULL,
-  base_branch TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  merged_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
 
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
@@ -254,7 +228,8 @@ CREATE TABLE IF NOT EXISTS user_profile (
 
 -- Core agent aliases: personality overrides for generalist & coordinator
 CREATE TABLE IF NOT EXISTS core_agent_aliases (
-  agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('generalist', 'coordinator')),
+  -- Both values accepted — see note on messages.role above.
+  agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('da-vinci', 'generalist')),
   alias TEXT DEFAULT NULL,
   avatar_key TEXT DEFAULT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -263,7 +238,7 @@ CREATE TABLE IF NOT EXISTS core_agent_aliases (
 -- Core agent prompts: editable system prompts for generalist
 CREATE TABLE IF NOT EXISTS core_agent_prompts (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  agent_role TEXT NOT NULL CHECK (agent_role IN ('generalist')),
+  agent_role TEXT NOT NULL CHECK (agent_role IN ('da-vinci', 'generalist')),
   mode TEXT NOT NULL CHECK (mode IN ('plan', 'build')),
   prompt_text TEXT NOT NULL,
   default_prompt_text TEXT NOT NULL,
@@ -308,21 +283,6 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation ON checkpoints(conversation_id);
-
--- Gate results: quality gate pass/fail records from specialist output
-CREATE TABLE IF NOT EXISTS gate_results (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  session_id TEXT,
-  conversation_id TEXT,
-  task_id TEXT,
-  agent_id TEXT,
-  gate_type TEXT NOT NULL CHECK (gate_type IN ('test', 'lint', 'typecheck', 'build')),
-  passed INTEGER NOT NULL DEFAULT 0,
-  summary TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_gate_results_conversation ON gate_results(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_gate_results_task ON gate_results(task_id);
 
 -- App-level key-value preferences
 CREATE TABLE IF NOT EXISTS app_preferences (
@@ -465,24 +425,6 @@ CREATE TABLE IF NOT EXISTS indexing_state (
 
 -- ── Inter-Agent Communication ──────────────────────────────────────────────
 
--- Persistent inter-agent message log for crash recovery and audit
-CREATE TABLE IF NOT EXISTS agent_messages (
-  id TEXT PRIMARY KEY,
-  conversation_id TEXT,
-  run_id TEXT,
-  from_agent TEXT NOT NULL,
-  to_agent TEXT,
-  type TEXT NOT NULL CHECK (type IN ('context', 'finding', 'dependency', 'feedback', 'status', 'artifact', 'custom')),
-  content TEXT NOT NULL,
-  task_id TEXT,
-  metadata_json TEXT DEFAULT '{}',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_agent_messages_conversation ON agent_messages(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_agent_messages_run ON agent_messages(run_id);
-CREATE INDEX IF NOT EXISTS idx_agent_messages_task ON agent_messages(task_id);
-CREATE INDEX IF NOT EXISTS idx_agent_messages_from ON agent_messages(from_agent);
-
 -- ── Per-Turn Token Usage ──────────────────────────────────────────────────
 
 -- Fine-grained token usage per turn for cost debugging and cache rate trends
@@ -501,17 +443,4 @@ CREATE TABLE IF NOT EXISTS turn_usage (
 CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
 CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id);
 
--- Agent context: per-conversation persistent memory for long-running agent context (Anthropic pattern)
-CREATE TABLE IF NOT EXISTS agent_context (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  conversation_id TEXT NOT NULL,
-  agent_id TEXT NOT NULL,
-  task_id TEXT,
-  context_type TEXT NOT NULL CHECK (context_type IN ('finding', 'decision', 'artifact', 'summary')),
-  content TEXT NOT NULL,
-  token_estimate INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_agent_context_conversation ON agent_context(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_agent_context_agent ON agent_context(conversation_id, agent_id);
-CREATE INDEX IF NOT EXISTS idx_agent_context_type ON agent_context(conversation_id, context_type);
+
