@@ -30,8 +30,6 @@ export function registerConversationSpecialistIpc(): void {
         conversationId: string
         specialistId: string
         isActive?: boolean
-        skillsEnabled?: boolean
-        skillOverrides?: string[] | null
       }
     ) => {
       validateSender(event)
@@ -48,9 +46,7 @@ export function registerConversationSpecialistIpc(): void {
       }
 
       conversationSpecialistRepository.upsert(args.conversationId, args.specialistId, {
-        isActive: args.isActive,
-        skillsEnabled: args.skillsEnabled,
-        skillOverrides: args.skillOverrides
+        isActive: args.isActive
       })
     }
   )
@@ -106,18 +102,16 @@ export function registerConversationSpecialistIpc(): void {
         throw new Error('Invalid conversation ID')
       }
 
-      // Get active specialists with skills enabled for this conversation
+      // Get active specialists for this conversation
       const overrides = conversationSpecialistRepository.findByConversation(args.conversationId)
-      const activeWithSkills = overrides.filter((o) => o.isActive && o.skillsEnabled)
+      const activeWithSkills = overrides.filter((o) => o.isActive)
 
       // Calculate real token estimates from actual skill file content
       const { specialistRepository } = await import('../db/repositories')
       const estimates = activeWithSkills.map((override) => {
         const specialist = specialistRepository.findById(override.specialistId)
         const skills = specialist ? specialistRepository.getSkills(override.specialistId) : []
-        const activeSkills = override.skillOverrides
-          ? skills.filter((s) => override.skillOverrides!.includes(s.id))
-          : skills
+        const activeSkills = skills
 
         // Estimate tokens from specialist prompt (~3.5 chars per token)
         const promptTokens = specialist?.prompt ? Math.ceil(specialist.prompt.length / 3.5) : 0

@@ -85,11 +85,19 @@ interface ExecuteStreamOptions {
 export class AgentSessionService extends AgentBaseService {
   protected readonly log = chatAgentLogger
 
-  // Compaction defaults scaled for 1M context window (context-1m-2025-08-07)
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 350_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 500_000
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 200_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 350_000
+  // Compaction defaults — match Claude Code's published behavior:
+  //   suggest at ~80% (early warning), auto at ~95% (with ~13K reserve for the
+  //   autocompact buffer). Anthropic's docs: cache + creation + read all count
+  //   toward the context window, so these thresholds operate on the full
+  //   context-pressure metric, not the cheap cache-discounted billing metric.
+  // Scaled for the 1M context window (context-1m-2025-08-07).
+  // TODO: reserve a literal 13K autocompact buffer once the SDK exposes
+  //   autoCompactThreshold reliably — for now the 950K cap leaves ~50K headroom.
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 800_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 950_000
+  // Economy preference uses a smaller effective window (200K-class models).
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 160_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 190_000
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
 
   private workspacePath: string | null = null
@@ -677,7 +685,7 @@ export class AgentSessionService extends AgentBaseService {
       agentId: this.adapter.agentId,
       thinking: { type: 'adaptive' },
       thinkingDisplay: 'summarized',
-      effort: resolvedModel.includes('opus') ? 'max' : 'high',
+      effort: resolvedModel.includes('opus') ? 'xhigh' : 'high',
       maxBudgetUsd: CHAT_AGENT_BUDGET_CAP,
       promptSuggestions: true,
       includeHookEvents: true,
@@ -843,10 +851,26 @@ export class AgentSessionService extends AgentBaseService {
     })
     this.tokenUsage += totalTokens
 
-    let sdkContextData: { totalTokens?: number } | undefined
+    let sdkContextData:
+      | {
+          totalTokens?: number
+          categories?: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
+          mcpTools?: {
+            name: string
+            serverName: string
+            tokens: number
+            isLoaded?: boolean
+          }[]
+          systemTools?: { name: string; tokens: number }[]
+          deferredBuiltinTools?: { name: string; tokens: number; isLoaded: boolean }[]
+          memoryFiles?: { path: string; type: string; tokens: number }[]
+          autoCompactThreshold?: number
+          isAutoCompactEnabled?: boolean
+        }
+      | undefined
     try {
       const sdkUsage = await this.sdkExecutor.getActiveQuery()?.getContextUsage()
-      sdkContextData = sdkUsage as { totalTokens?: number } | undefined
+      sdkContextData = sdkUsage as typeof sdkContextData
     } catch {
       /* SDK not available — fallback */
     }
@@ -860,7 +884,49 @@ export class AgentSessionService extends AgentBaseService {
       meta.tokenUsage.input +
         meta.tokenUsage.cacheReadInputTokens +
         meta.tokenUsage.cacheCreationInputTokens
-    this.checkCompaction(totalContextTokens)
+
+    // Build the Claude Code-style breakdown for the compact-context modal.
+    // Only forward the fields the modal actually renders — keeps the IPC
+    // payload small and avoids leaking SDK shape changes through the protocol.
+    const breakdown = sdkContextData
+      ? ({
+          categories: sdkContextData.categories,
+          mcpTools: sdkContextData.mcpTools,
+          systemTools: sdkContextData.systemTools,
+          deferredBuiltinTools: sdkContextData.deferredBuiltinTools,
+          memoryFiles: sdkContextData.memoryFiles,
+          autoCompactThreshold: sdkContextData.autoCompactThreshold,
+          isAutoCompactEnabled: sdkContextData.isAutoCompactEnabled
+        } as const)
+      : undefined
+
+    // One-shot diagnostic logging — surfaces what's eating the context window
+    // so we can tell whether the bloat is messages, MCP tool definitions, or
+    // skills/CLAUDE.md. Logged once per turn (not committed forever — remove
+    // after we have a sense of typical breakdowns in production).
+    if (breakdown) {
+      try {
+        const fmt = (n?: number): string =>
+          n === undefined ? '?' : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n)
+        const cats = (breakdown.categories ?? [])
+          .map((c) => `${c.name}=${fmt(c.tokens)}${c.isDeferred ? '(deferred)' : ''}`)
+          .join(' | ')
+        const topMcp = (breakdown.mcpTools ?? [])
+          .slice()
+          .sort((a, b) => b.tokens - a.tokens)
+          .slice(0, 5)
+          .map((t) => `${t.serverName}.${t.name}(${fmt(t.tokens)})`)
+          .join(', ')
+        this.log.info(
+          `[PIPELINE:context-breakdown] total=${fmt(totalContextTokens)} | ${cats}` +
+            (topMcp ? ` | top-mcp: ${topMcp}` : '')
+        )
+      } catch {
+        /* diagnostic logging is best-effort */
+      }
+    }
+
+    this.checkCompaction(totalContextTokens, breakdown)
 
     if (this.dbSessionId && conversationId && sdkContextData?.totalTokens) {
       try {
@@ -1151,7 +1217,10 @@ export class AgentSessionService extends AgentBaseService {
     }
   }
 
-  private checkCompaction(inputTokens: number): void {
+  private checkCompaction(
+    inputTokens: number,
+    breakdown?: import('../../shared/types').ContextUsageBreakdown
+  ): void {
     const autoThreshold = this.compactAutoThreshold
     const suggestThreshold = this.compactSuggestThreshold
     const warningThreshold = Math.floor(suggestThreshold * 0.8)
@@ -1160,11 +1229,11 @@ export class AgentSessionService extends AgentBaseService {
       this.log.warn(
         `Context very large (${inputTokens} input tokens) — prompting user to compact`
       )
-      this.emit('compactNeeded', { level: 'critical', inputTokens })
+      this.emit('compactNeeded', { level: 'critical', inputTokens, breakdown })
     } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
       this.compactSuggested = true
       this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
-      this.emit('compactNeeded', { level: 'suggest', inputTokens })
+      this.emit('compactNeeded', { level: 'suggest', inputTokens, breakdown })
     } else if (inputTokens >= warningThreshold && !this.compactSuggested) {
       this.log.info(
         `[PIPELINE:compact-warning] Context approaching threshold (${inputTokens}/${suggestThreshold} tokens)`
@@ -1172,7 +1241,8 @@ export class AgentSessionService extends AgentBaseService {
       this.emit('compactNeeded', {
         level: 'warning',
         inputTokens,
-        estimatedNextCost: Math.round(inputTokens * 0.05)
+        estimatedNextCost: Math.round(inputTokens * 0.05),
+        breakdown
       })
     }
   }

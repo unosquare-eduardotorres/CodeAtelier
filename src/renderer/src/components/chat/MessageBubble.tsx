@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
-import { Paperclip, Flame, Lightbulb, FileText } from 'lucide-react'
+import { Paperclip, Flame, Lightbulb, FileText, Loader2 } from 'lucide-react'
 import {
   remarkEmojiSpan,
   remarkHighlightQuestions,
@@ -186,7 +186,12 @@ const markdownComponents = {
 
 /**
  * Resolves the display identity (name, subtitle, avatar, color) for a message.
- * Single source of truth: specialist store for ALL roles (user, generalist, coordinator, specialists).
+ *
+ * Visual identity is driven exclusively by the message's own role + agentId — NOT
+ * by `activeConversation.personaSpecialistId`. Persona is a backend prompt-overlay
+ * concept (see DaVinciRoleAdapter.setPersona): it shapes how DaVinci writes, but
+ * the bubble still belongs to DaVinci. A real specialist response carries
+ * role='specialist' and renders the specialist's identity.
  */
 function useMessageIdentity(message: Message): {
   displayName: string
@@ -199,14 +204,11 @@ function useMessageIdentity(message: Message): {
   const workspaces = useWorkspaceStore((s) => s.workspaces)
 
   return useMemo(() => {
-    // Resolve mannequin for the active conversation's workspace (used by
-    // specialists and by the persona override below).
     const workspaceId = activeConversation?.workspaceId
     const mannequinKey = workspaceId
       ? getWorkspaceMannequin(workspaceId, workspaces)
       : 'mannequin-main'
 
-    // For user messages — find the 'user' specialist
     if (message.role === 'user') {
       const userSpec = specialists.find((s) => s.agentId === 'user')
       return {
@@ -217,63 +219,39 @@ function useMessageIdentity(message: Message): {
       }
     }
 
-    // For core agents — Da Vinci is the single default identity.
-    const coreRole = message.role === 'da-vinci' ? 'da-vinci' : null
+    if (message.role === 'da-vinci') {
+      // DaVinci is always DaVinci — persona is a backend prompt overlay, not a visual swap.
+      const coreSpec = specialists.find((s) => s.agentId === 'da-vinci')
+      const defaults = CORE_AGENT_DEFAULTS['da-vinci']
+      return {
+        displayName: coreSpec?.alias ?? coreSpec?.displayName ?? defaults.displayName,
+        subtitle: coreSpec?.alias ? (coreSpec.displayName ?? defaults.displayName) : null,
+        avatarKey: defaults.avatarKey,
+        accentColor: coreSpec?.color ?? defaults.color
+      }
+    }
 
-    if (coreRole) {
-      // Persona override — when conversation has a persona, generalist messages
-      // show that persona's identity (full visual swap). Personas are
-      // specialist-backed, so they inherit the workspace mannequin.
-      const personaId = activeConversation?.personaSpecialistId
-      if (personaId) {
-        const persona = specialists.find((s) => s.id === personaId)
-        if (persona && persona.agentId !== 'user') {
-          return {
-            displayName: persona.alias ?? persona.displayName,
-            subtitle: persona.alias ? persona.displayName : null,
-            avatarKey: mannequinKey,
-            accentColor: persona.color ?? '#F59E0B'
-          }
+    // role === 'specialist' — resolve by agentId
+    if (message.agentId) {
+      const specialist = specialists.find((s) => s.agentId === message.agentId)
+      if (specialist) {
+        return {
+          displayName: specialist.alias ?? specialist.displayName,
+          subtitle: specialist.alias ? specialist.displayName : null,
+          avatarKey: mannequinKey,
+          accentColor: specialist.color ?? '#F59E0B'
         }
       }
-
-      // Default Da Vinci identity
-      const coreSpec = specialists.find((s) => s.agentId === coreRole)
-      const defaults = CORE_AGENT_DEFAULTS[coreRole]
-      return {
-        displayName: coreSpec?.alias ?? coreSpec?.displayName ?? defaults?.displayName ?? coreRole,
-        subtitle: coreSpec?.alias ? (coreSpec?.displayName ?? defaults?.displayName ?? null) : null,
-        avatarKey: defaults?.avatarKey ?? 'da-vinci',
-        accentColor: coreSpec?.color ?? defaults?.color ?? '#6366F1'
-      }
     }
 
-    // For specialist messages — find by agentId
-    const specialist = specialists.find((s) => s.agentId === message.agentId)
-    if (specialist) {
-      return {
-        displayName: specialist.alias ?? specialist.displayName,
-        subtitle: specialist.alias ? specialist.displayName : null,
-        avatarKey: mannequinKey,
-        accentColor: specialist.color ?? '#F59E0B'
-      }
-    }
-
-    // Fallback for unknown agent — still show the workspace mannequin
+    // Unknown specialist — still show the workspace mannequin
     return {
       displayName: message.agentId ?? message.role,
       subtitle: null,
       avatarKey: mannequinKey,
       accentColor: '#6366F1'
     }
-  }, [
-    message.role,
-    message.agentId,
-    specialists,
-    activeConversation?.personaSpecialistId,
-    activeConversation?.workspaceId,
-    workspaces
-  ])
+  }, [message.role, message.agentId, specialists, activeConversation?.workspaceId, workspaces])
 }
 
 /** Renders a single image attachment inside a message bubble using data URIs */
@@ -536,9 +514,15 @@ function MessageBubbleInner({
         )}
 
         <div className="flex items-center gap-2 mt-1 px-1 group">
-          <span className="text-xs text-text-secondary">
+          <span className="text-xs text-text-secondary inline-flex items-center gap-1">
             {formatTime(message.createdAt)}
-            {isStreaming && ' · Streaming...'}
+            {isStreaming && (
+              <>
+                <span aria-hidden="true">·</span>
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                <span>Streaming…</span>
+              </>
+            )}
           </span>
           {!isUser && !isStreaming && (
             <button

@@ -6,8 +6,6 @@ interface ConversationSpecialistRow {
   conversation_id: string
   specialist_id: string
   is_active: number
-  skills_enabled: number
-  skill_overrides: string | null
   created_at: string
   updated_at: string
 }
@@ -18,8 +16,6 @@ function mapRow(row: ConversationSpecialistRow): ConversationSpecialist {
     conversationId: row.conversation_id,
     specialistId: row.specialist_id,
     isActive: row.is_active === 1,
-    skillsEnabled: row.skills_enabled === 1,
-    skillOverrides: row.skill_overrides ? JSON.parse(row.skill_overrides) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -62,8 +58,6 @@ export class ConversationSpecialistRepository {
     specialistId: string,
     data: {
       isActive?: boolean
-      skillsEnabled?: boolean
-      skillOverrides?: string[] | null
     }
   ): void {
     const db = getDatabase()
@@ -77,14 +71,6 @@ export class ConversationSpecialistRepository {
         updates.push('is_active = ?')
         params.push(data.isActive ? 1 : 0)
       }
-      if (data.skillsEnabled !== undefined) {
-        updates.push('skills_enabled = ?')
-        params.push(data.skillsEnabled ? 1 : 0)
-      }
-      if (data.skillOverrides !== undefined) {
-        updates.push('skill_overrides = ?')
-        params.push(data.skillOverrides ? JSON.stringify(data.skillOverrides) : null)
-      }
 
       if (updates.length > 0) {
         updates.push("updated_at = datetime('now')")
@@ -96,15 +82,13 @@ export class ConversationSpecialistRepository {
     } else {
       db.prepare(
         `
-        INSERT INTO conversation_specialists (conversation_id, specialist_id, is_active, skills_enabled, skill_overrides)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO conversation_specialists (conversation_id, specialist_id, is_active)
+        VALUES (?, ?, ?)
       `
       ).run(
         conversationId,
         specialistId,
-        data.isActive !== undefined ? (data.isActive ? 1 : 0) : 1,
-        data.skillsEnabled !== undefined ? (data.skillsEnabled ? 1 : 0) : 1,
-        data.skillOverrides ? JSON.stringify(data.skillOverrides) : null
+        data.isActive !== undefined ? (data.isActive ? 1 : 0) : 1
       )
     }
   }
@@ -128,8 +112,8 @@ export class ConversationSpecialistRepository {
     const db = getDatabase()
     db.prepare(
       `
-      INSERT OR IGNORE INTO conversation_specialists (conversation_id, specialist_id, is_active, skills_enabled)
-      SELECT ?, id, 1, 1 FROM specialists WHERE is_active = 1 AND is_core = 0
+      INSERT OR IGNORE INTO conversation_specialists (conversation_id, specialist_id, is_active)
+      SELECT ?, id, 1 FROM specialists WHERE is_active = 1 AND is_core = 0
     `
     ).run(conversationId)
   }

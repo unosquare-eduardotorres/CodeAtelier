@@ -15,3 +15,6 @@ chroma/
 
 # Agent Studio worktrees
 .agent-studio/
+
+# Coverage reports (c8)
+coverage/

@@ -316,7 +316,14 @@ export default function MessageInput({
       if (cmd === '/compact') {
         setText('')
         onClearAttachments()
-        await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined)
+        const extractNuance = trimmed.toLowerCase().includes('--nuance')
+        try {
+          await window.api.compactConversation({ extractNuance })
+        } catch (err) {
+          appendLocalMessage(
+            `**Compact failed:** ${err instanceof Error ? err.message : String(err)}`
+          )
+        }
         return
       }
 

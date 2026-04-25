@@ -58,18 +58,22 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
 
   /**
-   * "Build this" button — switches to Build mode and sends the plan to the
-   * Project Specialist as a regular chat message. There is no multi-specialist
-   * pipeline to orchestrate; the workspace's Project Specialist executes the
-   * plan as a standard build-mode turn.
+   * "Build this plan" button — switches to Build mode and asks the active
+   * agent (DaVinci or the workspace Project Specialist) to execute the plan.
+   *
+   * The plan is NOT re-sent in the user prompt: it already lives in the
+   * preceding assistant turn as a ```plan``` block (stored in messages.contentMd
+   * and replayed on every turn), so the model has full context.
+   *
+   * The `_plan` and `_planContent` args are still received from the plan card
+   * for parity with the other plan-action handlers, but are intentionally unused
+   * — kept on the signature so the MessageBubbleActions contract is unchanged.
    */
   const handleBuildFromPlan = useCallback(
-    async (_plan: StructuredPlan, planContent: string): Promise<void> => {
+    async (_plan: StructuredPlan, _planContent: string): Promise<void> => {
       if (!activeConversationId) return
       await updateMode('build')
-      await sendMessage(
-        `Please execute the following plan, step by step, with file edits and tests:\n\n${planContent}`
-      )
+      await sendMessage('Build the plan.')
     },
     [activeConversationId, updateMode, sendMessage]
   )
@@ -366,13 +370,32 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           categories={
             activeConversationId ? contextUsages[activeConversationId]?.categories : undefined
           }
-          onExtractNuance={() => {
+          breakdown={
+            // Prefer the breakdown attached to the live compactNeeded event
+            // (always fresh). Fall back to the cached contextUsages snapshot
+            // when the modal is opened manually (no live event).
+            compactSuggestion?.breakdown ??
+            (activeConversationId ? contextUsages[activeConversationId]?.breakdown : undefined)
+          }
+          onExtractNuance={async () => {
             setCompactSuggestion(null)
-            sendMessage('/compact --nuance')
+            try {
+              await window.api.compactConversation({ extractNuance: true })
+            } catch (err) {
+              appendLocalMessage(
+                `**Compact failed:** ${err instanceof Error ? err.message : String(err)}`
+              )
+            }
           }}
-          onQuickCompact={() => {
+          onQuickCompact={async () => {
             setCompactSuggestion(null)
-            sendMessage('/compact')
+            try {
+              await window.api.compactConversation({ extractNuance: false })
+            } catch (err) {
+              appendLocalMessage(
+                `**Compact failed:** ${err instanceof Error ? err.message : String(err)}`
+              )
+            }
           }}
           onCancel={() => setCompactSuggestion(null)}
         />

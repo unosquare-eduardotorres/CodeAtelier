@@ -521,8 +521,8 @@ export const THINKING_BUDGETS = {
 export const COMPLEXITY_TO_EFFORT = {
   simple: 'low',
   moderate: 'medium',
-  complex: 'max' // Opus 4.7 recommends max effort for complex coding tasks
-} as const satisfies Record<string, 'low' | 'medium' | 'high' | 'max'>
+  complex: 'xhigh' // Opus 4.7 recommends xhigh effort for complex coding tasks (SDK 0.2.120+)
+} as const satisfies Record<string, 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
 
 /**
  * Default USD budget caps per specialist execution.

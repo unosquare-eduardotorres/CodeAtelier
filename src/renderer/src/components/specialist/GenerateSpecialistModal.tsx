@@ -40,12 +40,16 @@ export default function GenerateSpecialistModal({
   const clearError = useProjectSpecialistStore((s) => s.clearError)
 
   const view: ViewState = useMemo(() => {
-    if (!specialist) return 'idle'
-    if (specialist.buildStatus === 'building') return 'building'
-    if (specialist.buildStatus === 'ready') return 'ready'
-    if (specialist.buildStatus === 'failed') return 'failed'
-    return 'idle' // pending
-  }, [specialist])
+    // Live progress event takes priority — the cached row is only
+    // refreshed after the IPC resolves, which can be 30-60s after click.
+    if (progress?.phase === 'failed') return 'failed'
+    if (progress?.phase === 'ready') return 'ready'
+    if (progress?.phase === 'started' || progress?.phase === 'building') return 'building'
+    if (specialist?.buildStatus === 'building') return 'building'
+    if (specialist?.buildStatus === 'ready') return 'ready'
+    if (specialist?.buildStatus === 'failed') return 'failed'
+    return 'idle' // pending / no specialist row yet
+  }, [specialist, progress])
 
   // Auto-close 1.5s after success
   useEffect(() => {

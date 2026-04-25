@@ -21,6 +21,13 @@ export interface StreamState {
   resultText?: string
   terminalReason?: TerminalReason
   sessionTitle?: string
+  /**
+   * Total length (chars) of text already streamed to the renderer via
+   * text_delta events. Used to compute the "missed delta" when the SDK's
+   * final result text exceeds what was actually streamed (interrupted /
+   * partial streams).
+   */
+  streamedTextLength: number
 }
 
 /**
@@ -93,11 +100,17 @@ export function* normalizeMessage(
       const delta = streamEvent.delta as Record<string, unknown> | undefined
       if (delta?.type === 'text_delta' && delta.text) {
         tools.hasPriorContent = true
-        yield { type: 'text', content: delta.text as string }
+        tools.hasPriorText = true
+        const text = delta.text as string
+        state.streamedTextLength += text.length
+        yield { type: 'text', content: text }
       }
       if (delta?.type === 'json_delta' && delta.json) {
         tools.hasPriorContent = true
-        yield { type: 'text', content: delta.json as string }
+        tools.hasPriorText = true
+        const text = delta.json as string
+        state.streamedTextLength += text.length
+        yield { type: 'text', content: text }
       }
     }
 
@@ -105,9 +118,12 @@ export function* normalizeMessage(
     if (streamEvent.type === 'content_block_start') {
       const cb = streamEvent.content_block as Record<string, unknown> | undefined
 
-      // Detect thinking→text transition within the same turn
-      if (cb?.type === 'text' && tools.lastBlockType === 'thinking' && tools.hasPriorContent) {
+      // Detect thinking→text transition within the same turn.
+      // Only split when there was already visible text — tool-only prior
+      // iterations should stay attached to the same bubble.
+      if (cb?.type === 'text' && tools.lastBlockType === 'thinking' && tools.hasPriorText) {
         yield { type: 'turn_boundary' as const, content: `thinking-split-${Date.now()}` }
+        tools.hasPriorText = false
       }
 
       // Track block type transitions
@@ -135,10 +151,17 @@ export function* normalizeMessage(
       }
     }
 
-    // Token usage from message_start + turn boundary detection
+    // Token usage from message_start + turn boundary detection.
+    //
+    // Only split into a new bubble when the prior turn had visible *text*.
+    // Tool-only iterations (Claude's internal "call tool → read result → call
+    // next tool" loop) should stay attached to the same bubble — otherwise
+    // every tool call produces a separate (mostly empty) Da Vinci bubble.
     if (streamEvent.type === 'message_start') {
-      if (tools.hasPriorContent) {
+      if (tools.hasPriorText) {
         yield { type: 'turn_boundary' as const, content: `turn-${Date.now()}` }
+        // Next turn starts clean — only further text_deltas re-arm the flag.
+        tools.hasPriorText = false
       }
       const startMsg = streamEvent.message as Record<string, unknown> | undefined
       tokens.accumulateFromMessageStart(startMsg?.usage as Record<string, number> | undefined)
@@ -228,7 +251,27 @@ export function* normalizeMessage(
 
     if (state.resultText && !tools.hasPriorContent) {
       yield { type: 'text', content: state.resultText }
+      state.streamedTextLength += state.resultText.length
+    } else if (
+      state.resultText &&
+      tools.hasPriorContent &&
+      state.resultText.length > state.streamedTextLength
+    ) {
+      // Streaming was partial — text_deltas didn't cover the entire final
+      // result text (can happen when the model emits a final text block after
+      // tool use without per-delta events, or when the stream was
+      // interrupted). Emit only the missing tail to avoid blank bubbles.
+      const missingTail = state.resultText.slice(state.streamedTextLength)
+      sdkLog.warn(
+        `[PIPELINE:turn-text-recovery] Recovered ${missingTail.length} chars of missed result text (resultLen=${state.resultText.length} streamedLen=${state.streamedTextLength})`
+      )
+      yield { type: 'text', content: missingTail }
+      state.streamedTextLength = state.resultText.length
     }
+
+    sdkLog.info(
+      `[PIPELINE:turn-text] streamedLen=${state.streamedTextLength} resultLen=${state.resultText?.length ?? 0} hasPriorContent=${tools.hasPriorContent}`
+    )
 
     // SDK result has authoritative usage
     tokens.setFromResult(msg.usage as Record<string, number> | undefined)

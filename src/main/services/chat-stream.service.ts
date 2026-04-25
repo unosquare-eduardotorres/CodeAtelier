@@ -5,6 +5,7 @@ import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   ConversationMode,
+  ConversationPhase,
   ElicitationEvent,
   AgentIntent,
   GrillQuestion,
@@ -136,7 +137,11 @@ export class ChatStreamService {
   /**
    * Full generalist streaming lifecycle.
    */
-  async stream(conversationId: string, text: string, attachments?: string[]): Promise<StreamHandle> {
+  async stream(
+    conversationId: string,
+    text: string,
+    attachments?: string[]
+  ): Promise<StreamHandle> {
     // Prevent concurrent streams — reject if already streaming
     if (this.streamingLock || !conversationStateMachine.isIdle()) {
       log.warn('[STREAM:concurrent-rejected] Already streaming or state machine not idle')
@@ -146,6 +151,27 @@ export class ChatStreamService {
     }
     this.streamingLock = true
     conversationStateMachine.transition('sendMessage', conversationId)
+
+    // Snapshot the active adapter's identity for this turn — adapter cannot change
+    // mid-stream because switchPersona / swap require lifecycle stop.
+    const messageRole = chatAgentService.getActiveMessageRole()
+    const adapterAgentId = chatAgentService.getActiveAgentId()
+
+    // Persona overlay (Da Vinci impersonating a Specialist) — when active, the
+    // adapter is still Da Vinci (so the DB role tag stays 'da-vinci' and the
+    // saved bubble's identity is resolved via personaSpecialistId), but the
+    // streaming chunks should present as the specialist so the thinking
+    // indicator + streaming bubble avatar stays consistent with the eventual
+    // saved bubble (no visible swap on each turn).
+    const persona = chatAgentService.getActivePersona()
+    const streamingRole: 'da-vinci' | 'specialist' = persona ? 'specialist' : messageRole
+    const phase: ConversationPhase =
+      streamingRole === 'specialist' ? 'specialist-executing' : 'da-vinci-responding'
+    const specialistMeta = persona
+      ? { specialist: persona.agentId, taskId: '' }
+      : messageRole === 'specialist'
+        ? { specialist: adapterAgentId }
+        : undefined
 
     // Reset stop flag for new message cycle
     this.isStopped = false
@@ -231,12 +257,12 @@ export class ChatStreamService {
         forwardChunkToRenderer(
           this.mainWindow,
           conversationId,
-          'da-vinci',
+          streamingRole,
           chunk,
           streamedContent,
           workspacePath,
-          undefined,
-          'da-vinci-responding',
+          specialistMeta,
+          phase,
           requestId
         )
       } catch (error) {
@@ -260,14 +286,27 @@ export class ChatStreamService {
           const cleanedContent = streamedContent.value.trim()
 
           if (!cleanedContent) {
-            log.warn('Agent completed with no content — possible silent failure')
+            // Diagnostic logging — surface enough context to triage the
+            // "blank bubble" failure mode without lying to the user via a
+            // misleading "_No response received_" placeholder.
+            const accumulatedText = chatAgentService.getStreamedContent()
+            log.warn(
+              `[PIPELINE:silent-failure] Agent completed with no streamed content. ` +
+                `streamedLen=${streamedContent.value.length} ` +
+                `accumulatedLen=${accumulatedText?.length ?? 0} ` +
+                `accumulatedPreview=${(accumulatedText ?? '').slice(0, 200).replace(/\n/g, ' ')}`
+            )
           }
 
+          // Save an empty bubble when there's truly no response — the UI's
+          // tool-activity panel still shows what work was done. We avoid the
+          // "_No response received_" placeholder because it overwrites the
+          // tool-activity history that *was* successfully streamed.
           const savedMessage = messageRepository.create(
             conversationId,
-            'da-vinci',
-            cleanedContent ||
-              '_No response received. The agent may have encountered an issue while processing. Try sending your message again._'
+            messageRole,
+            cleanedContent,
+            adapterAgentId
           )
           log.info('Agent message saved, id:', savedMessage.id)
 
@@ -280,7 +319,7 @@ export class ChatStreamService {
               const memoriesCreated = memoryService.processMemoryBlocks(
                 streamedContent.value,
                 conversationId,
-                'da-vinci',
+                adapterAgentId,
                 workspace.id
               )
               if (memoriesCreated > 0) {
@@ -310,7 +349,7 @@ export class ChatStreamService {
               conversationId,
               requestId,
               text: `\n\n**Error saving response:** ${(error as Error).message}`,
-              role: 'da-vinci'
+              role: streamingRole
             })
           )
           this.mainWindow.webContents.send(
@@ -355,7 +394,7 @@ export class ChatStreamService {
           conversationId,
           requestId,
           text: planBlock,
-          role: 'da-vinci'
+          role: streamingRole
         })
       )
       log.info(
@@ -395,13 +434,18 @@ export class ChatStreamService {
 
       eventLoggerService.logSessionFailed({
         conversationId,
-        agentId: 'da-vinci',
+        agentId: adapterAgentId,
         error: (error as Error).message
       })
 
       log.error('Generalist send failed:', (error as Error).message)
       const errorMsg = `**Generalist Error:** ${(error as Error).message}\n\nMake sure Claude CLI is installed and a workspace is open.`
-      const savedMessage = messageRepository.create(conversationId, 'da-vinci', errorMsg)
+      const savedMessage = messageRepository.create(
+        conversationId,
+        messageRole,
+        errorMsg,
+        adapterAgentId
+      )
 
       this.mainWindow.webContents.send(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
@@ -409,7 +453,7 @@ export class ChatStreamService {
           conversationId,
           requestId,
           text: errorMsg,
-          role: 'da-vinci'
+          role: streamingRole
         })
       )
       this.mainWindow.webContents.send(
@@ -448,7 +492,16 @@ export class ChatStreamService {
           ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
           : '⏹ *Generation stopped by user.*'
 
-        const savedMessage = messageRepository.create(conversationId, 'da-vinci', contentToSave)
+        // Snapshot the active adapter for the stop path — runs from a different
+        // IPC entry point and has no per-turn snapshot in scope.
+        const stopRole = chatAgentService.getActiveMessageRole()
+        const stopAgentId = chatAgentService.getActiveAgentId()
+        const savedMessage = messageRepository.create(
+          conversationId,
+          stopRole,
+          contentToSave,
+          stopAgentId
+        )
         log.info('Stopped message saved to DB, id:', savedMessage.id)
 
         this.mainWindow.webContents.send(

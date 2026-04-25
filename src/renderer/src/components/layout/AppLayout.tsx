@@ -475,7 +475,9 @@ export default function AppLayout(): React.JSX.Element {
             </div>
           )}
 
-          {/* Context + tokens merged */}
+          {/* Context + tokens — context is the live window % (incl. cache),
+              billed is the cheap input+output count for cost. They measure
+              different things and shouldn't be conflated. */}
           <span className="flex items-center gap-1.5 text-text-muted">
             {contextUsage && contextUsage.percentage > 0 && (
               <span
@@ -486,12 +488,18 @@ export default function AppLayout(): React.JSX.Element {
                       ? 'text-warning'
                       : 'text-text-secondary'
                 }
+                title="Live context window usage — % of model's window in use (incl. cache). Cache reduces cost, not context size."
               >
-                {contextUsage.percentage}%
+                {contextUsage.percentage}% context
               </span>
             )}
-            <Zap size={11} />
-            {sessionTokens > 0 ? `${(sessionTokens / 1000).toFixed(1)}k` : '0'} tokens
+            <span
+              className="flex items-center gap-1"
+              title="Tokens you'll be billed for this session — input + output (cache discounts applied). Different from context usage."
+            >
+              <Zap size={11} />
+              {sessionTokens > 0 ? `${(sessionTokens / 1000).toFixed(1)}k` : '0'} billed
+            </span>
           </span>
 
           {/* Zoom controls */}

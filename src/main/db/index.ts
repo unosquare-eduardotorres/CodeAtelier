@@ -14,7 +14,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 72
+const CURRENT_SCHEMA_VERSION = 73
 
 interface Migration {
   version: number
@@ -1847,6 +1847,41 @@ const migrations: Migration[] = [
     name: 'drop-specialist-mcp-columns',
     up: (db) => {
       runDropSpecialistMcpColumnsMigration(db)
+    }
+  },
+  {
+    version: 73,
+    name: 'davinci-tool-error-handling-guidance',
+    up: (db) => {
+      // Adds the "Tool Error Handling" section to DaVinci's build prompt so
+      // the model stops misdiagnosing `<tool_use_error>File has been modified
+      // since read…` as a sandbox/permission issue. Only overwrites
+      // uncustomized rows; customized rows just get the new
+      // default_prompt_text so users can diff in the settings UI.
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
+      const newBuildPrompt = DEFAULT_PROMPTS['da-vinci'].build
+
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'da-vinci' AND mode = 'plan'
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
+
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'da-vinci' AND mode = 'build'
+      `
+      ).run(newBuildPrompt, newBuildPrompt)
+
+      dbLogger.info('[migration-73] ✓ DaVinci prompts refreshed with tool-error guidance')
     }
   }
 ]

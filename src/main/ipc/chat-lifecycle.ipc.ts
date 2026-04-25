@@ -236,23 +236,28 @@ function registerChatModeIpc(): void {
     IPC_CHANNELS.CHAT_SWAP_TO_SPECIALIST,
     async (event, args: { workspaceId?: string; workspacePath?: string }) => {
       validateSender(event)
-      if (!args || (typeof args.workspaceId !== 'string' && typeof args.workspacePath !== 'string')) {
+      if (
+        !args ||
+        (typeof args.workspaceId !== 'string' && typeof args.workspacePath !== 'string')
+      ) {
         throw new Error('Invalid swap args — workspaceId or workspacePath required')
       }
 
-      let workspacePath = args.workspacePath
-      if (!workspacePath && args.workspaceId) {
-        const ws = workspaceRepository.findById(args.workspaceId)
-        if (!ws) throw new Error('Workspace not found')
-        workspacePath = ws.repoPath
-      }
-      if (!workspacePath) throw new Error('Workspace path could not be resolved')
+      const workspace = args.workspaceId
+        ? workspaceRepository.findById(args.workspaceId)
+        : workspaceRepository.findByPath(args.workspacePath!)
+      if (!workspace) throw new Error('Workspace not found')
 
-      // Start with no resumeSessionId — resolveAdapter() picks the
-      // ProjectSpecialistRoleAdapter now that build_status = 'ready', and the
-      // adapterChanged branch in start() tears down the DaVinci session.
-      await chatAgentService.start(workspacePath)
-      log.info(`[chat:swap] Swapped adapter for workspacePath=${workspacePath}`)
+      // Persist consent — resolveAdapter() reads this flag to decide whether to
+      // pick the ProjectSpecialistRoleAdapter. Until set, the workspace stays on DaVinci.
+      const settings = JSON.parse(workspace.settingsJson || '{}') as Record<string, unknown>
+      settings.specialistSwapAccepted = true
+      workspaceRepository.updateSettings(workspace.id, settings)
+
+      // Re-start so resolveAdapter() now picks the ProjectSpecialistRoleAdapter,
+      // which tears down the DaVinci session and rebuilds as the specialist.
+      await chatAgentService.start(workspace.repoPath)
+      log.info(`[chat:swap] User accepted swap for workspace=${workspace.id}`)
     }
   )
 
@@ -301,7 +306,23 @@ function registerChatModeIpc(): void {
               maxTokens: number
               percentage?: number
               model?: string
-              categories?: { name: string; tokens: number; color: string }[]
+              categories?: {
+                name: string
+                tokens: number
+                color: string
+                isDeferred?: boolean
+              }[]
+              mcpTools?: {
+                name: string
+                serverName: string
+                tokens: number
+                isLoaded?: boolean
+              }[]
+              systemTools?: { name: string; tokens: number }[]
+              deferredBuiltinTools?: { name: string; tokens: number; isLoaded: boolean }[]
+              memoryFiles?: { path: string; type: string; tokens: number }[]
+              autoCompactThreshold?: number
+              isAutoCompactEnabled?: boolean
             }
             const percentage = sdk.percentage ?? Math.round((sdk.totalTokens / sdk.maxTokens) * 100)
             // Quality window scales with context window: 50% of max, capped at 500K
@@ -333,6 +354,15 @@ function registerChatModeIpc(): void {
               level,
               qualityLevel,
               categories: sdk.categories,
+              breakdown: {
+                categories: sdk.categories,
+                mcpTools: sdk.mcpTools,
+                systemTools: sdk.systemTools,
+                deferredBuiltinTools: sdk.deferredBuiltinTools,
+                memoryFiles: sdk.memoryFiles,
+                autoCompactThreshold: sdk.autoCompactThreshold,
+                isAutoCompactEnabled: sdk.isAutoCompactEnabled
+              },
               model: sdk.model,
               source: 'sdk' as const
             }

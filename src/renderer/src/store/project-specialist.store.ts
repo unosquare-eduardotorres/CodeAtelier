@@ -94,13 +94,29 @@ export const useProjectSpecialistStore = create<ProjectSpecialistState>((set, ge
   },
 
   build: async (workspaceId) => {
-    set({ isLoading: true, error: null })
+    const previous = get().byWorkspace[workspaceId]
+    // Optimistic: flip to 'building' so any UI keyed on buildStatus
+    // (modal, WorkspaceCard chip) reacts the instant the user clicks.
+    if (previous) {
+      set((state) => ({
+        byWorkspace: {
+          ...state.byWorkspace,
+          [workspaceId]: { ...previous, buildStatus: 'building' }
+        },
+        isLoading: true,
+        error: null
+      }))
+    } else {
+      set({ isLoading: true, error: null })
+    }
     try {
       await window.api.buildProjectSpecialist({ workspaceId })
       await get().loadForWorkspace(workspaceId)
       set({ isLoading: false })
     } catch (error) {
       rendererLog.error('Project Specialist build failed:', error)
+      // Revert the optimistic update by reloading authoritative state.
+      await get().loadForWorkspace(workspaceId).catch(() => {})
       set({ isLoading: false, error: (error as Error).message })
       throw error
     }

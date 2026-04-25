@@ -120,7 +120,8 @@ const api = {
 
   stopGeneration: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_STOP),
 
-  compactConversation: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT),
+  compactConversation: (args?: { extractNuance?: boolean }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT, args),
 
   /**
    * Accept DaVinci's specialist-swap proposal — tears down the DaVinci session
@@ -213,8 +214,6 @@ const api = {
     conversationId: string
     specialistId: string
     isActive?: boolean
-    skillsEnabled?: boolean
-    skillOverrides?: string[] | null
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_UPSERT, args),
 
   removeConvSpecialist: (args: { conversationId: string; specialistId: string }): Promise<void> =>
@@ -538,6 +537,7 @@ const api = {
       compactNeeded?: {
         level: string
         inputTokens: number
+        breakdown?: import('../shared/types').ContextUsageBreakdown
       }
       turnBoundary?: boolean
       turnId?: string
@@ -563,6 +563,7 @@ const api = {
         compactNeeded?: {
           level: string
           inputTokens: number
+          breakdown?: import('../shared/types').ContextUsageBreakdown
         }
         turnBoundary?: boolean
         turnId?: string

@@ -1,10 +1,12 @@
-import { useEffect, useRef } from 'react'
-import { Minimize2, X, Sparkles, Zap } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Minimize2, X, Sparkles, Zap, ChevronDown, ChevronRight } from 'lucide-react'
+import type { ContextUsageBreakdown } from '../../../../shared/types'
 
 interface ContextCategory {
   name: string
   tokens: number
   color: string
+  isDeferred?: boolean
 }
 
 interface CompactContextModalProps {
@@ -12,7 +14,10 @@ interface CompactContextModalProps {
   inputTokens: number
   contextWindowSize?: number
   level: string
+  /** Legacy categories array — used as a fallback when breakdown is missing. */
   categories?: ContextCategory[]
+  /** Full Claude Code-style breakdown — preferred when available. */
+  breakdown?: ContextUsageBreakdown
   onExtractNuance: () => void
   onQuickCompact: () => void
   onCancel: () => void
@@ -36,17 +41,24 @@ function getBarColor(level: string): string {
   }
 }
 
+function fmtTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
+  return String(n)
+}
+
 export default function CompactContextModal({
   isOpen,
   inputTokens,
   contextWindowSize,
   level,
   categories,
+  breakdown,
   onExtractNuance,
   onQuickCompact,
   onCancel
 }: CompactContextModalProps): React.JSX.Element | null {
   const nuanceRef = useRef<HTMLButtonElement>(null)
+  const [showMcpDetails, setShowMcpDetails] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -66,6 +78,21 @@ export default function CompactContextModal({
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onCancel])
+
+  // Top 10 MCP tools by token cost (for the expandable detail view).
+  const topMcpTools = useMemo(() => {
+    const tools = breakdown?.mcpTools ?? []
+    return [...tools].sort((a, b) => b.tokens - a.tokens).slice(0, 10)
+  }, [breakdown?.mcpTools])
+
+  // Resolve which categories list to render.
+  // Prefer breakdown.categories (Claude Code-style 8-category panel).
+  // Fall back to legacy `categories` prop, then null.
+  const renderCategories = useMemo(() => {
+    if (breakdown?.categories && breakdown.categories.length > 0) return breakdown.categories
+    if (categories && categories.length > 0) return categories
+    return null
+  }, [breakdown, categories])
 
   if (!isOpen) return null
 
@@ -101,7 +128,7 @@ export default function CompactContextModal({
       />
 
       {/* Dialog */}
-      <div className="relative bg-surface-float border border-border-default rounded-lg shadow-2xl max-w-md w-full mx-4 animate-in fade-in zoom-in-95">
+      <div className="relative bg-surface-float border border-border-default rounded-lg shadow-2xl max-w-md w-full mx-4 animate-in fade-in zoom-in-95 max-h-[85vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-start justify-between p-5 pb-3">
           <div className="flex items-center gap-3">
@@ -129,7 +156,12 @@ export default function CompactContextModal({
         {/* Context Usage Bar */}
         <div className="px-5 pb-4">
           <div className="flex items-center justify-between text-xs text-text-secondary mb-1.5">
-            <span>Context usage</span>
+            <span
+              title="Live context window usage — % of model's window in use (incl. cache). Cache reduces cost, not context size."
+              className="cursor-help"
+            >
+              Context usage
+            </span>
             <span className="font-mono">
               {tokensK}K / {windowK}K ({percentage}%) — Quality: {qualityLabel}
             </span>
@@ -140,21 +172,80 @@ export default function CompactContextModal({
               style={{ width: `${qualityPercentage}%` }}
             />
           </div>
+          <p className="mt-2 text-[10px] text-text-muted leading-snug">
+            Includes all conversation history, tool definitions, and cached content — matches
+            Claude Code&apos;s formula. Cache reduces cost, not context size.
+          </p>
         </div>
 
-        {/* Context Category Breakdown */}
-        {categories && categories.length > 0 && (
+        {/* Context Category Breakdown — Claude Code 8-category panel */}
+        {renderCategories && renderCategories.length > 0 && (
           <div className="px-5 pb-3">
-            <div className="text-[10px] text-text-muted space-y-1">
-              {categories.map((cat) => (
-                <div key={cat.name} className="flex justify-between">
-                  <span className="truncate mr-2">{cat.name}</span>
-                  <span className="font-mono flex-shrink-0">
-                    {(cat.tokens / 1000).toFixed(1)}K
-                  </span>
-                </div>
-              ))}
+            <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5 font-semibold">
+              Breakdown by category
             </div>
+            <div className="text-[11px] text-text-secondary space-y-1">
+              {renderCategories.map((cat) => {
+                const pct = Math.round((cat.tokens / effectiveWindowSize) * 100)
+                return (
+                  <div
+                    key={`${cat.name}${cat.isDeferred ? '-deferred' : ''}`}
+                    className="flex justify-between items-center"
+                  >
+                    <span className="truncate mr-2 flex items-center gap-1.5">
+                      <span
+                        className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
+                        style={{ backgroundColor: cat.color }}
+                      />
+                      {cat.name}
+                      {cat.isDeferred && (
+                        <span
+                          className="ml-1 text-[9px] px-1 py-0.5 rounded bg-surface-overlay text-text-muted"
+                          title="Loaded but unused — often the surprise bloat source"
+                        >
+                          deferred
+                        </span>
+                      )}
+                    </span>
+                    <span className="font-mono flex-shrink-0 tabular-nums">
+                      {fmtTokens(cat.tokens)}{' '}
+                      <span className="text-text-muted">({pct}%)</span>
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* MCP Tools breakdown — collapsible */}
+        {topMcpTools.length > 0 && (
+          <div className="px-5 pb-3">
+            <button
+              type="button"
+              onClick={() => setShowMcpDetails((v) => !v)}
+              className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-text-muted hover:text-text-secondary font-semibold transition-colors"
+            >
+              {showMcpDetails ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+              Top MCP tools by token cost
+            </button>
+            {showMcpDetails && (
+              <div className="mt-1.5 text-[11px] text-text-secondary space-y-0.5 max-h-40 overflow-y-auto">
+                {topMcpTools.map((tool) => (
+                  <div
+                    key={`${tool.serverName}-${tool.name}`}
+                    className="flex justify-between items-center"
+                  >
+                    <span className="truncate mr-2 font-mono text-[10px]">
+                      {tool.serverName}.{tool.name}
+                    </span>
+                    <span className="font-mono flex-shrink-0 tabular-nums">
+                      {fmtTokens(tool.tokens)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

@@ -38,7 +38,6 @@ import type {
   UserProfile,
   CoreAgentAlias,
   CoreAgentPrompt,
-
   SubscriptionCheckResult,
   AutoConfigureResult,
   SpecialistTokenEstimate,
@@ -97,7 +96,7 @@ interface Api {
   }) => Promise<Conversation>
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
   stopGeneration: () => Promise<void>
-  compactConversation: () => Promise<void>
+  compactConversation: (args?: { extractNuance?: boolean }) => Promise<void>
   /** Accept DaVinci's specialist-swap proposal — rebuilds the session as the Project Specialist. */
   swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }) => Promise<void>
 
@@ -151,8 +150,6 @@ interface Api {
     conversationId: string
     specialistId: string
     isActive?: boolean
-    skillsEnabled?: boolean
-    skillOverrides?: string[] | null
   }) => Promise<void>
   removeConvSpecialist: (args: { conversationId: string; specialistId: string }) => Promise<void>
   resetConvSpecialists: (args: { conversationId: string }) => Promise<void>
@@ -186,12 +183,7 @@ interface Api {
   }) => Promise<{ ok: true }>
   getProjectSpecialistDrift: (args: { workspaceId: string }) => Promise<unknown | null>
   onProjectSpecialistBuildProgress: (
-    callback: (data: {
-      specialistId: string
-      phase: string
-      message: string
-      at: string
-    }) => void
+    callback: (data: { specialistId: string; phase: string; message: string; at: string }) => void
   ) => () => void
 
   // Skills
@@ -330,6 +322,7 @@ interface Api {
       compactNeeded?: {
         level: string
         inputTokens: number
+        breakdown?: import('../shared/types').ContextUsageBreakdown
       }
       turnBoundary?: boolean
       turnId?: string
@@ -718,11 +711,7 @@ interface Api {
   ) => () => void
   onAuthStatus: (callback: (data: { message: string; requestId?: string }) => void) => () => void
   onFilesPersisted: (
-    callback: (data: {
-      conversationId: string
-      files: string[]
-      requestId?: string
-    }) => void
+    callback: (data: { conversationId: string; files: string[]; requestId?: string }) => void
   ) => () => void
   onHookLifecycle: (
     callback: (data: { hookName?: string; hookState?: string; requestId?: string }) => void
@@ -753,11 +742,7 @@ interface Api {
   }) => Promise<void>
 
   // Session Management (SDK top-level functions)
-  sessionList: (args?: {
-    dir?: string
-    limit?: number
-    offset?: number
-  }) => Promise<unknown[]>
+  sessionList: (args?: { dir?: string; limit?: number; offset?: number }) => Promise<unknown[]>
   sessionGetInfo: (args: { sessionId: string; dir?: string }) => Promise<unknown>
   sessionGetMessages: (args: {
     sessionId: string

@@ -1,7 +1,9 @@
 import { useCallback } from 'react'
-import { Bot, FolderOpen, Plus, Mic, Keyboard, Flame, ChevronRight } from 'lucide-react'
+import { Bot, FolderOpen, Plus, Mic, Keyboard, Flame } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
+import { useWorkspaceCardsData } from '@renderer/hooks/useWorkspaceCardsData'
 import FloatingIconField from './FloatingIconField'
+import WorkspaceCard from './WorkspaceCard'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 const metaKey = isMac ? '⌘' : 'Ctrl+'
@@ -24,8 +26,41 @@ const tips = [
   }
 ] as const
 
+interface AddWorkspaceCardProps {
+  onClick: () => void
+}
+
+/**
+ * Local presentational sub-component — kept inside WelcomeScreen to avoid a new file.
+ * Reuses the dashed-border treatment as a card-shaped tile that fills a grid cell.
+ */
+function AddWorkspaceCard({ onClick }: AddWorkspaceCardProps): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex flex-col items-center justify-center gap-3 w-full min-h-[12rem] text-center p-4 rounded-2xl border-2 border-dashed border-border-default hover:border-primary/50 hover:bg-surface-overlay/60 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+    >
+      <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-surface-overlay border border-border-subtle text-text-muted group-hover:text-primary-text group-hover:border-primary/30 transition-colors">
+        <Plus size={18} />
+      </div>
+      <div>
+        <div className="text-sm font-medium text-text-secondary group-hover:text-text-primary transition-colors">
+          Add Workspace
+        </div>
+        <div className="text-xs text-text-muted mt-0.5">Open a project folder</div>
+      </div>
+      <FolderOpen
+        size={16}
+        className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity"
+      />
+    </button>
+  )
+}
+
 export default function WelcomeScreen(): React.JSX.Element {
   const { workspaces, openWorkspace, createWorkspace } = useWorkspaceStore()
+  const cardData = useWorkspaceCardsData(workspaces)
 
   const handleAddWorkspace = useCallback(async (): Promise<void> => {
     try {
@@ -45,7 +80,7 @@ export default function WelcomeScreen(): React.JSX.Element {
       <FloatingIconField />
 
       {/* All content stays above floating icons */}
-      <div className="w-full max-w-2xl px-8 py-12 relative z-10">
+      <div className="w-full max-w-5xl px-8 py-12 relative z-10">
         {/* Hero: Logo + Tagline */}
         <div className="flex items-center gap-3 mb-10 justify-center">
           <div className="w-14 h-14 rounded-2xl bg-primary-muted border border-primary/30 flex items-center justify-center">
@@ -63,55 +98,23 @@ export default function WelcomeScreen(): React.JSX.Element {
             Your Workspaces
           </h2>
 
-          <div className="space-y-2">
-            {workspaces.length > 0 ? (
-              workspaces.map((ws) => (
-                <button
-                  key={ws.id}
-                  onClick={() => openWorkspace(ws.id)}
-                  className="group flex items-center gap-3 w-full px-4 py-3 rounded-xl bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left focus-visible:ring-2 focus-visible:ring-primary/50"
-                >
-                  <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary-muted text-primary-text text-sm font-semibold flex-shrink-0">
-                    {ws.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-text-primary truncate">{ws.name}</div>
-                    <div className="text-xs text-text-secondary truncate">{ws.repoPath}</div>
-                  </div>
-                  <ChevronRight
-                    size={16}
-                    className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                  />
-                </button>
-              ))
-            ) : (
-              <div className="px-4 py-6 rounded-xl bg-surface-overlay border border-border-subtle text-center">
-                <p className="text-sm text-text-secondary">
-                  No workspaces yet. Add a project folder to get started.
-                </p>
-              </div>
-            )}
-
-            {/* Add Workspace — dashed card */}
-            <button
-              onClick={handleAddWorkspace}
-              className="group flex items-center gap-3 w-full px-4 py-3 rounded-xl border-2 border-dashed border-border-default hover:border-primary/50 hover:bg-surface-overlay/60 transition-all text-left focus-visible:ring-2 focus-visible:ring-primary/50"
-            >
-              <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-surface-overlay border border-border-subtle text-text-muted group-hover:text-primary-text group-hover:border-primary/30 transition-colors flex-shrink-0">
-                <Plus size={18} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-text-secondary group-hover:text-text-primary transition-colors">
-                  Add Workspace
-                </div>
-                <div className="text-xs text-text-muted">Open a project folder</div>
-              </div>
-              <FolderOpen
-                size={16}
-                className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            {workspaces.map((ws) => (
+              <WorkspaceCard
+                key={ws.id}
+                workspace={ws}
+                data={cardData[ws.id]}
+                onOpen={openWorkspace}
               />
-            </button>
+            ))}
+            <AddWorkspaceCard onClick={handleAddWorkspace} />
           </div>
+
+          {workspaces.length === 0 && (
+            <p className="mt-3 text-center text-xs text-text-muted">
+              No workspaces yet. Add a project folder to get started.
+            </p>
+          )}
         </div>
 
         {/* Quick Tips */}

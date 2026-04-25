@@ -2,7 +2,7 @@ import type { ConversationMode, CostPreference, Specialist } from '../../shared/
 import { chatAgentLogger } from '../logger'
 import { PromptBuilder, promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
-import { conversationSpecialistRepository, specialistRepository } from '../db/repositories'
+import { specialistRepository } from '../db/repositories'
 import {
   appendMcpToolGuidance,
   buildConditionalPrefix,
@@ -177,10 +177,7 @@ export class DaVinciPromptAssembler {
         personaSkills: opts.personaData
           ? specialistRepository.getSkills(opts.personaData.id)
           : undefined,
-        personaSkillOverrides: this.getPersonaSkillOverrides(
-          opts.conversationId,
-          opts.personaSpecialistId
-        )
+        personaSkillOverrides: undefined
       })
 
       // Strategy δ: MCP tool guidance sections on turn 1 only.
@@ -384,20 +381,6 @@ export class DaVinciPromptAssembler {
   }
 
   // ── Private Helpers ──
-
-  /**
-   * Resolve per-conversation skill overrides for the persona specialist.
-   * Uses the same conversation-specialist skill toggle system as regular specialists.
-   */
-  private getPersonaSkillOverrides(
-    conversationId: string | null,
-    personaSpecialistId?: string | null
-  ): string[] | undefined {
-    if (!personaSpecialistId || !conversationId) return undefined
-    const overrides = conversationSpecialistRepository.findByConversation(conversationId)
-    const match = overrides.find((o) => o.specialistId === personaSpecialistId)
-    return match?.skillOverrides ?? undefined
-  }
 
   /**
    * Scale memory budget by turn count.

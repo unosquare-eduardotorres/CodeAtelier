@@ -10,6 +10,16 @@ export class ToolTracker {
   /** Whether any content has been emitted this turn (text or tools) */
   hasPriorContent = false
 
+  /**
+   * Whether *visible text* has been emitted in the current turn (not just
+   * tools). Used to suppress turn_boundary for tool-only iterations so a
+   * single user prompt produces a single bubble with all its tool activity
+   * attached, instead of one bubble per internal Claude tool-loop iteration.
+   *
+   * Reset to false at every turn_boundary emission.
+   */
+  hasPriorText = false
+
   /** Track the last content block type for thinking→text transition detection */
   lastBlockType: 'thinking' | 'text' | 'tool_use' | null = null
 

@@ -18,12 +18,7 @@
  */
 
 import { EventEmitter } from 'node:events'
-import type {
-  AgentRole,
-  AgentStatus,
-  ConversationMode,
-  ImageAttachment
-} from '../../shared/types'
+import type { AgentRole, AgentStatus, ConversationMode, ImageAttachment } from '../../shared/types'
 import { chatAgentLogger } from '../logger'
 import { AgentSessionService } from './agent-session.service'
 import { DaVinciRoleAdapter } from './role-adapters/da-vinci.adapter'
@@ -98,20 +93,27 @@ export class ChatAgentService extends EventEmitter {
     try {
       const workspace = workspaceRepository.findByPath(workspacePath)
       if (!workspace) return this.daVinciAdapter
+
+      const settings = JSON.parse(workspace.settingsJson || '{}') as {
+        specialistSwapAccepted?: boolean
+      }
+      if (!settings.specialistSwapAccepted) {
+        // User has not accepted the swap yet → keep DaVinci.
+        return this.daVinciAdapter
+      }
+
       const db = getDatabase()
       const row = db
-        .prepare(
-          `SELECT id, build_status FROM specialists WHERE workspace_id = ?`
-        )
+        .prepare(`SELECT id, build_status FROM specialists WHERE workspace_id = ?`)
         .get(workspace.id) as { id: string; build_status: string } | undefined
       if (row?.build_status === 'ready') {
         this.log.info(
-          `[adapter-swap] Using ProjectSpecialistRoleAdapter for workspace=${workspace.id}`
+          `[adapter-swap] Using ProjectSpecialistRoleAdapter (user-accepted) for workspace=${workspace.id}`
         )
         return new ProjectSpecialistRoleAdapter({ workspaceId: workspace.id })
       }
     } catch (err) {
-      this.log.warn('[adapter-swap] resolveAdapter failed, falling back to Generalist:', err)
+      this.log.warn('[adapter-swap] resolveAdapter failed, falling back to DaVinci:', err)
     }
     return this.daVinciAdapter
   }
@@ -167,9 +169,7 @@ export class ChatAgentService extends EventEmitter {
     // Persona is a Generalist-only concept; if the Project Specialist is active,
     // persona switches are ignored (warning logged).
     if (this.adapter !== this.daVinciAdapter) {
-      this.log.warn(
-        '[persona-switch] Ignored — Project Specialist is active for this workspace'
-      )
+      this.log.warn('[persona-switch] Ignored — Project Specialist is active for this workspace')
       return
     }
     if (personaSpecialistId === this.daVinciAdapter.getPersona().id) return
@@ -292,6 +292,36 @@ export class ChatAgentService extends EventEmitter {
   /** Which role is currently driving the session. */
   getActiveRole(): AgentRole {
     return this.adapter.role
+  }
+
+  /** The agent_id of the currently active adapter (DA_VINCI_AGENT_ID or workspace-specialist-<wsId>). */
+  getActiveAgentId(): string {
+    return this.adapter.agentId
+  }
+
+  /** The DB role tag (`'da-vinci' | 'specialist'`) for whichever adapter is active. */
+  getActiveMessageRole(): 'da-vinci' | 'specialist' {
+    return this.adapter.role === 'project-specialist' ? 'specialist' : 'da-vinci'
+  }
+
+  /**
+   * Returns persona overlay info for the current Da Vinci adapter, or null when
+   * no persona is active (Da Vinci default) or when a Project Specialist
+   * adapter is driving (the project specialist *is* the active identity, not a
+   * persona overlay — callers should treat that as `getActiveMessageRole()`).
+   *
+   * Used by the chat-stream service to drive the renderer's thinking-indicator
+   * avatar so it matches the saved bubble's identity from the very first chunk.
+   */
+  getActivePersona(): { id: string; agentId: string; alias: string | null } | null {
+    if (this.adapter !== this.daVinciAdapter) return null
+    const persona = this.daVinciAdapter.getPersona()
+    if (!persona.id) return null
+    return {
+      id: persona.id,
+      agentId: persona.data?.agentId ?? persona.id,
+      alias: persona.data?.alias ?? persona.data?.displayName ?? null
+    }
   }
 }
 

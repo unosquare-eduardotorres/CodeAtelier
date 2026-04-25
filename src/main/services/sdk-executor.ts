@@ -71,8 +71,8 @@ export interface SDKAgentDefinition {
   background?: boolean
   /** Auto-load memory files for the SubAgent (SDK 0.2.96+) */
   memory?: 'project' | 'user' | 'local'
-  /** Effort level per SubAgent — simple tasks get 'low', complex get 'high'/'max' (SDK 0.2.96+) */
-  effort?: 'low' | 'medium' | 'high' | 'max'
+  /** Effort level per SubAgent — simple tasks get 'low', complex get 'high'/'xhigh'/'max' (SDK 0.2.96+, 'xhigh' added 0.2.120+) */
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** Permission mode per SubAgent — investigation = 'default', implementation = 'auto' (SDK 0.2.96+) */
   permissionMode?: 'default' | 'plan' | 'bypassPermissions' | 'acceptEdits' | 'auto' | 'dontAsk'
 }
@@ -183,9 +183,9 @@ export interface SDKExecuteOptions {
   thinking?: { type: 'adaptive' } | { type: 'enabled'; budgetTokens: number } | { type: 'disabled' }
   /**
    * Effort level — controls reasoning depth independently of thinking budget.
-   * Mapped from complexity tier: simple→low, moderate→medium, complex→high.
+   * Mapped from complexity tier: simple→low, moderate→medium, complex→xhigh (SDK 0.2.120+).
    */
-  effort?: 'low' | 'medium' | 'high' | 'max'
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /**
    * Thinking display mode (SDK 0.2.96+):
    * - 'summarized' — condensed reasoning for transparency (generalist)
@@ -256,7 +256,7 @@ export class SDKExecutor {
     const heartbeat = new HeartbeatMonitor(options.heartbeatIntervalMs ?? 15000)
     const tokens = new TokenAccountant()
     const tools = new ToolTracker()
-    const state: StreamState = {}
+    const state: StreamState = { streamedTextLength: 0 }
 
     heartbeat.start()
 

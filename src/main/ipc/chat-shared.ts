@@ -16,6 +16,21 @@ const log = chatIpcLogger
 function extractResultSummary(toolName: string, content: string | undefined): string | undefined {
   if (!content) return undefined
   try {
+    // SDK-level tool errors come through the result content as
+    // `<tool_use_error>…</tool_use_error>`. Surface a short, accurate label
+    // so the UI shows a real error instead of letting the LLM misdiagnose it
+    // (e.g. blaming "sandbox" for stale-read issues).
+    if (content.includes('<tool_use_error>')) {
+      const match = content.match(/<tool_use_error>([\s\S]*?)(?:<\/tool_use_error>|$)/)
+      const inner = (match?.[1] ?? content).trim()
+      if (/modified since read/i.test(inner)) return 'Stale read — re-read needed'
+      if (/string to replace not found/i.test(inner)) return 'String not found — re-read needed'
+      if (/permission denied|EACCES|operation not permitted/i.test(inner)) {
+        return 'Permission denied'
+      }
+      const oneLine = inner.split('\n')[0]?.trim() ?? 'Tool error'
+      return oneLine.length > 80 ? `Error: ${oneLine.slice(0, 77)}…` : `Error: ${oneLine}`
+    }
     // For Write/Edit tools, the result is typically a confirmation
     if (toolName === 'Write' || toolName === 'Edit') {
       return 'Done'
@@ -69,7 +84,7 @@ export function forwardChunkToRenderer(
   chunk: StreamChunk,
   contentAccumulator: { value: string },
   workspacePath?: string,
-  specialistMeta?: { specialist: string; taskId: string },
+  specialistMeta?: { specialist: string; taskId?: string },
   phase?: ConversationPhase,
   requestId?: string
 ): void {
@@ -160,10 +175,14 @@ export function forwardChunkToRenderer(
       }
     }
     const resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
+    // Tag the activity as 'error' when the SDK returned a tool_use_error so
+    // the renderer can show it visually distinct from a successful run.
+    const isToolError =
+      typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
     const toolActivity: Record<string, unknown> = {
       id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       toolName: chunk.toolName ?? 'Unknown',
-      status: 'completed',
+      status: isToolError ? 'error' : 'completed',
       completedAt: Date.now()
     }
     // Only include input if we have a real summary — don't overwrite existing input with undefined

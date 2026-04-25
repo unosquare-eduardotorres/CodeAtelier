@@ -35,19 +35,19 @@ describe('Opus 4.7 Thinking Config', () => {
     assert.equal(budget, 5000)
   })
 
-  test('COMPLEXITY_TO_EFFORT.complex is max', () => {
-    assert.equal(COMPLEXITY_TO_EFFORT.complex, 'max')
+  test('COMPLEXITY_TO_EFFORT.complex is xhigh', () => {
+    assert.equal(COMPLEXITY_TO_EFFORT.complex, 'xhigh')
   })
 
-  test('effort for opus model uses max', () => {
+  test('effort for opus model uses xhigh', () => {
     const modelId = 'claude-opus-4-7'
-    const effort = modelId.includes('opus') ? 'max' : 'high'
-    assert.equal(effort, 'max')
+    const effort = modelId.includes('opus') ? 'xhigh' : 'high'
+    assert.equal(effort, 'xhigh')
   })
 
   test('effort for sonnet model uses standard level', () => {
     const modelId = 'claude-sonnet-4-6'
-    const effort = modelId.includes('opus') ? 'max' : 'high'
+    const effort = modelId.includes('opus') ? 'xhigh' : 'high'
     assert.equal(effort, 'high')
   })
 })

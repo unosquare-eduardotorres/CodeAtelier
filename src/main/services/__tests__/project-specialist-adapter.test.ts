@@ -48,6 +48,27 @@ describe('ProjectSpecialistRoleAdapter', () => {
     assert.equal(adapter.agentId, 'custom-id')
   })
 
+  test('agentId_is_consumable_by_ChatAgentService_getActiveAgentId', async () => {
+    // Pin the contract that A1's accessor relies on: the adapter exposes a
+    // stable workspace-specialist-<wsId> agentId that chat-stream.service
+    // forwards to messageRepository.create() and event chunks.
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-abc' })
+    assert.equal(adapter.agentId, 'workspace-specialist-ws-abc')
+
+    // Verify ChatAgentService surfaces this same value via getActiveAgentId().
+    const { chatAgentService } =
+      (await import('../chat-agent.service')) as typeof import('../chat-agent.service')
+    const svc = chatAgentService as unknown as { adapter: unknown }
+    const original = svc.adapter
+    svc.adapter = adapter
+    try {
+      assert.equal(chatAgentService.getActiveAgentId(), 'workspace-specialist-ws-abc')
+      assert.equal(chatAgentService.getActiveMessageRole(), 'specialist')
+    } finally {
+      svc.adapter = original
+    }
+  })
+
   test('buildControlCallbacks_returns_all_callbacks_as_functions', () => {
     const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
     const cb = adapter.buildControlCallbacks({

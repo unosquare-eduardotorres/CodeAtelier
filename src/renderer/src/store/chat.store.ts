@@ -7,6 +7,7 @@ import { useWorkspaceStore } from './workspace.store'
 import type {
   CompleteResult,
   ContextUsage,
+  ContextUsageBreakdown,
   Conversation,
   ConversationMode,
   ConversationPhase,
@@ -120,7 +121,11 @@ interface ChatState {
   }
 
   // Compact suggestion state
-  compactSuggestion: { level: string; inputTokens: number } | null
+  compactSuggestion: {
+    level: string
+    inputTokens: number
+    breakdown?: ContextUsageBreakdown
+  } | null
 
   // Grill session state
   grillSession: GrillSessionState | null

@@ -77,6 +77,28 @@ export interface Conversation {
 
 export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
 
+/**
+ * Detailed Claude Code-style breakdown of what's filling the context window.
+ * Mirrors SDKControlGetContextUsageResponse so we can render the same 8-category
+ * panel + per-tool top-N table in the compact-context modal.
+ */
+export interface ContextUsageBreakdown {
+  /** Top-level categories (Messages, System Prompt, Skills, MCP, Tools, etc.) */
+  categories?: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
+  /** Per-tool MCP usage (server + tool name + tokens). */
+  mcpTools?: { name: string; serverName: string; tokens: number; isLoaded?: boolean }[]
+  /** Built-in system tools (Read, Write, Bash, …). */
+  systemTools?: { name: string; tokens: number }[]
+  /** SDK-deferred built-ins (loaded but unused). */
+  deferredBuiltinTools?: { name: string; tokens: number; isLoaded: boolean }[]
+  /** Workspace memory files (CLAUDE.md, skills/, …). */
+  memoryFiles?: { path: string; type: string; tokens: number }[]
+  /** Auto-compact threshold (raw tokens) reported by the SDK, if available. */
+  autoCompactThreshold?: number
+  /** Whether the SDK has auto-compaction enabled. */
+  isAutoCompactEnabled?: boolean
+}
+
 export interface ContextUsage {
   conversationId: string
   inputTokens: number
@@ -85,7 +107,9 @@ export interface ContextUsage {
   level: ContextUsageLevel
   qualityLevel?: 'excellent' | 'good' | 'moderate' | 'low'
   /** SDK-native breakdown by category (system prompt, tools, messages, etc.) */
-  categories?: { name: string; tokens: number; color: string }[]
+  categories?: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
+  /** Full Claude Code-style breakdown for the compact-context modal. */
+  breakdown?: ContextUsageBreakdown
   /** Current model reported by SDK */
   model?: string
   /** Whether this was sourced from SDK (live) or DB (historical fallback) */
@@ -210,8 +234,6 @@ export interface ConversationSpecialist {
   conversationId: string
   specialistId: string
   isActive: boolean
-  skillsEnabled: boolean
-  skillOverrides: string[] | null
   createdAt: string
   updatedAt: string
   // Joined fields for UI convenience
@@ -500,7 +522,11 @@ export interface StructuredPlan {
   steps?: PlanStep[]
   files?: string[]
   filesChanged?: Array<{ file: string; change: string }>
-  risks?: Array<{ risk: string; severity: 'low' | 'medium' | 'high'; mitigation?: string }>
+  risks?: Array<{
+    risk: string
+    severity: 'low' | 'medium' | 'high' | 'critical'
+    mitigation?: string
+  }>
   expectedOutcome?: string
   deferredItems?: string[]
   diagrams?: Array<{ title: string; mermaid: string }>

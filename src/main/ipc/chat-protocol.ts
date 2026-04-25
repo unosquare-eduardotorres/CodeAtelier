@@ -9,7 +9,7 @@
  * and message shapes are consistent across generalist and specialist paths.
  */
 
-import type { ConversationPhase, ToolActivity } from '../../shared/types'
+import type { ConversationPhase, ContextUsageBreakdown, ToolActivity } from '../../shared/types'
 
 // ── Message Interfaces ──
 
@@ -46,7 +46,12 @@ export interface TurnBoundaryMessage extends BaseChunkMessage {
 /** Compact needed suggestion */
 export interface CompactNeededMessage extends BaseChunkMessage {
   chunk: ''
-  compactNeeded: { level: string; inputTokens: number }
+  compactNeeded: {
+    level: string
+    inputTokens: number
+    /** Optional Claude Code-style breakdown for the modal */
+    breakdown?: ContextUsageBreakdown
+  }
 }
 
 /** Message complete signal */
@@ -135,7 +140,11 @@ export function createCompactNeeded(opts: {
   conversationId: string
   requestId?: string
   role: 'da-vinci' | 'specialist'
-  compactNeeded: { level: string; inputTokens: number }
+  compactNeeded: {
+    level: string
+    inputTokens: number
+    breakdown?: ContextUsageBreakdown
+  }
 }): CompactNeededMessage {
   return {
     conversationId: opts.conversationId,

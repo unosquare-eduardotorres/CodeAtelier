@@ -7,8 +7,6 @@ interface UpsertConversationSpecialistInput {
   conversationId: string
   specialistId: string
   isActive?: boolean
-  skillsEnabled?: boolean
-  skillOverrides?: string[] | null
 }
 
 interface ConversationSpecialistState {

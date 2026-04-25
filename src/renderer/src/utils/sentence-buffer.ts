@@ -13,7 +13,14 @@ export class SentenceBuffer {
   private inCodeBlock = false
 
   /** Max ms to wait before force-flushing partial content (handles trailing text) */
-  private static FLUSH_TIMEOUT = 600
+  private static FLUSH_TIMEOUT = 250
+
+  /**
+   * Force-flush threshold (chars). When unflushed buffered content exceeds
+   * this size, we flush even without a sentence boundary. Prevents long code
+   * blocks from stalling the visible stream behind the timeout.
+   */
+  private static FLUSH_CHAR_LIMIT = 200
 
   constructor(onFlush: (completeSentences: string) => void) {
     this.onFlush = onFlush
@@ -32,6 +39,13 @@ export class SentenceBuffer {
       const toFlush = unflushed.slice(0, boundary)
       this.flushedLength += boundary
       this.onFlush(toFlush)
+      return
+    }
+    // Char-based force-flush — covers long code-only responses that never
+    // hit a sentence boundary or paragraph break before the timeout.
+    if (unflushed.length > SentenceBuffer.FLUSH_CHAR_LIMIT) {
+      this.flushedLength = this.buffer.length
+      this.onFlush(unflushed)
     }
   }
 

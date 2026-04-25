@@ -47,6 +47,12 @@ import './layer2-rename-migration.test'
 // Run 7 — IPC protocol + input validation (in ../../ipc/__tests__/)
 import '../../ipc/__tests__/chat-protocol.test'
 import '../../ipc/__tests__/validate-args.test'
+// Run 8 — bubble identity / role tagging / consent regression
+import './chat-stream-role-tagging.test'
+import './resolve-adapter-consent.test'
+import '../../ipc/__tests__/chat-swap-handler.test'
+// Run 9 — renderer utilities (pure logic, no DOM)
+import './sentence-buffer.test'
 
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
