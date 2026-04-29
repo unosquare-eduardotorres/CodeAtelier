@@ -180,7 +180,9 @@ interface ChatState {
   appendLocalMessage: (content: string) => void
 
   // Compact suggestion
-  setCompactSuggestion: (data: { level: string; inputTokens: number } | null) => void
+  setCompactSuggestion: (
+    data: { level: string; inputTokens: number; breakdown?: ContextUsageBreakdown } | null
+  ) => void
 
   // Grill session actions
   startGrillSession: () => void
@@ -299,7 +301,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeConversation: conversation,
       messages: [],
       streamingContent: '',
-      isStreaming: false
+      isStreaming: false,
+      // Reset streaming identity — prevents stale specialist/DaVinci avatar leak
+      streamingRole: 'da-vinci' as const,
+      streamingSpecialist: null,
+      streamingTaskId: null
     }))
   },
 
@@ -382,6 +388,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages,
       streamingContent: '',
       isStreaming: false,
+      // Reset streaming identity — prevents stale specialist/DaVinci avatar leak
+      streamingRole: 'da-vinci' as const,
+      streamingSpecialist: null,
+      streamingTaskId: null,
       // Clear ephemeral UI state from previous conversation
       toolActivities: [],
       grillSession: null,

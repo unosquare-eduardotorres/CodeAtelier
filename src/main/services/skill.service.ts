@@ -15,6 +15,7 @@ import type { Skill } from '../../shared/types'
 import { skillLogger } from '../logger'
 import { skillRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
+import { skillEnrichmentService } from './skill-enrichment.service'
 
 interface QueueItem {
   operation: () => Promise<void>
@@ -266,7 +267,22 @@ export class SkillService {
         tier2Instructions: tiers.tier2Instructions
       })
 
-      // 3. Trigger Opus CLAUDE.md update for activation
+      // 3. Trigger Haiku enrichment (non-blocking — skill is usable without it)
+      const skillId = skill.id
+      void skillEnrichmentService
+        .enrichSkill(content, name)
+        .then((enrichment) => {
+          skillRepository.updateEnrichment(skillId, JSON.stringify(enrichment))
+          skillLogger.info(`✓ Skill ${name} enriched with ${enrichment.keywords.length} keywords`)
+        })
+        .catch((err) => {
+          skillLogger.warn(
+            `Skill enrichment failed for ${name} — will work without enrichment:`,
+            err
+          )
+        })
+
+      // 4. Trigger Opus CLAUDE.md update for activation
       await this.enqueueAndWait(async () => {
         await this.updateClaudeMd(targetPath, 'activate')
       })

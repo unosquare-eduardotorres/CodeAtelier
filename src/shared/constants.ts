@@ -86,6 +86,7 @@ export const IPC_CHANNELS = {
   PROJECT_SPECIALIST_DETACH_SKILL: 'project-specialist:detach-skill',
   PROJECT_SPECIALIST_GET_DRIFT: 'project-specialist:get-drift',
   PROJECT_SPECIALIST_BUILD_PROGRESS: 'project-specialist:build-progress',
+  PROJECT_SPECIALIST_REFRESH_RECOMMENDATIONS: 'project-specialist:refresh-recommendations',
 
   // Skills
   SKILL_LIST: 'skill:list',
@@ -259,12 +260,6 @@ export const IPC_CHANNELS = {
 
   // Agent events (new from audit)
   AGENT_ABANDONMENT_DETECTED: 'agent:abandonmentDetected',
-
-  // Tool approval
-  TOOL_APPROVAL_REQUEST: 'tool:approvalRequest',
-  TOOL_APPROVAL_RESPONSE: 'tool:approvalResponse',
-  TOOL_APPROVAL_SET_MODE: 'tool:approvalSetMode',
-  TOOL_APPROVAL_GET_MODE: 'tool:approvalGetMode',
 
   // Core Agent Prompts
   CORE_AGENT_PROMPT_LIST: 'coreAgentPrompt:list',

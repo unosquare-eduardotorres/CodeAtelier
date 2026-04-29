@@ -121,6 +121,131 @@ export function createCodeGraphFirstHook(mode: 'warn' | 'block' = 'warn'): HookC
   }
 }
 
+/**
+ * Strategy Μ (Mu): PreToolUse hook that enforces a default limit on Read calls.
+ * When the model calls Read without specifying a limit, inject a reasonable default
+ * to prevent full-file reads that bloat the context window. The model can override
+ * by explicitly passing limit in the tool input.
+ *
+ * Exemption: if the model specifies offset, it implies targeted reading — don't interfere.
+ */
+export function createReadLimitHook(defaultLimit: number = 300): HookCallback {
+  return async (input) => {
+    const toolName = (input as Record<string, unknown>).tool_name as string
+    if (toolName !== 'Read') return {}
+
+    const toolInput = (input as Record<string, unknown>).tool_input as Record<string, unknown>
+    // Only inject limit if the model didn't specify one AND didn't specify offset
+    // (offset implies targeted reading — the model knows what it's doing)
+    if (toolInput.limit === undefined && toolInput.offset === undefined) {
+      hookLog.info(`[ReadLimit] Injecting limit=${defaultLimit} on Read without explicit limit`)
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          updatedInput: {
+            ...toolInput,
+            limit: defaultLimit
+          }
+        }
+      } as SyncHookJSONOutput
+    }
+    return {}
+  }
+}
+
+/**
+ * PreToolUse hook that caps Bash output for commands known to produce large output.
+ * Appends `2>&1 | tail -N` to noisy commands (npm build, eslint, tsc, git log, etc.)
+ * where we only care about success/failure and a few trailing lines.
+ *
+ * Does NOT modify commands that already have output redirection.
+ */
+export function createBashOutputCapHook(tailLines: number = 30): HookCallback {
+  // Patterns that produce huge output but where we only care about success/failure
+  const NOISY_COMMANDS: RegExp[] = [
+    /^npm (run |)(dev|build|install|ci)\b/,
+    /^npx (eslint|prettier|tsc)\b/,
+    /^git log(?! --oneline)/
+  ]
+
+  return async (input) => {
+    const toolName = (input as Record<string, unknown>).tool_name as string
+    if (toolName !== 'Bash') return {}
+
+    const toolInput = (input as Record<string, unknown>).tool_input as Record<string, unknown>
+    const command = toolInput?.command as string
+    if (!command) return {}
+
+    // Don't modify commands that already have output redirection
+    if (
+      command.includes('| tail') ||
+      command.includes('| head') ||
+      command.includes('> ') ||
+      command.includes('2>')
+    ) {
+      return {}
+    }
+
+    const isNoisy = NOISY_COMMANDS.some((p) => p.test(command))
+    if (!isNoisy) return {}
+
+    hookLog.info(`[BashOutputCap] Capping output: ${command.substring(0, 80)}...`)
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse' as const,
+        updatedInput: {
+          ...toolInput,
+          command: `${command} 2>&1 | tail -${tailLines}`
+        }
+      }
+    } as SyncHookJSONOutput
+  }
+}
+
+/**
+ * PostToolUse hook that detects consecutive large tool outputs and injects
+ * guidance asking the model to use more targeted tool calls.
+ *
+ * When 2+ consecutive tool outputs exceed the character threshold,
+ * injects additionalContext advising the model to use offset+limit on Read,
+ * filter Grep, and pipe Bash through head/tail.
+ */
+export function createLargeOutputWarningHook(thresholdChars: number = 10_000): HookCallback {
+  let consecutiveLargeOutputs = 0
+
+  return async (input) => {
+    const i = input as Record<string, unknown>
+    // Only act on PostToolUse events
+    if (i.hook_event_name !== 'PostToolUse') return {}
+
+    const toolResponse = i.tool_response as string | undefined
+    const outputLen = typeof toolResponse === 'string' ? toolResponse.length : 0
+
+    if (outputLen > thresholdChars) {
+      consecutiveLargeOutputs++
+      if (consecutiveLargeOutputs >= 2) {
+        const toolName = i.tool_name as string
+        hookLog.info(
+          `[LargeOutputWarning] ${consecutiveLargeOutputs} consecutive large outputs ` +
+            `(last: ${toolName}, ${outputLen} chars) — injecting guidance`
+        )
+        consecutiveLargeOutputs = 0
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PostToolUse' as const,
+            additionalContext:
+              'Multiple large tool outputs detected. Use targeted reads (offset+limit), ' +
+              'filter grep results, and pipe bash output through head/tail to keep context manageable.'
+          }
+        } as SyncHookJSONOutput
+      }
+    } else {
+      consecutiveLargeOutputs = 0
+    }
+    return {}
+  }
+}
+
 /** PostToolUse hook — tracks tool success for analytics */
 export function createPostToolUseHook(agentId: string): HookCallback {
   return async (input) => {
@@ -168,29 +293,6 @@ export function createFileChangedHook(
     const changeType = (input as Record<string, unknown>).change_type as string
     onFileChanged(filePath, changeType)
     return {}
-  }
-}
-
-/**
- * Creates a PreToolUse hook that requests user approval for tool calls.
- * With SDK 0.2.96 PermissionMode: 'auto', this hook is only used as a
- * fallback when canUseTool callback is not available.
- */
-export function createToolApprovalHook(agentId: string, taskId?: string): HookCallback {
-  return async (input) => {
-    const toolName = (input as Record<string, unknown>).tool_name as string
-    const toolInput = (input as Record<string, unknown>).tool_input as Record<string, unknown>
-
-    const { toolApprovalService } = await import('./tool-approval.service')
-
-    const approved = await toolApprovalService.requestApproval(toolName, toolInput, agentId, taskId)
-
-    if (!approved) {
-      hookLog.info(`Tool ${toolName} blocked by user for agent ${agentId}`)
-      return { decision: 'block', reason: 'Blocked by user' }
-    }
-
-    return {} // Allow
   }
 }
 

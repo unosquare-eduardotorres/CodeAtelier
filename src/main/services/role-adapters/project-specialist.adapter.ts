@@ -57,6 +57,17 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
   private githubConfigured = false
 
   /**
+   * Strategy Λ: Locked MCP feature flags — snapshotted at onSessionStart()
+   * and used for buildMcpConfig() + MCP guidance in the system prompt.
+   * Prevents mid-session tool set drift that would break prompt cache prefix.
+   */
+  private lockedMcpFlags: {
+    repomapEnabled: boolean
+    semanticSearchEnabled: boolean
+    githubConfigured: boolean
+  } | null = null
+
+  /**
    * Cached system-prompt assembly (mode + identity + CLAUDE.md + MCP guidance).
    * Mirrors DaVinciPromptAssembler: rebuild on turn 1, reuse on turns 2+ when
    * (conversationId, mode) match. Invalidated on conversation switch, mode
@@ -74,6 +85,13 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
   async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
     this.loadSnapshot()
     this.refreshWorkspaceFlags(ctx.workspaceId)
+
+    // Strategy Λ: Lock MCP flags at session start for tool set stability.
+    this.lockedMcpFlags = {
+      repomapEnabled: this.repomapEnabled,
+      semanticSearchEnabled: this.semanticSearchEnabled,
+      githubConfigured: this.githubConfigured
+    }
   }
 
   refreshFeatureFlags(ctx: AdapterSessionLifecycleCtx): void {
@@ -142,11 +160,13 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       const layers = [modeSection, this.snapshot.prompt]
       if (claudeMdLayer) layers.push(claudeMdLayer)
       const basePrompt = layers.join('\n\n')
-      systemPrompt = appendMcpToolGuidance(basePrompt, ctx.turnCount, {
+      // Strategy Λ: Use locked flags so MCP guidance matches the mounted tool set.
+      const mcpFlags = this.lockedMcpFlags ?? {
         repomapEnabled: this.repomapEnabled,
         semanticSearchEnabled: this.semanticSearchEnabled,
         githubConfigured: this.githubConfigured
-      })
+      }
+      systemPrompt = appendMcpToolGuidance(basePrompt, ctx.turnCount, mcpFlags)
       this.systemPromptSnapshot = systemPrompt
       this.systemPromptSnapshotMode = ctx.mode
       this.systemPromptSnapshotConversationId = ctx.conversationId
@@ -169,16 +189,19 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
     if (!this.snapshot) this.loadSnapshot()
 
+    // Strategy Λ: Use locked flags for stable tool set across all turns.
+    const mcpFlags = this.lockedMcpFlags ?? {
+      repomapEnabled: this.repomapEnabled,
+      semanticSearchEnabled: this.semanticSearchEnabled,
+      githubConfigured: this.githubConfigured
+    }
+
     return buildWorkspaceMcpConfig({
       mode: ctx.mode,
       workspacePath: ctx.workspacePath,
       workspaceId: ctx.workspaceId,
       conversationId: ctx.conversationId,
-      featureFlags: {
-        repomapEnabled: this.repomapEnabled,
-        semanticSearchEnabled: this.semanticSearchEnabled,
-        githubConfigured: this.githubConfigured
-      },
+      featureFlags: mcpFlags,
       controlCallbacks: ctx.controlCallbacks
     })
   }
@@ -254,6 +277,7 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
     this.repomapEnabled = false
     this.semanticSearchEnabled = false
     this.githubConfigured = false
+    this.lockedMcpFlags = null
     this.invalidateSnapshot()
   }
 

@@ -137,6 +137,10 @@ export interface AgentStatus {
   elapsedMs: number
   /** Running sum of billing tokens (input+output) across all turns — used for cost tracking. */
   tokenUsage: number
+  /** Running sum of input tokens (excludes cache read/creation). */
+  inputTokens?: number
+  /** Running sum of output tokens. */
+  outputTokens?: number
   /**
    * Live SDK context window consumption (from query.getContextUsage().totalTokens).
    * This reflects the actual context size the model sees, unlike tokenUsage which is
@@ -206,6 +210,8 @@ export interface Skill {
   tier1Json: string | null
   /** Tier 2: Core instructions extracted from first section (~500 tokens) */
   tier2Instructions: string | null
+  /** Haiku-generated enrichment metadata (keywords, applicableTo, complexity) */
+  enrichmentJson: string | null
 }
 
 export interface CreateSpecialistInput {
@@ -512,12 +518,57 @@ export interface PlanSection {
   mermaid?: string
 }
 
+export type PlanType = 'bug' | 'feature' | 'refactor' | 'audit' | 'investigation'
+export type PhaseRisk = 'low' | 'medium' | 'high'
+
+export interface PlanRootCause {
+  id: number
+  title: string
+  description: string
+  /** Which user-visible symptom this root cause explains */
+  symptom?: string
+}
+
+export interface PlanPhase {
+  id: number
+  title: string
+  /** Complexity score 1-10 */
+  complexity: number
+  fileCount?: number
+  risk: PhaseRisk
+  description: string
+  files?: Array<{ file: string; change: string }>
+}
+
 export interface StructuredPlan {
+  /** Plan classification — drives card layout and section ordering */
+  type?: PlanType
+
   title: string
   summary: string
+
+  // ── Diagnostic fields (bugs / investigations) ──
   problemSummary?: string
   rootCause?: string
   decisions?: Array<{ what: string; why: string }>
+
+  /** Multi-root-cause analysis — numbered causes mapped to user symptoms */
+  rootCauses?: PlanRootCause[]
+
+  /** Post-implementation verification / acceptance criteria */
+  verification?: string[]
+
+  // ── Phased breakdown (features / refactors / audits) ──
+  /** Phased plan with complexity scoring and risk levels */
+  phases?: PlanPhase[]
+
+  /** Description of the current state / problem being solved */
+  currentState?: string
+
+  /** Recommended phase execution order (list of phase IDs) */
+  implementationOrder?: number[]
+
+  // ── Existing fields (unchanged) ──
   sections?: PlanSection[]
   steps?: PlanStep[]
   files?: string[]
@@ -577,8 +628,6 @@ export type AgentIntent =
     }
   | { type: 'grillEvaluation'; evaluation: GrillEvaluation }
   | { type: 'error'; message: string }
-
-
 
 // ── Build Summary Type ──
 export interface BuildSummary {

@@ -18,7 +18,6 @@ import './intent-detector.test'
 import './intent-router.test'
 // Run 3 — P0 continued
 import './agent-circuit-breaker.test'
-import './tool-approval.test'
 import './da-vinci-prompt-assembler.test'
 // Run 4 — P1 targets
 import './cost-tracker.test'

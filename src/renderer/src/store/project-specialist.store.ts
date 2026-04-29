@@ -13,6 +13,12 @@ export interface SpecialistSkillSummary {
   isEnabled: boolean
 }
 
+export interface SkillRecommendation {
+  skillId: string
+  relevance: number
+  rationale: string
+}
+
 export interface ProjectSpecialist {
   id: string
   workspaceId: string
@@ -29,6 +35,8 @@ export interface ProjectSpecialist {
   updatedAt: string
   /** Skills attached to this specialist (with per-specialist is_enabled state). */
   skills?: SpecialistSkillSummary[]
+  /** Haiku-generated skill recommendations for this project. */
+  skillRecommendations: SkillRecommendation[] | null
 }
 
 export interface BuildProgressEvent {
@@ -67,6 +75,7 @@ interface ProjectSpecialistState {
   attachSkill: (specialistId: string, skillId: string) => Promise<void>
   detachSkill: (specialistId: string, skillId: string) => Promise<void>
   checkDrift: (workspaceId: string) => Promise<void>
+  refreshRecommendations: (specialistId: string) => Promise<void>
   clearError: () => void
 }
 
@@ -80,9 +89,9 @@ export const useProjectSpecialistStore = create<ProjectSpecialistState>((set, ge
   loadForWorkspace: async (workspaceId) => {
     set({ isLoading: true, error: null })
     try {
-      const raw = (await window.api.getProjectSpecialist({ workspaceId })) as
-        | ProjectSpecialist
-        | null
+      const raw = (await window.api.getProjectSpecialist({
+        workspaceId
+      })) as ProjectSpecialist | null
       set((state) => ({
         byWorkspace: { ...state.byWorkspace, [workspaceId]: raw },
         isLoading: false
@@ -116,7 +125,9 @@ export const useProjectSpecialistStore = create<ProjectSpecialistState>((set, ge
     } catch (error) {
       rendererLog.error('Project Specialist build failed:', error)
       // Revert the optimistic update by reloading authoritative state.
-      await get().loadForWorkspace(workspaceId).catch(() => {})
+      await get()
+        .loadForWorkspace(workspaceId)
+        .catch(() => {})
       set({ isLoading: false, error: (error as Error).message })
       throw error
     }
@@ -204,14 +215,30 @@ export const useProjectSpecialistStore = create<ProjectSpecialistState>((set, ge
 
   checkDrift: async (workspaceId) => {
     try {
-      const report = (await window.api.getProjectSpecialistDrift({ workspaceId })) as
-        | DriftReport
-        | null
+      const report = (await window.api.getProjectSpecialistDrift({
+        workspaceId
+      })) as DriftReport | null
       set((state) => ({
         driftByWorkspace: { ...state.driftByWorkspace, [workspaceId]: report }
       }))
     } catch (error) {
       rendererLog.error('Drift check failed:', error)
+    }
+  },
+
+  refreshRecommendations: async (specialistId) => {
+    set({ error: null })
+    try {
+      await window.api.refreshProjectSpecialistRecommendations({ specialistId })
+      // Reload to pick up updated recommendations
+      const entries = Object.entries(get().byWorkspace)
+      for (const [wsId, row] of entries) {
+        if (row?.id === specialistId) await get().loadForWorkspace(wsId)
+      }
+    } catch (error) {
+      rendererLog.error('Refresh recommendations failed:', error)
+      set({ error: (error as Error).message })
+      throw error
     }
   },
 

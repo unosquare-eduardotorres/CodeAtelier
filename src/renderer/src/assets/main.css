@@ -77,6 +77,10 @@
   --color-plan-card-muted: rgba(14, 165, 233, 0.12);
   --color-plan-card-border: rgba(14, 165, 233, 0.3);
   --color-plan-card-text: #7dd3fc;
+  --color-plan-card-section-bg: rgba(14, 165, 233, 0.06);
+  --color-plan-card-accent: #6dc4b2;
+  --color-plan-card-phase-bg: rgba(31, 107, 94, 0.12);
+  --color-plan-card-phase-border: rgba(31, 107, 94, 0.25);
 
   /* ── Panel / Pillar colors (Four Pillars of Craftsmanship) ── */
   --color-panel-olive: #3a3531; /* Architecture */

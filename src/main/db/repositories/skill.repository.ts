@@ -17,6 +17,7 @@ interface SkillRow {
   summary_hash: string | null
   tier1_json: string | null
   tier2_instructions: string | null
+  enrichment_json: string | null
 }
 
 function mapRow(row: SkillRow): Skill {
@@ -35,7 +36,8 @@ function mapRow(row: SkillRow): Skill {
     summaryMinimal: row.summary_minimal,
     summaryHash: row.summary_hash,
     tier1Json: row.tier1_json,
-    tier2Instructions: row.tier2_instructions
+    tier2Instructions: row.tier2_instructions,
+    enrichmentJson: row.enrichment_json
   }
 }
 
@@ -202,6 +204,14 @@ export class SkillRepository {
       WHERE id = ?
     `
     ).run(tier1Json, tier2Instructions, skillId)
+  }
+
+  /** Store Haiku-generated enrichment metadata for a skill */
+  updateEnrichment(skillId: string, enrichmentJson: string): void {
+    const db = getDatabase()
+    db.prepare(
+      `UPDATE skills SET enrichment_json = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(enrichmentJson, skillId)
   }
 
   /** Get pre-computed summary for a specific budget tier */

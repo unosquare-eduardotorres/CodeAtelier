@@ -1,8 +1,3 @@
-export { default as SpecialistSlideOver } from './SpecialistSlideOver'
 export { default as StackDriftBanner } from './StackDriftBanner'
 export { default as BuildProgressInline } from './BuildProgressInline'
 export { default as GenerateSpecialistModal } from './GenerateSpecialistModal'
-export { default as SpecialistPromptTab } from './SpecialistPromptTab'
-export { default as SpecialistSkillsTab } from './SpecialistSkillsTab'
-export { default as SpecialistHistoryTab } from './SpecialistHistoryTab'
-export { default as SkillLibraryPicker } from './SkillLibraryPicker'

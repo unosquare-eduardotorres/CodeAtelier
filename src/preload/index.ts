@@ -273,6 +273,11 @@ const api = {
   getProjectSpecialistDrift: (args: { workspaceId: string }): Promise<unknown | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_GET_DRIFT, args),
 
+  refreshProjectSpecialistRecommendations: (args: {
+    specialistId: string
+  }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_REFRESH_RECOMMENDATIONS, args),
+
   onProjectSpecialistBuildProgress: (
     callback: (data: {
       specialistId: string
@@ -758,6 +763,8 @@ const api = {
       status: string
       elapsedMs: number
       tokenUsage: number
+      inputTokens?: number
+      outputTokens?: number
       activeMcpTools?: string[]
     }) => void
   ): (() => void) => {
@@ -769,6 +776,8 @@ const api = {
         status: string
         elapsedMs: number
         tokenUsage: number
+        inputTokens?: number
+        outputTokens?: number
         activeMcpTools?: string[]
       }
     ): void => callback(data)
@@ -1118,38 +1127,6 @@ const api = {
       ipcRenderer.removeListener(IPC_CHANNELS.AGENT_ABANDONMENT_DETECTED, handler)
     }
   },
-
-  // ── Tool Approval ──
-  onToolApprovalRequest: (
-    callback: (data: {
-      requestId: string
-      toolName: string
-      toolInput: string
-      agentId: string
-      taskId?: string
-    }) => void
-  ): (() => void) => {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      data: {
-        requestId: string
-        toolName: string
-        toolInput: string
-        agentId: string
-        taskId?: string
-      }
-    ): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.TOOL_APPROVAL_REQUEST, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.TOOL_APPROVAL_REQUEST, handler)
-    }
-  },
-  respondToolApproval: (requestId: string, approved: boolean): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_RESPONSE, requestId, approved),
-  setToolApprovalMode: (mode: string): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_SET_MODE, mode),
-  getToolApprovalMode: (): Promise<string> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TOOL_APPROVAL_GET_MODE),
 
   // ── Checkpoint Approval ──
   onCheckpointApprovalRequest: (

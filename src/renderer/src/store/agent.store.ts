@@ -6,7 +6,11 @@ interface AgentState {
   statuses: AgentStatus[]
   isStopping: boolean
   sessionTokens: number
+  sessionInputTokens: number
+  sessionOutputTokens: number
   lastKnownTokens: Record<string, number>
+  lastKnownInputTokens: Record<string, number>
+  lastKnownOutputTokens: Record<string, number>
   agentOutputs: Record<string, string>
   abandonments: Record<string, { pattern: string }>
 
@@ -26,13 +30,17 @@ export const useAgentStore = create<AgentState>((set) => ({
   statuses: previousAgentState?.statuses ?? [],
   isStopping: previousAgentState?.isStopping ?? false,
   sessionTokens: previousAgentState?.sessionTokens ?? 0,
+  sessionInputTokens: previousAgentState?.sessionInputTokens ?? 0,
+  sessionOutputTokens: previousAgentState?.sessionOutputTokens ?? 0,
   lastKnownTokens: previousAgentState?.lastKnownTokens ?? {},
+  lastKnownInputTokens: previousAgentState?.lastKnownInputTokens ?? {},
+  lastKnownOutputTokens: previousAgentState?.lastKnownOutputTokens ?? {},
   agentOutputs: previousAgentState?.agentOutputs ?? {},
   abandonments: previousAgentState?.abandonments ?? {},
 
   updateStatus: (status: AgentStatus) => {
     set((state) => {
-      // ── Session token accumulation ──
+      // ── Session token accumulation (total) ──
       const prevTokens = state.lastKnownTokens[status.agentId] ?? 0
       const currentTokens = status.tokenUsage
       // If current < prev, agent was restarted → treat current as a fresh delta
@@ -43,22 +51,41 @@ export const useAgentStore = create<AgentState>((set) => ({
         [status.agentId]: currentTokens
       }
 
+      // ── Session input/output token accumulation ──
+      const prevIn = state.lastKnownInputTokens[status.agentId] ?? 0
+      const curIn = status.inputTokens ?? 0
+      const deltaIn = curIn >= prevIn ? curIn - prevIn : curIn
+
+      const prevOut = state.lastKnownOutputTokens[status.agentId] ?? 0
+      const curOut = status.outputTokens ?? 0
+      const deltaOut = curOut >= prevOut ? curOut - prevOut : curOut
+
+      const newLastKnownInput = {
+        ...state.lastKnownInputTokens,
+        [status.agentId]: curIn
+      }
+      const newLastKnownOutput = {
+        ...state.lastKnownOutputTokens,
+        [status.agentId]: curOut
+      }
+
+      const sessionUpdate = {
+        sessionTokens: newSessionTokens,
+        sessionInputTokens: state.sessionInputTokens + deltaIn,
+        sessionOutputTokens: state.sessionOutputTokens + deltaOut,
+        lastKnownTokens: newLastKnown,
+        lastKnownInputTokens: newLastKnownInput,
+        lastKnownOutputTokens: newLastKnownOutput
+      }
+
       // ── Existing status array update ──
       const existing = state.statuses.findIndex((s) => s.agentId === status.agentId)
       if (existing >= 0) {
         const updated = [...state.statuses]
         updated[existing] = status
-        return {
-          statuses: updated,
-          sessionTokens: newSessionTokens,
-          lastKnownTokens: newLastKnown
-        }
+        return { statuses: updated, ...sessionUpdate }
       }
-      return {
-        statuses: [...state.statuses, status],
-        sessionTokens: newSessionTokens,
-        lastKnownTokens: newLastKnown
-      }
+      return { statuses: [...state.statuses, status], ...sessionUpdate }
     })
   },
 

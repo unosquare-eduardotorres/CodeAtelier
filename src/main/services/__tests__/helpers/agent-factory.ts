@@ -152,24 +152,6 @@ export function createCircuitBreaker() {
   return { breaker: new AgentCircuitBreaker() }
 }
 
-// ── ToolApprovalService Factory ──
-
-/**
- * Creates a ToolApprovalService with BrowserWindow.getFocusedWindow mocked.
- * Note: The real service uses Electron's BrowserWindow.getFocusedWindow() statically,
- * so for full integration tests, the module needs to be patched.
- * This factory returns a minimal instance for testing isAutoApproved / mode logic.
- */
-export function createToolApprovalService() {
-  const { ToolApprovalService } = require('../../tool-approval.service') as {
-    ToolApprovalService: new () => InstanceType<
-      typeof import('../../tool-approval.service').ToolApprovalService
-    >
-  }
-
-  return { service: new ToolApprovalService() }
-}
-
 // ── DaVinciPromptAssembler Factory ──
 
 export function createPromptAssembler() {

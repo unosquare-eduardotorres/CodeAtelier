@@ -38,7 +38,6 @@ import '../services/__tests__/intent-detector.test'
 import '../services/__tests__/intent-router.test'
 // Run 3 — P0 continued
 import '../services/__tests__/agent-circuit-breaker.test'
-import '../services/__tests__/tool-approval.test'
 import '../services/__tests__/da-vinci-prompt-assembler.test'
 // Run 4 — P1 targets
 import '../services/__tests__/cost-tracker.test'

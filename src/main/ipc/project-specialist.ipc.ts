@@ -41,6 +41,7 @@ interface ProjectSpecialistRow {
   last_built_at: string | null
   created_at: string
   updated_at: string
+  skill_recommendations_json: string | null
 }
 
 function emitProgress(specialistId: string, phase: string, message: string): void {
@@ -60,6 +61,7 @@ function loadRow(workspaceId: string): ProjectSpecialistRow | undefined {
     .prepare(
       `SELECT id, workspace_id, agent_id, display_name, icon, color, prompt, build_status,
               stack_fingerprint, detected_techs, last_built_at,
+              skill_recommendations_json,
               created_at, updated_at
          FROM specialists WHERE workspace_id = ?`
     )
@@ -73,6 +75,19 @@ function serializeRow(row: ProjectSpecialistRow): Record<string, unknown> {
   } catch {
     detectedTechs = []
   }
+  let skillRecommendations: Array<{
+    skillId: string
+    relevance: number
+    rationale: string
+  }> | null = null
+  try {
+    if (row.skill_recommendations_json) {
+      const parsed = JSON.parse(row.skill_recommendations_json)
+      skillRecommendations = parsed.recommendations ?? null
+    }
+  } catch {
+    skillRecommendations = null
+  }
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -84,6 +99,7 @@ function serializeRow(row: ProjectSpecialistRow): Record<string, unknown> {
     buildStatus: row.build_status,
     stackFingerprint: row.stack_fingerprint,
     detectedTechs,
+    skillRecommendations,
     lastBuiltAt: row.last_built_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -236,6 +252,44 @@ export function registerProjectSpecialistIpc(): void {
       validateSender(event)
       if (!args?.workspaceId) throw new Error('Invalid workspaceId')
       return stackDriftDetectorService.detectForWorkspace(args.workspaceId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROJECT_SPECIALIST_REFRESH_RECOMMENDATIONS,
+    async (event, args: { specialistId: string }) => {
+      validateSender(event)
+      if (!args?.specialistId) throw new Error('Invalid specialistId')
+
+      const db = getDatabase()
+      const row = db
+        .prepare(
+          `SELECT s.id, s.workspace_id, s.detected_techs, w.repo_path
+             FROM specialists s
+             JOIN workspaces w ON w.id = s.workspace_id
+            WHERE s.id = ?`
+        )
+        .get(args.specialistId) as
+        | { id: string; workspace_id: string; detected_techs: string; repo_path: string }
+        | undefined
+
+      if (!row) throw new Error(`Specialist not found: ${args.specialistId}`)
+
+      let detectedTechs: string[] = []
+      try {
+        detectedTechs = JSON.parse(row.detected_techs || '[]')
+      } catch {
+        detectedTechs = []
+      }
+
+      await specialistBuilderService.forceRefreshRecommendations(
+        row.id,
+        row.repo_path,
+        detectedTechs
+      )
+
+      psLog.info(`Skill recommendations force-refreshed for specialist ${args.specialistId}`)
+      return { ok: true }
     }
   )
 }

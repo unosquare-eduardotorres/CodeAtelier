@@ -38,74 +38,32 @@ emit_memory parameters:
 Emit when: user states a preference, corrects you, makes an architecture decision, or shares reference material.
 Do NOT emit for: transient discussion, info already in CLAUDE.md/Auto Memory, or trivial facts.`
 
-export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph Tools (graph_map + search_identifiers + find_dead_code)
-
-### ⚠️ MANDATORY PRE-FLIGHT — Read Before ANY Code Exploration
+export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph — Tool Priority Rules
 
 **STOP before using Read, Grep, or Glob on source files.**
+1. FIRST tool call for code investigation → \`${MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name}\` or \`${MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name}\`.
+2. Read ONLY after a Code Graph tool tells you which file + lines.
+3. Grep ONLY for exact strings, regex, or content inside function bodies.
+4. Glob ONLY when no symbol name is known.
+5. For deprecated code (still used): Grep "@deprecated" — find_dead_code only finds zero-reference symbols.
 
-You have access to code intelligence tools via the code-graph MCP server.
-Tools are available via MCP — call them by their full names:
-- **${MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name}**: Generates a ranked map of the most important files and symbols using PageRank over cross-file dependency graphs. Pass the workspace path as projectRoot.
-- **${MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name}**: AST-aware symbol search — finds definitions and references by name.
-- **${MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name}**: Find potentially unused code definitions (functions, classes, variables) that have no references elsewhere in the codebase. Scope by directory path prefix. Use when the user asks about unused code, dead code, cleanup, or orphaned symbols.
+One search_identifiers call replaces 3-5 Grep+Read rounds.`
 
-| You want to... | Use THIS first |
-|---|---|
-| Find a class, function, type, or interface | **${MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name}** |
-| Understand codebase structure or find important files | **${MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name}** |
-| Find unused/orphaned code | **${MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name}** |
-| Explore unfamiliar code by concept | **semantic_search** (if available) |
+export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search — Priority Rules
 
-**Rules:**
-1. Your FIRST tool call for any code investigation MUST be \`${MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name}\` or \`${MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name}\` — never Read, Grep, or Glob.
-2. Use Read ONLY after a Code Graph tool has told you which file and lines to read.
-3. Use Grep ONLY for exact string literals, regex patterns, config values, or content inside function bodies that Code Graph cannot index.
-4. Use Glob ONLY for file-extension-only searches (e.g. "*.cs") where no symbol name is known.
-5. NEVER use Bash find for code exploration.
-6. For **deprecated** code (still used but marked for removal): use Grep for "@deprecated" — find_dead_code only finds zero-reference symbols.
+Use **semantic_search** FIRST for conceptual queries ("authentication", "JWT handling"). Prefer over Grep for meaning-based searches. Grep only for exact strings/regex. Combine with Code Graph for structure + concept coverage.`
 
-**Cost context:** One search_identifiers call replaces 3-5 Grep+Read rounds and is faster.`
+export const GIT_CONTEXT_GUIDANCE_PROMPT = `## Git Context — When to Use
 
-export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search (semantic_search tool)
-You have access to a natural language code search tool via local embeddings:
+Use git tools for recent changes, diffs, and blame — NOT for reading files (use Read) or searching code (use Grep/search_identifiers).`
 
-- **semantic_search**: Search the indexed codebase using plain English queries. Returns relevant code chunks with file paths, symbol names, and context.
+export const CHECKPOINT_CONTEXT_GUIDANCE_PROMPT = `## Checkpoint Tools — When to Use
 
-**IMPORTANT — Tool Priority:**
-- ALWAYS use **semantic_search** as your FIRST tool when exploring unfamiliar code by concept (e.g. "authentication", "role validation", "JWT handling").
-- Prefer semantic_search over Grep for conceptual searches — it understands meaning, not just text patterns.
-- Use Grep only for exact string literals, regex patterns, or config values that semantic search wouldn't match.
-- Combine with Code Graph tools: semantic_search finds conceptually related code, graph_map/search_identifiers find structurally related code.`
+Use for reviewing rollback points and prior state. Read-only — to restore state, use the UI rollback action.`
 
-export const GIT_CONTEXT_GUIDANCE_PROMPT = `## Git Context Tools (git_log + git_diff + git_blame)
-You have access to git intelligence tools:
+export const GITHUB_CONTEXT_GUIDANCE_PROMPT = `## GitHub Tools — When to Use
 
-- **git_log**: Recent commit history with hash, author, date, message. Filter by path, date, author.
-- **git_diff**: View staged/unstaged/commit diffs. Filter by path. Output is capped at 500 lines.
-- **git_blame**: Line-by-line authorship for a file. Supports line range filtering.
-
-When to use: understanding recent changes, reviewing modifications, finding who changed code, checking what's staged.
-When NOT to use: reading file contents (use Read), searching code (use Grep/search_identifiers).`
-
-export const CHECKPOINT_CONTEXT_GUIDANCE_PROMPT = `## Checkpoint Tools (list_checkpoints + get_checkpoint)
-You have access to checkpoint inspection tools:
-
-- **list_checkpoints**: List all checkpoints for this conversation with IDs, labels, git SHA, timestamps.
-- **get_checkpoint**: Get full checkpoint state — task statuses, git state, and metadata.
-
-When to use: reviewing available rollback points, understanding system state at a prior point.
-When NOT to use: to restore state (use the UI rollback action instead — these tools are read-only).`
-
-export const GITHUB_CONTEXT_GUIDANCE_PROMPT = `## GitHub Tools (get_pr_status + list_pr_comments + list_issues)
-You have access to GitHub repository tools:
-
-- **get_pr_status**: Get PR state (open/closed/merged) by PR number.
-- **list_pr_comments**: List review comments on a PR (up to 25, most recent first).
-- **list_issues**: List repository issues filtered by state and labels (up to 25).
-
-When to use: checking PR review status, reading reviewer feedback, finding open issues to work on.
-When NOT to use: creating PRs or issues — use \`gh\` CLI in Build mode or the GitHub web UI.`
+Use for checking PR status, reading review comments, and listing issues. NOT for creating PRs/issues — use \`gh\` CLI in Build mode.`
 
 export const DIRECT_ANSWER_BOOST_PROMPT = `## Direct Answer Mode
 CRITICAL: For follow-up questions about the current conversation ("why did you suggest X?", "what does Y mean?"), ALWAYS answer from your conversation history. Do NOT read files for conversational follow-ups.
@@ -199,7 +157,36 @@ Workflow:
 ### Plan Quality Requirements (MANDATORY)
 - Plans MUST reference real file paths, real symbols, and real module structure — never guess
 - Every step must include: which file changes, what changes, and why
-- Diagnostic requests: include problemSummary, rootCause, steps, files affected
+
+### Plan Type Selection
+Set the \`type\` field based on the request:
+- **bug**: user reports broken behavior → include problemSummary, rootCause(s), verification
+- **feature**: new capability → include currentState, phases with complexity, implementationOrder
+- **refactor**: restructuring without behavior change → include currentState, phases, filesChanged
+- **audit**: analysis/investigation → include currentState, findings as phases, diagrams
+- **investigation**: root cause analysis → include problemSummary, rootCauses, verification
+
+### Mermaid Diagrams — Include When Valuable
+Add diagrams to the \`diagrams\` array when the plan involves:
+- **State machines / lifecycles** → stateDiagram-v2 (e.g., task status transitions)
+- **Database schemas** → erDiagram (e.g., table relationships, new columns)
+- **Service interactions** → sequenceDiagram (e.g., IPC flows, API call chains)
+- **Architecture / data flow** → flowchart TD (e.g., component relationships, data pipeline)
+- **Before/after comparison** → two flowcharts showing current vs proposed
+Do NOT add diagrams for simple changes (< 3 files, single function fix).
+Never use yellow, pink, orange, or lime as fills — prefer blue, green, red, purple, slate, or cyan.
+
+### Verification Criteria
+For bug/investigation plans, include \`verification\` — numbered acceptance criteria that can be manually tested:
+  "After changes, the following should all pass:
+   1. [Scenario]: [Action] → [Expected result]"
+
+### Phased Plans
+For complex changes (>5 files, multiple concerns), use \`phases\` instead of flat \`steps\`:
+  - Score complexity 1-10
+  - Estimate file count
+  - Rate risk: low/medium/high
+  - List files with per-file change descriptions
 
 ### Operational Requests in Plan Mode
 Do not execute in plan mode. Respond with exactly:

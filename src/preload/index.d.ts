@@ -182,6 +182,7 @@ interface Api {
     skillId: string
   }) => Promise<{ ok: true }>
   getProjectSpecialistDrift: (args: { workspaceId: string }) => Promise<unknown | null>
+  refreshProjectSpecialistRecommendations: (args: { specialistId: string }) => Promise<{ ok: true }>
   onProjectSpecialistBuildProgress: (
     callback: (data: { specialistId: string; phase: string; message: string; at: string }) => void
   ) => () => void
@@ -386,6 +387,8 @@ interface Api {
       currentTask?: string
       elapsedMs: number
       tokenUsage: number
+      inputTokens?: number
+      outputTokens?: number
       model?: 'haiku' | 'sonnet' | 'opus'
       complexityTier?: 'simple' | 'moderate' | 'complex'
       activeMcpTools?: string[]
@@ -588,20 +591,6 @@ interface Api {
   onAbandonmentDetected: (
     callback: (data: { taskId: string; specialist: string; pattern: string }) => void
   ) => () => void
-
-  // Tool approval
-  onToolApprovalRequest: (
-    callback: (data: {
-      requestId: string
-      toolName: string
-      toolInput: string
-      agentId: string
-      taskId?: string
-    }) => void
-  ) => () => void
-  respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
-  setToolApprovalMode: (mode: 'dangerous-only' | 'accept-all') => Promise<void>
-  getToolApprovalMode: () => Promise<string>
 
   // Checkpoint approval
   onCheckpointApprovalRequest: (

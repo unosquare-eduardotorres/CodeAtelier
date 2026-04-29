@@ -61,6 +61,9 @@ export class ChatStreamService {
   private streamingLock = false
   private activeRequestId: string | null = null
 
+  /** Per-stream identity — set at stream() start, cleared on cleanup. */
+  private currentStreamingRole: 'da-vinci' | 'specialist' = 'da-vinci'
+
   constructor(mainWindow: BrowserWindow, callbacks: PipelineCallbacks) {
     this.mainWindow = mainWindow
     this.callbacks = callbacks
@@ -89,7 +92,7 @@ export class ChatStreamService {
         createCompactNeeded({
           conversationId: chatAgentService.getCurrentConversationId() || '',
           requestId: this.activeRequestId ?? undefined,
-          role: 'da-vinci',
+          role: this.currentStreamingRole,
           compactNeeded: data
         })
       )
@@ -173,6 +176,9 @@ export class ChatStreamService {
         ? { specialist: adapterAgentId }
         : undefined
 
+    // Snapshot per-stream identity for event forwarders (e.g. compactNeeded)
+    this.currentStreamingRole = streamingRole
+
     // Reset stop flag for new message cycle
     this.isStopped = false
 
@@ -193,6 +199,7 @@ export class ChatStreamService {
     conversationLifecycle.onDispose(() => {
       this.streamingLock = false
       this.activeRequestId = null
+      this.currentStreamingRole = 'da-vinci'
     })
     conversationLifecycle.onDispose(() => {
       chatAgentService.removeListener('chunk', onChunk)
@@ -209,6 +216,24 @@ export class ChatStreamService {
     })
 
     void signal // AbortSignal available for future cooperative cancellation
+
+    // ── Step 0: Announce streaming identity ──
+    // The renderer's thinking indicator renders as soon as isStreaming=true
+    // (set by sendMessage before the IPC invoke resolves). This early chunk
+    // sets streamingRole + streamingSpecialist so the avatar matches the
+    // active adapter from the first frame — before any content arrives.
+    this.mainWindow.webContents.send(
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createTextChunk({
+        conversationId,
+        requestId,
+        text: '',
+        role: streamingRole,
+        phase,
+        specialist: specialistMeta?.specialist,
+        taskId: specialistMeta?.taskId
+      })
+    )
 
     // ── Step 1: Process attachments ──
     let fullContent = text

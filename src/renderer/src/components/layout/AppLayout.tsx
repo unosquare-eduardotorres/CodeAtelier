@@ -11,7 +11,9 @@ import {
   ZoomIn,
   ZoomOut,
   CircleHelp,
-  Bug
+  Bug,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react'
 import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
@@ -25,7 +27,8 @@ import {
   MemoryFeedBanner,
   BudgetWarningBanner,
   ErrorBoundary,
-  ToastContainer
+  ToastContainer,
+  TokenDetailsModal
 } from '@renderer/components/common'
 import { BugTrackerPage } from '@renderer/components/bugs'
 import {
@@ -65,8 +68,10 @@ export default function AppLayout(): React.JSX.Element {
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const agentStatus = useWorkspaceStore((s) => s.agentStatus)
   const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
-  const sessionTokens = useAgentStore((s) => s.sessionTokens)
-  const { updateMode } = useChatActions()
+  const sessionInputTokens = useAgentStore((s) => s.sessionInputTokens)
+  const sessionOutputTokens = useAgentStore((s) => s.sessionOutputTokens)
+  const { updateMode, setCompactSuggestion } = useChatActions()
+  const [tokenModalOpen, setTokenModalOpen] = useState(false)
   const activeConversation = useChatStore((s) => s.activeConversation)
   const { hydrateConversationSpecialists } = useConversationSpecialistActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -421,6 +426,15 @@ export default function AppLayout(): React.JSX.Element {
       {/* Toast notifications */}
       <ToastContainer onNavigate={(target) => setView(target as typeof view)} />
 
+      {/* Token details modal */}
+      <TokenDetailsModal
+        isOpen={tokenModalOpen}
+        conversationId={activeConversation?.id ?? null}
+        liveInputTokens={sessionInputTokens}
+        liveOutputTokens={sessionOutputTokens}
+        onClose={() => setTokenModalOpen(false)}
+      />
+
       {/* Status bar */}
       <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-[13px]">
         <div className="flex items-center gap-4">
@@ -475,31 +489,52 @@ export default function AppLayout(): React.JSX.Element {
             </div>
           )}
 
-          {/* Context + tokens — context is the live window % (incl. cache),
-              billed is the cheap input+output count for cost. They measure
-              different things and shouldn't be conflated. */}
+          {/* Context — clickable, opens CompactContextModal */}
           <span className="flex items-center gap-1.5 text-text-muted">
             {contextUsage && contextUsage.percentage > 0 && (
-              <span
-                className={
+              <button
+                type="button"
+                onClick={() =>
+                  setCompactSuggestion({
+                    level: contextUsage.level,
+                    inputTokens: contextUsage.inputTokens,
+                    breakdown: contextUsage.breakdown
+                  })
+                }
+                className={`hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-border-default rounded ${
                   contextUsage.level === 'critical' || contextUsage.level === 'red'
                     ? 'text-danger'
                     : contextUsage.level === 'yellow'
                       ? 'text-warning'
                       : 'text-text-secondary'
-                }
-                title="Live context window usage — % of model's window in use (incl. cache). Cache reduces cost, not context size."
+                }`}
+                title="Click for context breakdown and compact options"
               >
                 {contextUsage.percentage}% context
-              </span>
+              </button>
             )}
-            <span
-              className="flex items-center gap-1"
-              title="Tokens you'll be billed for this session — input + output (cache discounts applied). Different from context usage."
+
+            {/* Token IN / OUT — clickable, opens TokenDetailsModal */}
+            <button
+              type="button"
+              onClick={() => setTokenModalOpen(true)}
+              className="flex items-center gap-1.5 hover:text-text-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-border-default rounded"
+              title="Click for token breakdown (input / output / cache)"
             >
               <Zap size={11} />
-              {sessionTokens > 0 ? `${(sessionTokens / 1000).toFixed(1)}k` : '0'} billed
-            </span>
+              <span className="flex items-center gap-0.5 tabular-nums">
+                <ArrowUp size={10} />
+                {sessionInputTokens >= 1000
+                  ? `${(sessionInputTokens / 1000).toFixed(1)}k`
+                  : String(sessionInputTokens)}
+              </span>
+              <span className="flex items-center gap-0.5 tabular-nums">
+                <ArrowDown size={10} />
+                {sessionOutputTokens >= 1000
+                  ? `${(sessionOutputTokens / 1000).toFixed(1)}k`
+                  : String(sessionOutputTokens)}
+              </span>
+            </button>
           </span>
 
           {/* Zoom controls */}

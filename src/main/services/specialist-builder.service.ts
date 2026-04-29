@@ -31,6 +31,9 @@ import type { TechStackResult } from './tech-stack-detector.service'
 import { renderTemplate, type PromptSlotValues } from './project-specialist-prompt-template'
 import { buildEnvWithPath } from './env-utils'
 import { modelConfigService } from './model-config.service'
+import { skillEnrichmentService } from './skill-enrichment.service'
+import type { SkillEnrichment } from './skill-enrichment.service'
+import { skillRepository } from '../db/repositories'
 
 const buildLog = log.scope('specialist-builder')
 
@@ -211,6 +214,13 @@ export class SpecialistBuilderService {
         `✓ Built Project Specialist ${specialist.id} (workspace=${workspace.name}, techs=${techResult.detectedTechs.length}, usedLLM=${usedLLM})`
       )
 
+      // 4. Refresh skill recommendations if stale (non-blocking)
+      void this.refreshRecommendationsIfStale(
+        specialist.id,
+        workspace.repo_path,
+        techResult.detectedTechs
+      ).catch((err) => buildLog.warn('Skill recommendation refresh failed:', err))
+
       return {
         specialistId: specialist.id,
         stackFingerprint: fingerprint,
@@ -224,6 +234,102 @@ export class SpecialistBuilderService {
       ).run(specialist.id)
       throw err
     }
+  }
+
+  /**
+   * Refresh Haiku-powered skill recommendations for a specialist if the
+   * skills inventory has changed since the last review.
+   */
+  private async refreshRecommendationsIfStale(
+    specialistId: string,
+    workspacePath: string,
+    detectedTechs: string[]
+  ): Promise<void> {
+    const db = getDatabase()
+    const allSkills = skillRepository.findAll()
+    const currentHash = skillEnrichmentService.computeSkillsHash(
+      allSkills.map((s) => ({ id: s.id, enrichmentJson: s.enrichmentJson }))
+    )
+
+    const specialist = db
+      .prepare(`SELECT skill_recommendations_hash FROM specialists WHERE id = ?`)
+      .get(specialistId) as { skill_recommendations_hash: string | null } | undefined
+
+    if (
+      !skillEnrichmentService.isStale(currentHash, specialist?.skill_recommendations_hash ?? null)
+    ) {
+      buildLog.info('Skill recommendations still fresh — skipping Haiku review')
+      return
+    }
+
+    const claudeMd = this.readClaudeMd(workspacePath, 2000)
+    const enrichedSkills = allSkills.map((s) => {
+      let enrichment: SkillEnrichment | null = null
+      if (s.enrichmentJson) {
+        try {
+          enrichment = JSON.parse(s.enrichmentJson)
+        } catch {
+          /* ignore parse error */
+        }
+      }
+      return { id: s.id, name: s.name, enrichment }
+    })
+
+    const result = await skillEnrichmentService.generateRecommendations({
+      specialistId,
+      detectedTechs,
+      claudeMdExcerpt: claudeMd,
+      skills: enrichedSkills
+    })
+
+    db.prepare(
+      `UPDATE specialists SET skill_recommendations_json = ?, skill_recommendations_hash = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(JSON.stringify(result), currentHash, specialistId)
+
+    buildLog.info(
+      `✓ Skill recommendations refreshed for ${specialistId} (${result.recommendations.length} recommended)`
+    )
+  }
+
+  /** Force-refresh skill recommendations regardless of staleness. */
+  async forceRefreshRecommendations(
+    specialistId: string,
+    workspacePath: string,
+    detectedTechs: string[]
+  ): Promise<void> {
+    const db = getDatabase()
+    const allSkills = skillRepository.findAll()
+    const currentHash = skillEnrichmentService.computeSkillsHash(
+      allSkills.map((s) => ({ id: s.id, enrichmentJson: s.enrichmentJson }))
+    )
+
+    const claudeMd = this.readClaudeMd(workspacePath, 2000)
+    const enrichedSkills = allSkills.map((s) => {
+      let enrichment: SkillEnrichment | null = null
+      if (s.enrichmentJson) {
+        try {
+          enrichment = JSON.parse(s.enrichmentJson)
+        } catch {
+          /* ignore parse error */
+        }
+      }
+      return { id: s.id, name: s.name, enrichment }
+    })
+
+    const result = await skillEnrichmentService.generateRecommendations({
+      specialistId,
+      detectedTechs,
+      claudeMdExcerpt: claudeMd,
+      skills: enrichedSkills
+    })
+
+    db.prepare(
+      `UPDATE specialists SET skill_recommendations_json = ?, skill_recommendations_hash = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(JSON.stringify(result), currentHash, specialistId)
+
+    buildLog.info(
+      `✓ Skill recommendations force-refreshed for ${specialistId} (${result.recommendations.length} recommended)`
+    )
   }
 
   private buildSlotValues(

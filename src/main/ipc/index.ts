@@ -25,7 +25,6 @@ import { registerShellIpc } from './shell.ipc'
 import { registerCheckpointIpc } from './checkpoint.ipc'
 import { registerCostIpc } from './cost.ipc'
 import { registerEventsIpc } from './events.ipc'
-import { registerToolApprovalIpc } from './tool-approval.ipc'
 import { registerSubscriptionIpc } from './subscription.ipc'
 import { registerConversationSpecialistIpc } from './conversation-specialist.ipc'
 import { registerAppPreferenceIpc } from './app-preference.ipc'
@@ -66,7 +65,6 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerCheckpointIpc()
   registerCostIpc()
   registerEventsIpc()
-  registerToolApprovalIpc()
   registerSubscriptionIpc()
   registerConversationSpecialistIpc()
   registerAppPreferenceIpc()

@@ -310,11 +310,30 @@ export class DaVinciPromptAssembler {
 
   // ── Pending State Management ──
 
-  /** Store pending context injection (Strategy A). Accumulates multiple injections. */
+  /**
+   * Store pending context injection (Strategy A). Accumulates multiple injections
+   * but caps total size to MAX_PENDING_CONTEXT_CHARS (~2K tokens) to prevent
+   * unbounded growth if multiple specialist executions inject context.
+   * When the cap is exceeded, the oldest content is trimmed (keeps the tail).
+   */
+  private static readonly MAX_PENDING_CONTEXT_CHARS = 8000
+
   addPendingContext(conversationId: string, context: string): void {
     const existing = this.pendingContextInjection.get(conversationId)
     if (existing) {
-      this.pendingContextInjection.set(conversationId, `${existing}\n\n${context}`)
+      const combined = `${existing}\n\n${context}`
+      if (combined.length > DaVinciPromptAssembler.MAX_PENDING_CONTEXT_CHARS) {
+        // Keep the most recent content (tail) when over budget
+        this.pendingContextInjection.set(
+          conversationId,
+          combined.slice(-DaVinciPromptAssembler.MAX_PENDING_CONTEXT_CHARS)
+        )
+        this.log.warn(
+          `[PIPELINE:pending-context-cap] Truncated accumulated context from ${combined.length} to ${DaVinciPromptAssembler.MAX_PENDING_CONTEXT_CHARS} chars`
+        )
+      } else {
+        this.pendingContextInjection.set(conversationId, combined)
+      }
     } else {
       this.pendingContextInjection.set(conversationId, context)
     }
@@ -385,15 +404,19 @@ export class DaVinciPromptAssembler {
   /**
    * Scale memory budget by turn count.
    * Turn 1: full budget (memory is fresh context). Turn 3+: reduced (already in history). Turn 6+: zero.
+   *
+   * Cache-audit optimization: balanced turn-1 budget reduced from 5000→3000 chars
+   * (~600 fewer tokens on the first turn). Economy budget reduced from 3000→2000.
+   * This shrinks the dynamic user-message payload while still providing ample context.
    */
   private getMemoryBudgetForTurn(turnCount: number, costPreference: CostPreference): number {
     // Strategy 9: Memory budget floor — retain 300-500 chars for critical user preferences
     // even in long conversations (turn 4+). Previously dropped to 0, causing the model
     // to forget user preferences and corrections in extended sessions.
     if (costPreference === 'economy') {
-      return turnCount <= 1 ? 3000 : turnCount <= 3 ? 1000 : 300
+      return turnCount <= 1 ? 2000 : turnCount <= 3 ? 800 : 300
     }
-    return turnCount <= 1 ? 5000 : turnCount <= 3 ? 2000 : 500
+    return turnCount <= 1 ? 3000 : turnCount <= 3 ? 1500 : 500
   }
 
   /**

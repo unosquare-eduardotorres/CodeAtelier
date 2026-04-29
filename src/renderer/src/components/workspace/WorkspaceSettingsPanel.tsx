@@ -10,12 +10,14 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
-  ScrollText
+  ScrollText,
+  Bot
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 
 export type SettingsTab =
+  | 'specialist'
   | 'models'
   | 'repository'
   | 'team'
@@ -32,6 +34,7 @@ export const SETTINGS_MENU: {
   icon: LucideIcon
   iconColor?: string
 }[] = [
+  { id: 'specialist', label: 'Specialist', icon: Bot, iconColor: 'text-primary-text' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning' },
   { id: 'team', label: 'Team', icon: Users, iconColor: 'text-info' },
   { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-accent' },

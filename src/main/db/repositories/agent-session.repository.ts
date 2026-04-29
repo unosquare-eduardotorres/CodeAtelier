@@ -154,9 +154,29 @@ export class AgentSessionRepository {
   }
 
   /** Update token usage on a running session (periodic flush without completing) */
-  updateTokenUsage(id: string, tokenUsage: number): void {
+  updateTokenUsage(
+    id: string,
+    tokenUsage: number,
+    breakdown?: { input: number; output: number; cacheRead: number; cacheCreation: number }
+  ): void {
     const db = getDatabase()
-    db.prepare(`UPDATE agent_sessions SET token_usage = ? WHERE id = ?`).run(tokenUsage, id)
+    if (breakdown) {
+      db.prepare(
+        `UPDATE agent_sessions
+         SET token_usage = ?, input_tokens = ?, output_tokens = ?,
+             cache_read_tokens = ?, cache_creation_tokens = ?
+         WHERE id = ?`
+      ).run(
+        tokenUsage,
+        breakdown.input,
+        breakdown.output,
+        breakdown.cacheRead,
+        breakdown.cacheCreation,
+        id
+      )
+    } else {
+      db.prepare(`UPDATE agent_sessions SET token_usage = ? WHERE id = ?`).run(tokenUsage, id)
+    }
   }
 
   /** Get all sessions for a workspace */

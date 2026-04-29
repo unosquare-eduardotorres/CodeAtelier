@@ -177,6 +177,10 @@ export abstract class AgentBaseService extends EventEmitter {
   protected buffer: string = ''
   protected currentStatus: AgentStatus['status'] = 'idle'
   protected tokenUsage: number = 0
+  protected inputTokens: number = 0
+  protected outputTokens: number = 0
+  protected cacheReadTokens: number = 0
+  protected cacheCreationTokens: number = 0
   protected startedAt: number = 0
   protected messageStartedAt: number = 0
   protected hasEmittedContent: boolean = false
@@ -252,7 +256,12 @@ export abstract class AgentBaseService extends EventEmitter {
   protected flushTokenUsage(): void {
     if (!this.dbSessionId) return
     try {
-      agentSessionRepository.updateTokenUsage(this.dbSessionId, this.tokenUsage)
+      agentSessionRepository.updateTokenUsage(this.dbSessionId, this.tokenUsage, {
+        input: this.inputTokens,
+        output: this.outputTokens,
+        cacheRead: this.cacheReadTokens,
+        cacheCreation: this.cacheCreationTokens
+      })
     } catch (err) {
       this.log.error('Failed to flush token usage:', err)
     }
@@ -264,7 +273,13 @@ export abstract class AgentBaseService extends EventEmitter {
   protected completeDbSession(status: 'completed' | 'failed' | 'terminated'): void {
     if (!this.dbSessionId) return
     try {
-      agentSessionRepository.complete(this.dbSessionId, status, this.tokenUsage)
+      agentSessionRepository.completeWithBreakdown(this.dbSessionId, status, {
+        total: this.tokenUsage,
+        input: this.inputTokens,
+        output: this.outputTokens,
+        cacheRead: this.cacheReadTokens,
+        cacheCreation: this.cacheCreationTokens
+      })
     } catch (err) {
       this.log.error('Failed to complete DB session:', err)
     }

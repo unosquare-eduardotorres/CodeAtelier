@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { ChevronDown, Check } from 'lucide-react'
-import { useSpecialistStore, useChatActions } from '@renderer/store'
+import { useSpecialistStore, useChatActions, useWorkspaceStore } from '@renderer/store'
+import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
 import type { Conversation, Specialist } from '../../../../shared/types'
 
 interface PersonaSelectorProps {
@@ -13,6 +14,12 @@ export default function PersonaSelector({ conversation }: PersonaSelectorProps):
   const specialists = useSpecialistStore((s) => s.specialists)
   const { switchPersona } = useChatActions()
 
+  // Get the workspace's project specialist
+  const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
+  const projectSpecialist = useProjectSpecialistStore((s) =>
+    activeWorkspace?.id ? s.byWorkspace[activeWorkspace.id] : null
+  )
+
   // Resolve current persona
   const currentPersona = useMemo(() => {
     if (conversation.personaSpecialistId) {
@@ -23,17 +30,12 @@ export default function PersonaSelector({ conversation }: PersonaSelectorProps):
 
   const isDaVinci = !conversation.personaSpecialistId
 
-  // Categorize for dropdown
-  const { daVinci, activeItems, inactiveItems } = useMemo(() => {
+  // Filter dropdown to only DaVinci + this workspace's project specialist
+  const { daVinci, projectSpecialistItem } = useMemo(() => {
     const dv = specialists.find((s) => s.agentId === 'da-vinci')
-    const active = specialists
-      .filter((s) => !s.isCore && s.isActive)
-      .sort((a, b) => a.priority - b.priority)
-    const inactive = specialists
-      .filter((s) => !s.isCore && !s.isActive)
-      .sort((a, b) => a.priority - b.priority)
-    return { daVinci: dv, activeItems: active, inactiveItems: inactive }
-  }, [specialists])
+    const ps = projectSpecialist ? specialists.find((s) => s.id === projectSpecialist.id) : null
+    return { daVinci: dv, projectSpecialistItem: ps }
+  }, [specialists, projectSpecialist])
 
   // Close on outside click
   useEffect(() => {
@@ -111,41 +113,16 @@ export default function PersonaSelector({ conversation }: PersonaSelectorProps):
             />
           )}
 
-          {/* Active specialists */}
-          {activeItems.length > 0 && (
+          {/* This workspace's project specialist */}
+          {projectSpecialistItem && (
             <>
               <div className="mx-3 my-1 border-t border-border-subtle" />
-              {activeItems.map((s) => (
-                <DropdownItem
-                  key={s.id}
-                  specialist={s}
-                  selected={conversation.personaSpecialistId === s.id}
-                  onClick={() => handleSelect(s.id)}
-                />
-              ))}
-            </>
-          )}
-
-          {/* Inactive specialists */}
-          {inactiveItems.length > 0 && (
-            <>
-              <div className="mx-3 my-1 border-t border-border-subtle" />
-              <div className="px-3 py-1">
-                <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
-                  Inactive
-                </span>
-              </div>
-              {inactiveItems.map((s) => (
-                <DropdownItem
-                  key={s.id}
-                  specialist={s}
-                  selected={false}
-                  disabled
-                  onClick={() => {
-                    /* disabled */
-                  }}
-                />
-              ))}
+              <DropdownItem
+                specialist={projectSpecialistItem}
+                selected={conversation.personaSpecialistId === projectSpecialistItem.id}
+                badge="Project"
+                onClick={() => handleSelect(projectSpecialistItem.id)}
+              />
             </>
           )}
         </div>

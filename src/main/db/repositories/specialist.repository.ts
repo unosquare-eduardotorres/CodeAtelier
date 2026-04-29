@@ -35,6 +35,7 @@ interface SkillRow {
   summary_hash: string | null
   tier1_json: string | null
   tier2_instructions: string | null
+  enrichment_json: string | null
 }
 
 function mapRow(row: SpecialistRow): Specialist {
@@ -73,7 +74,8 @@ function mapSkillRow(row: SkillRow): Skill {
     summaryMinimal: row.summary_minimal ?? null,
     summaryHash: row.summary_hash ?? null,
     tier1Json: row.tier1_json ?? null,
-    tier2Instructions: row.tier2_instructions ?? null
+    tier2Instructions: row.tier2_instructions ?? null,
+    enrichmentJson: row.enrichment_json ?? null
   }
 }
 

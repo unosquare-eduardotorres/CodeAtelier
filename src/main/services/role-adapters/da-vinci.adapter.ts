@@ -49,6 +49,21 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
   private semanticSearchEnabled = false
   private githubConfigured = false
 
+  /**
+   * Strategy Λ (Lambda): Locked MCP feature flags — snapshotted at onSessionStart()
+   * and used for buildMcpConfig() for the entire session lifetime. This prevents
+   * mid-session tool set drift that would break Claude's prompt cache prefix.
+   *
+   * refreshFeatureFlags() still reads live settings (for specialist-ready detection
+   * and telemetry), but the locked flags are what actually drive MCP server mounting.
+   * Flags are only re-locked on the next start() or explicit session restart.
+   */
+  private lockedMcpFlags: {
+    repomapEnabled: boolean
+    semanticSearchEnabled: boolean
+    githubConfigured: boolean
+  } | null = null
+
   /** Persona overlay — null = Da Vinci default. */
   private currentPersonaSpecialistId: string | null = null
   private currentPersonaData: Specialist | null = null
@@ -69,7 +84,9 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
 
       if (settings.memoryEnabled !== false && workspace) {
-        const memoryBudget = settings.costPreference === 'economy' ? 5000 : 10000
+        // Cache-audit optimization: session-start budget reduced from 10K→5K (balanced)
+        // and 5K→3K (economy) to lower the first-turn context footprint.
+        const memoryBudget = settings.costPreference === 'economy' ? 3000 : 5000
         const memoryCtx = memoryService.getContextForPrompt(workspace.id, memoryBudget)
         if (memoryCtx) this.promptAssembler.setMemoryContext(memoryCtx)
       }
@@ -80,6 +97,18 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
     } catch {
       /* non-fatal — keep defaults */
     }
+
+    // Strategy Λ: Lock MCP flags at session start — tool set stays stable for
+    // the entire session, ensuring Claude's prompt cache prefix is never broken
+    // by a mid-session settings toggle.
+    this.lockedMcpFlags = {
+      repomapEnabled: this.repomapEnabled,
+      semanticSearchEnabled: this.semanticSearchEnabled,
+      githubConfigured: this.githubConfigured
+    }
+    this.log.info(
+      `[adapter:lock-mcp-flags] repomap=${this.lockedMcpFlags.repomapEnabled} semantic=${this.lockedMcpFlags.semanticSearchEnabled} github=${this.lockedMcpFlags.githubConfigured}`
+    )
 
     // Persona carries across session start if conversation was persona-bound,
     // but the session-layer resolves conversations per-send.  On start, reset.
@@ -125,6 +154,15 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
   }
 
   buildPrompts(ctx: AdapterPromptContext): AdapterPromptResult {
+    // Strategy Λ: Use locked flags for prompt assembly (MCP guidance sections
+    // must match the tool set mounted via buildMcpConfig). Fall back to live
+    // flags only if session hasn't started yet (shouldn't happen in practice).
+    const mcpFlags = this.lockedMcpFlags ?? {
+      repomapEnabled: this.repomapEnabled,
+      semanticSearchEnabled: this.semanticSearchEnabled,
+      githubConfigured: this.githubConfigured
+    }
+
     const systemPrompt = this.promptAssembler.buildSystemPromptForTurn({
       message: ctx.message,
       hasImages: ctx.hasImages,
@@ -133,11 +171,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       workspaceId: ctx.workspaceId,
       conversationId: ctx.conversationId,
       mode: ctx.mode,
-      featureFlags: {
-        repomapEnabled: this.repomapEnabled,
-        semanticSearchEnabled: this.semanticSearchEnabled,
-        githubConfigured: this.githubConfigured
-      },
+      featureFlags: mcpFlags,
       costPreference: ctx.costPreference,
       personaSpecialistId: this.currentPersonaSpecialistId,
       personaData: this.currentPersonaData
@@ -156,16 +190,20 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
   }
 
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
+    // Strategy Λ: Use locked flags so the MCP server set stays identical across
+    // all turns in this session, preserving the Claude prompt cache prefix.
+    const mcpFlags = this.lockedMcpFlags ?? {
+      repomapEnabled: this.repomapEnabled,
+      semanticSearchEnabled: this.semanticSearchEnabled,
+      githubConfigured: this.githubConfigured
+    }
+
     return buildWorkspaceMcpConfig({
       mode: ctx.mode,
       workspacePath: ctx.workspacePath,
       workspaceId: ctx.workspaceId,
       conversationId: ctx.conversationId,
-      featureFlags: {
-        repomapEnabled: this.repomapEnabled,
-        semanticSearchEnabled: this.semanticSearchEnabled,
-        githubConfigured: this.githubConfigured
-      },
+      featureFlags: mcpFlags,
       controlCallbacks: ctx.controlCallbacks
     })
   }
@@ -236,6 +274,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
     this.repomapEnabled = false
     this.semanticSearchEnabled = false
     this.githubConfigured = false
+    this.lockedMcpFlags = null
     this.currentPersonaSpecialistId = null
     this.currentPersonaData = null
     this.lastAnnouncedSpecialistId = null

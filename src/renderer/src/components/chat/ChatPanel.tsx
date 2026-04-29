@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Search, X, Bot, Settings } from 'lucide-react'
+import { Search, X, Bot } from 'lucide-react'
 import {
   useChatStore,
   useChatActions,
@@ -21,7 +21,6 @@ import PersonaSelector from './PersonaSelector'
 import ChatTabButton from './ChatTabButton'
 import CodeChangesPanel from './CodeChangesPanel'
 import {
-  SpecialistSlideOver,
   StackDriftBanner,
   BuildProgressInline,
   GenerateSpecialistModal
@@ -52,7 +51,6 @@ export default function ChatPanel({
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [activeTab, setActiveTab] = useState<ChatTab>('chat')
-  const [specialistPanelOpen, setSpecialistPanelOpen] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Load Project Specialist on workspace change
@@ -258,16 +256,6 @@ export default function ChatPanel({
           {activeTab === 'chat' && (
             <div className="flex items-center gap-2">
               <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
-              <button
-                type="button"
-                onClick={() => setSpecialistPanelOpen(true)}
-                title="Open specialist settings"
-                aria-label="Specialist settings"
-                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-surface-overlay hover:text-text-body"
-              >
-                <Settings className="h-3.5 w-3.5" />
-                <span>Specialist</span>
-              </button>
               <PersonaSelector conversation={activeConversation} />
             </div>
           )}
@@ -279,13 +267,6 @@ export default function ChatPanel({
             <StackDriftBanner workspaceId={activeWorkspace.id} />
           </div>
         )}
-
-        {/* Specialist slide-over panel */}
-        <SpecialistSlideOver
-          open={specialistPanelOpen}
-          onClose={() => setSpecialistPanelOpen(false)}
-          workspaceId={activeWorkspace?.id ?? null}
-        />
 
         {/* Rate limit warning banner — only shows during warning/rejected */}
         {rateLimitState && rateLimitState.status !== 'allowed' && (

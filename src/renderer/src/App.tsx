@@ -3,7 +3,6 @@ import { useBugCapture } from '@renderer/hooks/useBugCapture'
 import { AppLayout } from '@renderer/components/layout'
 import {
   WelcomeModal,
-  ToolApprovalModal,
   CheckpointApprovalModal,
   ElicitationModal
 } from '@renderer/components/common'
@@ -186,6 +185,8 @@ function App(): React.JSX.Element {
         currentTask: data.currentTask,
         elapsedMs: data.elapsedMs,
         tokenUsage: data.tokenUsage,
+        inputTokens: data.inputTokens,
+        outputTokens: data.outputTokens,
         model: data.model,
         complexityTier: data.complexityTier,
         activeMcpTools: data.activeMcpTools
@@ -308,7 +309,6 @@ function App(): React.JSX.Element {
   return (
     <>
       <AppLayout />
-      <ToolApprovalModal />
       <CheckpointApprovalModal />
       <ElicitationModal />
     </>

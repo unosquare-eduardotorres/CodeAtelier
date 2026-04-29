@@ -1,16 +1,14 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
-import type {
-  Query,
-  AgentMcpServerSpec,
-  PermissionUpdate,
-  PermissionResult
-} from '@anthropic-ai/claude-agent-sdk'
+import type { Query, AgentMcpServerSpec } from '@anthropic-ai/claude-agent-sdk'
 import type { StreamChunk } from './agent-base.service'
 import { authProvider } from './auth-provider'
 import {
   createScopeGuard,
   createCodeGraphFirstHook,
   createFireAndForgetHook,
+  createReadLimitHook,
+  createBashOutputCapHook,
+  createLargeOutputWarningHook,
   createPostToolUseHook,
   createPostToolUseFailureHook,
   createNotificationHook,
@@ -95,12 +93,8 @@ export interface SDKExecuteOptions {
   abortController?: AbortController
   /** Heartbeat interval in ms (default: 15000). Set to 0 to disable. */
   heartbeatIntervalMs?: number
-  /** Agent ID for tool approval attribution */
+  /** Agent ID for hook attribution */
   agentId?: string
-  /** Task ID for tool approval attribution */
-  taskId?: string
-  /** Enable per-tool approval flow via PreToolUse hook (fallback when canUseTool is not available) */
-  enableToolApproval?: boolean
   /** Max agentic turns (tool-use rounds). SDK stops the loop after this many turns. */
   maxTurns?: number
   /** MCP server configurations for in-process MCP tools (e.g. repomap) */
@@ -140,23 +134,6 @@ export interface SDKExecuteOptions {
   betas?: 'context-1m-2025-08-07'[]
   /** Fallback model when primary is unavailable/rate-limited */
   fallbackModel?: string
-  /** Custom permission handler — richer than PreToolUse hooks.
-   *  When provided, replaces the PreToolUse approval hook. */
-  canUseTool?: (
-    toolName: string,
-    input: Record<string, unknown>,
-    opts: {
-      signal: AbortSignal
-      title?: string
-      displayName?: string
-      description?: string
-      suggestions?: PermissionUpdate[]
-      blockedPath?: string
-      decisionReason?: string
-      toolUseID: string
-      agentID?: string
-    }
-  ) => Promise<PermissionResult>
   /** Callback before context compaction (receives pre-compaction token count) */
   onPreCompact?: (preTokens: number) => void
   /** Callback after context compaction (receives pre and post token counts) */
@@ -277,6 +254,12 @@ export class SDKExecutor {
       // Add fire-and-forget detection for long-running Bash commands
       preToolUseHooks.push(createFireAndForgetHook())
 
+      // Cache-audit Fix 1: Cap Read calls at 300 lines to prevent full-file reads bloating context
+      preToolUseHooks.push(createReadLimitHook(300))
+
+      // Cache-audit Fix 2: Cap Bash output for noisy commands (npm build, eslint, etc.)
+      preToolUseHooks.push(createBashOutputCapHook(30))
+
       // Add Code Graph-first enforcement when code-graph MCP server is active (warn mode — logs but doesn't block)
       if (
         options.mcpServers &&
@@ -285,16 +268,18 @@ export class SDKExecutor {
         preToolUseHooks.push(createCodeGraphFirstHook('warn'))
       }
 
-      // Add per-tool approval hook if enabled
-      if (options.enableToolApproval) {
-        const { createToolApprovalHook } = await import('./sdk-hooks')
-        preToolUseHooks.push(createToolApprovalHook(options.agentId ?? 'unknown', options.taskId))
-      }
-
       // Build hooks config — PreToolUse + optional PostToolUse, Notification, etc.
       const hooksConfig: Record<string, unknown> = {
         PreToolUse: [{ hooks: preToolUseHooks }],
-        PostToolUse: [{ hooks: [createPostToolUseHook(options.agentId ?? 'unknown')] }],
+        PostToolUse: [
+          {
+            hooks: [
+              createPostToolUseHook(options.agentId ?? 'unknown'),
+              // Cache-audit Fix 5: Warn model after consecutive large tool outputs
+              createLargeOutputWarningHook(10_000)
+            ]
+          }
+        ],
         PostToolUseFailure: [
           { hooks: [createPostToolUseFailureHook(options.agentId ?? 'unknown')] }
         ],
@@ -445,7 +430,6 @@ export class SDKExecutor {
           // ...(options.taskBudget ? { taskBudget: options.taskBudget } : {}),
           ...(options.resumeSessionAt ? { resumeSessionAt: options.resumeSessionAt } : {}),
           ...(options.fallbackModel ? { fallbackModel: options.fallbackModel } : {}),
-          ...(options.canUseTool ? { canUseTool: options.canUseTool } : {}),
           // Multi-org login support (SDK 0.2.96+ — accepts string | string[])
           ...(options.forceLoginOrgUUID ? { forceLoginOrgUUID: options.forceLoginOrgUUID } : {}),
           env: {

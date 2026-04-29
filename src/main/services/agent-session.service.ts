@@ -85,16 +85,20 @@ interface ExecuteStreamOptions {
 export class AgentSessionService extends AgentBaseService {
   protected readonly log = chatAgentLogger
 
-  // Compaction defaults — match Claude Code's published behavior:
-  //   suggest at ~80% (early warning), auto at ~95% (with ~13K reserve for the
-  //   autocompact buffer). Anthropic's docs: cache + creation + read all count
-  //   toward the context window, so these thresholds operate on the full
-  //   context-pressure metric, not the cheap cache-discounted billing metric.
-  // Scaled for the 1M context window (context-1m-2025-08-07).
-  // TODO: reserve a literal 13K autocompact buffer once the SDK exposes
-  //   autoCompactThreshold reliably — for now the 950K cap leaves ~50K headroom.
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 800_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 950_000
+  // Compaction defaults — tuned for the 1M context window (context-1m-2025-08-07).
+  //   Anthropic's docs: cache + creation + read all count toward the context
+  //   window, so these thresholds operate on the full context-pressure metric,
+  //   not the cheap cache-discounted billing metric.
+  //
+  //   Suggest at 60% (600K) — gives the user an early warning while quality is
+  //   still good. Auto at 80% (800K) — leaves 200K headroom for the next
+  //   message instead of only 50K.
+  //
+  //   Prior values were 800K/950K — changed after cache-audit showed quadratic
+  //   context growth in agentic loops could jump 100-200K tokens in a single
+  //   multi-tool turn, leaving insufficient headroom at the old thresholds.
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 600_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 800_000
   // Economy preference uses a smaller effective window (200K-class models).
   private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 160_000
   private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 190_000
@@ -209,6 +213,10 @@ export class AgentSessionService extends AgentBaseService {
     this.startedAt = Date.now()
     this.currentStatus = 'idle'
     this.tokenUsage = 0
+    this.inputTokens = 0
+    this.outputTokens = 0
+    this.cacheReadTokens = 0
+    this.cacheCreationTokens = 0
     this.lastContextTokens = undefined
     this.currentConversationId = null
     this.accumulatedText = ''
@@ -254,10 +262,7 @@ export class AgentSessionService extends AgentBaseService {
 
     eventLoggerService.logSessionStarted({
       agentId: this.adapter.agentId,
-      model: modelConfigService.getModel(
-        workspacePath,
-        `${this.adapter.role}:plan` as ModelAction
-      )
+      model: modelConfigService.getModel(workspacePath, `${this.adapter.role}:plan` as ModelAction)
     })
 
     this.log.info(`${this.adapter.role} SDK session initialized for workspace:`, workspacePath)
@@ -411,6 +416,8 @@ export class AgentSessionService extends AgentBaseService {
       status: this.currentStatus,
       elapsedMs: isActive && this.messageStartedAt ? Date.now() - this.messageStartedAt : 0,
       tokenUsage: this.tokenUsage,
+      inputTokens: this.inputTokens,
+      outputTokens: this.outputTokens,
       contextTokens: this.lastContextTokens
     }
   }
@@ -648,13 +655,18 @@ export class AgentSessionService extends AgentBaseService {
     abortController: AbortController
     mcpResult: AdapterMcpResult
   }): Record<string, unknown> {
-    const { sdkPrompt, systemPrompt, sessionId, isBuildMode, resumeAt, abortController, mcpResult } =
-      params
+    const {
+      sdkPrompt,
+      systemPrompt,
+      sessionId,
+      isBuildMode,
+      resumeAt,
+      abortController,
+      mcpResult
+    } = params
     const { mcpServers, allowedTools, disallowedTools } = mcpResult
 
-    const modelAction = `${this.adapter.role}:${
-      isBuildMode ? 'build' : 'plan'
-    }` as ModelAction
+    const modelAction = `${this.adapter.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
     const resolvedModel = modelConfigService.getModel(this.workspacePath!, modelAction)
 
     let additionalDirectories: string[] | undefined
@@ -675,10 +687,12 @@ export class AgentSessionService extends AgentBaseService {
       systemPrompt,
       model: resolvedModel,
       cwd: this.workspacePath!,
-      permissionMode: isBuildMode ? 'auto' : 'default',
+      permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
       allowedTools,
       disallowedTools,
-      maxTurns: isBuildMode ? 50 : 25,
+      // Cache-audit: lowered from 50/25 — caps worst-case context growth.
+      // 35 build turns is still generous; model stops and tells user if it needs more.
+      maxTurns: isBuildMode ? 35 : 20,
       resume: sessionId,
       ...(resumeAt ? { resumeSessionAt: resumeAt } : {}),
       abortController,
@@ -694,47 +708,6 @@ export class AgentSessionService extends AgentBaseService {
       betas: ['context-1m-2025-08-07'],
       ...(resolvedModel !== 'claude-sonnet-4-6' ? { fallbackModel: 'claude-sonnet-4-6' } : {}),
       ...(additionalDirectories?.length ? { additionalDirectories } : {}),
-      ...(isBuildMode
-        ? {
-            canUseTool: async (
-              toolName: string,
-              input: Record<string, unknown>,
-              opts: {
-                signal: AbortSignal
-                title?: string
-                displayName?: string
-                description?: string
-                suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[]
-                blockedPath?: string
-                decisionReason?: string
-                toolUseID: string
-                agentID?: string
-              }
-            ): Promise<import('@anthropic-ai/claude-agent-sdk').PermissionResult> => {
-              const { toolApprovalService } = await import('./tool-approval.service')
-              const result = await toolApprovalService.requestApprovalEnriched(
-                toolName,
-                input,
-                this.adapter.agentId,
-                undefined,
-                {
-                  title: opts.title,
-                  displayName: opts.displayName,
-                  description: opts.description,
-                  suggestions: opts.suggestions
-                }
-              )
-              return result.approved
-                ? {
-                    behavior: 'allow' as const,
-                    updatedPermissions: result.updatedPermissions as
-                      | import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[]
-                      | undefined
-                  }
-                : { behavior: 'deny' as const, message: 'Blocked by user' }
-            }
-          }
-        : {}),
       onPermissionDenied: (toolName: string, reason: string) => {
         this.log.info(`[PIPELINE:permission-denied] tool=${toolName} reason=${reason}`)
         this.emit('chunk', {
@@ -850,6 +823,10 @@ export class AgentSessionService extends AgentBaseService {
       workspacePath: this.workspacePath!
     })
     this.tokenUsage += totalTokens
+    this.inputTokens += meta.tokenUsage.input
+    this.outputTokens += meta.tokenUsage.output
+    this.cacheReadTokens += meta.tokenUsage.cacheReadInputTokens
+    this.cacheCreationTokens += meta.tokenUsage.cacheCreationInputTokens
 
     let sdkContextData:
       | {
@@ -1226,9 +1203,7 @@ export class AgentSessionService extends AgentBaseService {
     const warningThreshold = Math.floor(suggestThreshold * 0.8)
 
     if (inputTokens >= autoThreshold) {
-      this.log.warn(
-        `Context very large (${inputTokens} input tokens) — prompting user to compact`
-      )
+      this.log.warn(`Context very large (${inputTokens} input tokens) — prompting user to compact`)
       this.emit('compactNeeded', { level: 'critical', inputTokens, breakdown })
     } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
       this.compactSuggested = true
@@ -1246,5 +1221,4 @@ export class AgentSessionService extends AgentBaseService {
       })
     }
   }
-
 }

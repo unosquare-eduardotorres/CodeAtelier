@@ -126,6 +126,7 @@ npm run format        # Prettier
   - `ProjectSpecialistRoleAdapter` — bound to one workspace, LLM-tailored system prompt.
   - Both share `buildWorkspaceMcpConfig`, `intentDetector.detectAll`, `memoryRepository`, `prompt-assembly-helpers`.
 - **No handoffs, no orchestrator, no SDK sub-agents.** `Agent` and `ToolSearch` tools are blocked globally.
+- **Tool execution runs unattended in build mode** (`permissionMode: 'bypassPermissions'`). Safety relies on the workspace scope guard + `disallowedTools` (Agent, ToolSearch, ExitPlanMode, AskUserQuestion). No in-app permission popup.
 - **IPC**: `window.api.invoke()` → preload `ipcRenderer.invoke` → main `ipcMain.handle`.
 - **Streaming**: `ipcRenderer.on` with cleanup functions from `window.api.on()`.
 - **Database**: SQLite, `schema.sql`, 72 versioned migrations, repository pattern.
