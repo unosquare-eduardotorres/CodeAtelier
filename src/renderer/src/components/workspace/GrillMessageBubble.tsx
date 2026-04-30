@@ -68,7 +68,7 @@ export default function GrillMessageBubble({
     <div className="flex gap-3 flex-row">
       {/* Avatar — grill analyst portrait */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey="grillme" size="md" />
+        <Avatar avatarKey="grillme" size="xl" />
       </div>
 
       <div className="flex flex-col min-w-0 max-w-[85%] items-start">
