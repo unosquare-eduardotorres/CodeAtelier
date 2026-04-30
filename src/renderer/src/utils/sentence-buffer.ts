@@ -91,16 +91,21 @@ export class SentenceBuffer {
     let lastBoundary = 0
     let pos = 0
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+
       // Toggle code block state on ``` lines
       if (line.trimStart().startsWith('```')) {
         this.inCodeBlock = !this.inCodeBlock
       }
 
-      pos += line.length + 1 // +1 for \n
+      const lineStart = pos
+      pos += line.length
+      // Only add \n separator if this isn't the last line
+      if (i < lines.length - 1) pos += 1
 
       // Double newline = paragraph boundary (always flush)
-      if (line === '' && pos > 1 && !this.inCodeBlock) {
+      if (line === '' && lineStart > 0 && !this.inCodeBlock) {
         lastBoundary = pos
         continue
       }
@@ -119,7 +124,7 @@ export class SentenceBuffer {
         // Skip URLs
         if (line.slice(Math.max(0, match.index - 10), match.index).includes('://')) continue
 
-        lastBoundary = pos - line.length - 1 + match.index + match[0].length
+        lastBoundary = lineStart + match.index + match[0].length
       }
     }
 
