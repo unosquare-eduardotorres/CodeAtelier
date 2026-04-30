@@ -213,6 +213,34 @@ export class CodeGraphTagRepository {
   }
 
   /**
+   * Find the most-referenced symbols (hotspots) — symbols with the most cross-file references.
+   */
+  findSymbolHotspots(
+    workspaceId: string,
+    opts?: { maxResults?: number; pathPrefix?: string }
+  ): { name: string; refCount: number }[] {
+    const db = getDatabase()
+    const maxResults = opts?.maxResults ?? 30
+    const pathFilter = opts?.pathPrefix ? `AND rel_fname LIKE ? || '%'` : ''
+    const params: (string | number)[] = [workspaceId]
+    if (opts?.pathPrefix) params.push(opts.pathPrefix)
+    params.push(maxResults)
+
+    const rows = db
+      .prepare(
+        `SELECT name, COUNT(*) as ref_count
+         FROM code_graph_tags
+         WHERE workspace_id = ? AND kind = 'ref'
+         ${pathFilter}
+         GROUP BY name
+         ORDER BY ref_count DESC
+         LIMIT ?`
+      )
+      .all(...params) as { name: string; ref_count: number }[]
+    return rows.map((r) => ({ name: r.name, refCount: r.ref_count }))
+  }
+
+  /**
    * Count total tags for a workspace.
    */
   countByWorkspace(workspaceId: string): number {

@@ -533,7 +533,13 @@ export default function MessageInput({
         </button>
 
         {/* Idea popover */}
-        {showIdeaPopover && <IdeaPopover onClose={() => setShowIdeaPopover(false)} />}
+        {showIdeaPopover && (
+          <IdeaPopover
+            onClose={() => setShowIdeaPopover(false)}
+            onSaved={() => setText('')}
+            initialTitle={text.trim()}
+          />
+        )}
 
         {/* Voice mic button — visible when voice mode enabled */}
         {voiceEnabled && isVoiceSupported && (

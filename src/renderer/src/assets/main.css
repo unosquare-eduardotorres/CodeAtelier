@@ -240,13 +240,17 @@
 
   /* ── Code Atelier heading typography ── */
   h1,
-  h2,
+  h2 {
+    font-family: var(--ca-font-display);
+    font-weight: 500;
+    color: var(--color-text-primary);
+  }
   h3,
   h4,
   h5,
   h6 {
-    font-family: var(--ca-font-display);
-    font-weight: 400;
+    font-family: var(--ca-font-body);
+    font-weight: 600;
     color: var(--color-text-primary);
   }
 
@@ -336,15 +340,20 @@
   margin-bottom: 0.5em;
 }
 
-/* Headings — Cormorant Garamond, weight 400 (elegance from the typeface) */
+/* Headings — h1/h2 keep Cormorant at 500; h3/h4 switch to Inter 600 for small-size clarity */
 .prose h1,
-.prose h2,
+.prose h2 {
+  color: var(--color-text-primary);
+  font-family: var(--ca-font-display);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
 .prose h3,
 .prose h4 {
   color: var(--color-text-primary);
-  font-family: var(--ca-font-display);
-  font-weight: 400;
-  letter-spacing: 0.02em;
+  font-family: var(--ca-font-body);
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .prose h1 {

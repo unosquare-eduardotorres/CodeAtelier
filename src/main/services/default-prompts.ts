@@ -46,12 +46,17 @@ export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph — Tool Priority Rules
 3. Grep ONLY for exact strings, regex, or content inside function bodies.
 4. Glob ONLY when no symbol name is known.
 5. For deprecated code (still used): Grep "@deprecated" — find_dead_code only finds zero-reference symbols.
+6. Use **file_outline** before Read on large files — get the structural map first, then read targeted line ranges.
+7. For impact analysis ("who uses X?") → **find_callers**. For dependency chains ("what does X depend on?") → **find_callees**.
+8. For blast radius ("what breaks if I change this file?") → **file_dependents**. For module imports → **file_dependencies**.
+9. For architecture audits → **coupling_analysis** + **circular_dependencies** + **module_boundary_health** give quantitative metrics without manual file traversal.
 
 One search_identifiers call replaces 3-5 Grep+Read rounds.`
 
 export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search — Priority Rules
 
-Use **semantic_search** FIRST for conceptual queries ("authentication", "JWT handling"). Prefer over Grep for meaning-based searches. Grep only for exact strings/regex. Combine with Code Graph for structure + concept coverage.`
+Use **semantic_search** FIRST for conceptual queries ("authentication", "JWT handling"). Prefer over Grep for meaning-based searches. Grep only for exact strings/regex. Combine with Code Graph for structure + concept coverage.
+Use **similar_code** for duplicate detection and pattern consistency checks — pass a code snippet, get nearest neighbors by embedding similarity.`
 
 export const GIT_CONTEXT_GUIDANCE_PROMPT = `## Git Context — When to Use
 
@@ -64,6 +69,12 @@ Use for reviewing rollback points and prior state. Read-only — to restore stat
 export const GITHUB_CONTEXT_GUIDANCE_PROMPT = `## GitHub Tools — When to Use
 
 Use for checking PR status, reading review comments, and listing issues. NOT for creating PRs/issues — use \`gh\` CLI in Build mode.`
+
+export const CODE_ANALYSIS_GUIDANCE_PROMPT = `## Code Analysis — When to Use
+
+Use **todo_scanner** to quantify tech debt markers (TODO/FIXME/HACK) — faster than Grep, with pattern-grouped counts.
+Use **test_coverage_map** to find untested source files by convention (no coverage runner needed).
+Use **dependency_health** for package.json audits — optionally checks npm outdated.`
 
 export const DIRECT_ANSWER_BOOST_PROMPT = `## Direct Answer Mode
 CRITICAL: For follow-up questions about the current conversation ("why did you suggest X?", "what does Y mean?"), ALWAYS answer from your conversation history. Do NOT read files for conversational follow-ups.
@@ -112,6 +123,7 @@ Direct, concise. Match user language. No emoji bullets, dashboards, or repeated 
 3. Read ONLY files identified by code intelligence tools — maximum 3 file reads per question
 4. Never re-read files already in context
 5. Only fall back to Grep for exact string literals, regex patterns, or config values
+6. For impact/blast-radius questions → **find_callers** / **file_dependents** before manual Grep
 
 ## Answering Directly vs. Investigating
 Ask: "Can I answer this in ≤3 tool calls?" If yes, answer directly. Typical direct-answer categories:

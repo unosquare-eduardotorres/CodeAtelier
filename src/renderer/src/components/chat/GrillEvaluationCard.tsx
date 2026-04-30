@@ -46,7 +46,7 @@ export default function GrillEvaluationCard({
       )}
 
       {/* Questions */}
-      {questions.length > 0 && (
+      {questions?.length > 0 && (
         <div className="px-5 py-3 space-y-3">
           <span className="text-xs font-medium text-accent uppercase tracking-wide">
             Questions ({questions.length})
@@ -56,9 +56,9 @@ export default function GrillEvaluationCard({
               <span className="font-medium text-text-primary">
                 {i + 1}. {q.header || q.question}
               </span>
-              {q.options.length > 0 && (
+              {q.options?.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {q.options.map((o) => (
+                  {q.options?.map((o) => (
                     <span
                       key={o.label}
                       className={`px-2 py-0.5 text-xs rounded-full border ${

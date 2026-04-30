@@ -14,14 +14,27 @@ import type { OllamaStatus, PullProgress } from '../../shared/types'
  * - 'pullError': string — error message on pull failure
  */
 class OllamaManagerService extends EventEmitter {
-  private baseUrl = 'http://127.0.0.1:11434'
+  private defaultBaseUrl = 'http://127.0.0.1:11434'
   private pullAbortController: AbortController | null = null
+
+  /** Build the base URL from host:port or use provided URL */
+  private resolveBaseUrl(baseUrl?: string): string {
+    return baseUrl ?? this.defaultBaseUrl
+  }
+
+  /** Check if an address is a remote (non-localhost) Ollama */
+  isRemote(host: string): boolean {
+    return host !== '127.0.0.1' && host !== 'localhost' && host !== '::1'
+  }
 
   /**
    * Check the current status of the Ollama installation.
    * Detects whether Ollama is installed, running, its version, and available models.
+   *
+   * @param baseUrl - Optional Ollama server URL (e.g. 'http://192.168.1.50:11434')
    */
-  async checkStatus(): Promise<OllamaStatus> {
+  async checkStatus(baseUrl?: string): Promise<OllamaStatus> {
+    const url = this.resolveBaseUrl(baseUrl)
     const status: OllamaStatus = {
       installed: false,
       running: false,
@@ -30,7 +43,7 @@ class OllamaManagerService extends EventEmitter {
 
     try {
       // Check if Ollama is running by hitting the version endpoint
-      const versionRes = await fetch(`${this.baseUrl}/api/version`, {
+      const versionRes = await fetch(`${url}/api/version`, {
         signal: AbortSignal.timeout(3000)
       })
       if (versionRes.ok) {
@@ -41,25 +54,27 @@ class OllamaManagerService extends EventEmitter {
       }
     } catch {
       // Ollama is not running or not installed
-      // Try to detect installation via PATH check
-      try {
-        const { execSync } = await import('node:child_process')
-        const result = execSync('which ollama 2>/dev/null || where ollama 2>NUL', {
-          encoding: 'utf8',
-          timeout: 3000
-        }).trim()
-        if (result) {
-          status.installed = true
+      // Try to detect installation via PATH check (only for local servers)
+      if (!this.isRemote(new URL(url).hostname)) {
+        try {
+          const { execSync } = await import('node:child_process')
+          const result = execSync('which ollama 2>/dev/null || where ollama 2>NUL', {
+            encoding: 'utf8',
+            timeout: 3000
+          }).trim()
+          if (result) {
+            status.installed = true
+          }
+        } catch {
+          // Not installed
         }
-      } catch {
-        // Not installed
       }
       return status
     }
 
     // If running, also get the list of available models
     try {
-      const tagsRes = await fetch(`${this.baseUrl}/api/tags`, {
+      const tagsRes = await fetch(`${url}/api/tags`, {
         signal: AbortSignal.timeout(5000)
       })
       if (tagsRes.ok) {
@@ -76,14 +91,18 @@ class OllamaManagerService extends EventEmitter {
   /**
    * Pull (download) a model from the Ollama registry.
    * Streams NDJSON progress events and emits 'pullProgress' for each update.
+   *
+   * @param model - The model tag to pull
+   * @param baseUrl - Optional Ollama server URL for remote servers
    */
-  async pullModel(model: string): Promise<void> {
+  async pullModel(model: string, baseUrl?: string): Promise<void> {
+    const url = this.resolveBaseUrl(baseUrl)
     this.pullAbortController = new AbortController()
 
-    log.info(`[OllamaManager] Pulling model: ${model}`)
+    log.info(`[OllamaManager] Pulling model: ${model} from ${url}`)
 
     try {
-      const res = await fetch(`${this.baseUrl}/api/pull`, {
+      const res = await fetch(`${url}/api/pull`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: model, stream: true }),
@@ -173,11 +192,15 @@ class OllamaManagerService extends EventEmitter {
 
   /**
    * Remove a model from Ollama.
+   *
+   * @param model - The model tag to remove
+   * @param baseUrl - Optional Ollama server URL for remote servers
    */
-  async removeModel(model: string): Promise<void> {
-    log.info(`[OllamaManager] Removing model: ${model}`)
+  async removeModel(model: string, baseUrl?: string): Promise<void> {
+    const url = this.resolveBaseUrl(baseUrl)
+    log.info(`[OllamaManager] Removing model: ${model} from ${url}`)
 
-    const res = await fetch(`${this.baseUrl}/api/delete`, {
+    const res = await fetch(`${url}/api/delete`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: model })
@@ -194,9 +217,14 @@ class OllamaManagerService extends EventEmitter {
   /**
    * Generate embeddings for a batch of inputs.
    * Ollama supports batch embedding natively.
+   *
+   * @param model - The embedding model to use
+   * @param input - Array of strings to embed
+   * @param baseUrl - Optional Ollama server URL for remote servers
    */
-  async embed(model: string, input: string[]): Promise<number[][]> {
-    const res = await fetch(`${this.baseUrl}/api/embed`, {
+  async embed(model: string, input: string[], baseUrl?: string): Promise<number[][]> {
+    const url = this.resolveBaseUrl(baseUrl)
+    const res = await fetch(`${url}/api/embed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, input })
@@ -236,7 +264,7 @@ class OllamaManagerService extends EventEmitter {
       for (let i = 0; i < 16; i++) {
         await new Promise((r) => setTimeout(r, 500))
         try {
-          const res = await fetch(`${this.baseUrl}/api/version`, {
+          const res = await fetch(`${this.defaultBaseUrl}/api/version`, {
             signal: AbortSignal.timeout(1000)
           })
           if (res.ok) return true

@@ -1,18 +1,17 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { ClipboardList, Hammer, Lightbulb, GitBranch } from 'lucide-react'
-import { useSpecialistStore, useProfileStore } from '@renderer/store'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { ClipboardList, Hammer, Lightbulb, GitBranch, Cloud, Monitor } from 'lucide-react'
+import { useProfileStore, useWorkspaceStore } from '@renderer/store'
 import { AttachmentDropzone } from '@renderer/components/chat'
-import PersonaCard from './PersonaCard'
-import type { ConversationMode } from '../../../../shared/types'
+import type { ConversationMode, LLMProvider } from '../../../../shared/types'
 
 interface NewChatPageProps {
   onCreateChat: (data: {
     title: string
     description?: string
     mode: ConversationMode
-    personaSpecialistId?: string
     attachments?: string[]
     useIsolatedBranch?: boolean
+    llmProvider?: LLMProvider
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }
@@ -25,14 +24,17 @@ export default function NewChatPage({
   onCreateIdea
 }: NewChatPageProps): React.JSX.Element {
   const userName = useProfileStore((s) => s.profile?.displayName?.split(' ')[0] ?? null)
-  const specialists = useSpecialistStore((s) => s.specialists)
+  const { activeWorkspace } = useWorkspaceStore()
 
-  const [selectedPersonaId, setSelectedPersonaId] = useState<string | undefined>(undefined)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<ConversationMode>('plan')
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
+  const [llmProvider, setLlmProvider] = useState<LLMProvider>('claude')
+  const [localModelInfo, setLocalModelInfo] = useState<{ backend: string; model: string } | null>(
+    null
+  )
   const titleInputRef = useRef<HTMLInputElement>(null)
 
   // Auto-focus title input on mount
@@ -41,17 +43,20 @@ export default function NewChatPage({
     return (): void => clearTimeout(timer)
   }, [])
 
-  // Categorize specialists for the persona grid
-  const { daVinci, activeSpecialists, inactiveSpecialists } = useMemo(() => {
-    const dv = specialists.find((s) => s.agentId === 'da-vinci')
-    const active = specialists
-      .filter((s) => !s.isCore && s.isActive && s.agentId !== 'orchestrator')
-      .sort((a, b) => a.priority - b.priority)
-    const inactive = specialists
-      .filter((s) => !s.isCore && !s.isActive && s.agentId !== 'orchestrator')
-      .sort((a, b) => a.priority - b.priority)
-    return { daVinci: dv, activeSpecialists: active, inactiveSpecialists: inactive }
-  }, [specialists])
+  // Load saved provider from workspace settings on mount
+  useEffect(() => {
+    if (!activeWorkspace) return
+    window.api
+      .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
+      .then((s) => {
+        setLlmProvider((s.llmProvider as LLMProvider) ?? 'claude')
+        setLocalModelInfo({
+          backend: (s.localLlmBackend as string) ?? 'ollama',
+          model: (s.localModel as string) ?? (s.ollamaModel as string) ?? 'unknown'
+        })
+      })
+      .catch(() => {})
+  }, [activeWorkspace])
 
   const handleSubmit = useCallback((): void => {
     const trimmedTitle = title.trim()
@@ -61,11 +66,11 @@ export default function NewChatPage({
       title: trimmedTitle,
       description: description.trim() || undefined,
       mode,
-      personaSpecialistId: selectedPersonaId,
       attachments: attachments.length > 0 ? attachments : undefined,
-      useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined
+      useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
+      llmProvider
     })
-  }, [title, description, mode, selectedPersonaId, attachments, useIsolatedBranch, onCreateChat])
+  }, [title, description, mode, attachments, useIsolatedBranch, llmProvider, onCreateChat])
 
   const handleCreateIdea = useCallback((): void => {
     const trimmedTitle = title.trim()
@@ -100,7 +105,7 @@ export default function NewChatPage({
           {userName ? `Hey ${userName}, ready to build?` : 'Ready to build?'}
         </h1>
         <p className="text-sm text-text-secondary mb-8 text-center">
-          Choose who you&apos;ll be talking to, then start your conversation.
+          Configure your conversation and start building.
         </p>
 
         {/* Title */}
@@ -230,43 +235,39 @@ export default function NewChatPage({
           </div>
         )}
 
-        {/* Persona Grid */}
-        <div className="w-full mb-8">
-          <label className="block text-sm font-medium text-text-primary mb-3">Talk to</label>
-          <div className="flex flex-wrap gap-3">
-            {/* Da Vinci (default) */}
-            {daVinci && (
-              <PersonaCard
-                specialist={daVinci}
-                isDefault
-                selected={!selectedPersonaId}
-                onSelect={() => setSelectedPersonaId(undefined)}
-              />
-            )}
-
-            {/* Active specialists */}
-            {activeSpecialists.map((s) => (
-              <PersonaCard
-                key={s.id}
-                specialist={s}
-                selected={selectedPersonaId === s.id}
-                onSelect={() => setSelectedPersonaId(s.id)}
-              />
-            ))}
-
-            {/* Inactive specialists (grayed out) */}
-            {inactiveSpecialists.map((s) => (
-              <PersonaCard
-                key={s.id}
-                specialist={s}
-                selected={false}
-                disabled
-                onSelect={() => {
-                  /* disabled */
-                }}
-              />
-            ))}
+        {/* LLM Provider */}
+        <div className="w-full mb-5">
+          <label className="block text-sm font-medium text-text-primary mb-1.5">Provider</label>
+          <div className="flex items-center gap-2 bg-surface-overlay rounded-lg p-1 border border-border-subtle w-fit">
+            <button
+              onClick={() => setLlmProvider('claude')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                llmProvider === 'claude'
+                  ? 'bg-primary-muted text-primary-text border border-primary/30'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              <Cloud size={16} />
+              Claude
+            </button>
+            <button
+              onClick={() => setLlmProvider('local-llm')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                llmProvider === 'local-llm'
+                  ? 'bg-primary-muted text-primary-text border border-primary/30'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              <Monitor size={16} />
+              Local LLM
+            </button>
           </div>
+          {llmProvider === 'local-llm' && localModelInfo && (
+            <p className="text-xs text-text-muted mt-1.5">
+              Using {localModelInfo.backend === 'omlx' ? '🐧 oMLX' : '🦙 Ollama'} —{' '}
+              {localModelInfo.model}
+            </p>
+          )}
         </div>
 
         {/* Action buttons */}

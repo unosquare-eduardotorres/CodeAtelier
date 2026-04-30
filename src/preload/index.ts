@@ -23,8 +23,6 @@ import type {
   MemoryFeedProgress,
   MemoryFeedResult,
   WorkspaceFeedTimestamps,
-  DreamRun,
-  DreamProgress,
   TokenSummary,
   AgentSessionRecord,
   GrillQuestion,
@@ -43,7 +41,14 @@ import type {
   IndexingState,
   CodeGraphIndexingState,
   ContextUsage,
-  StructuredPlan
+  StructuredPlan,
+  AuditRun,
+  AuditMode,
+  AuditTrackId,
+  AuditFinding,
+  AuditProgressEvent,
+  AuditResult,
+  AuditStreamChunkEvent
 } from '../shared/types'
 
 const api = {
@@ -127,10 +132,8 @@ const api = {
    * Accept DaVinci's specialist-swap proposal — tears down the DaVinci session
    * and rebuilds as the workspace's ready Project Specialist.
    */
-  swapToSpecialist: (args: {
-    workspaceId?: string
-    workspacePath?: string
-  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_SWAP_TO_SPECIALIST, args),
+  swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_SWAP_TO_SPECIALIST, args),
 
   // Chat commands
   completeConversation: (args: {
@@ -279,12 +282,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_REFRESH_RECOMMENDATIONS, args),
 
   onProjectSpecialistBuildProgress: (
-    callback: (data: {
-      specialistId: string
-      phase: string
-      message: string
-      at: string
-    }) => void
+    callback: (data: { specialistId: string; phase: string; message: string; at: string }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
@@ -436,27 +434,6 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.MEMORY_FEED_PROGRESS, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_FEED_PROGRESS, handler)
-    }
-  },
-
-  // ── Dream (auto consolidation) ──
-  triggerDream: (args: { workspaceId: string }): Promise<DreamRun> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DREAM_TRIGGER, args),
-
-  cancelDream: (args: { workspaceId: string }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DREAM_CANCEL, args),
-
-  getDreamStatus: (args: { workspaceId: string }): Promise<DreamRun | null> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DREAM_GET_STATUS, args),
-
-  getDreamHistory: (args: { workspaceId: string; limit?: number }): Promise<DreamRun[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DREAM_GET_HISTORY, args),
-
-  onDreamProgress: (callback: (data: DreamProgress) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: DreamProgress): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.DREAM_PROGRESS, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.DREAM_PROGRESS, handler)
     }
   },
 
@@ -1208,18 +1185,42 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE),
 
   // ── Ollama ──
-  ollamaCheckStatus: (): Promise<OllamaStatus> =>
-    ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_CHECK_STATUS),
+  ollamaCheckStatus: (args?: { baseUrl?: string }): Promise<OllamaStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_CHECK_STATUS, args),
 
-  ollamaPullModel: (args: { model: string }): Promise<void> =>
+  ollamaPullModel: (args: { model: string; baseUrl?: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_PULL_MODEL, args),
 
   ollamaCancelPull: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_CANCEL_PULL),
 
-  ollamaRemoveModel: (args: { model: string }): Promise<void> =>
+  ollamaRemoveModel: (args: { model: string; baseUrl?: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_REMOVE_MODEL, args),
 
   ollamaStart: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_START),
+
+  // ── oMLX ──
+  omlxCheckStatus: (
+    args?: { baseUrl?: string; apiKey?: string }
+  ): Promise<import('../shared/types').OmlxExtendedStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMLX_CHECK_STATUS, args),
+
+  omlxStart: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.OMLX_START),
+
+  omlxAdminUrl: (args?: { baseUrl?: string }): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMLX_ADMIN_URL, args),
+
+  omlxLoadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMLX_LOAD_MODEL, args),
+
+  omlxUnloadModel: (args: {
+    modelId: string
+    baseUrl?: string
+    apiKey?: string
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.OMLX_UNLOAD_MODEL, args),
+
+  // ── Platform ──
+  getPlatformInfo: (): Promise<import('../shared/types').PlatformInfo> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLATFORM_INFO),
 
   onOllamaPullProgress: (callback: (data: PullProgress) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: PullProgress): void => callback(data)
@@ -1379,7 +1380,9 @@ const api = {
     }
   },
 
-  onAuthStatus: (callback: (data: { message: string; requestId?: string }) => void): (() => void) => {
+  onAuthStatus: (
+    callback: (data: { message: string; requestId?: string }) => void
+  ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
       data: { message: string; requestId?: string }
@@ -1391,11 +1394,7 @@ const api = {
   },
 
   onFilesPersisted: (
-    callback: (data: {
-      conversationId: string
-      files: string[]
-      requestId?: string
-    }) => void
+    callback: (data: { conversationId: string; files: string[]; requestId?: string }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
@@ -1564,6 +1563,115 @@ const api = {
     const handler = (_event: unknown, bug: unknown): void => callback(bug)
     ipcRenderer.on(IPC_CHANNELS.BUG_NEW, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.BUG_NEW, handler)
+  },
+
+  // ── Audit (Workspace Health) ──
+  auditStart: (args: {
+    workspaceId: string
+    mode: AuditMode
+    tracks: AuditTrackId[]
+  }): Promise<AuditRun> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_START, args),
+
+  auditCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_CANCEL),
+
+  auditGetLatest: (args: { workspaceId: string }): Promise<AuditRun | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_LATEST, args),
+
+  auditConvertFindings: (args: {
+    workspaceId: string
+    findings: AuditFinding[]
+  }): Promise<{ conversationId: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_CONVERT_FINDINGS, args),
+
+  auditRerunTrack: (args: {
+    workspaceId: string
+    trackId: AuditTrackId
+    mode: AuditMode
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_RERUN_TRACK, args),
+
+  auditExportMarkdown: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_EXPORT_MARKDOWN, args),
+
+  auditGetHistory: (args: {
+    workspaceId: string
+    limit?: number
+  }): Promise<AuditRun[]> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_HISTORY, args),
+
+  onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_PROGRESS, handler)
+  },
+
+  onAuditResult: (cb: (data: AuditResult) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditResult): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_RESULT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_RESULT, handler)
+  },
+
+  onAuditComplete: (cb: (data: AuditRun) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditRun): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_COMPLETE, handler)
+  },
+
+  onAuditStreamChunk: (cb: (data: AuditStreamChunkEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditStreamChunkEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_STREAM_CHUNK, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_STREAM_CHUNK, handler)
+  },
+
+  // ── Grill (dedicated agent) ──
+  grillEvaluate: (args: {
+    workspaceId: string
+    trackId: string
+    ideaTitle: string
+    ideaDescription: string
+    iterationHistory?: string
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_EVALUATE, args),
+
+  grillCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_CANCEL),
+
+  onGrillStreamChunk: (
+    cb: (data: { type: string; content?: string; toolActivity?: Record<string, unknown> }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { type: string; content?: string; toolActivity?: Record<string, unknown> }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.GRILL_STREAM_CHUNK, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STREAM_CHUNK, handler)
+  },
+
+  onGrillEvaluationResult: (
+    cb: (data: {
+      trackId?: string
+      score: number
+      scoreLabel: string
+      feedback: string
+      questions: GrillQuestion[]
+      suggestedNextTrack?: { trackId: string; reason: string }
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        trackId?: string
+        score: number
+        scoreLabel: string
+        feedback: string
+        questions: GrillQuestion[]
+        suggestedNextTrack?: { trackId: string; reason: string }
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.GRILL_EVALUATION_RESULT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_EVALUATION_RESULT, handler)
+  },
+
+  onGrillStreamComplete: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on(IPC_CHANNELS.GRILL_STREAM_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STREAM_COMPLETE, handler)
   }
 } as const
 

@@ -280,6 +280,18 @@ export class AgentSessionRepository {
     }
   }
 
+  /** Mark any running sessions as terminated — called on app startup to clean up orphans */
+  terminateStale(): number {
+    const db = getDatabase()
+    const result = db
+      .prepare(
+        `UPDATE agent_sessions SET status = 'terminated', ended_at = datetime('now')
+         WHERE status = 'running'`
+      )
+      .run()
+    return result.changes
+  }
+
   /** Get recent sessions (last N, for display) */
   getRecent(workspaceId: string, limit: number = 50): AgentSession[] {
     const db = getDatabase()

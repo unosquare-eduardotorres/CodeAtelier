@@ -124,6 +124,8 @@ export interface SDKExecuteOptions {
   maxOutputTokens?: number
   /** Enable native SDK file checkpointing for rewindFiles() */
   enableFileCheckpointing?: boolean
+  /** Additional env vars to inject into the SDK subprocess (e.g. Ollama endpoint) */
+  envOverrides?: Record<string, string>
   /** Enable follow-up prompt suggestions (nearly free — uses prompt cache) */
   promptSuggestions?: boolean
   /** Guarantee all hook lifecycle events are emitted (SDK 0.2.96+) */
@@ -434,6 +436,7 @@ export class SDKExecutor {
           ...(options.forceLoginOrgUUID ? { forceLoginOrgUUID: options.forceLoginOrgUUID } : {}),
           env: {
             ...process.env,
+            ...(options.envOverrides ?? {}),
             CLAUDE_AGENT_SDK_CLIENT_APP: `agent-studio/${app.getVersion()}`
           },
           // Get typed streaming events — eliminates need for dedup with assistant replay

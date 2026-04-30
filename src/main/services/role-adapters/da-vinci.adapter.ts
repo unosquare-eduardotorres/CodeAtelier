@@ -17,6 +17,7 @@ import type {
   MemoryType,
   Specialist
 } from '../../../shared/types'
+import { modelConfigService } from '../model-config.service'
 import type {
   AdapterIntentContext,
   AdapterMcpContext,
@@ -163,6 +164,8 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       githubConfigured: this.githubConfigured
     }
 
+    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
+
     const systemPrompt = this.promptAssembler.buildSystemPromptForTurn({
       message: ctx.message,
       hasImages: ctx.hasImages,
@@ -174,7 +177,8 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       featureFlags: mcpFlags,
       costPreference: ctx.costPreference,
       personaSpecialistId: this.currentPersonaSpecialistId,
-      personaData: this.currentPersonaData
+      personaData: this.currentPersonaData,
+      isLocalProvider: isLocal
     })
 
     const effectiveMessage = this.promptAssembler.buildEffectiveMessage({

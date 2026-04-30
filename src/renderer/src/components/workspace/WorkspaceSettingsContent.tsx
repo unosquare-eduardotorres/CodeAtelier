@@ -11,8 +11,9 @@ import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
 import SpecialistPage from './SpecialistPage'
+import HealthPage from './HealthPage'
 import { SkillDetailPage } from '@renderer/components/settings'
-import SpecialistsListPage from '@renderer/components/settings/SpecialistsListPage'
+import CoreTeamPage from '@renderer/components/settings/CoreTeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import type { SettingsTab } from './WorkspaceSettingsPanel'
 
@@ -103,12 +104,13 @@ export default function WorkspaceSettingsContent({
       className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${tab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}
     >
       {tab === 'specialist' && <SpecialistPage />}
+      {tab === 'health' && <HealthPage onNavigateToChat={onNavigateToChat} />}
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
 
       {tab === 'team' && workspacePath && (
         <div className="flex-1 min-h-0">
-          <SpecialistsListPage />
+          <CoreTeamPage />
         </div>
       )}
 

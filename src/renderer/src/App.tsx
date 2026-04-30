@@ -13,7 +13,6 @@ import {
   useAgentStore,
   useUpdateStore,
   useMemoryStore,
-  useDreamStore,
   useProfileStore
 } from '@renderer/store'
 import type { ConversationPhase } from '../../shared/types'
@@ -52,9 +51,8 @@ function App(): React.JSX.Element {
   const setProgress = useUpdateStore((s) => s.setProgress)
   const setError = useUpdateStore((s) => s.setError)
 
-  // Memory & Dream actions
+  // Memory actions
   const onMemoryFeedProgress = useMemoryStore((s) => s.onFeedProgress)
-  const onDreamProgress = useDreamStore((s) => s.onProgress)
 
   // Profile state + actions
   const isProfileLoading = useProfileStore((s) => s.isLoading)
@@ -215,11 +213,6 @@ function App(): React.JSX.Element {
       onMemoryFeedProgress(progress)
     })
 
-    // Dream progress listener
-    const unsubDreamProgress = window.api.onDreamProgress((progress) => {
-      onDreamProgress(progress)
-    })
-
     // Conversation state machine mirror — keep renderer in sync with backend state
     const unsubStateChange = window.api.onStateChange((data) => {
       // Guard: ignore state changes from a non-active conversation to prevent
@@ -256,7 +249,6 @@ function App(): React.JSX.Element {
       unsubUpdateProgress()
       unsubUpdateError()
       unsubMemoryFeed()
-      unsubDreamProgress()
       unsubStateChange()
     }
   }, [
@@ -279,7 +271,6 @@ function App(): React.JSX.Element {
     setProgress,
     setError,
     onMemoryFeedProgress,
-    onDreamProgress,
     finalizeTurnBubble,
     setConversationState
   ])

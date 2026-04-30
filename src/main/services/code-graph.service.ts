@@ -535,6 +535,85 @@ class CodeGraphService extends EventEmitter {
     )
   }
 
+  /**
+   * Detect circular file-level dependencies via DFS cycle detection.
+   * Returns an array of cycles, each being an array of file paths forming the cycle.
+   */
+  findCircularDependencies(
+    workspaceId: string,
+    opts?: { pathPrefix?: string; maxCycles?: number }
+  ): string[][] {
+    const edges = codeGraphEdgeRepository.findByWorkspace(workspaceId)
+    const maxCycles = opts?.maxCycles ?? 20
+
+    // Build adjacency list at file level
+    const adj = new Map<string, Set<string>>()
+    for (const edge of edges) {
+      if (edge.sourceFile === edge.targetFile) continue
+      if (opts?.pathPrefix) {
+        if (
+          !edge.sourceFile.startsWith(opts.pathPrefix) &&
+          !edge.targetFile.startsWith(opts.pathPrefix)
+        )
+          continue
+      }
+      const targets = adj.get(edge.sourceFile) ?? new Set()
+      targets.add(edge.targetFile)
+      adj.set(edge.sourceFile, targets)
+    }
+
+    // DFS-based cycle detection
+    const visited = new Set<string>()
+    const inStack = new Set<string>()
+    const cycles: string[][] = []
+
+    const dfs = (node: string, path: string[]): void => {
+      if (cycles.length >= maxCycles) return
+      visited.add(node)
+      inStack.add(node)
+      path.push(node)
+
+      for (const neighbor of adj.get(node) ?? []) {
+        if (cycles.length >= maxCycles) return
+        if (inStack.has(neighbor)) {
+          // Found a cycle — extract it from the path
+          const cycleStart = path.indexOf(neighbor)
+          if (cycleStart !== -1) {
+            const cycle = path.slice(cycleStart)
+            cycle.push(neighbor) // close the cycle
+            // Normalize: start from lexicographically smallest path
+            const minIdx = cycle
+              .slice(0, -1)
+              .reduce((mi, _v, i, arr) => (arr[i] < arr[mi] ? i : mi), 0)
+            const normalized = [
+              ...cycle.slice(minIdx, -1),
+              ...cycle.slice(0, minIdx),
+              cycle[minIdx]
+            ]
+            // Deduplicate by key
+            const key = normalized.join(' → ')
+            if (!cycles.some((c) => c.join(' → ') === key)) {
+              cycles.push(normalized)
+            }
+          }
+        } else if (!visited.has(neighbor)) {
+          dfs(neighbor, path)
+        }
+      }
+
+      path.pop()
+      inStack.delete(node)
+    }
+
+    for (const node of adj.keys()) {
+      if (!visited.has(node) && cycles.length < maxCycles) {
+        dfs(node, [])
+      }
+    }
+
+    return cycles
+  }
+
   private emitProgress(state: CodeGraphIndexingState): void {
     this.emit('progress', state)
   }

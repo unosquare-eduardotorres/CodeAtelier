@@ -28,7 +28,8 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore, useSkillStore, useToastStore } from '@renderer/store'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
-import { SettingsCard } from '@renderer/components/common'
+import { Avatar, SettingsCard } from '@renderer/components/common'
+import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 import type { Skill } from '../../../../shared/types'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -296,12 +297,14 @@ export default function SpecialistPage(): React.JSX.Element {
       {/* ── Header ────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ backgroundColor: `${specialist.color}20` }}
-          >
-            <span className="text-lg">{specialist.icon}</span>
-          </div>
+          <Avatar
+            avatarKey={getWorkspaceMannequin(
+              activeWorkspace?.id ?? '',
+              useWorkspaceStore.getState().workspaces
+            )}
+            size="sm"
+            accentColor={specialist.color ?? '#B8976A'}
+          />
           <div>
             <h3 className="text-sm font-semibold text-text-primary">{specialist.displayName}</h3>
             <div className="flex items-center gap-2 mt-0.5">

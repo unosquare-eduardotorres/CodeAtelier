@@ -12,7 +12,7 @@ export type ConversationMode = 'plan' | 'build'
  * rewrote persisted values from `'generalist'` to `'da-vinci'` so the DB and
  * the type line up.
  */
-export type AgentRole = 'da-vinci' | 'project-specialist'
+export type AgentRole = 'da-vinci' | 'project-specialist' | 'audit' | 'grill'
 
 /** Tracks which phase of the conversation lifecycle is active */
 export type ConversationPhase = 'da-vinci-responding' | 'specialist-executing'
@@ -73,6 +73,8 @@ export interface Conversation {
   sortOrder?: number
   /** Specialist ID used as generalist persona (null = Da Vinci default) */
   personaSpecialistId?: string | null
+  /** LLM provider locked at conversation creation time */
+  llmProvider: LLMProvider
 }
 
 export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
@@ -256,10 +258,13 @@ export interface SpecialistTokenEstimate {
   estimatedTokens: number
 }
 
+export type ChatBubbleSize = 'small' | 'medium' | 'large' | 'xl'
+
 export interface AppPreferences {
   specialistWarningBuild: boolean
   specialistWarningPlan: boolean
   specialistWarningAlways: boolean
+  chatBubbleSize: ChatBubbleSize
 }
 
 // ── Workspace Deploy Models ──
@@ -398,7 +403,6 @@ export type ModelAction =
   | 'specialist:simple'
   | 'specialist:moderate'
   | 'specialist:complex'
-  | 'dream'
   | 'memoryFeed'
   | 'activation'
   | 'haiku'
@@ -693,31 +697,6 @@ export interface Memory {
   updatedAt: string
 }
 
-export type DreamStatus = 'running' | 'completed' | 'failed' | 'cancelled'
-export type DreamTriggerType = 'startup' | 'idle' | 'manual'
-
-export interface DreamRun {
-  id: string
-  workspaceId: string
-  status: DreamStatus
-  triggerType: DreamTriggerType
-  memoriesCreated: number
-  memoriesMerged: number
-  memoriesPruned: number
-  tokenUsage: number
-  startedAt: string
-  endedAt: string | null
-  errorMessage: string | null
-}
-
-export interface DreamProgress {
-  phase: 'review' | 'consolidate' | 'prune' | 'complete'
-  message: string
-  memoriesCreated: number
-  memoriesMerged: number
-  memoriesPruned: number
-}
-
 export interface MemoryFeedProgress {
   status: 'running' | 'done' | 'error'
   message: string
@@ -820,6 +799,23 @@ export interface OllamaStatus {
   models: string[]
 }
 
+/** oMLX admin API model detail — richer than /v1/models */
+export interface OmlxModelDetail {
+  id: string
+  loaded: boolean
+  isLoading: boolean
+  estimatedSize: string // e.g. "19.02 GB"
+  pinned: boolean
+  isDefault: boolean
+  modelType: string // "llm", "vlm", "embedding", "reranker"
+}
+
+/** Extended status returned when oMLX admin API is available */
+export interface OmlxExtendedStatus extends OllamaStatus {
+  /** All models (downloaded + loaded) from admin API. Undefined when admin API unavailable. */
+  allModels?: OmlxModelDetail[]
+}
+
 export interface PullProgress {
   model: string
   status: string
@@ -910,4 +906,134 @@ export interface ElicitationEvent {
   requestedSchema?: Record<string, unknown>
   url?: string
   elicitationId?: string
+}
+
+// ── Local LLM Provider ──
+
+/** LLM provider for a workspace */
+export type LLMProvider = 'claude' | 'local-llm'
+
+/** Local LLM inference backend */
+export type LocalLLMBackend = 'ollama' | 'omlx'
+
+/** Local LLM execution strategy */
+export type LocalLLMStrategy = 'sdk-passthrough' | 'native'
+
+/** Configuration for local LLM provider */
+export interface LocalLLMConfig {
+  provider: LLMProvider
+  backend: LocalLLMBackend
+  localModel: string // was: ollamaModel
+  localHost: string // was: ollamaHost — e.g. '127.0.0.1' or '192.168.1.50'
+  localPort: number // was: ollamaPort — e.g. 11434 (Ollama) or 8000 (oMLX)
+  strategy?: LocalLLMStrategy
+  localApiKey?: string // oMLX API key for authenticated instances
+}
+
+/** Platform info exposed to the renderer for feature gating */
+export interface PlatformInfo {
+  platform: 'darwin' | 'win32' | 'linux'
+  arch: 'arm64' | 'x64' | string
+  /** True when running on macOS Apple Silicon — enables oMLX option */
+  isAppleSilicon: boolean
+  /** Total system memory in GB (for model recommendations) */
+  totalMemoryGB: number
+}
+
+// ── Workspace Health Audit ──
+
+export type AuditTrackId =
+  | 'database'
+  | 'code'
+  | 'testing'
+  | 'architecture'
+  | 'security'
+  | 'documentation'
+  | 'ui-ux'
+
+export type AuditMode = 'light' | 'deep'
+export type AuditRunStatus = 'pending' | 'running' | 'completed' | 'partial' | 'cancelled'
+export type AuditorStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface AuditTrack {
+  id: AuditTrackId
+  name: string
+  icon: string // Lucide icon name
+  description: string
+  weight: number // for weighted average (default 1.0)
+  scoringFocus: string[] // key areas this auditor evaluates
+}
+
+export interface AuditFinding {
+  id: string // generated UUID
+  severity: 'info' | 'low' | 'medium' | 'high' | 'critical'
+  title: string
+  description: string
+  filePath?: string
+  recommendation?: string
+}
+
+export interface AuditResult {
+  id: string
+  auditRunId: string
+  trackId: AuditTrackId
+  score: number | null // null while pending/running
+  status: AuditorStatus
+  findings: AuditFinding[]
+  summary: string
+  skillsUsed: string[] // skill names used (Deep mode)
+  startedAt: string | null
+  completedAt: string | null
+}
+
+export interface AuditRun {
+  id: string
+  workspaceId: string
+  mode: AuditMode
+  status: AuditRunStatus
+  overallScore: number | null
+  selectedTracks: AuditTrackId[]
+  detectedTechs: string[]
+  results: AuditResult[] // joined for UI convenience
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AuditProgressEvent {
+  workspaceId: string
+  trackId: AuditTrackId
+  status: AuditorStatus
+  score?: number
+  streamChunk?: string // live text from the running auditor
+}
+
+/** Rich streaming event for chat-like audit execution view */
+export interface AuditStreamChunkEvent {
+  workspaceId: string
+  trackId: AuditTrackId
+  type: 'text' | 'tool_activity'
+  content?: string
+  toolActivity?: Partial<ToolActivity> & { id: string; toolName: string }
+}
+
+/** Memory tier for hardware-aware model recommendations */
+export type MemoryTier = '8gb' | '16gb' | '32gb' | '48gb+'
+
+/** Recommended local model entry */
+export interface RecommendedLocalModel {
+  /** Model ID for Ollama backend (e.g. 'qwen3-coder:30b') */
+  ollamaId: string
+  /** Model ID for oMLX backend — HuggingFace format (e.g. 'mlx-community/Qwen3-30B-A3B-4bit'). Omit if model has no MLX variant. */
+  omlxId?: string
+  label: string
+  parameterSize: string
+  activeParams?: string
+  contextWindow: number
+  quantization?: string
+  minMemoryGB: number
+  memoryTier: MemoryTier
+  toolCalling: 'basic' | 'good' | 'native' | 'excellent'
+  description: string
+  recommended?: boolean
+  mlxOptimized?: boolean
 }

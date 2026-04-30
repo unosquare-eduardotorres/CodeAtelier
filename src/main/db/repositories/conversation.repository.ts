@@ -1,5 +1,5 @@
 import { getDatabase } from '../index'
-import type { Conversation, ConversationMode } from '../../../shared/types'
+import type { Conversation, ConversationMode, LLMProvider } from '../../../shared/types'
 
 interface ConversationRow {
   id: string
@@ -15,6 +15,7 @@ interface ConversationRow {
   branch_name: string | null
   sort_order: number | null
   persona_specialist_id: string | null
+  llm_provider: string | null
 }
 
 function mapRow(row: ConversationRow): Conversation {
@@ -31,7 +32,8 @@ function mapRow(row: ConversationRow): Conversation {
     prUrl: row.pr_url ?? undefined,
     branchName: row.branch_name ?? undefined,
     sortOrder: row.sort_order ?? undefined,
-    personaSpecialistId: row.persona_specialist_id ?? null
+    personaSpecialistId: row.persona_specialist_id ?? null,
+    llmProvider: (row.llm_provider as LLMProvider) ?? 'claude'
   }
 }
 
@@ -40,19 +42,21 @@ export class ConversationRepository {
     workspaceId: string,
     title?: string,
     mode?: ConversationMode,
-    personaSpecialistId?: string
+    personaSpecialistId?: string,
+    llmProvider?: LLMProvider
   ): Conversation {
     const db = getDatabase()
     const stmt = db.prepare(`
-      INSERT INTO conversations (workspace_id, title, mode, persona_specialist_id)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO conversations (workspace_id, title, mode, persona_specialist_id, llm_provider)
+      VALUES (?, ?, ?, ?, ?)
       RETURNING *
     `)
     const row = stmt.get(
       workspaceId,
       title ?? 'New Conversation',
       mode ?? 'plan',
-      personaSpecialistId ?? null
+      personaSpecialistId ?? null,
+      llmProvider ?? 'claude'
     ) as ConversationRow
     return mapRow(row)
   }

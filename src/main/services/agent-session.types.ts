@@ -105,7 +105,7 @@ export interface AgentRoleAdapter {
   readonly agentId: string
 
   /** Absolute interaction cap; null = use session default. */
-  readonly interactionTimeoutMs?: number
+  interactionTimeoutMs?: number
 
   /**
    * Called from AgentSessionService.start() to warm role state

@@ -21,6 +21,7 @@ import type {
   ElicitationEvent,
   AgentIntent,
   ImageAttachment,
+  LLMProvider,
   PlanDetectedEvent
 } from '../../shared/types'
 import type {
@@ -28,7 +29,12 @@ import type {
   ElicitationRequest,
   ElicitationResult
 } from '@anthropic-ai/claude-agent-sdk'
-import { CHAT_AGENT_BUDGET_CAP, MCP_TOOLS } from '../../shared/constants'
+import {
+  CHAT_AGENT_BUDGET_CAP,
+  LOCAL_LLM_COMPACT_THRESHOLDS,
+  MCP_TOOLS,
+  RECOMMENDED_LOCAL_MODELS
+} from '../../shared/constants'
 import { chatAgentLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
@@ -110,9 +116,13 @@ export class AgentSessionService extends AgentBaseService {
   private accumulatedText = ''
   private currentMode: ConversationMode = 'plan'
   private costPreference: CostPreference = 'balanced'
+  private llmProvider: LLMProvider = 'claude'
 
   /** Maps conversationId → SDK session_id for resume. */
   private readonly sessionMap = new Map<string, string>()
+
+  /** Whether the last executeStream was terminated by the interaction timeout. */
+  private _lastTimedOut = false
 
   /** AbortController for the current in-flight query. */
   private sdkAbortController: AbortController | null = null
@@ -178,6 +188,11 @@ export class AgentSessionService extends AgentBaseService {
     return this.workspacePath !== null
   }
 
+  /** Whether the last send() was terminated by an interaction timeout. */
+  wasTimedOut(): boolean {
+    return this._lastTimedOut
+  }
+
   getActiveQuery(): import('@anthropic-ai/claude-agent-sdk').Query | null {
     return this.sdkExecutor.getActiveQuery()
   }
@@ -231,6 +246,7 @@ export class AgentSessionService extends AgentBaseService {
       if (workspace) this.workspaceId = workspace.id
       const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
       this.costPreference = (settings.costPreference as CostPreference) || 'balanced'
+      this.llmProvider = (settings.llmProvider as LLMProvider) || 'claude'
       this.applyCompactionThresholds(settings)
     } catch {
       /* non-fatal */
@@ -431,6 +447,7 @@ export class AgentSessionService extends AgentBaseService {
 
     this.currentStatus = 'thinking'
     this.hasEmittedContent = false
+    this._lastTimedOut = false
     this.messageStartedAt = Date.now()
     this.processedToolIds.clear()
     this.currentConversationId = conversationId
@@ -563,6 +580,7 @@ export class AgentSessionService extends AgentBaseService {
     let timedOut = false
     const interactionTimer = setTimeout(() => {
       timedOut = true
+      this._lastTimedOut = true
       this.log.error(
         `Interaction timeout after ${timeoutMs / 60_000} minutes — ${this.circuitBreaker.count} tool calls made`
       )
@@ -632,7 +650,7 @@ export class AgentSessionService extends AgentBaseService {
       })
       if (recovered !== 'continue') return
 
-      this.finalizeStream({
+      await this.finalizeStream({
         conversationId,
         systemPrompt,
         isBuildMode,
@@ -682,10 +700,34 @@ export class AgentSessionService extends AgentBaseService {
       /* non-fatal */
     }
 
+    // ── Local LLM provider overrides ──
+    const isLocal = this.llmProvider === 'local-llm'
+    let finalModel = resolvedModel
+    let envOverrides: Record<string, string> | undefined
+
+    if (isLocal && this.workspacePath) {
+      const localConfig = modelConfigService.getLocalLLMConfig(this.workspacePath)
+      finalModel = localConfig.localModel
+      const baseUrl = modelConfigService.getLocalBaseUrl(localConfig)
+
+      // Use the real API key if configured, otherwise fall back to dummy
+      const localKey = localConfig.localApiKey || 'local'
+
+      // Both oMLX and Ollama expose Anthropic-compatible endpoints at the base URL
+      envOverrides = {
+        ANTHROPIC_BASE_URL: baseUrl,
+        ANTHROPIC_AUTH_TOKEN: localKey,
+        ANTHROPIC_API_KEY: localKey
+      }
+      this.log.info(
+        `[PIPELINE:local-llm] backend=${localConfig.backend} model=${finalModel} baseUrl=${baseUrl}`
+      )
+    }
+
     return {
       prompt: sdkPrompt,
       systemPrompt,
-      model: resolvedModel,
+      model: finalModel,
       cwd: this.workspacePath!,
       permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
       allowedTools,
@@ -693,20 +735,35 @@ export class AgentSessionService extends AgentBaseService {
       // Cache-audit: lowered from 50/25 — caps worst-case context growth.
       // 35 build turns is still generous; model stops and tells user if it needs more.
       maxTurns: isBuildMode ? 35 : 20,
-      resume: sessionId,
-      ...(resumeAt ? { resumeSessionAt: resumeAt } : {}),
+
+      // Session resume: disabled for local (Ollama has no SDK sessions)
+      resume: isLocal ? undefined : sessionId,
+      ...(resumeAt && !isLocal ? { resumeSessionAt: resumeAt } : {}),
       abortController,
       agentId: this.adapter.agentId,
-      thinking: { type: 'adaptive' },
-      thinkingDisplay: 'summarized',
-      effort: resolvedModel.includes('opus') ? 'xhigh' : 'high',
-      maxBudgetUsd: CHAT_AGENT_BUDGET_CAP,
-      promptSuggestions: true,
+
+      // Thinking: adaptive for Claude, omitted entirely for local (oMLX/Ollama reject unknown params)
+      thinking: isLocal ? undefined : { type: 'adaptive' },
+      thinkingDisplay: isLocal ? undefined : 'summarized',
+      effort: isLocal ? undefined : resolvedModel.includes('opus') ? 'xhigh' : 'high',
+
+      // Budget: no USD cap for local (it's free)
+      maxBudgetUsd: isLocal ? undefined : CHAT_AGENT_BUDGET_CAP,
+
+      // Features: disabled for local (Ollama doesn't support these SDK features)
+      promptSuggestions: isLocal ? false : true,
       includeHookEvents: true,
-      autoCompactWindow: true,
-      enableFileCheckpointing: true,
-      betas: ['context-1m-2025-08-07'],
-      ...(resolvedModel !== 'claude-sonnet-4-6' ? { fallbackModel: 'claude-sonnet-4-6' } : {}),
+      autoCompactWindow: isLocal ? false : true,
+      enableFileCheckpointing: isLocal ? false : true,
+      betas: isLocal ? undefined : ['context-1m-2025-08-07'],
+      fallbackModel: isLocal
+        ? undefined
+        : resolvedModel !== 'claude-sonnet-4-6'
+          ? 'claude-sonnet-4-6'
+          : undefined,
+
+      // Env overrides for Ollama SDK passthrough
+      ...(envOverrides ? { envOverrides } : {}),
       ...(additionalDirectories?.length ? { additionalDirectories } : {}),
       onPermissionDenied: (toolName: string, reason: string) => {
         this.log.info(`[PIPELINE:permission-denied] tool=${toolName} reason=${reason}`)
@@ -714,6 +771,20 @@ export class AgentSessionService extends AgentBaseService {
           type: 'status',
           content: `⚠️ Permission denied: ${toolName} — ${reason}`
         } as StreamChunk)
+      },
+      onFileChanged: (filePath: string, changeType: string) => {
+        if (!this.currentConversationId) return
+        const relativePath = filePath.startsWith(this.workspacePath!)
+          ? filePath.slice(this.workspacePath!.length).replace(/^\//, '')
+          : filePath
+        const mappedType: 'created' | 'modified' | 'deleted' =
+          changeType === 'create' ? 'created' : changeType === 'delete' ? 'deleted' : 'modified'
+        try {
+          const { fileChangeRepository } = require('../db/repositories')
+          fileChangeRepository.track(this.currentConversationId, relativePath, mappedType)
+        } catch (err) {
+          this.log.warn('Failed to track file change from SDK hook:', err)
+        }
       },
       onSubagentStart: (agentId: string, description: string) => {
         this.log.info(`[PIPELINE:subagent-start] agent=${agentId} desc=${description}`)
@@ -1082,7 +1153,7 @@ export class AgentSessionService extends AgentBaseService {
     ])
     const shouldSkipNudge =
       streamState.lastTerminalReason && skipNudgeReasons.has(streamState.lastTerminalReason)
-    if (this.circuitBreaker.count > 0 && !streamState.hasTextAfterLastTool && !shouldSkipNudge) {
+    if (this.circuitBreaker.count > 0 && !streamState.hasTextAfterLastTool && !shouldSkipNudge && !timedOut) {
       this.log.warn(
         `[PIPELINE:recovery-nudge-triggered] conversationId=${conversationId} ` +
           `toolCalls=${this.circuitBreaker.count} accumulatedTextLen=${this.accumulatedText.length}`
@@ -1177,7 +1248,21 @@ export class AgentSessionService extends AgentBaseService {
   // ── Compaction ────────────────────────────────────────────────────
 
   private applyCompactionThresholds(settings: Record<string, unknown>): void {
-    if (this.costPreference === 'economy') {
+    const isLocal = (settings.llmProvider as string) === 'local-llm'
+
+    if (isLocal) {
+      // Resolve model context window → threshold tier
+      const model =
+        (settings.localModel as string) ?? (settings.ollamaModel as string) ?? ''
+      const recommended = RECOMMENDED_LOCAL_MODELS.find(
+        (m) => m.ollamaId === model || m.omlxId === model
+      )
+      const ctx = recommended?.contextWindow ?? 32768
+      const tier = ctx >= 200_000 ? '256k' : ctx >= 100_000 ? '128k' : '32k'
+      const thresholds = LOCAL_LLM_COMPACT_THRESHOLDS[tier]
+      this.compactSuggestThreshold = thresholds.suggest
+      this.compactAutoThreshold = thresholds.auto
+    } else if (this.costPreference === 'economy') {
       this.compactSuggestThreshold =
         (settings.compactSuggestThreshold as number) ??
         AgentSessionService.DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY

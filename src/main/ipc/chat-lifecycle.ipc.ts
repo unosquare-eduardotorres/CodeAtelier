@@ -12,8 +12,9 @@ import {
   specialistRepository
 } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
-import { IPC_CHANNELS } from '../../shared/constants'
-import type { ConversationMode, ContextUsageLevel } from '../../shared/types'
+import { modelConfigService } from '../services/model-config.service'
+import { IPC_CHANNELS, RECOMMENDED_LOCAL_MODELS } from '../../shared/constants'
+import type { ConversationMode, ContextUsageLevel, LLMProvider } from '../../shared/types'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -70,11 +71,17 @@ function registerConversationCrudIpc(): void {
         if (!specialist) throw new Error('Invalid persona specialist ID')
       }
 
+      // Read workspace LLM provider setting
+      const wsRow = workspaceRepository.findById(args.workspaceId)
+      const settings = JSON.parse(wsRow?.settingsJson ?? '{}')
+      const llmProvider: LLMProvider = settings.llmProvider ?? 'claude'
+
       const conversation = conversationRepository.create(
         args.workspaceId,
         args.title,
         args.mode,
-        args.personaSpecialistId
+        args.personaSpecialistId,
+        llmProvider
       )
       conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 
@@ -379,7 +386,20 @@ function registerChatModeIpc(): void {
         (lastTurn?.inputTokens ?? 0) +
         (lastTurn?.cacheReadTokens ?? 0) +
         (lastTurn?.cacheCreationTokens ?? 0)
-      const contextWindowSize = 1_000_000
+
+      // Resolve context window — use model's actual window for local LLM, Claude's 1M otherwise
+      let contextWindowSize = 1_000_000
+      const conversation = conversationRepository.findById(args.conversationId)
+      if (conversation) {
+        const workspace = workspaceRepository.findById(conversation.workspaceId)
+        if (workspace && modelConfigService.isLocalProvider(workspace.repoPath)) {
+          const llmConfig = modelConfigService.getLocalLLMConfig(workspace.repoPath)
+          const recommended = RECOMMENDED_LOCAL_MODELS.find(
+            (m) => m.ollamaId === llmConfig.localModel || m.omlxId === llmConfig.localModel
+          )
+          contextWindowSize = recommended?.contextWindow ?? 32768
+        }
+      }
       // Quality window scales with context window: 50% of max, capped at 500K
       const effectiveQualityWindow = Math.min(Math.round(contextWindowSize * 0.5), 500_000)
       const percentage = Math.round((inputTokens / contextWindowSize) * 100)

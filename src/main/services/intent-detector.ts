@@ -95,7 +95,13 @@ export class IntentDetector {
       try {
         const data = JSON.parse(match[1].trim())
         if (data.questions && Array.isArray(data.questions)) {
-          allQuestions.push(...data.questions)
+          allQuestions.push(
+            ...data.questions.map((q: Record<string, unknown>) => ({
+              ...q,
+              id: q.id ?? `grill-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              options: Array.isArray(q.options) ? q.options : []
+            }))
+          )
         }
       } catch (error) {
         log.error('Failed to parse grill-question block:', error)

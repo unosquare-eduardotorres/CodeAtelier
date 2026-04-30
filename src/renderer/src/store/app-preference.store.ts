@@ -1,20 +1,22 @@
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
-import type { AppPreferences } from '../../../shared/types'
+import type { AppPreferences, ChatBubbleSize } from '../../../shared/types'
 
 type AppPreferenceKey = keyof AppPreferences
 
 const defaultPreferences: AppPreferences = {
   specialistWarningBuild: true,
   specialistWarningPlan: true,
-  specialistWarningAlways: false
+  specialistWarningAlways: false,
+  chatBubbleSize: 'xl'
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   specialistWarningBuild: 'specialist_warning_build',
   specialistWarningPlan: 'specialist_warning_plan',
-  specialistWarningAlways: 'specialist_warning_always'
+  specialistWarningAlways: 'specialist_warning_always',
+  chatBubbleSize: 'chat_bubble_size'
 }
 
 interface AppPreferenceState {
@@ -25,7 +27,7 @@ interface AppPreferenceState {
   error: string | null
 
   loadPreferences: () => Promise<void>
-  setPreference: (key: AppPreferenceKey, value: boolean) => Promise<void>
+  setPreference: (key: AppPreferenceKey, value: boolean | string) => Promise<void>
   reset: () => void
 }
 
@@ -62,7 +64,7 @@ export const useAppPreferenceStore = create<AppPreferenceState>((set) => ({
     }
   },
 
-  setPreference: async (key: AppPreferenceKey, value: boolean) => {
+  setPreference: async (key: AppPreferenceKey, value: boolean | string) => {
     const previous = useAppPreferenceStore.getState().preferences
     set((state) => ({
       preferences: {
@@ -80,7 +82,7 @@ export const useAppPreferenceStore = create<AppPreferenceState>((set) => ({
     try {
       await window.api.setAppPreference({
         key: preferenceStorageKeys[key],
-        value: value ? 'true' : 'false'
+        value: typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value)
       })
     } catch (error) {
       const message = (error as Error).message
@@ -114,6 +116,9 @@ export const useAppPreferenceStore = create<AppPreferenceState>((set) => ({
     })
   }
 }))
+
+export const useChatBubbleSize = (): ChatBubbleSize =>
+  useAppPreferenceStore((state) => state.preferences.chatBubbleSize)
 
 export const useAppPreferenceActions = (): Pick<
   AppPreferenceState,

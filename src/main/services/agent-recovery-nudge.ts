@@ -76,8 +76,9 @@ export class RecoveryNudgeService {
         maxTurns: 1,
         resume: opts.sessionId,
         agentId: DA_VINCI_AGENT_ID,
-        // Recovery is lightweight summarization — minimal thinking
-        thinking: { type: 'disabled' },
+        // Recovery is lightweight summarization — omit thinking entirely.
+        // 'disabled' is Claude-specific and breaks local LLMs (invalid signature).
+        // Without this param, Claude uses server defaults (fine for a 1-turn summary).
         effort: 'low'
       })) {
         if ('_meta' in chunk && chunk._meta) {

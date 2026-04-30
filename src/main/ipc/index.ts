@@ -8,7 +8,6 @@ import { registerSkillIpc } from './skill.ipc'
 import { registerWorkspaceDeployIpc } from './workspace-deploy.ipc'
 import { registerSyncIpc } from './sync.ipc'
 import { registerMemoryIpc } from './memory.ipc'
-import { registerDreamIpc } from './dream.ipc'
 import { registerTokenIpc } from './token.ipc'
 import { registerIdeaIpc } from './idea.ipc'
 import { registerUpdateIpc } from './update.ipc'
@@ -37,6 +36,9 @@ import { registerSdkControlIpc } from './sdk-control.ipc'
 import { registerSessionIpc } from './session.ipc'
 import { registerBugIpc } from './bug.ipc'
 import { registerProjectSpecialistIpc } from './project-specialist.ipc'
+import { registerPlatformIpc } from './platform.ipc'
+import { registerAuditIpc } from './audit.ipc'
+import { registerGrillIpc } from './grill.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -48,7 +50,6 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceDeployIpc()
   registerSyncIpc()
   registerMemoryIpc(mainWindow)
-  registerDreamIpc(mainWindow)
   registerTokenIpc()
   registerIdeaIpc()
   registerUpdateIpc()
@@ -77,4 +78,7 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerSessionIpc()
   registerBugIpc(mainWindow)
   registerProjectSpecialistIpc()
+  registerPlatformIpc()
+  registerAuditIpc(mainWindow)
+  registerGrillIpc(mainWindow)
 }

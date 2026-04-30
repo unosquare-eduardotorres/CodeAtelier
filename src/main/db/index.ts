@@ -14,7 +14,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 75
+const CURRENT_SCHEMA_VERSION = 79
 
 interface Migration {
   version: number
@@ -1935,6 +1935,74 @@ const migrations: Migration[] = [
       dbLogger.info(
         '[migration-75] ✓ Plan prompt updated with type selection, phases, verification, and diagram guidance'
       )
+    }
+  },
+  {
+    version: 76,
+    name: 'drop-dream-runs-table',
+    up: (db) => {
+      db.exec(`DROP TABLE IF EXISTS dream_runs;`)
+      dbLogger.info('[migration-76] ✓ Dropped dream_runs table')
+    }
+  },
+  {
+    version: 77,
+    name: 'add-audit-health-tables',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS audit_runs (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          mode TEXT NOT NULL DEFAULT 'light' CHECK (mode IN ('light', 'deep')),
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'running', 'completed', 'partial', 'cancelled')),
+          overall_score INTEGER,
+          selected_tracks TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(selected_tracks)),
+          detected_techs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(detected_techs)),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_runs_workspace
+          ON audit_runs(workspace_id);
+
+        CREATE TABLE IF NOT EXISTS audit_results (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          audit_run_id TEXT NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+          track_id TEXT NOT NULL,
+          score INTEGER,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+          findings TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(findings)),
+          summary TEXT DEFAULT '',
+          skills_used TEXT DEFAULT '[]' CHECK (json_valid(skills_used)),
+          started_at TEXT,
+          completed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_audit_results_run ON audit_results(audit_run_id);
+      `)
+      dbLogger.info('[migration-77] ✓ Created audit_runs + audit_results tables')
+    }
+  },
+  {
+    version: 78,
+    name: 'add-llm-provider-to-conversations',
+    up: (db) => {
+      db.exec(
+        `ALTER TABLE conversations ADD COLUMN llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm'))`
+      )
+      dbLogger.info('[migration-78] ✓ Added llm_provider column to conversations')
+    }
+  },
+  {
+    version: 79,
+    name: 'fix-audit-runs-unique-index',
+    up: (db) => {
+      db.exec(`DROP INDEX IF EXISTS idx_audit_runs_workspace`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_runs_workspace ON audit_runs(workspace_id)`)
+      dbLogger.info('[migration-79] ✓ Replaced UNIQUE index on audit_runs with non-unique index')
     }
   }
 ]

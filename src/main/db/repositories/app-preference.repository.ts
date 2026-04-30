@@ -35,7 +35,8 @@ export class AppPreferenceRepository {
     return {
       specialistWarningBuild: this.getBool('specialist_warning_build', true),
       specialistWarningPlan: this.getBool('specialist_warning_plan', true),
-      specialistWarningAlways: this.getBool('specialist_warning_always', false)
+      specialistWarningAlways: this.getBool('specialist_warning_always', false),
+      chatBubbleSize: (this.get('chat_bubble_size') as AppPreferences['chatBubbleSize']) ?? 'xl'
     }
   }
 }

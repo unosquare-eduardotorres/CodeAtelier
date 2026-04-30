@@ -1,4 +1,11 @@
-import type { AgentRole, GrillTrackId, GrillTrack, ModelAction } from './types'
+import type {
+  AgentRole,
+  GrillTrackId,
+  GrillTrack,
+  AuditTrackId,
+  AuditTrack,
+  ModelAction
+} from './types'
 
 export const IPC_CHANNELS = {
   // Workspace
@@ -149,13 +156,6 @@ export const IPC_CHANNELS = {
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
   MEMORY_GET_FEED_TIMESTAMPS: 'memory:getFeedTimestamps',
   MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
-
-  // Dream (auto consolidation)
-  DREAM_TRIGGER: 'dream:trigger',
-  DREAM_CANCEL: 'dream:cancel',
-  DREAM_GET_STATUS: 'dream:getStatus',
-  DREAM_GET_HISTORY: 'dream:getHistory',
-  DREAM_PROGRESS: 'dream:progress',
 
   // Tokens
   TOKEN_GET_WORKSPACE_SUMMARY: 'token:getWorkspaceSummary',
@@ -351,7 +351,37 @@ export const IPC_CHANNELS = {
   BUG_DELETE: 'bug:delete',
   BUG_UPDATE_NOTE: 'bug:updateNote',
   BUG_COUNT: 'bug:count',
-  BUG_NEW: 'bug:new'
+  BUG_NEW: 'bug:new',
+
+  // oMLX
+  OMLX_CHECK_STATUS: 'omlx:checkStatus',
+  OMLX_START: 'omlx:start',
+  OMLX_ADMIN_URL: 'omlx:adminUrl',
+  OMLX_LOAD_MODEL: 'omlx:loadModel',
+  OMLX_UNLOAD_MODEL: 'omlx:unloadModel',
+
+  // Platform
+  PLATFORM_INFO: 'platform:info',
+
+  // Audit (Workspace Health)
+  AUDIT_START: 'audit:start',
+  AUDIT_CANCEL: 'audit:cancel',
+  AUDIT_GET_LATEST: 'audit:getLatest',
+  AUDIT_PROGRESS: 'audit:progress',
+  AUDIT_RESULT: 'audit:result',
+  AUDIT_COMPLETE: 'audit:complete',
+  AUDIT_STREAM_CHUNK: 'audit:stream-chunk',
+  AUDIT_CONVERT_FINDINGS: 'audit:convertFindings',
+  AUDIT_RERUN_TRACK: 'audit:rerunTrack',
+  AUDIT_EXPORT_MARKDOWN: 'audit:exportMarkdown',
+  AUDIT_GET_HISTORY: 'audit:getHistory',
+
+  // Grill (dedicated agent)
+  GRILL_EVALUATE: 'grill:evaluate',
+  GRILL_CANCEL: 'grill:cancel',
+  GRILL_STREAM_CHUNK: 'grill:streamChunk',
+  GRILL_EVALUATION_RESULT: 'grill:evaluationResult',
+  GRILL_STREAM_COMPLETE: 'grill:streamComplete'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
@@ -401,7 +431,6 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   'specialist:simple': 'claude-haiku-4-5-20251001',
   'specialist:moderate': 'claude-sonnet-4-6',
   'specialist:complex': 'claude-opus-4-7',
-  dream: 'claude-haiku-4-5-20251001',
   memoryFeed: 'claude-haiku-4-5-20251001',
   activation: 'claude-haiku-4-5-20251001',
   haiku: 'claude-haiku-4-5-20251001'
@@ -471,12 +500,6 @@ export const MODEL_ACTIONS_META: Record<
     icon: '🧠',
     section: 'specialist'
   },
-  dream: {
-    label: 'Dream Consolidation',
-    description: 'Memory consolidation cycles',
-    icon: '🌙',
-    section: 'background'
-  },
   memoryFeed: {
     label: 'Memory Feed',
     description: 'Summarization of CLAUDE.md and memory feeds',
@@ -541,12 +564,12 @@ export const CHAT_AGENT_BUDGET_CAP = 1.5
  * without knowing about the legacy labels. Project Specialists use the
  * `'project-specialist:*'` keys that were added for the Phase 2 refactor.
  */
-export function getModelActionForRole(
-  role: AgentRole,
-  mode: 'plan' | 'build'
-): ModelAction {
+export function getModelActionForRole(role: AgentRole, mode: 'plan' | 'build'): ModelAction {
   if (role === 'da-vinci') {
     return mode === 'build' ? 'da-vinci:build' : 'da-vinci:plan'
+  }
+  if (role === 'audit') {
+    return 'da-vinci:plan' // Audits always use plan-tier model
   }
   return mode === 'build' ? 'project-specialist:build' : 'project-specialist:plan'
 }
@@ -663,6 +686,112 @@ export const GRILL_TRACKS: Record<GrillTrackId, GrillTrack> = {
   }
 } as const
 
+// ── Audit Tracks (Workspace Health) ──────────────────────────────────────────
+
+export const AUDIT_TRACKS: Record<AuditTrackId, AuditTrack> = {
+  database: {
+    id: 'database',
+    name: 'Database',
+    icon: 'Database',
+    description: 'Schema design, migrations, query patterns, indexing, and data integrity',
+    weight: 1.0,
+    scoringFocus: [
+      'Schema design & normalization',
+      'Migration strategy & safety',
+      'Query optimization & N+1 detection',
+      'Index coverage',
+      'Data integrity constraints'
+    ]
+  },
+  code: {
+    id: 'code',
+    name: 'Code Quality',
+    icon: 'Code',
+    description: 'Frontend and backend patterns, SOLID principles, complexity, error handling',
+    weight: 1.5,
+    scoringFocus: [
+      'SOLID adherence',
+      'Naming conventions & consistency',
+      'Cyclomatic complexity',
+      'Error handling patterns',
+      'Dead code & unused exports'
+    ]
+  },
+  testing: {
+    id: 'testing',
+    name: 'Testing',
+    icon: 'TestTube',
+    description: 'Test coverage, test pyramid balance, fixture quality, CI integration',
+    weight: 1.0,
+    scoringFocus: [
+      'Test pyramid balance (unit/integration/E2E)',
+      'Critical path coverage',
+      'Test fixture quality',
+      'Assertion specificity',
+      'CI/CD test integration'
+    ]
+  },
+  architecture: {
+    id: 'architecture',
+    name: 'Architecture',
+    icon: 'Building2',
+    description: 'Module boundaries, dependency management, separation of concerns, scalability',
+    weight: 1.5,
+    scoringFocus: [
+      'Module boundaries & coupling',
+      'Dependency direction (no circular)',
+      'Separation of concerns',
+      'API/IPC contract design',
+      'Scalability patterns'
+    ]
+  },
+  security: {
+    id: 'security',
+    name: 'Security',
+    icon: 'Shield',
+    description: 'Input validation, authentication, secret management, CSP, context isolation',
+    weight: 1.5,
+    scoringFocus: [
+      'Input validation & sanitization',
+      'Authentication & authorization',
+      'Secret management (no hardcoded secrets)',
+      'CSP & context isolation (Electron)',
+      'Dependency vulnerability posture'
+    ]
+  },
+  documentation: {
+    id: 'documentation',
+    name: 'Documentation',
+    icon: 'FileText',
+    description: 'README quality, inline docs, API documentation, CLAUDE.md completeness',
+    weight: 0.75,
+    scoringFocus: [
+      'README completeness',
+      'Inline documentation (JSDoc/TSDoc)',
+      'API endpoint documentation',
+      'CLAUDE.md / project guide quality',
+      'Change log / decision records'
+    ]
+  },
+  'ui-ux': {
+    id: 'ui-ux',
+    name: 'UI/UX',
+    icon: 'Palette',
+    description: 'Accessibility, responsive design, error states, loading states, consistency',
+    weight: 1.0,
+    scoringFocus: [
+      'Accessibility (WCAG compliance)',
+      'Error & empty state handling',
+      'Loading state indicators',
+      'Component consistency',
+      'Keyboard navigation'
+    ]
+  }
+} as const
+
+/** Maximum USD budget per auditor turn (lower than chat) */
+export const AUDIT_BUDGET_CAP = 0.75 as const
+
 // ── MCP Tool Name Registry ──────────────────────────────────────────────────
 // Single source of truth for all MCP tool names used across the codebase.
 // SDK convention: tool full name = `mcp__{server}__{tool}`
@@ -713,10 +842,34 @@ export const MCP_TOOLS = {
       'search_identifiers',
       'Code Graph · search_identifiers'
     ),
-    FIND_DEAD_CODE: mcpTool('code-graph', 'find_dead_code', 'Code Graph · find_dead_code')
+    FIND_DEAD_CODE: mcpTool('code-graph', 'find_dead_code', 'Code Graph · find_dead_code'),
+    FILE_OUTLINE: mcpTool('code-graph', 'file_outline', 'Code Graph · file_outline'),
+    FIND_CALLERS: mcpTool('code-graph', 'find_callers', 'Code Graph · find_callers'),
+    FIND_CALLEES: mcpTool('code-graph', 'find_callees', 'Code Graph · find_callees'),
+    FIND_REFERENCES: mcpTool('code-graph', 'find_references', 'Code Graph · find_references'),
+    FILE_DEPENDENCIES: mcpTool('code-graph', 'file_dependencies', 'Code Graph · file_dependencies'),
+    FILE_DEPENDENTS: mcpTool('code-graph', 'file_dependents', 'Code Graph · file_dependents'),
+    SYMBOL_HOTSPOTS: mcpTool('code-graph', 'symbol_hotspots', 'Code Graph · symbol_hotspots'),
+    COUPLING_ANALYSIS: mcpTool('code-graph', 'coupling_analysis', 'Code Graph · coupling_analysis'),
+    CIRCULAR_DEPENDENCIES: mcpTool(
+      'code-graph',
+      'circular_dependencies',
+      'Code Graph · circular_dependencies'
+    ),
+    MODULE_BOUNDARY_HEALTH: mcpTool(
+      'code-graph',
+      'module_boundary_health',
+      'Code Graph · module_boundary_health'
+    )
   }),
   SEMANTIC_SEARCH: mcpServer('semantic-search', {
-    SEMANTIC_SEARCH: mcpTool('semantic-search', 'semantic_search', 'Semantic Search')
+    SEMANTIC_SEARCH: mcpTool('semantic-search', 'semantic_search', 'Semantic Search'),
+    SIMILAR_CODE: mcpTool('semantic-search', 'similar_code', 'Semantic · similar_code'),
+    CODEBASE_CONCEPTS: mcpTool(
+      'semantic-search',
+      'codebase_concepts',
+      'Semantic · codebase_concepts'
+    )
   }),
   GIT_CONTEXT: mcpServer('git-context', {
     GIT_LOG: mcpTool('git-context', 'git_log', 'Git · log'),
@@ -732,6 +885,15 @@ export const MCP_TOOLS = {
     LIST_PR_COMMENTS: mcpTool('github-context', 'list_pr_comments', 'GitHub · PR comments'),
     LIST_ISSUES: mcpTool('github-context', 'list_issues', 'GitHub · issues')
   }),
+  CODE_ANALYSIS: mcpServer('code-analysis', {
+    TODO_SCANNER: mcpTool('code-analysis', 'todo_scanner', 'Analysis · todo_scanner'),
+    DEPENDENCY_HEALTH: mcpTool(
+      'code-analysis',
+      'dependency_health',
+      'Analysis · dependency_health'
+    ),
+    TEST_COVERAGE_MAP: mcpTool('code-analysis', 'test_coverage_map', 'Analysis · test_coverage_map')
+  }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
     ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user'),
@@ -741,6 +903,126 @@ export const MCP_TOOLS = {
 
 /** All MCP tool full names — for test assertions and validation */
 export const ALL_MCP_TOOL_NAMES = Object.values(MCP_TOOLS).flatMap((server) => server._ALL_NAMES)
+
+// ── Local LLM Provider ──
+
+/** Default Ollama connection */
+export const OLLAMA_DEFAULT_HOST = '127.0.0.1' as const
+export const OLLAMA_DEFAULT_PORT = 11434 as const
+
+/** Default oMLX connection (Apple Silicon native) */
+export const OMLX_DEFAULT_HOST = '127.0.0.1' as const
+export const OMLX_DEFAULT_PORT = 8000 as const
+
+/** Recommended local models — curated by memory tier (Mac-first, MLX-optimized where available) */
+export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[] = [
+  // 8GB tier
+  {
+    ollamaId: 'qwen2.5-coder:3b',
+    omlxId: 'mlx-community/Qwen2.5-Coder-3B-Instruct-4bit',
+    label: 'Qwen 2.5 Coder 3B',
+    parameterSize: '3B',
+    contextWindow: 32768,
+    minMemoryGB: 4,
+    memoryTier: '8gb',
+    toolCalling: 'basic',
+    description: 'Fastest option — limited quality'
+  },
+  {
+    ollamaId: 'qwen2.5-coder:7b',
+    omlxId: 'mlx-community/Qwen2.5-Coder-7B-Instruct-4bit',
+    label: 'Qwen 2.5 Coder 7B',
+    parameterSize: '7B',
+    contextWindow: 32768,
+    minMemoryGB: 6,
+    memoryTier: '8gb',
+    toolCalling: 'good',
+    description: 'Best balance for 8GB Macs'
+  },
+  // 16GB tier
+  {
+    ollamaId: 'qwen2.5-coder:14b',
+    omlxId: 'mlx-community/Qwen2.5-Coder-14B-Instruct-4bit',
+    label: 'Qwen 2.5 Coder 14B',
+    parameterSize: '14B',
+    contextWindow: 32768,
+    minMemoryGB: 12,
+    memoryTier: '16gb',
+    toolCalling: 'good',
+    description: 'Strong coding — fits 16GB well'
+  },
+  // 32GB tier (MLX)
+  {
+    ollamaId: 'qwen3.6:35b-a3b-coding-nvfp4',
+    omlxId: 'mlx-community/Qwen3.6-35B-A3B-Coding-NVFP4',
+    label: 'Qwen 3.6 Coding (MLX)',
+    parameterSize: '35B MoE',
+    activeParams: 'A3B',
+    contextWindow: 131072,
+    quantization: 'NVFP4',
+    minMemoryGB: 24,
+    memoryTier: '32gb',
+    toolCalling: 'native',
+    mlxOptimized: true,
+    description: 'Top pick — MLX + NVFP4, coding-tuned',
+    recommended: true
+  },
+  {
+    ollamaId: 'qwen3-coder:30b',
+    omlxId: 'mlx-community/Qwen3-Coder-30B-A3B-4bit',
+    label: 'Qwen 3 Coder 30B',
+    parameterSize: '30B MoE',
+    activeParams: '3.3B',
+    contextWindow: 262144,
+    minMemoryGB: 24,
+    memoryTier: '32gb',
+    toolCalling: 'native',
+    description: 'Purpose-built for coding agents, 256K context'
+  },
+  // 48GB+ tier
+  {
+    ollamaId: 'qwen3-coder-next:q4_K_M',
+    // No MLX variant available yet — omit omlxId
+    label: 'Qwen 3 Coder Next 80B',
+    parameterSize: '80B MoE',
+    activeParams: '3B',
+    contextWindow: 262144,
+    quantization: 'Q4_K_M',
+    minMemoryGB: 52,
+    memoryTier: '48gb+',
+    toolCalling: 'excellent',
+    description: 'Best local coding quality — needs 64GB+'
+  },
+  {
+    ollamaId: 'gemma4:e4b-mlx-bf16',
+    omlxId: 'mlx-community/gemma-4-e4b-it-bf16',
+    label: 'Gemma 4 E4B (MLX)',
+    parameterSize: 'MoE',
+    activeParams: 'E4B',
+    contextWindow: 128000,
+    quantization: 'BF16',
+    minMemoryGB: 32,
+    memoryTier: '48gb+',
+    toolCalling: 'native',
+    mlxOptimized: true,
+    description: 'Google alternative — MLX native'
+  }
+] as const
+
+/** Resolve the correct model ID for the active backend */
+export function resolveModelId(
+  model: import('./types').RecommendedLocalModel,
+  backend: import('./types').LocalLLMBackend
+): string {
+  return backend === 'omlx' ? (model.omlxId ?? model.ollamaId) : model.ollamaId
+}
+
+/** Default compaction thresholds by context window size (for local LLM models) */
+export const LOCAL_LLM_COMPACT_THRESHOLDS: Record<string, { suggest: number; auto: number }> = {
+  '32k': { suggest: 16_000, auto: 24_000 },
+  '128k': { suggest: 60_000, auto: 80_000 },
+  '256k': { suggest: 120_000, auto: 160_000 }
+} as const
 
 /** Full name → display name map — for renderer ToolActivityBlock */
 export const MCP_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(

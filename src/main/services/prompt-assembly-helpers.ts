@@ -11,6 +11,7 @@ import type { ConversationMode } from '../../shared/types'
 import {
   ASK_QUESTION_PROMPT,
   CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
+  CODE_ANALYSIS_GUIDANCE_PROMPT,
   DIRECT_ANSWER_BOOST_PROMPT,
   GIT_CONTEXT_GUIDANCE_PROMPT,
   GITHUB_CONTEXT_GUIDANCE_PROMPT,
@@ -64,6 +65,10 @@ export function appendMcpToolGuidance(
 
   if (featureFlags.githubConfigured && !basePrompt.includes('## GitHub Tools')) {
     appendSections.push(GITHUB_CONTEXT_GUIDANCE_PROMPT)
+  }
+
+  if (!basePrompt.includes('## Code Analysis')) {
+    appendSections.push(CODE_ANALYSIS_GUIDANCE_PROMPT)
   }
 
   if (appendSections.length === 0) return basePrompt

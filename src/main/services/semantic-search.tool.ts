@@ -79,6 +79,73 @@ class SemanticSearchMcpService {
               ]
             }
           }
+        },
+        // ── Phase 4: Expanded Semantic Tools ──
+        {
+          name: MCP_TOOLS.SEMANTIC_SEARCH.SIMILAR_CODE.tool,
+          description:
+            'Find code similar to a given snippet using vector embeddings. ' +
+            'Useful for detecting duplicates, enforcing pattern consistency, and auditing copy-paste code.',
+          inputSchema: {
+            code: z.string().describe('Code snippet to find similar implementations for'),
+            maxResults: z
+              .number()
+              .optional()
+              .default(10)
+              .describe('Maximum number of similar code results'),
+            language: z
+              .string()
+              .optional()
+              .describe('Filter by programming language (e.g. "typescript")')
+          },
+          handler: async (args) => {
+            const code = args.code as string
+            const maxResults = args.maxResults as number
+            const language = args.language as string | undefined
+            log.info(
+              `[SemanticSearch] MCP similar_code (workspace: ${workspaceId}, lang: ${language ?? 'all'})`
+            )
+            const results = await vectorSearchService.searchByCode(workspaceId, code, {
+              nResults: Math.min(maxResults, 20),
+              language
+            })
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({ results, count: results.length }, null, 2)
+                }
+              ]
+            }
+          }
+        },
+        {
+          name: MCP_TOOLS.SEMANTIC_SEARCH.CODEBASE_CONCEPTS.tool,
+          description:
+            'Cluster codebase embeddings into conceptual groupings. ' +
+            'Shows how the codebase organizes around concepts, with representative files per cluster.',
+          inputSchema: {
+            maxClusters: z
+              .number()
+              .optional()
+              .default(10)
+              .describe('Maximum number of concept clusters to return')
+          },
+          handler: async (args) => {
+            const maxClusters = args.maxClusters as number
+            log.info(`[SemanticSearch] MCP codebase_concepts (workspace: ${workspaceId})`)
+            const clusters = vectorSearchService.getConceptClusters(workspaceId, {
+              maxClusters
+            })
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({ clusters, count: clusters.length }, null, 2)
+                }
+              ]
+            }
+          }
         }
       ]
     })

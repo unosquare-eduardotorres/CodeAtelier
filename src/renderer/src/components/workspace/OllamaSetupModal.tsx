@@ -5,13 +5,17 @@ import type { OllamaStatus, PullProgress } from '../../../../shared/types'
 interface OllamaSetupModalProps {
   onClose: () => void
   model?: string
+  baseUrl?: string // Optional — pass configured Ollama address for remote servers
+  isRemote?: boolean // Changes UX for remote servers
 }
 
 type SetupState = 'checking' | 'not-installed' | 'not-running' | 'pulling' | 'ready'
 
 export default function OllamaSetupModal({
   onClose,
-  model = 'qwen3-embedding:4b'
+  model = 'qwen3-embedding:4b',
+  baseUrl,
+  isRemote = false
 }: OllamaSetupModalProps): React.JSX.Element {
   const [state, setState] = useState<SetupState>('checking')
   const [status, setStatus] = useState<OllamaStatus | null>(null)
@@ -23,17 +27,17 @@ export default function OllamaSetupModal({
     setPullProgress(null)
     setError(null)
     try {
-      await window.api.ollamaPullModel({ model })
+      await window.api.ollamaPullModel({ model, baseUrl })
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [model])
+  }, [model, baseUrl])
 
   const checkStatus = useCallback(async () => {
     setState('checking')
     setError(null)
     try {
-      const result = await window.api.ollamaCheckStatus()
+      const result = await window.api.ollamaCheckStatus(baseUrl ? { baseUrl } : undefined)
       setStatus(result)
 
       if (!result.installed) {
@@ -117,41 +121,51 @@ export default function OllamaSetupModal({
               <div className="flex items-start gap-3">
                 <AlertTriangle size={16} className="text-warning mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-sm text-text-body font-medium">Ollama not found</p>
+                  <p className="text-sm text-text-body font-medium">
+                    {isRemote
+                      ? `Cannot reach server at ${baseUrl ?? 'remote host'}`
+                      : 'Ollama not found'}
+                  </p>
                   <p className="text-xs text-text-secondary mt-1">
-                    Semantic search requires Ollama to generate embeddings locally. Install it in 3
-                    steps:
+                    {isRemote
+                      ? 'Ensure Ollama is installed and running on the remote machine, and that the network address is correct.'
+                      : 'Ollama is required for local LLM support. Install it in 3 steps:'}
                   </p>
                 </div>
               </div>
 
-              {/* Step-by-step guide */}
-              <ol className="space-y-2 pl-6 text-xs text-text-body list-decimal">
-                <li>
-                  <button
-                    onClick={() => window.open('https://ollama.com/download', '_blank')}
-                    className="text-primary hover:text-primary-hover underline inline-flex items-center gap-1"
-                  >
-                    Download Ollama <ExternalLink size={10} />
-                  </button>
-                </li>
-                <li>
-                  Install it (drag to Applications on macOS, or run the installer on Windows/Linux)
-                </li>
-                <li>
-                  Click <strong>Re-check</strong> below once installed
-                </li>
-              </ol>
+              {/* Step-by-step guide — only for local installations */}
+              {!isRemote && (
+                <ol className="space-y-2 pl-6 text-xs text-text-body list-decimal">
+                  <li>
+                    <button
+                      onClick={() => window.open('https://ollama.com/download', '_blank')}
+                      className="text-primary hover:text-primary-hover underline inline-flex items-center gap-1"
+                    >
+                      Download Ollama <ExternalLink size={10} />
+                    </button>
+                  </li>
+                  <li>
+                    Install it (drag to Applications on macOS, or run the installer on
+                    Windows/Linux)
+                  </li>
+                  <li>
+                    Click <strong>Re-check</strong> below once installed
+                  </li>
+                </ol>
+              )}
 
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => window.open('https://ollama.com/download', '_blank')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
-                >
-                  <Download size={12} />
-                  Download Ollama
-                  <ExternalLink size={10} />
-                </button>
+                {!isRemote && (
+                  <button
+                    onClick={() => window.open('https://ollama.com/download', '_blank')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
+                  >
+                    <Download size={12} />
+                    Download Ollama
+                    <ExternalLink size={10} />
+                  </button>
+                )}
                 <button
                   onClick={checkStatus}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border-default hover:bg-surface-hover rounded-lg transition-colors"
@@ -170,30 +184,34 @@ export default function OllamaSetupModal({
                 <div>
                   <p className="text-sm text-text-body font-medium">Ollama is not running</p>
                   <p className="text-xs text-text-secondary mt-1">
-                    Ollama is installed{status?.version ? ` (v${status.version})` : ''} but not
-                    running.
+                    {isRemote
+                      ? `Ollama server at ${baseUrl ?? 'remote host'} is not responding. Ensure it is running on the remote machine.`
+                      : `Ollama is installed${status?.version ? ` (v${status.version})` : ''} but not running.`}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    setState('checking')
-                    const started = await window.api.ollamaStart()
-                    if (started) {
-                      await checkStatus()
-                    } else {
-                      setState('not-running')
-                      setError(
-                        'Could not start Ollama automatically. Try running "ollama serve" manually.'
-                      )
-                    }
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
-                >
-                  <RefreshCw size={12} />
-                  Start Ollama
-                </button>
+                {/* Only show Start button for local installations */}
+                {!isRemote && (
+                  <button
+                    onClick={async () => {
+                      setState('checking')
+                      const started = await window.api.ollamaStart()
+                      if (started) {
+                        await checkStatus()
+                      } else {
+                        setState('not-running')
+                        setError(
+                          'Could not start Ollama automatically. Try running "ollama serve" manually.'
+                        )
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
+                  >
+                    <RefreshCw size={12} />
+                    Start Ollama
+                  </button>
+                )}
                 <button
                   onClick={checkStatus}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border-default hover:bg-surface-hover rounded-lg transition-colors"
@@ -202,7 +220,9 @@ export default function OllamaSetupModal({
                   Re-check
                 </button>
               </div>
-              <p className="text-xs text-text-muted font-mono">Or run manually: ollama serve</p>
+              {!isRemote && (
+                <p className="text-xs text-text-muted font-mono">Or run manually: ollama serve</p>
+              )}
             </div>
           )}
 

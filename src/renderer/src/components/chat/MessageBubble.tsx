@@ -20,7 +20,8 @@ import type {
 import ToolActivityBlock from './ToolActivityBlock'
 import MessageCardRenderer from './MessageCardRenderer'
 import { useMessageContent } from './useMessageContent'
-import { useSpecialistStore, useChatStore, useWorkspaceStore } from '@renderer/store'
+import { useSpecialistStore, useChatStore, useWorkspaceStore, useChatBubbleSize } from '@renderer/store'
+import type { ChatBubbleSize } from '../../../../shared/types'
 import { Avatar, ImageLightbox, Skeleton } from '@renderer/components/common'
 import { CORE_AGENT_DEFAULTS, USER_AVATAR_KEY } from '@renderer/utils/agentIdentity'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
@@ -78,6 +79,14 @@ function shortenFilePath(filePath: string): string {
   }
 
   return filePath
+}
+
+/** Bubble size classes — controlled by user preference */
+const BUBBLE_SIZE_CLASSES: Record<ChatBubbleSize, { text: string; userMax: string; aiMax: string }> = {
+  small: { text: 'text-xs leading-relaxed', userMax: 'max-w-[70%]', aiMax: 'max-w-[75%]' },
+  medium: { text: 'text-sm leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[80%]' },
+  large: { text: 'text-[15px] leading-relaxed', userMax: 'max-w-[80%]', aiMax: 'max-w-[85%]' },
+  xl: { text: 'text-base leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[85%]' }
 }
 
 // Module-level constants — stable references, never recreated on render
@@ -299,6 +308,8 @@ function MessageBubbleInner({
   actions
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
+  const bubbleSize = useChatBubbleSize()
+  const sizeClasses = BUBBLE_SIZE_CLASSES[bubbleSize]
   // Use actions from props (passed by MessageList) to avoid N×useShallow subscriptions
   const {
     updateMode,
@@ -407,7 +418,7 @@ function MessageBubbleInner({
 
       {/* Content */}
       <div
-        className={`flex flex-col min-w-0 ${isUser ? 'max-w-[75%] items-end' : 'max-w-[85%] items-start'}`}
+        className={`flex flex-col min-w-0 ${isUser ? `${sizeClasses.userMax} items-end` : `${sizeClasses.aiMax} items-start`}`}
       >
         <div className={`flex flex-col mb-1 px-1 ${isUser ? 'items-end' : 'items-start'}`}>
           <span className="text-sm font-semibold text-text-primary leading-tight">
@@ -489,7 +500,7 @@ function MessageBubbleInner({
             )}
 
             {(isUser ? displayContent : message.contentMd) ? (
-              <div className="prose max-w-none overflow-hidden">
+              <div className={`prose max-w-none overflow-hidden ${sizeClasses.text}`}>
                 <ReactMarkdown
                   remarkPlugins={isUser ? REMARK_PLUGINS_BASE : REMARK_PLUGINS}
                   rehypePlugins={REHYPE_PLUGINS}

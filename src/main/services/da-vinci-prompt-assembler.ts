@@ -26,6 +26,8 @@ export interface BuildSystemPromptOptions {
   personaSpecialistId?: string | null
   /** Cached persona specialist data for prompt building */
   personaData?: Specialist | null
+  /** When true, use condensed prompt assembly for local LLM providers */
+  isLocalProvider?: boolean
 }
 
 /** Options for building the effective user message */
@@ -131,6 +133,16 @@ export class DaVinciPromptAssembler {
    * 3) optional conditional sections appended after base prompt resolution
    */
   buildSystemPromptForTurn(opts: BuildSystemPromptOptions): string {
+    // Local LLM: condensed prompt — skip memory/skills/caching strategies
+    if (opts.isLocalProvider) {
+      return promptBuilder.buildLocalPrompt({
+        role: 'da-vinci',
+        mode: opts.mode,
+        workspacePath: opts.workspacePath,
+        budgetTier: 'minimal'
+      })
+    }
+
     // Strategy C: Memory context is now injected into the user prompt (not system prompt).
     // This keeps the system prompt identical across turns → Claude prompt caching gives
     // a 90% discount on the entire system prompt after the first turn (~1,350 tokens/turn saved).

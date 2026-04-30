@@ -28,8 +28,6 @@ import type {
   MemoryFeedProgress,
   MemoryFeedResult,
   WorkspaceFeedTimestamps,
-  DreamRun,
-  DreamProgress,
   TokenSummary,
   AgentSessionRecord,
   Idea,
@@ -43,12 +41,20 @@ import type {
   SpecialistTokenEstimate,
   AppPreferences,
   OllamaStatus,
+  OmlxExtendedStatus,
   PullProgress,
   IndexingState,
   CodeGraphIndexingState,
   ContextUsage,
   StructuredPlan,
-  BugRecord
+  BugRecord,
+  AuditRun,
+  AuditMode,
+  AuditTrackId,
+  AuditFinding,
+  AuditProgressEvent,
+  AuditResult,
+  AuditStreamChunkEvent
 } from '../shared/types'
 
 interface Api {
@@ -258,13 +264,6 @@ interface Api {
     filePath: string
   }) => Promise<MemoryFeedResult>
   onMemoryFeedProgress: (callback: (data: MemoryFeedProgress) => void) => () => void
-
-  // Dream (auto consolidation)
-  triggerDream: (args: { workspaceId: string }) => Promise<DreamRun>
-  cancelDream: (args: { workspaceId: string }) => Promise<void>
-  getDreamStatus: (args: { workspaceId: string }) => Promise<DreamRun | null>
-  getDreamHistory: (args: { workspaceId: string; limit?: number }) => Promise<DreamRun[]>
-  onDreamProgress: (callback: (data: DreamProgress) => void) => () => void
 
   computeSyncDiff: (args: { workspacePath: string }) => Promise<SyncDiff>
   applySync: (args: { workspacePath: string; skipRemoved?: boolean }) => Promise<SyncResult>
@@ -643,14 +642,28 @@ interface Api {
   autoConfigureClaude: () => Promise<AutoConfigureResult>
 
   // Ollama
-  ollamaCheckStatus: () => Promise<OllamaStatus>
-  ollamaPullModel: (args: { model: string }) => Promise<void>
+  ollamaCheckStatus: (args?: { baseUrl?: string }) => Promise<OllamaStatus>
+  ollamaPullModel: (args: { model: string; baseUrl?: string }) => Promise<void>
   ollamaCancelPull: () => Promise<void>
-  ollamaRemoveModel: (args: { model: string }) => Promise<void>
+  ollamaRemoveModel: (args: { model: string; baseUrl?: string }) => Promise<void>
   ollamaStart: () => Promise<boolean>
   onOllamaPullProgress: (callback: (data: PullProgress) => void) => () => void
   onOllamaPullComplete: (callback: (model: string) => void) => () => void
   onOllamaPullError: (callback: (error: string) => void) => () => void
+
+  // oMLX
+  omlxCheckStatus: (args?: { baseUrl?: string; apiKey?: string }) => Promise<OmlxExtendedStatus>
+  omlxStart: () => Promise<boolean>
+  omlxAdminUrl: (args?: { baseUrl?: string }) => Promise<string>
+  omlxLoadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }) => Promise<void>
+  omlxUnloadModel: (args: {
+    modelId: string
+    baseUrl?: string
+    apiKey?: string
+  }) => Promise<void>
+
+  // Platform
+  getPlatformInfo: () => Promise<import('../shared/types').PlatformInfo>
 
   // Indexing (semantic search)
   indexingStart: (args: { workspaceId: string }) => Promise<void>
@@ -780,6 +793,57 @@ interface Api {
   updateBugNote: (args: { id: string; note: string }) => Promise<void>
   getBugCount: () => Promise<number>
   onNewBug: (callback: (bug: BugRecord) => void) => () => void
+
+  // Audit (Workspace Health)
+  auditStart: (args: {
+    workspaceId: string
+    mode: AuditMode
+    tracks: AuditTrackId[]
+  }) => Promise<AuditRun>
+  auditCancel: () => Promise<void>
+  auditGetLatest: (args: { workspaceId: string }) => Promise<AuditRun | null>
+  auditConvertFindings: (args: {
+    workspaceId: string
+    findings: AuditFinding[]
+  }) => Promise<{ conversationId: string }>
+  auditRerunTrack: (args: {
+    workspaceId: string
+    trackId: AuditTrackId
+    mode: AuditMode
+  }) => Promise<void>
+  auditExportMarkdown: (args: { workspaceId: string }) => Promise<void>
+  auditGetHistory: (args: {
+    workspaceId: string
+    limit?: number
+  }) => Promise<AuditRun[]>
+  onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
+  onAuditResult: (cb: (data: AuditResult) => void) => () => void
+  onAuditComplete: (cb: (data: AuditRun) => void) => () => void
+  onAuditStreamChunk: (cb: (data: AuditStreamChunkEvent) => void) => () => void
+
+  // Grill (dedicated agent)
+  grillEvaluate: (args: {
+    workspaceId: string
+    trackId: GrillTrackId
+    ideaTitle: string
+    ideaDescription: string
+    iterationHistory?: string
+  }) => Promise<void>
+  grillCancel: () => Promise<void>
+  onGrillStreamChunk: (
+    cb: (data: { type: string; content?: string; toolActivity?: Record<string, unknown> }) => void
+  ) => () => void
+  onGrillEvaluationResult: (
+    cb: (data: {
+      trackId?: GrillTrackId
+      score: number
+      scoreLabel: string
+      feedback: string
+      questions: GrillQuestion[]
+      suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
+    }) => void
+  ) => () => void
+  onGrillStreamComplete: (cb: () => void) => () => void
 }
 
 declare global {

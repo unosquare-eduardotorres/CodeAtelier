@@ -9,7 +9,8 @@ import {
   Pencil,
   Check,
   X,
-  Search
+  Search,
+  Plus
 } from 'lucide-react'
 import { useIdeaStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import { ConfirmDialog, Skeleton } from '@renderer/components/common'
@@ -91,7 +92,7 @@ export default function IdeasList({
   onNavigateToChat,
   onOpenGrillSession
 }: IdeasListProps): React.JSX.Element {
-  const { ideas, loadIdeas, deleteIdea, updateIdea, startGrill, convertDirect, isLoading } =
+  const { ideas, loadIdeas, deleteIdea, updateIdea, startGrill, convertDirect, createIdea, isLoading } =
     useIdeaStore()
   const { activeWorkspace } = useWorkspaceStore()
   const { selectConversation, sendMessage, loadConversations } = useChatActions()
@@ -101,6 +102,27 @@ export default function IdeasList({
   const [editDescription, setEditDescription] = useState('')
   const [filter, setFilter] = useState<IdeaFilter>('active')
   const [searchQuery, setSearchQuery] = useState('')
+
+  // New Idea modal state
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [newTitle, setNewTitle] = useState('')
+  const [newDescription, setNewDescription] = useState('')
+  const [isCreating, setIsCreating] = useState(false)
+
+  const handleCreateIdea = async (): Promise<void> => {
+    if (!newTitle.trim() || !activeWorkspace || isCreating) return
+    setIsCreating(true)
+    try {
+      await createIdea(activeWorkspace.id, newTitle.trim(), newDescription.trim())
+      setShowCreateModal(false)
+      setNewTitle('')
+      setNewDescription('')
+    } catch (error) {
+      console.error('Failed to create idea:', error)
+    } finally {
+      setIsCreating(false)
+    }
+  }
 
   const filteredIdeas = useMemo(() => {
     let result = ideas
@@ -292,16 +314,87 @@ export default function IdeasList({
     )
   }
 
+  const renderCreateModal = (): React.JSX.Element => (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-surface-float rounded-xl border border-warning/30 shadow-xl w-96 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2.5 bg-warning-muted border-b border-warning/20">
+          <div className="flex items-center gap-2">
+            <Lightbulb size={16} className="text-warning" />
+            <span className="text-sm font-medium text-warning">New Idea</span>
+          </div>
+          <button
+            onClick={() => setShowCreateModal(false)}
+            className="p-1 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+        {/* Body */}
+        <div className="p-4 space-y-3">
+          <input
+            type="text"
+            placeholder="Idea title..."
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleCreateIdea()
+              if (e.key === 'Escape') setShowCreateModal(false)
+            }}
+            className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-warning/50 focus:ring-1 focus:ring-warning/20 transition-colors"
+            autoFocus
+          />
+          <textarea
+            placeholder="Description (optional)..."
+            value={newDescription}
+            onChange={(e) => setNewDescription(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleCreateIdea()
+              if (e.key === 'Escape') setShowCreateModal(false)
+            }}
+            rows={4}
+            className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-warning/50 focus:ring-1 focus:ring-warning/20 transition-colors resize-none"
+          />
+        </div>
+        {/* Footer */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border-subtle">
+          <span className="text-xs text-text-muted">⌘+Enter to save</span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowCreateModal(false)}
+              className="px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleCreateIdea}
+              disabled={!newTitle.trim() || isCreating}
+              className="px-3 py-1.5 text-xs font-medium text-surface-base bg-warning rounded-lg hover:brightness-110 disabled:opacity-30 transition-colors"
+            >
+              {isCreating ? 'Saving...' : 'Save Idea'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
   if (ideas.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-8 text-center">
-        <Lightbulb size={32} className="text-warning/30 mb-3" />
-        <p className="text-sm text-text-secondary mb-1">No ideas yet</p>
-        <p className="text-xs text-text-muted">
-          Use the <Lightbulb size={10} className="inline text-warning" /> button in the chat input
-          to capture ideas.
-        </p>
-      </div>
+      <>
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <Lightbulb size={32} className="text-warning/30 mb-3" />
+          <p className="text-sm text-text-secondary mb-3">No ideas yet</p>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-warning/20 hover:bg-warning/30 text-warning rounded-lg transition-colors"
+          >
+            <Plus size={14} />
+            New Idea
+          </button>
+        </div>
+        {showCreateModal && renderCreateModal()}
+      </>
     )
   }
 
@@ -337,6 +430,13 @@ export default function IdeasList({
             className="w-full pl-8 pr-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-colors"
           />
         </div>
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-warning/20 hover:bg-warning/30 text-warning rounded-lg transition-colors ml-auto"
+        >
+          <Plus size={14} />
+          New Idea
+        </button>
       </div>
 
       {/* Filtered empty state */}
@@ -544,6 +644,8 @@ export default function IdeasList({
           ))}
         </div>
       )}
+
+      {showCreateModal && renderCreateModal()}
 
       <ConfirmDialog
         isOpen={deleteTarget !== null}

@@ -33,6 +33,7 @@ import { intentDetector } from '../intent-detector'
 import { appendMcpToolGuidance, buildConditionalPrefix } from '../prompt-assembly-helpers'
 import { buildWorkspaceMcpConfig } from '../workspace-mcp-config'
 import { BUILD_MODE_SECTION, PLAN_MODE_SECTION } from '../default-prompts'
+import { modelConfigService } from '../model-config.service'
 import { promptBuilder } from '../prompt-builder'
 
 interface SpecialistSnapshot {
@@ -134,6 +135,17 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
     if (this.snapshot.buildStatus === 'failed') {
       const msg = `Project Specialist build failed. Use the ⚙️ Specialist panel to rebuild.`
       return { systemPrompt: msg, effectiveMessage: ctx.message }
+    }
+
+    // Local LLM: condensed prompt — skip skills, memory, caching strategies
+    if (modelConfigService.isLocalProvider(ctx.workspacePath)) {
+      const systemPrompt = promptBuilder.buildLocalPrompt({
+        role: 'da-vinci',
+        mode: ctx.mode,
+        workspacePath: ctx.workspacePath,
+        budgetTier: 'minimal'
+      })
+      return { systemPrompt, effectiveMessage: ctx.message }
     }
 
     // ── System-prompt assembly with snapshot cache ─────────────────

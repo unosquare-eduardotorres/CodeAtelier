@@ -13,7 +13,10 @@ const log = chatIpcLogger
  * Extracts a brief human-readable result summary from a tool result.
  * Used to populate ToolActivity.result for inline display in ToolActivityBlock.
  */
-function extractResultSummary(toolName: string, content: string | undefined): string | undefined {
+export function extractResultSummary(
+  toolName: string,
+  content: string | undefined
+): string | undefined {
   if (!content) return undefined
   try {
     // SDK-level tool errors come through the result content as

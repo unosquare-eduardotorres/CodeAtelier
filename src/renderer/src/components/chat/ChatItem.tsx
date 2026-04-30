@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Trash2, Pencil, MessageCircle, GripVertical } from 'lucide-react'
+import { Trash2, Pencil, MessageCircle, GripVertical, Cloud, Monitor } from 'lucide-react'
 import type { Conversation, ContextUsage } from '../../../../shared/types'
 import ContextBadge from './ContextBadge'
 
@@ -149,6 +149,25 @@ export default function ChatItem({
         )}
         <div className="flex items-center gap-1.5 text-xs text-text-muted truncate">
           <span>{formatRelativeTime(conversation.createdAt)}</span>
+          {/* Provider pill */}
+          <span
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+              conversation.llmProvider === 'local-llm'
+                ? 'bg-teal-muted text-teal-light'
+                : 'bg-primary-muted text-primary-text'
+            }`}
+            title={conversation.llmProvider === 'local-llm' ? 'Local LLM' : 'Claude'}
+          >
+            {conversation.llmProvider === 'local-llm' ? (
+              <>
+                <Monitor size={9} /> Local
+              </>
+            ) : (
+              <>
+                <Cloud size={9} /> Claude
+              </>
+            )}
+          </span>
           {contextUsage && contextUsage.percentage > 0 && (
             <ContextBadge percentage={contextUsage.percentage} level={contextUsage.level} compact />
           )}

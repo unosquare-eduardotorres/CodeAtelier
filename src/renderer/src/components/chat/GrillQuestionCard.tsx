@@ -59,7 +59,7 @@ export function QuestionItem({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent, optionIndex: number): void => {
-    const optionCount = question.options.length + (question.allowOther !== false ? 1 : 0)
+    const optionCount = (question.options ?? []).length + (question.allowOther !== false ? 1 : 0)
 
     if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
       e.preventDefault()
@@ -121,7 +121,7 @@ export function QuestionItem({
           aria-labelledby={question.header ? `question-header-${question.id}` : undefined}
           className="divide-y divide-border-subtle"
         >
-          {question.options.map((option, optIdx) => {
+          {(question.options ?? []).map((option, optIdx) => {
             const isSelected = state.selectedOptions.includes(option.label)
             const isRecommended = !!option.recommended
 
@@ -168,12 +168,12 @@ export function QuestionItem({
           {/* Other option row */}
           {question.allowOther !== false && (
             <div
-              data-option-index={question.options.length}
+              data-option-index={(question.options ?? []).length}
               className={`flex items-start gap-3 px-4 py-3 transition-colors duration-150 ${
                 state.otherSelected ? 'bg-primary/10' : 'hover:bg-surface-hover'
               }`}
               tabIndex={-1}
-              onKeyDown={(e) => handleKeyDown(e, question.options.length)}
+              onKeyDown={(e) => handleKeyDown(e, (question.options ?? []).length)}
             >
               <button
                 type="button"
@@ -261,7 +261,7 @@ export default function GrillQuestionCard({
     const initial: Record<string, QuestionState> = {}
     for (const q of questions) {
       // Pre-select recommended options
-      const recommended = q.options.filter((o) => o.recommended).map((o) => o.label)
+      const recommended = (q.options ?? []).filter((o) => o.recommended).map((o) => o.label)
       initial[q.id] = {
         selectedOptions: recommended,
         otherText: '',

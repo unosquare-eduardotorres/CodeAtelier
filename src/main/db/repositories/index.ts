@@ -16,7 +16,6 @@ export { AgentSessionRepository, agentSessionRepository } from './agent-session.
 export type { AgentSession, TokenSummary } from './agent-session.repository'
 export { IdeaRepository, ideaRepository } from './idea.repository'
 export { MemoryRepository, memoryRepository } from './memory.repository'
-export { DreamRunRepository, dreamRunRepository } from './dream-run.repository'
 export { UserProfileRepository, userProfileRepository } from './user-profile.repository'
 export { CoreAgentAliasRepository, coreAgentAliasRepository } from './core-agent-alias.repository'
 export {
@@ -43,3 +42,5 @@ export { CodeGraphRankRepository, codeGraphRankRepository } from './code-graph-r
 
 export { TurnUsageRepository, turnUsageRepository } from './turn-usage.repository'
 export type { TurnUsage } from './turn-usage.repository'
+
+export { AuditRepository, auditRepository } from './audit.repository'

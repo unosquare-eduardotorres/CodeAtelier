@@ -44,10 +44,21 @@ function formatTokens(tokens: number): string {
   return tokens.toString()
 }
 
+/**
+ * Normalize SQLite datetime strings to unambiguous UTC.
+ * SQLite `datetime('now')` returns UTC without 'Z' suffix, e.g. "2026-04-29 14:05:00".
+ * `new Date("2026-04-29 14:05:00")` is implementation-defined — some engines treat it
+ * as local time. Appending 'Z' forces UTC interpretation.
+ */
+function normalizeDbDate(dateStr: string): string {
+  if (dateStr.endsWith('Z') || dateStr.includes('+') || dateStr.includes('T')) return dateStr
+  return dateStr + 'Z'
+}
+
 function formatDuration(startedAt: string, endedAt: string | null): string {
   if (!endedAt) return 'Running...'
-  const start = new Date(startedAt).getTime()
-  const end = new Date(endedAt).getTime()
+  const start = new Date(normalizeDbDate(startedAt)).getTime()
+  const end = new Date(normalizeDbDate(endedAt)).getTime()
   const diffMs = end - start
 
   if (diffMs < 1000) return '<1s'
@@ -57,7 +68,7 @@ function formatDuration(startedAt: string, endedAt: string | null): string {
 }
 
 function formatDate(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = new Date(normalizeDbDate(dateStr))
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffDays = Math.floor(diffMs / 86_400_000)

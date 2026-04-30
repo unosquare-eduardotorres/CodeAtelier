@@ -128,7 +128,7 @@ class DescriptionCacheService {
 
     return new Promise<string>((resolve, reject) => {
       const env = buildEnvWithPath()
-      const args = ['-p', prompt, '--model', resolvedModel, '--max-tokens', '60']
+      const args = ['-p', prompt, '--model', resolvedModel]
 
       const proc = spawn('claude', args, {
         env,

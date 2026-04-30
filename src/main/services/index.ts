@@ -11,8 +11,6 @@ export { PromptBuilder, promptBuilder } from './prompt-builder'
 export { WorkspaceDeployService, workspaceDeployService } from './workspace-deploy.service'
 export { memoryService } from './memory.service'
 export { memoryFeedService } from './memory-feed.service'
-export { dreamService } from './dream.service'
-export { idleService } from './idle.service'
 export { GitHubService, githubService } from './github.service'
 export { RepoService, repoService } from './repo.service'
 

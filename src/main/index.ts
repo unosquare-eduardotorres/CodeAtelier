@@ -218,6 +218,17 @@ function createWindow(): void {
     )
   }
 
+  // Clean up stale "running" sessions left over from a previous app crash/quit
+  try {
+    const { agentSessionRepository } = require('./db/repositories') as typeof import('./db/repositories')
+    const staleCount = agentSessionRepository.terminateStale()
+    if (staleCount > 0) {
+      log.info(`[Startup] Terminated ${staleCount} stale agent session(s) from previous run`)
+    }
+  } catch (error) {
+    log.warn('[Startup] Failed to clean up stale sessions (non-critical):', error)
+  }
+
   // Prune old events to prevent unbounded DB growth
   try {
     eventLoggerService.prune(30)

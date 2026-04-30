@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Search, X, Bot } from 'lucide-react'
+import { Search, X, Bot, ClipboardList, Hammer } from 'lucide-react'
 import {
   useChatStore,
   useChatActions,
@@ -43,7 +43,7 @@ export default function ChatPanel({
   onNewChatDismiss
 }: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, agentStatus } = useWorkspaceStore()
-  const { createConversation, sendMessage, loadContextUsage } = useChatActions()
+  const { createConversation, sendMessage, loadContextUsage, updateMode } = useChatActions()
   const activeConversation = useChatStore((s) => s.activeConversation)
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -179,12 +179,30 @@ export default function ChatPanel({
     title: string
     description?: string
     mode: ConversationMode
-    personaSpecialistId?: string
     attachments?: string[]
     useIsolatedBranch?: boolean
+    llmProvider?: string
   }): Promise<void> => {
     if (!activeWorkspace) return
-    await createConversation(activeWorkspace.id, data.mode, data.title, data.personaSpecialistId)
+
+    // Persist llmProvider to workspace settings if it differs from current
+    if (data.llmProvider) {
+      try {
+        const settings = await window.api.getWorkspaceSettings({
+          workspaceId: activeWorkspace.id
+        })
+        if (settings.llmProvider !== data.llmProvider) {
+          await window.api.updateWorkspaceSettings({
+            workspaceId: activeWorkspace.id,
+            settings: { ...settings, llmProvider: data.llmProvider }
+          })
+        }
+      } catch {
+        // Non-critical — provider preference save failure shouldn't block chat creation
+      }
+    }
+
+    await createConversation(activeWorkspace.id, data.mode, data.title)
     onNewChatDismiss?.()
     if (data.useIsolatedBranch) {
       console.info(
@@ -348,6 +366,33 @@ export default function ChatPanel({
             ) : (
               <div className="flex-1 flex flex-col min-h-0">
                 <MessageList searchQuery={searchQuery} />
+              </div>
+            )}
+
+            {/* Floating mode pill — overlaid above input */}
+            {activeConversation && (
+              <div className="flex justify-center py-2 pointer-events-none">
+                <button
+                  onClick={() =>
+                    updateMode(activeConversation.mode === 'plan' ? 'build' : 'plan')
+                  }
+                  className={`pointer-events-auto inline-flex items-center gap-2 px-5 py-1.5 rounded-full text-sm font-semibold border-2 shadow-lg backdrop-blur-sm transition-all cursor-pointer hover:scale-105 ${
+                    activeConversation.mode === 'plan'
+                      ? 'bg-mode-plan-muted/80 text-mode-plan-text border-mode-plan-border'
+                      : 'bg-mode-build-muted/80 text-mode-build-text border-mode-build-border'
+                  }`}
+                  title="Click to switch mode"
+                >
+                  {activeConversation.mode === 'plan' ? (
+                    <>
+                      <ClipboardList size={16} /> Plan Mode
+                    </>
+                  ) : (
+                    <>
+                      <Hammer size={16} /> Build Mode
+                    </>
+                  )}
+                </button>
               </div>
             )}
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Database, Search, Trash2, Upload, Moon, Sparkles, RefreshCw } from 'lucide-react'
-import { useWorkspaceStore, useMemoryStore, useDreamStore } from '@renderer/store'
+import { Database, Search, Trash2, Upload, Sparkles, RefreshCw } from 'lucide-react'
+import { useWorkspaceStore, useMemoryStore } from '@renderer/store'
 import { SettingsCard } from '@renderer/components/common'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import type { Memory, MemoryType, WorkspaceFeedTimestamps } from '../../../../shared/types'
@@ -24,7 +24,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
     setSearchQuery,
     startFeed
   } = useMemoryStore()
-  const { triggerDream, currentRun } = useDreamStore()
   const [filterType, setFilterType] = useState<MemoryType | 'all'>('all')
   const [feedTimestamps, setFeedTimestamps] = useState<WorkspaceFeedTimestamps>({})
   const [showDiffModal, setShowDiffModal] = useState(false)
@@ -114,12 +113,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
     }
   }
 
-  const handleTriggerDream = async (): Promise<void> => {
-    if (!activeWorkspace?.id) return
-    await triggerDream(activeWorkspace.id)
-    loadMemories(activeWorkspace.id)
-  }
-
   const filteredMemories =
     filterType === 'all' ? memories : memories.filter((m) => m.type === filterType)
 
@@ -183,22 +176,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
             <FeedTimestamp timestamp={feedTimestamps['document']} />
           </button>
 
-          {/* Dream — consolidate memories */}
-          <button
-            onClick={handleTriggerDream}
-            disabled={!!currentRun}
-            title="Consolidates and deduplicates existing memories using AI, merging overlapping entries and updating importance scores"
-            aria-label="Dream — Deduplicate, merge, and score existing memories using AI consolidation"
-            className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <div className="flex items-center gap-2">
-              <Moon size={14} className="text-primary-text" />
-              <span className="text-sm font-medium text-text-primary">Dream (Consolidate)</span>
-            </div>
-            <p className="text-xs text-text-muted leading-relaxed">
-              Deduplicate, merge, and score existing memories using AI consolidation
-            </p>
-          </button>
         </div>
       </div>
 
@@ -290,17 +267,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
                     </span>
                   </div>
                 </div>
-                <div className="flex items-start gap-3">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary-muted text-primary-text text-xs font-bold flex-shrink-0 mt-0.5">
-                    2
-                  </span>
-                  <div>
-                    <span className="text-xs font-medium text-text-primary">Dream</span>
-                    <span className="text-xs text-text-muted ml-1">
-                      — Consolidate after 10+ memories to deduplicate and score
-                    </span>
-                  </div>
-                </div>
+
               </div>
               <p className="text-xs text-text-muted mt-4 italic">
                 Memories are created from conversations (via ```memory blocks) and document feeds.

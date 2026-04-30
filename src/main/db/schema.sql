@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   summary TEXT,
-  claude_session_id TEXT
+  claude_session_id TEXT,
+  llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm'))
 );
 
 -- Messages: individual chat messages
@@ -198,24 +199,6 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
 CREATE INDEX IF NOT EXISTS idx_memories_context ON memories(workspace_id, type, importance DESC);
-
--- Dream runs: consolidation cycles that process and refine memories
-CREATE TABLE IF NOT EXISTS dream_runs (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'running'
-    CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
-  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('startup', 'idle', 'manual')),
-  memories_created INTEGER DEFAULT 0,
-  memories_merged INTEGER DEFAULT 0,
-  memories_pruned INTEGER DEFAULT 0,
-  token_usage INTEGER DEFAULT 0,
-  started_at TEXT NOT NULL DEFAULT (datetime('now')),
-  ended_at TEXT,
-  error_message TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_dream_runs_workspace ON dream_runs(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_dream_runs_status ON dream_runs(status);
 
 -- User profile: app-wide identity (singleton row)
 CREATE TABLE IF NOT EXISTS user_profile (
@@ -442,5 +425,42 @@ CREATE TABLE IF NOT EXISTS turn_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
 CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id);
+
+-- ── Workspace Health: Audit Runs & Results ────────────────────────────────────
+
+-- Audit runs (multiple per workspace — history of up to 10 kept by repository)
+CREATE TABLE IF NOT EXISTS audit_runs (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL DEFAULT 'light' CHECK (mode IN ('light', 'deep')),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'running', 'completed', 'partial', 'cancelled')),
+  overall_score INTEGER,
+  selected_tracks TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(selected_tracks)),
+  detected_techs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(detected_techs)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_runs_workspace
+  ON audit_runs(workspace_id);
+
+-- Individual auditor results within a run
+CREATE TABLE IF NOT EXISTS audit_results (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  audit_run_id TEXT NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+  track_id TEXT NOT NULL,
+  score INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+  findings TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(findings)),
+  summary TEXT DEFAULT '',
+  skills_used TEXT DEFAULT '[]' CHECK (json_valid(skills_used)),
+  started_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_results_run ON audit_results(audit_run_id);
 
 

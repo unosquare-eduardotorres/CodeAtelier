@@ -635,6 +635,109 @@ class VectorSearchService extends EventEmitter {
     }
   }
 
+  /**
+   * Search by raw code snippet — embed the snippet and find nearest neighbors.
+   * Used by the `similar_code` MCP tool.
+   */
+  async searchByCode(
+    workspaceId: string,
+    code: string,
+    opts?: { nResults?: number; language?: string }
+  ): Promise<SemanticSearchResult[]> {
+    const collection = this.collections.get(workspaceId)
+    if (!collection || collection.size === 0) {
+      log.warn(`[VectorSearch] No index for workspace ${workspaceId}`)
+      return []
+    }
+
+    try {
+      const [codeEmbedding] = await ollamaManager.embed(DEFAULT_EMBEDDING_MODEL, [code])
+      const where = opts?.language ? { language: opts.language } : undefined
+      return collection.query(codeEmbedding, opts?.nResults ?? 10, where)
+    } catch (error) {
+      log.error(`[VectorSearch] searchByCode failed for workspace ${workspaceId}:`, error)
+      return []
+    }
+  }
+
+  /**
+   * Cluster code chunks by embedding similarity to identify conceptual groupings.
+   * Uses a greedy approach: pick highest-reference chunks as cluster centers,
+   * then group remaining chunks by nearest center.
+   */
+  getConceptClusters(
+    workspaceId: string,
+    opts?: { maxClusters?: number }
+  ): { clusterId: number; representative: { filePath: string; symbolName: string }; members: { filePath: string; symbolName: string; similarity: number }[] }[] {
+    const collection = this.collections.get(workspaceId)
+    if (!collection || collection.size === 0) return []
+
+    const maxClusters = opts?.maxClusters ?? 10
+    const entries = collection.getEntries()
+    if (entries.length === 0) return []
+
+    // Simple k-medoid-like clustering: pick N initial centers spread by diversity
+    const centers: number[] = [0] // start with first entry
+    while (centers.length < Math.min(maxClusters, entries.length)) {
+      // Find entry most distant from all current centers
+      let bestIdx = -1
+      let bestMinDist = -1
+      for (let i = 0; i < entries.length; i++) {
+        if (centers.includes(i)) continue
+        let minDist = Infinity
+        for (const ci of centers) {
+          const sim = cosineSimilarity(entries[i].embedding, entries[ci].embedding)
+          const dist = 1 - sim
+          if (dist < minDist) minDist = dist
+        }
+        if (minDist > bestMinDist) {
+          bestMinDist = minDist
+          bestIdx = i
+        }
+      }
+      if (bestIdx === -1) break
+      centers.push(bestIdx)
+    }
+
+    // Assign each entry to nearest center
+    const clusters = centers.map((ci, idx) => ({
+      clusterId: idx,
+      centerIdx: ci,
+      representative: {
+        filePath: entries[ci].chunk.metadata.filePath,
+        symbolName: entries[ci].chunk.metadata.symbolName
+      },
+      members: [] as { filePath: string; symbolName: string; similarity: number }[]
+    }))
+
+    for (let i = 0; i < entries.length; i++) {
+      if (centers.includes(i)) continue
+      let bestCluster = 0
+      let bestSim = -1
+      for (let c = 0; c < centers.length; c++) {
+        const sim = cosineSimilarity(entries[i].embedding, entries[centers[c]].embedding)
+        if (sim > bestSim) {
+          bestSim = sim
+          bestCluster = c
+        }
+      }
+      clusters[bestCluster].members.push({
+        filePath: entries[i].chunk.metadata.filePath,
+        symbolName: entries[i].chunk.metadata.symbolName,
+        similarity: Math.round(bestSim * 1000) / 1000
+      })
+    }
+
+    // Sort clusters by size descending, limit member list
+    return clusters
+      .sort((a, b) => b.members.length - a.members.length)
+      .map(({ clusterId, representative, members }) => ({
+        clusterId,
+        representative,
+        members: members.slice(0, 15) // cap per-cluster members
+      }))
+  }
+
   // ── Control Methods ──────────────────────────────────────────────────────
 
   /**

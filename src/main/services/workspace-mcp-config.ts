@@ -8,6 +8,7 @@ import { semanticSearchMcpService } from './semantic-search.tool'
 import { gitContextMcpService } from './git-context.tool'
 import { checkpointContextMcpService } from './checkpoint-context.tool'
 import { gitHubContextMcpService } from './github-context.tool'
+import { codeAnalysisMcpService } from './code-analysis.tool'
 import { buildModePermissions } from './mode-permissions'
 
 /**
@@ -61,11 +62,29 @@ export function buildWorkspaceMcpConfig(opts: {
           ...baseAllowed,
           // Code graph MCP tools (conditional)
           ...(repomapEnabled && opts.workspaceId
-            ? [MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name, MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name]
+            ? [
+                MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name,
+                MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name,
+                MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name,
+                MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name,
+                MCP_TOOLS.CODE_GRAPH.FIND_CALLERS.name,
+                MCP_TOOLS.CODE_GRAPH.FIND_CALLEES.name,
+                MCP_TOOLS.CODE_GRAPH.FIND_REFERENCES.name,
+                MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENCIES.name,
+                MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENTS.name,
+                MCP_TOOLS.CODE_GRAPH.SYMBOL_HOTSPOTS.name,
+                MCP_TOOLS.CODE_GRAPH.COUPLING_ANALYSIS.name,
+                MCP_TOOLS.CODE_GRAPH.CIRCULAR_DEPENDENCIES.name,
+                MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name
+              ]
             : []),
           // Semantic search (conditional)
           ...(semanticSearchEnabled && opts.workspaceId
-            ? [MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name]
+            ? [
+                MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name,
+                MCP_TOOLS.SEMANTIC_SEARCH.SIMILAR_CODE.name,
+                MCP_TOOLS.SEMANTIC_SEARCH.CODEBASE_CONCEPTS.name
+              ]
             : []),
           // Git context (always available)
           ...MCP_TOOLS.GIT_CONTEXT._ALL_NAMES,
@@ -73,6 +92,8 @@ export function buildWorkspaceMcpConfig(opts: {
           ...MCP_TOOLS.CHECKPOINT_CONTEXT._ALL_NAMES,
           // GitHub context (conditional on token)
           ...(githubConfigured ? MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES : []),
+          // Code analysis (always available)
+          ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES,
           // Control actions (plan + ask + memory)
           MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
           MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
@@ -107,6 +128,8 @@ export function buildWorkspaceMcpConfig(opts: {
       gitHubContextMcpService.getMcpServersConfig(opts.workspaceId, opts.workspacePath)
     )
   }
+  // Code analysis: always on
+  Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(opts.workspacePath))
   // Control actions — mode-aware structured output tools
   Object.assign(servers, controlActionsConfig)
 

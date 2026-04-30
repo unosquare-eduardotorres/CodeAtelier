@@ -230,7 +230,7 @@ export class MemoryRepository {
 
   /**
    * Find duplicate memories by checking for similar titles within the same workspace.
-   * Used during dream consolidation and dedup-on-create.
+   * Used during dedup-on-create.
    */
   findSimilar(workspaceId: string, title: string, excludeId?: string): Memory[] {
     const db = getDatabase()

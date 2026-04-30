@@ -606,6 +606,61 @@ export class PromptBuilder {
     return result.join('\n').trim()
   }
 
+  // ── Local LLM Prompt Assembly ──
+
+  /**
+   * Build a condensed system prompt for local LLM providers.
+   * Strips skills, reduces memory, keeps essential instructions.
+   * Target: ~4K tokens for 32K models, ~8K for 128K+ models.
+   */
+  buildLocalPrompt(options: PromptBuildOptions): string {
+    const layers: string[] = []
+
+    // Layer 1: Condensed role identity (no skills, no persona)
+    const rolePrompt = this.getRolePrompt(options.role, options.mode)
+    const condensed = this.extractEssentialSections(rolePrompt)
+    if (condensed) layers.push(condensed)
+
+    // Layer 2: Minimal project context (tech stack + key commands only)
+    if (options.workspacePath) {
+      const claudeMd = this.readProjectContext(
+        options.workspacePath,
+        options.role,
+        options.mode,
+        'minimal'
+      )
+      if (claudeMd) {
+        layers.push(`## Project Context\n\n${claudeMd}`)
+      }
+    }
+
+    return layers.join('\n\n---\n\n')
+  }
+
+  /**
+   * Extract identity + mode rules + conventions from a role prompt.
+   * Strips: skills, design system, architecture deep-dives, etc.
+   */
+  private extractEssentialSections(prompt: string): string {
+    const essentialHeaders = [
+      'identity',
+      'mode',
+      'conventions',
+      'key commands',
+      'what not to do',
+      'error handling',
+      'guidelines'
+    ]
+
+    const sections = prompt.split(/^## /m)
+    const kept = sections.filter((s) => {
+      const header = s.split('\n')[0].trim().toLowerCase()
+      return essentialHeaders.some((h) => header.startsWith(h))
+    })
+
+    return kept.map((s) => `## ${s}`).join('\n\n')
+  }
+
   // ── Prompt Size Estimation (Strategy: prevent context overflow) ──
 
   /**

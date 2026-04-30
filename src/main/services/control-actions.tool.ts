@@ -244,7 +244,14 @@ export function createControlActionsMcpServer(
       controlLog.info(
         `[control:ask_user] questionCount=${questions.length} action=${action ?? 'none'}`
       )
-      callbacks.onAskUser(questions as GrillQuestion[], action)
+      callbacks.onAskUser(
+        questions.map((q) => ({
+          ...q,
+          id: (q as Record<string, unknown>).id ?? crypto.randomUUID(),
+          options: q.options ?? []
+        })) as GrillQuestion[],
+        action
+      )
       return {
         content: [
           {

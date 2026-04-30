@@ -366,6 +366,11 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         <CompactContextModal
           isOpen={!!compactSuggestion}
           inputTokens={compactSuggestion?.inputTokens ?? 0}
+          contextWindowSize={
+            activeConversationId
+              ? contextUsages[activeConversationId]?.contextWindowSize
+              : undefined
+          }
           level={compactSuggestion?.level ?? 'suggest'}
           categories={
             activeConversationId ? contextUsages[activeConversationId]?.categories : undefined

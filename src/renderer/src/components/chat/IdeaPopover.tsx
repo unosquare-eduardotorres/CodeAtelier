@@ -4,12 +4,14 @@ import { useIdeaStore, useWorkspaceStore } from '@renderer/store'
 
 interface IdeaPopoverProps {
   onClose: () => void
+  onSaved?: () => void
   initialTitle?: string
   initialDescription?: string
 }
 
 export default function IdeaPopover({
   onClose,
+  onSaved,
   initialTitle,
   initialDescription
 }: IdeaPopoverProps): React.JSX.Element {
@@ -26,6 +28,7 @@ export default function IdeaPopover({
     try {
       await createIdea(activeWorkspace.id, title.trim(), description.trim())
       setSaved(true)
+      onSaved?.()
       setTimeout(() => onClose(), 800)
     } catch (error) {
       console.error('Failed to save idea:', error)
