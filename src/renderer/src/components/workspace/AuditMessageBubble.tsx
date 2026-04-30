@@ -82,10 +82,10 @@ export default function AuditMessageBubble({
     <div className="flex gap-3 flex-row">
       {/* Avatar — branded auditor portrait */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey="atelier-auditor" size="sm" />
+        <Avatar avatarKey="atelier-auditor" size="xl" />
       </div>
 
-      <div className={`flex flex-col min-w-0 ${sizeClasses.maxWidth} items-start`}>
+      <div className="flex flex-col min-w-0 max-w-[85%] items-start">
         <span className="text-sm font-semibold text-text-primary mb-1">{trackName} Auditor</span>
 
         {/* Markdown content */}

@@ -416,7 +416,7 @@ function wireAuditEvents(mainWindow: BrowserWindow, runId: string, workspaceId: 
 
       const isToolError =
         typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
-      const resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
+      let resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
 
       // Try to get input summary from result content for tool_result
       let inputSummary: string | undefined
@@ -427,6 +427,11 @@ function wireAuditEvents(mainWindow: BrowserWindow, runId: string, workspaceId: 
         } catch {
           // Non-JSON content — skip input summary
         }
+      }
+
+      // For Read, compose file path into result so it's always visible
+      if (chunk.toolName === 'Read' && inputSummary && resultSummary) {
+        resultSummary = `${resultSummary} — ${inputSummary}`
       }
 
       const toolActivity: Record<string, unknown> = {

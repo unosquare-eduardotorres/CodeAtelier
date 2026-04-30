@@ -46,6 +46,7 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
   private readonly ideaTitle: string
   private readonly ideaDescription: string
   private readonly iterationHistory?: string
+  private readonly previousScore?: number
 
   private systemPrompt: string | null = null
 
@@ -59,12 +60,14 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
     ideaTitle: string
     ideaDescription: string
     iterationHistory?: string
+    previousScore?: number
   }) {
     this.workspaceId = params.workspaceId
     this.trackId = params.trackId
     this.ideaTitle = params.ideaTitle
     this.ideaDescription = params.ideaDescription
     this.iterationHistory = params.iterationHistory
+    this.previousScore = params.previousScore
     this.agentId = `grill-${params.trackId}-${params.workspaceId}`
   }
 
@@ -211,7 +214,8 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
         'Agent',
         'ToolSearch',
         'ExitPlanMode',
-        'AskUserQuestion'
+        'AskUserQuestion',
+        'TodoWrite' // Prevent grill from modifying todos
       ]
     }
   }
@@ -268,7 +272,15 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
   // ── Private: prompt construction ───────────────────────────────────
 
   private buildSystemPrompt(track: (typeof GRILL_TRACKS)[GrillTrackId]): string {
-    return `You are a Grill Analyst — a requirement completeness evaluator.
+    const reEvalBlock = this.previousScore != null
+      ? `\n## Re-evaluation Context
+- Previous score: ${this.previousScore}/100
+- ANCHOR your new score to the previous one. Only change when decisions materially fill or reveal gaps.
+- Do NOT re-ask questions the user already answered — focus on REMAINING gaps.
+- In your analysis, explicitly credit which previous decisions address which criteria.\n`
+      : ''
+
+    return `You are a Grill Analyst — a requirement completeness evaluator.${reEvalBlock}
 
 ## Your Task
 Evaluate the completeness of a software requirement for the **${track.name}** track.
@@ -283,7 +295,7 @@ ${this.ideaDescription || 'No description provided.'}
 
 ## Instructions
 0. **Narrate your process.** Before each tool call, write a brief sentence explaining what you're about to look at and why (e.g., "Let me check the authentication module to assess error handling…"). This helps the user follow along in real time.
-1. You MAY use Read/Glob/Grep/CodeGraph tools to check relevant code files IF the requirement references specific components. Do NOT perform a broad codebase scan or read project documentation files (Roadmap, README, etc.).
+1. **Use your tools to ground your analysis.** The tool guidance sections below describe your full toolbox (Code Graph, Semantic Search, Git Context, Code Analysis, Read/Glob/Grep). Follow their priority rules — prefer structured tools (search_identifiers, semantic_search, dependency_health) over raw Read/Grep. Investigate the codebase to ensure your questions target REAL gaps, not hypothetical ones. Do NOT perform a broad codebase scan or read documentation files (README, Roadmap, etc.).
 2. Analyze the requirement against each scoring criterion above.
 3. Provide your analysis as markdown text — explain what is well-defined and what is missing.
 4. After your analysis, emit EXACTLY ONE structured evaluation block in this format:
@@ -297,18 +309,24 @@ ${this.ideaDescription || 'No description provided.'}
   "questions": [
     {
       "id": "q1",
-      "question": "<specific question about a gap>",
-      "header": "<short header>",
+      "question": "<2-3 sentence question explaining the gap and WHY it matters for implementation>",
+      "header": "<short 3-5 word label>",
       "options": [
-        { "label": "<option A>", "recommended": true },
-        { "label": "<option B>", "recommended": false },
-        { "label": "<option C>", "recommended": false }
+        { "label": "<concise choice>", "description": "<1-2 sentences: trade-offs, constraints, implications>", "recommended": true },
+        { "label": "<alternative>", "description": "<trade-offs>", "recommended": false }
       ]
     }
   ],
   "suggestedNextTrack": { "trackId": "<next-track-id>", "reason": "<why>" }
 }
 \`\`\`
+
+## Question Quality Rules
+- Each question MUST target a specific implementation decision, not just "what approach?"
+- The "question" field must explain the GAP and its IMPACT (2-3 sentences, not just a label)
+- Each option's "description" field is REQUIRED — explain trade-offs, constraints, or implications
+- At least 2 of the 5 questions must probe EDGE CASES or FAILURE MODES
+- Do NOT ask vague questions like "How should this work?" — ask "What happens when X fails/overflows/conflicts?"
 
 ## Rules
 - Score 1-20: Raw — fundamental gaps. Score 21-40: Warming Up. Score 41-60: Medium Rare. Score 61-80: Well Done. Score 81-100: Perfectly Grilled.

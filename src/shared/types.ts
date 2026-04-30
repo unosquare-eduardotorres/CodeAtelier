@@ -505,6 +505,18 @@ export interface GrillEvaluation {
   suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
 }
 
+/** A single Q→A decision captured during a Grill session */
+export interface DecisionEntry {
+  iteration: number
+  trackId?: GrillTrackId
+  question: string
+  /** Full question text (2-3 sentences) when different from header */
+  questionFull?: string
+  answer: string
+  /** Score at the iteration this decision belongs to */
+  score?: number
+}
+
 // ── Structured Plan Types ──
 export interface PlanStep {
   number: number

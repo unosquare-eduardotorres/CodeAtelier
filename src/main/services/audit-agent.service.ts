@@ -241,6 +241,55 @@ export class AuditAgentService extends EventEmitter {
       // Parse structured JSON from the auditor's response
       const parsed = parseAuditResponse(responseText)
 
+      // ── Recovery: if parser fell back (no JSON found), nudge the LLM ──
+      if (parsed.score === 0 && parsed.findings.length === 0 && responseText.length > 200) {
+        auditLog.warn(
+          `[audit:${params.trackId}] No JSON block found in ${responseText.length}-char response — attempting recovery nudge`
+        )
+
+        try {
+          const nudgeMessage =
+            `[System: Your analysis above was thorough but you did not output the required JSON result block. ` +
+            `Based on everything you already analyzed, output EXACTLY one JSON code block now with your score (0-100), ` +
+            `a 2-3 sentence summary, and your findings array. Do NOT use any tools. Just output the JSON block.]`
+
+          const nudgeConvId = `audit-nudge-${params.trackId}-${Date.now()}`
+          await this.session.send(nudgeMessage, nudgeConvId, [])
+
+          const nudgeText = this.session.getStreamedContent()
+          const nudgeParsed = parseAuditResponse(nudgeText)
+
+          if (nudgeParsed.score > 0 || nudgeParsed.findings.length > 0) {
+            auditLog.info(
+              `[audit:${params.trackId}] Recovery succeeded — score=${nudgeParsed.score}, findings=${nudgeParsed.findings.length}`
+            )
+            return {
+              trackId: params.trackId,
+              score: nudgeParsed.score,
+              status: 'completed',
+              findings: nudgeParsed.findings,
+              summary: nudgeParsed.summary,
+              skillsUsed: []
+            }
+          }
+        } catch (nudgeErr) {
+          auditLog.warn(`[audit:${params.trackId}] Recovery nudge failed:`, nudgeErr)
+        }
+
+        // If recovery also failed, mark as failed (not silently completed with 0)
+        auditLog.error(
+          `[audit:${params.trackId}] No structured result extracted — marking as failed`
+        )
+        return {
+          trackId: params.trackId,
+          score: 0,
+          status: 'failed',
+          findings: [],
+          summary: `Audit analysis completed but no structured report was produced. The auditor narrated its process but did not output the required JSON result. Try re-running this auditor.`,
+          skillsUsed: []
+        }
+      }
+
       auditLog.info(
         `[audit:${params.trackId}] completed — score=${parsed.score}, findings=${parsed.findings.length}`
       )

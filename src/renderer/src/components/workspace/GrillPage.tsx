@@ -1,13 +1,15 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { ArrowLeft, Flame, Play, Check, LayoutGrid, Square } from 'lucide-react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { ArrowLeft, Flame, Play, Check, LayoutGrid, Square, MessageSquare, ClipboardList } from 'lucide-react'
 import { useChatActions, useWorkspaceStore } from '@renderer/store'
 import { useIdeaStore } from '@renderer/store/idea.store'
-import { useGrillStreamStore } from '@renderer/store/grill-stream.store'
+import { useGrillStreamStore, getFlatContent, getFlatToolActivities } from '@renderer/store/grill-stream.store'
+import { stripGrillEvaluationBlocks } from '@renderer/utils/strip-grill-json'
 import type { QuestionState } from '@renderer/components/chat'
-import type { GrillQuestion, GrillTrackId, GrillTrackScore } from '../../../../shared/types'
+import type { GrillQuestion, GrillTrackId, GrillTrackScore, DecisionEntry } from '../../../../shared/types'
 import { GRILL_TRACKS } from '../../../../shared/constants'
 import GrillChatView from './GrillChatView'
 import type { GrillChatMessage, GrillPhase } from './GrillChatView'
+import GrillDecisionsView from './GrillDecisionsView'
 import { GrillTrackSelector } from './GrillTrackSelector'
 import GrillSidebar from './GrillSidebar'
 
@@ -33,6 +35,7 @@ interface GrillIteration {
 interface HistoryEntry {
   iteration: number
   score: number
+  feedback: string
   answersFormatted: string
   trackId?: GrillTrackId
 }
@@ -56,7 +59,7 @@ export default function GrillPage({
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const { completeFromGrill, convertDirect } = useIdeaStore()
 
-  const [phase, setPhase] = useState<GrillPhase>(isNewSession ? 'selecting' : 'evaluating')
+  const [phase, setPhase] = useState<GrillPhase>(isNewSession ? 'selecting' : 'paused')
   const [description] = useState(ideaDescription || '')
   const [currentIteration, setCurrentIteration] = useState<GrillIteration | null>(null)
   const [iterationCount, setIterationCount] = useState(0)
@@ -74,6 +77,12 @@ export default function GrillPage({
     trackId: GrillTrackId
     reason: string
   } | null>(null)
+
+  // ── Tab state (Chat vs Decisions) ──
+  type GrillTab = 'chat' | 'decisions'
+  const [activeTab, setActiveTab] = useState<GrillTab>('chat')
+  const [condensedDocument, setCondensedDocument] = useState<string | undefined>()
+  const [isCondensing, setIsCondensing] = useState(false)
 
   const mountedRef = useRef(false)
   const previousQuestionsRef = useRef<string[]>([])
@@ -116,12 +125,15 @@ export default function GrillPage({
       ])
 
       // Start dedicated grill evaluation
+      const existingTrackScore = trackScores.find((ts) => ts.trackId === trackId)
       try {
         await window.api.grillEvaluate({
           workspaceId: activeWorkspace.id,
           trackId,
           ideaTitle,
-          ideaDescription: description
+          ideaDescription: description,
+          previousScore: existingTrackScore?.score,
+          ideaId
         })
       } catch (error) {
         console.error('Failed to start grill evaluation:', error)
@@ -135,7 +147,7 @@ export default function GrillPage({
         setPhase('paused')
       }
     },
-    [activeWorkspace, ideaTitle, description]
+    [activeWorkspace, ideaTitle, description, trackScores]
   )
 
   // ── Grill stream event listeners ──
@@ -151,13 +163,13 @@ export default function GrillPage({
       grillStore.flush()
 
       // Capture content from grill stream store (NOT chat store — never cleared)
-      const { content, toolActivities } = useGrillStreamStore.getState()
+      const storeState = useGrillStreamStore.getState()
+      const content = getFlatContent(storeState)
+      const toolActivities = getFlatToolActivities(storeState)
 
       // Strip the raw grill-evaluation JSON block so it doesn't render as markdown
       // (the parsed evaluation renders separately as a GrillEvaluationBubble)
-      const cleanContent = content
-        .replace(/```grill-evaluation\n[\s\S]*?```/g, '')
-        .trim()
+      const cleanContent = stripGrillEvaluationBlocks(content)
 
       const newMessages: GrillChatMessage[] = []
       if (cleanContent || toolActivities.length > 0) {
@@ -246,10 +258,10 @@ export default function GrillPage({
       grillStore.flush()
 
       // If no evaluation was received, still capture the agent content
-      const { content, toolActivities } = useGrillStreamStore.getState()
-      const cleanContent = content
-        .replace(/```grill-evaluation\n[\s\S]*?```/g, '')
-        .trim()
+      const completeState = useGrillStreamStore.getState()
+      const content = getFlatContent(completeState)
+      const toolActivities = getFlatToolActivities(completeState)
+      const cleanContent = stripGrillEvaluationBlocks(content)
       if (cleanContent || toolActivities.length > 0) {
         setChatMessages((prev) => [
           ...prev,
@@ -277,9 +289,54 @@ export default function GrillPage({
     mountedRef.current = true
 
     const init = async (): Promise<void> => {
-      let loadedTrack: GrillTrackId | null = null
+      // 1. Try loading from DB session (Phase 2: background persistence)
+      try {
+        const dbSession = await window.api.grillGetSession({ ideaId })
+        if (dbSession && typeof dbSession === 'object') {
+          const s = dbSession as {
+            status?: string
+            iterationCount?: number
+            history?: unknown[]
+            trackScores?: unknown[]
+            messages?: unknown[]
+            currentIteration?: GrillIteration | null
+            questionStates?: Record<string, QuestionState> | null
+            trackId?: GrillTrackId | null
+            currentScore?: number | null
+          }
+          if (s.iterationCount) setIterationCount(s.iterationCount)
+          if (s.history) setHistory(s.history as HistoryEntry[])
+          if (s.trackScores) setTrackScores(s.trackScores as GrillTrackScore[])
+          if (s.messages) setChatMessages(s.messages as GrillChatMessage[])
+          if (s.currentIteration) setCurrentIteration(s.currentIteration)
+          if (s.questionStates) setQuestionStates(s.questionStates as Record<string, QuestionState>)
+          if (s.trackId) setSelectedTrack(s.trackId)
 
-      // Try to load saved grill decisions from the idea
+          // Restore phase based on DB session status
+          if (s.status === 'evaluating') {
+            setPhase('evaluating')
+            return
+          }
+          if (s.status === 'awaiting_answers') {
+            setPhase('answering')
+            return
+          }
+          if (s.currentScore != null) {
+            if (s.currentIteration?.questions?.length && s.questionStates) {
+              setPhase('answering')
+            } else if (s.trackScores && (s.trackScores as unknown[]).length > 0) {
+              setPhase('selecting')
+            } else {
+              setPhase('paused')
+            }
+            return
+          }
+        }
+      } catch {
+        /* non-fatal — fall through to legacy load */
+      }
+
+      // 2. Fallback: load from grillDecisions JSON in the idea (legacy)
       try {
         const ideas = useIdeaStore.getState().ideas
         const idea = ideas.find((i) => i.id === ideaId)
@@ -292,12 +349,15 @@ export default function GrillPage({
           if (saved.currentIteration) setCurrentIteration(saved.currentIteration)
           if (saved.questionStates) setQuestionStates(saved.questionStates)
           if (saved.activeTrack) {
-            loadedTrack = saved.activeTrack as GrillTrackId
-            setSelectedTrack(loadedTrack)
+            setSelectedTrack(saved.activeTrack as GrillTrackId)
           }
-          if (saved.currentScore && !isNewSession) {
-            // If there are track scores, go to selecting to let user pick next track
-            if (saved.trackScores?.length > 0) {
+          // Fix falsy-zero: use != null instead of truthiness check
+          if (saved.currentScore != null && !isNewSession) {
+            // If saved state has questions ready, go to answering
+            if (saved.currentIteration?.questions?.length > 0 && saved.questionStates) {
+              setPhase('answering')
+            } else if (saved.trackScores?.length > 0) {
+              // If there are track scores, go to selecting to let user pick next track
               setPhase('selecting')
             } else {
               setPhase('paused')
@@ -315,35 +375,9 @@ export default function GrillPage({
         return
       }
 
-      // For resume without saved state, start evaluating with dedicated agent
-      // Use loadedTrack (synchronous) instead of selectedTrack (stale React state)
-      const resumeTrack = loadedTrack ?? selectedTrack
-      if (activeWorkspace && resumeTrack) {
-        setPhase('evaluating')
-
-        // Reset grill stream store
-        useGrillStreamStore.getState().reset()
-
-        const historyText = history
-          .map((h) => `Iteration ${h.iteration} (score: ${h.score}): ${h.answersFormatted}`)
-          .join('\n')
-
-        try {
-          await window.api.grillEvaluate({
-            workspaceId: activeWorkspace.id,
-            trackId: resumeTrack,
-            ideaTitle,
-            ideaDescription: description,
-            iterationHistory: historyText || undefined
-          })
-        } catch (error) {
-          console.error('Failed to resume grill evaluation:', error)
-          setPhase('paused')
-        }
-      } else if (!resumeTrack) {
-        // No track to resume — show track selection instead of stuck spinner
-        setPhase('selecting')
-      }
+      // For resume without saved state — don't auto-fire grillEvaluate.
+      // Show track selection so user can choose what to do.
+      setPhase('selecting')
     }
     init()
   }, [activeWorkspace, isNewSession, ideaTitle, description, history, ideaId, selectedTrack])
@@ -359,7 +393,9 @@ export default function GrillPage({
       }
       const selected = state.selectedOptions.join(', ')
       const other = state.otherText ? ` (Custom: ${state.otherText})` : ''
-      parts.push(`- **${q.header || q.question}**: ${selected}${other}`)
+      // Include full question text when header is a short label
+      const fullQ = q.question !== q.header && q.header ? `\n  > ${q.question}` : ''
+      parts.push(`- **${q.header || q.question}**: ${selected}${other}${fullQ}`)
     }
     return parts.join('\n')
   }, [currentIteration, questionStates])
@@ -372,12 +408,75 @@ export default function GrillPage({
         description,
         ...historyEntries.map((h) => {
           const trackLabel = h.trackId ? ` [${GRILL_TRACKS[h.trackId]?.name ?? h.trackId}]` : ''
-          return `### Decisions from Iteration ${h.iteration}${trackLabel}\n${h.answersFormatted}`
+          return `### Iteration ${h.iteration}${trackLabel}\nScore: ${h.score}/100\nFeedback: ${h.feedback}\nDecisions:\n${h.answersFormatted}`
         })
       ].join('\n\n')
     },
     [description]
   )
+
+  // ── Decisions derivation for the Decisions tab ──
+
+  /** Derive structured DecisionEntry[] from chat message history */
+  const decisions = useMemo((): DecisionEntry[] => {
+    const entries: DecisionEntry[] = []
+    let iteration = 0
+
+    for (const msg of chatMessages) {
+      if (msg.type === 'questions') {
+        // Track which iteration this belongs to
+        iteration++
+        for (const q of msg.questions) {
+          const state = msg.questionStates[q.id]
+          if (!state) continue
+          const answerParts: string[] = []
+          if (state.skipped) {
+            answerParts.push('_Skipped_')
+          } else {
+            if (state.selectedOptions.length > 0) {
+              answerParts.push(state.selectedOptions.join(', '))
+            }
+            if (state.otherText?.trim()) {
+              answerParts.push(`(Custom: ${state.otherText.trim()})`)
+            }
+          }
+          // Find the matching track from the history entry
+          const historyEntry = history.find((h) => h.iteration === iteration)
+          entries.push({
+            iteration,
+            trackId: historyEntry?.trackId,
+            question: q.header || q.question,
+            questionFull: q.header && q.question !== q.header ? q.question : undefined,
+            answer: answerParts.join(' ') || '_No answer_',
+            score: historyEntry?.score
+          })
+        }
+      }
+    }
+    return entries
+  }, [chatMessages, history])
+
+  /** Requirement document for the Decisions tab */
+  const requirementDocument = useMemo(
+    () => buildFullDescription(history),
+    [buildFullDescription, history]
+  )
+
+  /** Condense handler — calls Haiku-tier summarization via IPC */
+  const handleCondense = useCallback(async () => {
+    if (isCondensing || !requirementDocument) return
+    setIsCondensing(true)
+    try {
+      const { condensed } = await window.api.grillCondenseRequirement({
+        text: requirementDocument
+      })
+      setCondensedDocument(condensed)
+    } catch (error) {
+      console.error('Failed to condense requirement:', error)
+    } finally {
+      setIsCondensing(false)
+    }
+  }, [requirementDocument, isCondensing])
 
   /** Save decisions to DB (includes track scores, chat history, and question state) */
   const saveDecisions = useCallback(
@@ -391,9 +490,22 @@ export default function GrillPage({
     ) => {
       const fullDescription = buildFullDescription(historyEntries)
 
-      // Strip toolActivities from agent messages to keep persisted JSON reasonable
+      // Keep lightweight tool summaries — drop full result content to keep JSON reasonable
       const messagesToSave = (messages ?? chatMessages).map((msg) =>
-        msg.type === 'agent' ? { ...msg, toolActivities: [] } : msg
+        msg.type === 'agent'
+          ? {
+              ...msg,
+              toolActivities: msg.toolActivities.map((ta) => ({
+                id: ta.id,
+                toolName: ta.toolName,
+                status: ta.status,
+                input: ta.input,
+                result: undefined,
+                startedAt: ta.startedAt,
+                completedAt: ta.completedAt
+              }))
+            }
+          : msg
       )
 
       const decisions = JSON.stringify({
@@ -448,6 +560,7 @@ export default function GrillPage({
     const newHistory: HistoryEntry = {
       iteration: newIterationCount,
       score: currentIteration.score,
+      feedback: currentIteration.feedback,
       answersFormatted: answersText,
       trackId: selectedTrack ?? undefined
     }
@@ -466,9 +579,9 @@ export default function GrillPage({
     const historyText = updatedHistory
       .map((h) => {
         const trackLabel = h.trackId ? ` [${GRILL_TRACKS[h.trackId]?.name ?? h.trackId}]` : ''
-        return `Iteration ${h.iteration}${trackLabel} (score: ${h.score}): ${h.answersFormatted}`
+        return `### Iteration ${h.iteration}${trackLabel}\nScore: ${h.score}/100\nFeedback: ${h.feedback}\nDecisions:\n${h.answersFormatted}`
       })
-      .join('\n')
+      .join('\n\n')
 
     // Start dedicated grill evaluation with history
     try {
@@ -477,7 +590,9 @@ export default function GrillPage({
         trackId: selectedTrack,
         ideaTitle,
         ideaDescription: description,
-        iterationHistory: historyText
+        iterationHistory: historyText,
+        previousScore: currentIteration.score,
+        ideaId
       })
     } catch (error) {
       console.error('Failed to re-evaluate:', error)
@@ -505,6 +620,12 @@ export default function GrillPage({
 
   /** Return to track selection after completing a track iteration */
   const handleBackToTracks = useCallback(async () => {
+    // Cancel any running evaluation before switching
+    try {
+      await window.api.grillCancel()
+    } catch {
+      /* non-fatal */
+    }
     // Save current state
     await saveDecisions(currentIteration?.score ?? 0, history, trackScores)
     setPhase('selecting')
@@ -520,6 +641,12 @@ export default function GrillPage({
   }, [])
 
   const handleSaveAndExit = useCallback(async () => {
+    // Cancel any running evaluation before exiting
+    try {
+      await window.api.grillCancel()
+    } catch {
+      /* non-fatal */
+    }
     await saveDecisions(currentIteration?.score ?? 0, history, trackScores)
     setPhase('paused')
     onBack()
@@ -528,13 +655,15 @@ export default function GrillPage({
   const handleConvertDirectly = useCallback(async () => {
     // Build the full enriched description from base + all decisions
     const fullDescription = buildFullDescription(history)
+    // Use condensed text when available (user already reviewed it)
+    const effectiveDescription = condensedDocument || fullDescription
 
     // Save current state first
     await saveDecisions(currentIteration?.score ?? 0, history, trackScores)
 
     // Complete the grill (marks idea as completed, saves summary)
     try {
-      await completeFromGrill(conversationId, fullDescription)
+      await completeFromGrill(conversationId, effectiveDescription)
     } catch (error) {
       console.error('Failed to complete from grill:', error)
     }
@@ -546,8 +675,8 @@ export default function GrillPage({
         await loadConversations(activeWorkspace.id)
         await selectConversation(newConv.id)
 
-        // Send "Generate a plan" prompt with the full enriched context
-        const planPrompt = `## ${ideaTitle}\n\n${fullDescription}\n\nGenerate a comprehensive implementation plan for this requirement. Use the structured \`\`\`plan block format with sections (one per phase), steps, affected files, complexity estimates, and risks. Do NOT write the plan to a file — emit it inline.`
+        // Send "Generate a plan" prompt with the enriched context
+        const planPrompt = `## ${ideaTitle}\n\n${effectiveDescription}\n\nGenerate a comprehensive implementation plan for this requirement. Use the structured \`\`\`plan block format with sections (one per phase), steps, affected files, complexity estimates, and risks. Do NOT write the plan to a file — emit it inline.`
         await sendMessage(planPrompt)
       } catch (error) {
         console.error('Failed to create planning conversation:', error)
@@ -565,6 +694,7 @@ export default function GrillPage({
     activeWorkspace,
     ideaTitle,
     buildFullDescription,
+    condensedDocument,
     convertDirect,
     loadConversations,
     selectConversation,
@@ -638,7 +768,42 @@ export default function GrillPage({
         </div>
       </div>
 
-      {/* Content — track selector or chat + sidebar split */}
+      {/* Tab toggle — Chat / Decisions (only visible when not in track-selection phase) */}
+      {phase !== 'selecting' && (
+        <div className="flex-shrink-0 border-b border-border-subtle bg-surface-raised px-6">
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setActiveTab('chat')}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'chat'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              <MessageSquare size={14} />
+              Chat
+            </button>
+            <button
+              onClick={() => setActiveTab('decisions')}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'decisions'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              <ClipboardList size={14} />
+              Decisions
+              {decisions.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-accent/15 text-accent font-semibold">
+                  {decisions.length}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Content — track selector, chat + sidebar, or decisions view */}
       {phase === 'selecting' ? (
         <div className="flex-1 overflow-y-auto px-6 py-6">
           <div className="max-w-3xl mx-auto space-y-6">
@@ -649,6 +814,16 @@ export default function GrillPage({
             />
           </div>
         </div>
+      ) : activeTab === 'decisions' ? (
+        <GrillDecisionsView
+          ideaDescription={description}
+          ideaTitle={ideaTitle}
+          decisions={decisions}
+          requirementDocument={requirementDocument}
+          onCondense={handleCondense}
+          condensedDocument={condensedDocument}
+          isCondensing={isCondensing}
+        />
       ) : (
         <div className="flex flex-1 min-h-0">
           <GrillChatView

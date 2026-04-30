@@ -36,6 +36,7 @@ export class GrillAgentService extends EventEmitter {
     ideaTitle: string
     ideaDescription: string
     iterationHistory?: string
+    previousScore?: number
   }): Promise<void> {
     grillLog.info(
       `[grill] evaluate called — track=${params.trackId} workspace=${params.workspaceId}`
@@ -53,7 +54,8 @@ export class GrillAgentService extends EventEmitter {
       trackId: params.trackId,
       ideaTitle: params.ideaTitle,
       ideaDescription: params.ideaDescription,
-      iterationHistory: params.iterationHistory
+      iterationHistory: params.iterationHistory,
+      previousScore: params.previousScore
     })
 
     this.session = new AgentSessionService(adapter)

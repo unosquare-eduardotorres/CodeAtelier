@@ -8,6 +8,7 @@
 import { Flame, ChevronRight, ListChecks, BarChart3, Lightbulb } from 'lucide-react'
 import { GRILL_TRACKS } from '../../../../shared/constants'
 import type { GrillTrackId, GrillTrackScore } from '../../../../shared/types'
+import { AVATAR_IMAGES } from '@renderer/assets/avatars'
 import ScoreGauge from './ScoreGauge'
 
 interface GrillSidebarProps {
@@ -36,6 +37,15 @@ export default function GrillSidebar({
   return (
     <div className="w-72 flex-shrink-0 border-l border-border-subtle bg-surface-base overflow-y-auto">
       <div className="p-4 space-y-5">
+        {/* Grill Analyst portrait */}
+        <div className="flex justify-center">
+          <img
+            src={AVATAR_IMAGES.grillme}
+            alt="Grill Analyst"
+            className="w-full rounded-lg object-cover aspect-square"
+          />
+        </div>
+
         {/* Score gauge */}
         <div className="flex flex-col items-center gap-2">
           {currentScore !== null ? (

@@ -1,11 +1,35 @@
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
+import { app } from 'electron'
 import log from 'electron-log/main'
 import { MCP_TOOLS } from '../../shared/constants'
 import { codeGraphService } from './code-graph.service'
 import { codeGraphTagRepository } from '../db/repositories/code-graph-tag.repository'
 import { codeGraphEdgeRepository } from '../db/repositories/code-graph-edge.repository'
+import { bugRepository } from '../db/repositories/bug.repository'
+
+/**
+ * Report an MCP tool handler error to the bug tracker so it's visible
+ * in the Bug Tracker UI. MCP errors are caught by the SDK and returned
+ * as tool_use_error responses — they never reach process.on('uncaughtException'),
+ * so without explicit reporting they'd be invisible.
+ */
+function reportMcpToolError(toolName: string, error: unknown): void {
+  try {
+    const err = error instanceof Error ? error : new Error(String(error))
+    bugRepository.upsertBug({
+      process: 'main',
+      severity: 'error',
+      errorMessage: `[MCP:${toolName}] ${err.message}`,
+      stackTrace: err.stack,
+      appVersion: app.getVersion(),
+      osInfo: `${process.platform}`
+    })
+  } catch {
+    /* bug tracker itself failed — don't crash the crash handler */
+  }
+}
 
 /**
  * Manages per-workspace MCP servers that expose `graph_map` and `search_identifiers`
@@ -54,16 +78,21 @@ class CodeGraphMcpService {
             priorityIdentifiers: z.array(z.string()).optional()
           },
           handler: async (args) => {
-            log.info(`[CodeGraph] MCP graph_map query (workspace: ${workspaceId})`)
-            const result = await codeGraphService.getRepoMap(workspaceId, workspacePath, {
-              focusFiles: args.focusFiles as string[] | undefined,
-              mapTokens: args.tokenLimit as number | undefined,
-              excludeUnranked: args.excludeUnranked as boolean | undefined,
-              priorityFiles: args.priorityFiles as string[] | undefined,
-              priorityIdentifiers: args.priorityIdentifiers as string[] | undefined
-            })
-            return {
-              content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }]
+            try {
+              log.info(`[CodeGraph] MCP graph_map query (workspace: ${workspaceId})`)
+              const result = await codeGraphService.getRepoMap(workspaceId, workspacePath, {
+                focusFiles: args.focusFiles as string[] | undefined,
+                mapTokens: args.tokenLimit as number | undefined,
+                excludeUnranked: args.excludeUnranked as boolean | undefined,
+                priorityFiles: args.priorityFiles as string[] | undefined,
+                priorityIdentifiers: args.priorityIdentifiers as string[] | undefined
+              })
+              return {
+                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }]
+              }
+            } catch (error) {
+              reportMcpToolError('graph_map', error)
+              throw error // Re-throw so SDK returns tool_use_error to LLM
             }
           }
         },
@@ -81,20 +110,25 @@ class CodeGraphMcpService {
             includeReferences: z.boolean().optional().default(true)
           },
           handler: async (args) => {
-            const query = args.query as string
-            log.info(`[CodeGraph] MCP search_identifiers: "${query}" (workspace: ${workspaceId})`)
-            const results = await codeGraphService.searchIdentifiers(
-              workspaceId,
-              workspacePath,
-              query,
-              {
-                maxResults: args.maxResults as number | undefined,
-                includeDefinitions: args.includeDefinitions as boolean | undefined,
-                includeReferences: args.includeReferences as boolean | undefined
+            try {
+              const query = args.query as string
+              log.info(`[CodeGraph] MCP search_identifiers: "${query}" (workspace: ${workspaceId})`)
+              const results = await codeGraphService.searchIdentifiers(
+                workspaceId,
+                workspacePath,
+                query,
+                {
+                  maxResults: args.maxResults as number | undefined,
+                  includeDefinitions: args.includeDefinitions as boolean | undefined,
+                  includeReferences: args.includeReferences as boolean | undefined
+                }
+              )
+              return {
+                content: [{ type: 'text' as const, text: JSON.stringify({ results }, null, 2) }]
               }
-            )
-            return {
-              content: [{ type: 'text' as const, text: JSON.stringify({ results }, null, 2) }]
+            } catch (error) {
+              reportMcpToolError('search_identifiers', error)
+              throw error
             }
           }
         },
@@ -119,20 +153,25 @@ class CodeGraphMcpService {
               .describe('Maximum number of dead code entries to return')
           },
           handler: async (args) => {
-            log.info(
-              `[CodeGraph] MCP find_dead_code (workspace: ${workspaceId}, prefix: ${args.pathPrefix ?? 'all'})`
-            )
-            const results = await codeGraphService.findDeadCode(workspaceId, workspacePath, {
-              pathPrefix: args.pathPrefix as string | undefined,
-              maxResults: args.maxResults as number | undefined
-            })
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify({ results, count: results.length }, null, 2)
-                }
-              ]
+            try {
+              log.info(
+                `[CodeGraph] MCP find_dead_code (workspace: ${workspaceId}, prefix: ${args.pathPrefix ?? 'all'})`
+              )
+              const results = await codeGraphService.findDeadCode(workspaceId, workspacePath, {
+                pathPrefix: args.pathPrefix as string | undefined,
+                maxResults: args.maxResults as number | undefined
+              })
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify({ results, count: results.length }, null, 2)
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('find_dead_code', error)
+              throw error
             }
           }
         },
@@ -148,29 +187,34 @@ class CodeGraphMcpService {
               .describe('Relative file path within the workspace (e.g. "src/main/index.ts")')
           },
           handler: async (args) => {
-            const filePath = args.filePath as string
-            log.info(`[CodeGraph] MCP file_outline: "${filePath}" (workspace: ${workspaceId})`)
-            const tags = codeGraphTagRepository
-              .findByFile(workspaceId, filePath)
-              .filter((t) => t.kind === 'def')
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify(
-                    {
-                      file: filePath,
-                      definitions: tags.map((t) => ({
-                        name: t.name,
-                        line: t.line
-                      })),
-                      count: tags.length
-                    },
-                    null,
-                    2
-                  )
-                }
-              ]
+            try {
+              const filePath = args.filePath as string
+              log.info(`[CodeGraph] MCP file_outline: "${filePath}" (workspace: ${workspaceId})`)
+              const tags = codeGraphTagRepository
+                .findByFile(workspaceId, filePath)
+                .filter((t) => t.kind === 'def')
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify(
+                      {
+                        file: filePath,
+                        definitions: tags.map((t) => ({
+                          name: t.name,
+                          line: t.line
+                        })),
+                        count: tags.length
+                      },
+                      null,
+                      2
+                    )
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('file_outline', error)
+              throw error
             }
           }
         },
@@ -184,31 +228,36 @@ class CodeGraphMcpService {
             maxResults: z.number().optional().default(50)
           },
           handler: async (args) => {
-            const symbolName = args.symbolName as string
-            const maxResults = args.maxResults as number
-            log.info(`[CodeGraph] MCP find_callers: "${symbolName}" (workspace: ${workspaceId})`)
-            const edges = codeGraphEdgeRepository
-              .findCallersOf(workspaceId, symbolName)
-              .slice(0, maxResults)
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify(
-                    {
-                      symbol: symbolName,
-                      callers: edges.map((e) => ({
-                        sourceFile: e.sourceFile,
-                        sourceSymbol: e.sourceSymbol,
-                        edgeType: e.edgeType
-                      })),
-                      count: edges.length
-                    },
-                    null,
-                    2
-                  )
-                }
-              ]
+            try {
+              const symbolName = args.symbolName as string
+              const maxResults = args.maxResults as number
+              log.info(`[CodeGraph] MCP find_callers: "${symbolName}" (workspace: ${workspaceId})`)
+              const edges = codeGraphEdgeRepository
+                .findCallersOf(workspaceId, symbolName)
+                .slice(0, maxResults)
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify(
+                      {
+                        symbol: symbolName,
+                        callers: edges.map((e) => ({
+                          sourceFile: e.sourceFile,
+                          sourceSymbol: e.sourceSymbol,
+                          edgeType: e.edgeType
+                        })),
+                        count: edges.length
+                      },
+                      null,
+                      2
+                    )
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('find_callers', error)
+              throw error
             }
           }
         },
@@ -222,31 +271,36 @@ class CodeGraphMcpService {
             maxResults: z.number().optional().default(50)
           },
           handler: async (args) => {
-            const symbolName = args.symbolName as string
-            const maxResults = args.maxResults as number
-            log.info(`[CodeGraph] MCP find_callees: "${symbolName}" (workspace: ${workspaceId})`)
-            const edges = codeGraphEdgeRepository
-              .findCalleesOf(workspaceId, symbolName)
-              .slice(0, maxResults)
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify(
-                    {
-                      symbol: symbolName,
-                      callees: edges.map((e) => ({
-                        targetFile: e.targetFile,
-                        targetSymbol: e.targetSymbol,
-                        edgeType: e.edgeType
-                      })),
-                      count: edges.length
-                    },
-                    null,
-                    2
-                  )
-                }
-              ]
+            try {
+              const symbolName = args.symbolName as string
+              const maxResults = args.maxResults as number
+              log.info(`[CodeGraph] MCP find_callees: "${symbolName}" (workspace: ${workspaceId})`)
+              const edges = codeGraphEdgeRepository
+                .findCalleesOf(workspaceId, symbolName)
+                .slice(0, maxResults)
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify(
+                      {
+                        symbol: symbolName,
+                        callees: edges.map((e) => ({
+                          targetFile: e.targetFile,
+                          targetSymbol: e.targetSymbol,
+                          edgeType: e.edgeType
+                        })),
+                        count: edges.length
+                      },
+                      null,
+                      2
+                    )
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('find_callees', error)
+              throw error
             }
           }
         },
@@ -260,33 +314,40 @@ class CodeGraphMcpService {
             maxResults: z.number().optional().default(50)
           },
           handler: async (args) => {
-            const symbolName = args.symbolName as string
-            const maxResults = args.maxResults as number
-            log.info(`[CodeGraph] MCP find_references: "${symbolName}" (workspace: ${workspaceId})`)
-            const refs = codeGraphTagRepository.searchByName(workspaceId, symbolName, {
-              maxResults,
-              includeDefinitions: false,
-              includeReferences: true
-            })
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify(
-                    {
-                      symbol: symbolName,
-                      references: refs.map((r) => ({
-                        file: r.relFname,
-                        line: r.line,
-                        name: r.name
-                      })),
-                      count: refs.length
-                    },
-                    null,
-                    2
-                  )
-                }
-              ]
+            try {
+              const symbolName = args.symbolName as string
+              const maxResults = args.maxResults as number
+              log.info(
+                `[CodeGraph] MCP find_references: "${symbolName}" (workspace: ${workspaceId})`
+              )
+              const refs = codeGraphTagRepository.searchByName(workspaceId, symbolName, {
+                maxResults,
+                includeDefinitions: false,
+                includeReferences: true
+              })
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify(
+                      {
+                        symbol: symbolName,
+                        references: refs.map((r) => ({
+                          file: r.relFname,
+                          line: r.line,
+                          name: r.name
+                        })),
+                        count: refs.length
+                      },
+                      null,
+                      2
+                    )
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('find_references', error)
+              throw error
             }
           }
         },
@@ -296,36 +357,39 @@ class CodeGraphMcpService {
             'Find files that a given file depends on (imports, calls, references), grouped by edge type. ' +
             'Useful for architecture auditing and understanding module boundaries.',
           inputSchema: {
-            filePath: z
-              .string()
-              .describe('Relative file path to analyze dependencies for')
+            filePath: z.string().describe('Relative file path to analyze dependencies for')
           },
           handler: async (args) => {
-            const filePath = args.filePath as string
-            log.info(
-              `[CodeGraph] MCP file_dependencies: "${filePath}" (workspace: ${workspaceId})`
-            )
-            const deps = codeGraphEdgeRepository.findDependenciesOf(workspaceId, filePath)
-            // Group by edge type
-            const grouped: Record<string, string[]> = {}
-            for (const d of deps) {
-              ;(grouped[d.edgeType] ??= []).push(d.targetFile)
-            }
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify(
-                    {
-                      file: filePath,
-                      dependencies: grouped,
-                      totalCount: deps.length
-                    },
-                    null,
-                    2
-                  )
-                }
-              ]
+            try {
+              const filePath = args.filePath as string
+              log.info(
+                `[CodeGraph] MCP file_dependencies: "${filePath}" (workspace: ${workspaceId})`
+              )
+              const deps = codeGraphEdgeRepository.findDependenciesOf(workspaceId, filePath)
+              // Group by edge type
+              const grouped: Record<string, string[]> = {}
+              for (const d of deps) {
+                ;(grouped[d.edgeType] ??= []).push(d.targetFile)
+              }
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify(
+                      {
+                        file: filePath,
+                        dependencies: grouped,
+                        totalCount: deps.length
+                      },
+                      null,
+                      2
+                    )
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('file_dependencies', error)
+              throw error
             }
           }
         },
@@ -335,36 +399,37 @@ class CodeGraphMcpService {
             'Find files that depend on a given file (blast radius) — who imports or references it. ' +
             'Useful for change impact analysis — "if I modify this file, what breaks?"',
           inputSchema: {
-            filePath: z
-              .string()
-              .describe('Relative file path to find dependents of')
+            filePath: z.string().describe('Relative file path to find dependents of')
           },
           handler: async (args) => {
-            const filePath = args.filePath as string
-            log.info(
-              `[CodeGraph] MCP file_dependents: "${filePath}" (workspace: ${workspaceId})`
-            )
-            const deps = codeGraphEdgeRepository.findDependentsOf(workspaceId, filePath)
-            // Group by edge type
-            const grouped: Record<string, string[]> = {}
-            for (const d of deps) {
-              ;(grouped[d.edgeType] ??= []).push(d.sourceFile)
-            }
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify(
-                    {
-                      file: filePath,
-                      dependents: grouped,
-                      totalCount: deps.length
-                    },
-                    null,
-                    2
-                  )
-                }
-              ]
+            try {
+              const filePath = args.filePath as string
+              log.info(`[CodeGraph] MCP file_dependents: "${filePath}" (workspace: ${workspaceId})`)
+              const deps = codeGraphEdgeRepository.findDependentsOf(workspaceId, filePath)
+              // Group by edge type
+              const grouped: Record<string, string[]> = {}
+              for (const d of deps) {
+                ;(grouped[d.edgeType] ??= []).push(d.sourceFile)
+              }
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify(
+                      {
+                        file: filePath,
+                        dependents: grouped,
+                        totalCount: deps.length
+                      },
+                      null,
+                      2
+                    )
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('file_dependents', error)
+              throw error
             }
           }
         },
@@ -382,22 +447,27 @@ class CodeGraphMcpService {
               .describe('Filter to symbols referenced in files under this path prefix')
           },
           handler: async (args) => {
-            const maxResults = args.maxResults as number
-            const pathPrefix = args.pathPrefix as string | undefined
-            log.info(
-              `[CodeGraph] MCP symbol_hotspots (workspace: ${workspaceId}, prefix: ${pathPrefix ?? 'all'})`
-            )
-            const hotspots = codeGraphTagRepository.findSymbolHotspots(workspaceId, {
-              maxResults,
-              pathPrefix
-            })
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify({ hotspots, count: hotspots.length }, null, 2)
-                }
-              ]
+            try {
+              const maxResults = args.maxResults as number
+              const pathPrefix = args.pathPrefix as string | undefined
+              log.info(
+                `[CodeGraph] MCP symbol_hotspots (workspace: ${workspaceId}, prefix: ${pathPrefix ?? 'all'})`
+              )
+              const hotspots = codeGraphTagRepository.findSymbolHotspots(workspaceId, {
+                maxResults,
+                pathPrefix
+              })
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify({ hotspots, count: hotspots.length }, null, 2)
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('symbol_hotspots', error)
+              throw error
             }
           }
         },
@@ -416,21 +486,26 @@ class CodeGraphMcpService {
             maxResults: z.number().optional().default(50)
           },
           handler: async (args) => {
-            log.info(
-              `[CodeGraph] MCP coupling_analysis (workspace: ${workspaceId}, prefix: ${(args.pathPrefix as string | undefined) ?? 'all'})`
-            )
-            const coupled = codeGraphEdgeRepository.findCoupledFiles(workspaceId, {
-              minCoupling: args.minCoupling as number,
-              pathPrefix: args.pathPrefix as string | undefined,
-              maxResults: args.maxResults as number
-            })
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify({ couples: coupled, count: coupled.length }, null, 2)
-                }
-              ]
+            try {
+              log.info(
+                `[CodeGraph] MCP coupling_analysis (workspace: ${workspaceId}, prefix: ${(args.pathPrefix as string | undefined) ?? 'all'})`
+              )
+              const coupled = codeGraphEdgeRepository.findCoupledFiles(workspaceId, {
+                minCoupling: args.minCoupling as number,
+                pathPrefix: args.pathPrefix as string | undefined,
+                maxResults: args.maxResults as number
+              })
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify({ couples: coupled, count: coupled.length }, null, 2)
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('coupling_analysis', error)
+              throw error
             }
           }
         },
@@ -443,20 +518,25 @@ class CodeGraphMcpService {
             pathPrefix: z.string().optional().describe('Limit detection to files under this prefix')
           },
           handler: async (args) => {
-            const pathPrefix = args.pathPrefix as string | undefined
-            log.info(
-              `[CodeGraph] MCP circular_dependencies (workspace: ${workspaceId}, prefix: ${pathPrefix ?? 'all'})`
-            )
-            const cycles = codeGraphService.findCircularDependencies(workspaceId, {
-              pathPrefix
-            })
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify({ cycles, count: cycles.length }, null, 2)
-                }
-              ]
+            try {
+              const pathPrefix = args.pathPrefix as string | undefined
+              log.info(
+                `[CodeGraph] MCP circular_dependencies (workspace: ${workspaceId}, prefix: ${pathPrefix ?? 'all'})`
+              )
+              const cycles = codeGraphService.findCircularDependencies(workspaceId, {
+                pathPrefix
+              })
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify({ cycles, count: cycles.length }, null, 2)
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('circular_dependencies', error)
+              throw error
             }
           }
         },
@@ -475,16 +555,23 @@ class CodeGraphMcpService {
               )
           },
           handler: async (args) => {
-            const depth = args.depth as number
-            log.info(`[CodeGraph] MCP module_boundary_health (workspace: ${workspaceId}, depth: ${depth})`)
-            const metrics = codeGraphEdgeRepository.getModuleBoundaryMetrics(workspaceId, depth)
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify({ modules: metrics, count: metrics.length }, null, 2)
-                }
-              ]
+            try {
+              const depth = args.depth as number
+              log.info(
+                `[CodeGraph] MCP module_boundary_health (workspace: ${workspaceId}, depth: ${depth})`
+              )
+              const metrics = codeGraphEdgeRepository.getModuleBoundaryMetrics(workspaceId, depth)
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify({ modules: metrics, count: metrics.length }, null, 2)
+                  }
+                ]
+              }
+            } catch (error) {
+              reportMcpToolError('module_boundary_health', error)
+              throw error
             }
           }
         }

@@ -7,7 +7,10 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import log from 'electron-log'
 import type { AuditFinding } from '../../shared/types'
+
+const parserLog = log.scope('audit-parser')
 
 export interface ParsedAuditResponse {
   score: number
@@ -47,6 +50,10 @@ export function parseAuditResponse(text: string): ParsedAuditResponse {
   }
 
   if (!lastMatch) {
+    parserLog.warn(
+      `[audit-parser] No JSON block found in ${text.length}-char response. ` +
+        `First 200 chars: ${text.slice(0, 200).replace(/\n/g, ' ')}`
+    )
     return {
       score: 0,
       summary: text.slice(0, 500).trim() || 'No structured response received from auditor.',

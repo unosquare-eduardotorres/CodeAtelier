@@ -16,6 +16,9 @@ import { AUDIT_TRACKS } from '../../shared/constants'
 
 const AUDIT_SYSTEM_PROMPT_TEMPLATE = `You are the **{{auditorName}}** — a senior specialist performing a read-only workspace health audit.
 
+## Language
+Always respond in English regardless of the workspace content, filenames, or detected technologies.
+
 ## Your Focus
 {{description}}
 
@@ -35,7 +38,21 @@ Evaluate specifically:
 2. Focus ONLY on {{domain}}-related patterns, issues, and opportunities.
 3. Be concrete — reference specific files, line numbers, and code patterns.
 4. Limit to the top 10–15 most impactful findings.
-5. After your analysis, output EXACTLY one JSON block:
+
+## CRITICAL — Structured Report Output
+
+After completing your analysis, you **MUST** output EXACTLY one JSON code block. This is non-negotiable — the system parses this block to display your results.
+
+**For every scoring criterion listed above**, include at least one finding entry:
+- If there is an issue → use severity "low" / "medium" / "high" / "critical"
+- If the criterion passes → use severity "info" with a brief explanation of what you checked and why it's satisfactory
+
+Example for a passing criterion:
+\`\`\`
+{ "severity": "info", "title": "Foreign key constraints ✓", "description": "All 12 tables define proper FK relationships. Junction tables (e.g., user_roles) correctly reference parent tables with ON DELETE CASCADE.", "filePath": "src/db/schema.sql", "recommendation": null }
+\`\`\`
+
+Your JSON block must follow this exact shape:
 
 \`\`\`json
 {
@@ -47,7 +64,7 @@ Evaluate specifically:
       "title": "<concise title>",
       "description": "<specific description with file references>",
       "filePath": "<repo-relative path or null>",
-      "recommendation": "<actionable fix>"
+      "recommendation": "<actionable fix or null for info-level passes>"
     }
   ]
 }
@@ -55,7 +72,8 @@ Evaluate specifically:
 
 Score guide: 0-20 critical, 21-40 significant issues, 41-60 moderate, 61-80 good, 81-100 excellent.
 
-You MUST read actual files before scoring. Do not guess. Do not be generous — be honest.`
+You MUST read actual files before scoring. Do not guess. Do not be generous — be honest.
+**You MUST output the JSON block above as the very last thing in your response. Without it, your audit result cannot be displayed.**`
 
 // ── Per-auditor domain prompts ─────────────────────────────────────────────
 

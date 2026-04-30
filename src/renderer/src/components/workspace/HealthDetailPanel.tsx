@@ -269,63 +269,113 @@ export default function HealthDetailPanel({
           </div>
         )}
 
-        {/* Findings list */}
+        {/* Findings list — split into Issues and Passed Checks */}
         <div className="flex-1 overflow-y-auto px-5 py-3 space-y-1.5">
-          {filteredFindings.length > 0 ? (
-            filteredFindings.map((finding) => (
-              <div
-                key={finding.id}
-                className="flex items-start gap-2 p-2.5 rounded-lg hover:bg-surface-overlay/50 transition-colors"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedIds.has(finding.id)}
-                  onChange={() => onToggleFinding(finding)}
-                  className="mt-0.5 rounded border-border-subtle text-primary focus:ring-primary/50"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`px-1.5 py-0.5 text-[10px] font-semibold uppercase rounded ${
-                        SEVERITY_COLORS[finding.severity] ?? SEVERITY_COLORS.info
-                      }`}
-                    >
-                      {finding.severity}
+          {(() => {
+            const issues = filteredFindings.filter((f) => f.severity !== 'info')
+            const passedChecks = findings.filter((f) => f.severity === 'info')
+            const showPassedChecks =
+              passedChecks.length > 0 && (severityFilter === 'all' || severityFilter === 'info')
+
+            return (
+              <>
+                {/* Issues section */}
+                {issues.length > 0 && (
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+                      Issues ({issues.length})
                     </span>
-                    <span className="text-xs font-medium text-text-primary truncate">
-                      {finding.title}
-                    </span>
+                    {issues.map((finding) => (
+                      <div
+                        key={finding.id}
+                        className="flex items-start gap-2 p-2.5 rounded-lg hover:bg-surface-overlay/50 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(finding.id)}
+                          onChange={() => onToggleFinding(finding)}
+                          className="mt-0.5 rounded border-border-subtle text-primary focus:ring-primary/50"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`px-1.5 py-0.5 text-[10px] font-semibold uppercase rounded ${
+                                SEVERITY_COLORS[finding.severity] ?? SEVERITY_COLORS.info
+                              }`}
+                            >
+                              {finding.severity}
+                            </span>
+                            <span className="text-xs font-medium text-text-primary truncate">
+                              {finding.title}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-text-secondary mt-0.5 line-clamp-2">
+                            {finding.description}
+                          </p>
+                          {finding.filePath && (
+                            <span className="text-[10px] text-text-muted font-mono mt-0.5 block truncate">
+                              {finding.filePath}
+                            </span>
+                          )}
+                          {finding.recommendation && (
+                            <p className="text-[10px] text-text-muted mt-1 italic">
+                              💡 {finding.recommendation}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => onAutoFix(finding, track.name)}
+                          className="flex-shrink-0 p-1.5 rounded-lg hover:bg-surface-overlay text-text-muted hover:text-primary-text transition-colors"
+                          title="Auto-fix suggestion"
+                        >
+                          <Wrench size={12} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                  <p className="text-[11px] text-text-secondary mt-0.5 line-clamp-2">
-                    {finding.description}
-                  </p>
-                  {finding.filePath && (
-                    <span className="text-[10px] text-text-muted font-mono mt-0.5 block truncate">
-                      {finding.filePath}
+                )}
+
+                {/* Passed Checks section */}
+                {showPassedChecks && (
+                  <div className="space-y-1.5 mt-4">
+                    <span className="text-[10px] font-semibold text-success uppercase tracking-wider">
+                      ✓ Passed Checks ({passedChecks.length})
                     </span>
-                  )}
-                  {finding.recommendation && (
-                    <p className="text-[10px] text-text-muted mt-1 italic">
-                      💡 {finding.recommendation}
-                    </p>
-                  )}
-                </div>
-                <button
-                  onClick={() => onAutoFix(finding, track.name)}
-                  className="flex-shrink-0 p-1.5 rounded-lg hover:bg-surface-overlay text-text-muted hover:text-primary-text transition-colors"
-                  title="Auto-fix suggestion"
-                >
-                  <Wrench size={12} />
-                </button>
-              </div>
-            ))
-          ) : (
-            <p className="text-xs text-text-muted italic py-4 text-center">
-              {findings.length === 0
-                ? 'No findings — clean bill of health!'
-                : 'No findings match the current filter.'}
-            </p>
-          )}
+                    {passedChecks.map((finding) => (
+                      <div
+                        key={finding.id}
+                        className="flex items-start gap-2 p-2.5 rounded-lg bg-success/5"
+                      >
+                        <span className="text-success mt-0.5 flex-shrink-0">✓</span>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-xs font-medium text-text-primary">
+                            {finding.title}
+                          </span>
+                          <p className="text-[11px] text-text-secondary mt-0.5">
+                            {finding.description}
+                          </p>
+                          {finding.filePath && (
+                            <span className="text-[10px] text-text-muted font-mono mt-0.5 block truncate">
+                              {finding.filePath}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Empty state — only when truly no results */}
+                {issues.length === 0 && !showPassedChecks && (
+                  <p className="text-xs text-text-muted italic py-4 text-center">
+                    {findings.length === 0
+                      ? 'No analysis results available. Try re-running this auditor.'
+                      : 'No findings match the current filter.'}
+                  </p>
+                )}
+              </>
+            )
+          })()}
         </div>
 
         {/* Bottom actions: export + re-run */}

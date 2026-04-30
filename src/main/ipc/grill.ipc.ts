@@ -14,6 +14,7 @@ import { summarizeToolInput } from '../services/agent-base.service'
 import { extractResultSummary } from './chat-shared'
 import { workspaceRepository } from '../db/repositories'
 import { grillAgentService } from '../services/grill-agent.service'
+import { grillPersistenceController } from '../services/grill-persistence.controller'
 import { validateSender } from './validate-sender'
 import log from 'electron-log'
 
@@ -32,6 +33,8 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
         ideaTitle: string
         ideaDescription: string
         iterationHistory?: string
+        previousScore?: number
+        ideaId?: string
       }
     ): Promise<void> => {
       validateSender(event)
@@ -41,7 +44,7 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
         trackId: args?.trackId
       })
 
-      const { workspaceId, trackId, ideaTitle, ideaDescription, iterationHistory } = args
+      const { workspaceId, trackId, ideaTitle, ideaDescription, iterationHistory, previousScore, ideaId } = args
 
       if (grillAgentService.isRunning) {
         throw new Error('A grill evaluation is already running.')
@@ -56,7 +59,12 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
         `[grill:evaluate] workspaceId=${workspaceId} track=${trackId} title="${ideaTitle.slice(0, 40)}"`
       )
 
-      // Wire event forwarding
+      // Start persistence tracking (if ideaId is provided)
+      if (ideaId) {
+        await grillPersistenceController.startTracking(ideaId, workspaceId, trackId)
+      }
+
+      // Wire event forwarding (through persistence controller)
       wireGrillEvents(mainWindow, workspace.repoPath)
 
       // Start the evaluation (non-blocking — runs in background)
@@ -67,7 +75,8 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
           trackId,
           ideaTitle,
           ideaDescription,
-          iterationHistory
+          iterationHistory,
+          previousScore
         })
         .catch((err) => {
           grillLog.error('[grill:evaluate] evaluate failed:', err)
@@ -80,14 +89,115 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.GRILL_CANCEL, (event): void => {
     validateSender(event)
     grillAgentService.cancel()
+    grillPersistenceController.clearTracking(mainWindow)
   })
+
+  // ── grill:getStatus — current grill status for a workspace ────────
+
+  ipcMain.handle(
+    IPC_CHANNELS.GRILL_GET_STATUS,
+    (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      return grillPersistenceController.getStatusForWorkspace(args.workspaceId)
+    }
+  )
+
+  // ── grill:getSession — full session state from DB ─────────────────
+
+  ipcMain.handle(
+    IPC_CHANNELS.GRILL_GET_SESSION,
+    (event, args: { ideaId: string }) => {
+      validateSender(event)
+      return grillPersistenceController.getSessionState(args.ideaId)
+    }
+  )
+
+  // ── grill:saveAnswers — persist question states to DB session ─────
+
+  ipcMain.handle(
+    IPC_CHANNELS.GRILL_SAVE_ANSWERS,
+    (event, args: { sessionId: string; questionStates: Record<string, unknown> }): void => {
+      validateSender(event)
+      grillPersistenceController.saveAnswers(args.sessionId, args.questionStates, mainWindow)
+    }
+  )
+
+  // ── grill:condenseRequirement — Haiku summarization of long docs ───
+
+  ipcMain.handle(
+    IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT,
+    async (event, args: { text: string }): Promise<{ condensed: string }> => {
+      validateSender(event)
+
+      const { text } = args
+      if (!text || text.length < 1000) {
+        return { condensed: text }
+      }
+
+      grillLog.info(
+        `[grill:condense] Condensing requirement document (${text.length} chars)`
+      )
+
+      try {
+        const { query } = await import('@anthropic-ai/claude-agent-sdk')
+        const { authProvider } = await import('../services/auth-provider')
+
+        // Ensure API key is in env (same pattern as SDKExecutor)
+        const apiKey = authProvider.getApiKey()
+        if (apiKey && !process.env.ANTHROPIC_API_KEY) {
+          process.env.ANTHROPIC_API_KEY = apiKey
+        }
+
+        const result = query({
+          prompt: text,
+          options: {
+            model: 'claude-haiku-4-5-20251001',
+            systemPrompt: [
+              'You are a technical requirement condensation assistant.',
+              'Condense the following requirement document into a clear, structured summary.',
+              'RULES:',
+              '- Preserve ALL decisions, constraints, and acceptance criteria',
+              '- Remove redundant phrasing, repeated context, and verbose explanations',
+              '- Keep the iteration/track structure but merge similar decisions',
+              '- Use concise bullet points instead of full paragraphs',
+              '- Target roughly 40-60% of the original length',
+              '- Do NOT add new information or opinions',
+              '- Output plain markdown — no code fences around the result'
+            ].join('\n'),
+            permissionMode: 'bypassPermissions',
+            maxTurns: 1,
+            abortController: new AbortController()
+          }
+        })
+
+        let condensed = ''
+        for await (const msg of result) {
+          if (msg.type === 'assistant' && typeof msg.message === 'string') {
+            condensed += msg.message
+          }
+        }
+
+        grillLog.info(
+          `[grill:condense] Done — ${text.length} → ${condensed.length} chars (${Math.round((condensed.length / text.length) * 100)}%)`
+        )
+
+        return { condensed: condensed.trim() || text }
+      } catch (err) {
+        grillLog.error('[grill:condense] Failed:', err)
+        throw new Error(
+          `Condensation failed: ${err instanceof Error ? err.message : String(err)}`
+        )
+      }
+    }
+  )
 }
 
 // ── Event forwarding ─────────────────────────────────────────────────────
 
 /**
  * Wire one-time event listeners for the current grill evaluation.
- * Forwards stream/evaluation/complete to the renderer.
+ * Transforms stream chunks, then routes through the persistence controller
+ * which both persists to DB and forwards to the renderer.
  */
 function wireGrillEvents(mainWindow: BrowserWindow, workspacePath: string): void {
   // Remove any stale listeners from a previous run
@@ -95,15 +205,15 @@ function wireGrillEvents(mainWindow: BrowserWindow, workspacePath: string): void
   grillAgentService.removeAllListeners('evaluation')
   grillAgentService.removeAllListeners('complete')
 
-  // ── stream — rich chunk forwarding ──
+  // ── stream — transform chunk + route through persistence ──
   grillAgentService.on('stream', (data: { chunk: StreamChunk }) => {
     const { chunk } = data
 
     if (chunk.type === 'text' && chunk.content) {
-      mainWindow.webContents.send(IPC_CHANNELS.GRILL_STREAM_CHUNK, {
-        type: 'text',
-        content: chunk.content
-      })
+      grillPersistenceController.handleStreamChunk(
+        { type: 'text', content: chunk.content },
+        mainWindow
+      )
     } else if (chunk.type === 'tool_use') {
       // Skip control tools
       if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
@@ -118,16 +228,19 @@ function wireGrillEvents(mainWindow: BrowserWindow, workspacePath: string): void
         }
       }
 
-      mainWindow.webContents.send(IPC_CHANNELS.GRILL_STREAM_CHUNK, {
-        type: 'tool_activity',
-        toolActivity: {
-          id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          toolName: chunk.toolName ?? 'Unknown',
-          status: 'running' as const,
-          input: inputSummary,
-          startedAt: Date.now()
-        }
-      })
+      grillPersistenceController.handleStreamChunk(
+        {
+          type: 'tool_activity',
+          toolActivity: {
+            id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            toolName: chunk.toolName ?? 'Unknown',
+            status: 'running' as const,
+            input: inputSummary,
+            startedAt: Date.now()
+          }
+        },
+        mainWindow
+      )
     } else if (chunk.type === 'tool_result') {
       // Skip control tools
       if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
@@ -155,30 +268,33 @@ function wireGrillEvents(mainWindow: BrowserWindow, workspacePath: string): void
       if (inputSummary) toolActivity.input = inputSummary
       if (resultSummary) toolActivity.result = resultSummary
 
-      mainWindow.webContents.send(IPC_CHANNELS.GRILL_STREAM_CHUNK, {
-        type: 'tool_activity',
-        toolActivity
-      })
+      grillPersistenceController.handleStreamChunk(
+        { type: 'tool_activity', toolActivity },
+        mainWindow
+      )
     } else if (chunk.type === 'tool_progress') {
-      mainWindow.webContents.send(IPC_CHANNELS.GRILL_STREAM_CHUNK, {
-        type: 'tool_activity',
-        toolActivity: {
-          id: chunk.toolId ?? `tool-${Date.now()}`,
-          toolName: chunk.toolName ?? 'Unknown',
-          status: 'running' as const,
-          elapsedSeconds: chunk.elapsedSeconds
-        }
-      })
+      grillPersistenceController.handleStreamChunk(
+        {
+          type: 'tool_activity',
+          toolActivity: {
+            id: chunk.toolId ?? `tool-${Date.now()}`,
+            toolName: chunk.toolName ?? 'Unknown',
+            status: 'running' as const,
+            elapsedSeconds: chunk.elapsedSeconds
+          }
+        },
+        mainWindow
+      )
     }
   })
 
-  // ── evaluation — parsed result ──
+  // ── evaluation — through persistence controller ──
   grillAgentService.on('evaluation', (data: GrillEvaluation) => {
-    mainWindow.webContents.send(IPC_CHANNELS.GRILL_EVALUATION_RESULT, data)
+    grillPersistenceController.handleEvaluationResult(data, mainWindow)
   })
 
-  // ── complete ──
+  // ── complete — through persistence controller ──
   grillAgentService.on('complete', () => {
-    mainWindow.webContents.send(IPC_CHANNELS.GRILL_STREAM_COMPLETE, {})
+    grillPersistenceController.handleComplete(mainWindow)
   })
 }

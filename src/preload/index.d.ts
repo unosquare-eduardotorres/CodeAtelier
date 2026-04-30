@@ -828,6 +828,8 @@ interface Api {
     ideaTitle: string
     ideaDescription: string
     iterationHistory?: string
+    previousScore?: number
+    ideaId?: string
   }) => Promise<void>
   grillCancel: () => Promise<void>
   onGrillStreamChunk: (
@@ -844,6 +846,21 @@ interface Api {
     }) => void
   ) => () => void
   onGrillStreamComplete: (cb: () => void) => () => void
+  grillCondenseRequirement: (args: { text: string }) => Promise<{ condensed: string }>
+  grillGetStatus: (args: { workspaceId: string }) => Promise<{
+    status: string
+    ideaId: string
+    trackId: string | null
+    score: number | null
+  } | null>
+  grillGetSession: (args: { ideaId: string }) => Promise<unknown | null>
+  grillSaveAnswers: (args: {
+    sessionId: string
+    questionStates: Record<string, unknown>
+  }) => Promise<void>
+  onGrillStatusChanged: (
+    cb: (data: { status: string; ideaId: string; trackId: string | null; score: number | null }) => void
+  ) => () => void
 }
 
 declare global {

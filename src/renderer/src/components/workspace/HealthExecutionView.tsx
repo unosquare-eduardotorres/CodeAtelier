@@ -185,6 +185,9 @@ export default function HealthExecutionView({
                           {activeResult.summary}
                         </p>
                       )}
+                      <p className="text-xs text-text-muted mt-2 italic">
+                        No analysis results available. Try re-running this auditor.
+                      </p>
                     </div>
                   </div>
                 ) : (

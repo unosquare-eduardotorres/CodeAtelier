@@ -10,11 +10,20 @@ import {
   Check,
   X,
   Search,
-  Plus
+  Plus,
+  MessageCircle
 } from 'lucide-react'
 import { useIdeaStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import { ConfirmDialog, Skeleton } from '@renderer/components/common'
 import type { Idea } from '../../../../shared/types'
+
+/** Live grill status from main process */
+interface GrillStatus {
+  status: string
+  ideaId: string
+  trackId: string | null
+  score: number | null
+}
 
 const FILTER_TABS = [
   { value: 'all', label: 'All' },
@@ -66,6 +75,26 @@ function StatusBadge({ status }: { status: Idea['status'] }): React.JSX.Element 
   )
 }
 
+/** Dynamic status icon for an idea based on live grill status */
+function GrillStatusIcon({ idea, grillStatus }: { idea: Idea; grillStatus: GrillStatus | null }): React.JSX.Element {
+  if (idea.status === 'completed') return <CheckCircle size={14} className="text-success flex-shrink-0" />
+
+  if (grillStatus?.ideaId === idea.id) {
+    if (grillStatus.status === 'evaluating') {
+      return <Flame size={14} className="text-accent animate-pulse flex-shrink-0" />
+    }
+    if (grillStatus.status === 'awaiting_answers') {
+      return <MessageCircle size={14} className="text-info flex-shrink-0" />
+    }
+  }
+
+  if (idea.status === 'grilling') {
+    return <Flame size={14} className="text-text-muted flex-shrink-0" />
+  }
+
+  return <Lightbulb size={14} className="text-warning flex-shrink-0" />
+}
+
 function GrillSummaryPreview({ summary }: { summary: string }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   return (
@@ -102,6 +131,9 @@ export default function IdeasList({
   const [editDescription, setEditDescription] = useState('')
   const [filter, setFilter] = useState<IdeaFilter>('active')
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Live grill status
+  const [grillStatus, setGrillStatus] = useState<GrillStatus | null>(null)
 
   // New Idea modal state
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -175,6 +207,14 @@ export default function IdeasList({
       loadIdeas(activeWorkspace.id)
     }
   }, [activeWorkspace, loadIdeas])
+
+  // Load and subscribe to live grill status
+  useEffect(() => {
+    if (!activeWorkspace) return
+    window.api.grillGetStatus({ workspaceId: activeWorkspace.id }).then(setGrillStatus)
+    const unsub = window.api.onGrillStatusChanged(setGrillStatus)
+    return unsub
+  }, [activeWorkspace?.id])
 
   const handleConvertDirect = async (idea: Idea): Promise<void> => {
     if (!activeWorkspace) return
@@ -464,11 +504,7 @@ export default function IdeasList({
                 /* Inline editing mode */
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
-                    {idea.status === 'grilling' ? (
-                      <Flame size={14} className="text-accent flex-shrink-0" />
-                    ) : (
-                      <Lightbulb size={14} className="text-warning flex-shrink-0" />
-                    )}
+                    <GrillStatusIcon idea={idea} grillStatus={grillStatus} />
                     <input
                       type="text"
                       value={editTitle}
@@ -515,13 +551,7 @@ export default function IdeasList({
                   {/* Title row */}
                   <div className="flex items-start justify-between gap-3 mb-1">
                     <div className="flex items-center gap-2 min-w-0">
-                      {idea.status === 'grilling' ? (
-                        <Flame size={14} className="text-accent flex-shrink-0" />
-                      ) : idea.status === 'completed' ? (
-                        <CheckCircle size={14} className="text-success flex-shrink-0" />
-                      ) : (
-                        <Lightbulb size={14} className="text-warning flex-shrink-0" />
-                      )}
+                      <GrillStatusIcon idea={idea} grillStatus={grillStatus} />
                       <span
                         className="text-base font-normal text-text-primary truncate"
                         style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}

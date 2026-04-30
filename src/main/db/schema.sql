@@ -463,4 +463,28 @@ CREATE TABLE IF NOT EXISTS audit_results (
 
 CREATE INDEX IF NOT EXISTS idx_audit_results_run ON audit_results(audit_run_id);
 
+-- Grill sessions: persistent grill evaluation state
+CREATE TABLE IF NOT EXISTS grill_sessions (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  idea_id TEXT NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  track_id TEXT,
+  status TEXT NOT NULL DEFAULT 'idle'
+    CHECK (status IN ('idle', 'evaluating', 'awaiting_answers', 'completed', 'cancelled', 'failed')),
+  current_score INTEGER,
+  score_label TEXT,
+  feedback TEXT,
+  iteration_count INTEGER DEFAULT 0,
+  messages TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(messages)),
+  track_scores TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(track_scores)),
+  history TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(history)),
+  question_states TEXT DEFAULT NULL,
+  current_iteration TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_grill_sessions_idea ON grill_sessions(idea_id);
+CREATE INDEX IF NOT EXISTS idx_grill_sessions_workspace ON grill_sessions(workspace_id);
+
 

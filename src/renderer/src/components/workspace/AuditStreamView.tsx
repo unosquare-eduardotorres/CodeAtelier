@@ -10,6 +10,7 @@ import { Loader2 } from 'lucide-react'
 import type { AuditTrackId } from '../../../../shared/types'
 import { useAuditStore } from '@renderer/store'
 import AuditMessageBubble from './AuditMessageBubble'
+import AuditResultBubble from './AuditResultBubble'
 
 interface AuditStreamViewProps {
   trackId: AuditTrackId
@@ -23,8 +24,10 @@ export default function AuditStreamView({
   isStreaming
 }: AuditStreamViewProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const { perTrackStreaming } = useAuditStore()
+  const { perTrackStreaming, currentRun } = useAuditStore()
   const trackData = perTrackStreaming[trackId]
+  const trackResult = currentRun?.results.find((r) => r.trackId === trackId)
+  const isCompleted = trackResult?.status === 'completed'
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -36,12 +39,22 @@ export default function AuditStreamView({
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4">
       {trackData?.content || (trackData?.toolActivities.length ?? 0) > 0 ? (
-        <AuditMessageBubble
-          content={trackData.content}
-          toolActivities={trackData.toolActivities}
-          trackName={trackName}
-          isStreaming={isStreaming}
-        />
+        <>
+          <AuditMessageBubble
+            content={trackData.content}
+            toolActivities={trackData.toolActivities}
+            trackName={trackName}
+            isStreaming={isStreaming}
+          />
+          {isCompleted && trackResult && trackResult.score != null && trackResult.score > 0 && (
+            <AuditResultBubble
+              score={trackResult.score}
+              summary={trackResult.summary ?? ''}
+              trackName={trackName}
+              findingsCount={trackResult.findings.length}
+            />
+          )}
+        </>
       ) : isStreaming ? (
         <div className="flex items-center gap-2 text-sm text-text-muted">
           <Loader2 size={14} className="animate-spin" />

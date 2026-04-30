@@ -358,8 +358,21 @@ class CodeGraphService extends EventEmitter {
         continue // File may have been deleted since indexing
       }
 
-      const linesOfInterest = fileTags.map((t) => t.line)
-      const rendered = renderTreeContext(code, linesOfInterest)
+      // Guard stale line refs — tags may reference lines beyond current file length
+      const totalLines = code.split('\n').length
+      const linesOfInterest = fileTags
+        .map((t) => t.line)
+        .filter((line) => line >= 1 && line <= totalLines)
+
+      if (linesOfInterest.length === 0) continue // All tags were stale — skip file
+
+      let rendered: string
+      try {
+        rendered = renderTreeContext(code, linesOfInterest)
+      } catch (err) {
+        log.warn(`[CodeGraph] renderTreeContext failed for ${relFname}:`, err)
+        continue // Skip this file, don't crash the whole map
+      }
       const entry = `${relFname}:\n${rendered}\n`
       const entryTokens = countTokens(entry)
 

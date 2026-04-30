@@ -1628,6 +1628,8 @@ const api = {
     ideaTitle: string
     ideaDescription: string
     iterationHistory?: string
+    previousScore?: number
+    ideaId?: string
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_EVALUATE, args),
 
   grillCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_CANCEL),
@@ -1672,6 +1674,35 @@ const api = {
     const handler = (): void => cb()
     ipcRenderer.on(IPC_CHANNELS.GRILL_STREAM_COMPLETE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STREAM_COMPLETE, handler)
+  },
+
+  grillCondenseRequirement: (args: { text: string }): Promise<{ condensed: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT, args),
+
+  grillGetStatus: (args: { workspaceId: string }): Promise<{
+    status: string
+    ideaId: string
+    trackId: string | null
+    score: number | null
+  } | null> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_GET_STATUS, args),
+
+  grillGetSession: (args: { ideaId: string }): Promise<unknown | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GRILL_GET_SESSION, args),
+
+  grillSaveAnswers: (args: {
+    sessionId: string
+    questionStates: Record<string, unknown>
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_SAVE_ANSWERS, args),
+
+  onGrillStatusChanged: (
+    cb: (data: { status: string; ideaId: string; trackId: string | null; score: number | null }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { status: string; ideaId: string; trackId: string | null; score: number | null }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.GRILL_STATUS_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STATUS_CHANGED, handler)
   }
 } as const
 

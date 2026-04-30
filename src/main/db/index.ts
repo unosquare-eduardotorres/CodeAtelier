@@ -14,7 +14,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 79
+const CURRENT_SCHEMA_VERSION = 80
 
 interface Migration {
   version: number
@@ -2003,6 +2003,36 @@ const migrations: Migration[] = [
       db.exec(`DROP INDEX IF EXISTS idx_audit_runs_workspace`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_runs_workspace ON audit_runs(workspace_id)`)
       dbLogger.info('[migration-79] ✓ Replaced UNIQUE index on audit_runs with non-unique index')
+    }
+  },
+  {
+    version: 80,
+    name: 'create-grill-sessions-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS grill_sessions (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          idea_id TEXT NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          track_id TEXT,
+          status TEXT NOT NULL DEFAULT 'idle'
+            CHECK (status IN ('idle', 'evaluating', 'awaiting_answers', 'completed', 'cancelled', 'failed')),
+          current_score INTEGER,
+          score_label TEXT,
+          feedback TEXT,
+          iteration_count INTEGER DEFAULT 0,
+          messages TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(messages)),
+          track_scores TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(track_scores)),
+          history TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(history)),
+          question_states TEXT DEFAULT NULL,
+          current_iteration TEXT DEFAULT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_grill_sessions_idea ON grill_sessions(idea_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_grill_sessions_workspace ON grill_sessions(workspace_id)`)
+      dbLogger.info('[migration-80] ✓ Created grill_sessions table')
     }
   }
 ]

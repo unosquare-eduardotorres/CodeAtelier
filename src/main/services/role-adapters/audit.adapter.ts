@@ -218,7 +218,8 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
         'Agent',
         'ToolSearch',
         'ExitPlanMode',
-        'AskUserQuestion'
+        'AskUserQuestion',
+        'TodoWrite' // Prevent audit from modifying todos
       ]
     }
   }

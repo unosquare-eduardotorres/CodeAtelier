@@ -381,7 +381,12 @@ export const IPC_CHANNELS = {
   GRILL_CANCEL: 'grill:cancel',
   GRILL_STREAM_CHUNK: 'grill:streamChunk',
   GRILL_EVALUATION_RESULT: 'grill:evaluationResult',
-  GRILL_STREAM_COMPLETE: 'grill:streamComplete'
+  GRILL_STREAM_COMPLETE: 'grill:streamComplete',
+  GRILL_CONDENSE_REQUIREMENT: 'grill:condenseRequirement',
+  GRILL_GET_STATUS: 'grill:getStatus',
+  GRILL_GET_SESSION: 'grill:getSession',
+  GRILL_SAVE_ANSWERS: 'grill:saveAnswers',
+  GRILL_STATUS_CHANGED: 'grill:statusChanged'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */

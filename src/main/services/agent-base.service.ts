@@ -126,11 +126,45 @@ export function summarizeToolInput(
     case 'TaskOutput':
       return `Reading output of task ${(input.id as string)?.slice(0, 7) ?? ''}…`
 
-    // ── MCP tools: Code Graph ──
+    // ── MCP tools: Code Graph (Phase 1) ──
     case MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name:
       return `graph_map${input.focusFiles ? ` (focus: ${(input.focusFiles as string[]).length} files)` : ''}`
     case MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name:
       return `search: ${(input.query as string) || ''}`
+    case MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name:
+      return `dead code${input.pathPrefix ? ` in ${input.pathPrefix}` : ''}`
+
+    // ── MCP tools: Code Graph (Phase 2 — Navigation) ──
+    case MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name:
+      return `outline: ${toRelativePath((input.filePath as string) || '', workspacePath)}`
+    case MCP_TOOLS.CODE_GRAPH.FIND_CALLERS.name:
+      return `callers of: ${(input.symbolName as string) || ''}`
+    case MCP_TOOLS.CODE_GRAPH.FIND_CALLEES.name:
+      return `callees of: ${(input.symbolName as string) || ''}`
+    case MCP_TOOLS.CODE_GRAPH.FIND_REFERENCES.name:
+      return `refs: ${(input.symbolName as string) || ''}`
+    case MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENCIES.name:
+      return `deps: ${toRelativePath((input.filePath as string) || '', workspacePath)}`
+    case MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENTS.name:
+      return `dependents: ${toRelativePath((input.filePath as string) || '', workspacePath)}`
+
+    // ── MCP tools: Code Graph (Phase 3 — Analysis) ──
+    case MCP_TOOLS.CODE_GRAPH.SYMBOL_HOTSPOTS.name:
+      return `hotspots${input.pathPrefix ? ` in ${input.pathPrefix}` : ''}`
+    case MCP_TOOLS.CODE_GRAPH.COUPLING_ANALYSIS.name:
+      return `coupling${input.pathPrefix ? ` in ${input.pathPrefix}` : ''}`
+    case MCP_TOOLS.CODE_GRAPH.CIRCULAR_DEPENDENCIES.name:
+      return `cycles${input.pathPrefix ? ` in ${input.pathPrefix}` : ''}`
+    case MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name:
+      return `boundaries (depth: ${input.depth ?? 2})`
+
+    // ── MCP tools: Code Analysis ──
+    case MCP_TOOLS.CODE_ANALYSIS.TODO_SCANNER.name:
+      return 'scan TODOs'
+    case MCP_TOOLS.CODE_ANALYSIS.DEPENDENCY_HEALTH.name:
+      return 'dependency health'
+    case MCP_TOOLS.CODE_ANALYSIS.TEST_COVERAGE_MAP.name:
+      return 'test coverage map'
 
     // ── MCP tools: Semantic Search ──
     case MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name:

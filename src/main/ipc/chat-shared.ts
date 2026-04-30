@@ -67,6 +67,29 @@ export function extractResultSummary(
       const fileCount = content.split('\n').filter((l) => l.trim()).length
       return `${fileCount} file${fileCount !== 1 ? 's' : ''} found`
     }
+    // ── MCP tool results: extract meaningful counts from JSON ──
+    if (toolName.startsWith(MCP_TOOLS.CODE_GRAPH._PREFIX)) {
+      try {
+        const parsed = JSON.parse(content)
+        if (parsed.count !== undefined)
+          return `${parsed.count} result${parsed.count !== 1 ? 's' : ''}`
+        if (parsed.definitions?.length !== undefined)
+          return `${parsed.definitions.length} definition${parsed.definitions.length !== 1 ? 's' : ''}`
+        if (parsed.report) return `${parsed.report.filesIncluded ?? '?'} files mapped`
+      } catch {
+        /* fall through to default */
+      }
+    }
+    if (toolName.startsWith(MCP_TOOLS.CODE_ANALYSIS._PREFIX)) {
+      try {
+        const parsed = JSON.parse(content)
+        if (parsed.count !== undefined)
+          return `${parsed.count} result${parsed.count !== 1 ? 's' : ''}`
+      } catch {
+        /* fall through */
+      }
+    }
+
     // Default: first line truncated
     const firstLine = content.split('\n')[0]?.trim()
     if (!firstLine) return undefined
@@ -177,7 +200,14 @@ export function forwardChunkToRenderer(
         toolInputSummary = chunk.content.slice(0, 120)
       }
     }
-    const resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
+    let resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
+
+    // For Read, compose file path into result so it's always visible
+    // (e.g. "176 lines read — src/main/index.ts" instead of just "176 lines read")
+    if (chunk.toolName === 'Read' && toolInputSummary && resultSummary) {
+      resultSummary = `${resultSummary} — ${toolInputSummary}`
+    }
+
     // Tag the activity as 'error' when the SDK returned a tool_use_error so
     // the renderer can show it visually distinct from a successful run.
     const isToolError =

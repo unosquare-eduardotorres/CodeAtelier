@@ -9,10 +9,12 @@
 import { useEffect, useRef, useMemo } from 'react'
 import { Loader2 } from 'lucide-react'
 import { useGrillStreamStore } from '@renderer/store/grill-stream.store'
+import type { GrillStreamSegment } from '@renderer/store/grill-stream.store'
 import { Avatar } from '@renderer/components/common'
 import { QuestionItem } from '@renderer/components/chat'
 import type { QuestionState } from '@renderer/components/chat'
 import type { GrillQuestion, ToolActivity } from '../../../../shared/types'
+import { stripGrillEvaluationBlocks } from '@renderer/utils/strip-grill-json'
 import GrillMessageBubble from './GrillMessageBubble'
 import GrillEvaluationBubble from './GrillEvaluationBubble'
 
@@ -66,28 +68,41 @@ export default function GrillChatView({
 }: GrillChatViewProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Read live streaming state from the dedicated grill stream store
-  const streamingContent = useGrillStreamStore((s) => s.content)
-  const toolActivities = useGrillStreamStore((s) => s.toolActivities)
+  // Read live streaming state from the dedicated grill stream store (segment-based)
+  const segments = useGrillStreamStore((s) => s.segments)
+  const currentContent = useGrillStreamStore((s) => s.currentContent)
+  const currentToolActivities = useGrillStreamStore((s) => s.currentToolActivities)
   const isStreaming = useGrillStreamStore((s) => s.isStreaming)
 
-  // Strip grill-evaluation JSON blocks from live streaming content so users
-  // never see raw JSON fields like "questions": [ or "score":
-  const cleanStreamingContent = useMemo(() => {
-    if (!streamingContent) return streamingContent
-    // Strip complete fenced blocks
-    let cleaned = streamingContent.replace(/```grill-evaluation\n[\s\S]*?```/g, '')
-    // Strip partial blocks (opening fence present, no closing fence yet — happens mid-stream)
-    cleaned = cleaned.replace(/```grill-evaluation[\s\S]*$/g, '')
-    return cleaned.trim()
-  }, [streamingContent])
+  // Build cleaned segments for rendering — strip grill-evaluation JSON from each
+  const cleanSegments = useMemo(() => {
+    const result: GrillStreamSegment[] = []
+
+    // Finalized segments
+    for (const seg of segments) {
+      const cleaned = stripGrillEvaluationBlocks(seg.content)
+      if (cleaned || seg.toolActivities.length > 0) {
+        result.push({ content: cleaned, toolActivities: seg.toolActivities })
+      }
+    }
+
+    // Current (in-progress) segment
+    const cleanedCurrent = currentContent ? stripGrillEvaluationBlocks(currentContent) : ''
+    if (cleanedCurrent || currentToolActivities.length > 0) {
+      result.push({ content: cleanedCurrent, toolActivities: currentToolActivities })
+    }
+
+    return result
+  }, [segments, currentContent, currentToolActivities])
+
+  const hasStreamingContent = cleanSegments.length > 0
 
   // Auto-scroll on new content
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [streamingContent, toolActivities.length, messages.length, phase])
+  }, [currentContent, currentToolActivities.length, segments.length, messages.length, phase])
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
@@ -167,14 +182,19 @@ export default function GrillChatView({
           }
         })}
 
-        {/* Live streaming section — reads from chat store */}
+        {/* Live streaming section — renders each segment as its own bubble */}
         {phase === 'evaluating' &&
-          (cleanStreamingContent || toolActivities.length > 0 ? (
-            <GrillMessageBubble
-              content={cleanStreamingContent}
-              toolActivities={toolActivities}
-              isStreaming={isStreaming}
-            />
+          (hasStreamingContent ? (
+            <>
+              {cleanSegments.map((seg, idx) => (
+                <GrillMessageBubble
+                  key={`stream-seg-${idx}`}
+                  content={seg.content}
+                  toolActivities={seg.toolActivities}
+                  isStreaming={isStreaming && idx === cleanSegments.length - 1}
+                />
+              ))}
+            </>
           ) : (
             <div className="flex items-center gap-2 text-sm text-text-muted ml-11">
               <Loader2 size={14} className="animate-spin text-accent" />

@@ -13,7 +13,8 @@ import {
   CircleHelp,
   Bug,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Flame
 } from 'lucide-react'
 import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
@@ -83,6 +84,36 @@ export default function AppLayout(): React.JSX.Element {
   const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
   const fetchBugCount = useBugStore((s) => s.fetchCount)
   const addToast = useToastStore((s) => s.addToast)
+
+  // Grill status for status bar indicator
+  const [grillStatus, setGrillStatus] = useState<{
+    status: string
+    ideaId: string
+    trackId: string | null
+    score: number | null
+  } | null>(null)
+
+  useEffect(() => {
+    if (!activeWorkspace) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on workspace change
+      setGrillStatus(null)
+      return
+    }
+    window.api.grillGetStatus({ workspaceId: activeWorkspace.id }).then(setGrillStatus)
+    const unsub = window.api.onGrillStatusChanged(setGrillStatus)
+    return unsub
+  }, [activeWorkspace?.id])
+
+  /** Navigate to the grill session for a given idea */
+  const handleNavigateToGrill = useCallback(
+    (_ideaId: string) => {
+      // Navigate to Ideas tab (workspace settings) — the grill session will show
+      setWorkspaceSettingsTab('ideas')
+      setSidebarView('settings')
+      // The ideas list will show the active grill for this idea
+    },
+    []
+  )
 
   // MCP tools from Da Vinci status (moved from ChatPanel header to status bar)
   const activeMcpTools = useAgentStore((s) => {
@@ -536,6 +567,26 @@ export default function AppLayout(): React.JSX.Element {
               </span>
             </button>
           </span>
+
+          {/* Grill status — shown when a grill is active */}
+          {grillStatus && (grillStatus.status === 'evaluating' || grillStatus.status === 'awaiting_answers') && (
+            <div className="flex items-center gap-1.5 border-l border-border-subtle pl-3 ml-1">
+              <button
+                onClick={() => handleNavigateToGrill(grillStatus.ideaId)}
+                className={`flex items-center gap-1 text-[11px] rounded px-1.5 py-0.5 transition-colors ${
+                  grillStatus.status === 'evaluating'
+                    ? 'text-accent bg-accent/10 hover:bg-accent/20'
+                    : 'text-info bg-info/10 hover:bg-info/20'
+                }`}
+                title={grillStatus.status === 'evaluating' ? 'Grill in progress' : 'Grill needs your answers'}
+              >
+                <Flame size={11} className={grillStatus.status === 'evaluating' ? 'animate-pulse' : ''} />
+                <span className="font-medium">
+                  {grillStatus.status === 'evaluating' ? 'Grilling…' : 'Needs Answers'}
+                </span>
+              </button>
+            </div>
+          )}
 
           {/* Zoom controls */}
           <div className="flex items-center gap-0.5 border-l border-border-subtle pl-3 ml-1">
