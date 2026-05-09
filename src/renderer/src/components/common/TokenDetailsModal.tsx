@@ -6,8 +6,8 @@ import Skeleton from './Skeleton'
 interface TokenDetailsModalProps {
   isOpen: boolean
   conversationId: string | null
-  /** Live input token count from agent.store */
-  liveInputTokens: number
+  /** Current context window size (point-in-time, from SDK getContextUsage) */
+  contextWindowTokens: number
   /** Live output token count from agent.store */
   liveOutputTokens: number
   onClose: () => void
@@ -22,7 +22,7 @@ function fmtTokens(n: number): string {
 export default function TokenDetailsModal({
   isOpen,
   conversationId,
-  liveInputTokens,
+  contextWindowTokens,
   liveOutputTokens,
   onClose
 }: TokenDetailsModalProps): React.JSX.Element | null {
@@ -63,6 +63,9 @@ export default function TokenDetailsModal({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
 
+  // Claude API token fields are non-overlapping:
+  // input_tokens = uncached input, cache_read = served from cache, cache_creation = written to cache.
+  // Total context = input + cacheRead + cacheCreation. Cache hit % = cacheRead / total.
   const cacheHitPercent = useMemo(() => {
     if (!summary) return null
     const totalInput =
@@ -123,9 +126,9 @@ export default function TokenDetailsModal({
                 <ArrowUp size={14} className="text-sky-400 flex-shrink-0" />
                 <div>
                   <div className="text-lg font-semibold text-text-primary tabular-nums">
-                    {fmtTokens(liveInputTokens)}
+                    {fmtTokens(contextWindowTokens)}
                   </div>
-                  <div className="text-[10px] text-text-muted">Input tokens</div>
+                  <div className="text-[10px] text-text-muted">Context window</div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -139,9 +142,16 @@ export default function TokenDetailsModal({
               </div>
             </div>
             <div className="border-t border-border-subtle pt-2 flex justify-between items-center text-xs text-text-secondary">
-              <span>Total billed</span>
-              <span className="font-mono tabular-nums font-medium">
-                {fmtTokens(liveInputTokens + liveOutputTokens)}
+              <span>
+                {summary && summary.totalTurns > 0 && <>Turns: {summary.totalTurns} · </>}
+                {cacheHitPercent !== null && (
+                  <span className="ml-2 px-1 py-0.5 rounded bg-success/10 text-success text-[10px]">
+                    Cache: {cacheHitPercent}% hit
+                  </span>
+                )}
+              </span>
+              <span className="font-mono tabular-nums text-text-muted text-[10px]">
+                Claude Max — no per-token billing
               </span>
             </div>
           </div>
@@ -163,20 +173,23 @@ export default function TokenDetailsModal({
 
           {!loading && summary && (
             <div className="text-[11px] text-text-secondary space-y-1.5">
+              {/* Context tokens — total context processed across all turns */}
+              {summary.totalContextTokens > 0 && (
+                <div className="flex justify-between">
+                  <span>Total context processed</span>
+                  <span className="font-mono tabular-nums">
+                    {fmtTokens(summary.totalContextTokens)}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
-                <span>Total input</span>
+                <span className={summary.totalContextTokens > 0 ? 'pl-3' : ''}>Uncached input</span>
                 <span className="font-mono tabular-nums">
                   {fmtTokens(summary.totalInputTokens)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span>Total output</span>
-                <span className="font-mono tabular-nums">
-                  {fmtTokens(summary.totalOutputTokens)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span>
+                <span className={summary.totalContextTokens > 0 ? 'pl-3' : ''}>
                   Cache read
                   {cacheHitPercent !== null && (
                     <span className="ml-1 text-[10px] px-1 py-0.5 rounded bg-success/10 text-success">
@@ -189,10 +202,20 @@ export default function TokenDetailsModal({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span>Cache creation</span>
+                <span className={summary.totalContextTokens > 0 ? 'pl-3' : ''}>Cache creation</span>
                 <span className="font-mono tabular-nums">
                   {fmtTokens(summary.totalCacheCreationTokens)}
                 </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Total output</span>
+                <span className="font-mono tabular-nums">
+                  {fmtTokens(summary.totalOutputTokens)}
+                </span>
+              </div>
+              <div className="flex justify-between text-text-muted">
+                <span>Turns</span>
+                <span className="font-mono tabular-nums">{summary.totalTurns}</span>
               </div>
 
               {/* Per-agent breakdown */}
@@ -233,8 +256,8 @@ export default function TokenDetailsModal({
         {/* Explanation footnote */}
         <div className="px-5 pb-4">
           <p className="text-[10px] text-text-muted leading-snug">
-            Cached input is billed at a discount. Total reflects actual cost; in/out are the raw
-            model traffic.
+            Context window shows the current model context size. Cached input tokens are served from
+            prompt cache at ~90% discount. Persisted breakdown shows per-turn API-reported values.
           </p>
         </div>
 

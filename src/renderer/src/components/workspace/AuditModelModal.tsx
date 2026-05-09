@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Cloud, Monitor, Play, X, HeartPulse } from 'lucide-react'
+import { Cloud, Monitor, Play, X, ShieldCheck } from 'lucide-react'
 import type { LLMProvider, AuditMode } from '../../../../shared/types'
 
 interface AuditModelModalProps {
@@ -36,7 +36,7 @@ export default function AuditModelModal({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
           <div className="flex items-center gap-2">
-            <HeartPulse size={20} className="text-success" />
+            <ShieldCheck size={20} className="text-success" />
             <h2 className="text-base font-bold text-text-primary">Run Workspace Audit</h2>
           </div>
           <button

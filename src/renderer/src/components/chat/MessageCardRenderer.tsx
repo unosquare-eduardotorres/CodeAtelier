@@ -139,9 +139,7 @@ export default function MessageCardRenderer({
             rehypePlugins={rehypePlugins}
             components={markdownComponents}
           >
-            {[beforeGrillQuestion?.trim(), afterGrillQuestion?.trim()]
-              .filter(Boolean)
-              .join('\n\n')}
+            {[beforeGrillQuestion?.trim(), afterGrillQuestion?.trim()].filter(Boolean).join('\n\n')}
           </ReactMarkdown>
         </div>
       </div>
@@ -240,7 +238,14 @@ export default function MessageCardRenderer({
           components={markdownComponents}
         />
         <TaskPlanCard
-          summary="Implementation Plan"
+          summary={(() => {
+            try {
+              const parsed = planContent ? JSON.parse(planContent) : null
+              return parsed?.title ?? 'Implementation Plan'
+            } catch {
+              return 'Implementation Plan'
+            }
+          })()}
           mode="plan"
           planContent={planContent}
           onBuildNow={onBuildNow}

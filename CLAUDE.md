@@ -1,8 +1,8 @@
-# Project: Agent Studio
+# Project: Code Atelier
 
 ## Overview
 
-Agent Studio is an Electron desktop application. Each workspace runs exactly one of two equivalent AI roles — **DaVinci** (the default expert partner) or a **Project Specialist** (an LLM-tailored expert built from the workspace's stack and CLAUDE.md). Both roles share the same execution pipeline — same MCP toolbox, same plan/build mode rules, same memory + intent pipelines. Only the identity prompt differs. Everything runs locally via Claude CLI backed by a Claude Max subscription; no API keys, no proxy servers.
+Code Atelier is an Electron desktop application. Each workspace runs exactly one of two equivalent AI roles — **DaVinci** (the default expert partner) or a **Project Specialist** (an LLM-tailored expert built from the workspace's stack and CLAUDE.md). Both roles share the same execution pipeline — same MCP toolbox, same plan/build mode rules, same memory + intent pipelines. Only the identity prompt differs. Everything runs locally via Claude CLI backed by a Claude Max subscription; no API keys, no proxy servers.
 
 ## Tech stack
 

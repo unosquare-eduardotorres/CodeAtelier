@@ -16,6 +16,7 @@ import type {
   CostPreference
 } from '../../shared/types'
 import type { ControlActionCallbacks } from './control-actions.tool'
+import type { ContextWindowTier } from './context-management'
 
 // ── Config for starting a session ────────────────────────────────────
 
@@ -50,6 +51,8 @@ export interface AdapterMcpContext {
   workspaceId: string | null
   conversationId: string | null
   controlCallbacks: ControlActionCallbacks
+  /** Context window tier for local LLM tool gating */
+  contextTier?: ContextWindowTier
 }
 
 export interface AdapterMcpResult {

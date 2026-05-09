@@ -41,15 +41,15 @@ class CodeAnalysisMcpService {
               .optional()
               .default(['TODO', 'FIXME', 'HACK', 'XXX', 'BUG'])
               .describe('Marker patterns to search for'),
-            pathPrefix: z
+            path: z
               .string()
               .optional()
-              .describe('Limit scan to files under this path prefix'),
+              .describe('Limit scan to files under this directory path'),
             maxResults: z.number().optional().default(100)
           },
           handler: async (args) => {
             const patterns = args.patterns as string[]
-            const pathPrefix = args.pathPrefix as string | undefined
+            const pathPrefix = args.path as string | undefined
             const maxResults = args.maxResults as number
             log.info(`[CodeAnalysis] todo_scanner (workspace: ${workspacePath})`)
 
@@ -95,19 +95,50 @@ class CodeAnalysisMcpService {
                 if (m) byPattern[m.pattern] = (byPattern[m.pattern] ?? 0) + 1
               }
 
+              const fullResult = { matches, summary: byPattern, totalCount: matches.length }
+              const fullJson = JSON.stringify(fullResult)
+
+              // Two-tier output: if full result exceeds 80K, return overview instead
+              if (fullJson.length > 80_000) {
+                // Group by top-level directory (first 2 path segments)
+                const byDirectory: Record<string, number> = {}
+                const fileHits: Record<string, number> = {}
+                for (const m of matches) {
+                  if (!m) continue
+                  const parts = m.file.split('/')
+                  const dirKey = parts.length >= 2 ? parts.slice(0, 2).join('/') : parts[0]
+                  byDirectory[dirKey] = (byDirectory[dirKey] ?? 0) + 1
+                  fileHits[m.file] = (fileHits[m.file] ?? 0) + 1
+                }
+
+                // Top 10 hotspot files
+                const hotspotFiles = Object.entries(fileHits)
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 10)
+                  .map(([file, count]) => ({ file, count }))
+
+                return {
+                  content: [
+                    {
+                      type: 'text' as const,
+                      text: JSON.stringify({
+                        mode: 'overview',
+                        totalCount: matches.length,
+                        byPattern,
+                        byDirectory,
+                        hotspotFiles,
+                        hint: 'Use the path parameter to drill into a specific directory for full match details'
+                      })
+                    }
+                  ]
+                }
+              }
+
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: JSON.stringify(
-                      {
-                        matches,
-                        summary: byPattern,
-                        totalCount: matches.length
-                      },
-                      null,
-                      2
-                    )
+                    text: JSON.stringify(fullResult)
                   }
                 ]
               }
@@ -117,11 +148,7 @@ class CodeAnalysisMcpService {
                 content: [
                   {
                     type: 'text' as const,
-                    text: JSON.stringify(
-                      { matches: [], summary: {}, totalCount: 0 },
-                      null,
-                      2
-                    )
+                    text: JSON.stringify({ matches: [], summary: {}, totalCount: 0 })
                   }
                 ]
               }
@@ -150,7 +177,7 @@ class CodeAnalysisMcpService {
                 content: [
                   {
                     type: 'text' as const,
-                    text: JSON.stringify({ error: 'No package.json found', dependencies: [] }, null, 2)
+                    text: JSON.stringify({ error: 'No package.json found', dependencies: [] })
                   }
                 ]
               }
@@ -207,21 +234,17 @@ class CodeAnalysisMcpService {
               content: [
                 {
                   type: 'text' as const,
-                  text: JSON.stringify(
-                    {
-                      projectName: pkg.name ?? 'unknown',
-                      dependencies: enriched,
-                      counts: {
-                        production: deps.length,
-                        dev: devDeps.length,
-                        peer: peerDeps.length,
-                        total: allDeps.length,
-                        outdated: Object.keys(outdatedInfo).length
-                      }
-                    },
-                    null,
-                    2
-                  )
+                  text: JSON.stringify({
+                    projectName: pkg.name ?? 'unknown',
+                    dependencies: enriched,
+                    counts: {
+                      production: deps.length,
+                      dev: devDeps.length,
+                      peer: peerDeps.length,
+                      total: allDeps.length,
+                      outdated: Object.keys(outdatedInfo).length
+                    }
+                  })
                 }
               ]
             }
@@ -233,13 +256,13 @@ class CodeAnalysisMcpService {
             'Map source files to their test counterparts using naming conventions (.test.ts, .spec.ts, __tests__/). ' +
             'Identifies untested modules without needing a coverage runner.',
           inputSchema: {
-            pathPrefix: z
+            path: z
               .string()
               .optional()
-              .describe('Limit analysis to files under this path prefix (e.g. "src/")')
+              .describe('Limit analysis to files under this directory path (e.g. "src/")')
           },
           handler: async (args) => {
-            const pathPrefix = args.pathPrefix as string | undefined
+            const pathPrefix = args.path as string | undefined
             log.info(`[CodeAnalysis] test_coverage_map (workspace: ${workspacePath})`)
 
             const searchPath = pathPrefix
@@ -297,24 +320,61 @@ class CodeAnalysisMcpService {
               const covered = coverage.filter((c) => c.hasCoverage).length
               const total = coverage.length
 
+              const fullResult = {
+                files: coverage,
+                summary: {
+                  totalSourceFiles: total,
+                  filesWithTests: covered,
+                  filesWithoutTests: total - covered,
+                  coverageRatio: total > 0 ? Math.round((covered / total) * 100) / 100 : 0
+                }
+              }
+              const fullJson = JSON.stringify(fullResult)
+
+              // Two-tier output: if full result exceeds 80K, return overview instead
+              if (fullJson.length > 80_000) {
+                // Group by top-level directory (first 2 path segments)
+                const byDirectory: Record<string, { total: number; covered: number; ratio: number }> = {}
+                for (const c of coverage) {
+                  const parts = c.sourceFile.split('/')
+                  const dirKey = parts.length >= 2 ? parts.slice(0, 2).join('/') : parts[0]
+                  if (!byDirectory[dirKey]) byDirectory[dirKey] = { total: 0, covered: 0, ratio: 0 }
+                  byDirectory[dirKey].total++
+                  if (c.hasCoverage) byDirectory[dirKey].covered++
+                }
+                // Compute ratios
+                for (const dir of Object.values(byDirectory)) {
+                  dir.ratio = dir.total > 0 ? Math.round((dir.covered / dir.total) * 100) / 100 : 0
+                }
+
+                // Worst directories (lowest ratio, min 5 files)
+                const worstDirectories = Object.entries(byDirectory)
+                  .filter(([, d]) => d.total >= 5)
+                  .sort((a, b) => a[1].ratio - b[1].ratio)
+                  .slice(0, 10)
+                  .map(([dir, d]) => ({ dir, ...d }))
+
+                return {
+                  content: [
+                    {
+                      type: 'text' as const,
+                      text: JSON.stringify({
+                        mode: 'overview',
+                        summary: fullResult.summary,
+                        byDirectory,
+                        worstDirectories,
+                        hint: 'Use the path parameter to get file-level details for a specific directory'
+                      })
+                    }
+                  ]
+                }
+              }
+
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: JSON.stringify(
-                      {
-                        files: coverage,
-                        summary: {
-                          totalSourceFiles: total,
-                          filesWithTests: covered,
-                          filesWithoutTests: total - covered,
-                          coverageRatio:
-                            total > 0 ? Math.round((covered / total) * 100) / 100 : 0
-                        }
-                      },
-                      null,
-                      2
-                    )
+                    text: JSON.stringify(fullResult)
                   }
                 ]
               }
@@ -324,7 +384,7 @@ class CodeAnalysisMcpService {
                 content: [
                   {
                     type: 'text' as const,
-                    text: JSON.stringify({ error: 'Failed to scan files', files: [] }, null, 2)
+                    text: JSON.stringify({ error: 'Failed to scan files', files: [] })
                   }
                 ]
               }

@@ -8,7 +8,7 @@ interface WorkspaceState {
   isLoading: boolean
   agentStatus: 'stopped' | 'starting' | 'running' | 'error'
   repoInfo: RepoInfo | null
-  githubStatus: { configured: boolean; login?: string } | null
+  githubStatus: { configured: boolean; login?: string; tokenType?: string } | null
 
   loadWorkspaces: () => Promise<void>
   createWorkspace: (name: string, repoPath: string) => Promise<void>

@@ -4,7 +4,8 @@ import { AppLayout } from '@renderer/components/layout'
 import {
   WelcomeModal,
   CheckpointApprovalModal,
-  ElicitationModal
+  ElicitationModal,
+  UpdateAvailableModal
 } from '@renderer/components/common'
 import {
   useWorkspaceStore,
@@ -35,10 +36,12 @@ function App(): React.JSX.Element {
     addToolActivity,
     updateToolActivity,
     setCompactSuggestion,
+    setBudgetCapBanner,
     endGrillSession,
     setGrillQuestions,
     setPendingQuestions,
-    setConversationState
+    setConversationState,
+    loadContextUsage
   } = useChatActions()
 
   // Agent actions
@@ -83,7 +86,11 @@ function App(): React.JSX.Element {
 
       // Handle turn boundaries — finalize current bubble and start a new one
       if (data.turnBoundary && data.turnId) {
-        finalizeTurnBubble(data.turnId)
+        finalizeTurnBubble(
+          data.turnId,
+          data.role as 'da-vinci' | 'specialist',
+          (data as Record<string, unknown>).specialist as string | undefined
+        )
         return
       }
       if (data.chunk) {
@@ -134,7 +141,23 @@ function App(): React.JSX.Element {
         }
       }
       if (data.compactNeeded) {
-        setCompactSuggestion(data.compactNeeded)
+        if (data.compactNeeded.level === 'compacted') {
+          // Auto-compaction completed — refresh context usage silently.
+          // Clear any stale compact suggestion that was showing pre-compaction data.
+          setCompactSuggestion(null)
+          if (data.conversationId) {
+            void loadContextUsage(data.conversationId)
+          }
+        } else {
+          setCompactSuggestion(data.compactNeeded)
+        }
+      }
+      if (data.budgetCapReached) {
+        setBudgetCapBanner({
+          conversationId: data.conversationId,
+          message: data.budgetCapReached.message,
+          canContinue: data.budgetCapReached.canContinue
+        })
       }
     })
 
@@ -193,7 +216,7 @@ function App(): React.JSX.Element {
 
     // Auto-update event listeners
     const unsubUpdateAvailable = window.api.onUpdateAvailable((info) => {
-      setAvailable(info.version, info.releaseNotes)
+      setAvailable(info.version, info.releaseNotes, info.releaseDate)
     })
     const unsubUpdateNotAvailable = window.api.onUpdateNotAvailable(() => {
       setNotAvailable()
@@ -224,9 +247,7 @@ function App(): React.JSX.Element {
         )
         return
       }
-      rendererLog.info(
-        `[StateMachine:renderer] ${data.from} → ${data.to} (event=${data.event})`
-      )
+      rendererLog.info(`[StateMachine:renderer] ${data.from} → ${data.to} (event=${data.event})`)
       setConversationState({
         phase: data.to as ConversationPhase | 'idle' | 'error' | 'stopped',
         from: data.from,
@@ -262,6 +283,7 @@ function App(): React.JSX.Element {
     updateStatus,
     setAgentReady,
     setCompactSuggestion,
+    setBudgetCapBanner,
     endGrillSession,
     setGrillQuestions,
     setPendingQuestions,
@@ -272,7 +294,8 @@ function App(): React.JSX.Element {
     setError,
     onMemoryFeedProgress,
     finalizeTurnBubble,
-    setConversationState
+    setConversationState,
+    loadContextUsage
   ])
 
   // Brief loading state while profile loads
@@ -302,6 +325,7 @@ function App(): React.JSX.Element {
       <AppLayout />
       <CheckpointApprovalModal />
       <ElicitationModal />
+      <UpdateAvailableModal />
     </>
   )
 }

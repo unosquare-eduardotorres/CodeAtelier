@@ -36,11 +36,11 @@ describe('Suite 9: Event sequence', () => {
       }
     })
 
-    emitter.emit('chunk', { type: 'text', text: 'Agent' })
-    emitter.emit('chunk', { type: 'text', text: ' Studio' })
+    emitter.emit('chunk', { type: 'text', text: 'Code' })
+    emitter.emit('chunk', { type: 'text', text: ' Atelier' })
     emitter.emit('chunk', { type: 'text', text: ' pipeline' })
 
-    assert.equal(accumulated, 'Agent Studio pipeline')
+    assert.equal(accumulated, 'Code Atelier pipeline')
   })
 })
 

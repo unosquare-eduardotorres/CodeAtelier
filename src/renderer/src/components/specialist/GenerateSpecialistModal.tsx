@@ -136,7 +136,7 @@ export default function GenerateSpecialistModal({
           {view === 'idle' && (
             <div className="bg-surface-base rounded-xl p-4 border border-border-subtle">
               <p className="text-sm text-text-body leading-relaxed">
-                Agent Studio scans <span className="font-semibold">{workspaceName}</span> to detect
+                Code Atelier scans <span className="font-semibold">{workspaceName}</span> to detect
                 its tech stack, then asks Claude to tailor a senior engineer persona for this
                 project.
               </p>

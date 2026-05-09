@@ -13,7 +13,8 @@ import {
 } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
 import { modelConfigService } from '../services/model-config.service'
-import { IPC_CHANNELS, RECOMMENDED_LOCAL_MODELS } from '../../shared/constants'
+import { contextWindowResolver } from '../services/context-window-resolver'
+import { IPC_CHANNELS } from '../../shared/constants'
 import type { ConversationMode, ContextUsageLevel, LLMProvider } from '../../shared/types'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
@@ -48,6 +49,8 @@ function registerConversationCrudIpc(): void {
         title?: string
         mode?: ConversationMode
         personaSpecialistId?: string
+        llmProvider?: LLMProvider
+        mcpOverrides?: Record<string, boolean>
       }
     ) => {
       validateSender(event)
@@ -71,17 +74,19 @@ function registerConversationCrudIpc(): void {
         if (!specialist) throw new Error('Invalid persona specialist ID')
       }
 
-      // Read workspace LLM provider setting
+      // Per-conversation LLM provider: explicit selection → workspace setting → 'claude'
       const wsRow = workspaceRepository.findById(args.workspaceId)
       const settings = JSON.parse(wsRow?.settingsJson ?? '{}')
-      const llmProvider: LLMProvider = settings.llmProvider ?? 'claude'
+      const llmProvider: LLMProvider =
+        (args.llmProvider as LLMProvider) ?? settings.llmProvider ?? 'claude'
 
       const conversation = conversationRepository.create(
         args.workspaceId,
         args.title,
         args.mode,
         args.personaSpecialistId,
-        llmProvider
+        llmProvider,
+        args.mcpOverrides
       )
       conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 
@@ -201,6 +206,27 @@ function registerConversationCrudIpc(): void {
         throw new Error('Invalid messageId')
       }
       await chatAgentService.resumeAt(args.messageId)
+    }
+  )
+
+  // ── Update per-conversation external MCP overrides ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_UPDATE_MCP_OVERRIDES,
+    async (event, args: { conversationId: string; overrides: Record<string, boolean> }) => {
+      validateSender(event)
+      if (
+        !args ||
+        typeof args.conversationId !== 'string' ||
+        args.conversationId.trim().length === 0
+      ) {
+        throw new Error('Invalid conversation ID')
+      }
+      if (!args.overrides || typeof args.overrides !== 'object' || Array.isArray(args.overrides)) {
+        throw new Error('Invalid overrides object')
+      }
+      const updated = conversationRepository.updateMcpOverrides(args.conversationId, args.overrides)
+      if (!updated) throw new Error('Conversation not found')
+      return updated
     }
   )
 }
@@ -331,10 +357,34 @@ function registerChatModeIpc(): void {
               autoCompactThreshold?: number
               isAutoCompactEnabled?: boolean
             }
-            const percentage = sdk.percentage ?? Math.round((sdk.totalTokens / sdk.maxTokens) * 100)
+            // For local LLMs: SDK reports the backend's working limit (oMLX scales
+            // it down, Ollama defaults by VRAM). Override with the resolved model
+            // context window so the UI shows the real capability.
+            let effectiveMaxTokens = sdk.maxTokens
+            const conversation = conversationRepository.findById(args.conversationId)
+            if (conversation) {
+              const workspace = workspaceRepository.findById(conversation.workspaceId)
+              if (workspace && modelConfigService.isLocalProvider(workspace.repoPath)) {
+                const llmConfig = modelConfigService.getLocalLLMConfig(workspace.repoPath)
+                const settings = JSON.parse(workspace.settingsJson || '{}')
+                const userOverride = settings.localContextWindow as number | undefined
+                const resolved = await contextWindowResolver.resolve(llmConfig, userOverride)
+                if (resolved > sdk.maxTokens) {
+                  log.info(
+                    `[ContextUsage] Overriding SDK maxTokens ${sdk.maxTokens} → ${resolved} (${llmConfig.backend})`
+                  )
+                  effectiveMaxTokens = resolved
+                }
+              }
+            }
+
+            const percentage =
+              sdk.percentage && effectiveMaxTokens === sdk.maxTokens
+                ? sdk.percentage
+                : Math.round((sdk.totalTokens / effectiveMaxTokens) * 100)
             // Quality window scales with context window: 50% of max, capped at 500K
             // For 1M context: 500K quality window. For 200K context: 100K quality window.
-            const effectiveQualityWindow = Math.min(Math.round(sdk.maxTokens * 0.5), 500_000)
+            const effectiveQualityWindow = Math.min(Math.round(effectiveMaxTokens * 0.5), 500_000)
             const qualityPercentage = Math.round((sdk.totalTokens / effectiveQualityWindow) * 100)
             const level: ContextUsageLevel =
               qualityPercentage > 80
@@ -356,7 +406,7 @@ function registerChatModeIpc(): void {
             return {
               conversationId: args.conversationId,
               inputTokens: sdk.totalTokens,
-              contextWindowSize: sdk.maxTokens,
+              contextWindowSize: effectiveMaxTokens,
               percentage,
               level,
               qualityLevel,
@@ -382,22 +432,25 @@ function registerChatModeIpc(): void {
 
       // ── Strategy 2: DB fallback (historical/idle conversations) ──
       const lastTurn = turnUsageRepository.getLastTurn(args.conversationId)
+      // Prefer context_tokens (SDK-reported, accounts for post-compaction state)
+      // over summing raw API fields (which reflect pre-compaction totals).
       const inputTokens =
-        (lastTurn?.inputTokens ?? 0) +
-        (lastTurn?.cacheReadTokens ?? 0) +
-        (lastTurn?.cacheCreationTokens ?? 0)
+        lastTurn?.contextTokens && lastTurn.contextTokens > 0
+          ? lastTurn.contextTokens
+          : (lastTurn?.inputTokens ?? 0) +
+            (lastTurn?.cacheReadTokens ?? 0) +
+            (lastTurn?.cacheCreationTokens ?? 0)
 
-      // Resolve context window — use model's actual window for local LLM, Claude's 1M otherwise
+      // Resolve context window — use full resolution chain for local LLMs, Claude's 1M otherwise
       let contextWindowSize = 1_000_000
-      const conversation = conversationRepository.findById(args.conversationId)
-      if (conversation) {
-        const workspace = workspaceRepository.findById(conversation.workspaceId)
-        if (workspace && modelConfigService.isLocalProvider(workspace.repoPath)) {
-          const llmConfig = modelConfigService.getLocalLLMConfig(workspace.repoPath)
-          const recommended = RECOMMENDED_LOCAL_MODELS.find(
-            (m) => m.ollamaId === llmConfig.localModel || m.omlxId === llmConfig.localModel
-          )
-          contextWindowSize = recommended?.contextWindow ?? 32768
+      const dbConversation = conversationRepository.findById(args.conversationId)
+      if (dbConversation) {
+        const dbWorkspace = workspaceRepository.findById(dbConversation.workspaceId)
+        if (dbWorkspace && modelConfigService.isLocalProvider(dbWorkspace.repoPath)) {
+          const llmConfig = modelConfigService.getLocalLLMConfig(dbWorkspace.repoPath)
+          const settings = JSON.parse(dbWorkspace.settingsJson || '{}')
+          const userOverride = settings.localContextWindow as number | undefined
+          contextWindowSize = await contextWindowResolver.resolve(llmConfig, userOverride)
         }
       }
       // Quality window scales with context window: 50% of max, capped at 500K

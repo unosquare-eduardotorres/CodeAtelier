@@ -27,6 +27,7 @@ import type { AgentRoleAdapter } from './agent-session.types'
 import type { CacheEfficiencyReport } from './agent-token-tracker'
 import { workspaceRepository } from '../db/repositories'
 import { getDatabase } from '../db/index'
+import { modelConfigService } from './model-config.service'
 
 /** Events forwarded session → this facade. */
 const FORWARDED_EVENTS = [
@@ -216,6 +217,13 @@ export class ChatAgentService extends EventEmitter {
     const conversationId = this.session.getCurrentConversationId()
     if (!workspacePath || !conversationId) {
       throw new Error('Agent not running — nothing to compact')
+    }
+
+    // Local LLMs: delegate directly to session.compact() which emits
+    // 'compactNeeded' with level='local-unsupported' — no sessionId needed.
+    if (modelConfigService.isLocalProvider(workspacePath)) {
+      await this.session.compact()
+      return
     }
 
     const sessionId = this.session.getSessionId(conversationId)

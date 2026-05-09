@@ -91,7 +91,7 @@ function exportSpecialistsBackup(db: Database.Database): string | null {
     }))
 
     const isoSafe = new Date().toISOString().replace(/[:.]/g, '-')
-    const filename = `agent-studio-specialist-backup-${isoSafe}.json`
+    const filename = `code-atelier-specialist-backup-${isoSafe}.json`
     const filepath = join(backupDir, filename)
     const doc: BackupDocument = {
       schemaVersion: 65,

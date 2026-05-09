@@ -272,12 +272,12 @@ These are query-option additions that unlock new features with minimal code.
 
 #### G.3 — `env` with `CLAUDE_AGENT_SDK_CLIENT_APP`
 
-**Problem**: API requests from Agent Studio are indistinguishable from raw CLI usage in Anthropic's analytics.
+**Problem**: API requests from Code Atelier are indistinguishable from raw CLI usage in Anthropic's analytics.
 
-**Win**: Setting `CLAUDE_AGENT_SDK_CLIENT_APP: 'agent-studio/1.0'` tags all API requests with our app identifier. Enables Anthropic-side analytics and potential partnership benefits.
+**Win**: Setting `CLAUDE_AGENT_SDK_CLIENT_APP: 'code-atelier/1.0'` tags all API requests with our app identifier. Enables Anthropic-side analytics and potential partnership benefits.
 
 **Files**:
-- `src/main/services/sdk-executor.ts` — pass `env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'agent-studio/VERSION' }` in query options
+- `src/main/services/sdk-executor.ts` — pass `env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'code-atelier/VERSION' }` in query options
 
 **Effort**: Trivial (1 line)
 

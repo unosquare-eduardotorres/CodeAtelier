@@ -10,6 +10,8 @@ import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
+import CodeIntelligencePage from './CodeIntelligencePage'
+import IntegrationsPage from './IntegrationsPage'
 import SpecialistPage from './SpecialistPage'
 import HealthPage from './HealthPage'
 import { SkillDetailPage } from '@renderer/components/settings'
@@ -20,6 +22,7 @@ import type { SettingsTab } from './WorkspaceSettingsPanel'
 interface WorkspaceSettingsContentProps {
   tab: SettingsTab
   onNavigateToChat: () => void
+  onFixInNewChat: () => void
   pendingGrill?: {
     ideaId: string
     conversationId: string
@@ -33,6 +36,7 @@ interface WorkspaceSettingsContentProps {
 export default function WorkspaceSettingsContent({
   tab,
   onNavigateToChat,
+  onFixInNewChat,
   pendingGrill,
   onPendingGrillConsumed
 }: WorkspaceSettingsContentProps): React.JSX.Element {
@@ -104,9 +108,11 @@ export default function WorkspaceSettingsContent({
       className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${tab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}
     >
       {tab === 'specialist' && <SpecialistPage />}
-      {tab === 'health' && <HealthPage onNavigateToChat={onNavigateToChat} />}
+      {tab === 'health' && <HealthPage onNavigateToChat={onNavigateToChat} onFixInNewChat={onFixInNewChat} />}
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
+      {tab === 'code-intelligence' && <CodeIntelligencePage />}
+      {tab === 'integrations' && <IntegrationsPage />}
 
       {tab === 'team' && workspacePath && (
         <div className="flex-1 min-h-0">

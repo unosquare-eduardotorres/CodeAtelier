@@ -1,5 +1,6 @@
 import { ipcMain, dialog } from 'electron'
 import { existsSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import { resolve, basename } from 'node:path'
 import simpleGit from 'simple-git'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -7,6 +8,7 @@ import { workspaceRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 import { agentSyncService } from '../services/agent-sync.service'
 import { fileWatcherService } from '../services/file-watcher.service'
+import { chatAgentService } from '../services/chat-agent.service'
 import { dbLogger } from '../logger'
 import { getDatabase } from '../db/index'
 
@@ -205,6 +207,26 @@ export function registerWorkspaceIpc(): void {
         dbLogger.warn('Failed to update file watcher on settings change:', e)
       }
 
+      // ── Restart agent session when LLM provider changes ──
+      // The running AgentSessionService caches llmProvider at start().
+      // If it changes, we must restart so the new provider takes effect.
+      try {
+        const oldProvider = (existing.llmProvider as string) ?? 'claude'
+        const newProvider = (merged.llmProvider as string) ?? 'claude'
+
+        if (oldProvider !== newProvider && chatAgentService.isRunning()) {
+          const ws = workspaceRepository.findById(args.workspaceId)
+          if (ws && chatAgentService.getWorkspacePath() === ws.repoPath) {
+            dbLogger.info(
+              `[workspace:settings] LLM provider changed: ${oldProvider} → ${newProvider} — restarting agent session`
+            )
+            await chatAgentService.start(ws.repoPath)
+          }
+        }
+      } catch (e) {
+        dbLogger.warn('Failed to restart agent after LLM provider change:', e)
+      }
+
       return result
     }
   )
@@ -238,6 +260,27 @@ export function registerWorkspaceIpc(): void {
       }
 
       return { success: true }
+    }
+  )
+
+  // ── External MCP prerequisite check ──
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP,
+    async (event, args: { command: string }) => {
+      validateSender(event)
+      if (!args || typeof args.command !== 'string' || args.command.trim().length === 0) {
+        throw new Error('Invalid command')
+      }
+      // Sanitize: only allow simple command names (no slashes, spaces, or shell metacharacters)
+      if (!/^[a-zA-Z0-9_-]+$/.test(args.command)) {
+        throw new Error('Invalid command name')
+      }
+      try {
+        const result = execSync(`which ${args.command}`, { stdio: 'pipe', timeout: 3000 })
+        return { available: true, path: result.toString().trim() }
+      } catch {
+        return { available: false }
+      }
     }
   )
 

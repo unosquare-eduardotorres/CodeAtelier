@@ -1,7 +1,7 @@
 /**
  * Agent Factory — Builds service instances with injected dependencies for testing.
  *
- * All services in Agent Studio use module-level singletons. For unit tests,
+ * All services in Code Atelier use module-level singletons. For unit tests,
  * we need to construct fresh instances with mocked dependencies. This factory
  * provides builder functions that wire up services with controllable fakes.
  *

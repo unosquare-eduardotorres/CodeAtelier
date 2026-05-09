@@ -422,6 +422,92 @@ describe('CodeGraphEdgeRepository', () => {
   })
 })
 
+// ── CodeGraphService.getIndexingState DB fallback ──
+
+describe('CodeGraphService.getIndexingState (DB fallback)', () => {
+  if (!dbAvailable) {
+    skip('returns idle when no in-memory state and no DB data')
+    skip('returns complete with DB counts when persisted data exists')
+    skip('returns in-memory state when available (no DB lookup)')
+    return
+  }
+
+  // Import service singleton — its private indexingStates map is empty on cold start,
+  // which mirrors the post-restart scenario we're testing.
+  let codeGraphService: typeof import('../code-graph.service').codeGraphService
+
+  try {
+    codeGraphService = require('../code-graph.service').codeGraphService
+  } catch (err) {
+    console.log(`  ⚠ Could not load CodeGraphService: ${(err as Error).message.split('\n')[0]}`)
+    skip('returns idle when no in-memory state and no DB data')
+    skip('returns complete with DB counts when persisted data exists')
+    return
+  }
+
+  test('returns idle when no in-memory state and no DB data', () => {
+    const { wsId } = setupTestDb()
+    const state = codeGraphService.getIndexingState(wsId)
+    assert.equal(state.status, 'idle')
+    assert.equal(state.totalTags, 0)
+    assert.equal(state.totalEdges, 0)
+    assert.equal(state.totalFiles, 0)
+  })
+
+  test('returns complete with DB counts when persisted data exists', () => {
+    const { wsId } = setupTestDb()
+    const tagRepo = new CodeGraphTagRepository()
+    const edgeRepo = new CodeGraphEdgeRepository()
+    const rankRepo = new CodeGraphRankRepository()
+
+    // Seed tags across two files (only files with symbols)
+    tagRepo.upsertTags(
+      wsId,
+      [
+        { relFname: 'src/a.ts', fname: '/abs/src/a.ts', line: 1, name: 'Foo', kind: 'def' },
+        { relFname: 'src/b.ts', fname: '/abs/src/b.ts', line: 5, name: 'Bar', kind: 'def' }
+      ],
+      new Map([
+        ['src/a.ts', 1000],
+        ['src/b.ts', 2000]
+      ])
+    )
+
+    // Seed edges
+    edgeRepo.upsertEdges(wsId, [
+      {
+        workspaceId: wsId,
+        sourceFile: 'src/a.ts',
+        sourceSymbol: 'Foo',
+        targetFile: 'src/b.ts',
+        targetSymbol: 'Bar',
+        edgeType: 'references',
+        pageRank: 0
+      }
+    ])
+
+    // Seed ranks — PageRank covers ALL discovered files (including ones
+    // without tags), so rank count should be used for totalFiles
+    rankRepo.upsertRanks(
+      wsId,
+      new Map([
+        ['src/a.ts', 0.5],
+        ['src/b.ts', 0.3],
+        ['src/c.ts', 0.1],
+        ['src/d.ts', 0.1]
+      ])
+    )
+
+    // Service has no in-memory state for this workspace — should fall back to DB
+    const state = codeGraphService.getIndexingState(wsId)
+    assert.equal(state.status, 'complete')
+    assert.equal(state.totalTags, 2)
+    assert.equal(state.totalEdges, 1)
+    // totalFiles comes from rank count (4), not tag file count (2)
+    assert.equal(state.totalFiles, 4)
+  })
+})
+
 // ── Summary ──
 
 console.log(`\n${'─'.repeat(40)}`)

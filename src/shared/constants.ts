@@ -189,6 +189,8 @@ export const IPC_CHANNELS = {
   UPDATE_PROGRESS: 'update:progress',
   UPDATE_INSTALL: 'update:install',
   UPDATE_DOWNLOAD: 'update:download',
+  UPDATE_GET_CONFIG: 'update:getConfig',
+  UPDATE_SET_CONFIG: 'update:setConfig',
 
   // GitHub Integration
   GITHUB_SAVE_TOKEN: 'github:saveToken',
@@ -272,7 +274,14 @@ export const IPC_CHANNELS = {
   SUBSCRIPTION_CHECK_CLAUDE_CLI: 'subscription:checkClaudeCli',
   SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure',
 
-  // Ollama
+  // Embedding provider (replaces Ollama for semantic search)
+  EMBEDDING_CHECK_STATUS: 'embedding:checkStatus',
+  EMBEDDING_INITIALIZE: 'embedding:initialize',
+  EMBEDDING_MODEL_PROGRESS: 'embedding:modelProgress',
+  EMBEDDING_MODEL_READY: 'embedding:modelReady',
+  EMBEDDING_MODEL_ERROR: 'embedding:modelError',
+
+  // Ollama — @deprecated for semantic search (still used by Local LLM chat backend)
   OLLAMA_CHECK_STATUS: 'ollama:checkStatus',
   OLLAMA_PULL_MODEL: 'ollama:pullModel',
   OLLAMA_CANCEL_PULL: 'ollama:cancelPull',
@@ -290,6 +299,9 @@ export const IPC_CHANNELS = {
   INDEXING_PROGRESS: 'indexing:progress',
   INDEXING_GET_STATUS: 'indexing:getStatus',
   INDEXING_LOAD_PERSISTED: 'indexing:loadPersisted',
+
+  // Semantic Search query
+  SEMANTIC_SEARCH_QUERY: 'semanticSearch:query',
 
   // Code Graph (persisted repomap)
   CODE_GRAPH_INDEX_START: 'codeGraph:indexStart',
@@ -374,6 +386,8 @@ export const IPC_CHANNELS = {
   AUDIT_CONVERT_FINDINGS: 'audit:convertFindings',
   AUDIT_RERUN_TRACK: 'audit:rerunTrack',
   AUDIT_EXPORT_MARKDOWN: 'audit:exportMarkdown',
+  AUDIT_RESUME: 'audit:resume',
+  AUDIT_INTERMEDIATE: 'audit:intermediate',
   AUDIT_GET_HISTORY: 'audit:getHistory',
 
   // Grill (dedicated agent)
@@ -386,7 +400,11 @@ export const IPC_CHANNELS = {
   GRILL_GET_STATUS: 'grill:getStatus',
   GRILL_GET_SESSION: 'grill:getSession',
   GRILL_SAVE_ANSWERS: 'grill:saveAnswers',
-  GRILL_STATUS_CHANGED: 'grill:statusChanged'
+  GRILL_STATUS_CHANGED: 'grill:statusChanged',
+
+  // External MCP Integrations
+  WORKSPACE_CHECK_EXTERNAL_MCP: 'workspace:check-external-mcp',
+  CHAT_UPDATE_MCP_OVERRIDES: 'chat:update-mcp-overrides'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
@@ -548,7 +566,9 @@ export const COMPLEXITY_TO_EFFORT = {
 } as const satisfies Record<string, 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
 
 /**
- * Default USD budget caps per specialist execution.
+ * @deprecated Budget caps removed for Claude Max (subscription = flat rate).
+ * Use workspace settings `budgetCapUsd` for opt-in caps.
+ * Kept for backward compatibility — will be removed in next major.
  * SDK returns error_max_budget_usd when exceeded — clean exit, no crash.
  */
 export const SPECIALIST_BUDGET_CAPS = {
@@ -557,8 +577,23 @@ export const SPECIALIST_BUDGET_CAPS = {
   complex: 2.0
 } as const satisfies Record<string, number>
 
-/** Chat agent per-turn budget — higher because it handles full conversations (Da Vinci or Project Specialist). */
+/**
+ * @deprecated Budget caps removed for Claude Max (subscription = flat rate).
+ * Use workspace settings `budgetCapUsd` for opt-in caps.
+ * Kept for backward compatibility — will be removed in next major.
+ */
 export const CHAT_AGENT_BUDGET_CAP = 1.5
+
+/**
+ * Mode-aware budget cap multipliers for users who opt into custom caps.
+ * Applied to the base `budgetCapUsd` from workspace settings.
+ * e.g. base=2.0 → plan gets 2.0, build gets 2×2.0=4.0, audit gets 3×2.0=6.0
+ */
+export const BUDGET_CAP_MODE_MULTIPLIERS = {
+  plan: 1.0,
+  build: 2.0,
+  audit: 3.0
+} as const satisfies Record<string, number>
 
 /**
  * Maps an `AgentRole` + mode into the canonical `ModelAction` key used by
@@ -909,6 +944,96 @@ export const MCP_TOOLS = {
 /** All MCP tool full names — for test assertions and validation */
 export const ALL_MCP_TOOL_NAMES = Object.values(MCP_TOOLS).flatMap((server) => server._ALL_NAMES)
 
+// ── Local MCP Integrations ──────────────────────────────────────────────
+
+export interface LocalMcpDefinition {
+  /** MCP server name — matches keys in MCP_TOOLS (e.g. 'code-graph') */
+  id: string
+  /** Display name shown in the UI */
+  displayName: string
+  /** Short description */
+  description: string
+  /** Lucide icon name */
+  icon: string
+  /** Token impact level */
+  tokenImpact: 'low' | 'medium' | 'high'
+  /** Number of tools the server exposes */
+  toolCount: number
+  /**
+   * Workspace settings key that gates availability.
+   * null = always available when workspace exists.
+   */
+  featureFlagKey: 'repomapEnabled' | 'semanticSearchEnabled' | 'githubConfigured' | null
+  /** Whether enabled by default when no per-chat override exists */
+  defaultEnabled: boolean
+}
+
+export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
+  {
+    id: 'code-graph',
+    displayName: 'Code Graph',
+    description: 'AST-based navigation — callers, references, dead code, coupling',
+    icon: 'Network',
+    tokenImpact: 'high',
+    toolCount: 13,
+    featureFlagKey: 'repomapEnabled',
+    defaultEnabled: true
+  },
+  {
+    id: 'semantic-search',
+    displayName: 'Semantic Search',
+    description: 'Embedding-based code search and concept discovery',
+    icon: 'Search',
+    tokenImpact: 'medium',
+    toolCount: 3,
+    featureFlagKey: 'semanticSearchEnabled',
+    defaultEnabled: true
+  },
+  {
+    id: 'git-context',
+    displayName: 'Git Context',
+    description: 'Git log, diff, and blame for version history',
+    icon: 'GitBranch',
+    tokenImpact: 'low',
+    toolCount: 3,
+    featureFlagKey: null,
+    defaultEnabled: true
+  },
+  {
+    id: 'checkpoint-context',
+    displayName: 'Checkpoints',
+    description: 'List and restore conversation checkpoints',
+    icon: 'Clock',
+    tokenImpact: 'low',
+    toolCount: 2,
+    featureFlagKey: null,
+    defaultEnabled: true
+  },
+  {
+    id: 'github-context',
+    displayName: 'GitHub',
+    description: 'PR status, comments, and issue tracking',
+    icon: 'Github',
+    tokenImpact: 'low',
+    toolCount: 3,
+    featureFlagKey: 'githubConfigured',
+    defaultEnabled: true
+  },
+  {
+    id: 'code-analysis',
+    displayName: 'Code Analysis',
+    description: 'TODO scanning, dependency health, test coverage',
+    icon: 'BarChart3',
+    tokenImpact: 'low',
+    toolCount: 3,
+    featureFlagKey: null,
+    defaultEnabled: true
+  }
+] as const
+
+/** IDs of internal MCP servers that are always on and hidden from the toggle UI */
+export const ALWAYS_ON_MCP_SERVERS = ['control-actions'] as const
+
 // ── Local LLM Provider ──
 
 /** Default Ollama connection */
@@ -963,7 +1088,7 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     label: 'Qwen 3.6 Coding (MLX)',
     parameterSize: '35B MoE',
     activeParams: 'A3B',
-    contextWindow: 131072,
+    contextWindow: 262144, // Native 262K (was 131K — incorrect; see HF model card)
     quantization: 'NVFP4',
     minMemoryGB: 24,
     memoryTier: '32gb',
@@ -1022,7 +1147,11 @@ export function resolveModelId(
   return backend === 'omlx' ? (model.omlxId ?? model.ollamaId) : model.ollamaId
 }
 
-/** Default compaction thresholds by context window size (for local LLM models) */
+/**
+ * @deprecated Use `TIER_LIMITS` from `src/main/services/context-management.ts` instead.
+ * Superseded by the context window tier system (ContextWindowTier / resolveContextTier / TIER_LIMITS).
+ * Kept temporarily for backward compatibility — will be removed in the next breaking change.
+ */
 export const LOCAL_LLM_COMPACT_THRESHOLDS: Record<string, { suggest: number; auto: number }> = {
   '32k': { suggest: 16_000, auto: 24_000 },
   '128k': { suggest: 60_000, auto: 80_000 },
@@ -1040,3 +1169,161 @@ export const MCP_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
       ])
   )
 )
+
+// ── External MCP Integrations ──────────────────────────────────────────────
+
+/**
+ * Definition for an optional external MCP server that can be enabled per-workspace
+ * and toggled per-conversation via the chat pill bar.
+ */
+export interface ExternalMcpDefinition {
+  /** Unique key — used as settingsJson key suffix and MCP server name */
+  id: string
+  /** Display name shown in the UI */
+  displayName: string
+  /** Short description for the integrations page */
+  description: string
+  /** Lucide icon name */
+  icon: string
+  /** stdio command to launch the MCP server */
+  command: string
+  /** Args passed to the command */
+  args: string[]
+  /** Optional env var keys the server accepts */
+  envKeys?: string[]
+  /** Token impact level — shown as a badge */
+  tokenImpact: 'low' | 'medium' | 'high'
+  /** Number of tools the server exposes */
+  toolCount: number
+  /** Prerequisite description for the user */
+  prerequisite: string
+  /** Documentation URL */
+  docsUrl: string
+  /** All tool names (SDK format: mcp__{server}__{tool}) */
+  toolNames: string[]
+  /** Read-only tools allowed in plan mode */
+  planModeToolNames: string[]
+  /** Category for UI grouping */
+  category: 'testing' | 'deployment' | 'monitoring' | 'other'
+
+  /** Longer explanation for newcomers — what is this integration and why use it */
+  longDescription?: string
+  /** Concrete use cases shown as cards */
+  useCases?: { title: string; description: string; icon: string }[]
+  /** Human-readable description per tool name */
+  toolDescriptions?: Record<string, string>
+  /** Step-by-step workflow explanation */
+  workflowSteps?: { step: string; description: string }[]
+}
+
+/**
+ * Registry of all supported external MCP integrations.
+ * Adding a new integration = adding an entry here — the UI and MCP builder
+ * consume this registry automatically.
+ */
+export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
+  {
+    id: 'maestro',
+    displayName: 'Maestro',
+    description:
+      'AI-powered mobile app testing — drive real devices, inspect screens, generate and run E2E flows.',
+    icon: 'Smartphone',
+    command: 'maestro',
+    args: ['mcp'],
+    envKeys: ['JAVA_HOME', 'MAESTRO_CLOUD_API_KEY'],
+    tokenImpact: 'high',
+    toolCount: 8,
+    prerequisite: 'Maestro CLI installed and on PATH',
+    docsUrl: 'https://docs.maestro.dev/get-started/maestro-mcp',
+    toolNames: [
+      'mcp__maestro__list_devices',
+      'mcp__maestro__inspect_screen',
+      'mcp__maestro__take_screenshot',
+      'mcp__maestro__run',
+      'mcp__maestro__cheat_sheet',
+      'mcp__maestro__list_cloud_devices',
+      'mcp__maestro__run_on_cloud',
+      'mcp__maestro__get_cloud_status'
+    ],
+    planModeToolNames: [
+      'mcp__maestro__list_devices',
+      'mcp__maestro__inspect_screen',
+      'mcp__maestro__take_screenshot',
+      'mcp__maestro__cheat_sheet',
+      'mcp__maestro__get_cloud_status'
+    ],
+    category: 'testing',
+
+    longDescription:
+      'Maestro lets your AI agent take full control of mobile app testing. Instead of manually writing test scripts, you describe what you want to test in plain language — your agent inspects the live app screen, identifies UI elements, generates test flows, and runs them on real devices or emulators. It works with iOS, Android, and web apps.',
+
+    useCases: [
+      {
+        title: 'AI-Written E2E Tests',
+        description:
+          'Describe a user flow in plain English — "test the login with invalid credentials" — and your agent writes the Maestro YAML, runs it, and reports results. No manual element inspection needed.',
+        icon: 'FileCode'
+      },
+      {
+        title: 'Visual Regression Checks',
+        description:
+          'Ask your agent to screenshot every screen in a flow, then compare after code changes. Catch visual regressions without a dedicated QA pass.',
+        icon: 'Eye'
+      },
+      {
+        title: 'Interactive Debugging',
+        description:
+          'When a test fails, your agent can inspect the live screen hierarchy, take screenshots, and diagnose what changed — all in the same conversation.',
+        icon: 'Bug'
+      },
+      {
+        title: 'Cross-Platform Validation',
+        description:
+          'Run the same flow on iOS simulator and Android emulator side-by-side. Your agent lists available devices and targets each one.',
+        icon: 'Layers'
+      },
+      {
+        title: 'Cloud Test Runs',
+        description:
+          'Submit flows to Maestro Cloud for parallel execution across device farms. Your agent monitors status and reports results back.',
+        icon: 'Cloud'
+      }
+    ],
+
+    toolDescriptions: {
+      mcp__maestro__list_devices:
+        'Discovers all available devices — Android emulators, iOS simulators, and Chromium browsers — so the agent knows what targets are ready for testing.',
+      mcp__maestro__inspect_screen:
+        "Reads the current screen's full UI hierarchy (element IDs, labels, positions) as structured data. The agent calls this before interacting with any element to understand what's on screen.",
+      mcp__maestro__take_screenshot:
+        'Captures a visual snapshot of the device screen. Useful when the agent needs to visually verify layout, compare states, or show you what it sees.',
+      mcp__maestro__run:
+        'Executes Maestro test flows — either inline YAML the agent generated, specific .yaml files, or an entire test directory with tag filters. This is the core "run the test" action.',
+      mcp__maestro__cheat_sheet:
+        "Returns Maestro's command reference — tap, scroll, assert, inputText, etc. The agent uses this to write correct YAML syntax without hallucinating commands.",
+      mcp__maestro__list_cloud_devices:
+        'Shows available device/OS combinations on Maestro Cloud (e.g., iPhone 15 + iOS 17.5, Pixel 8 + Android 34). Used when targeting cloud execution.',
+      mcp__maestro__run_on_cloud:
+        'Submits test flows to Maestro Cloud for remote execution across a device farm. Returns a dashboard URL for monitoring.',
+      mcp__maestro__get_cloud_status:
+        'Polls the status of a cloud test run — pending, running, passed, failed — so the agent can wait for results and report back.'
+    },
+
+    workflowSteps: [
+      { step: 'Enable', description: 'Toggle Maestro ON here. A pill appears in your chat bar.' },
+      {
+        step: 'Activate per-chat',
+        description: 'Click the Maestro pill in any conversation to activate it for that session.'
+      },
+      {
+        step: 'Ask naturally',
+        description: 'Tell your agent what to test: "Test the checkout flow on my Android emulator"'
+      },
+      {
+        step: 'Agent drives',
+        description:
+          'The agent inspects the screen, writes YAML flows, runs them, and reports results — all autonomously.'
+      }
+    ]
+  }
+] as const

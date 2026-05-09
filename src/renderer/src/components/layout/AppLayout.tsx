@@ -14,7 +14,8 @@ import {
   Bug,
   ArrowUp,
   ArrowDown,
-  Flame
+  Flame,
+  ShieldCheck
 } from 'lucide-react'
 import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
@@ -41,7 +42,8 @@ import {
   useConversationSpecialistActions,
   useSpecialistStore,
   useToastStore,
-  useBugStore
+  useBugStore,
+  useAuditStore
 } from '@renderer/store'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
@@ -69,8 +71,8 @@ export default function AppLayout(): React.JSX.Element {
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const agentStatus = useWorkspaceStore((s) => s.agentStatus)
   const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
-  const sessionInputTokens = useAgentStore((s) => s.sessionInputTokens)
   const sessionOutputTokens = useAgentStore((s) => s.sessionOutputTokens)
+  const contextWindowTokens = useAgentStore((s) => s.contextWindowTokens)
   const { updateMode, setCompactSuggestion } = useChatActions()
   const [tokenModalOpen, setTokenModalOpen] = useState(false)
   const activeConversation = useChatStore((s) => s.activeConversation)
@@ -79,11 +81,34 @@ export default function AppLayout(): React.JSX.Element {
   const [showNewChat, setShowNewChat] = useState(false)
   const { createIdea, startGrill } = useIdeaStore()
   const [zoomFactor, setZoomFactor] = useState(1.0)
+  const [appVersion, setAppVersion] = useState<string>('')
+
+  // Load app version once on mount
+  useEffect(() => {
+    window.api.getPlatformInfo().then((info) => setAppVersion(info.appVersion))
+  }, [])
 
   // Bug tracker + toast
   const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
   const fetchBugCount = useBugStore((s) => s.fetchCount)
   const addToast = useToastStore((s) => s.addToast)
+
+  // Audit status for status bar indicator
+  const auditRunning = useAuditStore((s) => s.isRunning)
+  const auditRerunning = useAuditStore((s) => s.rerunningTrackId)
+  const isAuditActive = auditRunning || !!auditRerunning
+  const isAuditPaused = useAuditStore((s) => s.isPaused)
+  const lastAuditScore = useAuditStore((s) => s.currentRun?.overallScore ?? null)
+  const loadLatestAudit = useAuditStore((s) => s.loadLatest)
+  const handleAuditComplete = useAuditStore((s) => s.handleComplete)
+
+  // Global audit listeners — keeps status bar in sync even when HealthPage is not mounted
+  useEffect(() => {
+    if (!activeWorkspace) return
+    loadLatestAudit(activeWorkspace.id)
+    const unsub = window.api.onAuditComplete(handleAuditComplete)
+    return unsub
+  }, [activeWorkspace?.id, loadLatestAudit, handleAuditComplete])
 
   // Grill status for status bar indicator
   const [grillStatus, setGrillStatus] = useState<{
@@ -284,6 +309,14 @@ export default function AppLayout(): React.JSX.Element {
     setSidebarView('chat')
   }
 
+  const handleFixInNewChat = (): void => {
+    // Clear active conversation so ChatPanel shows NewChatPage
+    useChatStore.setState({ activeConversation: null, messages: [] })
+    setShowNewChat(true)
+    setView('chat')
+    setSidebarView('chat')
+  }
+
   const handleOpenIdeas = (): void => {
     setWorkspaceSettingsTab('ideas')
     setSidebarView('settings')
@@ -347,6 +380,7 @@ export default function AppLayout(): React.JSX.Element {
         <WorkspaceSettingsContent
           tab={workspaceSettingsTab}
           onNavigateToChat={handleNavigateToChat}
+          onFixInNewChat={handleFixInNewChat}
           pendingGrill={pendingGrill}
           onPendingGrillConsumed={() => setPendingGrill(null)}
         />
@@ -461,7 +495,7 @@ export default function AppLayout(): React.JSX.Element {
       <TokenDetailsModal
         isOpen={tokenModalOpen}
         conversationId={activeConversation?.id ?? null}
-        liveInputTokens={sessionInputTokens}
+        contextWindowTokens={contextWindowTokens}
         liveOutputTokens={sessionOutputTokens}
         onClose={() => setTokenModalOpen(false)}
       />
@@ -477,6 +511,12 @@ export default function AppLayout(): React.JSX.Element {
             </span>
           ) : (
             <span className="text-text-muted">No workspace selected</span>
+          )}
+
+          {appVersion && (
+            <span className="text-[11px] text-text-muted font-mono border-l border-border-subtle pl-3 ml-1">
+              v{appVersion}
+            </span>
           )}
 
           {activeConversation && (
@@ -520,16 +560,17 @@ export default function AppLayout(): React.JSX.Element {
             </div>
           )}
 
-          {/* Context — clickable, opens CompactContextModal */}
+          {/* Context — clickable, opens CompactContextModal (only in chat view) */}
           <span className="flex items-center gap-1.5 text-text-muted">
-            {contextUsage && contextUsage.percentage > 0 && (
+            {sidebarView === 'chat' && contextUsage && contextUsage.percentage > 0 && (
               <button
                 type="button"
                 onClick={() =>
                   setCompactSuggestion({
                     level: contextUsage.level,
                     inputTokens: contextUsage.inputTokens,
-                    breakdown: contextUsage.breakdown
+                    breakdown: contextUsage.breakdown,
+                    isLocalProvider: activeConversation?.llmProvider === 'local-llm'
                   })
                 }
                 className={`hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-border-default rounded ${
@@ -550,14 +591,14 @@ export default function AppLayout(): React.JSX.Element {
               type="button"
               onClick={() => setTokenModalOpen(true)}
               className="flex items-center gap-1.5 hover:text-text-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-border-default rounded"
-              title="Click for token breakdown (input / output / cache)"
+              title="Click for token breakdown (context window / output / cache)"
             >
               <Zap size={11} />
               <span className="flex items-center gap-0.5 tabular-nums">
                 <ArrowUp size={10} />
-                {sessionInputTokens >= 1000
-                  ? `${(sessionInputTokens / 1000).toFixed(1)}k`
-                  : String(sessionInputTokens)}
+                {contextWindowTokens >= 1000
+                  ? `${(contextWindowTokens / 1000).toFixed(1)}k`
+                  : String(contextWindowTokens)}
               </span>
               <span className="flex items-center gap-0.5 tabular-nums">
                 <ArrowDown size={10} />
@@ -568,25 +609,80 @@ export default function AppLayout(): React.JSX.Element {
             </button>
           </span>
 
-          {/* Grill status — shown when a grill is active */}
-          {grillStatus && (grillStatus.status === 'evaluating' || grillStatus.status === 'awaiting_answers') && (
-            <div className="flex items-center gap-1.5 border-l border-border-subtle pl-3 ml-1">
+          {/* Audit status — always visible */}
+          <div className="flex items-center gap-1.5 border-l border-border-subtle pl-3 ml-1">
+            {isAuditActive && !isAuditPaused ? (
+              /* Running — red (matches Grill "Grilling…") */
+              <div className="flex items-center gap-1 text-[11px] text-danger bg-danger/10 rounded px-1.5 py-0.5">
+                <ShieldCheck size={11} className="animate-pulse" />
+                <span className="font-medium">Auditing…</span>
+              </div>
+            ) : isAuditPaused ? (
+              /* Paused — purple (matches Grill "Needs Attention") */
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceSettingsTab('health')
+                  setSidebarView('settings')
+                }}
+                className="flex items-center gap-1 text-[11px] text-purple-400 bg-purple-400/10 hover:bg-purple-400/20 rounded px-1.5 py-0.5 transition-colors"
+                title="Audit paused — click to resume"
+              >
+                <ShieldCheck size={11} />
+                <span className="font-medium">Paused</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceSettingsTab('health')
+                  setSidebarView('settings')
+                }}
+                className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary rounded px-1.5 py-0.5 transition-colors"
+                title={lastAuditScore !== null ? `Last audit score: ${lastAuditScore}` : 'Run a workspace audit'}
+              >
+                <ShieldCheck size={11} />
+                {lastAuditScore !== null && (
+                  <span className="font-mono text-[10px]">{lastAuditScore}</span>
+                )}
+              </button>
+            )}
+          </div>
+
+          {/* Grill status — always visible */}
+          <div className="flex items-center gap-1.5 border-l border-border-subtle pl-3 ml-1">
+            {grillStatus?.status === 'evaluating' ? (
               <button
                 onClick={() => handleNavigateToGrill(grillStatus.ideaId)}
-                className={`flex items-center gap-1 text-[11px] rounded px-1.5 py-0.5 transition-colors ${
-                  grillStatus.status === 'evaluating'
-                    ? 'text-accent bg-accent/10 hover:bg-accent/20'
-                    : 'text-info bg-info/10 hover:bg-info/20'
-                }`}
-                title={grillStatus.status === 'evaluating' ? 'Grill in progress' : 'Grill needs your answers'}
+                className="flex items-center gap-1 text-[11px] text-danger bg-danger/10 hover:bg-danger/20 rounded px-1.5 py-0.5 transition-colors"
+                title="Grill in progress"
               >
-                <Flame size={11} className={grillStatus.status === 'evaluating' ? 'animate-pulse' : ''} />
-                <span className="font-medium">
-                  {grillStatus.status === 'evaluating' ? 'Grilling…' : 'Needs Answers'}
-                </span>
+                <Flame size={11} className="animate-pulse" />
+                <span className="font-medium">Grilling…</span>
               </button>
-            </div>
-          )}
+            ) : grillStatus?.status === 'awaiting_answers' ? (
+              <button
+                onClick={() => handleNavigateToGrill(grillStatus.ideaId)}
+                className="flex items-center gap-1 text-[11px] text-purple-400 bg-purple-400/10 hover:bg-purple-400/20 rounded px-1.5 py-0.5 transition-colors"
+                title="Grill needs your answers"
+              >
+                <Flame size={11} />
+                <span className="font-medium">Needs Attention</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceSettingsTab('ideas')
+                  setSidebarView('settings')
+                }}
+                className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary rounded px-1.5 py-0.5 transition-colors"
+                title="Grill an idea"
+              >
+                <Flame size={11} />
+              </button>
+            )}
+          </div>
 
           {/* Zoom controls */}
           <div className="flex items-center gap-0.5 border-l border-border-subtle pl-3 ml-1">

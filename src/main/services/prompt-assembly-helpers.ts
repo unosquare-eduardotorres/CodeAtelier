@@ -106,18 +106,32 @@ export function buildConditionalPrefix(opts: {
 
   // Strategy N: Direct Answer Boost — only inject on turn 3+ when there's
   // conversation history to reference (irrelevant on early turns).
-  if (conditionalSections.includeDirectAnswerBoost && turnCount >= 3) {
-    sections.push(DIRECT_ANSWER_BOOST_PROMPT)
+  if (conditionalSections.includeDirectAnswerBoost) {
+    if (turnCount >= 3) {
+      // Full boost with conversation-history awareness (only makes sense with history)
+      sections.push(DIRECT_ANSWER_BOOST_PROMPT)
+    } else if (mode === 'plan') {
+      // Lightweight signal for plan-mode questions on early turns.
+      // DIRECT_ANSWER_BOOST_PROMPT references "conversation history" which doesn't
+      // exist on turn 1-2, so we use a targeted one-liner instead.
+      sections.push(
+        `[This is a question — answer it directly in plain text. Do NOT call emit_plan for explanations or Q&A.]`
+      )
+    }
   }
 
   // Strategy ζ: Plan Output Reinforcement.
-  // Plan mode: always remind about emit_plan.
+  // Plan mode: remind about emit_plan UNLESS the message is clearly a question.
   // Build mode: only when the user is explicitly asking for a plan.
   const isPlanGenerationRequest =
     /\b(create a plan|draft a plan|propose a plan|make a plan|write a plan|design a plan|plan for|plan to (implement|build|add|create|fix|refactor)|how (would|should|can) (I|we|you)|what('s| is) the (best|right) (way|approach)|investigate|diagnose|audit|analyze|what.*(wrong|broken|failing|issue)|assess|evaluate)\b/i.test(
       message
     )
-  const planReminderInjected = mode === 'plan' || isPlanGenerationRequest
+  // Simple questions in plan mode should get direct answers, not plan reminders.
+  // isPlanGenerationRequest acts as an override: explicit plan intent always wins.
+  const isSimpleQuestion = conditionalSections.includeDirectAnswerBoost
+  const planReminderInjected =
+    isPlanGenerationRequest || (mode === 'plan' && !isSimpleQuestion)
 
   if (planReminderInjected) {
     sections.push(

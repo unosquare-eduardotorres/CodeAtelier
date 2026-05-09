@@ -17,6 +17,7 @@ import type {
   MemoryType,
   Specialist
 } from '../../../shared/types'
+import { EXTERNAL_MCP_INTEGRATIONS, LOCAL_MCP_INTEGRATIONS } from '../../../shared/constants'
 import { modelConfigService } from '../model-config.service'
 import type {
   AdapterIntentContext,
@@ -34,7 +35,12 @@ import { DaVinciPromptAssembler } from '../da-vinci-prompt-assembler'
 import { buildWorkspaceMcpConfig } from '../workspace-mcp-config'
 import { githubService } from '../github.service'
 import { memoryService } from '../memory.service'
-import { memoryRepository, specialistRepository, workspaceRepository } from '../../db/repositories'
+import {
+  conversationRepository,
+  memoryRepository,
+  specialistRepository,
+  workspaceRepository
+} from '../../db/repositories'
 import { intentDetector } from '../intent-detector'
 import { chatAgentLogger } from '../../logger'
 
@@ -196,10 +202,33 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
     // Strategy Λ: Use locked flags so the MCP server set stays identical across
     // all turns in this session, preserving the Claude prompt cache prefix.
-    const mcpFlags = this.lockedMcpFlags ?? {
+    // Exception: externalMcpActive is ALWAYS read fresh (per-message toggling).
+    const baseMcpFlags = this.lockedMcpFlags ?? {
       repomapEnabled: this.repomapEnabled,
       semanticSearchEnabled: this.semanticSearchEnabled,
       githubConfigured: this.githubConfigured
+    }
+
+    // Resolve external + local MCP active states from conversation overrides
+    const externalMcpActive: Record<string, boolean> = {}
+    const localMcpActive: Record<string, boolean> = {}
+    try {
+      const ws = ctx.workspaceId ? workspaceRepository.findById(ctx.workspaceId) : null
+      const wsSettings = ws ? JSON.parse(ws.settingsJson || '{}') : {}
+      const conv = ctx.conversationId ? conversationRepository.findById(ctx.conversationId) : null
+      const chatOverrides = conv?.mcpOverrides ?? {}
+
+      for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+        externalMcpActive[integration.id] =
+          !!wsSettings[`${integration.id}Available`] && !!chatOverrides[integration.id]
+      }
+
+      // Derive per-chat local MCP active state from conversation overrides
+      for (const lm of LOCAL_MCP_INTEGRATIONS) {
+        localMcpActive[lm.id] = chatOverrides[lm.id] !== false
+      }
+    } catch {
+      /* non-fatal — keep all external MCPs disabled, local MCPs enabled */
     }
 
     return buildWorkspaceMcpConfig({
@@ -207,8 +236,10 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       workspacePath: ctx.workspacePath,
       workspaceId: ctx.workspaceId,
       conversationId: ctx.conversationId,
-      featureFlags: mcpFlags,
-      controlCallbacks: ctx.controlCallbacks
+      featureFlags: { ...baseMcpFlags, externalMcpActive, localMcpActive },
+      controlCallbacks: ctx.controlCallbacks,
+      isLocalProvider: modelConfigService.isLocalProvider(ctx.workspacePath),
+      contextTier: ctx.contextTier
     })
   }
 

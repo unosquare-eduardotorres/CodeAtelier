@@ -9,6 +9,7 @@ interface TurnUsageRow {
   output_tokens: number
   cache_read_tokens: number
   cache_creation_tokens: number
+  context_tokens: number
   model: string | null
   created_at: string
 }
@@ -22,6 +23,8 @@ export interface TurnUsage {
   outputTokens: number
   cacheReadTokens: number
   cacheCreationTokens: number
+  /** SDK-reported context window total (from getContextUsage().totalTokens) */
+  contextTokens: number
   model: string | null
   createdAt: string
 }
@@ -36,6 +39,7 @@ function toModel(row: TurnUsageRow): TurnUsage {
     outputTokens: row.output_tokens,
     cacheReadTokens: row.cache_read_tokens,
     cacheCreationTokens: row.cache_creation_tokens,
+    contextTokens: row.context_tokens ?? 0,
     model: row.model,
     createdAt: row.created_at
   }
@@ -97,7 +101,11 @@ export class TurnUsageRepository {
     return row ? toModel(row) : null
   }
 
-  /** Update the most recent turn's token data for a conversation (used for SDK-corrected values) */
+  /**
+   * @deprecated Use updateLastTurnContextTokens() instead.
+   * This method overwrote cache_read_tokens and cache_creation_tokens with 0, destroying
+   * the original API-reported cache data. Kept for reference but should not be called.
+   */
   updateLastTurnTokens(
     conversationId: string,
     tokens: { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
@@ -112,6 +120,24 @@ export class TurnUsageRepository {
          ORDER BY turn_number DESC LIMIT 1
        )`
     ).run(tokens.inputTokens, tokens.cacheReadTokens, tokens.cacheCreationTokens, conversationId)
+  }
+
+  /**
+   * Store the SDK's context window total on the most recent turn WITHOUT touching
+   * the original API-reported input_tokens, cache_read_tokens, or cache_creation_tokens.
+   * This preserves cache data for analysis while still recording the full context size.
+   */
+  updateLastTurnContextTokens(conversationId: string, contextTokens: number): void {
+    const db = getDatabase()
+    db.prepare(
+      `UPDATE turn_usage
+       SET context_tokens = ?
+       WHERE id = (
+         SELECT id FROM turn_usage
+         WHERE conversation_id = ?
+         ORDER BY turn_number DESC LIMIT 1
+       )`
+    ).run(contextTokens, conversationId)
   }
 
   /** Prune old turn usage records to prevent unbounded growth */

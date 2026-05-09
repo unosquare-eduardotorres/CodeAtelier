@@ -5,7 +5,13 @@ import { useIdeaStore } from '@renderer/store/idea.store'
 import { useGrillStreamStore, getFlatContent, getFlatToolActivities } from '@renderer/store/grill-stream.store'
 import { stripGrillEvaluationBlocks } from '@renderer/utils/strip-grill-json'
 import type { QuestionState } from '@renderer/components/chat'
-import type { GrillQuestion, GrillTrackId, GrillTrackScore, DecisionEntry } from '../../../../shared/types'
+import type {
+  GrillQuestion,
+  GrillTrackId,
+  GrillTrackScore,
+  DecisionEntry,
+  LLMProvider
+} from '../../../../shared/types'
 import { GRILL_TRACKS } from '../../../../shared/constants'
 import GrillChatView from './GrillChatView'
 import type { GrillChatMessage, GrillPhase } from './GrillChatView'
@@ -78,6 +84,20 @@ export default function GrillPage({
     reason: string
   } | null>(null)
 
+  // ── LLM Provider state (defaults to workspace setting) ──
+  const [grillProvider, setGrillProvider] = useState<LLMProvider>('claude')
+  useEffect(() => {
+    if (!activeWorkspace?.id) return
+    window.api
+      .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
+      .then((settings) => {
+        setGrillProvider((settings.llmProvider as LLMProvider) ?? 'claude')
+      })
+      .catch(() => {
+        /* non-fatal */
+      })
+  }, [activeWorkspace?.id])
+
   // ── Tab state (Chat vs Decisions) ──
   type GrillTab = 'chat' | 'decisions'
   const [activeTab, setActiveTab] = useState<GrillTab>('chat')
@@ -133,7 +153,8 @@ export default function GrillPage({
           ideaTitle,
           ideaDescription: description,
           previousScore: existingTrackScore?.score,
-          ideaId
+          ideaId,
+          llmProvider: grillProvider
         })
       } catch (error) {
         console.error('Failed to start grill evaluation:', error)
@@ -147,7 +168,7 @@ export default function GrillPage({
         setPhase('paused')
       }
     },
-    [activeWorkspace, ideaTitle, description, trackScores]
+    [activeWorkspace, ideaTitle, description, trackScores, grillProvider]
   )
 
   // ── Grill stream event listeners ──
@@ -807,6 +828,32 @@ export default function GrillPage({
       {phase === 'selecting' ? (
         <div className="flex-1 overflow-y-auto px-6 py-6">
           <div className="max-w-3xl mx-auto space-y-6">
+            {/* LLM Provider toggle */}
+            <div className="flex items-center gap-3 px-1">
+              <span className="text-xs font-medium text-text-secondary">Provider:</span>
+              <div className="flex rounded-lg border border-border-subtle overflow-hidden">
+                <button
+                  className={`px-3 py-1 text-xs font-medium transition-colors ${
+                    grillProvider === 'claude'
+                      ? 'bg-accent text-white'
+                      : 'bg-surface-overlay text-text-secondary hover:text-text-primary'
+                  }`}
+                  onClick={() => setGrillProvider('claude')}
+                >
+                  ☁️ Cloud
+                </button>
+                <button
+                  className={`px-3 py-1 text-xs font-medium transition-colors ${
+                    grillProvider === 'local-llm'
+                      ? 'bg-accent text-white'
+                      : 'bg-surface-overlay text-text-secondary hover:text-text-primary'
+                  }`}
+                  onClick={() => setGrillProvider('local-llm')}
+                >
+                  🖥️ Local
+                </button>
+              </div>
+            </div>
             <GrillTrackSelector
               trackScores={trackScores}
               suggestedNextTrack={suggestedNextTrack}

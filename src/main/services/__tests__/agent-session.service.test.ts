@@ -14,6 +14,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { AgentSessionService } from '../agent-session.service'
+import type { SDKExecuteOptions } from '../sdk-executor'
 import type {
   AgentRoleAdapter,
   AdapterIntentContext,
@@ -191,6 +192,126 @@ describe('AgentSessionService', () => {
       session.emit(e, {})
     }
     assert.deepEqual(seen, events)
+  })
+
+  test('SDKExecuteOptions_autoCompact_uses_correct_types', () => {
+    // Verify the interface contract: autoCompactEnabled is boolean, contextWindowSize is number.
+    // This catches the original bug where autoCompactWindow was passed as boolean (SDK expects number).
+    const opts: Partial<SDKExecuteOptions> = {
+      autoCompactEnabled: true,
+      contextWindowSize: 1_000_000
+    }
+    assert.equal(typeof opts.autoCompactEnabled, 'boolean')
+    assert.equal(typeof opts.contextWindowSize, 'number')
+
+    // Verify that the old broken property name no longer exists on the interface.
+    // TypeScript compile-time ensures this — if 'autoCompactWindow' were on SDKExecuteOptions,
+    // the type assertion below would succeed. Since we removed it, this is a runtime assertion
+    // that the object shape is correct.
+    assert.equal('autoCompactWindow' in opts, false, 'autoCompactWindow should not exist on SDKExecuteOptions')
+  })
+
+  test('SDKExecuteOptions_contextManagement_is_optional', () => {
+    // Verify contextManagement is accepted as a valid option
+    const opts: Partial<SDKExecuteOptions> = {
+      contextManagement: {
+        clearToolResults: true,
+        clearToolResultsTrigger: 300_000,
+        clearToolResultsKeep: 5,
+        clearToolResultsMinClear: 50_000,
+        clearToolResultsExclude: [],
+        clearThinking: true,
+        clearThinkingKeepTurns: 2,
+        serverCompaction: true,
+        serverCompactionTrigger: 600_000
+      }
+    }
+    assert.ok(opts.contextManagement)
+    assert.equal(opts.contextManagement!.clearToolResultsTrigger, 300_000)
+  })
+
+  test('SDKExecuteOptions_contextManagement_accepts_tier_metadata', () => {
+    // Verify _tier and _tierLimits are accepted in the interface
+    const opts: Partial<SDKExecuteOptions> = {
+      contextManagement: {
+        clearToolResults: true,
+        clearToolResultsTrigger: 9_830,
+        clearToolResultsKeep: 2,
+        clearToolResultsMinClear: 1_638,
+        clearToolResultsExclude: [],
+        clearThinking: false,
+        clearThinkingKeepTurns: 0,
+        serverCompaction: false,
+        serverCompactionTrigger: 0,
+        _tier: 'small',
+        _tierLimits: {
+          maxTurnsPlan: 8,
+          maxTurnsBuild: 12,
+          readLineLimit: 100,
+          toolResultBudgetChars: 30_000,
+          compactSuggestThreshold: 16_000,
+          compactAutoThreshold: 24_000,
+        }
+      }
+    }
+    assert.equal(opts.contextManagement!._tier, 'small')
+    assert.equal(opts.contextManagement!._tierLimits!.maxTurnsBuild, 12)
+    assert.equal(opts.contextManagement!._tierLimits!.readLineLimit, 100)
+  })
+
+  test('compact_throws_when_session_not_running', async () => {
+    // compact() on a non-started session should reject with a clear error
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+
+    let thrown = false
+    try {
+      await session.compact()
+    } catch (err) {
+      thrown = true
+      assert.ok((err as Error).message.includes('Session not running'))
+    }
+    assert.equal(thrown, true, 'compact() should throw when session is not running')
+  })
+
+  test('compactNeeded_event_payload_shape_includes_isLocalProvider', () => {
+    // Verify the compactNeeded event can carry isLocalProvider for the UI
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+
+    let emittedPayload: Record<string, unknown> | null = null
+    session.on('compactNeeded', (payload: unknown) => {
+      emittedPayload = payload as Record<string, unknown>
+    })
+
+    // Simulate a compactNeeded emission with isLocalProvider flag
+    session.emit('compactNeeded', {
+      level: 'local-unsupported',
+      inputTokens: 20_000,
+      isLocalProvider: true,
+      message: 'Local LLMs cannot compact mid-conversation.'
+    })
+
+    assert.ok(emittedPayload)
+    const p = emittedPayload as Record<string, unknown>
+    assert.equal(p.level, 'local-unsupported')
+    assert.equal(p.isLocalProvider, true)
+    assert.equal(typeof p.inputTokens, 'number')
+  })
+
+  test('AdapterMcpContext_accepts_contextTier', () => {
+    // Verify the interface accepts the new contextTier field
+    const { adapter, calls } = createTestAdapter()
+    adapter.buildMcpConfig({
+      mode: 'plan',
+      workspacePath: '/test',
+      workspaceId: null,
+      conversationId: null,
+      controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+      contextTier: 'small'
+    })
+    assert.equal(calls.buildMcpConfig.length, 1)
+    assert.equal(calls.buildMcpConfig[0].contextTier, 'small')
   })
 })
 

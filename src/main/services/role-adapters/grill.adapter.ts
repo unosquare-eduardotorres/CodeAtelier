@@ -25,7 +25,6 @@ import type {
 import type { ControlActionCallbacks } from '../control-actions.tool'
 import { GRILL_TRACKS } from '../../../shared/constants'
 import { workspaceRepository } from '../../db/repositories'
-import { modelConfigService } from '../model-config.service'
 import { codeGraphMcpService } from '../code-graph.tool'
 import { semanticSearchMcpService } from '../semantic-search.tool'
 import { gitContextMcpService } from '../git-context.tool'
@@ -48,6 +47,8 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
   private readonly iterationHistory?: string
   private readonly previousScore?: number
 
+  private readonly llmProvider: import('../../../shared/types').LLMProvider
+
   private systemPrompt: string | null = null
 
   // Feature flags read on session start
@@ -61,6 +62,7 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
     ideaDescription: string
     iterationHistory?: string
     previousScore?: number
+    llmProvider?: import('../../../shared/types').LLMProvider
   }) {
     this.workspaceId = params.workspaceId
     this.trackId = params.trackId
@@ -68,6 +70,7 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
     this.ideaDescription = params.ideaDescription
     this.iterationHistory = params.iterationHistory
     this.previousScore = params.previousScore
+    this.llmProvider = params.llmProvider ?? 'claude'
     this.agentId = `grill-${params.trackId}-${params.workspaceId}`
   }
 
@@ -85,14 +88,9 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
     }
 
     // Increase timeout for local LLMs
-    try {
-      const workspace = workspaceRepository.findById(this.workspaceId)
-      if (workspace && modelConfigService.isLocalProvider(workspace.repoPath)) {
-        this.interactionTimeoutMs = 45 * 60_000 // 45 min for local LLMs
-        this.log.info(`[grill-adapter] Using extended timeout (45 min) for local LLM`)
-      }
-    } catch {
-      /* non-fatal — keep 10 min default */
+    if (this.llmProvider === 'local-llm') {
+      this.interactionTimeoutMs = 45 * 60_000 // 45 min for local LLMs
+      this.log.info(`[grill-adapter] Using extended timeout (45 min) for local LLM`)
     }
 
     const track = GRILL_TRACKS[this.trackId]
@@ -139,6 +137,77 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
   }
 
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
+    // Local LLM path — mount code-graph, semantic-search (if enabled), code-analysis.
+    // Skip git-context to save tokens (Bash + git CLI equivalent).
+    if (this.llmProvider === 'local-llm') {
+      const servers: Record<string, McpServerConfig> = {}
+
+      // Code graph (conditional on workspace flag)
+      if (this.repomapEnabled && ctx.workspaceId) {
+        Object.assign(
+          servers,
+          codeGraphMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
+        )
+      }
+      // Semantic search (conditional on workspace flag)
+      if (this.semanticSearchEnabled && ctx.workspaceId) {
+        Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(ctx.workspaceId))
+      }
+      // Code analysis: always on
+      Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(ctx.workspacePath))
+
+      return {
+        ...(Object.keys(servers).length > 0 ? { mcpServers: servers } : {}),
+        allowedTools: [
+          'Read',
+          'Glob',
+          'Grep',
+          'WebSearch',
+          'WebFetch',
+          // Code graph (if mounted)
+          ...(this.repomapEnabled && ctx.workspaceId
+            ? [
+                'mcp__code-graph__graph_map',
+                'mcp__code-graph__search_identifiers',
+                'mcp__code-graph__find_dead_code',
+                'mcp__code-graph__file_outline',
+                'mcp__code-graph__find_callers',
+                'mcp__code-graph__find_callees',
+                'mcp__code-graph__find_references',
+                'mcp__code-graph__file_dependencies',
+                'mcp__code-graph__file_dependents',
+                'mcp__code-graph__symbol_hotspots',
+                'mcp__code-graph__coupling_analysis',
+                'mcp__code-graph__circular_dependencies',
+                'mcp__code-graph__module_boundary_health'
+              ]
+            : []),
+          // Semantic search (if mounted)
+          ...(this.semanticSearchEnabled && ctx.workspaceId
+            ? [
+                'mcp__semantic-search__semantic_search',
+                'mcp__semantic-search__similar_code',
+                'mcp__semantic-search__codebase_concepts'
+              ]
+            : []),
+          // Code analysis (always)
+          'mcp__code-analysis__todo_scanner',
+          'mcp__code-analysis__dependency_health',
+          'mcp__code-analysis__test_coverage_map'
+        ],
+        disallowedTools: [
+          'Write',
+          'Edit',
+          'Bash',
+          'Agent',
+          'ToolSearch',
+          'ExitPlanMode',
+          'AskUserQuestion',
+          'TodoWrite' // Prevent grill from modifying todos
+        ]
+      }
+    }
+
     const servers: Record<string, McpServerConfig> = {}
 
     // Code graph (conditional on workspace flag)
@@ -272,13 +341,14 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
   // ── Private: prompt construction ───────────────────────────────────
 
   private buildSystemPrompt(track: (typeof GRILL_TRACKS)[GrillTrackId]): string {
-    const reEvalBlock = this.previousScore != null
-      ? `\n## Re-evaluation Context
+    const reEvalBlock =
+      this.previousScore != null
+        ? `\n## Re-evaluation Context
 - Previous score: ${this.previousScore}/100
 - ANCHOR your new score to the previous one. Only change when decisions materially fill or reveal gaps.
 - Do NOT re-ask questions the user already answered — focus on REMAINING gaps.
 - In your analysis, explicitly credit which previous decisions address which criteria.\n`
-      : ''
+        : ''
 
     return `You are a Grill Analyst — a requirement completeness evaluator.${reEvalBlock}
 
@@ -295,7 +365,14 @@ ${this.ideaDescription || 'No description provided.'}
 
 ## Instructions
 0. **Narrate your process.** Before each tool call, write a brief sentence explaining what you're about to look at and why (e.g., "Let me check the authentication module to assess error handling…"). This helps the user follow along in real time.
-1. **Use your tools to ground your analysis.** The tool guidance sections below describe your full toolbox (Code Graph, Semantic Search, Git Context, Code Analysis, Read/Glob/Grep). Follow their priority rules — prefer structured tools (search_identifiers, semantic_search, dependency_health) over raw Read/Grep. Investigate the codebase to ensure your questions target REAL gaps, not hypothetical ones. Do NOT perform a broad codebase scan or read documentation files (README, Roadmap, etc.).
+
+## Tool Priority Order (MANDATORY)
+1. FIRST: Use Code Graph tools (mcp__code-graph__search_identifiers, mcp__code-graph__file_outline, mcp__code-graph__find_callers, mcp__code-graph__find_references, mcp__code-graph__coupling_analysis, mcp__code-graph__module_boundary_health) to understand structure and relationships
+2. THEN: Use Code Analysis tools (mcp__code-analysis__dependency_health, mcp__code-analysis__test_coverage_map, mcp__code-analysis__todo_scanner) for quantitative metrics
+3. THEN: Use Git Context tools (mcp__git-context__git_log, mcp__git-context__git_diff, mcp__git-context__git_blame) for history and change patterns
+4. LAST RESORT: Use Read/Glob/Grep only for specific details the structured tools cannot provide
+
+You MUST call at least one Code Graph tool AND one Code Analysis tool before falling back to Read or Grep to ground your gap analysis. The tool guidance sections below describe each tool's capabilities — follow their rules. Do NOT perform a broad codebase scan or read documentation files (README, Roadmap, etc.).
 2. Analyze the requirement against each scoring criterion above.
 3. Provide your analysis as markdown text — explain what is well-defined and what is missing.
 4. After your analysis, emit EXACTLY ONE structured evaluation block in this format:
@@ -312,8 +389,9 @@ ${this.ideaDescription || 'No description provided.'}
       "question": "<2-3 sentence question explaining the gap and WHY it matters for implementation>",
       "header": "<short 3-5 word label>",
       "options": [
-        { "label": "<concise choice>", "description": "<1-2 sentences: trade-offs, constraints, implications>", "recommended": true },
-        { "label": "<alternative>", "description": "<trade-offs>", "recommended": false }
+        { "label": "<concise choice>", "description": "<1-2 sentences: trade-offs, constraints, implications>", "recommended": true, "recommendedReason": "<1 sentence: why this is safest/best given trade-offs>" },
+        { "label": "<alternative>", "description": "<trade-offs>" },
+        { "label": "<another alternative>", "description": "<trade-offs>" }
       ]
     }
   ],
@@ -327,11 +405,12 @@ ${this.ideaDescription || 'No description provided.'}
 - Each option's "description" field is REQUIRED — explain trade-offs, constraints, or implications
 - At least 2 of the 5 questions must probe EDGE CASES or FAILURE MODES
 - Do NOT ask vague questions like "How should this work?" — ask "What happens when X fails/overflows/conflicts?"
+- The recommended option's "recommendedReason" must reference concrete trade-offs (risk, complexity, reversibility) — not just "this is better"
 
 ## Rules
 - Score 1-20: Raw — fundamental gaps. Score 21-40: Warming Up. Score 41-60: Medium Rare. Score 61-80: Well Done. Score 81-100: Perfectly Grilled.
 - Include exactly 5 questions targeting the weakest areas.
-- Each question must have 2-4 options with at most 1 recommended.
+- Each question must have 3-4 options with at most 1 recommended. The recommended option MUST include a "recommendedReason" field — a single sentence explaining WHY (e.g. "Lower risk with the same outcome — refactoring can happen in phase 2").
 - suggestedNextTrack is optional — only include if another track would benefit.
 - Do NOT emit any other code blocks with the grill-evaluation language tag.`
   }

@@ -18,9 +18,13 @@ interface CompactContextModalProps {
   categories?: ContextCategory[]
   /** Full Claude Code-style breakdown — preferred when available. */
   breakdown?: ContextUsageBreakdown
+  /** When true, SDK compaction is unavailable — show "new conversation" UX instead */
+  isLocalProvider?: boolean
   onExtractNuance: () => void
   onQuickCompact: () => void
   onCancel: () => void
+  /** Callback to start a new conversation (shown for local LLMs) */
+  onNewConversation?: () => void
 }
 
 const DEFAULT_CONTEXT_WINDOW_SIZE = 1_000_000
@@ -53,9 +57,11 @@ export default function CompactContextModal({
   level,
   categories,
   breakdown,
+  isLocalProvider,
   onExtractNuance,
   onQuickCompact,
-  onCancel
+  onCancel,
+  onNewConversation
 }: CompactContextModalProps): React.JSX.Element | null {
   const nuanceRef = useRef<HTMLButtonElement>(null)
   const [showMcpDetails, setShowMcpDetails] = useState(false)
@@ -97,7 +103,13 @@ export default function CompactContextModal({
   if (!isOpen) return null
 
   const effectiveWindowSize = contextWindowSize || DEFAULT_CONTEXT_WINDOW_SIZE
-  const qualityWindow = Math.min(Math.round(effectiveWindowSize * QUALITY_RATIO), QUALITY_WINDOW_CAP)
+  // Adjust quality window when auto-compact is active — server-side clearing
+  // buys extra quality headroom since stale content is being purged.
+  const qualityBoost = breakdown?.isAutoCompactEnabled ? 1.2 : 1.0
+  const qualityWindow = Math.min(
+    Math.round(effectiveWindowSize * QUALITY_RATIO * qualityBoost),
+    QUALITY_WINDOW_CAP
+  )
   const tokensK = (inputTokens / 1000).toFixed(1)
   const windowK = (effectiveWindowSize / 1000).toFixed(1)
   const percentage = Math.min(Math.round((inputTokens / effectiveWindowSize) * 100), 100)
@@ -249,69 +261,139 @@ export default function CompactContextModal({
           </div>
         )}
 
-        {/* Warning Note */}
-        <div className="px-5 pb-4">
-          <div className="px-3 py-2.5 rounded-lg bg-warning/5 border border-warning/20">
-            <p className="text-xs text-text-secondary leading-relaxed">
-              Standard compaction may lose important context and nuance.{' '}
-              <span className="text-warning font-medium">&quot;Extract Nuance&quot;</span> preserves
-              critical details before compacting.
-            </p>
+        {/* Auto-management status badge */}
+        {breakdown?.isAutoCompactEnabled && (
+          <div className="px-5 pb-3">
+            <div className="px-3 py-2 rounded-lg bg-success/5 border border-success/20">
+              <p className="text-xs text-text-secondary">
+                <span className="text-success font-medium">Auto-management active</span> — tool
+                results and thinking blocks are being cleared automatically. Compaction fires at{' '}
+                {breakdown.autoCompactThreshold
+                  ? `${(breakdown.autoCompactThreshold / 1000).toFixed(0)}K`
+                  : 'default threshold'}
+                .
+              </p>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Action Buttons */}
-        <div className="px-5 pb-3 space-y-2.5">
-          {/* Extract Nuance — Recommended */}
-          <button
-            ref={nuanceRef}
-            onClick={onExtractNuance}
-            className="w-full flex items-center gap-3 p-3 rounded-lg border-2 border-warning/40 bg-warning/5 hover:bg-warning/10 transition-colors text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-warning"
-          >
-            <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center">
-              <Sparkles size={16} className="text-warning" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-text-primary">
-                  Extract Nuance &amp; Compact
-                </span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning/15 text-warning">
-                  Recommended
-                </span>
+        {isLocalProvider ? (
+          <>
+            {/* Local LLM: explain that compaction isn't available */}
+            <div className="px-5 pb-3">
+              <div className="px-3 py-2 rounded-lg bg-danger/5 border border-danger/20">
+                <p className="text-xs text-text-secondary">
+                  <span className="text-danger font-medium">Compaction unavailable</span> —
+                  local LLMs don&apos;t support mid-conversation compaction.
+                  Context resets automatically when you start a new conversation.
+                </p>
               </div>
-              <p className="text-xs text-text-secondary mt-0.5">
-                Preserves decisions, preferences, and key details before compacting
-              </p>
             </div>
-          </button>
 
-          {/* Quick Compact */}
-          <button
-            onClick={onQuickCompact}
-            className="w-full flex items-center gap-3 p-3 rounded-lg border border-border-default bg-surface-overlay hover:bg-surface-raised transition-colors text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-border-default"
-          >
-            <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-surface-raised flex items-center justify-center">
-              <Zap size={16} className="text-text-secondary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <span className="text-sm font-medium text-text-primary">Quick Compact</span>
-              <p className="text-xs text-text-secondary mt-0.5">
-                Summarizes older messages — faster but may lose some context
-              </p>
-            </div>
-          </button>
-        </div>
+            {/* Primary action: start new conversation */}
+            <div className="px-5 pb-3 space-y-2.5">
+              <button
+                ref={nuanceRef}
+                onClick={onNewConversation}
+                className="w-full flex items-center gap-3 p-3 rounded-lg border-2 border-brand-primary/40 bg-brand-primary/5 hover:bg-brand-primary/10 transition-colors text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
+              >
+                <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-brand-primary/10 flex items-center justify-center">
+                  <Sparkles size={16} className="text-brand-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-text-primary">
+                    Start New Conversation
+                  </span>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    Begin fresh with full context window available
+                  </p>
+                </div>
+              </button>
 
-        {/* Cancel */}
-        <div className="px-5 pb-5 pt-1 text-center">
-          <button
-            onClick={onCancel}
-            className="text-xs text-text-muted hover:text-text-primary transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
+              {/* Dismiss */}
+              <button
+                onClick={onCancel}
+                className="w-full flex items-center gap-3 p-3 rounded-lg border border-border-default bg-surface-overlay hover:bg-surface-raised transition-colors text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-border-default"
+              >
+                <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-surface-raised flex items-center justify-center">
+                  <Zap size={16} className="text-text-secondary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-text-primary">Continue Anyway</span>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    Quality may degrade — model is running out of context
+                  </p>
+                </div>
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Warning Note */}
+            <div className="px-5 pb-4">
+              <div className="px-3 py-2.5 rounded-lg bg-warning/5 border border-warning/20">
+                <p className="text-xs text-text-secondary leading-relaxed">
+                  Standard compaction may lose important context and nuance.{' '}
+                  <span className="text-warning font-medium">&quot;Extract Nuance&quot;</span>{' '}
+                  preserves critical details before compacting.
+                </p>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="px-5 pb-3 space-y-2.5">
+              {/* Extract Nuance — Recommended */}
+              <button
+                ref={nuanceRef}
+                onClick={onExtractNuance}
+                className="w-full flex items-center gap-3 p-3 rounded-lg border-2 border-warning/40 bg-warning/5 hover:bg-warning/10 transition-colors text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-warning"
+              >
+                <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center">
+                  <Sparkles size={16} className="text-warning" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-text-primary">
+                      Extract Nuance &amp; Compact
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning/15 text-warning">
+                      Recommended
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    Preserves decisions, preferences, and key details before compacting
+                  </p>
+                </div>
+              </button>
+
+              {/* Quick Compact */}
+              <button
+                onClick={onQuickCompact}
+                className="w-full flex items-center gap-3 p-3 rounded-lg border border-border-default bg-surface-overlay hover:bg-surface-raised transition-colors text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-border-default"
+              >
+                <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-surface-raised flex items-center justify-center">
+                  <Zap size={16} className="text-text-secondary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-text-primary">Quick Compact</span>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    Summarizes older messages — faster but may lose some context
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            {/* Cancel */}
+            <div className="px-5 pb-5 pt-1 text-center">
+              <button
+                onClick={onCancel}
+                className="text-xs text-text-muted hover:text-text-primary transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

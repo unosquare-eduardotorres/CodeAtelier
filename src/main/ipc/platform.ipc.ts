@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import os from 'node:os'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { validateSender } from './validate-sender'
@@ -12,7 +12,8 @@ export function registerPlatformIpc(): void {
       platform: process.platform as PlatformInfo['platform'],
       arch: process.arch,
       isAppleSilicon: process.platform === 'darwin' && process.arch === 'arm64',
-      totalMemoryGB
+      totalMemoryGB,
+      appVersion: app.getVersion()
     }
   })
 }

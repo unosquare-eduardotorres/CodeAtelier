@@ -1,4 +1,4 @@
-# Agent Studio — Test Suite
+# Code Atelier — Test Suite
 
 ## Quick Start
 
@@ -20,7 +20,7 @@ npm run test:all
 
 ### Runner
 
-Agent Studio uses a **custom tsx-based test runner** (no Jest/Vitest). Tests use:
+Code Atelier uses a **custom tsx-based test runner** (no Jest/Vitest). Tests use:
 - `node:assert/strict` for assertions
 - A shared `test-harness.ts` providing `test()`, `describe()`, `summary()`
 - Manual fakes/stubs for mocking (no framework)

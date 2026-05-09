@@ -10,7 +10,7 @@ interface EmbeddingRow {
 
 /**
  * Serialize a number[] embedding to a Buffer for SQLite BLOB storage.
- * 768 floats x 4 bytes = 3,072 bytes per vector.
+ * Vector size depends on the model (384 floats for all-MiniLM-L6-v2).
  */
 export function serializeEmbedding(vec: number[]): Buffer {
   return Buffer.from(new Float32Array(vec).buffer)

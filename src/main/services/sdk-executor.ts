@@ -1,14 +1,18 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type { Query, AgentMcpServerSpec } from '@anthropic-ai/claude-agent-sdk'
 import type { StreamChunk } from './agent-base.service'
+import type { ContextManagementConfig } from './context-management'
 import { authProvider } from './auth-provider'
+import { join } from 'path'
 import {
   createScopeGuard,
   createCodeGraphFirstHook,
   createFireAndForgetHook,
+  createPathPrefixAutoCorrectHook,
   createReadLimitHook,
   createBashOutputCapHook,
   createLargeOutputWarningHook,
+  createToolResultBudgetHook,
   createPostToolUseHook,
   createPostToolUseFailureHook,
   createNotificationHook,
@@ -33,6 +37,27 @@ import {
   sdkLog
 } from './sdk-executor/index'
 import type { StreamState } from './sdk-executor/index'
+
+/**
+ * Resolve the Claude CLI binary path for the SDK.
+ * In packaged apps, the binary is inside app.asar.unpacked (not the ASAR itself)
+ * because child_process.spawn() cannot execute binaries from ASAR archives.
+ */
+function resolveClaudeBinaryPath(): string | undefined {
+  if (!app.isPackaged) return undefined // Dev mode — let SDK resolve via require.resolve()
+  // In production: binary is at app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude
+  const platform = process.platform === 'win32' ? 'win32' : process.platform
+  const arch = process.arch
+  const ext = platform === 'win32' ? '.exe' : ''
+  const binaryPkg = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`
+  const unpackedPath = join(
+    app.getAppPath().replace('app.asar', 'app.asar.unpacked'),
+    'node_modules',
+    binaryPkg,
+    `claude${ext}`
+  )
+  return unpackedPath
+}
 
 // Re-export middleware types for external consumers
 export type { TelemetryEntry } from './sdk-executor/telemetry-recorder'
@@ -130,8 +155,12 @@ export interface SDKExecuteOptions {
   promptSuggestions?: boolean
   /** Guarantee all hook lifecycle events are emitted (SDK 0.2.96+) */
   includeHookEvents?: boolean
-  /** Native auto-compact window control (SDK 0.2.96+) — SDK handles compaction timing */
-  autoCompactWindow?: boolean
+  /** Enable SDK auto-compaction (passed via settings.autoCompactEnabled) */
+  autoCompactEnabled?: boolean
+  /** Context window size in tokens for auto-compact threshold calculation */
+  contextWindowSize?: number
+  /** Context management configuration — tool clearing, thinking clearing, compaction thresholds */
+  contextManagement?: ContextManagementConfig
   /** Beta features — 1M context window */
   betas?: 'context-1m-2025-08-07'[]
   /** Fallback model when primary is unavailable/rate-limited */
@@ -249,6 +278,27 @@ export class SDKExecutor {
         process.env.ANTHROPIC_API_KEY = apiKey
       }
 
+      // Resolve tier-specific limits (falls back to Claude defaults for non-local)
+      const tierLimits = options.contextManagement?._tierLimits
+      const readLineLimit = tierLimits?.readLineLimit ?? 300
+      const toolBudgetChars = tierLimits?.toolResultBudgetChars ?? 200_000
+      const largeOutputThreshold = tierLimits
+        ? Math.round(tierLimits.toolResultBudgetChars / 20)
+        : 10_000
+
+      // Diagnostic: log tier-aware hook parameters and schema overhead
+      if (options.contextManagement?._tier) {
+        const mcpServerCount = Object.keys(options.mcpServers ?? {}).length
+        const allowedToolCount = options.allowedTools?.length ?? 0
+        sdkLog.info(
+          `[context-tier] tier=${options.contextManagement._tier} ` +
+          `mcpServers=${mcpServerCount} allowedTools=${allowedToolCount} ` +
+          `readLimit=${readLineLimit} toolBudget=${toolBudgetChars} ` +
+          `largeOutputThreshold=${largeOutputThreshold} ` +
+          `estSchemaOverhead=${allowedToolCount * 400}–${allowedToolCount * 500} tokens`
+        )
+      }
+
       // Build PreToolUse scope guard hooks — defense-in-depth even with bypassPermissions
       const scopeGuard = createScopeGuard(options.cwd)
       const preToolUseHooks = [scopeGuard]
@@ -256,8 +306,11 @@ export class SDKExecutor {
       // Add fire-and-forget detection for long-running Bash commands
       preToolUseHooks.push(createFireAndForgetHook())
 
-      // Cache-audit Fix 1: Cap Read calls at 300 lines to prevent full-file reads bloating context
-      preToolUseHooks.push(createReadLimitHook(300))
+      // Cache-audit Fix 1: Cap Read calls — tier-aware (100 lines for small, 300 for Claude)
+      preToolUseHooks.push(createReadLimitHook(readLineLimit))
+
+      // Auto-correct pathPrefix → path on SDK built-in tools (Grep/Glob)
+      preToolUseHooks.push(createPathPrefixAutoCorrectHook())
 
       // Cache-audit Fix 2: Cap Bash output for noisy commands (npm build, eslint, etc.)
       preToolUseHooks.push(createBashOutputCapHook(30))
@@ -277,8 +330,10 @@ export class SDKExecutor {
           {
             hooks: [
               createPostToolUseHook(options.agentId ?? 'unknown'),
-              // Cache-audit Fix 5: Warn model after consecutive large tool outputs
-              createLargeOutputWarningHook(10_000)
+              // Cache-audit Fix 5: Warn model after consecutive large tool outputs — tier-aware
+              createLargeOutputWarningHook(largeOutputThreshold),
+              // Context budget: track cumulative tool output per turn — tier-aware
+              createToolResultBudgetHook(toolBudgetChars)
             ]
           }
         ],
@@ -341,9 +396,15 @@ export class SDKExecutor {
           {
             hooks: [
               (input: Record<string, unknown>) => {
+                const pre = input.pre_tokens as number | undefined
+                const post = input.post_tokens as number | undefined
+                const trigger = input.trigger as string | undefined
                 const summary = input.compact_summary as string | undefined
+                const reduction = pre && post ? Math.round(((pre - post) / pre) * 100) : '?'
                 sdkLog.info(
-                  `[compact:post] Compaction complete — summary_length=${summary?.length ?? 0}`
+                  `[compact:post] trigger=${trigger ?? 'unknown'} ` +
+                    `pre=${pre ?? '?'} post=${post ?? '?'} ` +
+                    `reduction=${reduction}% summary_length=${summary?.length ?? 0}`
                 )
                 return {}
               },
@@ -372,6 +433,10 @@ export class SDKExecutor {
           systemPrompt: options.systemPrompt,
           cwd: options.cwd,
           permissionMode: options.permissionMode,
+          // In packaged apps, spawn() can't execute binaries from ASAR — point to unpacked path
+          ...(resolveClaudeBinaryPath()
+            ? { pathToClaudeCodeExecutable: resolveClaudeBinaryPath() }
+            : {}),
           // Wire SubAgent definitions (pass through mcpServers per agent if defined)
           ...(options.agents
             ? {
@@ -426,7 +491,18 @@ export class SDKExecutor {
           ...(options.enableFileCheckpointing ? { enableFileCheckpointing: true } : {}),
           ...(options.promptSuggestions ? { promptSuggestions: true } : {}),
           ...(options.includeHookEvents ? { includeHookEvents: true } : {}),
-          ...(options.autoCompactWindow ? { autoCompactWindow: true } : {}),
+          // Auto-compact wired via settings object (SDK expects number, not boolean)
+          ...(options.autoCompactEnabled !== false && options.contextWindowSize
+            ? {
+                settings: {
+                  autoCompactEnabled: true,
+                  autoCompactWindow: options.contextWindowSize,
+                  ...(options.contextManagement?.compactionInstructions
+                    ? { compactInstructions: options.contextManagement.compactionInstructions }
+                    : {})
+                }
+              }
+            : {}),
           ...(options.betas?.length ? { betas: options.betas } : {}),
           // taskBudget — disabled until API supports 'task-budgets' beta header
           // ...(options.taskBudget ? { taskBudget: options.taskBudget } : {}),
@@ -437,7 +513,7 @@ export class SDKExecutor {
           env: {
             ...process.env,
             ...(options.envOverrides ?? {}),
-            CLAUDE_AGENT_SDK_CLIENT_APP: `agent-studio/${app.getVersion()}`
+            CLAUDE_AGENT_SDK_CLIENT_APP: `code-atelier/${app.getVersion()}`
           },
           // Get typed streaming events — eliminates need for dedup with assistant replay
           includePartialMessages: true,

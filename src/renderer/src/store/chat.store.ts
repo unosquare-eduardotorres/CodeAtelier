@@ -2,8 +2,13 @@ import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
 import { detectPlanIntent } from '@renderer/utils/plan-intent-detector'
-import { SentenceBuffer } from '@renderer/utils/sentence-buffer'
+import {
+  StreamSegmentAccumulator,
+  type StreamSegment,
+  type SegmentState
+} from '@renderer/utils/stream-segment-accumulator'
 import { useWorkspaceStore } from './workspace.store'
+import { useProjectSpecialistStore } from './project-specialist.store'
 import type {
   CompleteResult,
   ContextUsage,
@@ -14,6 +19,7 @@ import type {
   GrillAnswerPayload,
   GrillProposedTask,
   GrillQuestion,
+  LLMProvider,
   Message,
   ToolActivity
 } from '../../../shared/types'
@@ -25,7 +31,7 @@ import type {
  */
 class ChatStreamingInternals {
   private safetyTimer: ReturnType<typeof setTimeout> | null = null
-  private buffer: SentenceBuffer | null = null
+  private accumulator: StreamSegmentAccumulator | null = null
   private storeGet: (() => ChatState) | null = null
   private storeSet: ((partial: Partial<ChatState>) => void) | null = null
 
@@ -35,25 +41,28 @@ class ChatStreamingInternals {
     this.storeSet = set
   }
 
-  getOrCreateBuffer(): SentenceBuffer {
-    if (!this.buffer) {
-      this.buffer = new SentenceBuffer((sentences: string) => {
-        const current = this.storeGet?.()
-        if (current) {
-          this.storeSet?.({ streamingContent: current.streamingContent + sentences })
-        }
+  getOrCreateAccumulator(): StreamSegmentAccumulator {
+    if (!this.accumulator) {
+      this.accumulator = new StreamSegmentAccumulator((state: SegmentState) => {
+        // Sync accumulator state → Zustand store
+        this.storeSet?.({
+          streamingSegments: state.segments,
+          streamingContent: state.currentContent,
+          toolActivities: state.currentToolActivities
+        })
       })
     }
-    return this.buffer
+    return this.accumulator
   }
 
-  resetBuffer(): void {
-    this.buffer?.reset()
+  resetAccumulator(): void {
+    this.accumulator?.reset()
+    this.accumulator = null
   }
 
-  /** Flush whatever's currently buffered without creating a buffer if none exists. */
-  flushBuffer(): void {
-    this.buffer?.flush()
+  /** Flush whatever's currently buffered without creating an accumulator if none exists. */
+  flushAccumulator(): void {
+    this.accumulator?.flush()
   }
 
   /** Stop the safety timer if one is running. */
@@ -111,6 +120,8 @@ interface ChatState {
   /** Conversation phase — more precise than isStreaming boolean */
   streamingPhase: ConversationPhase | null
   toolActivities: ToolActivity[]
+  /** Finalized streaming segments — each gets its own MessageBubble */
+  streamingSegments: StreamSegment[]
 
   /** Backend state machine mirror — single source of truth for conversation lifecycle state */
   conversationState: {
@@ -125,6 +136,8 @@ interface ChatState {
     level: string
     inputTokens: number
     breakdown?: ContextUsageBreakdown
+    /** When true, SDK compaction is unavailable (local LLM) */
+    isLocalProvider?: boolean
   } | null
 
   // Grill session state
@@ -145,7 +158,9 @@ interface ChatState {
     workspaceId: string,
     mode?: ConversationMode,
     title?: string,
-    personaSpecialistId?: string
+    personaSpecialistId?: string,
+    llmProvider?: LLMProvider,
+    mcpOverrides?: Record<string, boolean>
   ) => Promise<void>
   switchPersona: (personaSpecialistId: string | null) => Promise<void>
   selectConversation: (id: string) => Promise<void>
@@ -166,22 +181,27 @@ interface ChatState {
     taskId?: string,
     specialist?: string
   ) => void
-  finalizeStream: (
-    messageId: string,
-    taskId?: string,
-    requestId?: string
+  finalizeStream: (messageId: string, taskId?: string, requestId?: string) => void
+  finalizeTurnBubble: (
+    turnId: string,
+    turnRole?: 'da-vinci' | 'specialist',
+    turnSpecialist?: string
   ) => void
-  finalizeTurnBubble: (turnId: string) => void
   addToolActivity: (activity: ToolActivity) => void
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => void
 
   // Slash command actions
   clearDisplay: () => void
-  appendLocalMessage: (content: string) => void
+  appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => void
 
   // Compact suggestion
   setCompactSuggestion: (
-    data: { level: string; inputTokens: number; breakdown?: ContextUsageBreakdown } | null
+    data: {
+      level: string
+      inputTokens: number
+      breakdown?: ContextUsageBreakdown
+      isLocalProvider?: boolean
+    } | null
   ) => void
 
   // Grill session actions
@@ -226,6 +246,18 @@ interface ChatState {
   } | null
   setSessionRecovery: (data: ChatState['sessionRecovery']) => void
 
+  // Budget cap banner state
+  budgetCapBanner: {
+    conversationId: string
+    message: string
+    canContinue: boolean
+  } | null
+  setBudgetCapBanner: (
+    data: { conversationId: string; message: string; canContinue: boolean } | null
+  ) => void
+  continuePastBudgetCap: () => Promise<void>
+  dismissBudgetCap: () => void
+
   // Conversation state machine mirror
   setConversationState: (data: ChatState['conversationState']) => void
 
@@ -254,12 +286,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeRequestId: previousChatState?.activeRequestId ?? null,
   streamingPhase: previousChatState?.streamingPhase ?? null,
   toolActivities: previousChatState?.toolActivities ?? [],
+  streamingSegments: previousChatState?.streamingSegments ?? [],
   compactSuggestion: previousChatState?.compactSuggestion ?? null,
   grillSession: previousChatState?.grillSession ?? null,
   pendingQuestions: previousChatState?.pendingQuestions ?? null,
   pendingQuestionAction: previousChatState?.pendingQuestionAction ?? null,
   autoModeSwitchPill: null,
   sessionRecovery: null,
+  budgetCapBanner: null,
   conversationState: previousChatState?.conversationState ?? {
     phase: 'idle',
     from: null,
@@ -269,7 +303,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   draftTexts: previousChatState?.draftTexts ?? {},
   contextUsages: previousChatState?.contextUsages ?? {},
 
-  // Bind internals refs for safety timer + sentence buffer (runs once on store creation)
+  // Bind internals refs for safety timer + segment accumulator (runs once on store creation)
   ...(() => {
     internals.bind(get, set)
     return {}
@@ -277,6 +311,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   loadConversations: async (workspaceId: string) => {
     try {
+      // Detect workspace switch — clear stale chat state from previous workspace.
+      // Without this, activeConversation + messages from the old workspace leak
+      // into the new workspace's ChatPanel until the user explicitly selects a
+      // conversation (or creates one).
+      const { activeConversation } = get()
+      if (activeConversation && activeConversation.workspaceId !== workspaceId) {
+        get().reset()
+        internals.resetAccumulator()
+        internals.clearSafetyTimer()
+      }
+
       const conversations = await window.api.getConversations({ workspaceId })
       set({ conversations })
     } catch (error) {
@@ -288,19 +333,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     workspaceId: string,
     mode?: ConversationMode,
     title?: string,
-    personaSpecialistId?: string
+    personaSpecialistId?: string,
+    llmProvider?: LLMProvider,
+    mcpOverrides?: Record<string, boolean>
   ) => {
     const conversation = await window.api.createConversation({
       workspaceId,
       mode,
       title,
-      personaSpecialistId
+      personaSpecialistId,
+      llmProvider,
+      mcpOverrides
     })
     set((state) => ({
       conversations: [conversation, ...state.conversations],
       activeConversation: conversation,
       messages: [],
       streamingContent: '',
+      streamingSegments: [],
       isStreaming: false,
       // Reset streaming identity — prevents stale specialist/DaVinci avatar leak
       streamingRole: 'da-vinci' as const,
@@ -394,8 +444,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingTaskId: null,
       // Clear ephemeral UI state from previous conversation
       toolActivities: [],
+      streamingSegments: [],
       grillSession: null,
       compactSuggestion: null,
+      budgetCapBanner: null,
       pendingQuestions: null,
       pendingQuestionAction: null,
       activeRequestId: null,
@@ -420,10 +472,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   stopGeneration: async () => {
     // Flush any remaining buffered content before stopping
-    internals.flushBuffer()
-    internals.resetBuffer()
+    internals.flushAccumulator()
 
-    const { streamingContent, streamingRole, streamingSpecialist, activeConversation } = get()
+    const {
+      streamingContent,
+      streamingSegments,
+      streamingRole,
+      streamingSpecialist,
+      activeConversation
+    } = get()
 
     try {
       await window.api.stopGeneration()
@@ -431,22 +488,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
       rendererLog.error('Failed to stop generation:', error)
     }
 
-    // Preserve partial streaming content as a message with a "stopped" suffix
-    if (streamingContent && activeConversation) {
+    // Preserve partial streaming content as a single merged message with a "stopped" suffix
+    if ((streamingContent || streamingSegments.length > 0) && activeConversation) {
+      const stopTs = Date.now()
+
+      // Merge all segments + current content into one stopped message
+      const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent || '']
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .join('\n\n')
+
+      const mergedTools = [
+        ...streamingSegments.flatMap((s) => s.toolActivities)
+        // Note: don't include current toolActivities here — they weren't part of streamed content
+      ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
+
       const stoppedMessage: Message = {
-        id: `stopped-${Date.now()}`,
+        id: `stopped-${stopTs}`,
         conversationId: activeConversation.id,
         role: streamingRole,
         ...(streamingRole === 'specialist' && streamingSpecialist
           ? { agentId: streamingSpecialist }
           : {}),
-        contentMd: streamingContent + '\n\n---\n\n⏹ *Generation stopped by user.*',
+        contentMd: (mergedContent || '') + '\n\n---\n\n⏹ *Generation stopped by user.*',
         attachmentsJson: '[]',
-        createdAt: new Date().toISOString()
+        createdAt:
+          streamingSegments.length > 0
+            ? new Date(streamingSegments[0].timestamp).toISOString()
+            : new Date().toISOString(),
+        toolActivities: mergedTools.length > 0 ? mergedTools : undefined
       }
+
       set((state) => ({
         messages: [...state.messages, stoppedMessage],
         streamingContent: '',
+        streamingSegments: [],
         isStreaming: false,
         toolActivities: [],
         activeRequestId: null,
@@ -465,6 +541,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => ({
         messages: [...state.messages, stoppedMessage],
         streamingContent: '',
+        streamingSegments: [],
         isStreaming: false,
         toolActivities: [],
         activeRequestId: null,
@@ -474,11 +551,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         isStreaming: false,
         streamingContent: '',
+        streamingSegments: [],
         toolActivities: [],
         activeRequestId: null,
         conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
       })
     }
+
+    internals.resetAccumulator()
   },
 
   sendMessage: async (text: string, attachments?: string[]) => {
@@ -504,14 +584,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [...state.messages, optimisticMessage],
       isStreaming: true,
       streamingContent: '',
+      streamingSegments: [],
       toolActivities: [],
+      budgetCapBanner: null,
       // activeRequestId is set AFTER the backend returns — see below.
       // This prevents the mismatch where renderer and backend generate different IDs.
       activeRequestId: null
     }))
 
-    // Reset sentence buffer for new message
-    internals.resetBuffer()
+    // Reset segment accumulator for new message
+    internals.resetAccumulator()
 
     // Safety: force-reset if streaming state gets stuck (e.g., process dies without emitting complete)
     internals.resetSafetyTimer()
@@ -529,10 +611,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       rendererLog.error('Failed to send message:', error)
       internals.clearSafetyTimer()
-      set({
-        isStreaming: false,
-        conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
-      })
+
+      // Show user-visible error instead of silent failure
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      const { activeConversation: conv } = get()
+      if (conv) {
+        const errorMessage: Message = {
+          id: `error-${Date.now()}`,
+          conversationId: conv.id,
+          role: 'da-vinci',
+          contentMd: `**Failed to send message:** ${errorMsg}`,
+          attachmentsJson: '[]',
+          createdAt: new Date().toISOString()
+        }
+        set((state) => ({
+          messages: [...state.messages, errorMessage],
+          isStreaming: false,
+          streamingSegments: [],
+          conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
+        }))
+      } else {
+        set({
+          isStreaming: false,
+          streamingSegments: [],
+          conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
+        })
+      }
     }
   },
 
@@ -552,24 +656,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const isNewTask = taskId != null && taskId !== get().streamingTaskId
 
-    // If task changed, flush old buffer and reset
+    // If task changed, flush old accumulator and reset
     if (isNewTask) {
-      internals.flushBuffer()
-      internals.resetBuffer()
+      internals.flushAccumulator()
+      internals.resetAccumulator()
     }
 
     // Update streaming metadata (non-content state) immediately
     set((state) => ({
       isStreaming: true, // Ensure streaming bubble renders for specialist chunks
       streamingPhase: role === 'specialist' ? 'specialist-executing' : 'da-vinci-responding',
+      streamingSegments: isNewTask ? [] : state.streamingSegments,
       streamingContent: isNewTask ? '' : state.streamingContent,
       streamingRole: role ?? state.streamingRole,
       streamingSpecialist: specialist ?? state.streamingSpecialist,
       streamingTaskId: taskId ?? state.streamingTaskId
     }))
 
-    // Push chunk into sentence buffer (will auto-flush on sentence boundaries)
-    internals.getOrCreateBuffer().append(chunk)
+    // Push chunk through segment accumulator (auto-segments at sentence + tool boundaries)
+    internals.getOrCreateAccumulator().appendText(chunk)
   },
 
   updateStreamingIdentity: (role, taskId?, specialist?) => {
@@ -583,45 +688,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   addToolActivity: (activity: ToolActivity) => {
     // Reset safety timer — tool started, backend is active
     internals.resetSafetyTimer()
-    set((state) => ({
-      toolActivities: [...state.toolActivities, activity]
-    }))
+    internals.getOrCreateAccumulator().handleToolActivity(activity)
   },
 
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string; id?: string }) => {
     // Reset safety timer — tool completed, backend is active
     internals.resetSafetyTimer()
-    set((state) => {
-      // Find matching activity — by ID first (reliable), then by toolName (legacy fallback)
-      const activities = [...state.toolActivities]
-      for (let i = activities.length - 1; i >= 0; i--) {
-        const isMatch = activity.id
-          ? activities[i].id === activity.id
-          : activities[i].toolName === activity.toolName && activities[i].status === 'running'
-        if (isMatch) {
-          activities[i] = {
-            ...activities[i],
-            ...activity,
-            // Preserve existing input if update doesn't provide one
-            input: activity.input ?? activities[i].input,
-            // If elapsedSeconds is provided but no explicit status change, keep current status
-            status:
-              activity.status ??
-              (activity.elapsedSeconds !== undefined ? activities[i].status : 'completed'),
-            // Preserve elapsedSeconds for progress display
-            elapsedSeconds: activity.elapsedSeconds ?? activities[i].elapsedSeconds
-          }
-          break
-        }
-      }
-      return { toolActivities: activities }
-    })
+    internals
+      .getOrCreateAccumulator()
+      .handleToolActivity(activity as Partial<ToolActivity> & { id: string; toolName: string })
   },
 
   finalizeStream: (messageId: string, taskId?: string, requestId?: string) => {
     // Force-flush any remaining buffered content before finalizing
-    internals.flushBuffer()
-    internals.resetBuffer()
+    internals.flushAccumulator()
 
     const activeRequestId = get().activeRequestId
     if (activeRequestId && requestId && requestId !== activeRequestId) return
@@ -631,38 +711,55 @@ export const useChatStore = create<ChatState>((set, get) => ({
       internals.clearSafetyTimer()
     }
 
-    const { streamingContent, streamingRole, streamingSpecialist, activeConversation } = get()
+    const {
+      streamingSegments,
+      streamingContent,
+      streamingRole,
+      streamingSpecialist,
+      activeConversation,
+      toolActivities
+    } = get()
 
-    // Guard: generalist's CHAT_MESSAGE_COMPLETE arrived while specialist is mid-stream.
-    // Skip finalization so specialist content isn't captured under the wrong identity.
-    if (!taskId && streamingRole === 'specialist' && streamingSpecialist) {
-      rendererLog.info('[finalizeStream] Generalist complete during specialist streaming — skipping')
-      return
-    }
+    // (Removed) The specialist-pool guard that previously returned early here
+    // was vestigial — there is no specialist pool or parallel specialist execution
+    // in the current architecture. The guard blocked ALL specialist/persona
+    // completions, causing isStreaming to remain true indefinitely.
 
-    if (streamingContent && activeConversation) {
-      // Safety net: force-complete any tools still marked as "running" — ensures
-      // no tool dots stay yellow/running after the stream ends, even if a tool_result was lost.
-      const currentToolActivities = get().toolActivities.map((a) =>
-        a.status === 'running' ? { ...a, status: 'completed' as const, completedAt: Date.now() } : a
-      )
-      const finalMessage: Message = {
-        id: messageId,
-        conversationId: activeConversation.id,
-        role: streamingRole,
-        // Attach specialist agentId so MessageBubble can resolve the correct identity
-        ...(streamingRole === 'specialist' && streamingSpecialist
-          ? { agentId: streamingSpecialist }
-          : {}),
-        contentMd: streamingContent,
-        attachmentsJson: '[]',
-        createdAt: new Date().toISOString(),
-        toolActivities: currentToolActivities.length > 0 ? [...currentToolActivities] : undefined
+    if ((streamingContent || streamingSegments.length > 0) && activeConversation) {
+      // Merge all segments + current content into a single message
+      const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .join('\n\n')
+
+      const mergedTools = [
+        ...streamingSegments.flatMap((s) => s.toolActivities),
+        ...toolActivities
+      ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
+
+      const newMessages: Message[] = []
+      if (mergedContent || mergedTools.length > 0) {
+        newMessages.push({
+          id: messageId,
+          conversationId: activeConversation.id,
+          role: streamingRole,
+          ...(streamingRole === 'specialist' && streamingSpecialist
+            ? { agentId: streamingSpecialist }
+            : {}),
+          contentMd: mergedContent,
+          attachmentsJson: '[]',
+          createdAt:
+            streamingSegments.length > 0
+              ? new Date(streamingSegments[0].timestamp).toISOString()
+              : new Date().toISOString(),
+          toolActivities: mergedTools.length > 0 ? [...mergedTools] : undefined
+        })
       }
 
       set((state) => ({
-        messages: [...state.messages, finalMessage],
+        messages: [...state.messages, ...newMessages],
         streamingContent: '',
+        streamingSegments: [],
         // Only stop streaming if this is the final complete (no taskId = final summary)
         isStreaming: !!taskId,
         activeRequestId: taskId ? state.activeRequestId : null,
@@ -673,48 +770,59 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
     } else if (taskId) {
       // Per-task complete with no accumulated content — just reset task tracking
-      set({ streamingContent: '', streamingTaskId: null })
+      set({ streamingContent: '', streamingSegments: [], streamingTaskId: null })
     } else if (activeConversation) {
-      // No streaming content received — reload messages from DB
-      // The backend saved a message (possibly an error or "No response received")
+      // Clear streaming state synchronously to prevent the thinking indicator
+      // from hanging while the DB reload completes.
+      set({
+        streamingContent: '',
+        streamingSegments: [],
+        isStreaming: false,
+        activeRequestId: null,
+        toolActivities: [],
+        streamingTaskId: null
+      })
+      // Then reload messages from DB asynchronously
       window.api
         .getMessages({ conversationId: activeConversation.id })
         .then((dbMessages) => {
-          // Guard: don't replace existing messages with empty DB result
-          // This prevents data loss from DB lock contention or timing issues
-          const currentMessages = get()?.messages ?? []
-          set({
-            messages: dbMessages.length > 0 ? dbMessages : currentMessages,
-            streamingContent: '',
-            isStreaming: false,
-            activeRequestId: null,
-            toolActivities: [],
-            streamingTaskId: null
-          })
+          if (dbMessages.length > 0) {
+            const currentMessages = get()?.messages ?? []
+            set({
+              messages: dbMessages.length > 0 ? dbMessages : currentMessages
+            })
+          }
         })
         .catch((error) => {
           rendererLog.error('Failed to reload messages after stream finalize:', error)
-          set({
-            streamingContent: '',
-            isStreaming: false,
-            activeRequestId: null,
-            toolActivities: [],
-            streamingTaskId: null
-          })
         })
     } else {
       set({
         streamingContent: '',
+        streamingSegments: [],
         isStreaming: false,
         activeRequestId: null,
         toolActivities: [],
         streamingTaskId: null
       })
     }
+
+    internals.resetAccumulator()
   },
 
-  finalizeTurnBubble: (turnId: string) => {
+  finalizeTurnBubble: (
+    turnId: string,
+    turnRole?: 'da-vinci' | 'specialist',
+    turnSpecialist?: string
+  ) => {
+    // Flush any remaining buffered content before finalizing the turn.
+    // Without this, text streamed just before a tool call stays in the
+    // accumulator (waiting for a sentence boundary / 250ms timeout)
+    // and is never captured into the turn message.
+    internals.flushAccumulator()
+
     const {
+      streamingSegments,
       streamingContent,
       streamingRole,
       streamingSpecialist,
@@ -723,41 +831,77 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } = get()
 
     // Nothing to finalize — agent went straight to tools without text
-    if (!streamingContent && toolActivities.length === 0) return
+    if (!streamingContent && streamingSegments.length === 0 && toolActivities.length === 0) return
+
+    // Use identity from the turn boundary chunk if provided (defensive against stale store state)
+    const role = turnRole ?? streamingRole
+    const specialist = turnSpecialist ?? streamingSpecialist
 
     if (activeConversation) {
-      const turnMessage: Message = {
-        id: turnId,
-        conversationId: activeConversation.id,
-        role: streamingRole,
-        ...(streamingRole === 'specialist' && streamingSpecialist
-          ? { agentId: streamingSpecialist }
-          : {}),
-        contentMd: streamingContent,
-        attachmentsJson: '[]',
-        createdAt: new Date().toISOString(),
-        // Snapshot current tool activities into this bubble
-        toolActivities:
-          toolActivities.length > 0
-            ? toolActivities.map((a) => ({
-                ...a,
-                status: a.status === 'running' ? ('completed' as const) : a.status
-              }))
-            : undefined
-      }
+      // Merge ALL segments + current content into a single message per turn
+      const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .join('\n\n')
 
-      set((state) => ({
-        messages: [...state.messages, turnMessage],
-        streamingContent: '', // Reset for next turn
-        toolActivities: [], // Reset tools for next turn
-        isStreaming: true // Stay in streaming mode
-      }))
+      const mergedTools = [
+        ...streamingSegments.flatMap((s) => s.toolActivities),
+        ...toolActivities
+      ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
+
+      if (mergedContent || mergedTools.length > 0) {
+        const message: Message = {
+          id: turnId,
+          conversationId: activeConversation.id,
+          role,
+          ...(role === 'specialist' && specialist ? { agentId: specialist } : {}),
+          contentMd: mergedContent,
+          attachmentsJson: '[]',
+          createdAt:
+            streamingSegments.length > 0
+              ? new Date(streamingSegments[0].timestamp).toISOString()
+              : new Date().toISOString(),
+          toolActivities: mergedTools.length > 0 ? mergedTools : undefined
+        }
+
+        set((state) => ({
+          messages: [...state.messages, message],
+          streamingContent: '',
+          streamingSegments: [],
+          toolActivities: [],
+          isStreaming: true
+        }))
+      } else {
+        set({ streamingContent: '', streamingSegments: [], toolActivities: [], isStreaming: true })
+      }
     }
+
+    internals.resetAccumulator()
   },
 
   clearAutoModeSwitchPill: () => set({ autoModeSwitchPill: null }),
 
   setSessionRecovery: (data) => set({ sessionRecovery: data }),
+
+  setBudgetCapBanner: (data) => set({ budgetCapBanner: data }),
+
+  continuePastBudgetCap: async () => {
+    const { budgetCapBanner, activeConversation } = get()
+    if (!budgetCapBanner || !activeConversation) return
+    set({ budgetCapBanner: null })
+    // Resume by sending a continuation prompt — the SDK session is still alive
+    try {
+      await window.api.sendMessage({
+        conversationId: activeConversation.id,
+        text: 'Continue where you left off.',
+        attachments: []
+      })
+    } catch (err) {
+      console.error('Failed to continue past budget cap:', err)
+    }
+  },
+
+  dismissBudgetCap: () => set({ budgetCapBanner: null }),
 
   setConversationState: (data) => {
     // Only update conversationState — do NOT derive isStreaming from phase.
@@ -785,6 +929,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeConversation: null,
       messages: [],
       streamingContent: '',
+      streamingSegments: [],
       isStreaming: false,
       toolActivities: []
     })
@@ -964,9 +1109,71 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (accepted) {
         const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
         if (workspaceId) {
+          // Show immediate feedback
+          get().appendLocalMessage('🔄 *Swapping to Project Specialist…*')
+
           window.api
             .swapToSpecialist({ workspaceId })
-            .catch((err) => rendererLog.error('swapToSpecialist failed:', err))
+            .then(async () => {
+              // Reload messages to get clean state after swap
+              const { activeConversation } = get()
+              if (activeConversation) {
+                const messages = await window.api.getMessages({
+                  conversationId: activeConversation.id
+                })
+                set({ messages })
+              }
+
+              // Resolve the Project Specialist to get its identity
+              await useProjectSpecialistStore.getState().loadForWorkspace(workspaceId)
+              const specialist = useProjectSpecialistStore.getState().byWorkspace[workspaceId]
+
+              if (specialist) {
+                // Switch the persona selector to the specialist
+                await get().switchPersona(specialist.id)
+
+                // Greeting from the specialist (with specialist avatar/identity)
+                get().appendLocalMessage(
+                  `👋 **${specialist.displayName}** is now active and ready. I'm your dedicated specialist for this workspace — send a message and let's get to work!`,
+                  { role: 'specialist', agentId: specialist.agentId }
+                )
+              } else {
+                get().appendLocalMessage(
+                  '✅ *Specialist is now active. Send a message to start working with your Project Specialist.*'
+                )
+              }
+
+              // ── Auto-continue: re-send the user's original message ──
+              // The swap was triggered by a user request that DaVinci deferred
+              // to the specialist. Re-sending ensures the specialist picks up
+              // immediately instead of sitting idle waiting for new input.
+              const { messages: currentMessages } = get()
+              const lastUserMessage = [...currentMessages]
+                .reverse()
+                .find((m) => m.role === 'user')
+              if (lastUserMessage?.contentMd?.trim()) {
+                // Parse attachments from the original message (if any)
+                let attachments: string[] | undefined
+                try {
+                  const parsed = JSON.parse(
+                    lastUserMessage.attachmentsJson || '[]'
+                  ) as string[]
+                  if (parsed.length > 0) attachments = parsed
+                } catch {
+                  /* no attachments */
+                }
+
+                // Brief delay to let the greeting render and scroll settle
+                await new Promise((resolve) => setTimeout(resolve, 300))
+                await get().sendMessage(lastUserMessage.contentMd, attachments)
+              }
+            })
+            .catch((err) => {
+              rendererLog.error('swapToSpecialist failed:', err)
+              get().appendLocalMessage(
+                '❌ *Failed to swap to specialist. Please try again from workspace settings.*'
+              )
+            })
         } else {
           rendererLog.warn('swap-to-specialist: no active workspace — skipping IPC call')
         }
@@ -1001,17 +1208,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setCompactSuggestion: (data) => set({ compactSuggestion: data }),
 
   clearDisplay: () => {
-    set({ messages: [], streamingContent: '', toolActivities: [] })
+    set({ messages: [], streamingContent: '', streamingSegments: [], toolActivities: [] })
   },
 
-  appendLocalMessage: (content: string) => {
+  appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => {
     const { activeConversation } = get()
     if (!activeConversation) return
 
     const localMessage: Message = {
       id: `local-${Date.now()}`,
       conversationId: activeConversation.id,
-      role: 'da-vinci',
+      role: opts?.role ?? 'da-vinci',
+      ...(opts?.agentId ? { agentId: opts.agentId } : {}),
       contentMd: content,
       attachmentsJson: '[]',
       createdAt: new Date().toISOString()
@@ -1070,20 +1278,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   reset: () => {
+    internals.resetAccumulator()
+    internals.clearSafetyTimer()
     set({
       conversations: [],
       activeConversation: null,
       messages: [],
       streamingContent: '',
+      streamingSegments: [],
       streamingRole: 'da-vinci' as const,
       streamingSpecialist: null,
+      streamingTaskId: null,
       isStreaming: false,
       activeRequestId: null,
+      streamingPhase: null,
       toolActivities: [],
       compactSuggestion: null,
       grillSession: null,
       pendingQuestions: null,
       pendingQuestionAction: null,
+      budgetCapBanner: null,
+      sessionRecovery: null,
+      autoModeSwitchPill: null,
       draftTexts: {},
       contextUsages: {},
       conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
@@ -1116,6 +1332,7 @@ export const useChatActions = (): Pick<
   | 'skipAllGrillQuestions'
   | 'createItemsFromGrill'
   | 'setCompactSuggestion'
+  | 'setBudgetCapBanner'
   | 'setGrillQuestions'
   | 'endGrillSession'
   | 'appendStreamChunk'
@@ -1154,6 +1371,7 @@ export const useChatActions = (): Pick<
       skipAllGrillQuestions: s.skipAllGrillQuestions,
       createItemsFromGrill: s.createItemsFromGrill,
       setCompactSuggestion: s.setCompactSuggestion,
+      setBudgetCapBanner: s.setBudgetCapBanner,
       setGrillQuestions: s.setGrillQuestions,
       endGrillSession: s.endGrillSession,
       appendStreamChunk: s.appendStreamChunk,

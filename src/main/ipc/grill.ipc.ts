@@ -8,10 +8,10 @@
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS, MCP_TOOLS } from '../../shared/constants'
-import type { GrillTrackId, GrillEvaluation } from '../../shared/types'
+import type { GrillTrackId, GrillEvaluation, LLMProvider } from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
 import { summarizeToolInput } from '../services/agent-base.service'
-import { extractResultSummary } from './chat-shared'
+import { extractResultSummary, reportToolError } from './chat-shared'
 import { workspaceRepository } from '../db/repositories'
 import { grillAgentService } from '../services/grill-agent.service'
 import { grillPersistenceController } from '../services/grill-persistence.controller'
@@ -35,6 +35,7 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
         iterationHistory?: string
         previousScore?: number
         ideaId?: string
+        llmProvider?: LLMProvider
       }
     ): Promise<void> => {
       validateSender(event)
@@ -44,7 +45,16 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
         trackId: args?.trackId
       })
 
-      const { workspaceId, trackId, ideaTitle, ideaDescription, iterationHistory, previousScore, ideaId } = args
+      const {
+        workspaceId,
+        trackId,
+        ideaTitle,
+        ideaDescription,
+        iterationHistory,
+        previousScore,
+        ideaId,
+        llmProvider: explicitProvider
+      } = args
 
       if (grillAgentService.isRunning) {
         throw new Error('A grill evaluation is already running.')
@@ -64,6 +74,10 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
         await grillPersistenceController.startTracking(ideaId, workspaceId, trackId)
       }
 
+      // Resolve LLM provider: explicit selection → workspace setting → 'claude'
+      const settings = JSON.parse(workspace.settingsJson ?? '{}')
+      const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
+
       // Wire event forwarding (through persistence controller)
       wireGrillEvents(mainWindow, workspace.repoPath)
 
@@ -76,7 +90,8 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
           ideaTitle,
           ideaDescription,
           iterationHistory,
-          previousScore
+          previousScore,
+          llmProvider
         })
         .catch((err) => {
           grillLog.error('[grill:evaluate] evaluate failed:', err)
@@ -247,7 +262,19 @@ function wireGrillEvents(mainWindow: BrowserWindow, workspacePath: string): void
 
       const isToolError =
         typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
-      const resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
+
+      // Skip reporting prompt-format artifacts that the model sometimes emits as tool calls.
+      // grill-evaluation is a fenced-block language tag, not a real tool.
+      const GRILL_FORMAT_TAGS = new Set(['grill-evaluation'])
+
+      // Auto-capture tool errors to the bug tracker (skip known format tags)
+      if (isToolError && chunk.content && !GRILL_FORMAT_TAGS.has(chunk.toolName ?? '')) {
+        reportToolError(chunk.toolName ?? 'Unknown', chunk.content, { agentType: 'grill' })
+      }
+
+      const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
+      const resultSummary = resultSummaryObj?.result
+      const resultDetail = resultSummaryObj?.resultDetail
 
       let inputSummary: string | undefined
       if (chunk.content) {
@@ -267,6 +294,7 @@ function wireGrillEvents(mainWindow: BrowserWindow, workspacePath: string): void
       }
       if (inputSummary) toolActivity.input = inputSummary
       if (resultSummary) toolActivity.result = resultSummary
+      if (resultDetail) toolActivity.resultDetail = resultDetail
 
       grillPersistenceController.handleStreamChunk(
         { type: 'tool_activity', toolActivity },

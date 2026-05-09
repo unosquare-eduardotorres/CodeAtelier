@@ -1,5 +1,5 @@
 /**
- * Shared test harness for Agent Studio's custom test runner.
+ * Shared test harness for Code Atelier's custom test runner.
  * Import `test`, `describe`, and `summary` / `summaryAsync` instead of defining them inline.
  *
  * Synchronous usage:

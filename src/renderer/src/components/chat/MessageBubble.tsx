@@ -3,11 +3,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
-import { Paperclip, Flame, Lightbulb, FileText, Loader2 } from 'lucide-react'
+import { Paperclip, Flame, Lightbulb, FileText } from 'lucide-react'
 import {
   remarkEmojiSpan,
   remarkHighlightQuestions,
-  remarkHighlightNextSteps
+  remarkHighlightNextSteps,
+  remarkStyledArrows
 } from './remark-plugins'
 import { CodeBlock } from './CodeBlock'
 import type {
@@ -20,7 +21,12 @@ import type {
 import ToolActivityBlock from './ToolActivityBlock'
 import MessageCardRenderer from './MessageCardRenderer'
 import { useMessageContent } from './useMessageContent'
-import { useSpecialistStore, useChatStore, useWorkspaceStore, useChatBubbleSize } from '@renderer/store'
+import {
+  useSpecialistStore,
+  useChatStore,
+  useWorkspaceStore,
+  useChatBubbleSize
+} from '@renderer/store'
 import type { ChatBubbleSize } from '../../../../shared/types'
 import { Avatar, ImageLightbox, Skeleton } from '@renderer/components/common'
 import { CORE_AGENT_DEFAULTS, USER_AVATAR_KEY } from '@renderer/utils/agentIdentity'
@@ -30,7 +36,7 @@ import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 export interface MessageBubbleActions {
   updateMode: (mode: ConversationMode) => Promise<void>
   sendMessage: (text: string, attachments?: string[]) => Promise<void>
-  appendLocalMessage: (content: string) => void
+  appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => void
   clearGrillSession: () => void
   createItemsFromGrill: (
     tasks: { title: string; context: string; description: string }[]
@@ -81,16 +87,43 @@ function shortenFilePath(filePath: string): string {
   return filePath
 }
 
+/** Clickable file-path link — resolves relative paths against workspace root */
+function FilePathLink({ filePath }: { filePath: string }): React.JSX.Element {
+  const repoPath = useWorkspaceStore((s) => s.activeWorkspace?.repoPath)
+  const shortenedPath = shortenFilePath(filePath)
+
+  const isAbsolute = /^[/~]/.test(filePath) || /^[A-Z]:\\/.test(filePath)
+
+  const resolvedPath =
+    isAbsolute || !repoPath ? filePath : `${repoPath.replace(/\/$/, '')}/${filePath}`
+
+  return (
+    <span
+      role="button"
+      aria-label={`Reveal ${filePath} in file manager`}
+      className="inline-flex items-center gap-1 text-sm font-medium text-info hover:text-info/80 underline decoration-info/40 cursor-pointer transition-colors"
+      title={`Reveal in file manager: ${resolvedPath}`}
+      onClick={() => window.api.showItemInFolder(resolvedPath)}
+    >
+      <FileText size={13} className="shrink-0" />
+      {shortenedPath}
+    </span>
+  )
+}
+
 /** Bubble size classes — controlled by user preference */
-const BUBBLE_SIZE_CLASSES: Record<ChatBubbleSize, { text: string; userMax: string; aiMax: string }> = {
-  small: { text: 'text-xs leading-relaxed', userMax: 'max-w-[70%]', aiMax: 'max-w-[75%]' },
-  medium: { text: 'text-sm leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[80%]' },
-  large: { text: 'text-[15px] leading-relaxed', userMax: 'max-w-[80%]', aiMax: 'max-w-[85%]' },
-  xl: { text: 'text-base leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[85%]' }
+const BUBBLE_SIZE_CLASSES: Record<
+  ChatBubbleSize,
+  { text: string; userMax: string; aiMax: string }
+> = {
+  small: { text: 'text-xs leading-relaxed', userMax: 'max-w-[70%]', aiMax: 'max-w-[88%]' },
+  medium: { text: 'text-sm leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[90%]' },
+  large: { text: 'text-sm leading-relaxed', userMax: 'max-w-[80%]', aiMax: 'max-w-[92%]' },
+  xl: { text: 'text-base leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[92%]' }
 }
 
 // Module-level constants — stable references, never recreated on render
-const REMARK_PLUGINS_BASE = [remarkGfm, remarkBreaks, remarkEmojiSpan]
+const REMARK_PLUGINS_BASE = [remarkGfm, remarkBreaks, remarkEmojiSpan, remarkStyledArrows]
 const REMARK_PLUGINS = [...REMARK_PLUGINS_BASE, remarkHighlightQuestions, remarkHighlightNextSteps]
 const REHYPE_PLUGINS = [rehypeRaw]
 
@@ -149,28 +182,14 @@ const markdownComponents = {
     const isFilePath =
       /^[/~][\w.\-/@ ]+\.\w{1,10}$/.test(text) ||
       /^[A-Z]:\\/.test(text) ||
-      /^[\w@][\w.\-/@ ]*\/[\w.\-/@ ]*\.\w{1,10}$/.test(text)
+      /^[\w@][\w.\-/@ ]*\/[\w.\-/@ ]*\.\w{1,10}$/.test(text) ||
+      // Bare filenames — e.g., "index.html", "colors_and_type.css"
+      /^[\w][\w.\-]*\.\w{2,10}$/.test(text)
     if (isFilePath) {
-      const shortenedPath = shortenFilePath(text)
-      return (
-        <span
-          role="button"
-          aria-label={`Reveal ${text} in file manager`}
-          className="inline-flex items-center gap-1 text-sm font-medium text-info hover:text-info/80 underline decoration-info/40 cursor-pointer transition-colors"
-          title={`Reveal in file manager: ${text}`}
-          onClick={() => window.api.showItemInFolder(text)}
-        >
-          <FileText size={13} className="shrink-0" />
-          {shortenedPath}
-        </span>
-      )
+      return <FilePathLink filePath={text} />
     }
 
-    return (
-      <code className="bg-surface-overlay px-1.5 py-0.5 rounded text-sm text-text-body font-semibold">
-        {text}
-      </code>
-    )
+    return <code className="text-sm font-semibold">{text}</code>
   },
   table: ({ children }: { children?: React.ReactNode }) => (
     <div className="overflow-x-auto rounded-lg border border-border-default my-3 shadow-sm">
@@ -404,7 +423,7 @@ function MessageBubbleInner({
 
   /** Shared AI bubble styles */
   const aiBubbleClass =
-    'rounded-md px-5 py-4 bg-surface-overlay text-text-body border-l-[3px] border-primary/60 shadow-sm overflow-hidden min-w-0'
+    'rounded-md px-4 py-3 bg-surface-overlay text-text-body border-l-2 border-primary/50 shadow-sm overflow-hidden min-w-0'
 
   return (
     <div
@@ -418,7 +437,11 @@ function MessageBubbleInner({
 
       {/* Content */}
       <div
-        className={`flex flex-col min-w-0 ${isUser ? `${sizeClasses.userMax} items-end` : `${sizeClasses.aiMax} items-start`}`}
+        className={`flex flex-col min-w-0 ${
+          isUser
+            ? `${sizeClasses.userMax} items-end`
+            : `${planContent ? 'max-w-[95%]' : sizeClasses.aiMax} items-start`
+        }`}
       >
         <div className={`flex flex-col mb-1 px-1 ${isUser ? 'items-end' : 'items-start'}`}>
           <span className="text-sm font-semibold text-text-primary leading-tight">
@@ -447,7 +470,13 @@ function MessageBubbleInner({
             submitGrillAnswers={submitGrillAnswers}
             skipAllGrillQuestions={skipAllGrillQuestions}
           />
-        ) : (
+        ) : /* Skip empty bubble wrapper for AI messages with no visible content (tools-only segments) */
+        isUser ||
+          !!(isUser ? displayContent : message.contentMd?.trim()) ||
+          imageAttachments.length > 0 ||
+          fileAttachments.length > 0 ||
+          isGrillActivation ||
+          ideaToRefineMatch ? (
           /* Default: plain message bubble (no structured block detected) */
           <div
             className={`rounded shadow-sm ${
@@ -509,19 +538,13 @@ function MessageBubbleInner({
                   {isUser ? displayContent : message.contentMd}
                 </ReactMarkdown>
               </div>
-            ) : isStreaming ? (
-              <div className="flex items-center gap-1.5 py-1">
-                <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.3s]" />
-                <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.15s]" />
-                <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce" />
-              </div>
             ) : null}
           </div>
-        )}
+        ) : null}
 
         {/* Inline tool activity block */}
         {toolActivities && toolActivities.length > 0 && (
-          <ToolActivityBlock activities={toolActivities} />
+          <ToolActivityBlock activities={toolActivities} defaultExpanded={!!isStreaming} />
         )}
 
         <div className="flex items-center gap-2 mt-1 px-1 group">
@@ -530,8 +553,20 @@ function MessageBubbleInner({
             {isStreaming && (
               <>
                 <span aria-hidden="true">·</span>
-                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                <span>Streaming…</span>
+                <span className="inline-flex items-center gap-1 ml-0.5">
+                  <span
+                    className="typing-dot !w-[4px] !h-[4px]"
+                    style={{ animationDelay: '0ms' }}
+                  />
+                  <span
+                    className="typing-dot !w-[4px] !h-[4px]"
+                    style={{ animationDelay: '150ms' }}
+                  />
+                  <span
+                    className="typing-dot !w-[4px] !h-[4px]"
+                    style={{ animationDelay: '300ms' }}
+                  />
+                </span>
               </>
             )}
           </span>

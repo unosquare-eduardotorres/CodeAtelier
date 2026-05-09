@@ -12,7 +12,9 @@ import {
   X,
   ScrollText,
   Bot,
-  HeartPulse
+  ShieldCheck,
+  Brain,
+  Puzzle
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
@@ -22,6 +24,8 @@ export type SettingsTab =
   | 'health'
   | 'models'
   | 'repository'
+  | 'code-intelligence'
+  | 'integrations'
   | 'team'
   | 'ideas'
   | 'memory'
@@ -29,23 +33,72 @@ export type SettingsTab =
   | 'tokens'
   | 'events'
 
+type SettingsMenuGroup = 'tools' | 'configuration'
+
 // eslint-disable-next-line react-refresh/only-export-components -- intentional co-located constant export with component
 export const SETTINGS_MENU: {
   id: SettingsTab
   label: string
   icon: LucideIcon
   iconColor?: string
+  group: SettingsMenuGroup
 }[] = [
-  { id: 'specialist', label: 'Specialist', icon: Bot, iconColor: 'text-primary-text' },
-  { id: 'health', label: 'Health', icon: HeartPulse, iconColor: 'text-success' },
-  { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning' },
-  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-info' },
-  { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-accent' },
-  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-success' },
-  { id: 'documents', label: 'Documents', icon: FileText, iconColor: 'text-info' },
-  { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-mode-plan-text' },
-  { id: 'tokens', label: 'Tokens', icon: Zap },
-  { id: 'events', label: 'Events', icon: ScrollText, iconColor: 'text-danger' }
+  // ── Tools (interactive / operational) ──
+  { id: 'health', label: 'Health', icon: ShieldCheck, iconColor: 'text-success', group: 'tools' },
+  { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning', group: 'tools' },
+  // ── Configuration (settings) ──
+  {
+    id: 'specialist',
+    label: 'Specialist',
+    icon: Bot,
+    iconColor: 'text-primary-text',
+    group: 'configuration'
+  },
+  { id: 'team', label: 'Team', icon: Users, iconColor: 'text-info', group: 'configuration' },
+  {
+    id: 'repository',
+    label: 'Repository',
+    icon: GitBranch,
+    iconColor: 'text-accent',
+    group: 'configuration'
+  },
+  {
+    id: 'code-intelligence',
+    label: 'Code Intelligence',
+    icon: Brain,
+    iconColor: 'text-cyan-400',
+    group: 'configuration'
+  },
+  {
+    id: 'integrations',
+    label: 'Integrations',
+    icon: Puzzle,
+    iconColor: 'text-accent',
+    group: 'configuration'
+  },
+  { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-success', group: 'configuration' },
+  {
+    id: 'documents',
+    label: 'Documents',
+    icon: FileText,
+    iconColor: 'text-info',
+    group: 'configuration'
+  },
+  {
+    id: 'memory',
+    label: 'Memory',
+    icon: Database,
+    iconColor: 'text-mode-plan-text',
+    group: 'configuration'
+  },
+  { id: 'tokens', label: 'Tokens', icon: Zap, group: 'configuration' },
+  {
+    id: 'events',
+    label: 'Events',
+    icon: ScrollText,
+    iconColor: 'text-danger',
+    group: 'configuration'
+  }
 ]
 
 interface WorkspaceSettingsPanelProps {
@@ -108,8 +161,51 @@ export default function WorkspaceSettingsPanel({
 
       {/* Navigation tabs */}
       <nav className="flex-1 overflow-y-auto p-2">
+        {/* Tools group */}
+        {!isCollapsed && (
+          <div className="px-3 pt-1 pb-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+              Tools
+            </span>
+          </div>
+        )}
         <div className="space-y-0.5">
-          {SETTINGS_MENU.map((item) => {
+          {SETTINGS_MENU.filter((item) => item.group === 'tools').map((item) => {
+            const Icon = item.icon
+            const isActive = activeTab === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => onTabChange(item.id)}
+                className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                  isCollapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2'
+                } ${
+                  isActive
+                    ? 'bg-primary-muted text-primary-text border border-primary/20'
+                    : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
+                }`}
+                title={isCollapsed ? item.label : undefined}
+              >
+                <Icon size={16} className={isActive ? undefined : item.iconColor} />
+                {!isCollapsed && <span>{item.label}</span>}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Divider between groups */}
+        <div className="my-2 mx-2 border-t border-border-subtle" />
+
+        {/* Configuration group */}
+        {!isCollapsed && (
+          <div className="px-3 pt-1 pb-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+              Configuration
+            </span>
+          </div>
+        )}
+        <div className="space-y-0.5">
+          {SETTINGS_MENU.filter((item) => item.group === 'configuration').map((item) => {
             const Icon = item.icon
             const isActive = activeTab === item.id
             return (

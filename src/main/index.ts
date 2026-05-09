@@ -28,6 +28,10 @@ import { fileWatcherService } from './services/file-watcher.service'
 // Must happen before app.whenReady() for early error capture
 log.initialize()
 
+// Fix dock tooltip: Electron defaults to "Electron" in dev mode.
+// Must be set before app.whenReady().
+app.setName('Code Atelier')
+
 // ── Process-level error safety net — never crash silently ──
 process.on('uncaughtException', (error) => {
   log.error('[Process] Uncaught exception:', error)
@@ -317,7 +321,7 @@ app.on('web-contents-created', (_event, contents) => {
     // Strip any preload scripts from webview
     delete webPreferences.preload
     webPreferences.nodeIntegration = false
-    // Agent Studio does not use webviews — deny all
+    // Code Atelier does not use webviews — deny all
     webviewEvent.preventDefault()
   })
 })
@@ -365,7 +369,7 @@ app.whenReady().then(() => {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self'; connect-src 'self'"
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: https://cdn.jsdelivr.net; font-src 'self'; connect-src 'self'"
           ]
         }
       })
@@ -386,7 +390,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   // Quit on all platforms — including macOS.
-  // Agent Studio runs background CLI processes that should be cleaned up
+  // Code Atelier runs background CLI processes that should be cleaned up
   // via the before-quit handler rather than lingering in the dock.
   app.quit()
 })

@@ -28,6 +28,7 @@ import { registerSubscriptionIpc } from './subscription.ipc'
 import { registerConversationSpecialistIpc } from './conversation-specialist.ipc'
 import { registerAppPreferenceIpc } from './app-preference.ipc'
 import { registerOllamaIpc } from './ollama.ipc'
+import { registerEmbeddingIpc } from './embedding.ipc'
 import { registerIndexingIpc } from './indexing.ipc'
 import { registerCodeGraphIpc } from './code-graph.ipc'
 import { registerCodeChangesIpc } from './code-changes.ipc'
@@ -70,6 +71,7 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerConversationSpecialistIpc()
   registerAppPreferenceIpc()
   registerOllamaIpc(mainWindow)
+  registerEmbeddingIpc(mainWindow)
   registerIndexingIpc(mainWindow)
   registerCodeGraphIpc(mainWindow)
   registerCodeChangesIpc()

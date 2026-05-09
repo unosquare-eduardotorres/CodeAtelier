@@ -1,7 +1,8 @@
 /**
  * AuditStreamView — chat-like scrollable container for audit execution.
  *
- * Renders a single AuditMessageBubble per track with auto-scrolling.
+ * Renders one AuditMessageBubble per finalized segment plus one for the
+ * current (streaming) segment, with auto-scrolling.
  * Read-only — no input box, audits are fully automated.
  */
 
@@ -29,26 +30,49 @@ export default function AuditStreamView({
   const trackResult = currentRun?.results.find((r) => r.trackId === trackId)
   const isCompleted = trackResult?.status === 'completed'
 
+  const segments = trackData?.segments ?? []
+  const currentContent = trackData?.currentContent ?? ''
+  const currentToolActivities = trackData?.currentToolActivities ?? []
+  const hasCurrentSegment = currentContent || currentToolActivities.length > 0
+  const hasAnyContent = segments.length > 0 || hasCurrentSegment
+
   // Auto-scroll on new content
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [trackData?.content, trackData?.toolActivities.length])
+  }, [currentContent, currentToolActivities.length, segments.length])
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4">
-      {trackData?.content || (trackData?.toolActivities.length ?? 0) > 0 ? (
+      {hasAnyContent ? (
         <>
-          <AuditMessageBubble
-            content={trackData.content}
-            toolActivities={trackData.toolActivities}
-            trackName={trackName}
-            isStreaming={isStreaming}
-          />
-          {isCompleted && trackResult && trackResult.score != null && trackResult.score > 0 && (
+          {/* Finalized segments */}
+          {segments.map((seg, i) => (
+            <AuditMessageBubble
+              key={`seg-${i}`}
+              content={seg.content}
+              toolActivities={seg.toolActivities}
+              trackName={trackName}
+              isStreaming={false}
+              timestamp={seg.timestamp}
+            />
+          ))}
+
+          {/* Current streaming segment */}
+          {hasCurrentSegment && (
+            <AuditMessageBubble
+              content={currentContent}
+              toolActivities={currentToolActivities}
+              trackName={trackName}
+              isStreaming={isStreaming}
+              timestamp={Date.now()}
+            />
+          )}
+
+          {isCompleted && trackResult && (
             <AuditResultBubble
-              score={trackResult.score}
+              score={trackResult.score ?? 0}
               summary={trackResult.summary ?? ''}
               trackName={trackName}
               findingsCount={trackResult.findings.length}

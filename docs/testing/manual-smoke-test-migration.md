@@ -1,6 +1,6 @@
 # Manual Smoke Test Checklist: Orchestrator -> Generalist Migration
 
-Use this checklist for manual E2E validation of the Generalist + SubAgent migration in Agent Studio.
+Use this checklist for manual E2E validation of the Generalist + SubAgent migration in Code Atelier.
 
 ## Prerequisites
 

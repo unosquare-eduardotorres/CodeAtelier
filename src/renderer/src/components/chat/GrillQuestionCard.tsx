@@ -157,6 +157,9 @@ export function QuestionItem({
                       </span>
                     )}
                   </div>
+                  {option.recommendedReason && (
+                    <p className="text-xs text-warning/80 mt-0.5 italic">{option.recommendedReason}</p>
+                  )}
                   {option.description && (
                     <p className="text-xs text-text-muted mt-0.5">{option.description}</p>
                   )}

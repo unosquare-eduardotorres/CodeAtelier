@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Zap, Coins, Scale, Rocket, Cloud, Monitor, Loader2 } from 'lucide-react'
+import { Zap, Coins, Scale, Rocket, Cloud, Monitor, Loader2, DollarSign } from 'lucide-react'
 import { useWorkspaceStore, useToastStore } from '@renderer/store'
 import { SettingsCard } from '@renderer/components/common'
 import {
@@ -29,6 +29,7 @@ export default function ModelConfigTab(): React.JSX.Element {
   const addToast = useToastStore((s) => s.addToast)
   const [costPreference, setCostPreference] = useState<CostPreference>('balanced')
   const [fastMode, setFastMode] = useState(false)
+  const [budgetCapUsd, setBudgetCapUsd] = useState<number | undefined>(undefined)
 
   // ── Local LLM provider state ──
   const [provider, setProvider] = useState<LLMProvider>('claude')
@@ -38,6 +39,7 @@ export default function ModelConfigTab(): React.JSX.Element {
   const [localHost, setLocalHost] = useState<string>(OLLAMA_DEFAULT_HOST)
   const [localPort, setLocalPort] = useState<number>(OLLAMA_DEFAULT_PORT)
   const [localApiKey, setLocalApiKey] = useState<string>('')
+  const [localContextWindow, setLocalContextWindow] = useState<number | undefined>(undefined)
   const [localStatus, setLocalStatus] = useState<OmlxExtendedStatus | OllamaStatus | null>(null)
   const [showOllamaSetup, setShowOllamaSetup] = useState(false)
   const [connectionTesting, setConnectionTesting] = useState(false)
@@ -59,6 +61,11 @@ export default function ModelConfigTab(): React.JSX.Element {
       .then((settings) => {
         setCostPreference((settings.costPreference as CostPreference) || 'balanced')
         setFastMode(settings.fastMode === true)
+        setBudgetCapUsd(
+          typeof settings.budgetCapUsd === 'number' && settings.budgetCapUsd > 0
+            ? (settings.budgetCapUsd as number)
+            : undefined
+        )
         // Local LLM provider settings (new keys with backward-compat fallback)
         setProvider((settings.llmProvider as LLMProvider) ?? 'claude')
         setBackend((settings.localLlmBackend as LocalLLMBackend) ?? 'ollama')
@@ -74,6 +81,11 @@ export default function ModelConfigTab(): React.JSX.Element {
           (settings.localPort as number) ?? (settings.ollamaPort as number) ?? OLLAMA_DEFAULT_PORT
         )
         setLocalApiKey((settings.localApiKey as string) ?? '')
+        setLocalContextWindow(
+          typeof settings.localContextWindow === 'number'
+            ? (settings.localContextWindow as number)
+            : undefined
+        )
       })
       .catch(console.error)
   }, [activeWorkspace])
@@ -304,6 +316,18 @@ export default function ModelConfigTab(): React.JSX.Element {
     }
   }
 
+  const handleBudgetCapChange = async (value: string): Promise<void> => {
+    const parsed = value ? Number(value) : undefined
+    setBudgetCapUsd(parsed && parsed > 0 ? parsed : undefined)
+    if (activeWorkspace) {
+      const settings = await window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id })
+      await window.api.updateWorkspaceSettings({
+        workspaceId: activeWorkspace.id,
+        settings: { ...settings, budgetCapUsd: parsed && parsed > 0 ? parsed : null }
+      })
+    }
+  }
+
   if (!activeWorkspace) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -461,6 +485,42 @@ export default function ModelConfigTab(): React.JSX.Element {
               </div>
             </SettingsCard>
           </div>
+
+          {/* Per-Turn Budget Cap */}
+          <div className="col-span-full mt-2">
+            <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
+              Budget
+            </h3>
+            <SettingsCard>
+              <div className="flex items-start gap-3">
+                <DollarSign size={14} className="text-text-muted mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <h4 className="text-sm font-medium text-text-primary">
+                    Per-Turn Budget Cap (USD)
+                  </h4>
+                  <p className="text-xs text-text-secondary mt-0.5 mb-3">
+                    Optional. Leave empty for no cap (recommended for Claude Max subscriptions). If
+                    set, build mode gets 2× and audits get 3× this amount.
+                  </p>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    placeholder="No cap (recommended)"
+                    value={budgetCapUsd ?? ''}
+                    onChange={(e) => void handleBudgetCapChange(e.target.value)}
+                    className="w-48 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                  {budgetCapUsd != null && budgetCapUsd > 0 && (
+                    <p className="text-xs text-text-muted mt-2">
+                      Plan: ${budgetCapUsd.toFixed(2)} · Build: ${(budgetCapUsd * 2).toFixed(2)} ·
+                      Audit: ${(budgetCapUsd * 3).toFixed(2)}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </SettingsCard>
+          </div>
         </div>
       )}
 
@@ -568,70 +628,67 @@ export default function ModelConfigTab(): React.JSX.Element {
                           </span>
                           {/* No-models warning — show actionable list when admin API has downloaded models */}
                           {localStatus.models.length === 0 &&
-                            'allModels' in localStatus &&
-                            localStatus.allModels &&
-                            localStatus.allModels.length > 0 ? (
-                              <div className="mt-2 p-2.5 rounded-lg border border-yellow-500/20 bg-yellow-500/5">
-                                <p className="text-xs text-yellow-500 mb-2">
-                                  {localStatus.allModels.length} model
-                                  {localStatus.allModels.length !== 1 ? 's' : ''} downloaded but
-                                  none loaded into memory. Select one to load:
-                                </p>
-                                <div className="space-y-1">
-                                  {localStatus.allModels.map((model) => (
-                                    <div
-                                      key={model.id}
-                                      className="flex items-center justify-between px-2 py-1.5 rounded border border-border-subtle"
-                                    >
-                                      <div>
-                                        <span className="text-xs text-text-primary font-medium">
-                                          {model.id}
-                                        </span>
-                                        <span className="text-[10px] text-text-muted ml-2">
-                                          {model.estimatedSize}
-                                        </span>
-                                      </div>
-                                      <button
-                                        onClick={() => handleLoadOmlxModel(model.id)}
-                                        disabled={model.isLoading || modelLoading === model.id}
-                                        className="text-xs px-2.5 py-1 rounded border border-primary text-primary hover:bg-primary-muted transition-colors disabled:opacity-50"
-                                      >
-                                        {model.isLoading || modelLoading === model.id ? (
-                                          <>
-                                            <Loader2
-                                              size={10}
-                                              className="animate-spin inline mr-1"
-                                            />
-                                            Loading…
-                                          </>
-                                        ) : (
-                                          'Load'
-                                        )}
-                                      </button>
+                          'allModels' in localStatus &&
+                          localStatus.allModels &&
+                          localStatus.allModels.length > 0 ? (
+                            <div className="mt-2 p-2.5 rounded-lg border border-yellow-500/20 bg-yellow-500/5">
+                              <p className="text-xs text-yellow-500 mb-2">
+                                {localStatus.allModels.length} model
+                                {localStatus.allModels.length !== 1 ? 's' : ''} downloaded but none
+                                loaded into memory. Select one to load:
+                              </p>
+                              <div className="space-y-1">
+                                {localStatus.allModels.map((model) => (
+                                  <div
+                                    key={model.id}
+                                    className="flex items-center justify-between px-2 py-1.5 rounded border border-border-subtle"
+                                  >
+                                    <div>
+                                      <span className="text-xs text-text-primary font-medium">
+                                        {model.id}
+                                      </span>
+                                      <span className="text-[10px] text-text-muted ml-2">
+                                        {model.estimatedSize}
+                                      </span>
                                     </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              localStatus.models.length === 0 && (
-                                <p className="text-xs text-yellow-500 mt-1.5">
-                                  ⚠ No models loaded — load a model in{' '}
-                                  {backend === 'omlx' ? (
-                                    <a
-                                      href={`http://${localHost}:${localPort}/admin`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="underline hover:text-yellow-400"
+                                    <button
+                                      onClick={() => handleLoadOmlxModel(model.id)}
+                                      disabled={model.isLoading || modelLoading === model.id}
+                                      className="text-xs px-2.5 py-1 rounded border border-primary text-primary hover:bg-primary-muted transition-colors disabled:opacity-50"
                                     >
-                                      oMLX admin panel
-                                    </a>
-                                  ) : (
-                                    'Ollama'
-                                  )}{' '}
-                                  before starting a chat or audit.
-                                </p>
-                              )
-                            )}
+                                      {model.isLoading || modelLoading === model.id ? (
+                                        <>
+                                          <Loader2 size={10} className="animate-spin inline mr-1" />
+                                          Loading…
+                                        </>
+                                      ) : (
+                                        'Load'
+                                      )}
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            localStatus.models.length === 0 && (
+                              <p className="text-xs text-yellow-500 mt-1.5">
+                                ⚠ No models loaded — load a model in{' '}
+                                {backend === 'omlx' ? (
+                                  <a
+                                    href={`http://${localHost}:${localPort}/admin`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="underline hover:text-yellow-400"
+                                  >
+                                    oMLX admin panel
+                                  </a>
+                                ) : (
+                                  'Ollama'
+                                )}{' '}
+                                before starting a chat or audit.
+                              </p>
+                            )
+                          )}
                         </>
                       ) : localStatus.installed ? (
                         <span className="inline-flex items-center gap-1.5 text-xs text-yellow-500">
@@ -652,8 +709,7 @@ export default function ModelConfigTab(): React.JSX.Element {
                 {backend === 'omlx' && (
                   <div className="md:col-span-2">
                     <label className="text-xs font-medium text-text-secondary">
-                      API Key{' '}
-                      <span className="font-normal text-text-muted">(optional)</span>
+                      API Key <span className="font-normal text-text-muted">(optional)</span>
                     </label>
                     <div className="flex items-center gap-2 mt-1">
                       <input
@@ -684,9 +740,7 @@ export default function ModelConfigTab(): React.JSX.Element {
                 selectedModel={localModel}
                 installedModels={localStatus?.models ?? []}
                 downloadedModels={
-                  localStatus && 'allModels' in localStatus
-                    ? localStatus.allModels
-                    : undefined
+                  localStatus && 'allModels' in localStatus ? localStatus.allModels : undefined
                 }
                 backend={backend}
                 onSelect={handleLocalModelSelect}
@@ -716,6 +770,94 @@ export default function ModelConfigTab(): React.JSX.Element {
                   })
                 }}
               />
+            </SettingsCard>
+          </div>
+
+          {/* Section 3: Advanced — Context Window Override */}
+          <div>
+            <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
+              Advanced
+            </h3>
+            <SettingsCard>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <h4 className="text-sm font-medium text-text-primary">Context Window Override</h4>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    Override the auto-detected context window size (in tokens). Leave empty to use
+                    the auto-detected value from the model table or backend API.
+                  </p>
+                  <p className="text-[10px] text-text-muted mt-1">
+                    Useful when oMLX scales the context window down for auto-compact, or when Ollama
+                    allocates less than the model supports based on available VRAM.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={localContextWindow ?? ''}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      if (raw === '') {
+                        setLocalContextWindow(undefined)
+                      } else {
+                        const parsed = parseInt(raw, 10)
+                        if (!isNaN(parsed) && parsed > 0) {
+                          setLocalContextWindow(parsed)
+                        }
+                      }
+                    }}
+                    onBlur={async () => {
+                      if (!activeWorkspace) return
+                      try {
+                        const settings = await window.api.getWorkspaceSettings({
+                          workspaceId: activeWorkspace.id
+                        })
+                        await window.api.updateWorkspaceSettings({
+                          workspaceId: activeWorkspace.id,
+                          settings: {
+                            ...settings,
+                            localContextWindow: localContextWindow ?? null
+                          }
+                        })
+                        if (localContextWindow) {
+                          addToast({
+                            message: `Context window override set to ${localContextWindow.toLocaleString()} tokens`,
+                            type: 'success'
+                          })
+                        }
+                      } catch (err) {
+                        console.error('Failed to save context window override:', err)
+                      }
+                    }}
+                    type="number"
+                    placeholder="Auto-detect"
+                    className="w-36 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                  {localContextWindow && (
+                    <button
+                      onClick={async () => {
+                        setLocalContextWindow(undefined)
+                        if (!activeWorkspace) return
+                        try {
+                          const settings = await window.api.getWorkspaceSettings({
+                            workspaceId: activeWorkspace.id
+                          })
+                          await window.api.updateWorkspaceSettings({
+                            workspaceId: activeWorkspace.id,
+                            settings: { ...settings, localContextWindow: null }
+                          })
+                          addToast({ message: 'Context window override cleared', type: 'info' })
+                        } catch {
+                          /* non-fatal */
+                        }
+                      }}
+                      className="text-xs text-text-muted hover:text-text-secondary transition-colors"
+                      title="Clear override"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
             </SettingsCard>
           </div>
         </div>

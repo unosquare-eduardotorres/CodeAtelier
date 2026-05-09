@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { Trash2, Pencil, MessageCircle, GripVertical, Cloud, Monitor } from 'lucide-react'
+import { Trash2, Pencil, GripVertical, Cloud, Monitor } from 'lucide-react'
 import type { Conversation, ContextUsage } from '../../../../shared/types'
 import ContextBadge from './ContextBadge'
 
 interface ChatItemProps {
   conversation: Conversation
   isActive: boolean
+  isStreaming?: boolean
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onRename: (id: string, title: string) => void
@@ -36,6 +37,7 @@ function formatRelativeTime(dateStr: string): string {
 export default function ChatItem({
   conversation,
   isActive,
+  isStreaming = false,
   onSelect,
   onDelete,
   onRename,
@@ -49,7 +51,22 @@ export default function ChatItem({
 }: ChatItemProps): React.JSX.Element {
   const [isEditing, setIsEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(conversation.title)
+  const [showComplete, setShowComplete] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const wasStreamingRef = useRef(false)
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    if (wasStreamingRef.current && !isStreaming) {
+      // Streaming just ended — trigger completion flash
+      setShowComplete(true)
+      timer = setTimeout(() => setShowComplete(false), 800)
+    }
+    wasStreamingRef.current = isStreaming
+    return (): void => {
+      if (timer) clearTimeout(timer)
+    }
+  }, [isStreaming])
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -117,11 +134,21 @@ export default function ChatItem({
       )}
 
       <div
-        className={`flex items-center justify-center w-8 h-8 rounded-lg ${
-          isActive ? 'bg-primary/20 text-primary-text' : 'bg-surface-overlay text-text-muted'
-        }`}
+        className={`flex items-center justify-center w-8 h-8 rounded-lg transition-shadow ${
+          conversation.llmProvider === 'local-llm'
+            ? isActive
+              ? 'bg-teal/20 text-teal-text'
+              : 'bg-teal-muted text-teal-text'
+            : isActive
+              ? 'bg-info/15 text-info'
+              : 'bg-info-muted text-info'
+        } ${isStreaming ? 'chat-icon-processing' : showComplete ? 'chat-icon-complete' : ''}`}
       >
-        <MessageCircle size={14} />
+        {conversation.llmProvider === 'local-llm' ? (
+          <Monitor size={14} />
+        ) : (
+          <Cloud size={14} />
+        )}
       </div>
 
       <div className="flex-1 min-w-0">
@@ -151,22 +178,14 @@ export default function ChatItem({
           <span>{formatRelativeTime(conversation.createdAt)}</span>
           {/* Provider pill */}
           <span
-            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+            className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
               conversation.llmProvider === 'local-llm'
-                ? 'bg-teal-muted text-teal-light'
-                : 'bg-primary-muted text-primary-text'
+                ? 'bg-teal-muted text-teal-text'
+                : 'bg-info-muted text-info'
             }`}
             title={conversation.llmProvider === 'local-llm' ? 'Local LLM' : 'Claude'}
           >
-            {conversation.llmProvider === 'local-llm' ? (
-              <>
-                <Monitor size={9} /> Local
-              </>
-            ) : (
-              <>
-                <Cloud size={9} /> Claude
-              </>
-            )}
+            {conversation.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
           </span>
           {contextUsage && contextUsage.percentage > 0 && (
             <ContextBadge percentage={contextUsage.percentage} level={contextUsage.level} compact />

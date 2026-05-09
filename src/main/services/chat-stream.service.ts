@@ -15,7 +15,12 @@ import type {
 import { memoryService } from './memory.service'
 import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
-import { createTextChunk, createCompleteMessage, createCompactNeeded } from '../ipc/chat-protocol'
+import {
+  createTextChunk,
+  createCompleteMessage,
+  createCompactNeeded,
+  type CompactNeededMessage
+} from '../ipc/chat-protocol'
 import { chatIpcLogger } from '../logger'
 import { IntentRouter } from './intent-router'
 import { conversationStateMachine } from './conversation-state-machine'
@@ -86,7 +91,7 @@ export class ChatStreamService {
    */
   private registerEventForwarders(): void {
     // compactNeeded is not an intent — keep as direct forwarder
-    chatAgentService.on('compactNeeded', (data: { level: string; inputTokens: number }) => {
+    chatAgentService.on('compactNeeded', (data: CompactNeededMessage['compactNeeded']) => {
       this.mainWindow.webContents.send(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createCompactNeeded({
@@ -113,6 +118,18 @@ export class ChatStreamService {
       this.mainWindow.webContents.send(IPC_CHANNELS.ELICITATION_REQUEST, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         ...data
+      })
+    })
+
+    // Budget cap reached — forward as a CHAT_MESSAGE_CHUNK with budgetCapReached field
+    chatAgentService.on('budgetCapReached', (data: { conversationId: string; message: string }) => {
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+        conversationId: data.conversationId,
+        requestId: this.activeRequestId ?? undefined,
+        budgetCapReached: {
+          message: 'Turn budget reached — your work is safe.',
+          canContinue: true
+        }
       })
     })
 
@@ -161,11 +178,9 @@ export class ChatStreamService {
     const adapterAgentId = chatAgentService.getActiveAgentId()
 
     // Persona overlay (Da Vinci impersonating a Specialist) — when active, the
-    // adapter is still Da Vinci (so the DB role tag stays 'da-vinci' and the
-    // saved bubble's identity is resolved via personaSpecialistId), but the
-    // streaming chunks should present as the specialist so the thinking
-    // indicator + streaming bubble avatar stays consistent with the eventual
-    // saved bubble (no visible swap on each turn).
+    // adapter is still Da Vinci internally, but both streaming chunks AND the
+    // persisted DB message use the specialist's identity (role + agentId) so
+    // the avatar is consistent across streaming, finalization, and DB reload.
     const persona = chatAgentService.getActivePersona()
     const streamingRole: 'da-vinci' | 'specialist' = persona ? 'specialist' : messageRole
     const phase: ConversationPhase =
@@ -329,9 +344,9 @@ export class ChatStreamService {
           // tool-activity history that *was* successfully streamed.
           const savedMessage = messageRepository.create(
             conversationId,
-            messageRole,
+            streamingRole,
             cleanedContent,
-            adapterAgentId
+            specialistMeta?.specialist ?? adapterAgentId
           )
           log.info('Agent message saved, id:', savedMessage.id)
 
@@ -463,13 +478,14 @@ export class ChatStreamService {
         error: (error as Error).message
       })
 
-      log.error('Generalist send failed:', (error as Error).message)
-      const errorMsg = `**Generalist Error:** ${(error as Error).message}\n\nMake sure Claude CLI is installed and a workspace is open.`
+      const roleLabel = streamingRole === 'specialist' ? 'Specialist' : 'Generalist'
+      log.error(`${roleLabel} send failed:`, (error as Error).message)
+      const errorMsg = `**${roleLabel} Error:** ${(error as Error).message}\n\nMake sure Claude CLI is installed and a workspace is open.`
       const savedMessage = messageRepository.create(
         conversationId,
-        messageRole,
+        streamingRole,
         errorMsg,
-        adapterAgentId
+        specialistMeta?.specialist ?? adapterAgentId
       )
 
       this.mainWindow.webContents.send(
@@ -519,8 +535,11 @@ export class ChatStreamService {
 
         // Snapshot the active adapter for the stop path — runs from a different
         // IPC entry point and has no per-turn snapshot in scope.
-        const stopRole = chatAgentService.getActiveMessageRole()
-        const stopAgentId = chatAgentService.getActiveAgentId()
+        // Check persona directly since stream-level streamingRole/specialistMeta
+        // aren't available in this separate IPC entry point.
+        const stopPersona = chatAgentService.getActivePersona()
+        const stopRole = stopPersona ? 'specialist' : chatAgentService.getActiveMessageRole()
+        const stopAgentId = stopPersona?.agentId ?? chatAgentService.getActiveAgentId()
         const savedMessage = messageRepository.create(
           conversationId,
           stopRole,

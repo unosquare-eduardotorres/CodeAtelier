@@ -12,6 +12,7 @@
  */
 
 import type { AuditMode, AuditTrackId, CostPreference } from '../../../shared/types'
+import type { RoundContext } from '../audit-prompt-templates'
 import type {
   AdapterIntentContext,
   AdapterMcpContext,
@@ -24,7 +25,6 @@ import type {
 } from '../agent-session.types'
 import type { ControlActionCallbacks } from '../control-actions.tool'
 import { workspaceRepository } from '../../db/repositories'
-import { modelConfigService } from '../model-config.service'
 import { codeGraphMcpService } from '../code-graph.tool'
 import { semanticSearchMcpService } from '../semantic-search.tool'
 import { gitContextMcpService } from '../git-context.tool'
@@ -45,6 +45,9 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
   private readonly trackId: AuditTrackId
   private readonly mode: AuditMode
   private readonly skillContent?: string
+  private readonly roundContext?: RoundContext
+
+  private readonly llmProvider: import('../../../shared/types').LLMProvider
 
   private systemPrompt: string | null = null
 
@@ -57,11 +60,15 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
     trackId: AuditTrackId
     mode: AuditMode
     skillContent?: string
+    roundContext?: RoundContext
+    llmProvider?: import('../../../shared/types').LLMProvider
   }) {
     this.workspaceId = params.workspaceId
     this.trackId = params.trackId
     this.mode = params.mode
     this.skillContent = params.skillContent
+    this.roundContext = params.roundContext
+    this.llmProvider = params.llmProvider ?? 'claude'
     this.agentId = `audit-${params.trackId}-${params.workspaceId}`
   }
 
@@ -80,14 +87,9 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
 
     // Increase timeout for local LLMs — they're much slower but still productive.
     // 45 min gives enough headroom to manually observe progress via live stream.
-    try {
-      const workspace = workspaceRepository.findById(this.workspaceId)
-      if (workspace && modelConfigService.isLocalProvider(workspace.repoPath)) {
-        this.interactionTimeoutMs = 45 * 60_000 // 45 min for local LLMs
-        this.log.info(`[audit-adapter] Using extended timeout (45 min) for local LLM`)
-      }
-    } catch {
-      /* non-fatal — keep 5 min default */
+    if (this.llmProvider === 'local-llm') {
+      this.interactionTimeoutMs = 45 * 60_000 // 45 min for local LLMs
+      this.log.info(`[audit-adapter] Using extended timeout (45 min) for local LLM`)
     }
 
     // Detect tech stack and build prompt
@@ -106,7 +108,8 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
       trackId: this.trackId,
       workspaceName,
       detectedTechs,
-      skillContent: this.skillContent
+      skillContent: this.skillContent,
+      roundContext: this.roundContext
     })
 
     // Append MCP tool guidance (same as DaVinci/Grill) so the agent knows how to use custom tools
@@ -143,6 +146,78 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
   }
 
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
+    // Local LLM path — mount code-graph, semantic-search (if enabled), code-analysis.
+    // Skip git-context to save tokens (Bash + git CLI equivalent).
+    if (this.llmProvider === 'local-llm') {
+      const servers: Record<string, McpServerConfig> = {}
+
+      // Code graph (conditional on workspace flag)
+      if (this.repomapEnabled && ctx.workspaceId) {
+        Object.assign(
+          servers,
+          codeGraphMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
+        )
+      }
+      // Semantic search (conditional on workspace flag)
+      if (this.semanticSearchEnabled && ctx.workspaceId) {
+        Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(ctx.workspaceId))
+      }
+      // Code analysis: always on for audits
+      Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(ctx.workspacePath))
+
+      return {
+        ...(Object.keys(servers).length > 0 ? { mcpServers: servers } : {}),
+        allowedTools: [
+          'Read',
+          'Glob',
+          'Grep',
+          'WebSearch',
+          'WebFetch',
+          // Code graph (if mounted)
+          ...(this.repomapEnabled && ctx.workspaceId
+            ? [
+                'mcp__code-graph__graph_map',
+                'mcp__code-graph__search_identifiers',
+                'mcp__code-graph__find_dead_code',
+                'mcp__code-graph__file_outline',
+                'mcp__code-graph__find_callers',
+                'mcp__code-graph__find_callees',
+                'mcp__code-graph__find_references',
+                'mcp__code-graph__file_dependencies',
+                'mcp__code-graph__file_dependents',
+                'mcp__code-graph__symbol_hotspots',
+                'mcp__code-graph__coupling_analysis',
+                'mcp__code-graph__circular_dependencies',
+                'mcp__code-graph__module_boundary_health'
+              ]
+            : []),
+          // Semantic search (if mounted)
+          ...(this.semanticSearchEnabled && ctx.workspaceId
+            ? [
+                'mcp__semantic-search__semantic_search',
+                'mcp__semantic-search__similar_code',
+                'mcp__semantic-search__codebase_concepts'
+              ]
+            : []),
+          // Code analysis (always)
+          'mcp__code-analysis__todo_scanner',
+          'mcp__code-analysis__dependency_health',
+          'mcp__code-analysis__test_coverage_map'
+        ],
+        disallowedTools: [
+          'Write',
+          'Edit',
+          'Bash',
+          'ListDir',
+          'Agent',
+          'ToolSearch',
+          'ExitPlanMode',
+          'AskUserQuestion',
+          'TodoWrite'
+        ]
+      }
+    }
+
     const servers: Record<string, McpServerConfig> = {}
 
     // Code graph (conditional on workspace flag)
@@ -215,6 +290,7 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
         'Write',
         'Edit',
         'Bash',
+        'ListDir',
         'Agent',
         'ToolSearch',
         'ExitPlanMode',

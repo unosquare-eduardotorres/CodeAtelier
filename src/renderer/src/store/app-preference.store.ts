@@ -9,14 +9,22 @@ const defaultPreferences: AppPreferences = {
   specialistWarningBuild: true,
   specialistWarningPlan: true,
   specialistWarningAlways: false,
-  chatBubbleSize: 'xl'
+  chatBubbleSize: 'xl',
+  updateSource: 'drive',
+  updateDrivePath: '',
+  updateGithubOwner: '',
+  updateGithubRepo: ''
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   specialistWarningBuild: 'specialist_warning_build',
   specialistWarningPlan: 'specialist_warning_plan',
   specialistWarningAlways: 'specialist_warning_always',
-  chatBubbleSize: 'chat_bubble_size'
+  chatBubbleSize: 'chat_bubble_size',
+  updateSource: 'update_source',
+  updateDrivePath: 'update_drive_path',
+  updateGithubOwner: 'update_github_owner',
+  updateGithubRepo: 'update_github_repo'
 }
 
 interface AppPreferenceState {

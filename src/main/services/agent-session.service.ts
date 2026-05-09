@@ -30,8 +30,7 @@ import type {
   ElicitationResult
 } from '@anthropic-ai/claude-agent-sdk'
 import {
-  CHAT_AGENT_BUDGET_CAP,
-  LOCAL_LLM_COMPACT_THRESHOLDS,
+  BUDGET_CAP_MODE_MULTIPLIERS,
   MCP_TOOLS,
   RECOMMENDED_LOCAL_MODELS
 } from '../../shared/constants'
@@ -41,6 +40,14 @@ import type { StreamChunk } from './agent-base.service'
 import { SDKExecutor } from './sdk-executor'
 import type { SDKExecuteOptions, SDKExecuteResult } from './sdk-executor'
 import { createBuildModeSandbox } from './sandbox-config'
+import {
+  CLAUDE_1M_CONTEXT_CONFIG,
+  CLAUDE_ECONOMY_CONTEXT_CONFIG,
+  getLocalLlmContextConfig,
+  resolveContextTier,
+  TIER_LIMITS
+} from './context-management'
+import type { ContextWindowTier } from './context-management'
 import { authProvider } from './auth-provider'
 import { vectorSearchService } from './vector-search.service'
 import { semanticSearchMcpService } from './semantic-search.tool'
@@ -81,7 +88,10 @@ interface ExecuteStreamOptions {
   turnCount: number
   isBuildMode: boolean
   mcpResult: AdapterMcpResult
+  llmProvider: LLMProvider
   recoveryDepth?: number
+  /** Pre-resolved local context window size — avoids redundant lookups. */
+  localContextWindow?: number
 }
 
 /**
@@ -96,15 +106,16 @@ export class AgentSessionService extends AgentBaseService {
   //   window, so these thresholds operate on the full context-pressure metric,
   //   not the cheap cache-discounted billing metric.
   //
-  //   Suggest at 60% (600K) — gives the user an early warning while quality is
-  //   still good. Auto at 80% (800K) — leaves 200K headroom for the next
-  //   message instead of only 50K.
+  //   With context management active (context-management.ts), the SDK's internal
+  //   five-layer pipeline handles tool clearing at ~300K and server-side compaction
+  //   at ~600K. These app-level thresholds act as a safety net:
+  //     Suggest at 70% (700K) — catches anything the SDK pipeline missed
+  //     Auto at 85% (850K) — hard limit before overflow
   //
-  //   Prior values were 800K/950K — changed after cache-audit showed quadratic
-  //   context growth in agentic loops could jump 100-200K tokens in a single
-  //   multi-tool turn, leaving insufficient headroom at the old thresholds.
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 600_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 800_000
+  //   Prior values were 600K/800K — raised because server-side strategies now
+  //   handle the early/mid tiers, and double-prompting the user was wasteful.
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 700_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 850_000
   // Economy preference uses a smaller effective window (200K-class models).
   private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 160_000
   private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 190_000
@@ -326,13 +337,35 @@ export class AgentSessionService extends AgentBaseService {
     })
     this.wrapControlCallbacks(controlCallbacks)
 
+    // Resolve context tier for local LLMs — gates tool selection in MCP config.
+    // Resolve the local context window once here; pass it through to avoid redundant lookups.
+    const isLocalForMcp = this.llmProvider === 'local-llm'
+    const localContextWindow: number | undefined = isLocalForMcp
+      ? this.resolveLocalContextWindow()
+      : undefined
+    const contextTier: ContextWindowTier | undefined = isLocalForMcp
+      ? resolveContextTier(localContextWindow!)
+      : undefined
+
     const mcpResult = this.adapter.buildMcpConfig({
       mode: this.currentMode,
       workspacePath: this.workspacePath,
       workspaceId: this.workspaceId,
       conversationId: this.currentConversationId,
-      controlCallbacks
+      controlCallbacks,
+      contextTier
     })
+
+    // Resolve per-conversation LLM provider (falls back to session default)
+    let conversationProvider: LLMProvider = this.llmProvider
+    try {
+      const conv = conversationRepository.findById(conversationId)
+      if (conv?.llmProvider) {
+        conversationProvider = conv.llmProvider as LLMProvider
+      }
+    } catch {
+      /* non-fatal — keep session default */
+    }
 
     await this.executeStream({
       sdkPrompt,
@@ -341,7 +374,9 @@ export class AgentSessionService extends AgentBaseService {
       conversationId,
       turnCount,
       isBuildMode: this.currentMode === 'build',
-      mcpResult
+      mcpResult,
+      llmProvider: conversationProvider,
+      localContextWindow
     })
   }
 
@@ -401,6 +436,21 @@ export class AgentSessionService extends AgentBaseService {
     if (!this.workspacePath || !this.currentConversationId) {
       throw new Error('Session not running — nothing to compact')
     }
+
+    // Local LLMs: SDK compaction is not available (no session resume).
+    // Signal the UI to suggest a new conversation instead.
+    if (this.llmProvider === 'local-llm') {
+      this.log.info(
+        '[compaction] Local LLM — SDK compaction unavailable, suggesting new conversation'
+      )
+      this.emit('compactNeeded', {
+        level: 'local-unsupported',
+        inputTokens: this.lastContextTokens ?? 0,
+        isLocalProvider: true
+      })
+      return
+    }
+
     const sessionId = this.sessionMap.get(this.currentConversationId)
     if (!sessionId) throw new Error('No session to compact')
 
@@ -565,7 +615,9 @@ export class AgentSessionService extends AgentBaseService {
       conversationId,
       turnCount,
       isBuildMode,
-      mcpResult
+      mcpResult,
+      llmProvider,
+      localContextWindow
     } = opts
     const recoveryDepth = opts.recoveryDepth ?? 0
     const MAX_RECOVERY_DEPTH = 1
@@ -608,7 +660,9 @@ export class AgentSessionService extends AgentBaseService {
         isBuildMode,
         resumeAt,
         abortController,
-        mcpResult
+        mcpResult,
+        llmProvider,
+        localContextWindow
       })
 
       for await (const chunk of this.sdkExecutor.execute(
@@ -646,7 +700,8 @@ export class AgentSessionService extends AgentBaseService {
         conversationId,
         turnCount,
         isBuildMode,
-        mcpResult
+        mcpResult,
+        llmProvider
       })
       if (recovered !== 'continue') return
 
@@ -664,6 +719,25 @@ export class AgentSessionService extends AgentBaseService {
     }
   }
 
+  /**
+   * Resolve the context window size for the active local LLM model.
+   * Looks up the model in RECOMMENDED_LOCAL_MODELS; falls back to 32K for
+   * unknown models (conservative default).
+   */
+  private resolveLocalContextWindow(): number {
+    if (!this.workspacePath) return 32_768
+    try {
+      const localConfig = modelConfigService.getLocalLLMConfig(this.workspacePath)
+      const model = localConfig.localModel
+      const recommended = RECOMMENDED_LOCAL_MODELS.find(
+        (m) => m.ollamaId === model || m.omlxId === model
+      )
+      return recommended?.contextWindow ?? 32_768
+    } catch {
+      return 32_768
+    }
+  }
+
   private buildSdkExecuteOptions(params: {
     sdkPrompt: string | AsyncIterable<SDKUserMessage>
     systemPrompt: string
@@ -672,6 +746,8 @@ export class AgentSessionService extends AgentBaseService {
     resumeAt: string | undefined
     abortController: AbortController
     mcpResult: AdapterMcpResult
+    llmProvider: LLMProvider
+    localContextWindow?: number
   }): Record<string, unknown> {
     const {
       sdkPrompt,
@@ -680,7 +756,9 @@ export class AgentSessionService extends AgentBaseService {
       isBuildMode,
       resumeAt,
       abortController,
-      mcpResult
+      mcpResult,
+      llmProvider,
+      localContextWindow: passedLocalCtxWindow
     } = params
     const { mcpServers, allowedTools, disallowedTools } = mcpResult
 
@@ -701,7 +779,7 @@ export class AgentSessionService extends AgentBaseService {
     }
 
     // ── Local LLM provider overrides ──
-    const isLocal = this.llmProvider === 'local-llm'
+    const isLocal = llmProvider === 'local-llm'
     let finalModel = resolvedModel
     let envOverrides: Record<string, string> | undefined
 
@@ -724,6 +802,26 @@ export class AgentSessionService extends AgentBaseService {
       )
     }
 
+    // Resolve context management config — needed for maxTurns and hook parameterization
+    const localContextWindow = isLocal
+      ? (passedLocalCtxWindow ?? this.resolveLocalContextWindow())
+      : undefined
+    const contextManagement = isLocal
+      ? getLocalLlmContextConfig(localContextWindow!)
+      : this.costPreference === 'economy'
+        ? CLAUDE_ECONOMY_CONTEXT_CONFIG
+        : CLAUDE_1M_CONTEXT_CONFIG
+    const tierLimits = contextManagement._tierLimits
+
+    // Diagnostic: log tier resolution for local LLMs
+    if (isLocal && tierLimits) {
+      this.log.info(
+        `[PIPELINE:local-context-tier] model=${finalModel} contextWindow=${localContextWindow} ` +
+          `tier=${contextManagement._tier} maxTurns=${isBuildMode ? tierLimits.maxTurnsBuild : tierLimits.maxTurnsPlan} ` +
+          `readLimit=${tierLimits.readLineLimit} toolBudget=${tierLimits.toolResultBudgetChars}`
+      )
+    }
+
     return {
       prompt: sdkPrompt,
       systemPrompt,
@@ -732,9 +830,14 @@ export class AgentSessionService extends AgentBaseService {
       permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
       allowedTools,
       disallowedTools,
-      // Cache-audit: lowered from 50/25 — caps worst-case context growth.
-      // 35 build turns is still generous; model stops and tells user if it needs more.
-      maxTurns: isBuildMode ? 35 : 20,
+      // Tier-aware turn limits: small=8/12, medium=15/25, large=20/35, Claude=20/35
+      maxTurns: isLocal
+        ? isBuildMode
+          ? (tierLimits?.maxTurnsBuild ?? 12)
+          : (tierLimits?.maxTurnsPlan ?? 8)
+        : isBuildMode
+          ? 35
+          : 20,
 
       // Session resume: disabled for local (Ollama has no SDK sessions)
       resume: isLocal ? undefined : sessionId,
@@ -747,13 +850,16 @@ export class AgentSessionService extends AgentBaseService {
       thinkingDisplay: isLocal ? undefined : 'summarized',
       effort: isLocal ? undefined : resolvedModel.includes('opus') ? 'xhigh' : 'high',
 
-      // Budget: no USD cap for local (it's free)
-      maxBudgetUsd: isLocal ? undefined : CHAT_AGENT_BUDGET_CAP,
+      // Budget: no cap by default (Claude Max subscription = flat rate).
+      // Only apply if user opted into a custom cap via workspace settings.
+      maxBudgetUsd: this.resolveBudgetCap(isLocal, isBuildMode),
 
       // Features: disabled for local (Ollama doesn't support these SDK features)
       promptSuggestions: isLocal ? false : true,
       includeHookEvents: true,
-      autoCompactWindow: isLocal ? false : true,
+      autoCompactEnabled: isLocal ? false : true,
+      contextWindowSize: isLocal ? localContextWindow : 1_000_000, // 1M with context-1m beta
+      contextManagement,
       enableFileCheckpointing: isLocal ? false : true,
       betas: isLocal ? undefined : ['context-1m-2025-08-07'],
       fallbackModel: isLocal
@@ -816,6 +922,28 @@ export class AgentSessionService extends AgentBaseService {
             }
           }
         }
+
+        // Update in-memory + DB metrics with post-compaction value so subsequent
+        // getContextUsage calls (SDK or DB fallback) return the compacted size.
+        this.lastContextTokens = postTokens
+        if (this.currentConversationId) {
+          try {
+            const { turnUsageRepository } = await import('../db/repositories')
+            turnUsageRepository.updateLastTurnContextTokens(this.currentConversationId, postTokens)
+          } catch {
+            /* non-fatal */
+          }
+        }
+
+        // Notify the UI to refresh its context bar. Reuses the compactNeeded
+        // event chain with level='compacted' — renderer refreshes silently
+        // instead of opening the compact modal.
+        this.compactSuggested = false
+        this.emit('compactNeeded', {
+          level: 'compacted',
+          inputTokens: postTokens,
+          isLocalProvider: this.llmProvider === 'local-llm'
+        })
       },
       onElicitation: async (request: ElicitationRequest, { signal }: { signal: AbortSignal }) => {
         this.log.info(
@@ -846,6 +974,34 @@ export class AgentSessionService extends AgentBaseService {
           )
         })
       }
+    }
+  }
+
+  /**
+   * Resolve the USD budget cap for the current execution.
+   * - Local LLMs: no cap (free).
+   * - Claude without user override: no cap (subscription = flat rate).
+   * - Claude with user override: base × mode multiplier.
+   */
+  private resolveBudgetCap(isLocal: boolean, isBuildMode: boolean): number | undefined {
+    if (isLocal) return undefined
+
+    // Check workspace settings for user-defined cap
+    if (!this.workspacePath) return undefined
+    try {
+      const workspace = workspaceRepository.findAll().find((w) => w.repoPath === this.workspacePath)
+      if (!workspace) return undefined
+      const settings = JSON.parse(workspace.settingsJson || '{}')
+      const baseCap = settings.budgetCapUsd as number | undefined
+      if (!baseCap || baseCap <= 0) return undefined // No cap configured
+
+      // Apply mode multiplier
+      const multiplier = isBuildMode
+        ? BUDGET_CAP_MODE_MULTIPLIERS.build
+        : BUDGET_CAP_MODE_MULTIPLIERS.plan
+      return baseCap * multiplier
+    } catch {
+      return undefined
     }
   }
 
@@ -969,6 +1125,14 @@ export class AgentSessionService extends AgentBaseService {
           `[PIPELINE:context-breakdown] total=${fmt(totalContextTokens)} | ${cats}` +
             (topMcp ? ` | top-mcp: ${topMcp}` : '')
         )
+        // Log context management effectiveness — track whether server-side strategies are working
+        if (breakdown?.autoCompactThreshold != null) {
+          this.log.info(
+            `[PIPELINE:context-mgmt] autoCompactThreshold=${fmt(breakdown.autoCompactThreshold)} ` +
+              `autoCompactEnabled=${breakdown.isAutoCompactEnabled} ` +
+              `compactCount=${this.compactCount}`
+          )
+        }
       } catch {
         /* diagnostic logging is best-effort */
       }
@@ -976,13 +1140,11 @@ export class AgentSessionService extends AgentBaseService {
 
     this.checkCompaction(totalContextTokens, breakdown)
 
+    // Store the SDK context window total separately — preserves the original
+    // API-reported input_tokens and cache_* fields recorded by recordTurn().
     if (this.dbSessionId && conversationId && sdkContextData?.totalTokens) {
       try {
-        turnUsageRepository.updateLastTurnTokens(conversationId, {
-          inputTokens: sdkContextData.totalTokens,
-          cacheReadTokens: 0,
-          cacheCreationTokens: 0
-        })
+        turnUsageRepository.updateLastTurnContextTokens(conversationId, sdkContextData.totalTokens)
       } catch {
         /* non-fatal */
       }
@@ -1026,6 +1188,20 @@ export class AgentSessionService extends AgentBaseService {
       // Recovery context is adapter-agnostic: just recent messages.
       // (The Generalist adapter injects its own richer summary.)
       streamState.sessionRecoveryNeeded = true
+      return 'break'
+    }
+
+    // Intercept budget cap exceeded — offer the user a choice to continue
+    if (chunk.type === 'error' && chunk.error?.includes('budget cap exceeded')) {
+      this.log.warn(
+        `[PIPELINE:budget-cap-reached] conversationId=${conversationId} — offering continuation`
+      )
+      this.emit('budgetCapReached', {
+        conversationId,
+        message: chunk.error
+      })
+      // Don't emit the raw error to the renderer — the budgetCapReached
+      // event will show a user-friendly banner instead.
       return 'break'
     }
 
@@ -1085,6 +1261,7 @@ export class AgentSessionService extends AgentBaseService {
     turnCount: number
     isBuildMode: boolean
     mcpResult: AdapterMcpResult
+    llmProvider: LLMProvider
   }): Promise<'continue' | 'returned'> {
     if (!params.sessionRecoveryNeeded) return 'continue'
 
@@ -1111,6 +1288,7 @@ export class AgentSessionService extends AgentBaseService {
         turnCount: params.turnCount,
         isBuildMode: params.isBuildMode,
         mcpResult: params.mcpResult,
+        llmProvider: params.llmProvider,
         recoveryDepth: params.recoveryDepth + 1
       })
       return 'returned'
@@ -1153,7 +1331,12 @@ export class AgentSessionService extends AgentBaseService {
     ])
     const shouldSkipNudge =
       streamState.lastTerminalReason && skipNudgeReasons.has(streamState.lastTerminalReason)
-    if (this.circuitBreaker.count > 0 && !streamState.hasTextAfterLastTool && !shouldSkipNudge && !timedOut) {
+    if (
+      this.circuitBreaker.count > 0 &&
+      !streamState.hasTextAfterLastTool &&
+      !shouldSkipNudge &&
+      !timedOut
+    ) {
       this.log.warn(
         `[PIPELINE:recovery-nudge-triggered] conversationId=${conversationId} ` +
           `toolCalls=${this.circuitBreaker.count} accumulatedTextLen=${this.accumulatedText.length}`
@@ -1251,17 +1434,12 @@ export class AgentSessionService extends AgentBaseService {
     const isLocal = (settings.llmProvider as string) === 'local-llm'
 
     if (isLocal) {
-      // Resolve model context window → threshold tier
-      const model =
-        (settings.localModel as string) ?? (settings.ollamaModel as string) ?? ''
-      const recommended = RECOMMENDED_LOCAL_MODELS.find(
-        (m) => m.ollamaId === model || m.omlxId === model
-      )
-      const ctx = recommended?.contextWindow ?? 32768
-      const tier = ctx >= 200_000 ? '256k' : ctx >= 100_000 ? '128k' : '32k'
-      const thresholds = LOCAL_LLM_COMPACT_THRESHOLDS[tier]
-      this.compactSuggestThreshold = thresholds.suggest
-      this.compactAutoThreshold = thresholds.auto
+      // Reuse resolveLocalContextWindow() to avoid duplicating model lookup logic
+      const ctx = this.resolveLocalContextWindow()
+      const tier = resolveContextTier(ctx)
+      const limits = TIER_LIMITS[tier]
+      this.compactSuggestThreshold = limits.compactSuggestThreshold
+      this.compactAutoThreshold = limits.compactAutoThreshold
     } else if (this.costPreference === 'economy') {
       this.compactSuggestThreshold =
         (settings.compactSuggestThreshold as number) ??
@@ -1286,14 +1464,25 @@ export class AgentSessionService extends AgentBaseService {
     const autoThreshold = this.compactAutoThreshold
     const suggestThreshold = this.compactSuggestThreshold
     const warningThreshold = Math.floor(suggestThreshold * 0.8)
+    const isLocal = this.llmProvider === 'local-llm'
 
     if (inputTokens >= autoThreshold) {
       this.log.warn(`Context very large (${inputTokens} input tokens) — prompting user to compact`)
-      this.emit('compactNeeded', { level: 'critical', inputTokens, breakdown })
+      this.emit('compactNeeded', {
+        level: 'critical',
+        inputTokens,
+        breakdown,
+        isLocalProvider: isLocal
+      })
     } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
       this.compactSuggested = true
       this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
-      this.emit('compactNeeded', { level: 'suggest', inputTokens, breakdown })
+      this.emit('compactNeeded', {
+        level: 'suggest',
+        inputTokens,
+        breakdown,
+        isLocalProvider: isLocal
+      })
     } else if (inputTokens >= warningThreshold && !this.compactSuggested) {
       this.log.info(
         `[PIPELINE:compact-warning] Context approaching threshold (${inputTokens}/${suggestThreshold} tokens)`
@@ -1302,7 +1491,8 @@ export class AgentSessionService extends AgentBaseService {
         level: 'warning',
         inputTokens,
         estimatedNextCost: Math.round(inputTokens * 0.05),
-        breakdown
+        breakdown,
+        isLocalProvider: isLocal
       })
     }
   }

@@ -59,8 +59,11 @@ async function reindexSemanticSearch(
     try {
       const tags = await getTags(absPath, relPath, null, false)
       allTags.push(...tags)
-    } catch {
-      /* file deleted — skip */
+    } catch (error) {
+      const msg = (error as Error).message
+      if (!msg.includes('ENOENT') && !msg.includes('no such file')) {
+        log.warn(`[FileWatcher] getTags failed for ${relPath}: ${msg}`)
+      }
     }
   }
 
@@ -76,8 +79,7 @@ async function reindexSemanticSearch(
   // Re-index only the changed chunks (upsert semantics)
   await vectorSearchService.reindexFiles(workspaceId, workspacePath, chunks, fileContents, {
     generateDescriptions: !!settings.semanticSearchDescriptions,
-    descriptionModel: settings.descriptionModel || 'claude-haiku-4-5-20251001',
-    ollamaModel: settings.ollamaModel || 'qwen3-embedding:4b'
+    descriptionModel: settings.descriptionModel || 'claude-haiku-4-5-20251001'
   })
 
   log.info(

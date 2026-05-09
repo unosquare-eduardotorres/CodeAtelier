@@ -13,6 +13,8 @@ const hookLog = log.scope('SDKHooks')
  * as defense-in-depth for file path containment.
  */
 export function createScopeGuard(allowedCwd: string): HookCallback {
+  const resolvedCwd = require('path').resolve(allowedCwd)
+
   return async (input) => {
     const toolName = (input as Record<string, unknown>).tool_name as string
     const toolInput = (input as Record<string, unknown>).tool_input as Record<string, unknown>
@@ -20,14 +22,70 @@ export function createScopeGuard(allowedCwd: string): HookCallback {
     // File scope check for Write/Edit
     if (toolName === 'Write' || toolName === 'Edit') {
       const filePath = toolInput?.file_path as string
-      if (filePath && !filePath.startsWith(allowedCwd)) {
-        hookLog.warn(`Blocked file access outside scope: ${filePath}`)
+      if (filePath && !isWithinScope(filePath, resolvedCwd)) {
+        hookLog.warn(`Blocked file write outside scope: ${filePath}`)
         return { decision: 'block', reason: `File outside allowed scope: ${filePath}` }
+      }
+    }
+
+    // Read scope check — prevent agents from reading files outside the workspace
+    if (toolName === 'Read') {
+      const filePath = toolInput?.file_path as string
+      if (filePath && !isWithinScope(filePath, resolvedCwd)) {
+        hookLog.warn(`Blocked Read outside scope: ${filePath}`)
+        return {
+          decision: 'block',
+          reason: `Cannot read files outside workspace: ${filePath}. Stay within ${resolvedCwd}`
+        }
+      }
+    }
+
+    // Glob/Grep scope check — prevent scanning outside the workspace
+    if (toolName === 'Glob' || toolName === 'Grep') {
+      const searchPath = toolInput?.path as string | undefined
+      if (searchPath && !isWithinScope(searchPath, resolvedCwd)) {
+        hookLog.warn(`Blocked ${toolName} outside scope: ${searchPath}`)
+        return {
+          decision: 'block',
+          reason: `Cannot search outside workspace: ${searchPath}. Stay within ${resolvedCwd}`
+        }
+      }
+    }
+
+    // Bash scope check — block commands that explicitly reference paths outside workspace
+    if (toolName === 'Bash') {
+      const command = toolInput?.command as string
+      if (command) {
+        const dangerousPatterns = [/\.\.\//, /cd\s+\.\./]
+        const hasDangerousPath = dangerousPatterns.some((p) => p.test(command))
+        if (hasDangerousPath) {
+          // Resolve any path arguments to check if they escape cwd
+          const pathMatches = command.match(/(?:cat|less|head|tail|find|ls)\s+(\S+)/g)
+          if (pathMatches) {
+            for (const match of pathMatches) {
+              const arg = match.split(/\s+/).pop()
+              if (arg && !isWithinScope(arg, resolvedCwd)) {
+                hookLog.warn(`Blocked Bash outside scope: ${command}`)
+                return {
+                  decision: 'block',
+                  reason: `Bash command references files outside workspace. Stay within ${resolvedCwd}`
+                }
+              }
+            }
+          }
+        }
       }
     }
 
     return {} // Allow — no decision means continue
   }
+}
+
+/** Check if a path resolves within the allowed cwd (handles ../ traversal) */
+function isWithinScope(targetPath: string, resolvedCwd: string): boolean {
+  const path = require('path')
+  const resolved = path.resolve(resolvedCwd, targetPath)
+  return resolved.startsWith(resolvedCwd + path.sep) || resolved === resolvedCwd
 }
 
 /**
@@ -246,6 +304,34 @@ export function createLargeOutputWarningHook(thresholdChars: number = 10_000): H
   }
 }
 
+/**
+ * PreToolUse hook that auto-corrects pathPrefix → path for SDK built-in tools.
+ * The model sometimes confuses pathPrefix (from MCP tools like find_dead_code,
+ * todo_scanner) with path (the actual SDK parameter for Grep/Glob).
+ * Defense-in-depth: even after renaming MCP params, this catches stale sessions.
+ */
+export function createPathPrefixAutoCorrectHook(): HookCallback {
+  const CORRECTABLE_TOOLS = new Set(['Grep', 'Glob'])
+
+  return async (input) => {
+    const toolName = (input as Record<string, unknown>).tool_name as string
+    if (!CORRECTABLE_TOOLS.has(toolName)) return {}
+
+    const toolInput = (input as Record<string, unknown>).tool_input as Record<string, unknown>
+    if (toolInput.pathPrefix !== undefined && toolInput.path === undefined) {
+      hookLog.warn(`[PathPrefixAutoCorrect] Correcting pathPrefix → path on ${toolName} call`)
+      const { pathPrefix, ...rest } = toolInput
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          updatedInput: { ...rest, path: pathPrefix }
+        }
+      } as SyncHookJSONOutput
+    }
+    return {}
+  }
+}
+
 /** PostToolUse hook — tracks tool success for analytics */
 export function createPostToolUseHook(agentId: string): HookCallback {
   return async (input) => {
@@ -398,7 +484,7 @@ export function createFireAndForgetHook(): HookCallback {
     if (!isFireAndForget) return {}
 
     // Rewrite command to run in background with verification
-    const logFile = `/tmp/agent-studio-bg-${Date.now()}.log`
+    const logFile = `/tmp/code-atelier-bg-${Date.now()}.log`
     const bgCommand = [
       `nohup ${command} > ${logFile} 2>&1 &`,
       `BG_PID=$!`,
@@ -499,6 +585,50 @@ export function createPostCompactHook(
     const post = i.post_tokens as number
     hookLog.info(`[PostCompact] ${pre} → ${post} tokens (saved ${pre - post})`)
     onPostCompact(pre, post)
+    return {}
+  }
+}
+
+// ── Tool result budget hook ─────────────────────────────────────────────────
+
+/**
+ * PostToolUse hook: Track cumulative tool result size within a single
+ * agentic turn. When the running total exceeds a threshold, inject guidance
+ * asking the model to use more targeted queries.
+ *
+ * This is Code Atelier's equivalent of Claude Code's Layer 0 aggregate
+ * 200K character budget per message. The counter resets after the warning
+ * fires so it can re-trigger if the model continues to produce large output.
+ */
+export function createToolResultBudgetHook(budgetChars: number = 200_000): HookCallback {
+  let turnBudgetUsed = 0
+
+  return async (input) => {
+    const i = input as Record<string, unknown>
+    // Only act on PostToolUse events
+    if (i.hook_event_name !== 'PostToolUse') return {}
+
+    const toolResponse = i.tool_response as string | undefined
+    const batchSize = typeof toolResponse === 'string' ? toolResponse.length : 0
+    turnBudgetUsed += batchSize
+
+    if (turnBudgetUsed > budgetChars) {
+      const consumedK = Math.round(turnBudgetUsed / 1000)
+      hookLog.warn(
+        `[ToolResultBudget] Turn budget exceeded: ${turnBudgetUsed}/${budgetChars} chars`
+      )
+      // Reset counter so it can re-trigger if model continues large outputs
+      turnBudgetUsed = 0
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PostToolUse' as const,
+          additionalContext:
+            `⚠️ Context budget alert: This turn has consumed ${consumedK}K characters of tool output. ` +
+            'Use targeted reads (offset+limit), narrow grep patterns, and FindSymbol/FindDefinition ' +
+            'instead of broad searches to avoid context overflow.'
+        }
+      } as SyncHookJSONOutput
+    }
     return {}
   }
 }

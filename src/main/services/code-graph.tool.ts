@@ -138,13 +138,13 @@ class CodeGraphMcpService {
             'Find potentially unused code definitions (functions, classes, variables) ' +
             'that have no cross-file references in the codebase. ' +
             'Useful for cleanup, identifying orphaned symbols, or finding dead code after refactoring. ' +
-            'Scope results with pathPrefix for targeted analysis.',
+            'Scope results by passing a directory path for targeted analysis.',
           inputSchema: {
-            pathPrefix: z
+            path: z
               .string()
               .optional()
               .describe(
-                'Filter results to files under this path prefix (e.g. "src/main/services")'
+                'Filter results to files under this directory path (e.g. "src/main/services")'
               ),
             maxResults: z
               .number()
@@ -155,10 +155,10 @@ class CodeGraphMcpService {
           handler: async (args) => {
             try {
               log.info(
-                `[CodeGraph] MCP find_dead_code (workspace: ${workspaceId}, prefix: ${args.pathPrefix ?? 'all'})`
+                `[CodeGraph] MCP find_dead_code (workspace: ${workspaceId}, prefix: ${args.path ?? 'all'})`
               )
               const results = await codeGraphService.findDeadCode(workspaceId, workspacePath, {
-                pathPrefix: args.pathPrefix as string | undefined,
+                path: args.path as string | undefined,
                 maxResults: args.maxResults as number | undefined
               })
               return {
@@ -441,21 +441,21 @@ class CodeGraphMcpService {
             'High reference counts indicate high-risk change points and core APIs.',
           inputSchema: {
             maxResults: z.number().optional().default(30),
-            pathPrefix: z
+            path: z
               .string()
               .optional()
-              .describe('Filter to symbols referenced in files under this path prefix')
+              .describe('Filter to symbols referenced in files under this directory path')
           },
           handler: async (args) => {
             try {
               const maxResults = args.maxResults as number
-              const pathPrefix = args.pathPrefix as string | undefined
+              const path = args.path as string | undefined
               log.info(
-                `[CodeGraph] MCP symbol_hotspots (workspace: ${workspaceId}, prefix: ${pathPrefix ?? 'all'})`
+                `[CodeGraph] MCP symbol_hotspots (workspace: ${workspaceId}, prefix: ${path ?? 'all'})`
               )
               const hotspots = codeGraphTagRepository.findSymbolHotspots(workspaceId, {
                 maxResults,
-                pathPrefix
+                path
               })
               return {
                 content: [
@@ -482,17 +482,17 @@ class CodeGraphMcpService {
               .optional()
               .default(2)
               .describe('Minimum edge count between file pairs to include'),
-            pathPrefix: z.string().optional().describe('Filter to files under this path prefix'),
+            path: z.string().optional().describe('Filter to files under this directory path'),
             maxResults: z.number().optional().default(50)
           },
           handler: async (args) => {
             try {
               log.info(
-                `[CodeGraph] MCP coupling_analysis (workspace: ${workspaceId}, prefix: ${(args.pathPrefix as string | undefined) ?? 'all'})`
+                `[CodeGraph] MCP coupling_analysis (workspace: ${workspaceId}, prefix: ${(args.path as string | undefined) ?? 'all'})`
               )
               const coupled = codeGraphEdgeRepository.findCoupledFiles(workspaceId, {
                 minCoupling: args.minCoupling as number,
-                pathPrefix: args.pathPrefix as string | undefined,
+                path: args.path as string | undefined,
                 maxResults: args.maxResults as number
               })
               return {
@@ -515,16 +515,16 @@ class CodeGraphMcpService {
             'Detect circular file-level dependencies in the codebase. ' +
             'Circular deps are a top architecture smell — breaks clean layering.',
           inputSchema: {
-            pathPrefix: z.string().optional().describe('Limit detection to files under this prefix')
+            path: z.string().optional().describe('Limit detection to files under this directory path')
           },
           handler: async (args) => {
             try {
-              const pathPrefix = args.pathPrefix as string | undefined
+              const path = args.path as string | undefined
               log.info(
-                `[CodeGraph] MCP circular_dependencies (workspace: ${workspaceId}, prefix: ${pathPrefix ?? 'all'})`
+                `[CodeGraph] MCP circular_dependencies (workspace: ${workspaceId}, prefix: ${path ?? 'all'})`
               )
               const cycles = codeGraphService.findCircularDependencies(workspaceId, {
-                pathPrefix
+                path
               })
               return {
                 content: [

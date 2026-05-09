@@ -177,18 +177,18 @@ export class CodeGraphTagRepository {
   /**
    * Find definitions with zero cross-file references in the workspace.
    * A "dead" symbol has a 'def' tag but no matching 'ref' tag by name
-   * in any other file. Optional pathPrefix filters results to a subdirectory.
+   * in any other file. Optional path filters results to a subdirectory.
    */
   findDeadCode(
     workspaceId: string,
-    options?: { pathPrefix?: string; maxResults?: number }
+    options?: { path?: string; maxResults?: number }
   ): RepomapTag[] {
     const db = getDatabase()
     const limit = options?.maxResults ?? 100
-    const pathFilter = options?.pathPrefix ? `AND d.rel_fname LIKE ? || '%'` : ''
+    const pathFilter = options?.path ? `AND d.rel_fname LIKE ? || '%'` : ''
     const params: (string | number)[] = [workspaceId, workspaceId]
-    if (options?.pathPrefix) {
-      params.push(options.pathPrefix)
+    if (options?.path) {
+      params.push(options.path)
     }
     params.push(limit)
 
@@ -217,13 +217,13 @@ export class CodeGraphTagRepository {
    */
   findSymbolHotspots(
     workspaceId: string,
-    opts?: { maxResults?: number; pathPrefix?: string }
+    opts?: { maxResults?: number; path?: string }
   ): { name: string; refCount: number }[] {
     const db = getDatabase()
     const maxResults = opts?.maxResults ?? 30
-    const pathFilter = opts?.pathPrefix ? `AND rel_fname LIKE ? || '%'` : ''
+    const pathFilter = opts?.path ? `AND rel_fname LIKE ? || '%'` : ''
     const params: (string | number)[] = [workspaceId]
-    if (opts?.pathPrefix) params.push(opts.pathPrefix)
+    if (opts?.path) params.push(opts.path)
     params.push(maxResults)
 
     const rows = db

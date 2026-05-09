@@ -29,6 +29,7 @@ interface AuditMessageBubbleProps {
   toolActivities: ToolActivity[]
   trackName: string
   isStreaming: boolean
+  timestamp?: number
 }
 
 /** Strip stray backticks from markdown content — prevents rendering artefacts */
@@ -73,7 +74,8 @@ export default function AuditMessageBubble({
   content,
   toolActivities,
   trackName,
-  isStreaming
+  isStreaming,
+  timestamp
 }: AuditMessageBubbleProps): React.JSX.Element {
   const bubbleSize = useChatBubbleSize()
   const sizeClasses = BUBBLE_SIZE_CLASSES[bubbleSize]
@@ -86,7 +88,14 @@ export default function AuditMessageBubble({
       </div>
 
       <div className="flex flex-col min-w-0 max-w-[85%] items-start">
-        <span className="text-sm font-semibold text-text-primary mb-1">{trackName} Auditor</span>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-sm font-semibold text-text-primary">{trackName} Auditor</span>
+          {timestamp && (
+            <span className="text-[10px] text-text-muted">
+              {new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+        </div>
 
         {/* Markdown content */}
         <div className="rounded-md px-5 py-4 bg-surface-overlay text-text-body border-l-[3px] border-primary/60 shadow-sm overflow-hidden min-w-0">

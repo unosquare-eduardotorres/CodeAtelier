@@ -3,35 +3,65 @@ import { safeStorage } from 'electron'
 import simpleGit from 'simple-git'
 import { workspaceRepository } from '../db/repositories'
 import log from 'electron-log'
+import type { GitHubTokenType } from '../../shared/types'
 
 const logger = log.scope('GitHub')
 
+// ── Token type detection ──────────────────────────────────────────
+
+function detectTokenType(token: string): GitHubTokenType {
+  if (token.startsWith('ghp_')) return 'classic'
+  if (token.startsWith('github_pat_')) return 'fine-grained'
+  return 'unknown'
+}
+
 export class GitHubService {
   /**
-   * Validate a GitHub PAT: check it works and has the `repo` scope.
+   * Validate a GitHub PAT: check it authenticates and detect its type.
+   * Classic tokens return scopes via x-oauth-scopes header.
+   * Fine-grained tokens return an empty header — scopes will be [].
    */
-  async validateToken(token: string): Promise<{ valid: boolean; login: string; scopes: string[] }> {
+  async validateToken(
+    token: string
+  ): Promise<{ valid: boolean; login: string; scopes: string[]; tokenType: GitHubTokenType }> {
+    const tokenType = detectTokenType(token)
     try {
       const octokit = new Octokit({ auth: token })
       const response = await octokit.rest.users.getAuthenticated()
-      const scopes = (response.headers['x-oauth-scopes'] ?? '').split(',').map((s) => s.trim())
-      return { valid: true, login: response.data.login, scopes }
+      const rawScopes = response.headers['x-oauth-scopes'] ?? ''
+      const scopes = rawScopes ? rawScopes.split(',').map((s) => s.trim()) : []
+      return { valid: true, login: response.data.login, scopes, tokenType }
     } catch {
-      return { valid: false, login: '', scopes: [] }
+      return { valid: false, login: '', scopes: [], tokenType }
     }
   }
 
   /**
    * Validate, encrypt, and persist a GitHub PAT for a workspace.
+   * Classic tokens are validated via x-oauth-scopes header (must include "repo").
+   * Fine-grained tokens are validated by probing the workspace repo's API endpoints.
    * Token is encrypted using Electron safeStorage (OS keychain) then stored as base64 in settingsJson.
    */
-  async saveToken(workspaceId: string, token: string): Promise<{ login: string }> {
+  async saveToken(
+    workspaceId: string,
+    token: string
+  ): Promise<{ login: string; tokenType: GitHubTokenType }> {
     const result = await this.validateToken(token)
     if (!result.valid) {
       throw new Error('Invalid GitHub token')
     }
-    if (!result.scopes.includes('repo')) {
-      throw new Error('Token missing required "repo" scope')
+
+    if (result.tokenType === 'classic') {
+      if (!result.scopes.includes('repo')) {
+        throw new Error(
+          'Token missing required "repo" scope. Generate a classic token with the "repo" scope.'
+        )
+      }
+    } else if (result.tokenType === 'fine-grained') {
+      await this.probeFineGrainedPermissions(workspaceId, token)
+    } else {
+      // Unknown prefix — allow if authenticated, log a warning
+      logger.warn('Unknown token prefix format — skipping scope validation')
     }
 
     // Encrypt and store
@@ -41,21 +71,32 @@ export class GitHubService {
     const settings = workspaceRepository.getSettings(workspaceId)
     settings.githubTokenEncrypted = base64
     settings.githubLogin = result.login
+    settings.githubTokenType = result.tokenType
     workspaceRepository.updateSettings(workspaceId, settings)
 
-    logger.info(`GitHub token saved for workspace ${workspaceId} (user: ${result.login})`)
-    return { login: result.login }
+    logger.info(
+      `GitHub ${result.tokenType} token saved for workspace ${workspaceId} (user: ${result.login})`
+    )
+    return { login: result.login, tokenType: result.tokenType }
   }
 
   /**
    * Get the GitHub connection status for a workspace.
    */
-  getStatus(workspaceId: string): { configured: boolean; login?: string } {
+  getStatus(workspaceId: string): {
+    configured: boolean
+    login?: string
+    tokenType?: GitHubTokenType
+  } {
     const settings = workspaceRepository.getSettings(workspaceId)
     if (!settings.githubTokenEncrypted) {
       return { configured: false }
     }
-    return { configured: true, login: settings.githubLogin as string | undefined }
+    return {
+      configured: true,
+      login: settings.githubLogin as string | undefined,
+      tokenType: (settings.githubTokenType as GitHubTokenType | undefined) ?? 'classic'
+    }
   }
 
   /**
@@ -65,6 +106,7 @@ export class GitHubService {
     const settings = workspaceRepository.getSettings(workspaceId)
     delete settings.githubTokenEncrypted
     delete settings.githubLogin
+    delete settings.githubTokenType
     workspaceRepository.updateSettings(workspaceId, settings)
     logger.info(`GitHub token removed for workspace ${workspaceId}`)
   }
@@ -221,6 +263,70 @@ export class GitHubService {
         createdAt: i.created_at,
         body: i.body ? i.body.slice(0, 300) : null
       }))
+  }
+
+  /**
+   * Probe the workspace repo to verify a fine-grained token has the required permissions.
+   * Fine-grained PATs don't expose their permissions via headers, so we test
+   * lightweight read-only API calls against the actual repo.
+   * Skipped when the workspace has no remote configured yet.
+   */
+  private async probeFineGrainedPermissions(workspaceId: string, token: string): Promise<void> {
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace?.repoPath) return
+
+    let owner: string, repo: string
+    try {
+      const parsed = await this.parseRemoteUrl(workspace.repoPath)
+      owner = parsed.owner
+      repo = parsed.repo
+    } catch {
+      // No remote configured yet — can't probe, accept the token
+      logger.info('No remote configured — skipping fine-grained permission probe')
+      return
+    }
+
+    const octokit = new Octokit({ auth: token })
+
+    // Probe: Can we read the repo? (Metadata + Contents)
+    try {
+      await octokit.rest.repos.get({ owner, repo })
+    } catch (e: unknown) {
+      const status = (e as { status?: number }).status
+      if (status === 403 || status === 404) {
+        throw new Error(
+          `Token cannot access ${owner}/${repo}. Ensure the fine-grained token grants repository access for this repo.`
+        )
+      }
+      throw e
+    }
+
+    // Probe: Can we list PRs? (Pull requests: Read)
+    try {
+      await octokit.rest.pulls.list({ owner, repo, per_page: 1 })
+    } catch (e: unknown) {
+      const status = (e as { status?: number }).status
+      if (status === 403) {
+        throw new Error(
+          'Token missing "Pull requests: Read" permission. Update your fine-grained token permissions.'
+        )
+      }
+    }
+
+    // Probe: Can we list issues? (Issues: Read)
+    try {
+      await octokit.rest.issues.listForRepo({ owner, repo, per_page: 1 })
+    } catch (e: unknown) {
+      const status = (e as { status?: number }).status
+      if (status === 403) {
+        throw new Error(
+          'Token missing "Issues: Read" permission. Update your fine-grained token permissions.'
+        )
+      }
+    }
+
+    // Note: Write permissions (PR create, branch delete) are not probed to avoid side effects.
+    // Those will surface clear errors from the GitHub API at usage time.
   }
 
   /**

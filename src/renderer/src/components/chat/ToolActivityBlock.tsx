@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, Wrench } from 'lucide-react'
+import { ChevronDown, ChevronRight, Wrench, Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import type { ToolActivity } from '../../../../shared/types'
 import { MCP_DISPLAY_NAMES } from '../../../../shared/constants'
 
@@ -7,7 +7,7 @@ import { MCP_DISPLAY_NAMES } from '../../../../shared/constants'
  * Shortens long absolute paths to show `…/parentFolder/file.ext`.
  * Handles paths with spaces, command strings containing paths, and Grep summaries.
  */
-function shortenInput(input: string): string {
+export function shortenInput(input: string): string {
   // If already short enough, return as-is
   if (input.length <= 45) return input
 
@@ -51,7 +51,7 @@ function shortenPath(fullPath: string): string {
 }
 
 /** Maps raw MCP tool names (mcp__server__tool) to human-readable display names. */
-function getToolDisplayName(toolName: string): string {
+export function getToolDisplayName(toolName: string): string {
   if (MCP_DISPLAY_NAMES[toolName]) return MCP_DISPLAY_NAMES[toolName]
   // Generic MCP fallback — e.g. "mcp__server__tool" → "server · tool"
   if (toolName.startsWith('mcp__')) {
@@ -63,16 +63,15 @@ function getToolDisplayName(toolName: string): string {
 
 interface ToolActivityBlockProps {
   activities: ToolActivity[]
+  /** When true, the tool list starts expanded (e.g., during streaming). Default false. */
+  defaultExpanded?: boolean
 }
 
-/** Threshold (characters) above which the expand chevron appears for a row. */
-const INPUT_EXPAND_THRESHOLD = 50
-const RESULT_EXPAND_THRESHOLD = 80
-
 export default function ToolActivityBlock({
-  activities
+  activities,
+  defaultExpanded = false
 }: ToolActivityBlockProps): React.JSX.Element | null {
-  const [isExpanded, setIsExpanded] = useState(false)
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   if (activities.length === 0) return null
@@ -96,22 +95,21 @@ export default function ToolActivityBlock({
   /** Render a single tool activity row with optional per-row expand. */
   const renderActivity = (activity: ToolActivity): React.JSX.Element => {
     const isActivityExpanded = expandedIds.has(activity.id)
-    const isLongInput = !!activity.input && activity.input.length > INPUT_EXPAND_THRESHOLD
-    const isLongResult = !!activity.result && activity.result.length > RESULT_EXPAND_THRESHOLD
+    const isLongInput = !!activity.input && activity.input.length > 50
+    const isLongResult = !!activity.result && activity.result.length > 80
     const hasExpandableContent = isLongInput || isLongResult
-
-    const statusClass =
-      activity.status === 'running'
-        ? 'bg-warning animate-pulse'
-        : activity.status === 'completed'
-          ? 'bg-success'
-          : 'bg-danger'
 
     return (
       <div key={activity.id} className="flex flex-col gap-0.5 text-xs">
         <div className="flex items-center gap-2 min-w-0">
-          {/* Status dot */}
-          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusClass}`} />
+          {/* Status icon — SVG with appropriate color and animation */}
+          {activity.status === 'running' ? (
+            <Loader2 size={12} className="text-purple-400 animate-spin flex-shrink-0" />
+          ) : activity.status === 'completed' ? (
+            <CheckCircle2 size={12} className="text-success flex-shrink-0" />
+          ) : (
+            <XCircle size={12} className="text-danger flex-shrink-0" />
+          )}
 
           {/* Tool name */}
           <span className="font-mono text-text-body flex-shrink-0">
@@ -128,11 +126,18 @@ export default function ToolActivityBlock({
             </span>
           )}
 
-          {/* Result — full or truncated */}
+          {/* Result — full or truncated (non-error) */}
           {activity.status === 'completed' && activity.result && (
             <span
               className={`text-text-muted text-[11px] ml-1 min-w-0 ${isActivityExpanded ? 'break-all whitespace-normal' : 'truncate max-w-[300px]'}`}
             >
+              — {activity.result}
+            </span>
+          )}
+
+          {/* Error result — shown in red */}
+          {activity.status === 'error' && activity.result && (
+            <span className="text-danger text-[11px] ml-1 min-w-0 truncate max-w-[300px]">
               — {activity.result}
             </span>
           )}
@@ -158,6 +163,15 @@ export default function ToolActivityBlock({
             </button>
           )}
         </div>
+
+        {/* Expand panel — monospace text block below tool row */}
+        {isActivityExpanded && (activity.resultDetail || activity.result) && (
+          <div className="ml-6 mt-1 rounded-md bg-surface-base border border-border-subtle p-2 max-h-80 overflow-y-auto">
+            <pre className="text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all leading-relaxed">
+              {activity.resultDetail || activity.result}
+            </pre>
+          </div>
+        )}
       </div>
     )
   }

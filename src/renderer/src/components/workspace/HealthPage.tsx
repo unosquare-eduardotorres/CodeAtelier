@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
-import { HeartPulse, Loader2 } from 'lucide-react'
-import { useWorkspaceStore, useAuditStore, useChatActions } from '@renderer/store'
+import { ShieldCheck, Loader2 } from 'lucide-react'
+import { useWorkspaceStore, useAuditStore } from '@renderer/store'
 import { AUDIT_TRACKS } from '../../../../shared/constants'
 import type { AuditMode, AuditTrackId, AuditFinding, LLMProvider } from '../../../../shared/types'
 import HealthAuditControls from './HealthAuditControls'
@@ -11,28 +11,33 @@ import ScoreGauge from './ScoreGauge'
 
 interface HealthPageProps {
   onNavigateToChat: () => void
+  onFixInNewChat: () => void
 }
 
 const ALL_TRACK_IDS = Object.keys(AUDIT_TRACKS) as AuditTrackId[]
 
-export default function HealthPage({ onNavigateToChat }: HealthPageProps): React.JSX.Element {
+export default function HealthPage({ onNavigateToChat: _onNavigateToChat, onFixInNewChat }: HealthPageProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
-  const { loadConversations, selectConversation, sendMessage } = useChatActions()
   const {
     currentRun,
     isRunning,
+    isPaused,
     rerunningTrackId,
     selectedFindings,
     loadLatest,
     startAudit,
     cancelAudit,
+    pauseAudit,
+    resumeAudit,
     rerunTrack,
     toggleFinding,
-    convertFindings,
+    clearSelectedFindings,
+    setPendingFixContext,
     handleProgress,
     handleResult,
     handleComplete,
-    handleStreamChunk
+    handleStreamChunk,
+    handleIntermediate
   } = useAuditStore()
 
   const [mode, setMode] = useState<AuditMode>('light')
@@ -55,14 +60,16 @@ export default function HealthPage({ onNavigateToChat }: HealthPageProps): React
     const cleanupResult = window.api.onAuditResult(handleResult)
     const cleanupComplete = window.api.onAuditComplete(handleComplete)
     const cleanupStream = window.api.onAuditStreamChunk(handleStreamChunk)
+    const cleanupIntermediate = window.api.onAuditIntermediate(handleIntermediate)
 
     return () => {
       cleanupProgress()
       cleanupResult()
       cleanupComplete()
       cleanupStream()
+      cleanupIntermediate()
     }
-  }, [handleProgress, handleResult, handleComplete, handleStreamChunk])
+  }, [handleProgress, handleResult, handleComplete, handleStreamChunk, handleIntermediate])
 
   // Auto-select the running track so detail panel shows live stream
   useEffect(() => {
@@ -101,20 +108,33 @@ export default function HealthPage({ onNavigateToChat }: HealthPageProps): React
   }, [])
 
   const handleConfirmAudit = useCallback(
-    async (_provider: LLMProvider) => {
+    async (provider: LLMProvider) => {
       if (!workspaceId) return
       setShowModelModal(false)
       const tracks = ALL_TRACK_IDS.filter((id) => selectedTracks.has(id))
-      await startAudit(workspaceId, mode, tracks)
+      await startAudit(workspaceId, mode, tracks, provider)
     },
     [workspaceId, selectedTracks, mode, startAudit]
   )
 
-  const handleConvert = useCallback(async () => {
-    if (!workspaceId) return
-    await convertFindings(workspaceId)
-    onNavigateToChat()
-  }, [workspaceId, convertFindings, onNavigateToChat])
+  const handleConvert = useCallback(() => {
+    const findings = [...selectedFindings]
+    const findingsContext = findings
+      .map(
+        (f, i) =>
+          `### ${i + 1}. [${f.severity.toUpperCase()}] ${f.title}\n${f.description}` +
+          (f.filePath ? `\n**File:** \`${f.filePath}\`` : '') +
+          (f.recommendation ? `\n**Recommendation:** ${f.recommendation}` : '')
+      )
+      .join('\n\n')
+
+    setPendingFixContext({
+      title: `🔧 Fix ${findings.length} audit finding${findings.length > 1 ? 's' : ''}`,
+      description: `The following audit findings need to be addressed:\n\n${findingsContext}\n\nPlease analyze these findings and propose a plan to fix them.`
+    })
+    clearSelectedFindings()
+    onFixInNewChat()
+  }, [selectedFindings, setPendingFixContext, clearSelectedFindings, onFixInNewChat])
 
   const handleRerunTrack = useCallback(
     async (trackId: AuditTrackId) => {
@@ -134,32 +154,50 @@ export default function HealthPage({ onNavigateToChat }: HealthPageProps): React
   }, [workspaceId])
 
   const handleAutoFix = useCallback(
-    async (finding: AuditFinding, trackName: string) => {
-      if (!workspaceId) return
-      const result = await window.api.auditConvertFindings({
-        workspaceId,
-        findings: [finding]
-      })
-      await loadConversations(workspaceId)
-      await selectConversation(result.conversationId)
-      sendMessage(
+    (finding: AuditFinding, trackName: string) => {
+      const description =
         `Please analyze this ${trackName} finding and suggest a specific fix:\n\n` +
-          `**[${finding.severity.toUpperCase()}] ${finding.title}**\n` +
-          `${finding.description}\n` +
-          (finding.filePath ? `File: \`${finding.filePath}\`\n` : '') +
-          (finding.recommendation ? `Recommendation: ${finding.recommendation}\n` : '') +
-          `\nProvide the exact code changes needed to fix this issue.`
-      )
-      onNavigateToChat()
+        `**[${finding.severity.toUpperCase()}] ${finding.title}**\n` +
+        `${finding.description}\n` +
+        (finding.filePath ? `File: \`${finding.filePath}\`\n` : '') +
+        (finding.recommendation ? `Recommendation: ${finding.recommendation}\n` : '') +
+        `\nProvide the exact code changes needed to fix this issue.`
+
+      setPendingFixContext({
+        title: `🔧 Fix: ${finding.title}`,
+        description
+      })
+      onFixInNewChat()
     },
-    [workspaceId, loadConversations, selectConversation, sendMessage, onNavigateToChat]
+    [setPendingFixContext, onFixInNewChat]
   )
+
+  const handleResume = useCallback(async () => {
+    if (!workspaceId) return
+    try {
+      await resumeAudit(workspaceId)
+    } catch {
+      // error already logged in store
+    }
+  }, [workspaceId, resumeAudit])
 
   // Compute counts
   const completedCount = currentRun?.results.filter((r) => r.status === 'completed').length ?? 0
   const totalCount = currentRun?.selectedTracks.length ?? 0
   const percentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
-  const effectivelyRunning = isRunning || !!rerunningTrackId
+  const hasRunningTrack = currentRun?.results.some((r) => r.status === 'running') ?? false
+  const effectivelyRunning = isRunning || !!rerunningTrackId || hasRunningTrack
+
+  // Count incomplete tracks for resume button
+  const incompleteTrackCount =
+    currentRun?.results.filter(
+      (r) => r.status === 'cancelled' || r.status === 'pending' || r.status === 'failed'
+    ).length ?? 0
+  const canResume =
+    !effectivelyRunning &&
+    currentRun != null &&
+    (currentRun.status === 'partial' || currentRun.status === 'cancelled') &&
+    incompleteTrackCount > 0
 
   // Show a loading spinner while the audit is starting and currentRun hasn't arrived yet
   if (effectivelyRunning && !currentRun) {
@@ -177,7 +215,7 @@ export default function HealthPage({ onNavigateToChat }: HealthPageProps): React
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-subtle bg-surface-raised">
         {/* Left: title */}
         <div className="flex items-center gap-2">
-          <HeartPulse size={16} className="text-success" />
+          <ShieldCheck size={16} className="text-success" />
           <h2 className="text-sm font-bold text-text-primary">Workspace Health</h2>
         </div>
 
@@ -197,8 +235,12 @@ export default function HealthPage({ onNavigateToChat }: HealthPageProps): React
           onModeChange={setMode}
           onStart={handleStart}
           onCancel={cancelAudit}
+          onPause={pauseAudit}
+          onResume={canResume || isPaused ? handleResume : undefined}
           isRunning={effectivelyRunning}
+          isPaused={isPaused}
           hasSelectedTracks={selectedTracks.size > 0}
+          incompleteTrackCount={canResume ? incompleteTrackCount : 0}
         />
       </div>
 
@@ -224,6 +266,7 @@ export default function HealthPage({ onNavigateToChat }: HealthPageProps): React
           onConvertToChat={handleConvert}
           onRerunTrack={handleRerunTrack}
           onAutoFix={handleAutoFix}
+          onClearSelected={clearSelectedFindings}
           onExport={handleExport}
         />
       </div>

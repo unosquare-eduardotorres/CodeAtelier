@@ -132,7 +132,7 @@ export function summarizeToolInput(
     case MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name:
       return `search: ${(input.query as string) || ''}`
     case MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name:
-      return `dead code${input.pathPrefix ? ` in ${input.pathPrefix}` : ''}`
+      return `dead code${input.path ? ` in ${input.path}` : ''}`
 
     // ── MCP tools: Code Graph (Phase 2 — Navigation) ──
     case MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name:
@@ -150,11 +150,11 @@ export function summarizeToolInput(
 
     // ── MCP tools: Code Graph (Phase 3 — Analysis) ──
     case MCP_TOOLS.CODE_GRAPH.SYMBOL_HOTSPOTS.name:
-      return `hotspots${input.pathPrefix ? ` in ${input.pathPrefix}` : ''}`
+      return `hotspots${input.path ? ` in ${input.path}` : ''}`
     case MCP_TOOLS.CODE_GRAPH.COUPLING_ANALYSIS.name:
-      return `coupling${input.pathPrefix ? ` in ${input.pathPrefix}` : ''}`
+      return `coupling${input.path ? ` in ${input.path}` : ''}`
     case MCP_TOOLS.CODE_GRAPH.CIRCULAR_DEPENDENCIES.name:
-      return `cycles${input.pathPrefix ? ` in ${input.pathPrefix}` : ''}`
+      return `cycles${input.path ? ` in ${input.path}` : ''}`
     case MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name:
       return `boundaries (depth: ${input.depth ?? 2})`
 

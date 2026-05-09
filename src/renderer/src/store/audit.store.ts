@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
-import { SentenceBuffer } from '@renderer/utils/sentence-buffer'
+import {
+  StreamSegmentAccumulator,
+  type SegmentState
+} from '@renderer/utils/stream-segment-accumulator'
 import type {
   AuditRun,
   AuditMode,
@@ -9,22 +12,19 @@ import type {
   AuditProgressEvent,
   AuditResult,
   AuditStreamChunkEvent,
+  AuditIntermediateEvent,
+  LLMProvider,
   ToolActivity
 } from '../../../shared/types'
 
-// ── Per-track streaming state ────────────────────────────────────────────────
-
-interface TrackStreamingState {
-  content: string // sentence-buffered markdown text
-  toolActivities: ToolActivity[] // running/completed tools
-}
+// ── Per-track streaming internals ───────────────────────────────────────────
 
 /**
- * Manages SentenceBuffer instances per audit track — keeps timers and mutable
- * state outside the reactive Zustand store (same pattern as ChatStreamingInternals).
+ * Manages StreamSegmentAccumulator instances per audit track — keeps timers
+ * and mutable state outside the reactive Zustand store.
  */
 class AuditStreamingInternals {
-  private buffers = new Map<string, SentenceBuffer>()
+  private accumulators = new Map<string, StreamSegmentAccumulator>()
   private storeGet: (() => AuditState) | null = null
   private storeSet: ((partial: Partial<AuditState>) => void) | null = null
 
@@ -33,38 +33,37 @@ class AuditStreamingInternals {
     this.storeSet = set
   }
 
-  getOrCreateBuffer(trackId: string): SentenceBuffer {
-    if (!this.buffers.has(trackId)) {
-      this.buffers.set(
+  getOrCreateAccumulator(trackId: string): StreamSegmentAccumulator {
+    if (!this.accumulators.has(trackId)) {
+      this.accumulators.set(
         trackId,
-        new SentenceBuffer((sentences: string) => {
+        new StreamSegmentAccumulator((state: SegmentState) => {
           const current = this.storeGet?.()
           if (!current) return
-          const track = current.perTrackStreaming[trackId] ?? { content: '', toolActivities: [] }
           this.storeSet?.({
             perTrackStreaming: {
               ...current.perTrackStreaming,
-              [trackId]: { ...track, content: track.content + sentences }
+              [trackId]: state
             }
           })
         })
       )
     }
-    return this.buffers.get(trackId)!
+    return this.accumulators.get(trackId)!
   }
 
   flushTrack(trackId: string): void {
-    this.buffers.get(trackId)?.flush()
+    this.accumulators.get(trackId)?.flush()
   }
 
   resetTrack(trackId: string): void {
-    this.buffers.get(trackId)?.reset()
-    this.buffers.delete(trackId)
+    this.accumulators.get(trackId)?.reset()
+    this.accumulators.delete(trackId)
   }
 
   resetAll(): void {
-    this.buffers.forEach((b) => b.reset())
-    this.buffers.clear()
+    this.accumulators.forEach((a) => a.reset())
+    this.accumulators.clear()
   }
 }
 
@@ -75,25 +74,36 @@ const auditInternals = new AuditStreamingInternals()
 interface AuditState {
   currentRun: AuditRun | null
   isRunning: boolean
+  isPaused: boolean
   rerunningTrackId: AuditTrackId | null
   liveStreamText: Record<string, string> // trackId → live text (legacy, still used by progress)
   selectedFindings: AuditFinding[] // for "Fix in Chat"
+  pendingFixContext: { title: string; description: string } | null
 
-  // Per-track chat-like streaming state
-  perTrackStreaming: Record<string, TrackStreamingState>
+  // Per-track segment-based streaming state
+  perTrackStreaming: Record<string, SegmentState>
 
   // Actions
   loadLatest: (workspaceId: string) => Promise<void>
-  startAudit: (workspaceId: string, mode: AuditMode, tracks: AuditTrackId[]) => Promise<void>
+  startAudit: (
+    workspaceId: string,
+    mode: AuditMode,
+    tracks: AuditTrackId[],
+    llmProvider?: LLMProvider
+  ) => Promise<void>
   cancelAudit: () => Promise<void>
+  pauseAudit: () => Promise<void>
+  resumeAudit: (workspaceId: string) => Promise<void>
   rerunTrack: (workspaceId: string, trackId: AuditTrackId, mode: AuditMode) => Promise<void>
   toggleFinding: (finding: AuditFinding) => void
   clearSelectedFindings: () => void
+  setPendingFixContext: (ctx: { title: string; description: string } | null) => void
   convertFindings: (workspaceId: string) => Promise<string> // returns conversationId
   handleProgress: (data: AuditProgressEvent) => void
   handleResult: (data: AuditResult) => void
   handleComplete: (data: AuditRun) => void
   handleStreamChunk: (data: AuditStreamChunkEvent) => void
+  handleIntermediate: (data: AuditIntermediateEvent) => void
   reset: () => void
 }
 
@@ -104,31 +114,41 @@ export const useAuditStore = create<AuditState>((set, get) => {
   return {
     currentRun: null,
     isRunning: false,
+    isPaused: false,
     rerunningTrackId: null,
     liveStreamText: {},
     selectedFindings: [],
+    pendingFixContext: null,
     perTrackStreaming: {},
 
     loadLatest: async (workspaceId) => {
       try {
         const run = await window.api.auditGetLatest({ workspaceId })
-        // Sync isRunning: if the DB shows a terminal state, ensure store reflects it.
-        // This fixes stale spinner when navigating away during a run and coming back.
-        const isTerminal = !run || ['completed', 'partial', 'cancelled', 'failed'].includes(run.status)
+        // Sync isRunning with the DB state so the status bar reflects reality
+        // (e.g. after app restart while an audit was in progress).
+        const isTerminal =
+          !run || ['completed', 'partial', 'cancelled', 'failed'].includes(run.status)
         set({
           currentRun: run,
-          ...(isTerminal ? { isRunning: false, rerunningTrackId: null } : {})
+          isRunning: !isTerminal,
+          ...(isTerminal ? { rerunningTrackId: null } : {})
         })
       } catch (error) {
         rendererLog.error('Failed to load latest audit:', error)
       }
     },
 
-    startAudit: async (workspaceId, mode, tracks) => {
+    startAudit: async (workspaceId, mode, tracks, llmProvider?) => {
       try {
         auditInternals.resetAll()
-        set({ isRunning: true, liveStreamText: {}, perTrackStreaming: {}, selectedFindings: [] })
-        const run = await window.api.auditStart({ workspaceId, mode, tracks })
+        set({
+          isRunning: true,
+          isPaused: false,
+          liveStreamText: {},
+          perTrackStreaming: {},
+          selectedFindings: []
+        })
+        const run = await window.api.auditStart({ workspaceId, mode, tracks, llmProvider })
         set({ currentRun: run })
       } catch (error) {
         rendererLog.error('Failed to start audit:', error)
@@ -142,6 +162,40 @@ export const useAuditStore = create<AuditState>((set, get) => {
         await window.api.auditCancel()
       } catch (error) {
         rendererLog.error('Failed to cancel audit:', error)
+      }
+    },
+
+    pauseAudit: async () => {
+      try {
+        await window.api.auditCancel()
+        set({ isPaused: true })
+      } catch (error) {
+        rendererLog.error('Failed to pause audit:', error)
+      }
+    },
+
+    resumeAudit: async (workspaceId) => {
+      try {
+        // Reset streaming state for incomplete tracks
+        const current = get()
+        const resumableTracks =
+          current.currentRun?.results
+            .filter(
+              (r) => r.status === 'cancelled' || r.status === 'pending' || r.status === 'failed'
+            )
+            .map((r) => r.trackId) ?? []
+
+        for (const trackId of resumableTracks) {
+          auditInternals.resetTrack(trackId)
+        }
+
+        set({ isRunning: true, isPaused: false })
+        const run = await window.api.auditResume({ workspaceId })
+        if (run) set({ currentRun: run })
+      } catch (error) {
+        rendererLog.error('Failed to resume audit:', error)
+        set({ isRunning: false })
+        throw error
       }
     },
 
@@ -185,6 +239,8 @@ export const useAuditStore = create<AuditState>((set, get) => {
     },
 
     clearSelectedFindings: () => set({ selectedFindings: [] }),
+
+    setPendingFixContext: (ctx) => set({ pendingFixContext: ctx }),
 
     convertFindings: async (workspaceId) => {
       const { selectedFindings } = get()
@@ -247,9 +303,11 @@ export const useAuditStore = create<AuditState>((set, get) => {
 
     handleComplete: (data) => {
       auditInternals.resetAll()
+      const wasPaused = get().isPaused
       set({
         currentRun: data,
         isRunning: false,
+        isPaused: wasPaused, // preserve — don't blindly clear on complete
         rerunningTrackId: null,
         liveStreamText: {},
         perTrackStreaming: {}
@@ -258,31 +316,38 @@ export const useAuditStore = create<AuditState>((set, get) => {
 
     handleStreamChunk: (data) => {
       if (data.type === 'text' && data.content) {
-        auditInternals.getOrCreateBuffer(data.trackId).append(data.content)
+        auditInternals.getOrCreateAccumulator(data.trackId).appendText(data.content)
       } else if (data.type === 'tool_activity' && data.toolActivity) {
-        set((s) => {
-          const track = s.perTrackStreaming[data.trackId] ?? { content: '', toolActivities: [] }
-          const existingIdx = track.toolActivities.findIndex((a) => a.id === data.toolActivity!.id)
-          let updatedActivities: ToolActivity[]
-          if (existingIdx >= 0) {
-            // Update existing (tool_result / tool_progress)
-            updatedActivities = [...track.toolActivities]
-            updatedActivities[existingIdx] = {
-              ...updatedActivities[existingIdx],
-              ...data.toolActivity
-            } as ToolActivity
-          } else {
-            // New tool_use
-            updatedActivities = [...track.toolActivities, data.toolActivity as ToolActivity]
-          }
+        const activity = data.toolActivity as ToolActivity & { id: string; toolName: string }
+        auditInternals.getOrCreateAccumulator(data.trackId).handleToolActivity(activity)
+      }
+    },
+
+    handleIntermediate: (data) => {
+      set((s) => {
+        if (!s.currentRun) return s
+
+        // Merge intermediate findings into the running track's result
+        const updatedResults = s.currentRun.results.map((r) => {
+          if (r.trackId !== data.trackId) return r
           return {
-            perTrackStreaming: {
-              ...s.perTrackStreaming,
-              [data.trackId]: { ...track, toolActivities: updatedActivities }
+            ...r,
+            findings: data.findings,
+            coverageStats: data.coverageStats,
+            summary: `Round ${data.roundNumber}/${data.totalRounds}: ${data.findings.length} finding(s), ${data.coverageStats.fileCount} files inspected`,
+            roundProgress: {
+              roundNumber: data.roundNumber,
+              totalRounds: data.totalRounds,
+              totalFiles: data.totalFiles,
+              batchSize: data.batchSize
             }
           }
         })
-      }
+
+        return {
+          currentRun: { ...s.currentRun, results: updatedResults }
+        }
+      })
     },
 
     reset: () => {
@@ -290,10 +355,12 @@ export const useAuditStore = create<AuditState>((set, get) => {
       set({
         currentRun: null,
         isRunning: false,
+        isPaused: false,
         rerunningTrackId: null,
         liveStreamText: {},
         perTrackStreaming: {},
-        selectedFindings: []
+        selectedFindings: [],
+        pendingFixContext: null
       })
     }
   }

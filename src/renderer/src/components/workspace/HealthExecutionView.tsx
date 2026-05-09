@@ -13,7 +13,8 @@ import {
   Clock,
   Ban,
   ArrowLeft,
-  Square
+  Square,
+  Pause
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AuditRun, AuditTrackId } from '../../../../shared/types'
@@ -37,6 +38,7 @@ interface HealthExecutionViewProps {
   isRunning: boolean
   rerunningTrackId: AuditTrackId | null
   onCancel: () => void
+  onPause: () => void
   onBack: () => void
   selectedFindings: AuditFinding[]
   onToggleFinding: (finding: AuditFinding) => void
@@ -72,12 +74,14 @@ export default function HealthExecutionView({
   isRunning,
   rerunningTrackId,
   onCancel,
+  onPause,
   onBack,
   selectedFindings,
   onToggleFinding,
   onConvertToChat
 }: HealthExecutionViewProps): React.JSX.Element {
   const [selectedTrackId, setSelectedTrackId] = useState<AuditTrackId | null>(null)
+  const [confirmingCancel, setConfirmingCancel] = useState(false)
   const effectivelyRunning = isRunning || !!rerunningTrackId
 
   // Find the currently-running track
@@ -124,13 +128,47 @@ export default function HealthExecutionView({
           </span>
         </div>
         {effectivelyRunning && (
-          <button
-            onClick={onCancel}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-danger/10 text-danger hover:bg-danger/20 transition-colors"
-          >
-            <Square size={12} />
-            Cancel
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Pause button */}
+            <button
+              onClick={onPause}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors"
+              title="Pause audit — you can resume later"
+            >
+              <Pause size={12} />
+              Pause
+            </button>
+
+            {/* Cancel with confirmation */}
+            {confirmingCancel ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-danger">Cancel audit?</span>
+                <button
+                  onClick={() => {
+                    onCancel()
+                    setConfirmingCancel(false)
+                  }}
+                  className="px-2 py-1 text-[10px] font-medium rounded bg-danger/20 text-danger hover:bg-danger/30 transition-colors"
+                >
+                  Yes
+                </button>
+                <button
+                  onClick={() => setConfirmingCancel(false)}
+                  className="px-2 py-1 text-[10px] font-medium rounded bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+                >
+                  No
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmingCancel(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-danger/10 text-danger hover:bg-danger/20 transition-colors"
+              >
+                <Square size={12} />
+                Cancel
+              </button>
+            )}
+          </div>
         )}
       </div>
 

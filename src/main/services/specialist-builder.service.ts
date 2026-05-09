@@ -214,6 +214,29 @@ export class SpecialistBuilderService {
         `✓ Built Project Specialist ${specialist.id} (workspace=${workspace.name}, techs=${techResult.detectedTechs.length}, usedLLM=${usedLLM})`
       )
 
+      // 3b. Auto-activate: set specialistSwapAccepted so resolveAdapter() picks
+      // the specialist adapter for new conversations without requiring the
+      // ask_user swap proposal. Existing sessions (still DaVinci) can still
+      // trigger the manual swap flow for the current conversation.
+      try {
+        const wsRow = db
+          .prepare(`SELECT settings_json FROM workspaces WHERE id = ?`)
+          .get(workspace.id) as { settings_json: string } | undefined
+        const wsSettings = JSON.parse(wsRow?.settings_json || '{}') as Record<string, unknown>
+        if (!wsSettings.specialistSwapAccepted) {
+          wsSettings.specialistSwapAccepted = true
+          db.prepare(`UPDATE workspaces SET settings_json = ? WHERE id = ?`).run(
+            JSON.stringify(wsSettings),
+            workspace.id
+          )
+          buildLog.info(
+            `[auto-activate] Set specialistSwapAccepted=true for workspace=${workspace.id}`
+          )
+        }
+      } catch (activateErr) {
+        buildLog.warn('[auto-activate] Failed to set specialistSwapAccepted:', activateErr)
+      }
+
       // 4. Refresh skill recommendations if stale (non-blocking)
       void this.refreshRecommendationsIfStale(
         specialist.id,

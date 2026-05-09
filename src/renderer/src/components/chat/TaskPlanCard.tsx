@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import {
   Hammer,
   RefreshCw,
@@ -38,14 +38,6 @@ const PLAN_TYPE_CONFIG: Record<
     label: 'Investigation',
     badgeClass: 'bg-[var(--color-plan-card-phase-bg)] text-[var(--color-plan-card-accent)]'
   }
-}
-
-// ── Complexity badge color ──
-
-function complexityColor(score: number): string {
-  if (score <= 3) return 'text-success bg-success-muted'
-  if (score <= 6) return 'text-warning bg-warning-muted'
-  return 'text-danger bg-danger-muted'
 }
 
 function riskColor(risk: 'low' | 'medium' | 'high'): string {
@@ -200,22 +192,22 @@ export default function TaskPlanCard({
   // ── Section renderers (extracted for layout composition) ──
 
   const titleSection = structuredPlan && (
-    <div className="border-l-4 border-[var(--color-plan-card)] pl-4">
-      <h3 className="text-base font-bold text-[var(--color-plan-card-text)] flex items-center gap-2">
-        <ClipboardList size={16} className="text-[var(--color-plan-card)]" />
+    <div className="border-l-4 border-[var(--color-plan-card)] pl-4 bg-surface-overlay rounded-r">
+      <h3 className="text-lg font-semibold text-[var(--color-plan-card-text)] flex items-center gap-2">
+        <ClipboardList size={18} className="text-[var(--color-plan-card)]" />
         {structuredPlan.title}
       </h3>
+      {structuredPlan.summary && (
+        <p className="text-sm text-text-body mt-1.5 leading-relaxed">{structuredPlan.summary}</p>
+      )}
     </div>
   )
 
-  const summarySection = structuredPlan?.summary && (
-    <div className="text-sm text-text-body bg-[var(--color-plan-card-muted)] rounded-lg px-4 py-3 border border-[var(--color-plan-card-border)]">
-      {structuredPlan.summary}
-    </div>
-  )
+  // Summary is now rendered inline with titleSection — this is kept as a no-op for backward compat
+  const summarySection = false
 
   const problemAnalysisSection = structuredPlan?.problemSummary && (
-    <div className="rounded-lg border border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-section-bg)] p-4">
+    <div className="rounded border border-[var(--color-plan-card-border)] bg-surface-base/30 p-3">
       <div className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-text)] mb-2">
         <Search size={14} className="text-[var(--color-plan-card)]" />
         Problem Analysis
@@ -241,9 +233,9 @@ export default function TaskPlanCard({
   )
 
   const currentStateSection = structuredPlan?.currentState && (
-    <div className="rounded-lg border border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-section-bg)] p-4">
-      <div className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-text)] mb-2">
-        <ClipboardList size={14} className="text-[var(--color-plan-card)]" />
+    <div className="pt-3 border-t border-border-subtle">
+      <div className="flex items-center gap-2 text-sm font-semibold text-text-secondary mb-2">
+        <ClipboardList size={14} className="text-text-secondary" />
         Current State
       </div>
       <div className="text-sm text-text-body prose prose-sm prose-invert max-w-none">
@@ -253,17 +245,17 @@ export default function TaskPlanCard({
   )
 
   const decisionsSection = visibleDecisions.length > 0 && (
-    <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
+    <div className="rounded border-l-3 border-[var(--color-plan-card-accent)] bg-surface-base/30 pl-4 pr-3 py-3">
       <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-3">
-        <Lightbulb size={14} className="text-[var(--color-plan-card)]" />
+        <Lightbulb size={14} className="text-warning" />
         Key Decisions
       </div>
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         {visibleDecisions.map((d, i) => (
           <div key={`decision-${i}`} className="flex items-start gap-2 text-sm">
-            <ArrowRight size={12} className="text-[var(--color-plan-card)] mt-1 shrink-0" />
+            <ArrowRight size={12} className="text-warning mt-1 shrink-0" />
             <div>
-              <span className="text-text-primary font-medium">{d.what}</span>
+              <span className="text-text-primary font-semibold">{d.what}</span>
               <span className="text-text-secondary"> — {d.why}</span>
             </div>
           </div>
@@ -292,8 +284,7 @@ export default function TaskPlanCard({
             {visibleFilesChanged.map((entry, index) => (
               <tr key={`file-change-${index}`}>
                 <td>
-                  <span className="inline-flex items-center gap-1 text-[var(--color-plan-card)] hover:text-[var(--color-plan-card-text)] cursor-pointer font-mono text-xs bg-[var(--color-plan-card-muted)] px-1.5 py-0.5 rounded">
-                    <FileCode size={12} />
+                  <span className="text-[var(--color-plan-card)] font-mono text-xs bg-[var(--color-plan-card-muted)] px-1.5 py-0.5 rounded">
                     {shortenPath(entry.file)}
                   </span>
                 </td>
@@ -316,9 +307,8 @@ export default function TaskPlanCard({
         {visibleFiles.map((file, index) => (
           <span
             key={`scope-file-${index}`}
-            className="inline-flex items-center gap-1 text-[var(--color-plan-card)] hover:text-[var(--color-plan-card-text)] cursor-pointer font-mono text-xs bg-[var(--color-plan-card-muted)] px-1.5 py-0.5 rounded"
+            className="text-[var(--color-plan-card)] font-mono text-xs bg-[var(--color-plan-card-muted)] px-1.5 py-0.5 rounded"
           >
-            <FileCode size={12} />
             {shortenPath(file)}
           </span>
         ))}
@@ -348,11 +338,11 @@ export default function TaskPlanCard({
           return (
             <div
               key={`risk-${index}`}
-              className="rounded-lg border border-border-subtle bg-surface-base/40 p-3"
+              className="rounded border border-border-subtle bg-surface-base/40 p-3"
             >
               <div className="flex items-center gap-2">
                 <span
-                  className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide ${severityClass}`}
+                  className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wide ${severityClass}`}
                 >
                   {severity}
                 </span>
@@ -371,7 +361,7 @@ export default function TaskPlanCard({
   )
 
   const verificationSection = visibleVerification.length > 0 && (
-    <div className="rounded-lg bg-[var(--color-plan-card-phase-bg)] border border-[var(--color-plan-card-phase-border)] p-4">
+    <div className="pt-3 border-t border-border-subtle">
       <div className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-accent)] mb-3">
         <CheckCircle2 size={14} />
         Verification
@@ -388,7 +378,7 @@ export default function TaskPlanCard({
     'expectedOutcome' in structuredPlan &&
     typeof structuredPlan.expectedOutcome === 'string' &&
     structuredPlan.expectedOutcome.trim() && (
-      <div className="rounded-lg bg-success-muted border border-success/20 p-4">
+      <div className="pt-3 border-t border-border-subtle">
         <div className="flex items-center gap-2 text-sm font-semibold text-success mb-2">
           <CheckCircle2 size={14} />
           Expected Outcome
@@ -400,9 +390,9 @@ export default function TaskPlanCard({
   const implementationOrderSection = structuredPlan?.implementationOrder &&
     structuredPlan.implementationOrder.length > 0 &&
     visiblePhases.length > 0 && (
-      <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
+      <div className="rounded border-l-3 border-info bg-surface-base/20 pl-4 pr-3 py-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-3">
-          <ArrowRight size={14} className="text-[var(--color-plan-card)]" />
+          <ArrowRight size={14} className="text-info" />
           Recommended Implementation Order
         </div>
         <div className="flex items-center gap-1.5 flex-wrap text-sm">
@@ -422,17 +412,21 @@ export default function TaskPlanCard({
     )
 
   const deferredItemsSection = visibleDeferredItems.length > 0 && (
-    <div className="rounded-lg border border-border-subtle bg-surface-base/40 p-4">
-      <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
-        <Clock size={14} className="text-text-secondary" />
-        Deferred Items
-      </div>
-      <ul className="list-disc pl-5 space-y-1 text-sm text-text-body">
+    <details className="pt-3 border-t border-border-subtle group">
+      <summary className="flex items-center gap-2 text-xs font-semibold text-text-muted cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          size={12}
+          className="text-text-muted transition-transform group-open:rotate-90"
+        />
+        <Clock size={12} className="text-text-muted" />
+        Deferred Items ({visibleDeferredItems.length})
+      </summary>
+      <ul className="list-disc pl-7 space-y-1 text-xs text-text-body mt-2">
         {visibleDeferredItems.map((item, index) => (
           <li key={`deferred-${index}`}>{item}</li>
         ))}
       </ul>
-    </div>
+    </details>
   )
 
   const diagramsSection = visibleDiagrams.length > 0 && (
@@ -440,7 +434,7 @@ export default function TaskPlanCard({
       {visibleDiagrams.map((diagram, index) => (
         <div
           key={`diagram-${index}`}
-          className="rounded-lg border border-border-subtle bg-surface-base p-3"
+          className="rounded border border-border-subtle bg-surface-base p-3"
         >
           <div className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
             {diagram.title}
@@ -456,7 +450,7 @@ export default function TaskPlanCard({
       {visibleSections.map((section, index) => (
         <div
           key={`${section.heading}-${index}`}
-          className="rounded-lg border border-mode-plan-border bg-mode-plan-muted overflow-hidden"
+          className="rounded border border-mode-plan-border bg-mode-plan-muted overflow-hidden"
         >
           <div className="px-4 py-3">
             {section.icon && <span className="text-base mr-2">{section.icon}</span>}
@@ -467,7 +461,7 @@ export default function TaskPlanCard({
           </div>
           {section.mermaid && (
             <div className="px-4 pb-4">
-              <div className="rounded-lg border border-border-subtle bg-surface-base p-3">
+              <div className="rounded border border-border-subtle bg-surface-base p-3">
                 <MermaidDiagram definition={section.mermaid} />
               </div>
             </div>
@@ -502,6 +496,7 @@ export default function TaskPlanCard({
           {expectedOutcomeSection}
           {risksSection}
           {deferredItemsSection}
+          {implementationOrderSection}
         </>
       )
     }
@@ -519,10 +514,10 @@ export default function TaskPlanCard({
           {risksSection}
           {expectedOutcomeSection}
           {verificationSection}
-          {implementationOrderSection}
           {filesChangedSection}
           {filesInScopeSection}
           {deferredItemsSection}
+          {implementationOrderSection}
         </>
       )
     }
@@ -541,8 +536,8 @@ export default function TaskPlanCard({
           {sectionsBlock}
           {risksSection}
           {verificationSection}
-          {implementationOrderSection}
           {deferredItemsSection}
+          {implementationOrderSection}
         </>
       )
     }
@@ -562,10 +557,10 @@ export default function TaskPlanCard({
         {risksSection}
         {verificationSection}
         {expectedOutcomeSection}
-        {implementationOrderSection}
         {diagramsSection}
         {sectionsBlock}
         {deferredItemsSection}
+        {implementationOrderSection}
       </>
     )
   }
@@ -573,25 +568,25 @@ export default function TaskPlanCard({
   return (
     <div
       data-testid="task-plan-card"
-      className={`my-3 rounded-xl border ${isInlinePlan ? 'border-[var(--color-plan-card-border)]' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}
+      className={`my-3 rounded border ${isInlinePlan ? 'border-[var(--color-plan-card-border)]' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}
     >
       {/* Header */}
-      <div className={`flex items-center gap-3 px-4 py-3 border-b ${headerBg}`}>
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${headerIconBg}`}>
+      <div className={`flex items-center gap-3 px-5 py-4 border-b ${headerBg}`}>
+        <div className={`w-8 h-8 rounded flex items-center justify-center ${headerIconBg}`}>
           <ClipboardList size={16} className={headerIconColor} />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-text-primary">{headerTitle}</p>
-          <p className="text-xs text-text-secondary truncate">{summary}</p>
+          <p className="text-xs text-text-secondary truncate">{structuredPlan?.title ?? summary}</p>
         </div>
         <div className="flex items-center gap-1.5">
           {planTypeConfig && (
-            <span className={`text-[10px] px-2 py-0.5 rounded-full ${planTypeConfig.badgeClass}`}>
+            <span className={`text-[10px] px-2 py-0.5 rounded ${planTypeConfig.badgeClass}`}>
               {planTypeConfig.emoji} {planTypeConfig.label}
             </span>
           )}
           <span
-            className={`text-[10px] px-2 py-0.5 rounded-full ${
+            className={`text-[10px] px-2 py-0.5 rounded ${
               mode === 'build'
                 ? 'bg-mode-build-muted text-mode-build-text'
                 : 'bg-mode-plan-muted text-mode-plan-text'
@@ -614,14 +609,14 @@ export default function TaskPlanCard({
 
       {/* ── Unified action buttons ── */}
       {!hasUserChosen && (onBuildNow || onSaveAsIdea || onRefine) && (
-        <div className="flex items-center gap-2 px-4 py-3 border-t border-border-subtle bg-surface-base/50">
+        <div className="sticky bottom-0 flex items-center gap-2 px-5 py-3 border-t border-border-subtle bg-surface-overlay/95 backdrop-blur-sm">
           {onBuildNow && (
             <button
               onClick={() => {
                 setUserClicked(true)
                 onBuildNow()
               }}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-mode-build/50 press-scale"
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-mode-build/50 press-scale"
             >
               <Hammer size={14} />
               Build Now
@@ -633,7 +628,7 @@ export default function TaskPlanCard({
                 setUserClicked(true)
                 onSaveAsIdea()
               }}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
             >
               <Lightbulb size={14} />
               Save as Idea
@@ -645,7 +640,7 @@ export default function TaskPlanCard({
                 setUserClicked(true)
                 onRefine()
               }}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded-lg text-sm font-medium transition-colors press-scale"
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
             >
               <RefreshCw size={14} />
               Refine Plan
@@ -665,7 +660,7 @@ function RootCausesList({ rootCauses }: { rootCauses: PlanRootCause[] }): React.
       {rootCauses.map((rc) => (
         <div
           key={`root-cause-${rc.id}`}
-          className="rounded-lg border-l-4 border-danger bg-surface-base/40 p-4"
+          className="rounded border-l-4 border-danger bg-surface-base/40 p-4"
         >
           <div className="text-sm font-semibold text-text-primary mb-1">
             Root Cause {rc.id} — {rc.title}
@@ -684,6 +679,40 @@ function RootCausesList({ rootCauses }: { rootCauses: PlanRootCause[] }): React.
   )
 }
 
+function ComplexityIndicator({ score }: { score: number }): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-1" title={`Complexity: ${score}/10`}>
+      <span className="text-xs text-text-secondary mr-0.5">{score}</span>
+      <div className="flex gap-px">
+        {Array.from({ length: 10 }, (_, i) => (
+          <div
+            key={i}
+            className={`w-1.5 h-3 rounded-sm ${
+              i < score
+                ? score <= 3
+                  ? 'bg-success'
+                  : score <= 6
+                    ? 'bg-warning'
+                    : 'bg-danger'
+                : 'bg-surface-base/60'
+            }`}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function RiskDot({ risk }: { risk: 'low' | 'medium' | 'high' }): React.JSX.Element {
+  const dotColor = risk === 'low' ? 'bg-success' : risk === 'medium' ? 'bg-warning' : 'bg-danger'
+  return (
+    <span className="flex items-center gap-1 text-xs">
+      <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+      <span className={`capitalize ${riskColor(risk)}`}>{risk}</span>
+    </span>
+  )
+}
+
 function PhasesList({ phases }: { phases: PlanPhase[] }): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
 
@@ -699,7 +728,7 @@ function PhasesList({ phases }: { phases: PlanPhase[] }): React.JSX.Element {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-        <ClipboardList size={14} className="text-[var(--color-plan-card)]" />
+        <ClipboardList size={14} className="text-[var(--color-plan-card-accent)]" />
         Implementation Phases
       </div>
       <div className="space-y-2">
@@ -708,37 +737,32 @@ function PhasesList({ phases }: { phases: PlanPhase[] }): React.JSX.Element {
           return (
             <div
               key={`phase-${phase.id}`}
-              className="rounded-lg border border-[var(--color-plan-card-phase-border)] bg-[var(--color-plan-card-phase-bg)] overflow-hidden"
+              className="rounded border border-[var(--color-plan-card-phase-border)] bg-[var(--color-plan-card-phase-bg)] overflow-hidden"
             >
               <button
                 type="button"
                 onClick={() => toggle(phase.id)}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-[var(--color-plan-card-section-bg)] transition-colors"
+                className="w-full flex flex-col gap-1 px-4 py-3 text-left hover:bg-[var(--color-plan-card-section-bg)] transition-colors"
               >
-                {isOpen ? (
-                  <ChevronDown size={14} className="text-text-secondary shrink-0" />
-                ) : (
-                  <ChevronRight size={14} className="text-text-secondary shrink-0" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium text-text-primary">
-                    Phase {phase.id}: {phase.title}
+                <div className="flex items-center gap-2 w-full">
+                  {isOpen ? (
+                    <ChevronDown size={14} className="text-text-secondary shrink-0" />
+                  ) : (
+                    <ChevronRight size={14} className="text-text-secondary shrink-0" />
+                  )}
+                  <span className="w-5 h-5 rounded bg-[var(--color-plan-card-muted)] text-[var(--color-plan-card)] text-xs flex items-center justify-center font-mono shrink-0">
+                    {phase.id}
+                  </span>
+                  <span className="text-sm font-medium text-text-primary truncate">
+                    {phase.title}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span
-                    className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${complexityColor(phase.complexity)}`}
-                  >
-                    {phase.complexity}/10
-                  </span>
+                <div className="flex items-center gap-3 ml-[calc(14px+8px+20px+8px)] text-xs">
+                  <ComplexityIndicator score={phase.complexity} />
                   {phase.fileCount != null && (
-                    <span className="text-[10px] text-text-secondary">
-                      ~{phase.fileCount} files
-                    </span>
+                    <span className="text-text-secondary">~{phase.fileCount} files</span>
                   )}
-                  <span className={`text-[10px] capitalize ${riskColor(phase.risk)}`}>
-                    {phase.risk}
-                  </span>
+                  <RiskDot risk={phase.risk} />
                 </div>
               </button>
               {isOpen && (
@@ -747,19 +771,20 @@ function PhasesList({ phases }: { phases: PlanPhase[] }): React.JSX.Element {
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{phase.description}</ReactMarkdown>
                   </div>
                   {phase.files && phase.files.length > 0 && (
-                    <div className="mt-3 space-y-1">
-                      <div className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+                    <div className="mt-3">
+                      <div className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
                         Files
                       </div>
-                      {phase.files.map((f, fi) => (
-                        <div key={`phase-file-${fi}`} className="flex items-start gap-2 text-xs">
-                          <span className="inline-flex items-center gap-1 text-[var(--color-plan-card)] font-mono bg-[var(--color-plan-card-muted)] px-1.5 py-0.5 rounded shrink-0">
-                            <FileCode size={10} />
-                            {shortenPath(f.file)}
-                          </span>
-                          <span className="text-text-secondary">— {f.change}</span>
-                        </div>
-                      ))}
+                      <div className="grid grid-cols-[minmax(160px,auto)_1fr] gap-x-3 gap-y-1.5 text-xs">
+                        {phase.files.map((f, fi) => (
+                          <React.Fragment key={`phase-file-${fi}`}>
+                            <span className="text-[var(--color-plan-card)] font-mono truncate">
+                              {shortenPath(f.file)}
+                            </span>
+                            <span className="text-text-secondary">{f.change}</span>
+                          </React.Fragment>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

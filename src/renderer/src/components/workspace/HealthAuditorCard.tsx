@@ -13,7 +13,8 @@ import {
   Clock,
   Ban,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  AlertTriangle
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AuditTrackId, AuditResult, AuditFinding, AuditTrack } from '../../../../shared/types'
@@ -129,13 +130,18 @@ export default function HealthAuditorCard({
           disabled={isCardDisabled}
           className="rounded border-border-subtle text-primary focus:ring-primary/50 disabled:opacity-40"
         />
-        {score !== null && (
+        {result?.coverageSufficient === false ? (
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-warning/10 text-warning flex items-center gap-1">
+            <AlertTriangle size={10} />
+            Low coverage
+          </span>
+        ) : score !== null ? (
           <span
             className={`text-xs font-bold px-2 py-0.5 rounded-full ${getScoreColor(score)} ${getScoreBgColor(score)}`}
           >
             {score}
           </span>
-        )}
+        ) : null}
       </div>
 
       {/* Large centered icon + name + description */}

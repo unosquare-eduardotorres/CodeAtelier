@@ -95,8 +95,7 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
     // Start indexing (async — fires progress events via EventEmitter)
     const indexingOptions = {
       generateDescriptions: !!settings.semanticSearchDescriptions,
-      descriptionModel: (settings.descriptionModel as string) || 'claude-haiku-4-5-20251001',
-      ollamaModel: (settings.ollamaModel as string) || 'qwen3-embedding:4b'
+      descriptionModel: (settings.descriptionModel as string) || 'claude-haiku-4-5-20251001'
     }
     vectorSearchService
       .indexProject(args.workspaceId, workspace.repoPath, chunks, fileContents, indexingOptions)
@@ -124,6 +123,16 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
     validateSender(event)
     return vectorSearchService.getIndexingState(args.workspaceId)
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.SEMANTIC_SEARCH_QUERY,
+    async (event, args: { workspaceId: string; query: string; nResults?: number }) => {
+      validateSender(event)
+      return vectorSearchService.search(args.workspaceId, args.query, {
+        nResults: args.nResults ?? 5
+      })
+    }
+  )
 
   ipcMain.handle(
     IPC_CHANNELS.INDEXING_LOAD_PERSISTED,

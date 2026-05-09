@@ -37,6 +37,7 @@ export class GrillAgentService extends EventEmitter {
     ideaDescription: string
     iterationHistory?: string
     previousScore?: number
+    llmProvider?: import('../../shared/types').LLMProvider
   }): Promise<void> {
     grillLog.info(
       `[grill] evaluate called — track=${params.trackId} workspace=${params.workspaceId}`
@@ -55,7 +56,8 @@ export class GrillAgentService extends EventEmitter {
       ideaTitle: params.ideaTitle,
       ideaDescription: params.ideaDescription,
       iterationHistory: params.iterationHistory,
-      previousScore: params.previousScore
+      previousScore: params.previousScore,
+      llmProvider: params.llmProvider
     })
 
     this.session = new AgentSessionService(adapter)

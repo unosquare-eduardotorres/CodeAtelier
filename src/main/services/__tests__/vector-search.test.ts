@@ -277,6 +277,63 @@ describe('InMemoryCollection.query edge cases', () => {
   })
 })
 
+// ── Indexing pipeline structural verification ──
+// These tests verify critical structural invariants of the indexing pipeline
+// by reading the source code, ensuring guards and phases remain in the correct order.
+
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
+describe('VectorSearchService.indexProject — phase transitions', () => {
+  const source = readFileSync(
+    path.join(process.cwd(), 'src/main/services/vector-search.service.ts'),
+    'utf-8'
+  )
+
+  test('EMBEDDING_BATCH_SIZE constant is 16', () => {
+    assert.ok(
+      source.includes('EMBEDDING_BATCH_SIZE = 16'),
+      'Batch size should be 16 for WASM backend throughput/memory balance'
+    )
+  })
+
+  test('embedding init is deferred until after preprocessing (not before)', () => {
+    // The WASM model init must come AFTER preprocessing (which spawns CLI processes)
+    // to avoid memory pressure from concurrent CLI + WASM allocation.
+    const preprocessIdx = source.indexOf("state.status = 'preprocessing'")
+    const initIdx = source.indexOf('Initializing embedding model after description phase')
+    const batchLoopIdx = source.indexOf('for (let i = 0; i < processedChunks.length')
+    assert.ok(preprocessIdx > 0, 'Preprocessing phase should exist')
+    assert.ok(initIdx > 0, 'Deferred embedding init comment should exist')
+    assert.ok(batchLoopIdx > 0, 'Batch loop should exist')
+    assert.ok(initIdx > preprocessIdx, 'Embedding init should come after preprocessing')
+    assert.ok(initIdx < batchLoopIdx, 'Embedding init should come before batch loop')
+  })
+
+  test('GC hint exists between preprocessing and embedding batch loop', () => {
+    const preprocessEndIdx = source.indexOf('preprocessOpts.cancelled')
+    const gcIdx = source.indexOf('global.gc()')
+    const batchLoopIdx = source.indexOf('for (let i = 0; i < processedChunks.length')
+    assert.ok(gcIdx > 0, 'GC hint should exist')
+    assert.ok(batchLoopIdx > 0, 'Batch loop should exist')
+    assert.ok(preprocessEndIdx > 0, 'Preprocessing cancellation check should exist')
+    // GC comes after preprocessing cancellation check, before the batch embed loop
+    assert.ok(gcIdx > preprocessEndIdx, 'GC hint should come after preprocessing')
+    assert.ok(gcIdx < batchLoopIdx, 'GC hint should come before batch embed loop')
+  })
+})
+
+describe('EmbeddingProviderService — WASM config', () => {
+  const source = readFileSync(
+    path.join(process.cwd(), 'src/main/services/embedding-provider.service.ts'),
+    'utf-8'
+  )
+
+  test('numThreads is set to 4', () => {
+    assert.ok(source.includes('numThreads = 4'), 'Should use 4 WASM threads')
+  })
+})
+
 // ── Summary ──
 
 console.log(`\n${'─'.repeat(40)}`)

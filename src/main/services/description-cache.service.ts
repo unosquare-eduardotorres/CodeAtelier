@@ -31,7 +31,7 @@ Descriptions (one per line, format "N: description"):`
  * Descriptions are keyed by sha256(filePath + symbolName + body) so they
  * are only regenerated when the code actually changes.
  *
- * Uses the main agent-studio.db `chunk_descriptions` table (unified storage).
+ * Uses the main code-atelier.db `chunk_descriptions` table (unified storage).
  */
 class DescriptionCacheService {
   /** Active workspace ID for scoping description writes */

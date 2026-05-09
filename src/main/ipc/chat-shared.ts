@@ -1,5 +1,7 @@
 import type { BrowserWindow } from 'electron'
+import { app } from 'electron'
 import { fileChangeRepository } from '../db/repositories'
+import { bugRepository } from '../db/repositories/bug.repository'
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
 import { IPC_CHANNELS, MCP_TOOLS } from '../../shared/constants'
@@ -9,16 +11,35 @@ import { createTextChunk, createToolActivityChunk, createTurnBoundary } from './
 
 const log = chatIpcLogger
 
+/** Return type from extractResultSummary — short summary + optional expanded detail */
+export interface ToolResultSummary {
+  result: string
+  resultDetail?: string
+}
+
+/** Cap for resultDetail content — ~2K chars */
+const DETAIL_CAP = 2048
+
 /**
  * Extracts a brief human-readable result summary from a tool result.
- * Used to populate ToolActivity.result for inline display in ToolActivityBlock.
+ * Returns both a short `result` (one-line) and an optional `resultDetail`
+ * (expanded text, up to ~2K chars) for the expand panel in ToolActivityBlock.
  */
 export function extractResultSummary(
   toolName: string,
   content: string | undefined
-): string | undefined {
+): ToolResultSummary | undefined {
   if (!content) return undefined
   try {
+    // SDK persisted-output placeholder — the SDK stores oversized results to disk
+    if (content.includes('<persisted-output>') || content.includes('persisted-output')) {
+      return {
+        result: 'Result too large to display',
+        resultDetail:
+          'Output was persisted by the SDK. Check .claude/ directory for the full result.'
+      }
+    }
+
     // SDK-level tool errors come through the result content as
     // `<tool_use_error>…</tool_use_error>`. Surface a short, accurate label
     // so the UI shows a real error instead of letting the LLM misdiagnose it
@@ -26,56 +47,142 @@ export function extractResultSummary(
     if (content.includes('<tool_use_error>')) {
       const match = content.match(/<tool_use_error>([\s\S]*?)(?:<\/tool_use_error>|$)/)
       const inner = (match?.[1] ?? content).trim()
-      if (/modified since read/i.test(inner)) return 'Stale read — re-read needed'
-      if (/string to replace not found/i.test(inner)) return 'String not found — re-read needed'
+      if (/modified since read/i.test(inner))
+        return { result: 'Stale read — re-read needed', resultDetail: inner.slice(0, DETAIL_CAP) }
+      if (/string to replace not found/i.test(inner))
+        return {
+          result: 'String not found — re-read needed',
+          resultDetail: inner.slice(0, DETAIL_CAP)
+        }
       if (/permission denied|EACCES|operation not permitted/i.test(inner)) {
-        return 'Permission denied'
+        return { result: 'Permission denied', resultDetail: inner.slice(0, DETAIL_CAP) }
       }
       const oneLine = inner.split('\n')[0]?.trim() ?? 'Tool error'
-      return oneLine.length > 80 ? `Error: ${oneLine.slice(0, 77)}…` : `Error: ${oneLine}`
+      const shortResult =
+        oneLine.length > 80 ? `Error: ${oneLine.slice(0, 77)}…` : `Error: ${oneLine}`
+      return { result: shortResult, resultDetail: inner.slice(0, DETAIL_CAP) }
     }
     // For Write/Edit tools, the result is typically a confirmation
     if (toolName === 'Write' || toolName === 'Edit') {
-      return 'Done'
+      return { result: 'Done' }
     }
     // For Bash tool, extract exit code or first meaningful line
     if (toolName === 'Bash') {
       const lines = content.split('\n').filter((l) => l.trim())
-      if (lines.length === 0) return 'No output'
+      if (lines.length === 0) return { result: 'No output' }
       if (content.includes('exit code')) {
         const exitMatch = content.match(/exit code[:\s]*(\d+)/i)
         if (exitMatch) {
-          return exitMatch[1] === '0' ? 'Success (exit 0)' : `Failed (exit ${exitMatch[1]})`
+          const shortResult =
+            exitMatch[1] === '0' ? 'Success (exit 0)' : `Failed (exit ${exitMatch[1]})`
+          return {
+            result: shortResult,
+            resultDetail: lines.length > 1 ? content.slice(0, DETAIL_CAP) : undefined
+          }
         }
       }
       // Return first meaningful line, truncated
       const firstLine = lines[0].trim()
-      return firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine
+      const shortResult = firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine
+      return {
+        result: shortResult,
+        resultDetail: lines.length > 1 ? content.slice(0, DETAIL_CAP) : undefined
+      }
     }
-    // For Read tool — report line count
+    // For Read tool — report line count (no detail — file path is in input)
     if (toolName === 'Read') {
       const lineCount = content.split('\n').length
-      return `${lineCount} line${lineCount !== 1 ? 's' : ''} read`
+      return { result: `${lineCount} line${lineCount !== 1 ? 's' : ''} read` }
     }
-    // For Grep — report match count
+    // For Grep — report match count + detail with matching lines
     if (toolName === 'Grep') {
-      const matchCount = content.split('\n').filter((l) => l.trim()).length
-      return `${matchCount} match${matchCount !== 1 ? 'es' : ''}`
+      const matchLines = content.split('\n').filter((l) => l.trim())
+      const matchCount = matchLines.length
+      const shortResult = `${matchCount} match${matchCount !== 1 ? 'es' : ''}`
+      const detail = matchLines.slice(0, 30).join('\n')
+      return {
+        result: shortResult,
+        resultDetail: detail.length > 0 ? detail.slice(0, DETAIL_CAP) : undefined
+      }
     }
-    // For Glob — report file count
+    // For Glob — report file count + detail with file list
     if (toolName === 'Glob') {
-      const fileCount = content.split('\n').filter((l) => l.trim()).length
-      return `${fileCount} file${fileCount !== 1 ? 's' : ''} found`
+      const fileLines = content.split('\n').filter((l) => l.trim())
+      const fileCount = fileLines.length
+      const shortResult = `${fileCount} file${fileCount !== 1 ? 's' : ''} found`
+      const detail = fileLines.slice(0, 50).join('\n')
+      return {
+        result: shortResult,
+        resultDetail: detail.length > 0 ? detail.slice(0, DETAIL_CAP) : undefined
+      }
     }
     // ── MCP tool results: extract meaningful counts from JSON ──
     if (toolName.startsWith(MCP_TOOLS.CODE_GRAPH._PREFIX)) {
       try {
         const parsed = JSON.parse(content)
-        if (parsed.count !== undefined)
-          return `${parsed.count} result${parsed.count !== 1 ? 's' : ''}`
-        if (parsed.definitions?.length !== undefined)
-          return `${parsed.definitions.length} definition${parsed.definitions.length !== 1 ? 's' : ''}`
-        if (parsed.report) return `${parsed.report.filesIncluded ?? '?'} files mapped`
+        const detail = content.slice(0, DETAIL_CAP)
+        // search_identifiers
+        if (parsed.symbols?.length !== undefined) {
+          const n = parsed.symbols.length
+          return { result: `${n} symbol${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        // find_callers / FindAllCallers
+        if (parsed.callers?.length !== undefined) {
+          const n = parsed.callers.length
+          return { result: `${n} caller${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        // find_references
+        if (parsed.references?.length !== undefined) {
+          const n = parsed.references.length
+          return { result: `${n} reference${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        // find_callees / FindAllCallees
+        if (parsed.callees?.length !== undefined) {
+          const n = parsed.callees.length
+          return { result: `${n} callee${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        // file_outline
+        if (parsed.outline?.length !== undefined) {
+          const n = parsed.outline.length
+          return { result: `${n} symbol${n !== 1 ? 's' : ''} in outline`, resultDetail: detail }
+        }
+        // coupling_analysis
+        if (parsed.coupledPairs?.length !== undefined) {
+          const n = parsed.coupledPairs.length
+          return { result: `${n} coupled pair${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        // circular_dependencies
+        if (parsed.cycles?.length !== undefined) {
+          const n = parsed.cycles.length
+          return { result: `${n} cycle${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        // module_boundary_health
+        if (parsed.boundaries?.length !== undefined) {
+          const n = parsed.boundaries.length
+          return { result: `${n} module boundary${n !== 1 ? 'ies' : ''}`, resultDetail: detail }
+        }
+        // Existing checks
+        if (parsed.count !== undefined) {
+          const n = parsed.count
+          return { result: `${n} result${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        if (parsed.definitions?.length !== undefined) {
+          const n = parsed.definitions.length
+          return { result: `${n} definition${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        if (parsed.report) {
+          return {
+            result: `${parsed.report.filesIncluded ?? '?'} files mapped`,
+            resultDetail: detail
+          }
+        }
+        // Generic fallback — find the first top-level array
+        const firstArr = Object.entries(parsed).find(([, v]) => Array.isArray(v)) as
+          | [string, unknown[]]
+          | undefined
+        if (firstArr) {
+          return { result: `${firstArr[1].length} ${firstArr[0]}`, resultDetail: detail }
+        }
       } catch {
         /* fall through to default */
       }
@@ -83,19 +190,119 @@ export function extractResultSummary(
     if (toolName.startsWith(MCP_TOOLS.CODE_ANALYSIS._PREFIX)) {
       try {
         const parsed = JSON.parse(content)
-        if (parsed.count !== undefined)
-          return `${parsed.count} result${parsed.count !== 1 ? 's' : ''}`
+        const detail = content.slice(0, DETAIL_CAP)
+        // todo_scanner
+        if (parsed.totalCount !== undefined) {
+          const mode = parsed.mode === 'overview' ? ' (overview)' : ''
+          return {
+            result: `${parsed.totalCount} marker${parsed.totalCount !== 1 ? 's' : ''} found${mode}`,
+            resultDetail: detail
+          }
+        }
+        // test_coverage_map
+        if (parsed.summary?.totalSourceFiles !== undefined) {
+          const s = parsed.summary
+          const mode = parsed.mode === 'overview' ? ' (overview)' : ''
+          return {
+            result: `${s.filesWithTests}/${s.totalSourceFiles} covered (${Math.round(s.coverageRatio * 100)}%)${mode}`,
+            resultDetail: detail
+          }
+        }
+        // dependency_health
+        if (parsed.counts?.total !== undefined) {
+          const c = parsed.counts
+          const outdated = c.outdated > 0 ? `, ${c.outdated} outdated` : ''
+          return {
+            result: `${c.total} deps (${c.production} prod, ${c.dev} dev${outdated})`,
+            resultDetail: detail
+          }
+        }
+        // Generic count fallback
+        if (parsed.count !== undefined) {
+          return {
+            result: `${parsed.count} result${parsed.count !== 1 ? 's' : ''}`,
+            resultDetail: detail
+          }
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+    // Git Context tools
+    if (toolName.startsWith(MCP_TOOLS.GIT_CONTEXT._PREFIX)) {
+      try {
+        const parsed = JSON.parse(content)
+        const detail = content.slice(0, DETAIL_CAP)
+        if (parsed.commits?.length !== undefined) {
+          const n = parsed.commits.length
+          return { result: `${n} commit${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        if (parsed.hunks?.length !== undefined) {
+          const n = parsed.hunks.length
+          return { result: `${n} diff hunk${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        if (parsed.lines?.length !== undefined) {
+          const n = parsed.lines.length
+          return { result: `${n} blame line${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+    // Semantic Search tools
+    if (toolName.startsWith(MCP_TOOLS.SEMANTIC_SEARCH._PREFIX)) {
+      try {
+        const parsed = JSON.parse(content)
+        const detail = content.slice(0, DETAIL_CAP)
+        if (parsed.results?.length !== undefined) {
+          const n = parsed.results.length
+          return { result: `${n} result${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
+        if (parsed.concepts?.length !== undefined) {
+          const n = parsed.concepts.length
+          return { result: `${n} concept${n !== 1 ? 's' : ''}`, resultDetail: detail }
+        }
       } catch {
         /* fall through */
       }
     }
 
-    // Default: first line truncated
+    // Default: first line truncated, detail from first 2K
     const firstLine = content.split('\n')[0]?.trim()
     if (!firstLine) return undefined
-    return firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine
+    const shortResult = firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine
+    const hasMore = content.length > firstLine.length + 1
+    return { result: shortResult, resultDetail: hasMore ? content.slice(0, DETAIL_CAP) : undefined }
   } catch {
     return undefined
+  }
+}
+
+/**
+ * Auto-capture MCP tool errors to the bug tracker.
+ * Called when `isToolError` is true in any pipeline (DaVinci, Grill, Audit).
+ */
+export function reportToolError(
+  toolName: string,
+  errorContent: string,
+  context: { agentType: 'da-vinci' | 'grill' | 'audit'; workspaceId?: string; agentId?: string }
+): void {
+  try {
+    const firstLine = errorContent.split('\n')[0]?.trim() ?? 'Unknown error'
+    const SDK_BUILTIN_TOOLS = new Set(['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'])
+    const prefix = SDK_BUILTIN_TOOLS.has(toolName) ? 'Tool error' : 'MCP tool error'
+    bugRepository.upsertBug({
+      process: 'main',
+      severity: 'error',
+      errorMessage: `${prefix}: ${toolName} — ${firstLine}`,
+      stackTrace: errorContent.slice(0, 2048),
+      componentName: context.agentType,
+      agentId: context.agentId,
+      workspaceId: context.workspaceId,
+      appVersion: app.getVersion()
+    })
+  } catch (e) {
+    log.warn('Failed to report tool error to bug tracker:', e)
   }
 }
 
@@ -132,13 +339,15 @@ export function forwardChunkToRenderer(
     // Control tools are internal — don't show as tool activity in the UI
     if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
 
-    // Track file changes for Write/Edit tools
-    if ((chunk.toolName === 'Write' || chunk.toolName === 'Edit') && chunk.toolInput) {
+    // Track file changes for Write/Edit tools (native + MCP variants)
+    const isWriteTool = chunk.toolName === 'Write' || chunk.toolName?.endsWith('__Write')
+    const isEditTool = chunk.toolName === 'Edit' || chunk.toolName?.endsWith('__Edit')
+    if ((isWriteTool || isEditTool) && chunk.toolInput) {
       try {
         fileChangeRepository.track(
           conversationId,
           chunk.toolInput,
-          chunk.toolName === 'Write' ? 'created' : 'modified'
+          isWriteTool ? 'created' : 'modified'
         )
       } catch (e) {
         log.warn('Failed to track file change:', e)
@@ -200,7 +409,9 @@ export function forwardChunkToRenderer(
         toolInputSummary = chunk.content.slice(0, 120)
       }
     }
-    let resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
+    const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
+    let resultSummary = resultSummaryObj?.result
+    const resultDetail = resultSummaryObj?.resultDetail
 
     // For Read, compose file path into result so it's always visible
     // (e.g. "176 lines read — src/main/index.ts" instead of just "176 lines read")
@@ -212,6 +423,16 @@ export function forwardChunkToRenderer(
     // the renderer can show it visually distinct from a successful run.
     const isToolError =
       typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
+
+    // Auto-capture tool errors to the bug tracker
+    if (isToolError && chunk.content) {
+      reportToolError(chunk.toolName ?? 'Unknown', chunk.content, {
+        agentType: 'da-vinci',
+        workspaceId: undefined, // not available in this context
+        agentId: undefined
+      })
+    }
+
     const toolActivity: Record<string, unknown> = {
       id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       toolName: chunk.toolName ?? 'Unknown',
@@ -224,6 +445,9 @@ export function forwardChunkToRenderer(
     }
     if (resultSummary) {
       toolActivity.result = resultSummary
+    }
+    if (resultDetail) {
+      toolActivity.resultDetail = resultDetail
     }
     mainWindow.webContents.send(
       IPC_CHANNELS.CHAT_MESSAGE_CHUNK,

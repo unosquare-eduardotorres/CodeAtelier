@@ -82,14 +82,14 @@ export default function GrillChatView({
     for (const seg of segments) {
       const cleaned = stripGrillEvaluationBlocks(seg.content)
       if (cleaned || seg.toolActivities.length > 0) {
-        result.push({ content: cleaned, toolActivities: seg.toolActivities })
+        result.push({ content: cleaned, toolActivities: seg.toolActivities, timestamp: seg.timestamp })
       }
     }
 
     // Current (in-progress) segment
     const cleanedCurrent = currentContent ? stripGrillEvaluationBlocks(currentContent) : ''
     if (cleanedCurrent || currentToolActivities.length > 0) {
-      result.push({ content: cleanedCurrent, toolActivities: currentToolActivities })
+      result.push({ content: cleanedCurrent, toolActivities: currentToolActivities, timestamp: Date.now() })
     }
 
     return result

@@ -1545,7 +1545,7 @@ When Bug Council is active, show a panel with:
 
 ### Goal
 
-Fully leverage the Claude Agent SDK surface area. Agent Studio currently uses only 5 of 20+ SDK exports.
+Fully leverage the Claude Agent SDK surface area. Code Atelier currently uses only 5 of 20+ SDK exports.
 Many features we built manually (tool approval, decomposition parsing, session management) have native SDK
 equivalents that are more robust, better maintained, and integrate with the SDK's internal systems.
 

@@ -3,17 +3,19 @@ import { rendererLog } from '@renderer/utils/logger'
 
 interface AvatarProps {
   avatarKey: string
-  size?: 'sm' | 'md' | 'lg' | 'xl'
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl'
   className?: string
   accentColor?: string
 }
 
 // Sizes bumped across the board. xl (chat bubble) grows from 54 → 80.
+// xxl (120px) is used for the specialist hero banner.
 const SIZE_MAP = {
   sm: 32,
   md: 48,
   lg: 64,
-  xl: 80
+  xl: 80,
+  xxl: 120
 } as const
 
 /**

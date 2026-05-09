@@ -18,7 +18,7 @@ import type {
 } from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
 import { summarizeToolInput } from '../services/agent-base.service'
-import { extractResultSummary } from './chat-shared'
+import { extractResultSummary, reportToolError } from './chat-shared'
 import { auditRepository, conversationRepository, messageRepository } from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
 import { detectTechStack } from '../services/tech-stack-detector.service'
@@ -26,7 +26,8 @@ import {
   auditAgentService,
   type AuditProgressPayload,
   type AuditResultPayload,
-  type AuditCompletePayload
+  type AuditCompletePayload,
+  type AuditIntermediateFindingsPayload
 } from '../services/audit-agent.service'
 import { validateSender } from './validate-sender'
 import log from 'electron-log'
@@ -40,11 +41,16 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.AUDIT_START,
     async (
       event,
-      args: { workspaceId: string; mode: AuditMode; tracks: AuditTrackId[] }
+      args: {
+        workspaceId: string
+        mode: AuditMode
+        tracks: AuditTrackId[]
+        llmProvider?: LLMProvider
+      }
     ): Promise<AuditRun> => {
       validateSender(event)
 
-      const { workspaceId, mode, tracks } = args
+      const { workspaceId, mode, tracks, llmProvider: explicitProvider } = args
 
       if (auditAgentService.isRunning) {
         throw new Error('An audit is already running. Cancel it first.')
@@ -59,13 +65,17 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
       const techResult = detectTechStack(workspace.repoPath)
       const detectedTechs = techResult.detectedTechs
 
+      // Resolve LLM provider: explicit selection → workspace setting → 'claude'
+      const settings = JSON.parse(workspace.settingsJson ?? '{}')
+      const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
+
       // Create new run in DB (deletes previous for this workspace)
       const run = auditRepository.createRun(workspaceId, mode, tracks, detectedTechs)
       const results = auditRepository.createResults(run.id, tracks)
       run.results = results
 
       auditLog.info(
-        `[audit:start] workspaceId=${workspaceId} mode=${mode} tracks=${tracks.join(',')} runId=${run.id}`
+        `[audit:start] workspaceId=${workspaceId} mode=${mode} tracks=${tracks.join(',')} provider=${llmProvider} runId=${run.id}`
       )
 
       // Wire event forwarding: auditAgentService → renderer + DB
@@ -78,7 +88,8 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
           workspacePath: workspace.repoPath,
           mode,
           selectedTracks: tracks,
-          auditRunId: run.id
+          auditRunId: run.id,
+          llmProvider
         })
         .catch((err) => {
           auditLog.error('[audit:start] runAudit failed:', err)
@@ -105,7 +116,32 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.AUDIT_GET_LATEST,
     (event, args: { workspaceId: string }): AuditRun | null => {
       validateSender(event)
-      return auditRepository.getLatestForWorkspace(args.workspaceId)
+      const run = auditRepository.getLatestForWorkspace(args.workspaceId)
+
+      // Reconcile stale "running" state after app restart.
+      // If the DB says the audit is running but the agent process isn't,
+      // the previous run was interrupted — mark incomplete tracks as cancelled.
+      if (run && run.status === 'running' && !auditAgentService.isRunning) {
+        auditLog.warn(
+          `[audit:getLatest] Stale running audit detected (runId=${run.id}) — reconciling`
+        )
+
+        for (const result of run.results) {
+          if (result.status === 'running' || result.status === 'pending') {
+            auditRepository.updateResult(result.id, { status: 'cancelled' })
+            result.status = 'cancelled' as typeof result.status
+          }
+        }
+
+        const hasCompleted = run.results.some((r) => r.status === 'completed')
+        const finalStatus = hasCompleted ? 'partial' : 'cancelled'
+        const updated = auditRepository.updateRun(run.id, {
+          status: finalStatus as 'completed' | 'partial' | 'cancelled'
+        })
+        return updated ?? run
+      }
+
+      return run
     }
   )
 
@@ -149,6 +185,9 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
           // Recalculate overall score after single track re-run
           const results = auditRepository.findResultsByRunId(latestRun.id)
           const completed = results.filter((r) => r.status === 'completed' && r.score !== null)
+          const hasFailed = results.some((r) => r.status === 'failed')
+
+          let newOverall: number | null = null
           if (completed.length > 0) {
             let weightedSum = 0
             let totalWeight = 0
@@ -157,16 +196,84 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
               weightedSum += (r.score ?? 0) * w
               totalWeight += w
             }
-            const newOverall = Math.round(weightedSum / totalWeight)
-            const updatedRun = auditRepository.updateRun(latestRun.id, { overallScore: newOverall })
-            if (updatedRun) {
-              mainWindow.webContents.send(IPC_CHANNELS.AUDIT_COMPLETE, updatedRun)
-            }
+            newOverall = Math.round(weightedSum / totalWeight)
+          }
+
+          // Update status — 'partial' if any track failed, 'completed' if all succeeded
+          const newStatus = hasFailed ? 'partial' : 'completed'
+          const updatedRun = auditRepository.updateRun(latestRun.id, {
+            overallScore: newOverall ?? undefined,
+            status: newStatus
+          })
+          if (updatedRun) {
+            mainWindow.webContents.send(IPC_CHANNELS.AUDIT_COMPLETE, updatedRun)
           }
         })
         .catch((err) => {
           auditLog.error('[audit:rerunTrack] failed:', err)
         })
+    }
+  )
+
+  // ── audit:resume — resume an interrupted audit (re-run only incomplete tracks) ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_RESUME,
+    async (event, args: { workspaceId: string }): Promise<AuditRun | null> => {
+      validateSender(event)
+
+      if (auditAgentService.isRunning) {
+        throw new Error('An audit is already running.')
+      }
+
+      const workspace = workspaceRepository.findById(args.workspaceId)
+      if (!workspace) throw new Error(`Workspace ${args.workspaceId} not found`)
+      if (!workspace.repoPath) throw new Error(`Workspace ${args.workspaceId} has no repo path`)
+
+      const run = auditRepository.getLatestForWorkspace(args.workspaceId)
+      if (!run) throw new Error('No audit run found to resume')
+
+      // Only tracks that didn't complete successfully are resumable
+      const resumableTracks = run.results
+        .filter((r) => r.status === 'cancelled' || r.status === 'pending' || r.status === 'failed')
+        .map((r) => r.trackId)
+
+      if (resumableTracks.length === 0) {
+        throw new Error('All tracks are already completed — nothing to resume')
+      }
+
+      auditLog.info(
+        `[audit:resume] runId=${run.id} resuming ${resumableTracks.length} tracks: ${resumableTracks.join(',')}`
+      )
+
+      // Reset resumable track results back to 'pending'
+      for (const result of run.results) {
+        if (resumableTracks.includes(result.trackId)) {
+          auditRepository.updateResult(result.id, { status: 'pending' })
+          result.status = 'pending' as typeof result.status
+        }
+      }
+
+      // Update run status back to 'running'
+      auditRepository.updateRun(run.id, { status: 'running' })
+      run.status = 'running'
+
+      // Wire events and start — same as audit:start but targeting only incomplete tracks
+      wireAuditEvents(mainWindow, run.id, args.workspaceId, workspace.repoPath)
+
+      auditAgentService
+        .runAudit({
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath,
+          mode: run.mode,
+          selectedTracks: resumableTracks,
+          auditRunId: run.id
+        })
+        .catch((err) => {
+          auditLog.error('[audit:resume] runAudit failed:', err)
+        })
+
+      return run
     }
   )
 
@@ -297,12 +404,18 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
  * Wire one-time event listeners for the current audit run.
  * Forwards progress/result/complete to the renderer and persists to DB.
  */
-function wireAuditEvents(mainWindow: BrowserWindow, runId: string, workspaceId: string, workspacePath: string): void {
+function wireAuditEvents(
+  mainWindow: BrowserWindow,
+  runId: string,
+  workspaceId: string,
+  workspacePath: string
+): void {
   // Remove any stale listeners from a previous run
   auditAgentService.removeAllListeners('progress')
   auditAgentService.removeAllListeners('result')
   auditAgentService.removeAllListeners('complete')
   auditAgentService.removeAllListeners('stream')
+  auditAgentService.removeAllListeners('intermediate_findings')
 
   // ── progress ──
   auditAgentService.on('progress', (data: AuditProgressPayload) => {
@@ -325,7 +438,7 @@ function wireAuditEvents(mainWindow: BrowserWindow, runId: string, workspaceId: 
 
   // ── result ──
   auditAgentService.on('result', (data: AuditResultPayload) => {
-    // Persist to DB
+    // Persist to DB (including coverage data)
     const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
     if (resultRow) {
       auditRepository.updateResult(resultRow.id, {
@@ -334,7 +447,9 @@ function wireAuditEvents(mainWindow: BrowserWindow, runId: string, workspaceId: 
         findings: data.findings,
         summary: data.summary,
         skillsUsed: data.skillsUsed,
-        completedAt: new Date().toISOString()
+        completedAt: new Date().toISOString(),
+        coverageStats: data.coverageStats,
+        coverageSufficient: data.coverageSufficient
       })
     }
 
@@ -343,6 +458,31 @@ function wireAuditEvents(mainWindow: BrowserWindow, runId: string, workspaceId: 
     if (updatedResult) {
       mainWindow.webContents.send(IPC_CHANNELS.AUDIT_RESULT, updatedResult)
     }
+  })
+
+  // ── intermediate findings — live accumulation during multi-round ──
+  auditAgentService.on('intermediate_findings', (data: AuditIntermediateFindingsPayload) => {
+    // Persist partial findings to DB for crash resilience
+    const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
+    if (resultRow) {
+      auditRepository.updateResult(resultRow.id, {
+        findings: data.findings,
+        summary: `Round ${data.roundNumber}: ${data.findings.length} finding(s), ${data.coverageStats.fileCount} files inspected`,
+        coverageStats: data.coverageStats
+      })
+    }
+
+    // Forward to renderer for live display
+    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_INTERMEDIATE, {
+      workspaceId,
+      trackId: data.trackId,
+      findings: data.findings,
+      coverageStats: data.coverageStats,
+      roundNumber: data.roundNumber,
+      totalRounds: data.totalRounds,
+      totalFiles: data.totalFiles,
+      batchSize: data.batchSize
+    })
   })
 
   // ── complete ──
@@ -416,7 +556,22 @@ function wireAuditEvents(mainWindow: BrowserWindow, runId: string, workspaceId: 
 
       const isToolError =
         typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
-      let resultSummary = extractResultSummary(chunk.toolName ?? '', chunk.content)
+
+      // Skip reporting prompt-format artifacts that the model sometimes emits as tool calls.
+      // audit-finding / audit-score are fenced-block language tags, not real tools.
+      const AUDIT_FORMAT_TAGS = new Set(['audit-finding', 'audit-score'])
+
+      // Auto-capture tool errors to the bug tracker (skip known format tags)
+      if (isToolError && chunk.content && !AUDIT_FORMAT_TAGS.has(chunk.toolName ?? '')) {
+        reportToolError(chunk.toolName ?? 'Unknown', chunk.content, {
+          agentType: 'audit',
+          workspaceId
+        })
+      }
+
+      const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
+      let resultSummary = resultSummaryObj?.result
+      const resultDetail = resultSummaryObj?.resultDetail
 
       // Try to get input summary from result content for tool_result
       let inputSummary: string | undefined
@@ -442,6 +597,7 @@ function wireAuditEvents(mainWindow: BrowserWindow, runId: string, workspaceId: 
       }
       if (inputSummary) toolActivity.input = inputSummary
       if (resultSummary) toolActivity.result = resultSummary
+      if (resultDetail) toolActivity.resultDetail = resultDetail
 
       mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
         workspaceId,

@@ -420,6 +420,7 @@ CREATE TABLE IF NOT EXISTS turn_usage (
   output_tokens INTEGER DEFAULT 0,
   cache_read_tokens INTEGER DEFAULT 0,
   cache_creation_tokens INTEGER DEFAULT 0,
+  context_tokens INTEGER DEFAULT 0,
   model TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

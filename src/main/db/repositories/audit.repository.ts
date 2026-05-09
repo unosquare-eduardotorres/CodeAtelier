@@ -6,7 +6,8 @@ import type {
   AuditMode,
   AuditRunStatus,
   AuditorStatus,
-  AuditFinding
+  AuditFinding,
+  AuditCoverageStats
 } from '../../../shared/types'
 
 // ── Row shapes (snake_case from DB) ──
@@ -35,6 +36,8 @@ interface AuditResultRow {
   started_at: string | null
   completed_at: string | null
   created_at: string
+  coverage_stats: string | null // JSON
+  coverage_sufficient: number | null // 0/1 boolean
 }
 
 // ── Row mappers ──
@@ -55,6 +58,15 @@ function mapRunRow(row: AuditRunRow, results: AuditResult[] = []): AuditRun {
 }
 
 function mapResultRow(row: AuditResultRow): AuditResult {
+  let coverageStats: AuditCoverageStats | undefined
+  try {
+    coverageStats = row.coverage_stats
+      ? (JSON.parse(row.coverage_stats) as AuditCoverageStats)
+      : undefined
+  } catch {
+    coverageStats = undefined
+  }
+
   return {
     id: row.id,
     auditRunId: row.audit_run_id,
@@ -65,7 +77,9 @@ function mapResultRow(row: AuditResultRow): AuditResult {
     summary: row.summary ?? '',
     skillsUsed: JSON.parse(row.skills_used || '[]') as string[],
     startedAt: row.started_at,
-    completedAt: row.completed_at
+    completedAt: row.completed_at,
+    coverageStats,
+    coverageSufficient: row.coverage_sufficient === null ? undefined : row.coverage_sufficient === 1
   }
 }
 
@@ -139,6 +153,8 @@ export class AuditRepository {
       skillsUsed?: string[]
       startedAt?: string | null
       completedAt?: string | null
+      coverageStats?: AuditCoverageStats
+      coverageSufficient?: boolean
     }
   ): AuditResult | null {
     const db = getDatabase()
@@ -172,6 +188,14 @@ export class AuditRepository {
     if (update.completedAt !== undefined) {
       sets.push('completed_at = ?')
       values.push(update.completedAt)
+    }
+    if (update.coverageStats !== undefined) {
+      sets.push('coverage_stats = ?')
+      values.push(JSON.stringify(update.coverageStats))
+    }
+    if (update.coverageSufficient !== undefined) {
+      sets.push('coverage_sufficient = ?')
+      values.push(update.coverageSufficient ? 1 : 0)
     }
 
     if (sets.length === 0) return null

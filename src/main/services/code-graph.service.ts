@@ -8,6 +8,22 @@ import { codeGraphRankRepository } from '../db/repositories'
 import type { RepomapTag } from '../db/repositories/code-graph-tag.repository'
 import type { CodeGraphIndexingState } from '../../shared/types'
 
+// ── Race-condition guard for tree-sitter initialization ──
+
+let initParserPromise: Promise<void> | null = null
+
+/**
+ * Serialized initParser — prevents the race condition in repomap-mcp's
+ * initializeBinding() where concurrent calls both see Module3 === null
+ * and create duplicate Emscripten instances.
+ */
+async function safeInitParser(initParser: () => Promise<void>): Promise<void> {
+  if (!initParserPromise) {
+    initParserPromise = initParser()
+  }
+  return initParserPromise
+}
+
 /**
  * Core service for persisted code graph indexing and queries.
  *
@@ -115,6 +131,47 @@ export function sortAndFilterByRank(
 class CodeGraphService extends EventEmitter {
   private indexingStates = new Map<string, CodeGraphIndexingState>()
 
+  /** Track whether we've logged a diagnostic for this session */
+  private diagnosticLogged = false
+
+  /**
+   * Wrap getTags with diagnostic logging on first failure.
+   * getTagsRaw in repomap-mcp has 4 silent return-[] paths:
+   *   1. filenameToLang(fname) → null
+   *   2. loadLanguage(lang) throws → caught, returns []
+   *   3. loadQuery(language, lang) → null
+   *   4. readFileSync(fname) throws → caught, returns []
+   * Plus parser.setLanguage() is NOT in a try/catch — throws propagate.
+   */
+  private async getTagsWithDiagnostics(
+    getTags: typeof import('repomap-mcp/dist/tags.js').getTags,
+    fname: string,
+    relFname: string,
+    filenameToLang: (f: string) => string | null
+  ): Promise<RepomapTag[]> {
+    try {
+      const tags = await getTags(fname, relFname, null, false)
+      if (tags.length > 0 && this.diagnosticLogged) {
+        log.info(`[CodeGraph] ✓ Parsing recovered — got ${tags.length} tags from ${relFname}`)
+        this.diagnosticLogged = false
+      }
+      return tags
+    } catch (error) {
+      // getTags threw — this means parser.setLanguage() or query.captures() failed
+      if (!this.diagnosticLogged) {
+        const lang = filenameToLang(fname)
+        log.error(
+          `[CodeGraph] getTags threw for ${relFname} (lang=${lang}): ${(error as Error).message}`
+        )
+        log.error(
+          `[CodeGraph] Stack: ${(error as Error).stack?.split('\n').slice(0, 3).join('\n')}`
+        )
+        this.diagnosticLogged = true
+      }
+      return []
+    }
+  }
+
   /**
    * Full workspace indexing — called when toggle is enabled or "Re-index" clicked.
    * Phases: discover files → parse tags → build edges → PageRank → persist
@@ -124,7 +181,7 @@ class CodeGraphService extends EventEmitter {
       (await import('repomap-mcp/dist/tags.js')) as typeof import('repomap-mcp/dist/tags.js')
     const { findSrcFiles } =
       (await import('repomap-mcp/dist/file-discovery.js')) as typeof import('repomap-mcp/dist/file-discovery.js')
-    const { isSupportedFile } =
+    const { isSupportedFile, filenameToLang } =
       (await import('repomap-mcp/dist/languages.js')) as typeof import('repomap-mcp/dist/languages.js')
 
     const state: CodeGraphIndexingState = {
@@ -140,10 +197,52 @@ class CodeGraphService extends EventEmitter {
     this.emitProgress(state)
 
     try {
-      await initParser()
+      await safeInitParser(initParser)
 
       // Phase 1: Discover files
       const allFiles = findSrcFiles(workspacePath).filter(isSupportedFile)
+
+      // ── Health check: verify tree-sitter parsing works ──
+      // getTagsRaw silently returns [] on failure. Test with a known file
+      // to catch Electron-specific WASM issues before processing all files.
+      try {
+        const testFile = allFiles[0]
+        if (testFile) {
+          const testRelFname = testFile.replace(workspacePath + '/', '')
+          const testTags = await getTags(testFile, testRelFname, null, false)
+          if (testTags.length === 0) {
+            const lang = filenameToLang(testFile)
+            log.warn(
+              `[CodeGraph] ⚠ Health check: 0 tags from ${testRelFname} (lang=${lang}). ` +
+                `Tree-sitter parsing may be broken in this runtime.`
+            )
+
+            // Try a step-by-step diagnostic
+            try {
+              const tagsModule = (await import('repomap-mcp/dist/tags.js')) as Record<
+                string,
+                unknown
+              >
+              if (typeof tagsModule.getTagsRaw === 'function') {
+                const rawTags = await (
+                  tagsModule.getTagsRaw as (f: string, r: string) => Promise<RepomapTag[]>
+                )(testFile, testRelFname)
+                log.warn(`[CodeGraph] ⚠ getTagsRaw returned ${rawTags.length} tags`)
+              } else {
+                log.warn('[CodeGraph] ⚠ getTagsRaw not exported — cannot run deeper diagnostic')
+              }
+            } catch (rawErr) {
+              log.error(`[CodeGraph] ⚠ getTagsRaw threw: ${(rawErr as Error).message}`)
+            }
+          } else {
+            log.info(
+              `[CodeGraph] ✓ Health check passed: ${testTags.length} tags from ${testRelFname}`
+            )
+          }
+        }
+      } catch (healthErr) {
+        log.error(`[CodeGraph] ⚠ Health check failed: ${(healthErr as Error).message}`)
+      }
       state.totalFiles = allFiles.length
       state.status = 'parsing'
       this.emitProgress(state)
@@ -168,11 +267,14 @@ class CodeGraphService extends EventEmitter {
             allTags.push(...cachedTags)
           } else {
             // File changed or new — parse with Tree-sitter
-            const tags = await getTags(fname, relFname, null, false)
+            const tags = await this.getTagsWithDiagnostics(getTags, fname, relFname, filenameToLang)
             allTags.push(...tags)
           }
-        } catch {
-          // Skip unreadable files
+        } catch (error) {
+          if (!this.diagnosticLogged) {
+            log.warn(`[CodeGraph] Failed to parse ${relFname}: ${(error as Error).message}`)
+            this.diagnosticLogged = true
+          }
         }
 
         state.processedFiles++
@@ -255,9 +357,9 @@ class CodeGraphService extends EventEmitter {
   ): Promise<void> {
     const { getTags, initParser } =
       (await import('repomap-mcp/dist/tags.js')) as typeof import('repomap-mcp/dist/tags.js')
-    const { isSupportedFile } =
+    const { isSupportedFile, filenameToLang } =
       (await import('repomap-mcp/dist/languages.js')) as typeof import('repomap-mcp/dist/languages.js')
-    await initParser()
+    await safeInitParser(initParser)
 
     // 1. Re-parse only changed files
     const newTags: RepomapTag[] = []
@@ -269,11 +371,16 @@ class CodeGraphService extends EventEmitter {
       try {
         const stat = statSync(absPath)
         fileMtimes.set(relPath, stat.mtimeMs)
-        const tags = await getTags(absPath, relPath, null, false)
+        const tags = await this.getTagsWithDiagnostics(getTags, absPath, relPath, filenameToLang)
         newTags.push(...tags)
-      } catch {
-        // File deleted — remove its tags
-        codeGraphTagRepository.deleteByFile(workspaceId, relPath)
+      } catch (error) {
+        const msg = (error as Error).message
+        if (msg.includes('ENOENT') || msg.includes('no such file')) {
+          // File deleted — remove its tags
+          codeGraphTagRepository.deleteByFile(workspaceId, relPath)
+        } else {
+          log.warn(`[CodeGraph] reindexFiles: parse failed for ${relPath}: ${msg}`)
+        }
       }
     }
 
@@ -461,7 +568,7 @@ class CodeGraphService extends EventEmitter {
   async findDeadCode(
     workspaceId: string,
     workspacePath: string,
-    options?: { pathPrefix?: string; maxResults?: number }
+    options?: { path?: string; maxResults?: number }
   ): Promise<Array<{ file: string; line: number; name: string; context: string }>> {
     const { renderTreeContext } =
       (await import('repomap-mcp/dist/tree-context.js')) as typeof import('repomap-mcp/dist/tree-context.js')
@@ -533,19 +640,44 @@ class CodeGraphService extends EventEmitter {
 
   /**
    * Get current indexing state for a workspace.
+   *
+   * After an app restart the in-memory map is empty, but the DB may still
+   * hold a fully-indexed graph from a previous session. When that's the case
+   * we return a synthetic 'complete' state with real counts so the UI can
+   * display stats immediately without requiring a re-index.
    */
   getIndexingState(workspaceId: string): CodeGraphIndexingState {
-    return (
-      this.indexingStates.get(workspaceId) ?? {
+    const inMemory = this.indexingStates.get(workspaceId)
+    if (inMemory) return inMemory
+
+    // No in-memory state (e.g. after app restart) — check persisted DB
+    const tagCount = codeGraphTagRepository.countByWorkspace(workspaceId)
+    if (tagCount > 0) {
+      const edgeCount = codeGraphEdgeRepository.countByWorkspace(workspaceId)
+      // Use rank count for totalFiles — PageRank is computed over ALL discovered
+      // source files (not just files with tags), so this matches what indexWorkspace
+      // reports during indexing. fileMtimes.size would only count files with tags.
+      const fileCount = codeGraphRankRepository.countByWorkspace(workspaceId)
+      return {
         workspaceId,
-        status: 'idle',
-        totalFiles: 0,
-        processedFiles: 0,
-        totalTags: 0,
-        totalEdges: 0,
+        status: 'complete',
+        totalFiles: fileCount,
+        processedFiles: fileCount,
+        totalTags: tagCount,
+        totalEdges: edgeCount,
         currentFile: ''
       }
-    )
+    }
+
+    return {
+      workspaceId,
+      status: 'idle',
+      totalFiles: 0,
+      processedFiles: 0,
+      totalTags: 0,
+      totalEdges: 0,
+      currentFile: ''
+    }
   }
 
   /**
@@ -554,7 +686,7 @@ class CodeGraphService extends EventEmitter {
    */
   findCircularDependencies(
     workspaceId: string,
-    opts?: { pathPrefix?: string; maxCycles?: number }
+    opts?: { path?: string; maxCycles?: number }
   ): string[][] {
     const edges = codeGraphEdgeRepository.findByWorkspace(workspaceId)
     const maxCycles = opts?.maxCycles ?? 20
@@ -563,11 +695,8 @@ class CodeGraphService extends EventEmitter {
     const adj = new Map<string, Set<string>>()
     for (const edge of edges) {
       if (edge.sourceFile === edge.targetFile) continue
-      if (opts?.pathPrefix) {
-        if (
-          !edge.sourceFile.startsWith(opts.pathPrefix) &&
-          !edge.targetFile.startsWith(opts.pathPrefix)
-        )
+      if (opts?.path) {
+        if (!edge.sourceFile.startsWith(opts.path) && !edge.targetFile.startsWith(opts.path))
           continue
       }
       const targets = adj.get(edge.sourceFile) ?? new Set()

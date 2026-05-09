@@ -48,6 +48,10 @@ export interface TokenSummary {
   totalOutputTokens: number
   totalCacheReadTokens: number
   totalCacheCreationTokens: number
+  /** Sum of SDK-reported context window sizes across all turns */
+  totalContextTokens: number
+  /** Number of recorded turns from turn_usage table */
+  totalTurns: number
   byAgent: { agentType: string; totalTokens: number; sessionCount: number }[]
 }
 
@@ -211,6 +215,18 @@ export class AgentSessionRepository {
       total_cache_creation_tokens: number
     }
 
+    // Pull context_tokens and turn count from the per-turn table
+    // (workspace-level: join through agent_sessions to scope by workspace)
+    const turnTotals = db
+      .prepare(
+        `SELECT COALESCE(SUM(tu.context_tokens), 0) as total_context_tokens,
+                COUNT(*) as total_turns
+         FROM turn_usage tu
+         INNER JOIN agent_sessions s ON tu.session_id = s.id
+         WHERE s.workspace_id = ?`
+      )
+      .get(workspaceId) as { total_context_tokens: number; total_turns: number }
+
     const byAgent = db
       .prepare(
         `SELECT agent_type, COALESCE(SUM(token_usage), 0) as total_tokens, COUNT(*) as session_count
@@ -226,6 +242,8 @@ export class AgentSessionRepository {
       totalOutputTokens: totals.total_output_tokens,
       totalCacheReadTokens: totals.total_cache_read_tokens,
       totalCacheCreationTokens: totals.total_cache_creation_tokens,
+      totalContextTokens: turnTotals.total_context_tokens,
+      totalTurns: turnTotals.total_turns,
       byAgent: byAgent.map((r) => ({
         agentType: r.agent_type,
         totalTokens: r.total_tokens,
@@ -257,6 +275,15 @@ export class AgentSessionRepository {
       total_cache_creation_tokens: number
     }
 
+    // Pull context_tokens and turn count from the per-turn table
+    const turnTotals = db
+      .prepare(
+        `SELECT COALESCE(SUM(context_tokens), 0) as total_context_tokens,
+                COUNT(*) as total_turns
+         FROM turn_usage WHERE conversation_id = ?`
+      )
+      .get(conversationId) as { total_context_tokens: number; total_turns: number }
+
     const byAgent = db
       .prepare(
         `SELECT agent_type, COALESCE(SUM(token_usage), 0) as total_tokens, COUNT(*) as session_count
@@ -272,6 +299,8 @@ export class AgentSessionRepository {
       totalOutputTokens: totals.total_output_tokens,
       totalCacheReadTokens: totals.total_cache_read_tokens,
       totalCacheCreationTokens: totals.total_cache_creation_tokens,
+      totalContextTokens: turnTotals.total_context_tokens,
+      totalTurns: turnTotals.total_turns,
       byAgent: byAgent.map((r) => ({
         agentType: r.agent_type,
         totalTokens: r.total_tokens,

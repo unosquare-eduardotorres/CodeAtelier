@@ -75,6 +75,8 @@ export interface Conversation {
   personaSpecialistId?: string | null
   /** LLM provider locked at conversation creation time */
   llmProvider: LLMProvider
+  /** Per-chat external MCP toggles (e.g. { maestro: true }) */
+  mcpOverrides?: Record<string, boolean>
 }
 
 export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
@@ -163,6 +165,8 @@ export interface ToolActivity {
   status: 'running' | 'completed' | 'error'
   input?: string
   result?: string
+  /** Extended result for expand panel — first ~2K chars of raw tool output */
+  resultDetail?: string
   startedAt: number
   completedAt?: number
   /** Updated by tool_progress events — elapsed time in seconds */
@@ -260,11 +264,32 @@ export interface SpecialistTokenEstimate {
 
 export type ChatBubbleSize = 'small' | 'medium' | 'large' | 'xl'
 
+/** GitHub PAT type — classic uses OAuth scopes, fine-grained uses granular permissions */
+export type GitHubTokenType = 'classic' | 'fine-grained' | 'unknown'
+
+/** Update source provider */
+export type UpdateSourceProvider = 'github' | 'drive'
+
+/** Persisted update configuration */
+export interface UpdateConfig {
+  source: UpdateSourceProvider
+  /** Local folder path containing latest-mac.yml + .zip (Drive source) */
+  drivePath: string
+  /** GitHub owner — pre-filled, for future GitHub artifact support */
+  githubOwner: string
+  /** GitHub repo — pre-filled, for future GitHub artifact support */
+  githubRepo: string
+}
+
 export interface AppPreferences {
   specialistWarningBuild: boolean
   specialistWarningPlan: boolean
   specialistWarningAlways: boolean
   chatBubbleSize: ChatBubbleSize
+  updateSource: UpdateSourceProvider
+  updateDrivePath: string
+  updateGithubOwner: string
+  updateGithubRepo: string
 }
 
 // ── Workspace Deploy Models ──
@@ -452,6 +477,8 @@ export interface GrillQuestionOption {
   label: string
   description?: string
   recommended?: boolean
+  /** Rationale for why this option is recommended — e.g. "Lower risk, same outcome; refactor in phase 2" */
+  recommendedReason?: string
 }
 
 export interface GrillQuestion {
@@ -687,6 +714,10 @@ export interface TokenSummary {
   totalOutputTokens: number
   totalCacheReadTokens: number
   totalCacheCreationTokens: number
+  /** Sum of SDK-reported context window sizes across all turns */
+  totalContextTokens: number
+  /** Number of recorded turns from turn_usage table */
+  totalTurns: number
   byAgent: { agentType: string; totalTokens: number; sessionCount: number }[]
 }
 
@@ -801,6 +832,26 @@ export interface SubscriptionCheckResult {
 export interface AutoConfigureResult {
   success: boolean
   error: string | null
+}
+
+// ── Embedding Provider ──
+
+/** Status of the bundled embedding model */
+export interface EmbeddingModelStatus {
+  /** Model is loaded and ready for inference */
+  ready: boolean
+  /** Model files exist in local cache (no download needed) */
+  cached: boolean
+}
+
+/** Progress event during model download */
+export interface EmbeddingModelProgress {
+  /** Percentage 0–100 */
+  progress: number
+  /** Bytes downloaded */
+  loaded: number
+  /** Total bytes */
+  total: number
 }
 
 // ── Ollama ──
@@ -950,6 +1001,8 @@ export interface PlatformInfo {
   isAppleSilicon: boolean
   /** Total system memory in GB (for model recommendations) */
   totalMemoryGB: number
+  /** Application version from package.json (via app.getVersion()) */
+  appVersion: string
 }
 
 // ── Workspace Health Audit ──
@@ -985,6 +1038,13 @@ export interface AuditFinding {
   recommendation?: string
 }
 
+export interface AuditCoverageStats {
+  filesInspected: string[]
+  fileCount: number
+  toolCallCount: number
+  readToolCount: number
+}
+
 export interface AuditResult {
   id: string
   auditRunId: string
@@ -996,6 +1056,17 @@ export interface AuditResult {
   skillsUsed: string[] // skill names used (Deep mode)
   startedAt: string | null
   completedAt: string | null
+  /** Coverage metadata — tracks what was actually inspected */
+  coverageStats?: AuditCoverageStats
+  /** Whether the audit had sufficient evidence to trust the score */
+  coverageSufficient?: boolean
+  /** Runtime-only: multi-round progress (not persisted to DB) */
+  roundProgress?: {
+    roundNumber: number
+    totalRounds: number
+    totalFiles: number
+    batchSize: number
+  }
 }
 
 export interface AuditRun {
@@ -1017,6 +1088,18 @@ export interface AuditProgressEvent {
   status: AuditorStatus
   score?: number
   streamChunk?: string // live text from the running auditor
+}
+
+/** Intermediate findings event during multi-round audits */
+export interface AuditIntermediateEvent {
+  workspaceId: string
+  trackId: AuditTrackId
+  findings: AuditFinding[]
+  coverageStats: AuditCoverageStats
+  roundNumber: number
+  totalRounds: number
+  totalFiles: number
+  batchSize: number
 }
 
 /** Rich streaming event for chat-like audit execution view */

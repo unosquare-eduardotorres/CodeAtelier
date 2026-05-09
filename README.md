@@ -1,8 +1,8 @@
-# Agent Studio
+# Code Atelier
 
 > AI-Powered Development Team — running locally on your machine.
 
-Agent Studio is a desktop application that puts a single, opinionated AI engineer in each workspace — running locally through your Claude Max subscription via Claude CLI. No API keys. No proxy servers. Just your machine.
+Code Atelier is a desktop application that puts a single, opinionated AI engineer in each workspace — running locally through your Claude Max subscription via Claude CLI. No API keys. No proxy servers. Just your machine.
 
 ## How It Works
 

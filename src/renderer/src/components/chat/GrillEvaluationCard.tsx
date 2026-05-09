@@ -66,6 +66,7 @@ export default function GrillEvaluationCard({
                           ? 'border-success/30 bg-success-muted text-success'
                           : 'border-border-subtle bg-surface-base text-text-muted'
                       }`}
+                      title={o.recommendedReason || undefined}
                     >
                       {o.label}
                       {o.recommended ? ' ✓' : ''}

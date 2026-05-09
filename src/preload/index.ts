@@ -36,6 +36,8 @@ import type {
   AutoConfigureResult,
   SpecialistTokenEstimate,
   AppPreferences,
+  EmbeddingModelStatus,
+  EmbeddingModelProgress,
   OllamaStatus,
   PullProgress,
   IndexingState,
@@ -48,7 +50,11 @@ import type {
   AuditFinding,
   AuditProgressEvent,
   AuditResult,
-  AuditStreamChunkEvent
+  AuditStreamChunkEvent,
+  AuditIntermediateEvent,
+  LLMProvider,
+  UpdateConfig,
+  SemanticSearchResult
 } from '../shared/types'
 
 const api = {
@@ -102,12 +108,22 @@ const api = {
     title?: string
     mode?: ConversationMode
     personaSpecialistId?: string
+    llmProvider?: LLMProvider
+    mcpOverrides?: Record<string, boolean>
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
   updatePersona: (args: {
     conversationId: string
     personaSpecialistId: string | null
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_PERSONA, args),
+
+  updateMcpOverrides: (args: {
+    conversationId: string
+    overrides: Record<string, boolean>
+  }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_MCP_OVERRIDES, args),
+
+  checkExternalMcp: (args: { command: string }): Promise<{ available: boolean; path?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP, args),
 
   getMessages: (args: { conversationId: string }): Promise<Message[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES, args),
@@ -490,6 +506,11 @@ const api = {
 
   installUpdate: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_INSTALL),
 
+  getUpdateConfig: (): Promise<UpdateConfig> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_GET_CONFIG),
+
+  setUpdateConfig: (config: Partial<UpdateConfig>): Promise<UpdateConfig> =>
+    ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SET_CONFIG, config),
+
   // ── Events (main → renderer) with cleanup ──
   onActivationProgress: (callback: (data: ActivationProgressEvent) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: ActivationProgressEvent): void =>
@@ -523,6 +544,10 @@ const api = {
       }
       turnBoundary?: boolean
       turnId?: string
+      budgetCapReached?: {
+        message: string
+        canContinue: boolean
+      }
     }) => void
   ): (() => void) => {
     const handler = (
@@ -549,6 +574,10 @@ const api = {
         }
         turnBoundary?: boolean
         turnId?: string
+        budgetCapReached?: {
+          message: string
+          canContinue: boolean
+        }
       }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, handler)
@@ -832,17 +861,20 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.DOCS_RENDER_MERMAID, args),
 
   // ── GitHub ──
-  saveGitHubToken: (args: { workspaceId: string; token: string }): Promise<{ login: string }> =>
+  saveGitHubToken: (args: {
+    workspaceId: string
+    token: string
+  }): Promise<{ login: string; tokenType: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GITHUB_SAVE_TOKEN, args),
 
   validateGitHubToken: (args: {
     token: string
-  }): Promise<{ valid: boolean; login: string; scopes: string[] }> =>
+  }): Promise<{ valid: boolean; login: string; scopes: string[]; tokenType: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GITHUB_VALIDATE_TOKEN, args),
 
   getGitHubStatus: (args: {
     workspaceId: string
-  }): Promise<{ configured: boolean; login?: string }> =>
+  }): Promise<{ configured: boolean; login?: string; tokenType?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GITHUB_GET_STATUS, args),
 
   removeGitHubToken: (args: { workspaceId: string }): Promise<void> =>
@@ -1184,7 +1216,38 @@ const api = {
   autoConfigureClaude: (): Promise<AutoConfigureResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE),
 
-  // ── Ollama ──
+  // ── Embedding Provider ──
+  embeddingCheckStatus: (): Promise<EmbeddingModelStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_CHECK_STATUS),
+
+  embeddingInitialize: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE),
+
+  onEmbeddingModelProgress: (callback: (data: EmbeddingModelProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: EmbeddingModelProgress): void =>
+      callback(data)
+    ipcRenderer.on(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, handler)
+    }
+  },
+
+  onEmbeddingModelReady: (callback: () => void): (() => void) => {
+    const handler = (): void => callback()
+    ipcRenderer.on(IPC_CHANNELS.EMBEDDING_MODEL_READY, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EMBEDDING_MODEL_READY, handler)
+    }
+  },
+
+  onEmbeddingModelError: (callback: (error: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, error: string): void => callback(error)
+    ipcRenderer.on(IPC_CHANNELS.EMBEDDING_MODEL_ERROR, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EMBEDDING_MODEL_ERROR, handler)
+    }
+  },
+
+  // ── Ollama — @deprecated for semantic search (still used by Local LLM chat) ──
   ollamaCheckStatus: (args?: { baseUrl?: string }): Promise<OllamaStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_CHECK_STATUS, args),
 
@@ -1199,9 +1262,10 @@ const api = {
   ollamaStart: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_START),
 
   // ── oMLX ──
-  omlxCheckStatus: (
-    args?: { baseUrl?: string; apiKey?: string }
-  ): Promise<import('../shared/types').OmlxExtendedStatus> =>
+  omlxCheckStatus: (args?: {
+    baseUrl?: string
+    apiKey?: string
+  }): Promise<import('../shared/types').OmlxExtendedStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.OMLX_CHECK_STATUS, args),
 
   omlxStart: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.OMLX_START),
@@ -1212,11 +1276,8 @@ const api = {
   omlxLoadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OMLX_LOAD_MODEL, args),
 
-  omlxUnloadModel: (args: {
-    modelId: string
-    baseUrl?: string
-    apiKey?: string
-  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.OMLX_UNLOAD_MODEL, args),
+  omlxUnloadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMLX_UNLOAD_MODEL, args),
 
   // ── Platform ──
   getPlatformInfo: (): Promise<import('../shared/types').PlatformInfo> =>
@@ -1275,6 +1336,14 @@ const api = {
       ipcRenderer.removeListener(IPC_CHANNELS.INDEXING_PROGRESS, handler)
     }
   },
+
+  // ── Semantic Search query ──
+  semanticSearchQuery: (args: {
+    workspaceId: string
+    query: string
+    nResults?: number
+  }): Promise<SemanticSearchResult[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SEMANTIC_SEARCH_QUERY, args),
 
   // ── Code Graph (persisted repomap) ──
   codeGraphIndexStart: (args: { workspaceId: string }): Promise<void> =>
@@ -1570,6 +1639,7 @@ const api = {
     workspaceId: string
     mode: AuditMode
     tracks: AuditTrackId[]
+    llmProvider?: LLMProvider
   }): Promise<AuditRun> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_START, args),
 
   auditCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_CANCEL),
@@ -1589,13 +1659,14 @@ const api = {
     mode: AuditMode
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_RERUN_TRACK, args),
 
+  auditResume: (args: { workspaceId: string }): Promise<AuditRun | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_RESUME, args),
+
   auditExportMarkdown: (args: { workspaceId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_EXPORT_MARKDOWN, args),
 
-  auditGetHistory: (args: {
-    workspaceId: string
-    limit?: number
-  }): Promise<AuditRun[]> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_HISTORY, args),
+  auditGetHistory: (args: { workspaceId: string; limit?: number }): Promise<AuditRun[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_HISTORY, args),
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)
@@ -1621,6 +1692,12 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_STREAM_CHUNK, handler)
   },
 
+  onAuditIntermediate: (cb: (data: AuditIntermediateEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditIntermediateEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_INTERMEDIATE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_INTERMEDIATE, handler)
+  },
+
   // ── Grill (dedicated agent) ──
   grillEvaluate: (args: {
     workspaceId: string
@@ -1630,6 +1707,7 @@ const api = {
     iterationHistory?: string
     previousScore?: number
     ideaId?: string
+    llmProvider?: LLMProvider
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_EVALUATE, args),
 
   grillCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_CANCEL),
@@ -1679,7 +1757,9 @@ const api = {
   grillCondenseRequirement: (args: { text: string }): Promise<{ condensed: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT, args),
 
-  grillGetStatus: (args: { workspaceId: string }): Promise<{
+  grillGetStatus: (args: {
+    workspaceId: string
+  }): Promise<{
     status: string
     ideaId: string
     trackId: string | null
@@ -1695,7 +1775,12 @@ const api = {
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_SAVE_ANSWERS, args),
 
   onGrillStatusChanged: (
-    cb: (data: { status: string; ideaId: string; trackId: string | null; score: number | null }) => void
+    cb: (data: {
+      status: string
+      ideaId: string
+      trackId: string | null
+      score: number | null
+    }) => void
   ): (() => void) => {
     const handler = (
       _: unknown,

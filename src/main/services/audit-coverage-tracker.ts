@@ -1,0 +1,134 @@
+/**
+ * AuditCoverageTracker — tracks file-level coverage during an audit session.
+ *
+ * Listens to StreamChunk events during audit execution and extracts file
+ * paths from tool_use / tool_result chunks (Read, Glob, Grep, file_outline,
+ * find_references, etc.) to determine which files were actually inspected.
+ *
+ * The resulting stats feed the coverage gate that prevents hallucinated
+ * scores when insufficient evidence was gathered.
+ */
+
+import type { StreamChunk } from './agent-base.service'
+
+export interface AuditCoverageStats {
+  filesInspected: string[]
+  fileCount: number
+  toolCallCount: number
+  readToolCount: number
+}
+
+/** Tools whose invocation implies a file was inspected. */
+const READ_TOOLS = new Set([
+  'Read',
+  'file_outline',
+  'find_callers',
+  'find_callees',
+  'find_references',
+  'find_definition',
+  'find_all_callers',
+  'find_all_callees',
+  'class_hierarchy',
+  'module_dependencies',
+  // MCP code-graph tools (prefixed form)
+  'mcp__code-graph__file_outline',
+  'mcp__code-graph__find_callers',
+  'mcp__code-graph__find_callees',
+  'mcp__code-graph__find_references',
+  'mcp__code-graph__file_dependencies',
+  'mcp__code-graph__file_dependents',
+  'mcp__code-graph__graph_map',
+  'mcp__code-graph__search_identifiers',
+  'mcp__code-graph__find_dead_code',
+  'mcp__code-graph__symbol_hotspots',
+  'mcp__code-graph__coupling_analysis',
+  'mcp__code-graph__circular_dependencies',
+  'mcp__code-graph__module_boundary_health',
+  // Code analysis MCP tools
+  'mcp__code-analysis__todo_scanner',
+  'mcp__code-analysis__dependency_health',
+  'mcp__code-analysis__test_coverage_map',
+  // Semantic search
+  'mcp__semantic-search__semantic_search',
+  'mcp__semantic-search__similar_code',
+  'mcp__semantic-search__codebase_concepts'
+])
+
+export class AuditCoverageTracker {
+  private inspectedFiles = new Set<string>()
+  private toolCallCount = 0
+  private readToolCount = 0
+
+  /** Call on every StreamChunk during audit execution. */
+  onChunk(chunk: StreamChunk): void {
+    if (chunk.type === 'tool_use') {
+      this.toolCallCount++
+      this.extractFilesFromToolUse(chunk)
+    }
+    if (chunk.type === 'tool_result') {
+      this.extractFilesFromToolResult(chunk)
+    }
+  }
+
+  private extractFilesFromToolUse(chunk: StreamChunk): void {
+    const toolName = chunk.toolName ?? ''
+
+    if (READ_TOOLS.has(toolName)) {
+      this.readToolCount++
+    }
+
+    // Extract file_path / path from tool input JSON
+    try {
+      const input = JSON.parse(chunk.toolInput ?? '{}') as Record<string, unknown>
+      if (typeof input.file_path === 'string' && input.file_path) {
+        this.inspectedFiles.add(this.normalizePath(input.file_path))
+      }
+      if (typeof input.path === 'string' && input.path) {
+        this.inspectedFiles.add(this.normalizePath(input.path))
+      }
+    } catch {
+      /* ignore malformed JSON */
+    }
+  }
+
+  private extractFilesFromToolResult(chunk: StreamChunk): void {
+    // Extract file paths mentioned in Glob / Grep results
+    if (!chunk.content) return
+
+    const toolName = chunk.toolName ?? ''
+    if (toolName === 'Glob' || toolName === 'Grep') {
+      // These tools return file paths (one per line or in structured output)
+      const lines = chunk.content.split('\n')
+      for (const line of lines) {
+        const trimmed = line.trim()
+        // Basic heuristic: looks like a file path (contains a dot extension, no spaces at start)
+        if (trimmed && /\.[a-zA-Z]{1,10}$/.test(trimmed) && !trimmed.includes(' ')) {
+          this.inspectedFiles.add(this.normalizePath(trimmed))
+        }
+      }
+    }
+  }
+
+  /** Normalize a file path for consistent deduplication. */
+  private normalizePath(filePath: string): string {
+    // Strip leading ./ and trailing whitespace
+    return filePath.replace(/^\.\//, '').trim()
+  }
+
+  /** Get current coverage statistics. */
+  getStats(): AuditCoverageStats {
+    return {
+      filesInspected: [...this.inspectedFiles],
+      fileCount: this.inspectedFiles.size,
+      toolCallCount: this.toolCallCount,
+      readToolCount: this.readToolCount
+    }
+  }
+
+  /** Reset all tracking state. */
+  reset(): void {
+    this.inspectedFiles.clear()
+    this.toolCallCount = 0
+    this.readToolCount = 0
+  }
+}

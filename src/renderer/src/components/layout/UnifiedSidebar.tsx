@@ -32,6 +32,7 @@ export default function UnifiedSidebar({
     useChatActions()
   const conversations = useChatStore((s) => s.conversations)
   const activeConversation = useChatStore((s) => s.activeConversation)
+  const isStreaming = useChatStore((s) => s.isStreaming)
 
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -143,7 +144,7 @@ export default function UnifiedSidebar({
                     activeConversation?.id === conv.id
                       ? 'bg-primary text-white'
                       : 'bg-surface-overlay text-text-secondary hover:bg-surface-float'
-                  }`}
+                  } ${isStreaming && activeConversation?.id === conv.id ? 'chat-icon-processing' : ''}`}
                   title={conv.title}
                   aria-label={`Open conversation: ${conv.title}`}
                 >
@@ -153,25 +154,53 @@ export default function UnifiedSidebar({
             </>
           )}
           {activeTab === 'settings' && (
-            <div className="space-y-0.5 w-full px-1.5">
-              {SETTINGS_MENU.map((item) => {
-                const Icon = item.icon
-                const isActive = activeSettingsTab === item.id
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => onSettingsTabChange(item.id)}
-                    className={`flex items-center justify-center w-full px-2 py-2 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                      isActive
-                        ? 'bg-primary-muted text-primary-text border border-primary/20'
-                        : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
-                    }`}
-                    title={item.label}
-                  >
-                    <Icon size={16} className={isActive ? undefined : item.iconColor} />
-                  </button>
-                )
-              })}
+            <div className="w-full px-1.5">
+              {/* Tools group (collapsed — icons only) */}
+              <div className="space-y-0.5">
+                {SETTINGS_MENU.filter((item) => item.group === 'tools').map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeSettingsTab === item.id
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onSettingsTabChange(item.id)}
+                      className={`flex items-center justify-center w-full px-2 py-2 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                        isActive
+                          ? 'bg-primary-muted text-primary-text border border-primary/20'
+                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
+                      }`}
+                      title={item.label}
+                    >
+                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Divider */}
+              <div className="my-2 mx-1 border-t border-border-subtle" />
+
+              {/* Configuration group (collapsed — icons only) */}
+              <div className="space-y-0.5">
+                {SETTINGS_MENU.filter((item) => item.group === 'configuration').map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeSettingsTab === item.id
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onSettingsTabChange(item.id)}
+                      className={`flex items-center justify-center w-full px-2 py-2 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                        isActive
+                          ? 'bg-primary-muted text-primary-text border border-primary/20'
+                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
+                      }`}
+                      title={item.label}
+                    >
+                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -238,6 +267,7 @@ export default function UnifiedSidebar({
                     key={conv.id}
                     conversation={conv}
                     isActive={activeConversation?.id === conv.id}
+                    isStreaming={isStreaming && activeConversation?.id === conv.id}
                     onSelect={(id) => {
                       selectConversation(id)
                       // Ensure main content shows chat when selecting a conversation
@@ -275,8 +305,44 @@ export default function UnifiedSidebar({
 
           {activeTab === 'settings' && (
             <nav className="p-2">
+              {/* Tools group */}
+              <div className="px-3 pt-1 pb-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  Tools
+                </span>
+              </div>
               <div className="space-y-0.5">
-                {SETTINGS_MENU.map((item) => {
+                {SETTINGS_MENU.filter((item) => item.group === 'tools').map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeSettingsTab === item.id
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onSettingsTabChange(item.id)}
+                      className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 px-3 py-2 ${
+                        isActive
+                          ? 'bg-primary-muted text-primary-text border border-primary/20'
+                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
+                      }`}
+                    >
+                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
+                      <span>{item.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Divider between groups */}
+              <div className="my-2 mx-2 border-t border-border-subtle" />
+
+              {/* Configuration group */}
+              <div className="px-3 pt-1 pb-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  Configuration
+                </span>
+              </div>
+              <div className="space-y-0.5">
+                {SETTINGS_MENU.filter((item) => item.group === 'configuration').map((item) => {
                   const Icon = item.icon
                   const isActive = activeSettingsTab === item.id
                   return (

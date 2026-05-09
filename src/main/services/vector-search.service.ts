@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import log from 'electron-log/main'
-import { ollamaManager } from './ollama-manager.service'
+import { memoryCheckpoint } from './indexing-diagnostics'
+import { embeddingProvider } from './embedding-provider.service'
 import { descriptionCache } from './description-cache.service'
 import {
   runPreprocessingPipeline,
@@ -17,10 +18,17 @@ import {
 import { getDatabase } from '../db/index'
 import type { IndexingState, SemanticSearchResult } from '../../shared/types'
 
-/** Default embedding model — 768-dim, multilingual, good for code */
-const DEFAULT_EMBEDDING_MODEL = 'qwen3-embedding:4b'
+/** Embedding model name — stored in indexing_state for provenance */
+const EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2' as const
 
-/** Max batch size for embedding calls */
+/**
+ * Max batch size for embedding calls.
+ *
+ * With the WASM backend (via patch-package swap of onnxruntime-node →
+ * onnxruntime-web), memory is managed by the V8/WASM runtime. Batch size 32
+ * is safe with the smaller all-MiniLM-L6-v2 model (~60MB peak). The adaptive
+ * retry in embed() will halve the batch on OOM errors as a safety net.
+ */
 const EMBEDDING_BATCH_SIZE = 32
 
 /**
@@ -184,6 +192,21 @@ class VectorSearchService extends EventEmitter {
       return { symbolCount: 0 }
     }
 
+    // Check if persisted embeddings were generated with a different model
+    const dbForModelCheck = getDatabase()
+    const modelRow = dbForModelCheck
+      .prepare('SELECT embedding_model FROM indexing_state WHERE workspace_id = ?')
+      .get(workspaceId) as { embedding_model?: string } | undefined
+
+    if (modelRow?.embedding_model && modelRow.embedding_model !== EMBEDDING_MODEL_NAME) {
+      log.info(
+        `[VectorSearch] Model changed (${modelRow.embedding_model} → ${EMBEDDING_MODEL_NAME}), ` +
+          `invalidating persisted index for ${workspaceId}`
+      )
+      chunkEmbeddingRepository.deleteByWorkspace(workspaceId)
+      return { symbolCount: 0 }
+    }
+
     // Load embeddings from DB
     const embeddings = chunkEmbeddingRepository.loadAllForWorkspace(workspaceId)
     if (embeddings.length === 0) {
@@ -311,6 +334,12 @@ class VectorSearchService extends EventEmitter {
     state.totalChunks = tags.length
     this.indexingStates.set(workspaceId, state)
 
+    memoryCheckpoint('INDEX_START', {
+      tags: tags.length,
+      files: fileContents.size,
+      descriptions: !!options?.generateDescriptions
+    })
+
     // Set workspace ID on description cache for proper scoping
     descriptionCache.setWorkspaceId(workspaceId)
 
@@ -338,6 +367,8 @@ class VectorSearchService extends EventEmitter {
       state.preprocessTotal = tags.length
       this.emitProgress(workspaceId)
       this.updateIndexingStateDb(workspaceId, 'preprocessing')
+
+      memoryCheckpoint('PREPROCESS_START', { totalTags: tags.length })
 
       const projectName = workspacePath.split('/').pop() ?? 'unknown'
 
@@ -380,6 +411,10 @@ class VectorSearchService extends EventEmitter {
           }
         : undefined
 
+      memoryCheckpoint('PREPROCESS_PIPELINE_ENTER', {
+        generateDescriptions: !!preprocessOpts.generateDescriptions
+      })
+
       const processedChunks = await runPreprocessingPipeline(
         tags,
         fileContents,
@@ -405,6 +440,11 @@ class VectorSearchService extends EventEmitter {
         }
       )
 
+      memoryCheckpoint('PREPROCESS_PIPELINE_EXIT', {
+        processedChunks: processedChunks.length,
+        cancelled: !!preprocessOpts.cancelled
+      })
+
       if (preprocessOpts.cancelled) {
         state.status = 'idle'
         this.emitProgress(workspaceId)
@@ -419,10 +459,41 @@ class VectorSearchService extends EventEmitter {
       this.emitProgress(workspaceId)
       this.updateIndexingStateDb(workspaceId, 'indexing')
 
-      const embeddingModel =
-        ((options as Record<string, unknown>)?.ollamaModel as string) || DEFAULT_EMBEDDING_MODEL
+      // Nudge GC between preprocessing and embedding phases to reclaim
+      // memory from AI description generation before heavy WASM work.
+      // Description generation spawns concurrent Claude CLI processes
+      // (DESCRIPTION_CONCURRENCY × DESCRIPTION_BATCH_SIZE) — by this point
+      // those processes have exited and their memory can be reclaimed.
+      memoryCheckpoint('GC_BEFORE')
+      if (global.gc) {
+        log.info('[VectorSearch] Running GC hint between preprocessing and embedding phases')
+        global.gc()
+      }
+      memoryCheckpoint('GC_AFTER')
+
+      // ── Embedding model init (deferred until after descriptions) ──
+      // The ONNX WASM model allocates ~60MB with all-MiniLM-L6-v2. Loading it
+      // *before* preprocessing meant it was resident alongside 3 concurrent
+      // Claude CLI processes for AI descriptions, risking V8 heap or WASM OOM
+      // crashes. By deferring the init to here — after descriptions are done
+      // and GC has run — the CLI process memory has been freed.
+      if (!embeddingProvider.isReady) {
+        memoryCheckpoint('EMBEDDING_MODEL_INIT_START')
+        log.info('[VectorSearch] Initializing embedding model after description phase...')
+        await embeddingProvider.initialize()
+        memoryCheckpoint('EMBEDDING_MODEL_INIT_DONE')
+      } else {
+        memoryCheckpoint('EMBEDDING_MODEL_ALREADY_READY')
+      }
 
       // Batch embed chunks
+      const totalBatches = Math.ceil(processedChunks.length / EMBEDDING_BATCH_SIZE)
+      memoryCheckpoint('EMBED_LOOP_START', {
+        chunks: processedChunks.length,
+        batchSize: EMBEDDING_BATCH_SIZE,
+        totalBatches
+      })
+
       for (let i = 0; i < processedChunks.length; i += EMBEDDING_BATCH_SIZE) {
         if (preprocessOpts.cancelled) break
 
@@ -436,11 +507,21 @@ class VectorSearchService extends EventEmitter {
 
         state.status = 'indexing-chunks'
 
+        const batchNum = Math.floor(i / EMBEDDING_BATCH_SIZE) + 1
         const batch = processedChunks.slice(i, i + EMBEDDING_BATCH_SIZE)
         const texts = batch.map((c) => c.embedText)
 
+        // Log first batch, every 10th batch, and last batch for crash diagnosis
+        const isLogBatch = batchNum === 1 || batchNum % 10 === 0 || batchNum === totalBatches
+        if (isLogBatch) {
+          memoryCheckpoint(`EMBED_BATCH_${batchNum}/${totalBatches}`, {
+            offset: i,
+            batchTextsChars: texts.reduce((s, t) => s + t.length, 0)
+          })
+        }
+
         try {
-          const embeddings = await ollamaManager.embed(embeddingModel, texts)
+          const embeddings = await embeddingProvider.embed(texts)
           const ids = batch.map((c) => c.id)
           collection.upsert(ids, embeddings, batch)
 
@@ -449,6 +530,7 @@ class VectorSearchService extends EventEmitter {
           this.emitProgress(workspaceId)
         } catch (error) {
           log.error(`[VectorSearch] Embedding batch failed at offset ${i}:`, error)
+          memoryCheckpoint('EMBED_BATCH_ERROR', { offset: i, error: (error as Error).message })
           state.status = 'error'
           state.error = (error as Error).message
           this.emitProgress(workspaceId)
@@ -460,6 +542,7 @@ class VectorSearchService extends EventEmitter {
       if (!preprocessOpts.cancelled) {
         state.status = 'complete'
         state.processedChunks = processedChunks.length
+        memoryCheckpoint('INDEX_COMPLETE', { vectors: collection.size })
         log.info(`[VectorSearch] Indexing complete for ${workspaceId}: ${collection.size} vectors`)
 
         // ── Persist to SQLite for fast reload on restart ──
@@ -480,7 +563,7 @@ class VectorSearchService extends EventEmitter {
             }
           }
 
-          this.saveToDb(workspaceId, processedChunks, fileMtimes, embeddingModel)
+          this.saveToDb(workspaceId, processedChunks, fileMtimes, EMBEDDING_MODEL_NAME)
         } catch (persistError) {
           // Non-fatal: index still works in-memory, just won't persist
           log.warn('[VectorSearch] Failed to persist index to SQLite:', persistError)
@@ -493,6 +576,7 @@ class VectorSearchService extends EventEmitter {
     } catch (error) {
       state.status = 'error'
       state.error = (error as Error).message
+      memoryCheckpoint('INDEX_FATAL_ERROR', { error: (error as Error).message })
       log.error(`[VectorSearch] Indexing failed for ${workspaceId}:`, error)
       this.emitProgress(workspaceId)
       this.updateIndexingStateDb(workspaceId, 'error', (error as Error).message)
@@ -516,7 +600,7 @@ class VectorSearchService extends EventEmitter {
     workspacePath: string,
     chunks: RawChunk[],
     fileContents: Map<string, string>,
-    options?: Partial<PreprocessingOptions> & { ollamaModel?: string }
+    options?: Partial<PreprocessingOptions>
   ): Promise<void> {
     const collection = this.collections.get(workspaceId)
     if (!collection) {
@@ -574,7 +658,10 @@ class VectorSearchService extends EventEmitter {
 
     if (processedChunks.length === 0) return
 
-    const embeddingModel = options?.ollamaModel || DEFAULT_EMBEDDING_MODEL
+    // Ensure embedding model is loaded before first use
+    if (!embeddingProvider.isReady) {
+      await embeddingProvider.initialize()
+    }
 
     // Embed and upsert in batches
     for (let i = 0; i < processedChunks.length; i += EMBEDDING_BATCH_SIZE) {
@@ -582,7 +669,7 @@ class VectorSearchService extends EventEmitter {
       const texts = batch.map((c) => c.embedText)
 
       try {
-        const embeddings = await ollamaManager.embed(embeddingModel, texts)
+        const embeddings = await embeddingProvider.embed(texts)
         const ids = batch.map((c) => c.id)
         collection.upsert(ids, embeddings, batch)
       } catch (error) {
@@ -603,7 +690,7 @@ class VectorSearchService extends EventEmitter {
         fileMtimes.set(relPath, 0)
       }
     }
-    this.saveToDb(workspaceId, processedChunks, fileMtimes, embeddingModel)
+    this.saveToDb(workspaceId, processedChunks, fileMtimes, EMBEDDING_MODEL_NAME)
 
     log.info(`[VectorSearch] Incremental: upserted ${processedChunks.length} chunks`)
   }
@@ -624,10 +711,12 @@ class VectorSearchService extends EventEmitter {
       return []
     }
 
-    const embeddingModel = DEFAULT_EMBEDDING_MODEL
-
     try {
-      const [queryEmbedding] = await ollamaManager.embed(embeddingModel, [query])
+      // Ensure embedding model is loaded before first use
+      if (!embeddingProvider.isReady) {
+        await embeddingProvider.initialize()
+      }
+      const [queryEmbedding] = await embeddingProvider.embed([query])
       return collection.query(queryEmbedding, options?.nResults ?? 5, options?.where)
     } catch (error) {
       log.error(`[VectorSearch] Search failed for workspace ${workspaceId}:`, error)
@@ -651,7 +740,11 @@ class VectorSearchService extends EventEmitter {
     }
 
     try {
-      const [codeEmbedding] = await ollamaManager.embed(DEFAULT_EMBEDDING_MODEL, [code])
+      // Ensure embedding model is loaded before first use
+      if (!embeddingProvider.isReady) {
+        await embeddingProvider.initialize()
+      }
+      const [codeEmbedding] = await embeddingProvider.embed([code])
       const where = opts?.language ? { language: opts.language } : undefined
       return collection.query(codeEmbedding, opts?.nResults ?? 10, where)
     } catch (error) {

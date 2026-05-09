@@ -201,6 +201,14 @@ export class DaVinciPromptAssembler {
       this.systemPromptSnapshotConversationId = opts.conversationId
     }
 
+    // Diagnostic: hash the system prompt to verify cache prefix stability across turns.
+    // If the hash differs between turns, the system prompt changed and prompt caching
+    // will miss — explaining 0% cache hit rates.
+    const promptHash = Buffer.from(promptWithMcpGuidance).toString('base64').slice(0, 12)
+    this.log.info(
+      `[PIPELINE:prompt-hash] turn=${opts.turnCount} hash=${promptHash} reused=${!!canReuseSnapshot}`
+    )
+
     this.log.info(
       `[PIPELINE:prompt-adaptive] conversationId=${opts.conversationId} turn=${opts.turnCount} budget=${budgetTier}`
     )

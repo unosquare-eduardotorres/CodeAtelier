@@ -8,6 +8,8 @@ interface AgentState {
   sessionTokens: number
   sessionInputTokens: number
   sessionOutputTokens: number
+  /** Current context window size (point-in-time, from SDK getContextUsage) */
+  contextWindowTokens: number
   lastKnownTokens: Record<string, number>
   lastKnownInputTokens: Record<string, number>
   lastKnownOutputTokens: Record<string, number>
@@ -32,6 +34,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   sessionTokens: previousAgentState?.sessionTokens ?? 0,
   sessionInputTokens: previousAgentState?.sessionInputTokens ?? 0,
   sessionOutputTokens: previousAgentState?.sessionOutputTokens ?? 0,
+  contextWindowTokens: previousAgentState?.contextWindowTokens ?? 0,
   lastKnownTokens: previousAgentState?.lastKnownTokens ?? {},
   lastKnownInputTokens: previousAgentState?.lastKnownInputTokens ?? {},
   lastKnownOutputTokens: previousAgentState?.lastKnownOutputTokens ?? {},
@@ -69,10 +72,17 @@ export const useAgentStore = create<AgentState>((set) => ({
         [status.agentId]: curOut
       }
 
+      // Extract context window size from the da-vinci agent status (point-in-time value)
+      const contextWindowTokens =
+        status.agentType === 'da-vinci' && status.contextTokens
+          ? status.contextTokens
+          : state.contextWindowTokens
+
       const sessionUpdate = {
         sessionTokens: newSessionTokens,
         sessionInputTokens: state.sessionInputTokens + deltaIn,
         sessionOutputTokens: state.sessionOutputTokens + deltaOut,
+        contextWindowTokens,
         lastKnownTokens: newLastKnown,
         lastKnownInputTokens: newLastKnownInput,
         lastKnownOutputTokens: newLastKnownOutput

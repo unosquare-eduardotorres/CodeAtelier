@@ -182,17 +182,17 @@ export class CodeGraphEdgeRepository {
    */
   findCoupledFiles(
     workspaceId: string,
-    opts?: { minCoupling?: number; pathPrefix?: string; maxResults?: number }
+    opts?: { minCoupling?: number; path?: string; maxResults?: number }
   ): { sourceFile: string; targetFile: string; edgeCount: number }[] {
     const db = getDatabase()
     const minCoupling = opts?.minCoupling ?? 2
     const maxResults = opts?.maxResults ?? 50
-    const pathFilter = opts?.pathPrefix
+    const pathFilter = opts?.path
       ? `AND (source_file LIKE ? || '%' OR target_file LIKE ? || '%')`
       : ''
     const params: (string | number)[] = [workspaceId]
-    if (opts?.pathPrefix) {
-      params.push(opts.pathPrefix, opts.pathPrefix)
+    if (opts?.path) {
+      params.push(opts.path, opts.path)
     }
     params.push(minCoupling, maxResults)
 

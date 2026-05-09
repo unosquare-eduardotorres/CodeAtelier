@@ -1,5 +1,6 @@
 import log from 'electron-log/main'
 import { basename, dirname } from 'node:path'
+import { memoryCheckpoint } from './indexing-diagnostics'
 
 // ── Types ──
 
@@ -701,6 +702,11 @@ export async function runPreprocessingPipeline(
     let totalCached = 0
     let totalGenerated = 0
 
+    memoryCheckpoint('DESC_PHASE_START', {
+      descriptionsTotal,
+      chunksCollected: allChunksForDesc.length
+    })
+
     onDescriptionProgress?.({
       descriptionsProcessed: 0,
       descriptionsTotal,
@@ -710,6 +716,7 @@ export async function runPreprocessingPipeline(
 
     // Phase 2: Batch generate descriptions with limited concurrency
     const batches = chunkArray(allChunksForDesc, DESCRIPTION_BATCH_SIZE)
+    const totalDescBatches = batches.length
 
     for (let i = 0; i < batches.length; i += DESCRIPTION_CONCURRENCY) {
       if (options.cancelled) break
@@ -721,6 +728,19 @@ export async function runPreprocessingPipeline(
       if (options.cancelled) break
 
       const concurrentBatches = batches.slice(i, i + DESCRIPTION_CONCURRENCY)
+      const descBatchGroup = Math.floor(i / DESCRIPTION_CONCURRENCY) + 1
+      const totalDescGroups = Math.ceil(totalDescBatches / DESCRIPTION_CONCURRENCY)
+
+      // Log first, every 5th, and last batch group
+      const isLogGroup =
+        descBatchGroup === 1 || descBatchGroup % 5 === 0 || descBatchGroup === totalDescGroups
+      if (isLogGroup) {
+        memoryCheckpoint(`DESC_BATCH_GROUP_${descBatchGroup}/${totalDescGroups}`, {
+          batchesInGroup: concurrentBatches.length,
+          descriptionsProcessed
+        })
+      }
+
       const batchPromises = concurrentBatches.map((batch) =>
         getBatchDescriptions(batch.map((b) => ({ chunk: b.chunk, embedText: b.embedText })))
       )
@@ -749,12 +769,20 @@ export async function runPreprocessingPipeline(
       })
     }
 
+    memoryCheckpoint('DESC_PHASE_DONE', {
+      generated: totalGenerated,
+      cached: totalCached,
+      total: descriptionsTotal,
+      descriptionMapSize: descriptionMap.size
+    })
+
     log.info(
       `[Preprocessing] AI descriptions: ${totalGenerated} generated, ${totalCached} cached, ${descriptionsTotal} total`
     )
   }
 
   // ── Phase 3: Preprocess all chunks (fast — descriptions already resolved) ──
+  memoryCheckpoint('CHUNK_PREPROCESS_START', { validFiles: validFiles.length })
   for (const { filePath, fileTags, content, scopeContexts } of validFiles) {
     if (options.cancelled) {
       log.info('[Preprocessing] Cancelled by user')
@@ -813,6 +841,12 @@ export async function runPreprocessingPipeline(
       currentFile: filePath
     })
   }
+
+  memoryCheckpoint('CHUNK_PREPROCESS_DONE', {
+    resultChunks: results.length,
+    processedFiles,
+    skippedFiles
+  })
 
   log.info(
     `[Preprocessing] Complete: ${results.length} chunks from ${processedFiles} files (${skippedFiles} skipped)`

@@ -51,6 +51,8 @@ export interface CompactNeededMessage extends BaseChunkMessage {
     inputTokens: number
     /** Optional Claude Code-style breakdown for the modal */
     breakdown?: ContextUsageBreakdown
+    /** When true, SDK compaction is unavailable — UI should offer "new conversation" instead */
+    isLocalProvider?: boolean
   }
 }
 
@@ -144,6 +146,7 @@ export function createCompactNeeded(opts: {
     level: string
     inputTokens: number
     breakdown?: ContextUsageBreakdown
+    isLocalProvider?: boolean
   }
 }): CompactNeededMessage {
   return {

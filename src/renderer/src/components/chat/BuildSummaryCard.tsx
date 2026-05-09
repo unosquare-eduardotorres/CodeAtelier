@@ -25,7 +25,7 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
   const allFiles = [...new Set(summary.tasks.flatMap((t) => t.filesChanged ?? []))]
 
   return (
-    <div className="my-3 rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden">
+    <div className="my-3 rounded border border-border-subtle bg-surface-overlay overflow-hidden">
       {/* Header */}
       <div
         className={`flex items-center gap-3 px-4 py-3 border-b ${
@@ -35,7 +35,7 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
         }`}
       >
         <div
-          className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+          className={`w-8 h-8 rounded flex items-center justify-center ${
             hasErrors ? 'bg-amber-500/20' : 'bg-emerald-500/20'
           }`}
         >

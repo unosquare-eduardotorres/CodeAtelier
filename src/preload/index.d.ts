@@ -40,6 +40,9 @@ import type {
   AutoConfigureResult,
   SpecialistTokenEstimate,
   AppPreferences,
+  EmbeddingModelStatus,
+  EmbeddingModelProgress,
+  SemanticSearchResult,
   OllamaStatus,
   OmlxExtendedStatus,
   PullProgress,
@@ -54,7 +57,10 @@ import type {
   AuditFinding,
   AuditProgressEvent,
   AuditResult,
-  AuditStreamChunkEvent
+  AuditStreamChunkEvent,
+  AuditIntermediateEvent,
+  LLMProvider,
+  UpdateConfig
 } from '../shared/types'
 
 interface Api {
@@ -89,11 +95,18 @@ interface Api {
     title?: string
     mode?: ConversationMode
     personaSpecialistId?: string
+    llmProvider?: LLMProvider
+    mcpOverrides?: Record<string, boolean>
   }) => Promise<Conversation>
   updatePersona: (args: {
     conversationId: string
     personaSpecialistId: string | null
   }) => Promise<Conversation>
+  updateMcpOverrides: (args: {
+    conversationId: string
+    overrides: Record<string, boolean>
+  }) => Promise<Conversation>
+  checkExternalMcp: (args: { command: string }) => Promise<{ available: boolean; path?: string }>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
   deleteConversation: (args: { conversationId: string }) => Promise<void>
   updateConversationMode: (args: {
@@ -299,6 +312,8 @@ interface Api {
   checkForUpdate: () => Promise<void>
   downloadUpdate: () => Promise<void>
   installUpdate: () => Promise<void>
+  getUpdateConfig: () => Promise<UpdateConfig>
+  setUpdateConfig: (config: Partial<UpdateConfig>) => Promise<UpdateConfig>
 
   // Events (main → renderer) with cleanup
   onActivationProgress: (callback: (data: ActivationProgressEvent) => void) => () => void
@@ -326,6 +341,10 @@ interface Api {
       }
       turnBoundary?: boolean
       turnId?: string
+      budgetCapReached?: {
+        message: string
+        canContinue: boolean
+      }
     }) => void
   ) => () => void
   onMessageComplete: (
@@ -416,13 +435,16 @@ interface Api {
   renderMermaid: (args: { definition: string; id?: string }) => Promise<{ svg: string }>
 
   // GitHub
-  saveGitHubToken: (args: { workspaceId: string; token: string }) => Promise<{ login: string }>
+  saveGitHubToken: (args: {
+    workspaceId: string
+    token: string
+  }) => Promise<{ login: string; tokenType: string }>
   validateGitHubToken: (args: {
     token: string
-  }) => Promise<{ valid: boolean; login: string; scopes: string[] }>
+  }) => Promise<{ valid: boolean; login: string; scopes: string[]; tokenType: string }>
   getGitHubStatus: (args: {
     workspaceId: string
-  }) => Promise<{ configured: boolean; login?: string }>
+  }) => Promise<{ configured: boolean; login?: string; tokenType?: string }>
   removeGitHubToken: (args: { workspaceId: string }) => Promise<void>
 
   // Repository
@@ -641,7 +663,14 @@ interface Api {
   }>
   autoConfigureClaude: () => Promise<AutoConfigureResult>
 
-  // Ollama
+  // Embedding Provider
+  embeddingCheckStatus: () => Promise<EmbeddingModelStatus>
+  embeddingInitialize: () => Promise<void>
+  onEmbeddingModelProgress: (callback: (data: EmbeddingModelProgress) => void) => () => void
+  onEmbeddingModelReady: (callback: () => void) => () => void
+  onEmbeddingModelError: (callback: (error: string) => void) => () => void
+
+  // Ollama — @deprecated for semantic search (still used by Local LLM chat)
   ollamaCheckStatus: (args?: { baseUrl?: string }) => Promise<OllamaStatus>
   ollamaPullModel: (args: { model: string; baseUrl?: string }) => Promise<void>
   ollamaCancelPull: () => Promise<void>
@@ -675,6 +704,13 @@ interface Api {
     workspaceId: string
   }) => Promise<{ loaded: boolean; status: string; symbolCount?: number }>
   onIndexingProgress: (callback: (state: IndexingState) => void) => () => void
+  // Semantic Search query
+  semanticSearchQuery: (args: {
+    workspaceId: string
+    query: string
+    nResults?: number
+  }) => Promise<SemanticSearchResult[]>
+
   // Code Graph (persisted repomap)
   codeGraphIndexStart: (args: { workspaceId: string }) => Promise<void>
   codeGraphGetStatus: (args: { workspaceId: string }) => Promise<CodeGraphIndexingState>
@@ -799,6 +835,7 @@ interface Api {
     workspaceId: string
     mode: AuditMode
     tracks: AuditTrackId[]
+    llmProvider?: LLMProvider
   }) => Promise<AuditRun>
   auditCancel: () => Promise<void>
   auditGetLatest: (args: { workspaceId: string }) => Promise<AuditRun | null>
@@ -811,6 +848,7 @@ interface Api {
     trackId: AuditTrackId
     mode: AuditMode
   }) => Promise<void>
+  auditResume: (args: { workspaceId: string }) => Promise<AuditRun | null>
   auditExportMarkdown: (args: { workspaceId: string }) => Promise<void>
   auditGetHistory: (args: {
     workspaceId: string
@@ -820,6 +858,7 @@ interface Api {
   onAuditResult: (cb: (data: AuditResult) => void) => () => void
   onAuditComplete: (cb: (data: AuditRun) => void) => () => void
   onAuditStreamChunk: (cb: (data: AuditStreamChunkEvent) => void) => () => void
+  onAuditIntermediate: (cb: (data: AuditIntermediateEvent) => void) => () => void
 
   // Grill (dedicated agent)
   grillEvaluate: (args: {
@@ -830,6 +869,7 @@ interface Api {
     iterationHistory?: string
     previousScore?: number
     ideaId?: string
+    llmProvider?: LLMProvider
   }) => Promise<void>
   grillCancel: () => Promise<void>
   onGrillStreamChunk: (

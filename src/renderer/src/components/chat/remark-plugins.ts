@@ -3,7 +3,7 @@
  * Extracted from MessageBubble.tsx for maintainability.
  */
 import type { Plugin } from 'unified'
-import type { Root, Text, PhrasingContent, Html, RootContent } from 'mdast'
+import type { Root, Text, PhrasingContent, Html, RootContent, Parent } from 'mdast'
 import { visit } from 'unist-util-visit'
 
 /**
@@ -113,5 +113,43 @@ export const remarkHighlightNextSteps: Plugin<[], Root> = () => {
       }
       i++
     }
+  }
+}
+
+/**
+ * Remark plugin: wraps arrow characters (→, ←, ⟶, ⟹, ↔) in a styled
+ * <span class="arrow-indicator"> so they stand out from surrounding body text.
+ */
+export const remarkStyledArrows: Plugin<[], Root> = () => {
+  const arrowRegex = /([→←↔⟶⟹])/g
+
+  return (tree) => {
+    visit(tree, 'text', (node: Text, index, parent) => {
+      if (index == null || !parent) return
+      const text = node.value
+      if (!arrowRegex.test(text)) return
+
+      arrowRegex.lastIndex = 0
+      const parts: (Text | Html)[] = []
+      let lastIndex = 0
+      let match: RegExpExecArray | null
+
+      while ((match = arrowRegex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push({ type: 'text', value: text.slice(lastIndex, match.index) })
+        }
+        parts.push({
+          type: 'html',
+          value: `<span class="arrow-indicator">${match[0]}</span>`
+        } as Html)
+        lastIndex = match.index + match[0].length
+      }
+      if (lastIndex < text.length) {
+        parts.push({ type: 'text', value: text.slice(lastIndex) })
+      }
+      if (parts.length > 1) {
+        ;(parent as Parent).children.splice(index, 1, ...(parts as RootContent[]))
+      }
+    })
   }
 }

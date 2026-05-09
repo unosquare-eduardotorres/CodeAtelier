@@ -1,44 +1,32 @@
 /**
- * SpecialistPage — Full specialist administration page.
+ * SpecialistPage — Presentation page for the per-workspace Project Specialist.
  *
- * Replaces the old SpecialistSlideOver and provides:
- * - Rebuild with progress spinner, success, and error feedback
- * - Prompt preview with edit + save
- * - LLM-powered Skill Market (recommended + other sections)
- * - Import custom skills from disk
- * - Detected stack display
+ * Layout: Hero Banner → Detected Stack → Skill Market (cards grid) → System Prompt (rendered MD + edit modal)
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 import {
   Bot,
   RefreshCw,
-  Save,
   Download,
   Star,
-  CheckCircle,
   XCircle,
   Loader2,
   Hammer,
-  ToggleLeft,
-  ToggleRight,
-  Plus,
-  Minus,
-  Tag
+  Pencil,
+  CheckCircle
 } from 'lucide-react'
 import { useWorkspaceStore, useSkillStore, useToastStore } from '@renderer/store'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
-import { Avatar, SettingsCard } from '@renderer/components/common'
+import { Avatar } from '@renderer/components/common'
+import { TechBadge, SkillCard, PromptPreviewModal } from '@renderer/components/specialist'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 import type { Skill } from '../../../../shared/types'
 
 // ── Types ────────────────────────────────────────────────────────────────────
-
-interface SkillEnrichment {
-  keywords: string[]
-  applicableTo: string
-  complexity: 'foundational' | 'intermediate' | 'advanced'
-}
 
 type RebuildState = 'idle' | 'building' | 'success' | 'failed'
 
@@ -46,6 +34,7 @@ type RebuildState = 'idle' | 'building' | 'success' | 'failed'
 
 export default function SpecialistPage(): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
   const workspaceId = activeWorkspace?.id ?? null
 
   const specialist = useProjectSpecialistStore((s) =>
@@ -75,8 +64,8 @@ export default function SpecialistPage(): React.JSX.Element {
   const [rebuildState, setRebuildState] = useState<RebuildState>('idle')
   const [rebuildError, setRebuildError] = useState<string | null>(null)
   const [editedPrompt, setEditedPrompt] = useState<string>('')
-  const [promptDirty, setPromptDirty] = useState(false)
   const [savingPrompt, setSavingPrompt] = useState(false)
+  const [promptModalOpen, setPromptModalOpen] = useState(false)
   const [refreshingRecs, setRefreshingRecs] = useState(false)
   const [importingSkill, setImportingSkill] = useState(false)
 
@@ -90,12 +79,11 @@ export default function SpecialistPage(): React.JSX.Element {
     void loadSkills()
   }, [loadSkills])
 
-  // Sync prompt textarea when specialist prompt changes
+  // Sync local prompt when specialist prompt changes
   useEffect(() => {
     if (specialist?.prompt !== undefined) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync from external store update
       setEditedPrompt(specialist.prompt)
-      setPromptDirty(false)
     }
   }, [specialist?.prompt])
 
@@ -108,7 +96,6 @@ export default function SpecialistPage(): React.JSX.Element {
       setRebuildError(null)
     } else if (buildProgress.phase === 'ready') {
       setRebuildState('success')
-      // Auto-revert to idle after 2.5s
       const timer = setTimeout(() => setRebuildState('idle'), 2500)
       return () => clearTimeout(timer)
     } else if (buildProgress.phase === 'failed') {
@@ -144,19 +131,22 @@ export default function SpecialistPage(): React.JSX.Element {
     }
   }, [specialist, rebuildPrompt])
 
-  const handleSavePrompt = useCallback(async () => {
-    if (!specialist || !promptDirty) return
-    setSavingPrompt(true)
-    try {
-      await updatePrompt(specialist.id, editedPrompt)
-      setPromptDirty(false)
-      addToast({ message: 'Prompt saved', type: 'success' })
-    } catch {
-      addToast({ message: 'Failed to save prompt', type: 'error' })
-    } finally {
-      setSavingPrompt(false)
-    }
-  }, [specialist, editedPrompt, promptDirty, updatePrompt, addToast])
+  const handleSavePrompt = useCallback(
+    async (newPrompt: string) => {
+      if (!specialist) return
+      setSavingPrompt(true)
+      try {
+        await updatePrompt(specialist.id, newPrompt)
+        setPromptModalOpen(false)
+        addToast({ message: 'Prompt saved', type: 'success' })
+      } catch {
+        addToast({ message: 'Failed to save prompt', type: 'error' })
+      } finally {
+        setSavingPrompt(false)
+      }
+    },
+    [specialist, updatePrompt, addToast]
+  )
 
   const handleImportSkill = useCallback(async () => {
     setImportingSkill(true)
@@ -169,7 +159,6 @@ export default function SpecialistPage(): React.JSX.Element {
       const result = await importSkill(filePath)
       if (result.success) {
         addToast({ message: 'Skill imported successfully', type: 'success' })
-        // Reload specialist to pick up new skills
         if (workspaceId) await loadForWorkspace(workspaceId)
       } else {
         addToast({ message: result.error ?? 'Import failed', type: 'error' })
@@ -274,17 +263,20 @@ export default function SpecialistPage(): React.JSX.Element {
     return { recommendedSkills: recommended, otherSkills: other }
   }, [skills, recommendationMap])
 
+  const mannequinKey = getWorkspaceMannequin(activeWorkspace?.id ?? '', workspaces)
+
   // ── No specialist state ──────────────────────────────────────────────────
 
   if (!specialist) {
     return (
-      <div className="p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Bot size={16} className="text-primary-text" />
-          <h3 className="text-sm font-semibold text-text-primary">Specialist</h3>
+      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-surface-overlay border border-border-subtle flex items-center justify-center mb-4">
+          <Bot size={28} className="text-text-muted" />
         </div>
-        <p className="text-xs text-text-secondary">
-          No specialist configured for this workspace. Open a chat to get started.
+        <h3 className="text-sm font-semibold text-text-primary mb-1">No Specialist Yet</h3>
+        <p className="text-xs text-text-secondary max-w-xs">
+          No specialist configured for this workspace. Open a chat to get started — the build wizard
+          will guide you.
         </p>
       </div>
     )
@@ -293,36 +285,58 @@ export default function SpecialistPage(): React.JSX.Element {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-6">
-      {/* ── Header ────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Avatar
-            avatarKey={getWorkspaceMannequin(
-              activeWorkspace?.id ?? '',
-              useWorkspaceStore.getState().workspaces
-            )}
-            size="sm"
-            accentColor={specialist.color ?? '#B8976A'}
-          />
-          <div>
-            <h3 className="text-sm font-semibold text-text-primary">{specialist.displayName}</h3>
-            <div className="flex items-center gap-2 mt-0.5">
+    <div className="p-6 space-y-8 max-w-5xl mx-auto">
+      {/* ── Hero Banner ──────────────────────────────────────────────── */}
+      <div className="relative rounded-2xl overflow-hidden bg-surface-overlay border border-border-subtle">
+        {/* Radial gradient background — brand gold accent */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background: `radial-gradient(ellipse at 30% 50%,
+              rgba(184,151,106,0.08) 0%,
+              rgba(30,46,51,0.4) 40%,
+              transparent 70%)`
+          }}
+        />
+
+        <div className="relative flex items-center gap-6 p-8">
+          {/* Large avatar — rounded rectangle */}
+          <div className="flex-shrink-0">
+            <Avatar
+              avatarKey={mannequinKey}
+              size="xxl"
+              className="!rounded-2xl"
+              accentColor={specialist.color ?? '#B8976A'}
+            />
+          </div>
+
+          {/* Info */}
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-semibold text-text-primary mb-1">
+              {specialist.displayName}
+            </h2>
+            <div className="flex items-center gap-2 mb-3">
               <StatusBadge status={specialist.buildStatus} />
               {specialist.lastBuiltAt && (
-                <span className="text-[10px] text-text-muted">
+                <span className="text-[11px] text-text-muted">
                   Built {new Date(specialist.lastBuiltAt).toLocaleDateString()}
                 </span>
               )}
             </div>
+            <p className="text-xs text-text-secondary">
+              Tailored specialist for this workspace
+            </p>
+          </div>
+
+          {/* Rebuild button — top right area */}
+          <div className="flex-shrink-0 self-start">
+            <RebuildButton
+              state={rebuildState}
+              onClick={handleRebuild}
+              progressMessage={buildProgress?.message}
+            />
           </div>
         </div>
-
-        <RebuildButton
-          state={rebuildState}
-          onClick={handleRebuild}
-          progressMessage={buildProgress?.message}
-        />
       </div>
 
       {/* Error banner */}
@@ -355,64 +369,24 @@ export default function SpecialistPage(): React.JSX.Element {
 
       {/* ── Detected Stack ──────────────────────────────────────────── */}
       {specialist.detectedTechs.length > 0 && (
-        <SettingsCard>
-          <h4 className="text-xs font-semibold text-text-primary mb-2">Detected Stack</h4>
-          <div className="flex flex-wrap gap-1.5">
+        <section>
+          <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
+            Detected Stack
+          </h4>
+          <div className="flex flex-wrap gap-2">
             {specialist.detectedTechs.map((tech) => (
-              <span
-                key={tech}
-                className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-surface-overlay text-text-body border border-border-subtle"
-              >
-                {tech}
-              </span>
+              <TechBadge key={tech} tech={tech} />
             ))}
           </div>
-        </SettingsCard>
+        </section>
       )}
 
-      {/* ── Prompt Section ──────────────────────────────────────────── */}
-      <SettingsCard>
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs font-semibold text-text-primary">System Prompt</h4>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-text-muted">
-              {editedPrompt.length.toLocaleString()} chars
-            </span>
-            <button
-              onClick={handleSavePrompt}
-              disabled={!promptDirty || savingPrompt}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-primary text-white hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              <Save size={12} />
-              {savingPrompt ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              onClick={handleRebuildPrompt}
-              disabled={rebuildState === 'building'}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-text-secondary hover:bg-surface-overlay transition-colors disabled:opacity-40"
-              title="Rebuild prompt using LLM"
-            >
-              <RefreshCw size={12} className={rebuildState === 'building' ? 'animate-spin' : ''} />
-              Rebuild
-            </button>
-          </div>
-        </div>
-        <textarea
-          value={editedPrompt}
-          onChange={(e) => {
-            setEditedPrompt(e.target.value)
-            setPromptDirty(e.target.value !== specialist.prompt)
-          }}
-          className="w-full h-64 px-3 py-2 rounded-lg bg-surface-base border border-border-subtle text-xs text-text-body font-mono resize-y focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40"
-          placeholder="Specialist prompt will appear here after building…"
-          spellCheck={false}
-        />
-      </SettingsCard>
-
-      {/* ── Skills Section — "Skill Market" ─────────────────────────── */}
-      <SettingsCard>
+      {/* ── Skill Market ─────────────────────────────────────────────── */}
+      <section>
         <div className="flex items-center justify-between mb-4">
-          <h4 className="text-xs font-semibold text-text-primary">Skill Market</h4>
+          <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+            Skill Market
+          </h4>
           <div className="flex items-center gap-2">
             <button
               onClick={handleRefreshRecommendations}
@@ -429,27 +403,29 @@ export default function SpecialistPage(): React.JSX.Element {
               className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-primary text-white hover:bg-primary/90 disabled:opacity-40 transition-colors"
             >
               <Download size={12} />
-              {importingSkill ? 'Importing…' : 'Import Skill'}
+              {importingSkill ? 'Importing…' : 'Import'}
             </button>
           </div>
         </div>
 
         {/* Recommended skills */}
         {recommendedSkills.length > 0 && (
-          <div className="mb-4">
-            <div className="flex items-center gap-1.5 mb-2">
+          <div className="mb-6">
+            <div className="flex items-center gap-1.5 mb-3">
               <Star size={12} className="text-warning" />
-              <span className="text-[11px] font-semibold text-text-primary">
+              <span className="text-xs font-medium text-text-primary">
                 Recommended for this project
               </span>
             </div>
-            <div className="space-y-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {recommendedSkills.map((skill) => (
-                <SkillRow
+                <SkillCard
                   key={skill.id}
                   skill={skill}
                   isAttached={attachedSkillIds.has(skill.id)}
-                  isEnabled={specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false}
+                  isEnabled={
+                    specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false
+                  }
                   recommendation={{
                     relevance: skill.relevance,
                     rationale: skill.rationale
@@ -463,24 +439,19 @@ export default function SpecialistPage(): React.JSX.Element {
           </div>
         )}
 
-        {/* Divider */}
-        {recommendedSkills.length > 0 && otherSkills.length > 0 && (
-          <div className="border-t border-border-subtle my-3" />
-        )}
-
         {/* Other skills */}
         {otherSkills.length > 0 && (
           <div>
-            <span className="text-[11px] font-semibold text-text-muted mb-2 block">
-              Other skills
-            </span>
-            <div className="space-y-1">
+            <span className="text-xs font-medium text-text-muted mb-3 block">Other skills</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {otherSkills.map((skill) => (
-                <SkillRow
+                <SkillCard
                   key={skill.id}
                   skill={skill}
                   isAttached={attachedSkillIds.has(skill.id)}
-                  isEnabled={specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false}
+                  isEnabled={
+                    specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false
+                  }
                   onToggle={(enabled) => handleToggleSkill(skill.id, enabled)}
                   onAttach={() => handleAttachSkill(skill.id)}
                   onDetach={() => handleDetachSkill(skill.id)}
@@ -491,11 +462,67 @@ export default function SpecialistPage(): React.JSX.Element {
         )}
 
         {skills.length === 0 && (
-          <p className="text-xs text-text-muted py-4 text-center">
+          <p className="text-xs text-text-muted py-8 text-center">
             No skills available. Import a .md skill file to get started.
           </p>
         )}
-      </SettingsCard>
+      </section>
+
+      {/* ── System Prompt ────────────────────────────────────────────── */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+            System Prompt
+          </h4>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-text-muted">
+              {editedPrompt.length.toLocaleString()} chars
+            </span>
+            <button
+              onClick={() => setPromptModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-text-secondary hover:bg-surface-overlay transition-colors"
+              title="Edit raw prompt"
+            >
+              <Pencil size={12} />
+              Edit
+            </button>
+            <button
+              onClick={handleRebuildPrompt}
+              disabled={rebuildState === 'building'}
+              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-text-secondary hover:bg-surface-overlay transition-colors disabled:opacity-40"
+              title="Rebuild prompt using LLM"
+            >
+              <RefreshCw size={12} className={rebuildState === 'building' ? 'animate-spin' : ''} />
+              Rebuild
+            </button>
+          </div>
+        </div>
+
+        {/* Rendered markdown preview */}
+        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-6 max-h-[70vh] overflow-y-auto">
+          <div
+            className="prose prose-sm max-w-none [&]:max-w-none
+              prose-headings:text-text-primary prose-headings:font-semibold
+              prose-p:text-text-body prose-strong:text-text-primary
+              prose-code:text-code-text prose-code:bg-surface-base prose-code:px-1 prose-code:rounded
+              prose-ul:text-text-body prose-li:text-text-body
+              prose-a:text-accent"
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+              {specialist.prompt || '*No prompt generated yet. Click Rebuild to generate.*'}
+            </ReactMarkdown>
+          </div>
+        </div>
+      </section>
+
+      {/* Edit Prompt Modal */}
+      <PromptPreviewModal
+        open={promptModalOpen}
+        prompt={editedPrompt}
+        onSave={handleSavePrompt}
+        onClose={() => setPromptModalOpen(false)}
+        isSaving={savingPrompt}
+      />
     </div>
   )
 }
@@ -520,6 +547,7 @@ function StatusBadge({
       className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${className}`}
     >
       {status === 'building' && <Loader2 size={10} className="mr-1 animate-spin" />}
+      {status === 'ready' && <span className="mr-1 w-1.5 h-1.5 rounded-full bg-success inline-block" />}
       {label}
     </span>
   )
@@ -563,114 +591,5 @@ function RebuildButton({
       <Hammer size={14} />
       Rebuild
     </button>
-  )
-}
-
-function SkillRow({
-  skill,
-  isAttached,
-  isEnabled,
-  recommendation,
-  onToggle,
-  onAttach,
-  onDetach
-}: {
-  skill: Skill
-  isAttached: boolean
-  isEnabled: boolean
-  recommendation?: { relevance: number; rationale: string }
-  onToggle: (enabled: boolean) => void
-  onAttach: () => void
-  onDetach: () => void
-}): React.JSX.Element {
-  // Parse enrichment
-  let enrichment: SkillEnrichment | null = null
-  if (skill.enrichmentJson) {
-    try {
-      enrichment = JSON.parse(skill.enrichmentJson)
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return (
-    <div className="flex items-start gap-2 p-2 rounded-lg hover:bg-surface-overlay/50 transition-colors group">
-      {/* Icon + name */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          {recommendation && <Star size={11} className="text-warning flex-shrink-0" />}
-          <span className="text-xs font-medium text-text-primary truncate">{skill.name}</span>
-          {recommendation && (
-            <span className="text-[9px] font-medium text-primary bg-primary/10 px-1 py-0.5 rounded-full flex-shrink-0">
-              {Math.round(recommendation.relevance * 100)}%
-            </span>
-          )}
-        </div>
-
-        {/* ApplicableTo from enrichment or rationale from recommendation */}
-        {recommendation?.rationale ? (
-          <p className="text-[10px] text-text-muted mt-0.5 line-clamp-1">
-            {recommendation.rationale}
-          </p>
-        ) : enrichment?.applicableTo ? (
-          <p className="text-[10px] text-text-muted mt-0.5 line-clamp-1">
-            {enrichment.applicableTo}
-          </p>
-        ) : skill.description ? (
-          <p className="text-[10px] text-text-muted mt-0.5 line-clamp-1">{skill.description}</p>
-        ) : null}
-
-        {/* Keywords */}
-        {enrichment?.keywords && enrichment.keywords.length > 0 && !recommendation && (
-          <div className="flex flex-wrap gap-1 mt-1">
-            {enrichment.keywords.slice(0, 5).map((kw) => (
-              <span
-                key={kw}
-                className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] text-text-muted bg-surface-overlay"
-              >
-                <Tag size={8} />
-                {kw}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Controls */}
-      <div className="flex items-center gap-1 flex-shrink-0">
-        {isAttached ? (
-          <>
-            {/* Toggle enabled/disabled */}
-            <button
-              onClick={() => onToggle(!isEnabled)}
-              title={isEnabled ? 'Disable skill' : 'Enable skill'}
-              className="p-1 rounded hover:bg-surface-overlay transition-colors"
-            >
-              {isEnabled ? (
-                <ToggleRight size={16} className="text-success" />
-              ) : (
-                <ToggleLeft size={16} className="text-text-muted" />
-              )}
-            </button>
-            {/* Detach */}
-            <button
-              onClick={onDetach}
-              title="Detach skill"
-              className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-danger transition-colors opacity-0 group-hover:opacity-100"
-            >
-              <Minus size={14} />
-            </button>
-          </>
-        ) : (
-          <button
-            onClick={onAttach}
-            title="Attach skill"
-            className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-primary transition-colors"
-          >
-            <Plus size={14} />
-          </button>
-        )}
-      </div>
-    </div>
   )
 }

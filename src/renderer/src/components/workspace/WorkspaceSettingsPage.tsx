@@ -29,7 +29,6 @@ import TeamPage from '@renderer/components/settings/TeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import SyncBanner from '@renderer/components/settings/SyncBanner'
 import SyncReviewModal from '@renderer/components/settings/SyncReviewModal'
-
 type SettingsTab =
   | 'models'
   | 'repository'

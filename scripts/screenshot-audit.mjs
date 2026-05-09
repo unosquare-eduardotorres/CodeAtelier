@@ -1,5 +1,5 @@
 /**
- * Playwright Electron screenshot audit for Agent Studio.
+ * Playwright Electron screenshot audit for Code Atelier.
  * Launches the built app and captures every major page/state.
  *
  * Usage:  node scripts/screenshot-audit.mjs

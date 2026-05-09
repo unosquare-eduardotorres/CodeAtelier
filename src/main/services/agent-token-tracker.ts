@@ -65,6 +65,15 @@ export class AgentTokenTracker {
     const { cacheReadInputTokens, cacheCreationInputTokens } = meta.tokenUsage
     const totalTokens = meta.tokenUsage.input + meta.tokenUsage.output
 
+    // Diagnostic: raw SDK token values to determine overlap semantics
+    // (input_tokens inclusive vs exclusive of cache tokens)
+    this.log.info(
+      `[PIPELINE:token-debug] turn=${opts.turnCount} ` +
+        `input=${meta.tokenUsage.input} output=${meta.tokenUsage.output} ` +
+        `cacheRead=${cacheReadInputTokens} cacheCreation=${cacheCreationInputTokens} ` +
+        `sum=${meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens}`
+    )
+
     // S8 + Strategy M: Log prompt cache effectiveness
     if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
       const totalInput = meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens

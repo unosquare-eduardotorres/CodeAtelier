@@ -1,7 +1,7 @@
 /**
  * UX Audit Screenshot Capture Suite
  *
- * Captures screenshots of every page/view in the Agent Studio Electron app
+ * Captures screenshots of every page/view in the Code Atelier Electron app
  * for UX/UI audit analysis.
  *
  * Uses a manual Electron + CDP approach since Playwright's built-in

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync, renameSync } from 'node:fs'
 import { dbLogger } from '../logger'
 import { DEFAULT_PROMPTS } from '../services/default-prompts'
 import { runProjectSpecialistMigration } from './migrations/project-specialist-migration'
@@ -14,7 +14,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 80
+const CURRENT_SCHEMA_VERSION = 85
 
 interface Migration {
   version: number
@@ -419,7 +419,7 @@ const migrations: Migration[] = [
         'git-github-specialist',
         'docs-diagrams-specialist'
       ]
-      const deactivateStmt = db.prepare(`UPDATE specialists SET active = 0 WHERE agent_id = ?`)
+      const deactivateStmt = db.prepare(`UPDATE specialists SET is_active = 0 WHERE agent_id = ?`)
       for (const id of archivedIds) {
         deactivateStmt.run(id)
       }
@@ -2034,6 +2034,75 @@ const migrations: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_grill_sessions_workspace ON grill_sessions(workspace_id)`)
       dbLogger.info('[migration-80] ✓ Created grill_sessions table')
     }
+  },
+  {
+    version: 81,
+    name: 'add-audit-coverage-columns',
+    up: (db) => {
+      db.exec(`ALTER TABLE audit_results ADD COLUMN coverage_stats TEXT DEFAULT NULL`)
+      db.exec(`ALTER TABLE audit_results ADD COLUMN coverage_sufficient INTEGER DEFAULT NULL`)
+      dbLogger.info('[migration-81] ✓ Added coverage_stats and coverage_sufficient columns to audit_results')
+    }
+  },
+  {
+    version: 82,
+    name: 'add-turn-usage-context-tokens',
+    up: (db) => {
+      // Store the SDK's context window total separately from the API-reported input_tokens.
+      // Previously updateLastTurnTokens() overwrote input_tokens with the SDK context total
+      // and zeroed out cache_read_tokens/cache_creation_tokens — destroying cache data.
+      // This column stores the context window size without touching the original API values.
+      db.exec(`ALTER TABLE turn_usage ADD COLUMN context_tokens INTEGER DEFAULT 0`)
+      dbLogger.info('[migration-82] ✓ Added context_tokens column to turn_usage')
+    }
+  },
+  {
+    version: 83,
+    name: 'clear-embeddings-for-model-migration',
+    up: (db) => {
+      // Embedding model changed from qwen3-embedding:4b (Ollama) to
+      // nomic-embed-text-v1.5 (Transformers.js). Vectors from different
+      // models are incompatible — clear all embeddings so workspaces
+      // re-index with the new model on next use.
+      db.exec('DELETE FROM chunk_embeddings')
+      db.exec("UPDATE indexing_state SET status = 'idle', embedding_model = NULL")
+      dbLogger.info(
+        '[migration-83] ✓ Cleared embeddings for model migration (qwen3→nomic-embed)'
+      )
+    }
+  },
+  {
+    version: 84,
+    name: 'plan-mode-direct-answer-support',
+    up: (db) => {
+      // Sync updated PLAN_MODE_SECTION that distinguishes questions from plan requests.
+      // Follows the same pattern as migrations 49, 53, 54, 55, 56, 71.
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
+
+      db.prepare(
+        `
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'da-vinci' AND mode = 'plan'
+        `
+      ).run(newPlanPrompt, newPlanPrompt)
+
+      dbLogger.info(
+        '[migration-84] ✓ Updated plan-mode prompt to support direct answers for questions'
+      )
+    }
+  },
+  {
+    version: 85,
+    name: 'add-conversation-mcp-overrides',
+    up: (db) => {
+      db.exec(
+        `ALTER TABLE conversations ADD COLUMN mcp_overrides_json TEXT DEFAULT '{}'`
+      )
+      dbLogger.info('[migration-85] ✓ Added mcp_overrides_json column to conversations')
+    }
   }
 ]
 
@@ -2083,7 +2152,16 @@ function runMigrations(database: Database.Database): void {
 export function getDatabase(): Database.Database {
   if (db) return db
 
-  const dbPath = join(app.getPath('userData'), 'agent-studio.db')
+  const newDbPath = join(app.getPath('userData'), 'code-atelier.db')
+  const oldDbPath = join(app.getPath('userData'), 'agent-studio.db')
+
+  // Migrate DB filename for existing installations
+  if (!existsSync(newDbPath) && existsSync(oldDbPath)) {
+    renameSync(oldDbPath, newDbPath)
+    dbLogger.info('[DB] Migrated database: agent-studio.db → code-atelier.db')
+  }
+
+  const dbPath = newDbPath
   db = new Database(dbPath)
 
   // Enable WAL mode for crash-safe writes
@@ -2285,7 +2363,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   summary TEXT,
-  claude_session_id TEXT
+  claude_session_id TEXT,
+  mcp_overrides_json TEXT DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS messages (

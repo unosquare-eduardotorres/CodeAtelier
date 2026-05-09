@@ -1,5 +1,5 @@
 import { getDatabase } from '../index'
-import type { AppPreferences } from '../../../shared/types'
+import type { AppPreferences, UpdateSourceProvider } from '../../../shared/types'
 
 interface AppPreferenceRow {
   key: string
@@ -36,7 +36,11 @@ export class AppPreferenceRepository {
       specialistWarningBuild: this.getBool('specialist_warning_build', true),
       specialistWarningPlan: this.getBool('specialist_warning_plan', true),
       specialistWarningAlways: this.getBool('specialist_warning_always', false),
-      chatBubbleSize: (this.get('chat_bubble_size') as AppPreferences['chatBubbleSize']) ?? 'xl'
+      chatBubbleSize: (this.get('chat_bubble_size') as AppPreferences['chatBubbleSize']) ?? 'xl',
+      updateSource: (this.get('update_source') as UpdateSourceProvider) ?? 'drive',
+      updateDrivePath: this.get('update_drive_path') ?? '',
+      updateGithubOwner: this.get('update_github_owner') ?? '',
+      updateGithubRepo: this.get('update_github_repo') ?? ''
     }
   }
 }

@@ -66,7 +66,7 @@ export default function AuthSettingsTab(): React.JSX.Element {
       </div>
 
       <p className="text-sm text-text-secondary mb-6">
-        Choose how Agent Studio authenticates with Claude. The default uses your Claude Max
+        Choose how Code Atelier authenticates with Claude. The default uses your Claude Max
         subscription via CLI. Alternatively, provide an API key to use the Agent SDK for improved
         streaming and reliability.
       </p>

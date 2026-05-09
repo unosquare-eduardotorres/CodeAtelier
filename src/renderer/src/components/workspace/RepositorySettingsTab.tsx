@@ -1,13 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useWorkspaceStore } from '@renderer/store'
-import type { RepoInfo, OllamaStatus } from '../../../../shared/types'
-import OllamaSetupModal from './OllamaSetupModal'
-import {
-  GitConfigSection,
-  GitHubTokenSection,
-  AutomationSection,
-  CodeIntelligenceSection
-} from './settings-sections'
+import type { RepoInfo } from '../../../../shared/types'
+import { GitConfigSection, GitHubTokenSection, AutomationSection } from './settings-sections'
 
 export default function RepositorySettingsTab(): React.JSX.Element {
   const { activeWorkspace, repoInfo, githubStatus, loadRepoInfo, loadGitHubStatus } =
@@ -19,7 +13,6 @@ export default function RepositorySettingsTab(): React.JSX.Element {
   const [isInitializingRepo, setIsInitializingRepo] = useState(false)
   const [isEditingRemote, setIsEditingRemote] = useState(false)
   const [remoteSaved, setRemoteSaved] = useState(false)
-  const [codeGraphJustEnabled, setCodeGraphJustEnabled] = useState(false)
 
   // GitHub token state
   const [token, setToken] = useState('')
@@ -30,48 +23,13 @@ export default function RepositorySettingsTab(): React.JSX.Element {
   // Automation toggles
   const [settings, setSettings] = useState<Record<string, unknown>>({})
 
-  // Semantic search state
-  const [showOllamaSetup, setShowOllamaSetup] = useState(false)
-  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
-  const [isStartingIndex, setIsStartingIndex] = useState(false)
-
-  // Persisted index state
-  const [persistedIndexStatus, setPersistedIndexStatus] = useState<{
-    loaded: boolean
-    symbolCount?: number
-    loading: boolean
-  }>({ loaded: false, loading: false })
-
   useEffect(() => {
     if (activeWorkspace) {
       loadRepoInfo(activeWorkspace.id)
       loadGitHubStatus(activeWorkspace.id)
       window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id }).then((s) => {
         setSettings(s)
-        // Check Ollama status if semantic search is enabled
-        if (s.semanticSearchEnabled) {
-          window.api
-            .ollamaCheckStatus()
-            .then(setOllamaStatus)
-            .catch(() => {})
-        }
       })
-
-      // Auto-load persisted index on workspace open
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- optimistic loading state before async fetch
-      setPersistedIndexStatus((prev) => ({ ...prev, loading: true }))
-      window.api
-        .loadPersistedIndex({ workspaceId: activeWorkspace.id })
-        .then((result) => {
-          setPersistedIndexStatus({
-            loaded: result.loaded,
-            symbolCount: result.symbolCount,
-            loading: false
-          })
-        })
-        .catch(() => {
-          setPersistedIndexStatus({ loaded: false, loading: false })
-        })
     }
   }, [activeWorkspace, loadRepoInfo, loadGitHubStatus])
 
@@ -154,48 +112,6 @@ export default function RepositorySettingsTab(): React.JSX.Element {
     })
   }
 
-  const handleCodeGraphToggle = async (v: boolean): Promise<void> => {
-    await handleToggleSetting('repomapEnabled', v)
-    if (v && activeWorkspace) {
-      const hasIndex = await window.api.codeGraphHasIndex({
-        workspaceId: activeWorkspace.id
-      })
-      if (!hasIndex) {
-        // Auto-start indexing — progress panel will appear
-        await window.api.codeGraphIndexStart({ workspaceId: activeWorkspace.id })
-      } else {
-        setCodeGraphJustEnabled(true)
-        setTimeout(() => setCodeGraphJustEnabled(false), 4000)
-      }
-    }
-  }
-
-  const handleSemanticSearchToggle = async (v: boolean): Promise<void> => {
-    await handleToggleSetting('semanticSearchEnabled', v)
-    if (v) {
-      try {
-        const status = await window.api.ollamaCheckStatus()
-        setOllamaStatus(status)
-        if (!status.running || !status.installed) {
-          setShowOllamaSetup(true)
-        }
-      } catch {
-        setShowOllamaSetup(true)
-      }
-    }
-  }
-
-  const handleStartIndex = async (): Promise<void> => {
-    if (!activeWorkspace) return
-    setIsStartingIndex(true)
-    try {
-      await window.api.indexingStart({ workspaceId: activeWorkspace.id })
-    } catch (e) {
-      console.error('Failed to start indexing:', e)
-    }
-    setIsStartingIndex(false)
-  }
-
   if (!activeWorkspace) return <div />
 
   const hasRemote = !!(localRepoInfo?.hasRemote && localRepoInfo?.remoteUrl)
@@ -228,6 +144,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
       <GitHubTokenSection
         configured={!!githubStatus?.configured}
         login={githubStatus?.login}
+        tokenType={githubStatus?.tokenType}
         token={token}
         isSavingToken={isSavingToken}
         tokenError={tokenError}
@@ -243,35 +160,6 @@ export default function RepositorySettingsTab(): React.JSX.Element {
         hasRemote={hasRemote}
         onToggle={handleToggleSetting}
       />
-
-      <CodeIntelligenceSection
-        workspaceId={activeWorkspace.id}
-        settings={settings}
-        ollamaStatus={ollamaStatus}
-        persistedIndexStatus={persistedIndexStatus}
-        codeGraphJustEnabled={codeGraphJustEnabled}
-        onToggle={handleToggleSetting}
-        onCodeGraphToggle={handleCodeGraphToggle}
-        onSemanticSearchToggle={handleSemanticSearchToggle}
-        onStartIndex={handleStartIndex}
-        isStartingIndex={isStartingIndex}
-        onShowOllamaSetup={() => setShowOllamaSetup(true)}
-      />
-
-      {/* Ollama Setup Modal */}
-      {showOllamaSetup && (
-        <OllamaSetupModal
-          onClose={() => {
-            setShowOllamaSetup(false)
-            // Refresh Ollama status after closing modal
-            window.api
-              .ollamaCheckStatus()
-              .then(setOllamaStatus)
-              .catch(() => {})
-          }}
-          model={(settings.ollamaModel as string) ?? 'qwen3-embedding:4b'}
-        />
-      )}
     </div>
   )
 }

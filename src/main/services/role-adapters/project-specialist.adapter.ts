@@ -14,6 +14,7 @@
  */
 
 import type { AgentIntent, ConversationMode, MemoryType } from '../../../shared/types'
+import { EXTERNAL_MCP_INTEGRATIONS, LOCAL_MCP_INTEGRATIONS } from '../../../shared/constants'
 import type {
   AdapterIntentContext,
   AdapterMcpContext,
@@ -27,7 +28,11 @@ import type {
 import type { ControlActionCallbacks } from '../control-actions.tool'
 import { getDatabase } from '../../db/index'
 import { chatAgentLogger } from '../../logger'
-import { memoryRepository, workspaceRepository } from '../../db/repositories'
+import {
+  conversationRepository,
+  memoryRepository,
+  workspaceRepository
+} from '../../db/repositories'
 import { githubService } from '../github.service'
 import { intentDetector } from '../intent-detector'
 import { appendMcpToolGuidance, buildConditionalPrefix } from '../prompt-assembly-helpers'
@@ -202,10 +207,33 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
     if (!this.snapshot) this.loadSnapshot()
 
     // Strategy Λ: Use locked flags for stable tool set across all turns.
-    const mcpFlags = this.lockedMcpFlags ?? {
+    // Exception: externalMcpActive is ALWAYS read fresh (per-message toggling).
+    const baseMcpFlags = this.lockedMcpFlags ?? {
       repomapEnabled: this.repomapEnabled,
       semanticSearchEnabled: this.semanticSearchEnabled,
       githubConfigured: this.githubConfigured
+    }
+
+    // Resolve external + local MCP active states from conversation overrides
+    const externalMcpActive: Record<string, boolean> = {}
+    const localMcpActive: Record<string, boolean> = {}
+    try {
+      const ws = ctx.workspaceId ? workspaceRepository.findById(ctx.workspaceId) : null
+      const wsSettings = ws ? JSON.parse(ws.settingsJson || '{}') : {}
+      const conv = ctx.conversationId ? conversationRepository.findById(ctx.conversationId) : null
+      const chatOverrides = conv?.mcpOverrides ?? {}
+
+      for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+        externalMcpActive[integration.id] =
+          !!wsSettings[`${integration.id}Available`] && !!chatOverrides[integration.id]
+      }
+
+      // Derive per-chat local MCP active state from conversation overrides
+      for (const lm of LOCAL_MCP_INTEGRATIONS) {
+        localMcpActive[lm.id] = chatOverrides[lm.id] !== false
+      }
+    } catch {
+      /* non-fatal — keep all external MCPs disabled, local MCPs enabled */
     }
 
     return buildWorkspaceMcpConfig({
@@ -213,8 +241,10 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       workspacePath: ctx.workspacePath,
       workspaceId: ctx.workspaceId,
       conversationId: ctx.conversationId,
-      featureFlags: mcpFlags,
-      controlCallbacks: ctx.controlCallbacks
+      featureFlags: { ...baseMcpFlags, externalMcpActive, localMcpActive },
+      controlCallbacks: ctx.controlCallbacks,
+      isLocalProvider: modelConfigService.isLocalProvider(ctx.workspacePath),
+      contextTier: ctx.contextTier
     })
   }
 

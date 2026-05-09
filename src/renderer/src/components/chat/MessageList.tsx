@@ -9,7 +9,7 @@ import {
 } from '@renderer/store'
 import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
-import { MessageBubble, GrillQuestionCard } from '@renderer/components/chat'
+import { MessageBubble, GrillQuestionCard, ToolActivityBlock } from '@renderer/components/chat'
 import IdeaPopover from './IdeaPopover'
 import { Avatar, CompactContextModal } from '@renderer/components/common'
 import type { MessageBubbleActions } from './MessageBubble'
@@ -25,6 +25,7 @@ interface MessageListProps {
 export default function MessageList({ searchQuery }: MessageListProps): React.JSX.Element {
   const messages = useChatStore((s) => s.messages)
   const streamingContent = useChatStore((s) => s.streamingContent)
+  const streamingSegments = useChatStore((s) => s.streamingSegments)
   const streamingRole = useChatStore((s) => s.streamingRole)
   const streamingSpecialist = useChatStore((s) => s.streamingSpecialist)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -46,7 +47,8 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     updateMode,
     appendLocalMessage,
     clearGrillSession,
-    createItemsFromGrill
+    createItemsFromGrill,
+    createConversation
   } = useChatActions()
 
   // Single actions object passed to all MessageBubbles — avoids N×useShallow subscriptions
@@ -166,6 +168,12 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     thinkingAccentColor
   ])
 
+  // Aggregate all tool activities across segments + current for the thinking indicator
+  const allStreamingTools = useMemo(() => {
+    if (!isStreaming) return []
+    return [...streamingSegments.flatMap((s) => s.toolActivities), ...toolActivities]
+  }, [isStreaming, streamingSegments, toolActivities])
+
   const userName = useSpecialistStore((s) => {
     const userSpec = s.specialists.find((sp) => sp.agentId === 'user')
     const name = userSpec?.alias ?? userSpec?.displayName
@@ -184,6 +192,32 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     title: string
     description: string
   } | null>(null)
+
+  // Track streaming → complete transition to trigger fade-in on the newly arrived message.
+  // Only animate on single-message completion — batch finalization (multiple segments
+  // converted to messages) should NOT re-animate because the user already saw the content.
+  const justCompletedRef = useRef(false)
+  const prevIsStreaming = useRef(isStreaming)
+  const prevMessageCountRef = useRef(messages.length)
+
+  useEffect(() => {
+    if (prevIsStreaming.current && !isStreaming) {
+      // Only animate when exactly 1 new message was added (single-message completion).
+      // Batch finalization adds multiple messages — skip animation to avoid flash.
+      const newMessageCount = messages.length - prevMessageCountRef.current
+      justCompletedRef.current = newMessageCount <= 1
+      // Clear after animation completes
+      const timer = setTimeout(() => {
+        justCompletedRef.current = false
+      }, 400)
+      prevIsStreaming.current = isStreaming
+      prevMessageCountRef.current = messages.length
+      return () => clearTimeout(timer)
+    }
+    prevIsStreaming.current = isStreaming
+    prevMessageCountRef.current = messages.length
+    return undefined
+  }, [isStreaming, messages.length])
 
   // Force scroll to bottom when switching conversations
   useEffect(() => {
@@ -243,7 +277,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         }
       })
     }
-  }, [messages.length, streamingContent])
+  }, [messages.length, streamingContent, allStreamingTools.length])
 
   // Scroll-to-bottom handler for the floating button
   // Two-step approach: first tell virtualizer to render bottom items,
@@ -326,7 +360,13 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                   transform: `translateY(${virtualRow.start}px)`
                 }}
               >
-                <div className="pb-4">
+                <div
+                  className={`pb-4 ${
+                    virtualRow.index === messages.length - 1 && justCompletedRef.current
+                      ? 'animate-message-reveal'
+                      : ''
+                  }`}
+                >
                   <MessageBubble
                     message={msg}
                     toolActivities={msg.toolActivities}
@@ -382,6 +422,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             compactSuggestion?.breakdown ??
             (activeConversationId ? contextUsages[activeConversationId]?.breakdown : undefined)
           }
+          isLocalProvider={compactSuggestion?.isLocalProvider}
           onExtractNuance={async () => {
             setCompactSuggestion(null)
             try {
@@ -403,6 +444,18 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             }
           }}
           onCancel={() => setCompactSuggestion(null)}
+          onNewConversation={async () => {
+            setCompactSuggestion(null)
+            if (!activeConversationWorkspaceId) return
+            try {
+              // Create and switch to a new conversation in the same workspace
+              await createConversation(activeConversationWorkspaceId)
+            } catch (err) {
+              appendLocalMessage(
+                `**Failed to create conversation:** ${err instanceof Error ? err.message : String(err)}`
+              )
+            }
+          }}
         />
 
         {/* Store-driven Grill Question Card — authoritative rendering */}
@@ -431,8 +484,8 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
           </div>
         )}
 
-        {/* Thinking indicator: shows when streaming but no content yet */}
-        {isStreaming && !streamingContent && (
+        {/* Thinking indicator: shows during entire streaming duration */}
+        {isStreaming && (
           <div className="flex gap-3 flex-row">
             {/* Avatar — matches MessageBubble layout */}
             <div className="flex-shrink-0 mt-0.5">
@@ -442,81 +495,27 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                 accentColor={thinkingIdentity.accentColor}
               />
             </div>
-            <div className="flex flex-col max-w-[85%] items-start">
+            <div className="flex flex-col max-w-[92%] items-start">
               <div className="flex flex-col mb-1 px-1 items-start">
                 <span className="text-sm font-semibold text-text-primary leading-tight">
                   {thinkingIdentity.name}
                 </span>
               </div>
               <div className="flex flex-col gap-2 px-5 py-4 rounded-xl bg-surface-overlay border border-border-subtle shadow-sm">
-                <div className="flex items-center gap-2">
-                  <svg
-                    className="animate-spin h-4 w-4 text-primary-text"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                  <span className="text-sm text-text-secondary">Thinking...</span>
+                {/* Typing dots animation */}
+                <div className="flex items-center gap-1.5 py-0.5 px-1">
+                  <span className="typing-dot" style={{ animationDelay: '0ms' }} />
+                  <span className="typing-dot" style={{ animationDelay: '150ms' }} />
+                  <span className="typing-dot" style={{ animationDelay: '300ms' }} />
                 </div>
-                {toolActivities.some((a) => a.status === 'running') && (
-                  <div className="space-y-1 border-l-2 border-border-subtle pl-3 ml-1">
-                    {toolActivities
-                      .filter((a) => a.status === 'running')
-                      .slice(-5)
-                      .map((activity) => (
-                        <div key={activity.id} className="flex items-center gap-2 text-xs">
-                          <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
-                          <span className="font-mono text-text-body">{activity.toolName}</span>
-                          {activity.input && (
-                            <span
-                              className="text-text-muted truncate max-w-[300px]"
-                              title={activity.input}
-                            >
-                              {activity.input}
-                            </span>
-                          )}
-                        </div>
-                      ))}
+                {/* Tool activity feed — shows ALL tools (completed + running) via ToolActivityBlock */}
+                {allStreamingTools.length > 0 && (
+                  <div className="mt-2">
+                    <ToolActivityBlock activities={allStreamingTools} defaultExpanded />
                   </div>
                 )}
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Streaming message bubble — content arrives sentence-by-sentence via SentenceBuffer */}
-        {isStreaming && streamingContent && (
-          <div className="animate-sentence-reveal streaming-bubble-content">
-            <MessageBubble
-              message={{
-                id: 'streaming',
-                conversationId: '',
-                role: streamingRole,
-                ...(streamingRole === 'specialist' && streamingSpecialist
-                  ? { agentId: streamingSpecialist }
-                  : {}),
-                contentMd: streamingContent,
-                attachmentsJson: '[]',
-                createdAt: new Date().toISOString()
-              }}
-              isStreaming
-              toolActivities={toolActivities}
-              actions={bubbleActions}
-            />
           </div>
         )}
       </div>

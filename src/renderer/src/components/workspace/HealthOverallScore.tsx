@@ -1,12 +1,13 @@
 import { Zap, Microscope } from 'lucide-react'
 import ScoreGauge from './ScoreGauge'
-import type { AuditMode } from '../../../../shared/types'
+import type { AuditMode, AuditResult } from '../../../../shared/types'
 
 interface HealthOverallScoreProps {
   score: number | null
   completedCount: number
   totalCount: number
   mode: AuditMode
+  results?: AuditResult[]
 }
 
 function getHealthLabel(score: number): string {
@@ -17,12 +18,38 @@ function getHealthLabel(score: number): string {
   return 'Excellent'
 }
 
+function getCoverageNote(results?: AuditResult[]): string | null {
+  if (!results || results.length === 0) return null
+
+  const completedResults = results.filter((r) => r.status === 'completed')
+  if (completedResults.length === 0) return null
+
+  const insufficientCount = completedResults.filter((r) => r.coverageSufficient === false).length
+  const totalFilesInspected = completedResults.reduce(
+    (sum, r) => sum + (r.coverageStats?.fileCount ?? 0),
+    0
+  )
+
+  if (insufficientCount > 0) {
+    return `⚠ ${insufficientCount} auditor${insufficientCount !== 1 ? 's' : ''} had insufficient coverage`
+  }
+
+  if (totalFilesInspected > 0) {
+    return `Based on ${totalFilesInspected} files across ${completedResults.length} auditors`
+  }
+
+  return null
+}
+
 export default function HealthOverallScore({
   score,
   completedCount,
   totalCount,
-  mode
+  mode,
+  results
 }: HealthOverallScoreProps): React.JSX.Element {
+  const coverageNote = getCoverageNote(results)
+
   return (
     <div className="flex flex-col items-center gap-2">
       {score !== null ? (
@@ -46,6 +73,9 @@ export default function HealthOverallScore({
       <span className="text-[11px] text-text-muted">
         {completedCount}/{totalCount} auditors complete
       </span>
+      {coverageNote && (
+        <span className="text-[10px] text-text-muted italic mt-1">{coverageNote}</span>
+      )}
     </div>
   )
 }

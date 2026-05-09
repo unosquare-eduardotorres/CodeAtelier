@@ -1,3 +1,8 @@
+/**
+ * @deprecated Moved to src/renderer/src/components/workspace/code-intelligence/.
+ * This file is kept for reference but is no longer imported anywhere.
+ * Use CodeGraphCard, SemanticSearchCard, EmbeddingModelCard, and SearchPlayground instead.
+ */
 import React, { useState } from 'react'
 import {
   Check,
@@ -7,11 +12,10 @@ import {
   RefreshCw,
   Info,
   ChevronDown,
-  ChevronRight,
-  AlertTriangle
+  ChevronRight
 } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
-import type { OllamaStatus } from '../../../../../shared/types'
+import type { EmbeddingModelStatus } from '../../../../../shared/types'
 import ToggleRow from './ToggleRow'
 import IndexingProgressPanel from '../IndexingProgressPanel'
 import CodeGraphProgressPanel from '../CodeGraphProgressPanel'
@@ -19,7 +23,7 @@ import CodeGraphProgressPanel from '../CodeGraphProgressPanel'
 interface CodeIntelligenceSectionProps {
   workspaceId: string
   settings: Record<string, unknown>
-  ollamaStatus: OllamaStatus | null
+  embeddingStatus: EmbeddingModelStatus | null
   persistedIndexStatus: { loaded: boolean; symbolCount?: number; loading: boolean }
   codeGraphJustEnabled: boolean
   onToggle: (key: string, value: boolean) => Promise<void>
@@ -27,13 +31,13 @@ interface CodeIntelligenceSectionProps {
   onSemanticSearchToggle: (enabled: boolean) => Promise<void>
   onStartIndex: () => Promise<void>
   isStartingIndex: boolean
-  onShowOllamaSetup: () => void
+  onShowEmbeddingSetup: () => void
 }
 
 export default function CodeIntelligenceSection({
   workspaceId,
   settings,
-  ollamaStatus,
+  embeddingStatus,
   persistedIndexStatus,
   codeGraphJustEnabled,
   onToggle,
@@ -41,7 +45,7 @@ export default function CodeIntelligenceSection({
   onSemanticSearchToggle,
   onStartIndex,
   isStartingIndex,
-  onShowOllamaSetup
+  onShowEmbeddingSetup
 }: CodeIntelligenceSectionProps): React.JSX.Element {
   const [showAiDescInfo, setShowAiDescInfo] = useState(false)
 
@@ -98,8 +102,8 @@ export default function CodeIntelligenceSection({
         {/* Semantic Search */}
         <div className="py-3 first:pt-0 last:pb-0">
           <ToggleRow
-            label="Semantic Search (Ollama)"
-            description="Enable natural language code search using local embeddings."
+            label="Semantic Search"
+            description="Enable natural language code search using local embeddings (no external tools required)."
             checked={!!settings.semanticSearchEnabled}
             onChange={onSemanticSearchToggle}
           />
@@ -108,22 +112,27 @@ export default function CodeIntelligenceSection({
         {/* Semantic search sub-settings (shown when enabled) */}
         {!!settings.semanticSearchEnabled && (
           <div className="py-3 space-y-3 border-t border-border-subtle">
-            {/* Ollama status badge */}
+            {/* Embedding model status badge */}
             <div className="flex items-center gap-2">
               <Search size={12} className="text-text-secondary" />
-              <span className="text-xs text-text-secondary">Ollama:</span>
-              {ollamaStatus?.running ? (
+              <span className="text-xs text-text-secondary">Embedding model:</span>
+              {embeddingStatus?.ready ? (
                 <span className="flex items-center gap-1 text-xs text-success">
                   <Check size={10} />
-                  Running{ollamaStatus.version ? ` (v${ollamaStatus.version})` : ''}
+                  Ready
+                </span>
+              ) : embeddingStatus?.cached ? (
+                <span className="flex items-center gap-1 text-xs text-text-secondary">
+                  <Check size={10} />
+                  Cached (loads on first use)
                 </span>
               ) : (
                 <button
-                  onClick={onShowOllamaSetup}
-                  className="text-xs text-warning hover:text-warning/80 flex items-center gap-1"
+                  onClick={onShowEmbeddingSetup}
+                  className="text-xs text-primary hover:text-primary-hover flex items-center gap-1"
                 >
-                  <AlertTriangle size={10} />
-                  Not running — click to set up
+                  <Info size={10} />
+                  Not downloaded — click to set up
                 </button>
               )}
             </div>
@@ -202,34 +211,32 @@ export default function CodeIntelligenceSection({
               )}
             </div>
 
-            {/* Start / Re-index button */}
-            {ollamaStatus?.running && (
-              <div className="pl-1">
-                <button
-                  onClick={onStartIndex}
-                  disabled={isStartingIndex}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-primary bg-primary/10 border border-primary/30 hover:bg-primary/20 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isStartingIndex ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : persistedIndexStatus.loaded ? (
-                    <RefreshCw size={12} />
-                  ) : (
-                    <Search size={12} />
-                  )}
-                  {isStartingIndex
-                    ? 'Starting…'
-                    : persistedIndexStatus.loaded
-                      ? 'Re-index'
-                      : 'Start Indexing'}
-                </button>
-                <p className="text-xs text-text-muted mt-1">
-                  {persistedIndexStatus.loaded
-                    ? 'Rebuild the semantic search index from scratch.'
-                    : 'Scan the codebase and build the semantic search index.'}
-                </p>
-              </div>
-            )}
+            {/* Start / Re-index button — always available when semantic search is enabled */}
+            <div className="pl-1">
+              <button
+                onClick={onStartIndex}
+                disabled={isStartingIndex}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-primary bg-primary/10 border border-primary/30 hover:bg-primary/20 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isStartingIndex ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : persistedIndexStatus.loaded ? (
+                  <RefreshCw size={12} />
+                ) : (
+                  <Search size={12} />
+                )}
+                {isStartingIndex
+                  ? 'Starting…'
+                  : persistedIndexStatus.loaded
+                    ? 'Re-index'
+                    : 'Start Indexing'}
+              </button>
+              <p className="text-xs text-text-muted mt-1">
+                {persistedIndexStatus.loaded
+                  ? 'Rebuild the semantic search index from scratch.'
+                  : 'Scan the codebase and build the semantic search index.'}
+              </p>
+            </div>
 
             {/* Indexing progress */}
             <IndexingProgressPanel workspaceId={workspaceId} />
