@@ -1,41 +1,61 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
-import type { UserProfile, CoreAgentAlias } from '../../../shared/types'
+import { USER_AVATAR_KEY } from '@renderer/utils/agentIdentity'
+import type { UserProfile, CoreAgentPrompt } from '../../../shared/types'
 
 interface ProfileState {
   profile: UserProfile | null
-  coreAgentAliases: CoreAgentAlias[]
+  coreAgentPrompts: CoreAgentPrompt[]
   isLoading: boolean
   hasCompletedWelcome: boolean
 
   loadProfile: () => Promise<void>
   saveProfile: (displayName: string, avatarKey: string) => Promise<void>
-  loadCoreAgentAliases: () => Promise<void>
-  saveCoreAgentAlias: (
-    agentRole: 'generalist' | 'coordinator',
-    alias: string | null,
-    avatarKey: string | null
+
+  // Core Agent Prompts
+  loadCoreAgentPrompts: () => Promise<void>
+  saveCoreAgentPrompt: (
+    agentRole: 'da-vinci',
+    mode: 'plan' | 'build',
+    promptText: string
   ) => Promise<void>
-  getCoreAgentAlias: (role: 'generalist' | 'coordinator') => CoreAgentAlias | undefined
+  resetCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build') => Promise<void>
+  getCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build') => CoreAgentPrompt | undefined
 }
 
 export const useProfileStore = create<ProfileState>((set, get) => ({
   profile: null,
-  coreAgentAliases: [],
+  coreAgentPrompts: [],
   isLoading: true,
   hasCompletedWelcome: false,
 
   loadProfile: async () => {
     set({ isLoading: true })
     try {
-      const profile = await window.api.getUserProfile()
-      set({
-        profile,
-        hasCompletedWelcome: profile !== null,
-        isLoading: false
-      })
-      // Also load core agent aliases
-      await get().loadCoreAgentAliases()
+      // Try to read from user specialist record first
+      const specialists = await window.api.listSpecialists()
+      const userSpec = specialists.find((s) => s.agentId === 'user')
+      if (userSpec) {
+        set({
+          profile: {
+            id: userSpec.id,
+            displayName: userSpec.alias ?? userSpec.displayName,
+            avatarKey: USER_AVATAR_KEY,
+            createdAt: userSpec.createdAt,
+            updatedAt: userSpec.updatedAt
+          },
+          hasCompletedWelcome: true,
+          isLoading: false
+        })
+      } else {
+        // Fallback to legacy user_profile table
+        const profile = await window.api.getUserProfile()
+        set({
+          profile,
+          hasCompletedWelcome: profile !== null,
+          isLoading: false
+        })
+      }
     } catch (error) {
       rendererLog.error('Failed to load user profile:', error)
       set({ isLoading: false })
@@ -44,43 +64,73 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
   saveProfile: async (displayName: string, avatarKey: string) => {
     try {
-      const profile = await window.api.upsertUserProfile({ displayName, avatarKey })
-      set({ profile, hasCompletedWelcome: true })
+      // Find user specialist and update it
+      const specialists = await window.api.listSpecialists()
+      const userSpec = specialists.find((s) => s.agentId === 'user')
+      if (userSpec) {
+        await window.api.updateSpecialist({
+          id: userSpec.id,
+          displayName,
+          avatarUrl: avatarKey
+        })
+      } else {
+        // Fallback: legacy path
+        await window.api.upsertUserProfile({ displayName, avatarKey })
+      }
+      // Reload to get fresh data
+      await get().loadProfile()
     } catch (error) {
       rendererLog.error('Failed to save user profile:', error)
       throw error
     }
   },
 
-  loadCoreAgentAliases: async () => {
+  // ── Core Agent Prompts ──
+
+  loadCoreAgentPrompts: async () => {
     try {
-      const aliases = await window.api.listCoreAgentAliases()
-      set({ coreAgentAliases: aliases })
+      const prompts = await window.api.listCoreAgentPrompts()
+      set({ coreAgentPrompts: prompts })
     } catch (error) {
-      rendererLog.error('Failed to load core agent aliases:', error)
+      rendererLog.error('Failed to load core agent prompts:', error)
     }
   },
 
-  saveCoreAgentAlias: async (
-    agentRole: 'generalist' | 'coordinator',
-    alias: string | null,
-    avatarKey: string | null
+  saveCoreAgentPrompt: async (
+    agentRole: 'da-vinci',
+    mode: 'plan' | 'build',
+    promptText: string
   ) => {
     try {
-      const updated = await window.api.upsertCoreAgentAlias({ agentRole, alias, avatarKey })
+      const updated = await window.api.upsertCoreAgentPrompt({ agentRole, mode, promptText })
       set((state) => ({
-        coreAgentAliases: [
-          ...state.coreAgentAliases.filter((a) => a.agentRole !== agentRole),
+        coreAgentPrompts: [
+          ...state.coreAgentPrompts.filter((p) => !(p.agentRole === agentRole && p.mode === mode)),
           updated
         ]
       }))
     } catch (error) {
-      rendererLog.error('Failed to save core agent alias:', error)
+      rendererLog.error('Failed to save core agent prompt:', error)
       throw error
     }
   },
 
-  getCoreAgentAlias: (role: 'generalist' | 'coordinator') => {
-    return get().coreAgentAliases.find((a) => a.agentRole === role)
+  resetCoreAgentPrompt: async (agentRole: 'da-vinci', mode: 'plan' | 'build') => {
+    try {
+      const updated = await window.api.resetCoreAgentPrompt({ agentRole, mode })
+      set((state) => ({
+        coreAgentPrompts: [
+          ...state.coreAgentPrompts.filter((p) => !(p.agentRole === agentRole && p.mode === mode)),
+          updated
+        ]
+      }))
+    } catch (error) {
+      rendererLog.error('Failed to reset core agent prompt:', error)
+      throw error
+    }
+  },
+
+  getCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build') => {
+    return get().coreAgentPrompts.find((p) => p.agentRole === agentRole && p.mode === mode)
   }
 }))

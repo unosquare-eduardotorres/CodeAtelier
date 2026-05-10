@@ -1,8 +1,87 @@
+import { readFile } from 'node:fs/promises'
+import { extname, resolve, relative } from 'node:path'
 import simpleGit from 'simple-git'
 import type { RepoInfo } from '../../shared/types'
 import log from 'electron-log'
 
 const logger = log.scope('Repo')
+
+/** Map file extensions to Prism language identifiers */
+const EXT_TO_LANGUAGE: Record<string, string> = {
+  '.ts': 'typescript',
+  '.tsx': 'tsx',
+  '.js': 'javascript',
+  '.jsx': 'jsx',
+  '.json': 'json',
+  '.css': 'css',
+  '.scss': 'scss',
+  '.html': 'html',
+  '.md': 'markdown',
+  '.yml': 'yaml',
+  '.yaml': 'yaml',
+  '.sql': 'sql',
+  '.sh': 'bash',
+  '.bash': 'bash',
+  '.py': 'python',
+  '.rs': 'rust',
+  '.go': 'go',
+  '.java': 'java',
+  '.c': 'c',
+  '.cpp': 'cpp',
+  '.h': 'c',
+  '.vue': 'markup',
+  '.xml': 'xml',
+  '.svg': 'xml',
+  '.toml': 'toml',
+  '.ini': 'ini',
+  '.env': 'bash',
+  '.graphql': 'graphql',
+  '.gql': 'graphql',
+  '.prisma': 'graphql',
+  '.dockerfile': 'docker',
+  '.rb': 'ruby',
+  '.swift': 'swift',
+  '.kt': 'kotlin'
+}
+
+/**
+ * Ensure filePath resolves within repoPath — prevents path traversal attacks.
+ * Throws if the resolved path escapes the repo root (e.g. ../../etc/passwd).
+ */
+export function assertWithinRepo(repoPath: string, filePath: string): string {
+  const absoluteRepo = resolve(repoPath)
+  const absoluteFile = resolve(repoPath, filePath)
+  const rel = relative(absoluteRepo, absoluteFile)
+  if (rel.startsWith('..') || rel.startsWith('/')) {
+    throw new Error(`Path traversal denied: ${filePath}`)
+  }
+  return absoluteFile
+}
+
+function detectLanguage(filePath: string): string {
+  const ext = extname(filePath).toLowerCase()
+  // Handle Dockerfile without extension
+  if (filePath.toLowerCase().endsWith('dockerfile')) return 'docker'
+  return EXT_TO_LANGUAGE[ext] ?? 'text'
+}
+
+interface FileDetailEntry {
+  filePath: string
+  changeType: 'created' | 'modified' | 'deleted'
+  staged: boolean
+}
+
+interface FileDiffResult {
+  oldContent: string
+  newContent: string
+  language: string
+}
+
+interface PushStatusResult {
+  branch: string
+  commitsAhead: number
+  hasRemote: boolean
+}
 
 export class RepoService {
   /**
@@ -109,6 +188,156 @@ export class RepoService {
       logger.warn('Failed to check uncommitted changes:', e)
       return { hasChanges: false, fileCount: 0, files: [] }
     }
+  }
+
+  /**
+   * Get detailed uncommitted file status for a conversation.
+   * Cross-references tracked files from DB with actual git status.
+   */
+  async getUncommittedFileDetails(
+    repoPath: string,
+    trackedFiles: string[]
+  ): Promise<FileDetailEntry[]> {
+    if (trackedFiles.length === 0) return []
+
+    try {
+      const git = simpleGit(repoPath)
+      const status = await git.status()
+
+      const stagedSet = new Set([
+        ...status.staged,
+        ...status.renamed.filter((r) => status.staged.includes(r.to)).map((r) => r.to)
+      ])
+      const modifiedSet = new Set(status.modified)
+      const createdSet = new Set([...status.created, ...status.not_added])
+      const deletedSet = new Set(status.deleted)
+      const allChanged = new Set([
+        ...modifiedSet,
+        ...createdSet,
+        ...deletedSet,
+        ...status.renamed.map((r) => r.to)
+      ])
+
+      return trackedFiles
+        .filter((fp) => allChanged.has(fp))
+        .map((fp) => ({
+          filePath: fp,
+          changeType: deletedSet.has(fp) ? 'deleted' : createdSet.has(fp) ? 'created' : 'modified',
+          staged: stagedSet.has(fp)
+        }))
+    } catch (e) {
+      logger.warn('Failed to get uncommitted file details:', e)
+      return []
+    }
+  }
+
+  /**
+   * Get old (HEAD) and new (working tree) content for side-by-side diff.
+   * For new files: oldContent = ''. For deleted files: newContent = ''.
+   */
+  async getFileDiff(repoPath: string, filePath: string): Promise<FileDiffResult> {
+    assertWithinRepo(repoPath, filePath)
+    const git = simpleGit(repoPath)
+    const language = detectLanguage(filePath)
+
+    // Normalize: resolve handles both absolute and relative paths correctly.
+    // join('/a/b', '/c/d') = '/a/b/c/d' (wrong for absolute paths)
+    // resolve('/a/b', '/c/d') = '/c/d' (correct — uses last absolute path)
+    const absoluteRepo = resolve(repoPath)
+    const absoluteFile = resolve(repoPath, filePath)
+    // Always produce a relative path for git show — absolute paths break git.show
+    const normalizedPath = relative(absoluteRepo, absoluteFile)
+
+    let oldContent = ''
+    let newContent = ''
+
+    // Get old content from HEAD using normalized relative path
+    try {
+      oldContent = await git.show([`HEAD:${normalizedPath}`])
+    } catch (e) {
+      // File is new (untracked) — no HEAD version. Log for debugging path issues.
+      logger.debug(`git show HEAD:${normalizedPath} failed (file may be new):`, e)
+      oldContent = ''
+    }
+
+    // Get new content from working tree
+    try {
+      newContent = await readFile(absoluteFile, 'utf-8')
+    } catch {
+      // File was deleted
+      newContent = ''
+    }
+
+    return { oldContent, newContent, language }
+  }
+
+  /**
+   * Stage specific files and commit.
+   */
+  async commitFiles(
+    repoPath: string,
+    filePaths: string[],
+    message: string
+  ): Promise<{ commitHash: string }> {
+    if (filePaths.length === 0) throw new Error('No files to commit')
+    if (!message.trim()) throw new Error('Commit message is required')
+    filePaths.forEach((fp) => assertWithinRepo(repoPath, fp))
+
+    const git = simpleGit(repoPath)
+    await git.add(filePaths)
+    const result = await git.commit(message, filePaths)
+    logger.info(`Committed ${filePaths.length} files: ${result.commit}`)
+    return { commitHash: result.commit }
+  }
+
+  /**
+   * Push current branch to origin.
+   */
+  async push(repoPath: string): Promise<{ branch: string; remote: string }> {
+    const git = simpleGit(repoPath)
+    const branch = await git.revparse(['--abbrev-ref', 'HEAD'])
+    await git.push('origin', branch)
+    logger.info(`Pushed branch ${branch} to origin`)
+    return { branch, remote: 'origin' }
+  }
+
+  /**
+   * Get push status — how many commits ahead of origin.
+   */
+  async getPushStatus(repoPath: string): Promise<PushStatusResult> {
+    const git = simpleGit(repoPath)
+    let branch = 'main'
+    try {
+      branch = await git.revparse(['--abbrev-ref', 'HEAD'])
+    } catch {
+      // Unborn branch
+    }
+
+    let hasRemote = false
+    try {
+      const remotes = await git.getRemotes(true)
+      hasRemote = remotes.some((r) => r.name === 'origin')
+    } catch {
+      // No remotes
+    }
+
+    let commitsAhead = 0
+    if (hasRemote) {
+      try {
+        const log = await git.log([`origin/${branch}..HEAD`])
+        commitsAhead = log.total
+      } catch {
+        // Remote branch may not exist yet — all local commits are ahead
+        try {
+          const log = await git.log()
+          commitsAhead = log.total
+        } catch {
+          // Empty repo
+        }
+      }
+    }
+
+    return { branch, commitsAhead, hasRemote }
   }
 }
 

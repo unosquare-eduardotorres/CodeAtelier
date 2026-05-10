@@ -1,5 +1,5 @@
 import { getDatabase } from '../index'
-import type { Skill } from '../../../shared/types'
+import type { BudgetTier, Skill } from '../../../shared/types'
 
 interface SkillRow {
   id: string
@@ -11,6 +11,13 @@ interface SkillRow {
   last_updated_date: string | null
   created_at: string
   updated_at: string
+  summary_full: string | null
+  summary_standard: string | null
+  summary_minimal: string | null
+  summary_hash: string | null
+  tier1_json: string | null
+  tier2_instructions: string | null
+  enrichment_json: string | null
 }
 
 function mapRow(row: SkillRow): Skill {
@@ -23,7 +30,14 @@ function mapRow(row: SkillRow): Skill {
     isActive: row.is_active === 1,
     lastUpdatedDate: row.last_updated_date,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    summaryFull: row.summary_full,
+    summaryStandard: row.summary_standard,
+    summaryMinimal: row.summary_minimal,
+    summaryHash: row.summary_hash,
+    tier1Json: row.tier1_json,
+    tier2Instructions: row.tier2_instructions,
+    enrichmentJson: row.enrichment_json
   }
 }
 
@@ -34,6 +48,8 @@ export interface CreateSkillInput {
   filePath: string
   isActive?: boolean
   lastUpdatedDate?: string
+  tier1Json?: string
+  tier2Instructions?: string
 }
 
 export interface UpdateSkillInput {
@@ -75,8 +91,8 @@ export class SkillRepository {
     const row = db
       .prepare(
         `
-      INSERT INTO skills (name, description, filename, file_path, is_active, last_updated_date)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO skills (name, description, filename, file_path, is_active, last_updated_date, tier1_json, tier2_instructions)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING *
     `
       )
@@ -86,7 +102,9 @@ export class SkillRepository {
         data.filename,
         data.filePath,
         data.isActive !== false ? 1 : 0,
-        data.lastUpdatedDate ?? null
+        data.lastUpdatedDate ?? null,
+        data.tier1Json ?? null,
+        data.tier2Instructions ?? null
       ) as SkillRow
     return mapRow(row)
   }
@@ -139,36 +157,6 @@ export class SkillRepository {
     db.prepare('DELETE FROM skills').run()
   }
 
-  upsertByFilename(data: CreateSkillInput): Skill {
-    const existing = this.findByFilename(data.filename)
-    if (existing) {
-      // Update existing — preserve active status
-      const db = getDatabase()
-      const row = db
-        .prepare(
-          `
-        UPDATE skills SET
-          name = COALESCE(?, name),
-          description = COALESCE(?, description),
-          file_path = COALESCE(?, file_path),
-          last_updated_date = COALESCE(?, last_updated_date),
-          updated_at = datetime('now')
-        WHERE filename = ?
-        RETURNING *
-      `
-        )
-        .get(
-          data.name,
-          data.description ?? null,
-          data.filePath,
-          data.lastUpdatedDate ?? null,
-          data.filename
-        ) as SkillRow
-      return mapRow(row)
-    }
-    return this.create(data)
-  }
-
   setActive(id: string, isActive: boolean): Skill {
     const db = getDatabase()
     const row = db
@@ -183,6 +171,62 @@ export class SkillRepository {
 
     if (!row) throw new Error(`Skill not found: ${id}`)
     return mapRow(row)
+  }
+
+  /** Store pre-computed semantic summaries for a skill */
+  updateSummaries(
+    skillId: string,
+    summaries: { full: string; standard: string; minimal: string; hash: string }
+  ): void {
+    const db = getDatabase()
+    db.prepare(
+      `
+      UPDATE skills SET
+        summary_full = ?,
+        summary_standard = ?,
+        summary_minimal = ?,
+        summary_hash = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `
+    ).run(summaries.full, summaries.standard, summaries.minimal, summaries.hash, skillId)
+  }
+
+  /** Update tier1/tier2 progressive loading data for a skill */
+  updateTiers(skillId: string, tier1Json: string, tier2Instructions: string): void {
+    const db = getDatabase()
+    db.prepare(
+      `
+      UPDATE skills SET
+        tier1_json = ?,
+        tier2_instructions = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `
+    ).run(tier1Json, tier2Instructions, skillId)
+  }
+
+  /** Store Haiku-generated enrichment metadata for a skill */
+  updateEnrichment(skillId: string, enrichmentJson: string): void {
+    const db = getDatabase()
+    db.prepare(
+      `UPDATE skills SET enrichment_json = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(enrichmentJson, skillId)
+  }
+
+  /** Get pre-computed summary for a specific budget tier */
+  getSummary(skillId: string, tier: BudgetTier): string | null {
+    const col =
+      tier === 'full'
+        ? 'summary_full'
+        : tier === 'standard'
+          ? 'summary_standard'
+          : 'summary_minimal'
+    const db = getDatabase()
+    const row = db.prepare(`SELECT ${col} as summary FROM skills WHERE id = ?`).get(skillId) as
+      | { summary: string | null }
+      | undefined
+    return row?.summary ?? null
   }
 }
 

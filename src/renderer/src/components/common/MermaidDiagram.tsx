@@ -26,8 +26,8 @@ function getMermaid(): Promise<typeof import('mermaid').default> {
     m.initialize({
       startOnLoad: false,
       theme: 'dark',
-      securityLevel: 'strict',
-      fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace",
+      securityLevel: 'loose', // 'strict' blocks gitGraph and some other diagram types
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       themeVariables: {
         primaryColor: '#1E2E33',
         primaryTextColor: '#C8B89A',
@@ -231,8 +231,22 @@ export default function MermaidDiagram({
       await navigator.clipboard.writeText(definition)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      /* ignore */
+    } catch (err) {
+      // Fallback: textarea + execCommand for restricted Electron contexts
+      try {
+        const textarea = document.createElement('textarea')
+        textarea.value = definition
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } catch (fallbackErr) {
+        console.error('MermaidDiagram: clipboard copy failed', err, fallbackErr)
+      }
     }
   }, [definition])
 

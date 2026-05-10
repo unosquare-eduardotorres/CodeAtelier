@@ -4,23 +4,72 @@
 
 ---
 
+### [DECISION] Two-Layer Architecture — Orchestrator Removed
+
+> 2026-03-28
+
+Collapsed the three-layer model (Generalist → Orchestrator → Specialists) into a two-layer model (Generalist → Specialists). The Generalist now directly handles task decomposition via `decompose()` and specialist coordination via `executeWithSubAgents()` with SDK SubAgent spawning.
+
+**Rationale:** The Orchestrator was a dedicated intermediary that added an unnecessary LLM hop per request — burning tokens on routing that the Generalist could handle directly. Removing it saves ~1,100 tokens and 3s per handoff. The SubAgent orchestration prompt is now 5 lines (312 chars) instead of a full Orchestrator service.
+
+**Supersedes:** "Generalist-First Architecture" decision from 2026-03-21 (which described the Orchestrator as part of the flow).
+
+---
+
+### [DECISION] Claude Agent SDK Replaces CLI Spawn
+
+> 2026-03-25
+
+Migrated from `child_process.spawn` with NDJSON streaming to the Claude Agent SDK `query()` async generator. SDK provides: native SubAgent spawning via `agents` parameter, per-tool-use approval hooks, session management, and structured streaming.
+
+**Rationale:** SDK eliminates the fragile NDJSON parsing layer, provides first-class SubAgent support (no manual process management), and enables tool approval hooks for user control. CLI spawn required custom buffer flushing, exit code handling, and process lifecycle management.
+
+**Supersedes:** "Claude CLI via spawn (not API)" decision from 2026-03-21.
+
+---
+
+### [DECISION] Adaptive Prompt Budgeting by Turn Count
+
+> 2026-03-29
+
+System prompt shrinks as conversation progresses. Turn 1 gets full context (CLAUDE.md + memory + all sections). Turn 2-4 gets standard context. Turn 5+ gets minimal context (no CLAUDE.md — model already has it in conversation history).
+
+**Rationale:** After turn 1, the LLM has already seen the project context. Re-injecting 1,990 chars of CLAUDE.md on every subsequent turn is pure waste. Adaptive budgeting saves ~569 tokens per turn from turn 5 onward.
+
+---
+
+### [DECISION] Specialist Skills Restricted to Build Mode Only
+
+> 2026-03-29
+
+Plan-mode specialists (investigations, analysis) no longer receive skill content. Skills are implementation guides — not needed for read-only analysis.
+
+**Rationale:** Skills like electron-pro (21K chars) and dotnet-architect (19K chars) were being truncated and injected into investigation specialists that only read files. Restricting to build mode saves 571-2,000 tokens per plan-mode specialist.
+
+---
+
+### [DECISION] Performance Target — 30% Token Reduction Verified
+
+> 2026-03-30
+
+Deep audit verified current token usage across all LLM call paths. After Wave 4 optimizations:
+
+- Investigation total: ~3,815 → ~2,685 tokens (-30%)
+- Simple Q&A: ~3,815 → ~2,510 tokens (-34%)
+- Investigation latency: 30-100s → 12-25s (-66%)
+- Specialist BUILD prompt: ~2,398 → ~1,720 tokens (-28%)
+
+**Next target:** Wave 5 strategies (NEW-S1 through NEW-S10) project further reductions to B+ grade. Key remaining bottlenecks: specialist BUILD CLAUDE.md (4,463 chars), skills auto-loading for simple tasks, and unnecessary decomposition LLM calls.
+
+---
+
 ### [DECISION] Generalist-First Architecture
 
 > 2026-03-21
 
-User always talks to the Generalist agent (long-lived Claude CLI session). The Generalist detects inflection points and hands off to the Orchestrator, which spawns specialists. This avoids multi-agent confusion and keeps a single conversational thread.
+User always talks to the Generalist agent. The Generalist handles 80% of interactions directly (Q&A, review, brainstorming). For specialist work, it emits a handoff block and delegates via SDK SubAgents.
 
-**Rationale:** Users expect one chat partner, not a committee. The generalist handles 80% of interactions (Q&A, review, brainstorming) without spawning any processes.
-
----
-
-### [DECISION] Claude CLI via spawn (not API)
-
-> 2026-03-21
-
-Use Claude CLI (`claude`) via `child_process.spawn` with `--input-format stream-json` and `--output-format stream-json` for NDJSON streaming. No API keys needed — leverages Claude Max subscription.
-
-**Rationale:** Zero configuration for users. No proxy servers. No API key management. Claude CLI handles auth via `claude login`.
+**Rationale:** Users expect one chat partner, not a committee.
 
 ---
 
@@ -28,9 +77,9 @@ Use Claude CLI (`claude`) via `child_process.spawn` with `--input-format stream-
 
 > 2026-03-21
 
-Raw SQL with repository pattern instead of an ORM like Prisma or TypeORM. Each domain entity gets its own repository class with a singleton export.
+Raw SQL with repository pattern. Each domain entity gets its own repository class with a singleton export.
 
-**Rationale:** Synchronous API (better-sqlite3 is sync), zero setup, single-file database, fast for local-first desktop app. ORM adds complexity without benefit for 8 tables.
+**Rationale:** Synchronous API, zero setup, single-file database, fast for local-first desktop app.
 
 ---
 
@@ -38,19 +87,19 @@ Raw SQL with repository pattern instead of an ORM like Prisma or TypeORM. Each d
 
 > 2026-03-22
 
-Each specialist agent works in its own git worktree branch during parallel execution. Worktrees are merged back to the main branch after completion.
+Each specialist agent works in its own git worktree branch during parallel execution.
 
-**Rationale:** Prevents file conflicts when multiple specialists edit code simultaneously. Git worktrees are lightweight and share the same .git directory.
+**Rationale:** Prevents file conflicts when multiple specialists edit code simultaneously.
 
 ---
 
-### [DECISION] Plan/Build Mode with CLI Session Resume
+### [DECISION] Plan/Build Mode with Session Resume
 
 > 2026-03-22
 
-Plan mode uses `--permission-mode plan` (read-only). Build mode uses `--dangerously-skip-permissions` (full access). Mode switch kills and re-spawns the CLI process with `--resume sessionId` to preserve conversation history.
+Plan mode uses `--permission-mode plan` (read-only). Build mode uses full permissions. Mode switch preserves conversation history via session resume.
 
-**Rationale:** Security boundary between read-only analysis and code modification. Session resume avoids losing context on mode switch.
+**Rationale:** Security boundary between read-only analysis and code modification.
 
 ---
 
@@ -58,9 +107,9 @@ Plan mode uses `--permission-mode plan` (read-only). Build mode uses `--dangerou
 
 > 2026-03-22
 
-Project brain stored as `.brain/*.md` files in the workspace repo, not in SQLite. Files are append-friendly markdown with periodic compaction.
+Project brain stored as `.brain/*.md` files in the workspace repo. Append-friendly markdown with periodic compaction.
 
-**Rationale:** 1) Git-trackable — team members benefit from shared context. 2) Human-readable — developers can read/edit brain files directly. 3) Simple — no schema migrations needed. 4) Portable — brain travels with the repo.
+**Rationale:** Git-trackable, human-readable, portable — brain travels with the repo.
 
 ---
 
@@ -68,32 +117,38 @@ Project brain stored as `.brain/*.md` files in the workspace repo, not in SQLite
 
 > 2026-03-23
 
-Evaluated three tiers of knowledge persistence:
+- Tier 1 (.brain/ markdown): Working memory — always injected. Implemented.
+- Tier 2 (local vectors): Long-term memory via all-MiniLM-L6-v2 + vectra. Chosen for future phase.
+- Tier 3 (cloud vectors): Rejected — contradicts local-first philosophy.
 
-- **Tier 1 (.brain/ markdown):** Compact curated working memory — always injected into system prompt. Already implemented.
-- **Tier 2 (local vectors):** Long-term searchable memory using local embedding model (all-MiniLM-L6-v2 via ONNX) + local file-based vector DB (vectra). Selective retrieval — only top-K relevant chunks per query. **Chosen for next phase.**
-- **Tier 3 (cloud vectors — Pinecone/Weaviate):** Rejected for now — requires API keys and network, contradicts Agent Studio's local-first, no-API-key philosophy.
-
-**Key insight:** `.brain/` = "what matters now" (working memory). Vectors = "what did we decide 3 weeks ago about X" (long-term memory). They complement each other.
-
-**Cost analysis:** Local embedding ~5ms/query, vector search ~2ms/query. Zero API cost. ~90MB model bundled with app. No network calls.
-
-**Rationale:** Keeps Agent Studio fully offline and API-key-free while enabling semantic search across all past conversations, decisions, and code architecture. Toggle in settings allows users to opt in/out per workspace.
+**Rationale:** `.brain/` = "what matters now". Vectors = "what did we decide 3 weeks ago". Zero API cost, fully offline.
 
 ---
 
-### [DECISION] Code Audit — Security & Performance Fixes Applied
+### [DECISION] Code Audit — Security & Performance Fixes
 
 > 2026-03-23
 
-Applied comprehensive 3-specialist code audit (Electron, React, Agentic):
+Applied 14 fixes from 3-specialist audit. Critical: validateSender() added to 37 IPC handlers. Path validation on file read/write. React perf fixes for streaming.
 
-- **Security (Critical):** Added `validateSender()` to 37 unprotected IPC handlers across 4 modules. Added path validation for `WORKSPACE_READ_FILE`/`WORKSPACE_WRITE_FILE` (allowlist: `.claude/`, `skills/`, `CLAUDE.md`).
-- **Reliability:** Fixed async `before-quit` handler (Electron doesn't await async — now uses `event.preventDefault()` + guard). Added 10-min timeout to specialist processes (SIGTERM → SIGKILL escalation).
-- **Performance:** Zustand individual selectors in MessageList, React.memo on MessageBubble, extracted OrchestratorDot component.
-- **Observability:** Generalist restart now notifies UI, skill truncation logged, orchestrator session map bounded (100 max with LRU eviction).
-- **Cleanup:** Removed dead `waitForReady()`, added ErrorBoundary per feature panel, minimal production menu (preserves Cmd+C/V/X/Z).
+---
 
-**Rationale:** Security hardening was critical — `workspace-deploy.ipc.ts` had 18 handlers with zero sender validation, including arbitrary file read/write. React perf fixes reduce unnecessary re-renders during streaming.
+### [DEFERRED] Message-Intent Classifier (Gap 3: 8→10)
+
+> 2026-04-06
+
+Replace the plan reminder regex in `intent-detector.ts` with a lightweight NLU classifier. Currently at Gap 3 score 8/10 — the regex-based plan detection works but occasionally misses nuanced phrasing.
+
+**Scope:** ~4h. Touches `intent-detector.ts` (main change), `generalist-prompt-assembler.ts` (plan reminder injection), and tests.
+
+**Approach options:**
+
+1. Heuristic keyword classifier (zero-cost, fast, ~80% coverage improvement)
+2. Small local model via Ollama (high accuracy, adds latency + dependency)
+3. Claude Haiku one-shot classification (high accuracy, costs tokens per turn)
+
+**Why deferred:** Lower priority than the fence→tool migrations (items 1–3). The regex fallback works well enough at 8/10. Revisit after stabilizing the MCP tool protocol.
+
+**Prerequisite:** Telemetry from `[PIPELINE:plan-path]` logs confirming how often `regex=true tool=false` fires (i.e., how often the LLM misses the `emit_plan` tool and falls back to fence detection).
 
 ---

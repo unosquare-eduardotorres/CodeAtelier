@@ -1,159 +1,269 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Code Atelier</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Code Atelier</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
 
-    body {
-      background: #0F1517;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      overflow: hidden;
-      font-family: Georgia, 'Times New Roman', serif;
-      -webkit-app-region: drag;
-      user-select: none;
-    }
+      body {
+        background: #0f1517;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        overflow: hidden;
+        font-family: Georgia, 'Times New Roman', serif;
+        -webkit-app-region: drag;
+        user-select: none;
+      }
 
-    .splash-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 24px;
-      opacity: 0;
-      animation: fadeIn 1.5s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
-    }
+      .splash-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 24px;
+        opacity: 0;
+        animation: fadeIn 1.5s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
+      }
 
-    /* Diamond Sigil Icon */
-    .icon-container {
-      width: 80px;
-      height: 80px;
-      animation: scaleIn 2.2s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards;
-      transform: scale(0.92);
-      opacity: 0;
-    }
+      /* Diamond Sigil Icon */
+      .icon-container {
+        width: 80px;
+        height: 80px;
+        animation: scaleIn 2.2s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards;
+        transform: scale(0.92);
+        opacity: 0;
+      }
 
-    .icon-container svg {
-      width: 100%;
-      height: 100%;
-      filter: drop-shadow(0 8px 32px rgba(184, 151, 106, 0.15));
-    }
+      .icon-container svg {
+        width: 100%;
+        height: 100%;
+        filter: drop-shadow(0 8px 32px rgba(184, 151, 106, 0.15));
+      }
 
-    /* Brand Name */
-    .brand-name {
-      font-size: 20px;
-      font-weight: 400;
-      color: #C8B89A;
-      letter-spacing: 0.25em;
-      text-transform: uppercase;
-      opacity: 0;
-      animation: slideUp 2.0s cubic-bezier(0.16, 1, 0.3, 1) 0.5s forwards;
-    }
+      /* Brand Name */
+      .brand-name {
+        font-size: 20px;
+        font-weight: 400;
+        color: #c8b89a;
+        letter-spacing: 0.25em;
+        text-transform: uppercase;
+        opacity: 0;
+        animation: slideUp 2s cubic-bezier(0.16, 1, 0.3, 1) 0.5s forwards;
+      }
 
-    /* Decorative divider */
-    .divider {
-      width: 0;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(184, 151, 106, 0.4), transparent);
-      animation: expandLine 1.5s cubic-bezier(0.16, 1, 0.3, 1) 0.8s forwards;
-    }
+      /* Decorative divider */
+      .divider {
+        width: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(184, 151, 106, 0.4), transparent);
+        animation: expandLine 1.5s cubic-bezier(0.16, 1, 0.3, 1) 0.8s forwards;
+      }
 
-    /* Subtitle message */
-    .subtitle {
-      font-size: 13px;
-      font-weight: 400;
-      color: #8A9A9E;
-      letter-spacing: 0.08em;
-      font-style: italic;
-      opacity: 0;
-      animation: fadeIn 2.0s cubic-bezier(0.16, 1, 0.3, 1) 1.2s forwards;
-    }
+      /* Subtitle message */
+      .subtitle {
+        font-size: 13px;
+        font-weight: 400;
+        color: #8a9a9e;
+        letter-spacing: 0.08em;
+        font-style: italic;
+        opacity: 0;
+        animation: fadeIn 2s cubic-bezier(0.16, 1, 0.3, 1) 1.2s forwards;
+      }
 
-    /* Progress bar */
-    .progress-track {
-      width: 120px;
-      height: 2px;
-      background: rgba(184, 151, 106, 0.08);
-      border-radius: 1px;
-      overflow: hidden;
-      opacity: 0;
-      animation: fadeIn 1.0s ease 1.5s forwards;
-    }
+      /* Progress bar */
+      .progress-track {
+        width: 120px;
+        height: 2px;
+        background: rgba(184, 151, 106, 0.08);
+        border-radius: 1px;
+        overflow: hidden;
+        opacity: 0;
+        animation: fadeIn 1s ease 1.5s forwards;
+      }
 
-    .progress-bar {
-      width: 30%;
-      height: 100%;
-      background: linear-gradient(90deg, #8B6F4A, #B8976A, #C8B89A);
-      border-radius: 1px;
-      animation: shimmerProgress 2s ease-in-out infinite;
-    }
+      .progress-bar {
+        width: 30%;
+        height: 100%;
+        background: linear-gradient(90deg, #8b6f4a, #b8976a, #c8b89a);
+        border-radius: 1px;
+        animation: shimmerProgress 2s ease-in-out infinite;
+      }
 
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
 
-    @keyframes scaleIn {
-      from { transform: scale(0.92); opacity: 0; }
-      to { transform: scale(1); opacity: 1; }
-    }
+      @keyframes scaleIn {
+        from {
+          transform: scale(0.92);
+          opacity: 0;
+        }
+        to {
+          transform: scale(1);
+          opacity: 1;
+        }
+      }
 
-    @keyframes slideUp {
-      from { transform: translateY(12px); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
-    }
+      @keyframes slideUp {
+        from {
+          transform: translateY(12px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
 
-    @keyframes expandLine {
-      from { width: 0; }
-      to { width: 120px; }
-    }
+      @keyframes expandLine {
+        from {
+          width: 0;
+        }
+        to {
+          width: 120px;
+        }
+      }
 
-    @keyframes shimmerProgress {
-      0% { transform: translateX(-100%); }
-      50% { transform: translateX(250%); }
-      100% { transform: translateX(-100%); }
-    }
-  </style>
-</head>
-<body>
-  <div class="splash-container">
-    <!-- Inline Diamond Sigil SVG (simplified for splash) -->
-    <div class="icon-container">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
-        <rect width="1024" height="1024" rx="224" fill="#1C272D"/>
-        <rect x="24" y="24" width="976" height="976" rx="200" fill="none" stroke="#B8976A" stroke-width="2" opacity="0.08"/>
-        <g transform="translate(512,440)">
-          <rect x="-280" y="-280" width="560" height="560" rx="24" transform="rotate(45)" stroke="#B8976A" stroke-width="14" fill="none"/>
-          <rect x="-244" y="-244" width="488" height="488" rx="16" transform="rotate(45)" stroke="#B8976A" stroke-width="4" fill="none" opacity="0.2"/>
-          <rect x="-210" y="-210" width="420" height="420" rx="12" transform="rotate(45)" stroke="#B8976A" stroke-width="2" fill="none" opacity="0.1"/>
-        </g>
-        <circle cx="512" cy="44" r="26" fill="#C4714A"/>
-        <circle cx="512" cy="44" r="16" fill="#D4885A" opacity="0.5"/>
-        <circle cx="512" cy="44" r="8" fill="#E8A070" opacity="0.35"/>
-        <circle cx="512" cy="836" r="20" fill="#C4714A" opacity="0.3"/>
-        <circle cx="116" cy="440" r="20" fill="#C4714A" opacity="0.22"/>
-        <circle cx="908" cy="440" r="20" fill="#C4714A" opacity="0.22"/>
-        <text x="512" y="470" fill="#C8B89A" font-size="176" font-family="JetBrains Mono,Menlo,monospace" font-weight="400" text-anchor="middle" letter-spacing="-4">&lt;/&gt;</text>
-        <line x1="280" y1="920" x2="744" y2="920" stroke="#B8976A" stroke-width="2" opacity="0.15"/>
-        <text x="512" y="936" fill="#B8976A" font-size="56" font-family="Georgia,Times New Roman,serif" font-weight="400" text-anchor="middle" letter-spacing="28">ATELIER</text>
-        <line x1="280" y1="956" x2="744" y2="956" stroke="#B8976A" stroke-width="2" opacity="0.15"/>
-      </svg>
+      @keyframes shimmerProgress {
+        0% {
+          transform: translateX(-100%);
+        }
+        50% {
+          transform: translateX(250%);
+        }
+        100% {
+          transform: translateX(-100%);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="splash-container">
+      <!-- Inline Diamond Sigil SVG (simplified for splash) -->
+      <div class="icon-container">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+          <rect width="1024" height="1024" rx="224" fill="#1C272D" />
+          <rect
+            x="24"
+            y="24"
+            width="976"
+            height="976"
+            rx="200"
+            fill="none"
+            stroke="#B8976A"
+            stroke-width="2"
+            opacity="0.08"
+          />
+          <g transform="translate(512,440)">
+            <rect
+              x="-280"
+              y="-280"
+              width="560"
+              height="560"
+              rx="24"
+              transform="rotate(45)"
+              stroke="#B8976A"
+              stroke-width="14"
+              fill="none"
+            />
+            <rect
+              x="-244"
+              y="-244"
+              width="488"
+              height="488"
+              rx="16"
+              transform="rotate(45)"
+              stroke="#B8976A"
+              stroke-width="4"
+              fill="none"
+              opacity="0.2"
+            />
+            <rect
+              x="-210"
+              y="-210"
+              width="420"
+              height="420"
+              rx="12"
+              transform="rotate(45)"
+              stroke="#B8976A"
+              stroke-width="2"
+              fill="none"
+              opacity="0.1"
+            />
+          </g>
+          <circle cx="512" cy="44" r="26" fill="#C4714A" />
+          <circle cx="512" cy="44" r="16" fill="#D4885A" opacity="0.5" />
+          <circle cx="512" cy="44" r="8" fill="#E8A070" opacity="0.35" />
+          <circle cx="512" cy="836" r="20" fill="#C4714A" opacity="0.3" />
+          <circle cx="116" cy="440" r="20" fill="#C4714A" opacity="0.22" />
+          <circle cx="908" cy="440" r="20" fill="#C4714A" opacity="0.22" />
+          <text
+            x="512"
+            y="470"
+            fill="#C8B89A"
+            font-size="176"
+            font-family="JetBrains Mono,Menlo,monospace"
+            font-weight="400"
+            text-anchor="middle"
+            letter-spacing="-4"
+          >
+            &lt;/&gt;
+          </text>
+          <line
+            x1="280"
+            y1="920"
+            x2="744"
+            y2="920"
+            stroke="#B8976A"
+            stroke-width="2"
+            opacity="0.15"
+          />
+          <text
+            x="512"
+            y="936"
+            fill="#B8976A"
+            font-size="56"
+            font-family="Georgia,Times New Roman,serif"
+            font-weight="400"
+            text-anchor="middle"
+            letter-spacing="28"
+          >
+            ATELIER
+          </text>
+          <line
+            x1="280"
+            y1="956"
+            x2="744"
+            y2="956"
+            stroke="#B8976A"
+            stroke-width="2"
+            opacity="0.15"
+          />
+        </svg>
+      </div>
+
+      <div class="brand-name">Code Atelier</div>
+
+      <div class="divider"></div>
+
+      <div class="subtitle">Preparing your workspace...</div>
+
+      <div class="progress-track">
+        <div class="progress-bar"></div>
+      </div>
     </div>
-
-    <div class="brand-name">Code Atelier</div>
-
-    <div class="divider"></div>
-
-    <div class="subtitle">Preparing your workspace...</div>
-
-    <div class="progress-track">
-      <div class="progress-bar"></div>
-    </div>
-  </div>
-</body>
+  </body>
 </html>

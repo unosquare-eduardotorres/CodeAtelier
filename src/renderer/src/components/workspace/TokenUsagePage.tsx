@@ -1,5 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Zap, Activity, Clock, Users, DollarSign, ShieldCheck } from 'lucide-react'
+import {
+  Zap,
+  Activity,
+  Clock,
+  Users,
+  DollarSign,
+  ShieldCheck,
+  Database,
+  MessageSquare
+} from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { Skeleton } from '@renderer/components/common'
 import type { TokenSummary, AgentSessionRecord } from '../../../../shared/types'
@@ -8,7 +17,16 @@ interface CostSummary {
   totalCostCents: number
   totalTokens: number
   sessionCount: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  cacheHitRate: number
   byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
+}
+
+interface ConversationCost {
+  conversationId: string
+  costCents: number
+  totalTokens: number
 }
 
 interface BudgetStatus {
@@ -26,10 +44,21 @@ function formatTokens(tokens: number): string {
   return tokens.toString()
 }
 
+/**
+ * Normalize SQLite datetime strings to unambiguous UTC.
+ * SQLite `datetime('now')` returns UTC without 'Z' suffix, e.g. "2026-04-29 14:05:00".
+ * `new Date("2026-04-29 14:05:00")` is implementation-defined — some engines treat it
+ * as local time. Appending 'Z' forces UTC interpretation.
+ */
+function normalizeDbDate(dateStr: string): string {
+  if (dateStr.endsWith('Z') || dateStr.includes('+') || dateStr.includes('T')) return dateStr
+  return dateStr + 'Z'
+}
+
 function formatDuration(startedAt: string, endedAt: string | null): string {
   if (!endedAt) return 'Running...'
-  const start = new Date(startedAt).getTime()
-  const end = new Date(endedAt).getTime()
+  const start = new Date(normalizeDbDate(startedAt)).getTime()
+  const end = new Date(normalizeDbDate(endedAt)).getTime()
   const diffMs = end - start
 
   if (diffMs < 1000) return '<1s'
@@ -39,7 +68,7 @@ function formatDuration(startedAt: string, endedAt: string | null): string {
 }
 
 function formatDate(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = new Date(normalizeDbDate(dateStr))
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffDays = Math.floor(diffMs / 86_400_000)
@@ -65,7 +94,23 @@ export default function TokenUsagePage(): React.JSX.Element {
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([])
   const [costSummary, setCostSummary] = useState<CostSummary | null>(null)
   const [budgetStatus, setBudgetStatus] = useState<BudgetStatus | null>(null)
+  const [conversationCosts, setConversationCosts] = useState<ConversationCost[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [cacheEfficiency, setCacheEfficiency] = useState<{
+    hitRate: number
+    savedTokens: number
+    totalInput: number
+    turns: number
+    turnBreakdown: Array<{
+      turn: number
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheCreationTokens: number
+      cacheHitRate: number
+      timestamp: number
+    }>
+  } | null>(null)
 
   useEffect(() => {
     if (!activeWorkspace) return
@@ -77,14 +122,18 @@ export default function TokenUsagePage(): React.JSX.Element {
       window.api.getWorkspaceTokenSummary({ workspaceId: activeWorkspace.id }),
       window.api.getRecentSessions({ workspaceId: activeWorkspace.id, limit: 50 }),
       window.api.getCostSummary({ workspaceId: activeWorkspace.id }),
-      window.api.checkBudget({ workspaceId: activeWorkspace.id })
+      window.api.checkBudget({ workspaceId: activeWorkspace.id }),
+      window.api.getWorkspaceConversationCosts({ workspaceId: activeWorkspace.id }),
+      window.api.getCacheEfficiency()
     ])
-      .then(([sum, sess, cost, budget]) => {
+      .then(([sum, sess, cost, budget, convCosts, cacheEff]) => {
         if (cancelled) return
         setSummary(sum)
         setSessions(sess)
         setCostSummary(cost)
         setBudgetStatus(budget)
+        setConversationCosts(convCosts)
+        setCacheEfficiency(cacheEff)
       })
       .catch((err) => {
         console.error('Failed to load token data:', err)
@@ -112,7 +161,7 @@ export default function TokenUsagePage(): React.JSX.Element {
         {/* Skeleton stat cards */}
         <div className="grid grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-surface-overlay border border-border-subtle rounded p-4">
+            <div key={i} className="bg-surface-overlay border border-border-subtle rounded-lg p-4">
               <Skeleton className="h-3 w-20 mb-3" />
               <Skeleton className="h-6 w-24 mb-2" />
               <Skeleton className="h-3 w-16" />
@@ -120,7 +169,7 @@ export default function TokenUsagePage(): React.JSX.Element {
           ))}
         </div>
         {/* Skeleton table rows */}
-        <div className="bg-surface-overlay border border-border-subtle rounded p-4 space-y-3">
+        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 space-y-3">
           <Skeleton className="h-4 w-32 mb-4" />
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="flex items-center gap-3">
@@ -165,18 +214,18 @@ export default function TokenUsagePage(): React.JSX.Element {
     <div className="max-w-4xl mx-auto px-6 py-8">
       {/* Cost Summary Row */}
       <div className="grid grid-cols-2 gap-4 mb-4">
-        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <DollarSign size={12} />
             Estimated Cost
           </div>
-          <div className="text-2xl font-bold text-text-primary">
+          <div className="text-2xl font-display font-normal text-text-primary">
             ${((costSummary?.totalCostCents ?? 0) / 100).toFixed(2)}
           </div>
           <div className="text-xs text-text-secondary mt-1">Based on model pricing</div>
         </div>
 
-        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <ShieldCheck size={12} />
             Budget Status
@@ -184,7 +233,7 @@ export default function TokenUsagePage(): React.JSX.Element {
           {budgetHasDailyLimit ? (
             <>
               <div className="flex items-center gap-2">
-                <span className="text-2xl font-bold text-text-primary">
+                <span className="text-2xl font-display font-normal text-text-primary">
                   ${((budgetStatus?.currentCostCents ?? 0) / 100).toFixed(2)}
                 </span>
                 <span className="text-sm text-text-secondary">
@@ -211,7 +260,7 @@ export default function TokenUsagePage(): React.JSX.Element {
             </>
           ) : (
             <>
-              <div className="text-2xl font-bold text-text-primary">No limit</div>
+              <div className="text-2xl font-display font-normal text-text-primary">No limit</div>
               <div className="text-xs text-text-secondary mt-1">
                 Set a daily budget in Models settings
               </div>
@@ -220,37 +269,153 @@ export default function TokenUsagePage(): React.JSX.Element {
         </div>
       </div>
 
+      {/* Cache Performance */}
+      {costSummary && (costSummary.cacheReadTokens > 0 || costSummary.cacheCreationTokens > 0) && (
+        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 shadow-sm mb-4">
+          <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
+            <Database size={12} />
+            Prompt Cache Performance
+          </div>
+          <div className="flex items-center gap-6">
+            <div>
+              <div className="text-2xl font-display font-normal text-text-primary">
+                {costSummary.cacheHitRate.toFixed(1)}%
+              </div>
+              <div className="text-xs text-text-secondary mt-0.5">Cache Hit Rate</div>
+            </div>
+            <div className="h-8 w-px bg-border-subtle" />
+            <div>
+              <div className="text-sm font-mono text-text-body">
+                {formatTokens(costSummary.cacheReadTokens)}
+              </div>
+              <div className="text-xs text-text-secondary mt-0.5">Cache Reads</div>
+            </div>
+            <div>
+              <div className="text-sm font-mono text-text-body">
+                {formatTokens(costSummary.cacheCreationTokens)}
+              </div>
+              <div className="text-xs text-text-secondary mt-0.5">Cache Writes</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Zap size={12} />
             Total Tokens
           </div>
-          <div className="text-2xl font-bold text-text-primary">
+          <div className="text-2xl font-display font-normal text-text-primary">
             {formatTokens(summary?.totalTokens ?? 0)}
           </div>
           <div className="text-xs text-text-secondary mt-1">All-time for this workspace</div>
         </div>
 
-        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Activity size={12} />
             Sessions
           </div>
-          <div className="text-2xl font-bold text-text-primary">{summary?.sessionCount ?? 0}</div>
+          <div className="text-2xl font-display font-normal text-text-primary">
+            {summary?.sessionCount ?? 0}
+          </div>
           <div className="text-xs text-text-secondary mt-1">Agent sessions recorded</div>
         </div>
 
-        <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 shadow-sm">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Users size={12} />
             Most Active
           </div>
-          <div className="text-2xl font-bold text-text-primary truncate">{mostActiveAgent}</div>
+          <div className="text-2xl font-display font-normal text-text-primary truncate">
+            {mostActiveAgent}
+          </div>
           <div className="text-xs text-text-secondary mt-1">Highest token consumption</div>
         </div>
       </div>
+
+      {/* Strategy θ: Cache Efficiency & Per-Turn Breakdown */}
+      {cacheEfficiency && cacheEfficiency.turns > 0 && (
+        <section className="mb-8">
+          <h3 className="text-sm text-text-secondary uppercase tracking-wider font-medium mb-3">
+            Cache Efficiency
+          </h3>
+          <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 space-y-4">
+            {/* Summary stats row */}
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <p className="text-lg font-semibold text-primary">
+                  {cacheEfficiency.hitRate.toFixed(1)}%
+                </p>
+                <p className="text-xs text-text-secondary">Cache Hit Rate</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-success">
+                  {formatTokens(cacheEfficiency.savedTokens)}
+                </p>
+                <p className="text-xs text-text-secondary">Tokens Saved</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-text-body">{cacheEfficiency.turns}</p>
+                <p className="text-xs text-text-secondary">Turns Tracked</p>
+              </div>
+            </div>
+
+            {/* Per-turn breakdown bars */}
+            {cacheEfficiency.turnBreakdown.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs text-text-secondary font-medium">Per-Turn Token Breakdown</p>
+                {cacheEfficiency.turnBreakdown.map((t) => {
+                  const total = t.inputTokens + t.outputTokens + t.cacheReadTokens
+                  if (total === 0) return null
+                  return (
+                    <div key={t.turn} className="flex items-center gap-2 text-xs">
+                      <span className="w-8 text-text-muted text-right">T{t.turn}</span>
+                      <div className="flex-1 flex h-4 rounded overflow-hidden bg-surface-base">
+                        {/* Input tokens */}
+                        <div
+                          className="bg-primary/60"
+                          style={{ width: `${(t.inputTokens / total) * 100}%` }}
+                          title={`Input: ${formatTokens(t.inputTokens)}`}
+                        />
+                        {/* Cache read tokens */}
+                        <div
+                          className="bg-success/60"
+                          style={{ width: `${(t.cacheReadTokens / total) * 100}%` }}
+                          title={`Cache read: ${formatTokens(t.cacheReadTokens)}`}
+                        />
+                        {/* Output tokens */}
+                        <div
+                          className="bg-warning/60"
+                          style={{ width: `${(t.outputTokens / total) * 100}%` }}
+                          title={`Output: ${formatTokens(t.outputTokens)}`}
+                        />
+                      </div>
+                      <span className="w-12 text-text-muted text-right">
+                        {t.cacheHitRate.toFixed(0)}%
+                      </span>
+                    </div>
+                  )
+                })}
+                {/* Legend */}
+                <div className="flex gap-4 mt-1 text-[10px] text-text-muted">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded bg-primary/60" /> Input
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded bg-success/60" /> Cache
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded bg-warning/60" /> Output
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Per-Agent Breakdown */}
       {summary && summary.byAgent.length > 0 && (
@@ -316,6 +481,56 @@ export default function TokenUsagePage(): React.JSX.Element {
                     </tr>
                   )
                 })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Per-Conversation Costs */}
+      {conversationCosts.length > 0 && (
+        <div className="mb-8">
+          <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-3 font-medium">
+            Per-Conversation Costs
+          </h3>
+          <div className="bg-surface-overlay border border-border-subtle rounded overflow-hidden shadow-sm">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border-subtle text-xs text-text-secondary uppercase tracking-wider">
+                  <th className="text-left px-4 py-2.5 font-medium">Conversation</th>
+                  <th className="text-right px-4 py-2.5 font-medium">Tokens</th>
+                  <th className="text-right px-4 py-2.5 font-medium">Est. Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {conversationCosts.slice(0, 20).map((conv) => (
+                  <tr
+                    key={conv.conversationId}
+                    className="border-b border-border-subtle/50 last:border-b-0 hover:bg-surface-overlay/50"
+                  >
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare size={12} className="text-text-muted shrink-0" />
+                        <span
+                          className="text-sm text-text-primary font-mono truncate max-w-xs"
+                          title={conv.conversationId}
+                        >
+                          {conv.conversationId.slice(0, 12)}...
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span className="text-sm text-text-body font-mono">
+                        {formatTokens(conv.totalTokens)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span className="text-sm text-text-body font-mono">
+                        ${(conv.costCents / 100).toFixed(2)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

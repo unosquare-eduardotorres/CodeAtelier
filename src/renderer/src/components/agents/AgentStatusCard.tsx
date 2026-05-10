@@ -7,12 +7,15 @@ import {
   XCircle,
   Pause,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Square
 } from 'lucide-react'
 import type { AgentStatus, ModelTier, ComplexityTier } from '../../../../shared/types'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
-import { useSpecialistStore, useAgentStore } from '@renderer/store'
-import { AgentIcon } from '@renderer/assets/agent-icons'
+import { useSpecialistStore, useAgentStore, useWorkspaceStore } from '@renderer/store'
+import { Avatar } from '@renderer/components/common'
+import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
+import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 
 // Model tier badge config
 const MODEL_BADGE: Record<ModelTier, { label: string; bg: string; text: string }> = {
@@ -30,6 +33,8 @@ const TIER_DOT: Record<ComplexityTier, string> = {
 
 interface AgentStatusCardProps {
   status: AgentStatus
+  /** When true, renders with subtle indentation to indicate this is a sub-agent of the generalist */
+  isSubagent?: boolean
 }
 
 const STATUS_CONFIG: Record<
@@ -93,18 +98,31 @@ function formatTokens(count: number): string {
   return count.toString()
 }
 
-export default function AgentStatusCard({ status }: AgentStatusCardProps): React.JSX.Element {
+export default function AgentStatusCard({
+  status,
+  isSubagent
+}: AgentStatusCardProps): React.JSX.Element {
   const [elapsed, setElapsed] = useState(status.elapsedMs)
   const [isExpanded, setIsExpanded] = useState(false)
   const outputRef = useRef<HTMLDivElement>(null)
   const config = STATUS_CONFIG[status.status] || STATUS_CONFIG.idle
   const { specialists } = useSpecialistStore()
   const agentOutput = useAgentStore((s) => s.agentOutputs[status.agentId] ?? '')
-  const gates = useAgentStore((s) => s.gateResults[status.agentId]) ?? []
   const abandonment = useAgentStore((s) => s.abandonments[status.agentId])
+  const activeWs = useWorkspaceStore((s) => s.activeWorkspace)
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
 
   // Look up metadata from DB-backed specialists
   const meta = getAgentMeta(status.agentType, specialists)
+
+  // Resolve avatar key: Da Vinci uses its dedicated portrait, everyone else
+  // (specialists + unknown agents) inherits the active workspace mannequin.
+  const avatarKey =
+    status.agentType === 'da-vinci'
+      ? CORE_AGENT_DEFAULTS['da-vinci'].avatarKey
+      : activeWs
+        ? getWorkspaceMannequin(activeWs.id, workspaces)
+        : 'mannequin-main'
 
   const isActive =
     status.status === 'thinking' || status.status === 'writing' || status.status === 'reviewing'
@@ -137,8 +155,8 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
 
   return (
     <div
-      className="bg-surface-overlay rounded-lg p-4 border border-border-subtle border-l-2 shadow-sm hover:border-border-default transition-colors"
-      style={{ borderLeftColor: meta?.color ?? '#6366F1' }}
+      className={`bg-surface-overlay rounded-lg border border-border-subtle border-l-2 shadow-sm hover:border-border-default transition-colors ${isSubagent ? 'ml-4 p-3' : 'p-4'}`}
+      style={{ borderLeftColor: meta?.color ?? '#B8976A' }}
     >
       <div
         className="flex items-center justify-between mb-2 cursor-pointer press-scale"
@@ -150,18 +168,21 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
         }}
       >
         <div className="flex items-center gap-2">
-          <AgentIcon
-            agentType={status.agentType}
-            size={20}
-            className="text-text-secondary"
-          />
-          <span className="text-sm font-medium text-text-primary">
-            {meta?.displayName ??
-              status.agentType
-                .split('-')
-                .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-                .join(' ')}
-          </span>
+          <Avatar avatarKey={avatarKey} size="sm" accentColor={meta?.color ?? '#B8976A'} />
+          <div className="flex flex-col">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-medium text-text-primary">
+                {meta?.displayName ??
+                  status.agentType
+                    .split('-')
+                    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                    .join(' ')}
+              </span>
+            </div>
+            {isSubagent && (
+              <span className="text-[10px] text-text-muted leading-tight">Sub-agent</span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <span
@@ -206,24 +227,23 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
         <span>{formatElapsed(elapsed)}</span>
         <span>·</span>
         <span>{formatTokens(status.tokenUsage)} tokens</span>
+        {/* Per-agent Stop button — uses SDK stopTask */}
+        {isActive && isSubagent && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              window.api.sdkStopTask({ taskId: status.agentId }).catch(() => {
+                // Silently handle — query may have ended
+              })
+            }}
+            className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-danger bg-danger-muted hover:bg-danger/20 transition-colors"
+            title={`Stop ${meta?.displayName ?? status.agentType}`}
+          >
+            <Square size={10} />
+            <span>Stop</span>
+          </button>
+        )}
       </div>
-
-      {/* Gate results badges */}
-      {gates.length > 0 && (
-        <div className="flex items-center gap-1 mt-1 flex-wrap">
-          {gates.map((g, i) => (
-            <span
-              key={i}
-              className={`text-[10px] px-1.5 py-0.5 rounded ${
-                g.passed ? 'bg-success-muted text-success' : 'bg-danger-muted text-danger'
-              }`}
-              title={g.summary}
-            >
-              {g.passed ? '✓' : '✗'} {g.type}
-            </span>
-          ))}
-        </div>
-      )}
 
       {/* Abandonment warning */}
       {abandonment && (
@@ -242,7 +262,7 @@ export default function AgentStatusCard({ status }: AgentStatusCardProps): React
         <div className="mt-3 pt-3 border-t border-border-subtle">
           {isActive && !agentOutput && (
             <div className="flex items-center gap-2 text-xs text-text-muted animate-pulse">
-              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-ping" />
+              <span className="w-1.5 h-1.5 bg-info rounded-full animate-ping" />
               Starting up...
             </div>
           )}

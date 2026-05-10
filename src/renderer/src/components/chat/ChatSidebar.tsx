@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import {
@@ -28,7 +28,9 @@ export default function ChatSidebar({
     selectConversation,
     closeConversation,
     renameConversation,
-    sendMessage
+    sendMessage,
+    reorderConversations,
+    loadContextUsage
   } = useChatActions()
   const conversations = useChatStore((s) => s.conversations)
   const activeConversation = useChatStore((s) => s.activeConversation)
@@ -42,6 +44,9 @@ export default function ChatSidebar({
   } | null>(null)
   const [completeFromUnsaved, setCompleteFromUnsaved] = useState<string | null>(null)
   const [showNewChatModal, setShowNewChatModal] = useState(false)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const dragItemId = useRef<string | null>(null)
+  const contextUsages = useChatStore((s) => s.contextUsages)
 
   const isCollapsed = externalCollapsed ?? internalCollapsed
   const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c))
@@ -53,7 +58,6 @@ export default function ChatSidebar({
     }
   }, [activeWorkspace, loadConversations])
 
-
   const handleNewChat = (): void => {
     setShowNewChatModal(true)
   }
@@ -62,26 +66,87 @@ export default function ChatSidebar({
     title: string
     description?: string
     mode: ConversationMode
+    personaSpecialistId?: string
     attachments?: string[]
     useIsolatedBranch?: boolean
   }): Promise<void> => {
     if (!activeWorkspace) return
-    await createConversation(activeWorkspace.id, data.mode, data.title)
-    if (data.description) {
-      await sendMessage(data.description, data.attachments)
-    }
+    await createConversation(activeWorkspace.id, data.mode, data.title, data.personaSpecialistId)
+    setShowNewChatModal(false)
     if (data.useIsolatedBranch) {
       // TODO: integrate worktree IPC — creates a git worktree for this conversation
       console.info(
         '[NewConversationModal] Isolated branch requested — worktree integration pending'
       )
     }
-    setShowNewChatModal(false)
+    if (data.description) {
+      sendMessage(data.description, data.attachments)
+    }
   }
+
+  // Load context usage for all visible conversations
+  useEffect(() => {
+    const visibleConvs = conversations.filter((c) => !c.title.startsWith('\u{1F4A1} Grill:'))
+    visibleConvs.forEach((conv) => {
+      if (!contextUsages[conv.id]) {
+        void loadContextUsage(conv.id)
+      }
+    })
+  }, [conversations, contextUsages, loadContextUsage])
 
   const sortedConversations = [...conversations]
     .filter((c) => !c.title.startsWith('\u{1F4A1} Grill:'))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .sort((a, b) => {
+      // Use sortOrder if available, fallback to createdAt
+      const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER
+      const bOrder = b.sortOrder ?? Number.MAX_SAFE_INTEGER
+      if (aOrder !== bOrder) return aOrder - bOrder
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+
+  const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
+    dragItemId.current = id
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', id)
+    // Make the drag image slightly transparent
+    const target = e.currentTarget as HTMLElement
+    target.style.opacity = '0.5'
+    setTimeout(() => {
+      target.style.opacity = '1'
+    }, 0)
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent, id: string) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverId(id)
+  }, [])
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverId(null)
+  }, [])
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent, targetId: string) => {
+      e.preventDefault()
+      setDragOverId(null)
+      const sourceId = dragItemId.current
+      if (!sourceId || sourceId === targetId) return
+
+      const ids = sortedConversations.map((c) => c.id)
+      const sourceIdx = ids.indexOf(sourceId)
+      const targetIdx = ids.indexOf(targetId)
+      if (sourceIdx === -1 || targetIdx === -1) return
+
+      // Remove source and insert at target position
+      ids.splice(sourceIdx, 1)
+      ids.splice(targetIdx, 0, sourceId)
+
+      void reorderConversations(ids)
+      dragItemId.current = null
+    },
+    [sortedConversations, reorderConversations]
+  )
 
   if (isCollapsed) {
     return (
@@ -180,6 +245,13 @@ export default function ChatSidebar({
                 conversation={conv}
                 isActive={activeConversation?.id === conv.id}
                 onSelect={selectConversation}
+                contextUsage={contextUsages[conv.id]}
+                draggable
+                onDragStart={handleDragStart}
+                onDragOver={(e) => handleDragOver(e, conv.id)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, conv.id)}
+                isDragOver={dragOverId === conv.id}
                 onDelete={(id) => {
                   // Skip confirmation for new/empty conversations (no interaction yet)
                   const target = conversations.find((c) => c.id === id)

@@ -10,18 +10,35 @@ import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
-import { SkillDetailPage, SpecialistMarketplace } from '@renderer/components/settings'
+import CodeIntelligencePage from './CodeIntelligencePage'
+import IntegrationsPage from './IntegrationsPage'
+import SpecialistPage from './SpecialistPage'
+import HealthPage from './HealthPage'
+import { SkillDetailPage } from '@renderer/components/settings'
+import CoreTeamPage from '@renderer/components/settings/CoreTeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import type { SettingsTab } from './WorkspaceSettingsPanel'
 
 interface WorkspaceSettingsContentProps {
   tab: SettingsTab
   onNavigateToChat: () => void
+  onFixInNewChat: () => void
+  pendingGrill?: {
+    ideaId: string
+    conversationId: string
+    ideaTitle: string
+    ideaDescription?: string
+    isNewSession?: boolean
+  } | null
+  onPendingGrillConsumed?: () => void
 }
 
 export default function WorkspaceSettingsContent({
   tab,
-  onNavigateToChat
+  onNavigateToChat,
+  onFixInNewChat,
+  pendingGrill,
+  onPendingGrillConsumed
 }: WorkspaceSettingsContentProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
 
@@ -52,6 +69,21 @@ export default function WorkspaceSettingsContent({
     }
   }, [workspacePath, reset])
 
+  // Auto-activate grill page when navigated from /grillme command
+  useEffect(() => {
+    if (pendingGrill) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- consuming pending navigation action
+      setActiveGrill({
+        ideaId: pendingGrill.ideaId,
+        conversationId: pendingGrill.conversationId,
+        ideaTitle: pendingGrill.ideaTitle,
+        ideaDescription: pendingGrill.ideaDescription,
+        isNewSession: pendingGrill.isNewSession
+      })
+      onPendingGrillConsumed?.()
+    }
+  }, [pendingGrill, onPendingGrillConsumed])
+
   // CLAUDE.md diff review (full page overlay)
   if (pendingClaudeMd && workspacePath) {
     return (
@@ -72,13 +104,19 @@ export default function WorkspaceSettingsContent({
   }
 
   return (
-    <div className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${tab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+    <div
+      className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${tab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}
+    >
+      {tab === 'specialist' && <SpecialistPage />}
+      {tab === 'health' && <HealthPage onNavigateToChat={onNavigateToChat} onFixInNewChat={onFixInNewChat} />}
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
+      {tab === 'code-intelligence' && <CodeIntelligencePage />}
+      {tab === 'integrations' && <IntegrationsPage />}
 
       {tab === 'team' && workspacePath && (
         <div className="flex-1 min-h-0">
-          <SpecialistMarketplace workspacePath={workspacePath} />
+          <CoreTeamPage />
         </div>
       )}
 
@@ -108,7 +146,13 @@ export default function WorkspaceSettingsContent({
             </p>
             <IdeasList
               onNavigateToChat={onNavigateToChat}
-              onOpenGrillSession={(ideaId, conversationId, ideaTitle, isNewSession, ideaDescription) =>
+              onOpenGrillSession={(
+                ideaId,
+                conversationId,
+                ideaTitle,
+                isNewSession,
+                ideaDescription
+              ) =>
                 setActiveGrill({ ideaId, conversationId, ideaTitle, ideaDescription, isNewSession })
               }
             />

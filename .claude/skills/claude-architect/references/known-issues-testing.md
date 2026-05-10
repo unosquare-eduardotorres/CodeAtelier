@@ -66,7 +66,7 @@ If/when Agent Studio migrates from CLI to SDK, these open issues apply:
 ### Smoke Tests
 
 - Generalist plan mode: send message, receive streaming response
-- Orchestrator decomposition: verify JSON task plan structure
+- Coordinator decomposition: verify JSON task plan structure
 - Specialist pool: execute 2+ tasks in parallel with worktree isolation
 - Mode switch: plan → build → verify permission flags change
 - Token tracking: verify `agent_sessions` records created and completed

@@ -12,6 +12,16 @@ const eventLog = log.scope('EventLogger')
  * and hook actions are logged to the events DB table for analysis and debugging.
  */
 class EventLoggerService {
+  /** Monotonic sequence counters per session — enables total ordering of events within a session */
+  private sequenceCounters = new Map<string, number>()
+
+  /** Get the next monotonic sequence number for a session */
+  private nextSequence(sessionId: string): number {
+    const current = this.sequenceCounters.get(sessionId) ?? 0
+    this.sequenceCounters.set(sessionId, current + 1)
+    return current + 1
+  }
+
   private log(
     eventType: string,
     category: EventCategory,
@@ -26,10 +36,12 @@ class EventLoggerService {
     } = {}
   ): void {
     try {
+      const sequenceNumber = opts.sessionId ? this.nextSequence(opts.sessionId) : undefined
       eventRepository.create({
         eventType,
         category,
         message,
+        sequenceNumber,
         ...opts
       })
     } catch (err) {
@@ -47,20 +59,6 @@ class EventLoggerService {
     model?: string
   }): void {
     this.log('session.started', 'session', `Agent ${opts.agentId} session started`, opts)
-  }
-
-  logSessionCompleted(opts: {
-    sessionId?: string
-    conversationId?: string
-    workspaceId?: string
-    agentId: string
-    tokenUsage?: number
-    durationMs?: number
-  }): void {
-    this.log('session.completed', 'session', `Agent ${opts.agentId} session completed`, {
-      ...opts,
-      data: { tokenUsage: opts.tokenUsage, durationMs: opts.durationMs }
-    })
   }
 
   logSessionFailed(opts: {
@@ -128,6 +126,34 @@ class EventLoggerService {
       'agent',
       `Specialist ${opts.agentId} failed task ${opts.taskId ?? 'unknown'}: ${opts.error}`,
       { ...opts, data: { taskId: opts.taskId, error: opts.error, attempt: opts.attempt } }
+    )
+  }
+
+  // ── Task Retry Events ──
+
+  logTaskRetry(opts: {
+    conversationId?: string
+    agentId: string
+    taskId: string
+    attempt: number
+    maxRetries: number
+    escalation?: { fromModel: string; toModel: string }
+    reason: string
+  }): void {
+    this.log(
+      'agent.retry',
+      'agent',
+      `Specialist ${opts.agentId} retrying task ${opts.taskId} (attempt ${opts.attempt}/${opts.maxRetries}): ${opts.reason}`,
+      {
+        ...opts,
+        data: {
+          taskId: opts.taskId,
+          attempt: opts.attempt,
+          maxRetries: opts.maxRetries,
+          escalation: opts.escalation,
+          reason: opts.reason
+        }
+      }
     )
   }
 
@@ -233,24 +259,6 @@ class EventLoggerService {
     })
   }
 
-  // ── Hook Events ──
-
-  logHookBlocked(opts: {
-    conversationId?: string
-    workspaceId?: string
-    agentId?: string
-    hookType: 'pre-tool-use' | 'post-tool-use'
-    toolName: string
-    reason: string
-  }): void {
-    this.log(
-      `hook.${opts.hookType}.blocked`,
-      'hook',
-      `Hook blocked ${opts.toolName}: ${opts.reason}`,
-      { ...opts, data: { hookType: opts.hookType, toolName: opts.toolName, reason: opts.reason } }
-    )
-  }
-
   // ── Budget Events ──
 
   logBudgetWarning(opts: {
@@ -295,167 +303,29 @@ class EventLoggerService {
     )
   }
 
-  // ── Decomposition / Orchestrator Events ──
+  // ── Agent Events ──
 
-  logDecompositionStarted(opts: {
+  logPlanDetected(opts: {
     conversationId: string
     workspaceId?: string
-    summary: string
-    specialists: string[]
+    detectionPath: 'tool' | 'regex'
+    structured: boolean
+    contentLength: number
   }): void {
     this.log(
-      'decomposition.started',
+      'plan.detected',
       'agent',
-      `Decomposing task for ${opts.specialists.length} specialist(s): ${opts.summary.substring(0, 120)}`,
+      `Plan detected via ${opts.detectionPath} (structured=${opts.structured}, ${opts.contentLength} chars)`,
       {
         ...opts,
-        agentId: 'orchestrator',
+        agentId: 'da-vinci',
         data: {
-          summary: opts.summary,
-          specialists: opts.specialists
+          detectionPath: opts.detectionPath,
+          structured: opts.structured,
+          contentLength: opts.contentLength
         }
       }
     )
-  }
-
-  logDecompositionCompleted(opts: {
-    conversationId: string
-    workspaceId?: string
-    taskCount: number
-    tasks: { id: string; specialist: string; model?: string }[]
-  }): void {
-    this.log(
-      'decomposition.completed',
-      'agent',
-      `Decomposition produced ${opts.taskCount} task(s)`,
-      {
-        ...opts,
-        agentId: 'orchestrator',
-        data: {
-          taskCount: opts.taskCount,
-          tasks: opts.tasks
-        }
-      }
-    )
-  }
-
-  logDecompositionFailed(opts: {
-    conversationId: string
-    workspaceId?: string
-    error: string
-    fallback: 'legacy' | 'abort'
-  }): void {
-    this.log(
-      'decomposition.failed',
-      'error',
-      `Decomposition failed: ${opts.error} — fallback: ${opts.fallback}`,
-      {
-        ...opts,
-        agentId: 'orchestrator',
-        data: {
-          error: opts.error,
-          fallback: opts.fallback
-        }
-      }
-    )
-  }
-
-  logHandoffDetected(opts: {
-    conversationId: string
-    workspaceId?: string
-    summary: string
-    specialists: string[]
-    mode?: string
-  }): void {
-    this.log(
-      'handoff.detected',
-      'agent',
-      `Handoff detected: ${opts.summary.substring(0, 120)}`,
-      {
-        ...opts,
-        agentId: 'generalist',
-        data: {
-          summary: opts.summary,
-          specialists: opts.specialists,
-          mode: opts.mode
-        }
-      }
-    )
-  }
-
-  logPlanExecutionStarted(opts: {
-    conversationId: string
-    workspaceId?: string
-    strategy: string
-    taskCount: number
-  }): void {
-    this.log(
-      'plan.execution.started',
-      'agent',
-      `Plan execution started: ${opts.strategy}, ${opts.taskCount} task(s)`,
-      {
-        ...opts,
-        agentId: 'orchestrator',
-        data: {
-          strategy: opts.strategy,
-          taskCount: opts.taskCount
-        }
-      }
-    )
-  }
-
-  logPlanExecutionCompleted(opts: {
-    conversationId: string
-    workspaceId?: string
-    strategy: string
-    taskCount: number
-  }): void {
-    this.log(
-      'plan.execution.completed',
-      'agent',
-      `Plan execution completed: ${opts.strategy}, ${opts.taskCount} task(s)`,
-      {
-        ...opts,
-        agentId: 'orchestrator',
-        data: {
-          strategy: opts.strategy,
-          taskCount: opts.taskCount
-        }
-      }
-    )
-  }
-
-  logPlanExecutionFailed(opts: {
-    conversationId: string
-    workspaceId?: string
-    strategy: string
-    error: string
-  }): void {
-    this.log(
-      'plan.execution.failed',
-      'error',
-      `Plan execution failed (${opts.strategy}): ${opts.error}`,
-      {
-        ...opts,
-        agentId: 'orchestrator',
-        data: {
-          strategy: opts.strategy,
-          error: opts.error
-        }
-      }
-    )
-  }
-
-  logOrchestratorStderr(opts: {
-    conversationId?: string
-    workspaceId?: string
-    stderr: string
-  }): void {
-    this.log('orchestrator.stderr', 'error', `Orchestrator stderr: ${opts.stderr.substring(0, 200)}`, {
-      ...opts,
-      agentId: 'orchestrator',
-      data: { stderr: opts.stderr.substring(0, 1000) }
-    })
   }
 
   // ── Tool Call Events ──
@@ -514,6 +384,26 @@ class EventLoggerService {
       'error',
       `Circuit breaker tripped after ${opts.failures} consecutive failures`,
       { ...opts, data: { failures: opts.failures } }
+    )
+  }
+
+  // ── Merge Events ──
+
+  logMergeRejected(opts: {
+    conversationId?: string
+    agentId: string
+    taskId: string
+    reason: string
+  }): void {
+    this.log(
+      'merge.rejected',
+      'agent',
+      `Merge rejected for ${opts.agentId}/${opts.taskId}: ${opts.reason}`,
+      {
+        conversationId: opts.conversationId,
+        agentId: opts.agentId,
+        data: { taskId: opts.taskId, reason: opts.reason }
+      }
     )
   }
 

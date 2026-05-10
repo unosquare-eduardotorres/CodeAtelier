@@ -2,7 +2,7 @@ import { getDatabase } from '../index'
 import type { CoreAgentAlias } from '../../../shared/types'
 
 interface CoreAgentAliasRow {
-  agent_role: 'generalist' | 'coordinator'
+  agent_role: 'da-vinci'
   alias: string | null
   avatar_key: string | null
   updated_at: string
@@ -25,7 +25,7 @@ export class CoreAgentAliasRepository {
   }
 
   upsert(
-    agentRole: 'generalist' | 'coordinator',
+    agentRole: 'da-vinci',
     alias: string | null,
     avatarKey: string | null
   ): CoreAgentAlias {

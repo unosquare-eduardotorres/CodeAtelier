@@ -59,7 +59,7 @@ export function QuestionItem({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent, optionIndex: number): void => {
-    const optionCount = question.options.length + (question.allowOther !== false ? 1 : 0)
+    const optionCount = (question.options ?? []).length + (question.allowOther !== false ? 1 : 0)
 
     if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
       e.preventDefault()
@@ -121,7 +121,7 @@ export function QuestionItem({
           aria-labelledby={question.header ? `question-header-${question.id}` : undefined}
           className="divide-y divide-border-subtle"
         >
-          {question.options.map((option, optIdx) => {
+          {(question.options ?? []).map((option, optIdx) => {
             const isSelected = state.selectedOptions.includes(option.label)
             const isRecommended = !!option.recommended
 
@@ -157,6 +157,9 @@ export function QuestionItem({
                       </span>
                     )}
                   </div>
+                  {option.recommendedReason && (
+                    <p className="text-xs text-warning/80 mt-0.5 italic">{option.recommendedReason}</p>
+                  )}
                   {option.description && (
                     <p className="text-xs text-text-muted mt-0.5">{option.description}</p>
                   )}
@@ -168,14 +171,12 @@ export function QuestionItem({
           {/* Other option row */}
           {question.allowOther !== false && (
             <div
-              data-option-index={question.options.length}
+              data-option-index={(question.options ?? []).length}
               className={`flex items-start gap-3 px-4 py-3 transition-colors duration-150 ${
-                state.otherSelected
-                  ? 'bg-primary/10'
-                  : 'hover:bg-surface-hover'
+                state.otherSelected ? 'bg-primary/10' : 'hover:bg-surface-hover'
               }`}
               tabIndex={-1}
-              onKeyDown={(e) => handleKeyDown(e, question.options.length)}
+              onKeyDown={(e) => handleKeyDown(e, (question.options ?? []).length)}
             >
               <button
                 type="button"
@@ -263,8 +264,13 @@ export default function GrillQuestionCard({
     const initial: Record<string, QuestionState> = {}
     for (const q of questions) {
       // Pre-select recommended options
-      const recommended = q.options.filter((o) => o.recommended).map((o) => o.label)
-      initial[q.id] = { selectedOptions: recommended, otherText: '', otherSelected: false, skipped: false }
+      const recommended = (q.options ?? []).filter((o) => o.recommended).map((o) => o.label)
+      initial[q.id] = {
+        selectedOptions: recommended,
+        otherText: '',
+        otherSelected: false,
+        skipped: false
+      }
     }
     return initial
   })
@@ -282,18 +288,30 @@ export default function GrillQuestionCard({
     const state = questionStates[q.id]
     if (!state) return false
     if (state.skipped) return true
-    return state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
+    return (
+      state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
+    )
   })
 
   const answeredCount = questions.filter((q) => {
     const state = questionStates[q.id]
     if (!state) return false
-    return state.skipped || state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
+    return (
+      state.skipped ||
+      state.selectedOptions.length > 0 ||
+      state.otherSelected ||
+      state.otherText.trim().length > 0
+    )
   }).length
 
   const handleSubmit = (): void => {
     const answers: GrillAnswerPayload[] = questions.map((q) => {
-      const state = questionStates[q.id] ?? { selectedOptions: [], otherText: '', otherSelected: false, skipped: true }
+      const state = questionStates[q.id] ?? {
+        selectedOptions: [],
+        otherText: '',
+        otherSelected: false,
+        skipped: true
+      }
       return {
         questionId: q.id,
         selectedOptions: state.selectedOptions,

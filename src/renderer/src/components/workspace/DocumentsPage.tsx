@@ -27,7 +27,9 @@ function DocFileItem({
       <FileText size={14} className={doc.supported ? 'text-success' : 'text-text-muted'} />
       <div className="flex-1 min-w-0">
         <span className="block truncate">{doc.name}</span>
-        {!doc.supported && <span className="text-xs text-mode-build-text/70">Not supported yet</span>}
+        {!doc.supported && (
+          <span className="text-xs text-mode-build-text/70">Not supported yet</span>
+        )}
       </div>
     </button>
   )

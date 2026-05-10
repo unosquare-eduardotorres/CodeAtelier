@@ -5,6 +5,7 @@ import type {
   Message,
   AgentStatus,
   Specialist,
+  ConversationSpecialist,
   Skill,
   CreateSpecialistInput,
   UpdateSpecialistInput,
@@ -15,23 +16,18 @@ import type {
   DiscoveredAgent,
   SyncDiff,
   SyncResult,
-  DecomposedTask,
-  TaskPlan,
   ExecutionStrategy,
-  TaskExecutionProgress,
+  InvestigationDepth,
   FileChange,
   CompleteResult,
-  AgentWorktree,
-  MergeAllResult,
   GrillProposedTask,
   GrillQuestion,
+  GrillTrackId,
   Memory,
   MemoryType,
   MemoryFeedProgress,
   MemoryFeedResult,
   WorkspaceFeedTimestamps,
-  DreamRun,
-  DreamProgress,
   TokenSummary,
   AgentSessionRecord,
   Idea,
@@ -39,7 +35,32 @@ import type {
   RepoInfo,
   UserProfile,
   CoreAgentAlias,
-  MarketplaceSpecialist
+  CoreAgentPrompt,
+  SubscriptionCheckResult,
+  AutoConfigureResult,
+  SpecialistTokenEstimate,
+  AppPreferences,
+  EmbeddingModelStatus,
+  EmbeddingModelProgress,
+  SemanticSearchResult,
+  OllamaStatus,
+  OmlxExtendedStatus,
+  PullProgress,
+  IndexingState,
+  CodeGraphIndexingState,
+  ContextUsage,
+  StructuredPlan,
+  BugRecord,
+  AuditRun,
+  AuditMode,
+  AuditTrackId,
+  AuditFinding,
+  AuditProgressEvent,
+  AuditResult,
+  AuditStreamChunkEvent,
+  AuditIntermediateEvent,
+  LLMProvider,
+  UpdateConfig
 } from '../shared/types'
 
 interface Api {
@@ -54,20 +75,38 @@ interface Api {
     workspaceId: string
     settings: Record<string, unknown>
   }) => Promise<void>
-  saveClipboardImage: (args: { dataUrl: string }) => Promise<string>
+  updateAuthSettings: (args: {
+    workspaceId: string
+    authMode: string
+    anthropicApiKey?: string
+  }) => Promise<{ success: boolean }>
+  saveClipboardImage: (args: { dataUrl: string; conversationId: string }) => Promise<string>
+  readImageBase64: (args: { filePath: string }) => Promise<string>
 
   // Chat
   sendMessage: (args: {
     conversationId: string
     text: string
     attachments?: string[]
-  }) => Promise<void>
+  }) => Promise<{ requestId: string }>
   getConversations: (args: { workspaceId: string }) => Promise<Conversation[]>
   createConversation: (args: {
     workspaceId: string
     title?: string
     mode?: ConversationMode
+    personaSpecialistId?: string
+    llmProvider?: LLMProvider
+    mcpOverrides?: Record<string, boolean>
   }) => Promise<Conversation>
+  updatePersona: (args: {
+    conversationId: string
+    personaSpecialistId: string | null
+  }) => Promise<Conversation>
+  updateMcpOverrides: (args: {
+    conversationId: string
+    overrides: Record<string, boolean>
+  }) => Promise<Conversation>
+  checkExternalMcp: (args: { command: string }) => Promise<{ available: boolean; path?: string }>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
   deleteConversation: (args: { conversationId: string }) => Promise<void>
   updateConversationMode: (args: {
@@ -76,12 +115,9 @@ interface Api {
   }) => Promise<Conversation>
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
   stopGeneration: () => Promise<void>
-  compactConversation: () => Promise<void>
-  executePlan: (args: {
-    conversationId: string
-    strategy: ExecutionStrategy
-    tasks: DecomposedTask[]
-  }) => Promise<void>
+  compactConversation: (args?: { extractNuance?: boolean }) => Promise<void>
+  /** Accept DaVinci's specialist-swap proposal — rebuilds the session as the Project Specialist. */
+  swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }) => Promise<void>
 
   // Chat commands
   completeConversation: (args: {
@@ -97,9 +133,25 @@ interface Api {
   // Agents
   getAgentStatuses: () => Promise<AgentStatus[]>
   stopAllAgents: () => Promise<string[]>
+  /** Strategy M + θ: Cache efficiency metrics with per-turn breakdown for dashboard */
+  getCacheEfficiency: () => Promise<{
+    hitRate: number
+    savedTokens: number
+    totalInput: number
+    turns: number
+    turnBreakdown: Array<{
+      turn: number
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheCreationTokens: number
+      cacheHitRate: number
+      timestamp: number
+    }>
+  }>
 
-  // Orchestrator
-  startOrchestrator: (workspacePath: string) => Promise<void>
+  // Agent lifecycle
+  startAgent: (workspacePath: string) => Promise<void>
 
   // Specialists
   listSpecialists: () => Promise<Specialist[]>
@@ -109,20 +161,50 @@ interface Api {
   deleteSpecialist: (args: { id: string }) => Promise<void>
   assignSkillToSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
   removeSkillFromSpecialist: (args: { specialistId: string; skillId: string }) => Promise<void>
+  reorderSpecialists: (args: { orderedIds: string[] }) => Promise<void>
 
-  // Specialist Marketplace
-  deploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
-  undeploySpecialist: (args: { workspacePath: string; specialistId: string }) => Promise<void>
-  updateSpecialistConfig: (args: {
-    id: string
-    displayName?: string
-    icon?: string
-    color?: string
-    alias?: string | null
-    avatarUrl?: string | null
-    priority?: number
-  }) => Promise<Specialist>
-  getMarketplace: (args: { workspacePath: string }) => Promise<MarketplaceSpecialist[]>
+  // Conversation Specialist Activation (skill gating)
+  listConvSpecialists: (args: { conversationId: string }) => Promise<ConversationSpecialist[]>
+  upsertConvSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+    isActive?: boolean
+  }) => Promise<void>
+  removeConvSpecialist: (args: { conversationId: string; specialistId: string }) => Promise<void>
+  resetConvSpecialists: (args: { conversationId: string }) => Promise<void>
+  estimateConvTokens: (args: { conversationId: string }) => Promise<SpecialistTokenEstimate[]>
+
+  // App Preferences
+  getAppPreferences: () => Promise<AppPreferences>
+  setAppPreference: (args: { key: string; value: string }) => Promise<void>
+
+  // Project Specialist (Phase 2 refactor)
+  getProjectSpecialist: (args: { workspaceId: string }) => Promise<unknown | null>
+  buildProjectSpecialist: (args: { workspaceId: string }) => Promise<unknown>
+  rebuildProjectSpecialistPrompt: (args: { specialistId: string }) => Promise<unknown>
+  rebuildProjectSpecialistSkills: (args: { specialistId: string }) => Promise<unknown>
+  updateProjectSpecialistPrompt: (args: {
+    specialistId: string
+    prompt: string
+  }) => Promise<{ ok: true }>
+  toggleProjectSpecialistSkill: (args: {
+    specialistId: string
+    skillId: string
+    enabled: boolean
+  }) => Promise<{ ok: true }>
+  attachProjectSpecialistSkill: (args: {
+    specialistId: string
+    skillId: string
+  }) => Promise<{ ok: true }>
+  detachProjectSpecialistSkill: (args: {
+    specialistId: string
+    skillId: string
+  }) => Promise<{ ok: true }>
+  getProjectSpecialistDrift: (args: { workspaceId: string }) => Promise<unknown | null>
+  refreshProjectSpecialistRecommendations: (args: { specialistId: string }) => Promise<{ ok: true }>
+  onProjectSpecialistBuildProgress: (
+    callback: (data: { specialistId: string; phase: string; message: string; at: string }) => void
+  ) => () => void
 
   // Skills
   listSkills: () => Promise<Skill[]>
@@ -162,18 +244,6 @@ interface Api {
   // Deploy all (inactive) to workspace
   deployAll: (args: { workspacePath: string }) => Promise<{ agents: number; skills: number }>
 
-  // Worktrees
-  listWorktrees: (args: { conversationId: string }) => Promise<AgentWorktree[]>
-  getWorktreeDiff: (args: { worktreeId: string }) => Promise<string>
-  mergeWorktree: (args: {
-    worktreeId: string
-  }) => Promise<{ success: boolean; conflictedFiles?: string[] }>
-  mergeAllWorktrees: (args: { conversationId: string }) => Promise<MergeAllResult>
-  abandonWorktree: (args: { worktreeId: string }) => Promise<void>
-
-  // Pixel Office
-  popoutPixelOffice: () => Promise<void>
-
   // Memory (auto memory system)
   listMemories: (args: { workspaceId: string }) => Promise<Memory[]>
   searchMemories: (args: { workspaceId: string; query: string }) => Promise<Memory[]>
@@ -199,23 +269,14 @@ interface Api {
   memorySelectDocument: () => Promise<string | null>
   memoryFeedCancel: () => Promise<void>
   memoryGetFeedTimestamps: (args: { workspaceId: string }) => Promise<WorkspaceFeedTimestamps>
-  memoryFeedClaudeMd: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
   memoryRegenerateClaudeMd: (args: {
     workspacePath: string
   }) => Promise<{ success: boolean; content: string; existing: string | null; error?: string }>
-  memoryFeedCodebase: (args: { workspacePath: string }) => Promise<MemoryFeedResult>
   memoryFeedDocument: (args: {
     workspacePath: string
     filePath: string
   }) => Promise<MemoryFeedResult>
   onMemoryFeedProgress: (callback: (data: MemoryFeedProgress) => void) => () => void
-
-  // Dream (auto consolidation)
-  triggerDream: (args: { workspaceId: string }) => Promise<DreamRun>
-  cancelDream: (args: { workspaceId: string }) => Promise<void>
-  getDreamStatus: (args: { workspaceId: string }) => Promise<DreamRun | null>
-  getDreamHistory: (args: { workspaceId: string; limit?: number }) => Promise<DreamRun[]>
-  onDreamProgress: (callback: (data: DreamProgress) => void) => () => void
 
   computeSyncDiff: (args: { workspacePath: string }) => Promise<SyncDiff>
   applySync: (args: { workspacePath: string; skipRemoved?: boolean }) => Promise<SyncResult>
@@ -245,15 +306,14 @@ interface Api {
     conversationId: string
     summary?: string
   }) => Promise<Idea | null>
-  saveIdeaGrillDecisions: (args: {
-    ideaId: string
-    decisions: string
-  }) => Promise<Idea>
+  saveIdeaGrillDecisions: (args: { ideaId: string; decisions: string }) => Promise<Idea>
 
   // Auto-update
   checkForUpdate: () => Promise<void>
   downloadUpdate: () => Promise<void>
   installUpdate: () => Promise<void>
+  getUpdateConfig: () => Promise<UpdateConfig>
+  setUpdateConfig: (config: Partial<UpdateConfig>) => Promise<UpdateConfig>
 
   // Events (main → renderer) with cleanup
   onActivationProgress: (callback: (data: ActivationProgressEvent) => void) => () => void
@@ -264,6 +324,7 @@ interface Api {
       role: string
       taskId?: string
       specialist?: string
+      requestId?: string
       toolActivity?: {
         id: string
         toolName: string
@@ -271,22 +332,27 @@ interface Api {
         input?: string
         startedAt?: number
         completedAt?: number
+        elapsedSeconds?: number
       }
       compactNeeded?: {
         level: string
         inputTokens: number
+        breakdown?: import('../shared/types').ContextUsageBreakdown
+      }
+      turnBoundary?: boolean
+      turnId?: string
+      budgetCapReached?: {
+        message: string
+        canContinue: boolean
       }
     }) => void
   ) => () => void
   onMessageComplete: (
-    callback: (data: { conversationId: string; messageId: string; taskId?: string }) => void
-  ) => () => void
-  onHandoff: (
     callback: (data: {
       conversationId: string
-      summary: string
-      specialists: string[]
-      mode: string
+      messageId: string
+      taskId?: string
+      requestId?: string
     }) => void
   ) => () => void
   onGrillComplete: (
@@ -299,18 +365,35 @@ interface Api {
   onGrillQuestion: (
     callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
   ) => () => void
+  onAskQuestion: (
+    callback: (data: {
+      conversationId: string
+      questions: GrillQuestion[]
+      action?: string
+    }) => void
+  ) => () => void
   onGrillEvaluation: (
     callback: (data: {
       conversationId: string
+      trackId?: GrillTrackId
       score: number
       scoreLabel: string
       feedback: string
       questions: GrillQuestion[]
+      suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
     }) => void
   ) => () => void
-  onTaskPlan: (callback: (data: TaskPlan) => void) => () => void
-  onTaskProgress: (callback: (data: TaskExecutionProgress) => void) => () => void
-  onOrchestratorReady: (callback: () => void) => () => void
+  onTaskRetry: (
+    callback: (data: {
+      taskId: string
+      specialist: string
+      attempt: number
+      maxRetries: number
+      escalation?: { fromModel: string; toModel: string }
+      reason: string
+    }) => void
+  ) => () => void
+  onAgentReady: (callback: () => void) => () => void
   onAgentTaskChunk: (
     callback: (data: { agentId: string; taskId: string; text: string }) => void
   ) => () => void
@@ -319,10 +402,14 @@ interface Api {
       agentId: string
       agentType: string
       status: string
+      currentTask?: string
       elapsedMs: number
       tokenUsage: number
+      inputTokens?: number
+      outputTokens?: number
       model?: 'haiku' | 'sonnet' | 'opus'
       complexityTier?: 'simple' | 'moderate' | 'complex'
+      activeMcpTools?: string[]
     }) => void
   ) => () => void
 
@@ -348,13 +435,16 @@ interface Api {
   renderMermaid: (args: { definition: string; id?: string }) => Promise<{ svg: string }>
 
   // GitHub
-  saveGitHubToken: (args: { workspaceId: string; token: string }) => Promise<{ login: string }>
+  saveGitHubToken: (args: {
+    workspaceId: string
+    token: string
+  }) => Promise<{ login: string; tokenType: string }>
   validateGitHubToken: (args: {
     token: string
-  }) => Promise<{ valid: boolean; login: string; scopes: string[] }>
+  }) => Promise<{ valid: boolean; login: string; scopes: string[]; tokenType: string }>
   getGitHubStatus: (args: {
     workspaceId: string
-  }) => Promise<{ configured: boolean; login?: string }>
+  }) => Promise<{ configured: boolean; login?: string; tokenType?: string }>
   removeGitHubToken: (args: { workspaceId: string }) => Promise<void>
 
   // Repository
@@ -365,6 +455,37 @@ interface Api {
     conversationId: string
   }) => Promise<{ hasChanges: boolean; fileCount: number; files: string[] }>
 
+  // Code Changes
+  getFileDetails: (args: {
+    conversationId: string
+  }) => Promise<
+    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+  >
+  getFileDiff: (args: {
+    conversationId: string
+    filePath: string
+  }) => Promise<{ oldContent: string; newContent: string; language: string }>
+  commitFiles: (args: {
+    conversationId: string
+    filePaths: string[]
+    message: string
+  }) => Promise<{ commitHash: string }>
+  repoPush: (args: { conversationId: string }) => Promise<{ branch: string; remote: string }>
+  getPushStatus: (args: {
+    conversationId: string
+  }) => Promise<{ branch: string; commitsAhead: number; hasRemote: boolean }>
+  generateCommitMessage: (args: {
+    conversationId: string
+    filePaths: string[]
+  }) => Promise<{ message: string }>
+  createPr: (args: {
+    conversationId: string
+    title: string
+    body: string
+    base: string
+    head: string
+  }) => Promise<{ url: string; number: number }>
+
   // User Profile
   getUserProfile: () => Promise<UserProfile | null>
   upsertUserProfile: (args: { displayName: string; avatarKey: string }) => Promise<UserProfile>
@@ -372,10 +493,26 @@ interface Api {
   // Core Agent Aliases
   listCoreAgentAliases: () => Promise<CoreAgentAlias[]>
   upsertCoreAgentAlias: (args: {
-    agentRole: 'generalist' | 'coordinator'
+    agentRole: 'da-vinci'
     alias: string | null
     avatarKey: string | null
   }) => Promise<CoreAgentAlias>
+
+  // Core Agent Prompts
+  listCoreAgentPrompts: () => Promise<CoreAgentPrompt[]>
+  getCoreAgentPrompt: (args: {
+    agentRole: 'da-vinci'
+    mode: 'plan' | 'build'
+  }) => Promise<CoreAgentPrompt | undefined>
+  upsertCoreAgentPrompt: (args: {
+    agentRole: 'da-vinci'
+    mode: 'plan' | 'build'
+    promptText: string
+  }) => Promise<CoreAgentPrompt>
+  resetCoreAgentPrompt: (args: {
+    agentRole: 'da-vinci'
+    mode: 'plan' | 'build'
+  }) => Promise<CoreAgentPrompt>
 
   // Renderer logging bridge
   log: (args: {
@@ -396,7 +533,9 @@ interface Api {
   showItemInFolder: (filePath: string) => Promise<void>
 
   // Checkpoints
-  listCheckpoints: (args: { conversationId: string }) => Promise<
+  listCheckpoints: (args: {
+    conversationId: string
+  }) => Promise<
     { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
   >
   restoreCheckpoint: (args: {
@@ -408,8 +547,15 @@ interface Api {
     totalCostCents: number
     totalTokens: number
     sessionCount: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheHitRate: number
     byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
   }>
+  getConversationCost: (args: { conversationId: string }) => Promise<number>
+  getWorkspaceConversationCosts: (args: {
+    workspaceId: string
+  }) => Promise<{ conversationId: string; costCents: number; totalTokens: number }[]>
   checkBudget: (args: { workspaceId: string }) => Promise<{
     currentCostCents: number
     dailyBudgetCents: number
@@ -427,15 +573,11 @@ interface Api {
     }) => void
   ) => () => void
   onBudgetExceeded: (
-    callback: (data: {
-      workspaceId: string
-      currentCostCents: number
-      budgetCents: number
-    }) => void
+    callback: (data: { workspaceId: string; currentCostCents: number; budgetCents: number }) => void
   ) => () => void
 
   // Events (audit log)
-  getRecentEvents: (args?: { limit?: number }) => Promise<
+  getRecentEvents: (args?: { workspaceId?: string; limit?: number }) => Promise<
     {
       id: string
       sessionId: string | null
@@ -450,10 +592,7 @@ interface Api {
       createdAt: string
     }[]
   >
-  getConversationEvents: (args: {
-    conversationId: string
-    limit?: number
-  }) => Promise<
+  getConversationEvents: (args: { conversationId: string; limit?: number }) => Promise<
     {
       id: string
       sessionId: string | null
@@ -469,31 +608,298 @@ interface Api {
     }[]
   >
 
-  // Gate results
-  getGateResults: (args: { conversationId: string }) => Promise<
-    {
-      id: string
-      sessionId: string | null
-      conversationId: string | null
-      taskId: string | null
-      agentId: string | null
-      gateType: string
-      passed: boolean
-      summary: string
-      createdAt: string
-    }[]
-  >
-
-  // Agent events (specialist pool)
+  // Agent events
   onAbandonmentDetected: (
     callback: (data: { taskId: string; specialist: string; pattern: string }) => void
   ) => () => void
-  onGateFailure: (
+
+  // Checkpoint approval
+  onCheckpointApprovalRequest: (
     callback: (data: {
-      taskId: string
-      specialist: string
-      gate: { type: string; passed: boolean; summary: string }
+      id: string
+      type: 'phase_gate' | 'merge_approval' | 'destructive_action'
+      title: string
+      summary: string
+      details: {
+        what: string
+        why: string
+        risk: string
+        changedFiles?: string[]
+        testResults?: string
+      }
+      createdAt: string
     }) => void
+  ) => () => void
+  respondCheckpointApproval: (checkpointId: string, approved: boolean) => Promise<void>
+
+  // Hooks
+  listHooks: () => Promise<
+    Array<{
+      event: string
+      name: string
+      command: string
+      blocking: boolean
+      condition?: { mode?: string; model?: string; agent?: string }
+      timeout?: number
+    }>
+  >
+  reloadHooks: (args: { workspacePath: string }) => Promise<
+    Array<{
+      event: string
+      name: string
+      command: string
+      blocking: boolean
+      condition?: { mode?: string; model?: string; agent?: string }
+      timeout?: number
+    }>
+  >
+
+  // AI Subscriptions
+  validateSubscriptions: () => Promise<SubscriptionCheckResult>
+  checkClaudeCli: () => Promise<{
+    installed: boolean
+    version: string | null
+    error: string | null
+  }>
+  autoConfigureClaude: () => Promise<AutoConfigureResult>
+
+  // Embedding Provider
+  embeddingCheckStatus: () => Promise<EmbeddingModelStatus>
+  embeddingInitialize: () => Promise<void>
+  onEmbeddingModelProgress: (callback: (data: EmbeddingModelProgress) => void) => () => void
+  onEmbeddingModelReady: (callback: () => void) => () => void
+  onEmbeddingModelError: (callback: (error: string) => void) => () => void
+
+  // Ollama — @deprecated for semantic search (still used by Local LLM chat)
+  ollamaCheckStatus: (args?: { baseUrl?: string }) => Promise<OllamaStatus>
+  ollamaPullModel: (args: { model: string; baseUrl?: string }) => Promise<void>
+  ollamaCancelPull: () => Promise<void>
+  ollamaRemoveModel: (args: { model: string; baseUrl?: string }) => Promise<void>
+  ollamaStart: () => Promise<boolean>
+  onOllamaPullProgress: (callback: (data: PullProgress) => void) => () => void
+  onOllamaPullComplete: (callback: (model: string) => void) => () => void
+  onOllamaPullError: (callback: (error: string) => void) => () => void
+
+  // oMLX
+  omlxCheckStatus: (args?: { baseUrl?: string; apiKey?: string }) => Promise<OmlxExtendedStatus>
+  omlxStart: () => Promise<boolean>
+  omlxAdminUrl: (args?: { baseUrl?: string }) => Promise<string>
+  omlxLoadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }) => Promise<void>
+  omlxUnloadModel: (args: {
+    modelId: string
+    baseUrl?: string
+    apiKey?: string
+  }) => Promise<void>
+
+  // Platform
+  getPlatformInfo: () => Promise<import('../shared/types').PlatformInfo>
+
+  // Indexing (semantic search)
+  indexingStart: (args: { workspaceId: string }) => Promise<void>
+  indexingPause: (args: { workspaceId: string }) => Promise<void>
+  indexingResume: (args: { workspaceId: string }) => Promise<void>
+  indexingCancel: (args: { workspaceId: string }) => Promise<void>
+  indexingGetStatus: (args: { workspaceId: string }) => Promise<IndexingState>
+  loadPersistedIndex: (args: {
+    workspaceId: string
+  }) => Promise<{ loaded: boolean; status: string; symbolCount?: number }>
+  onIndexingProgress: (callback: (state: IndexingState) => void) => () => void
+  // Semantic Search query
+  semanticSearchQuery: (args: {
+    workspaceId: string
+    query: string
+    nResults?: number
+  }) => Promise<SemanticSearchResult[]>
+
+  // Code Graph (persisted repomap)
+  codeGraphIndexStart: (args: { workspaceId: string }) => Promise<void>
+  codeGraphGetStatus: (args: { workspaceId: string }) => Promise<CodeGraphIndexingState>
+  codeGraphHasIndex: (args: { workspaceId: string }) => Promise<boolean>
+  onCodeGraphProgress: (callback: (state: CodeGraphIndexingState) => void) => () => void
+
+  // Context Usage
+  getContextUsage: (args: { conversationId: string }) => Promise<ContextUsage>
+
+  // Conversation Reorder
+  reorderConversations: (args: { orderedIds: string[] }) => Promise<void>
+
+  // SDK Events
+  onRateLimitEvent: (
+    callback: (data: {
+      status: string
+      utilization?: number
+      resetsAt?: number
+      rateLimitType?: string
+    }) => void
+  ) => () => void
+  onPromptSuggestion: (
+    callback: (data: { conversationId: string; suggestion: string }) => void
+  ) => () => void
+  onApiRetry: (
+    callback: (data: {
+      attempt: number
+      maxRetries: number
+      retryDelayMs: number
+      errorStatus: number | null
+    }) => void
+  ) => () => void
+  onSessionState: (callback: (data: { state: string }) => void) => () => void
+  onSessionRecovery: (
+    callback: (data: { conversationId: string; phase: string; message: string }) => void
+  ) => () => void
+  onAuthStatus: (callback: (data: { message: string; requestId?: string }) => void) => () => void
+  onFilesPersisted: (
+    callback: (data: { conversationId: string; files: string[]; requestId?: string }) => void
+  ) => () => void
+  onHookLifecycle: (
+    callback: (data: { hookName?: string; hookState?: string; requestId?: string }) => void
+  ) => () => void
+  onStateChange: (
+    callback: (data: {
+      conversationId: string | null
+      from: string
+      to: string
+      event: string
+    }) => void
+  ) => () => void
+
+  // SDK Control — Query instance methods
+  sdkStopTask: (args: { taskId: string }) => Promise<unknown>
+  sdkSupportedModels: () => Promise<unknown>
+
+  // SDK Subagent inspection (0.2.96+)
+  sdkListSubagents: (args: { sessionId: string }) => Promise<string[]>
+  sdkGetSubagentMessages: (args: { sessionId: string; subagentId: string }) => Promise<unknown[]>
+
+  // SDK Elicitation (enriched — via elicitation.service)
+  onSdkElicitationRequest: (callback: (data: unknown) => void) => () => void
+  sdkElicitationRespond: (args: {
+    requestId: string
+    action: string
+    content?: Record<string, unknown>
+  }) => Promise<void>
+
+  // Session Management (SDK top-level functions)
+  sessionList: (args?: { dir?: string; limit?: number; offset?: number }) => Promise<unknown[]>
+  sessionGetInfo: (args: { sessionId: string; dir?: string }) => Promise<unknown>
+  sessionGetMessages: (args: {
+    sessionId: string
+    dir?: string
+    includeSystemMessages?: boolean
+  }) => Promise<unknown[]>
+  sessionRename: (args: { sessionId: string; title: string; dir?: string }) => Promise<void>
+  sessionTag: (args: { sessionId: string; tag: string | null; dir?: string }) => Promise<void>
+  sessionFork: (args: {
+    sessionId: string
+    upToMessageId?: string
+    title?: string
+    dir?: string
+  }) => Promise<{ sessionId: string }>
+
+  // Chat resume at checkpoint
+  chatResumeAt: (args: { conversationId: string; messageId: string }) => Promise<void>
+
+  // Bug Tracker
+  reportBug: (input: {
+    process: 'main' | 'renderer' | 'preload'
+    severity: 'error' | 'fatal'
+    errorMessage: string
+    stackTrace?: string
+    sourceFile?: string
+    sourceLine?: number
+    sourceColumn?: number
+    componentName?: string
+    activeView?: string
+    workspaceId?: string
+    agentId?: string
+    appVersion: string
+    osInfo?: string
+  }) => Promise<{ isNew: boolean; bugId: string }>
+  getBugs: (filters?: {
+    process?: 'main' | 'renderer' | 'preload'
+    isResolved?: boolean
+    workspaceId?: string
+    sortBy?: 'last_seen_at' | 'occurrence_count' | 'severity'
+    sortDir?: 'asc' | 'desc'
+  }) => Promise<BugRecord[]>
+  getBug: (args: { id: string }) => Promise<BugRecord | null>
+  resolveBug: (args: { id: string }) => Promise<void>
+  unresolveBug: (args: { id: string }) => Promise<void>
+  deleteBug: (args: { id: string }) => Promise<void>
+  updateBugNote: (args: { id: string; note: string }) => Promise<void>
+  getBugCount: () => Promise<number>
+  onNewBug: (callback: (bug: BugRecord) => void) => () => void
+
+  // Audit (Workspace Health)
+  auditStart: (args: {
+    workspaceId: string
+    mode: AuditMode
+    tracks: AuditTrackId[]
+    llmProvider?: LLMProvider
+  }) => Promise<AuditRun>
+  auditCancel: () => Promise<void>
+  auditGetLatest: (args: { workspaceId: string }) => Promise<AuditRun | null>
+  auditConvertFindings: (args: {
+    workspaceId: string
+    findings: AuditFinding[]
+  }) => Promise<{ conversationId: string }>
+  auditRerunTrack: (args: {
+    workspaceId: string
+    trackId: AuditTrackId
+    mode: AuditMode
+  }) => Promise<void>
+  auditResume: (args: { workspaceId: string }) => Promise<AuditRun | null>
+  auditExportMarkdown: (args: { workspaceId: string }) => Promise<void>
+  auditGetHistory: (args: {
+    workspaceId: string
+    limit?: number
+  }) => Promise<AuditRun[]>
+  onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
+  onAuditResult: (cb: (data: AuditResult) => void) => () => void
+  onAuditComplete: (cb: (data: AuditRun) => void) => () => void
+  onAuditStreamChunk: (cb: (data: AuditStreamChunkEvent) => void) => () => void
+  onAuditIntermediate: (cb: (data: AuditIntermediateEvent) => void) => () => void
+
+  // Grill (dedicated agent)
+  grillEvaluate: (args: {
+    workspaceId: string
+    trackId: GrillTrackId
+    ideaTitle: string
+    ideaDescription: string
+    iterationHistory?: string
+    previousScore?: number
+    ideaId?: string
+    llmProvider?: LLMProvider
+  }) => Promise<void>
+  grillCancel: () => Promise<void>
+  onGrillStreamChunk: (
+    cb: (data: { type: string; content?: string; toolActivity?: Record<string, unknown> }) => void
+  ) => () => void
+  onGrillEvaluationResult: (
+    cb: (data: {
+      trackId?: GrillTrackId
+      score: number
+      scoreLabel: string
+      feedback: string
+      questions: GrillQuestion[]
+      suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
+    }) => void
+  ) => () => void
+  onGrillStreamComplete: (cb: () => void) => () => void
+  grillCondenseRequirement: (args: { text: string }) => Promise<{ condensed: string }>
+  grillGetStatus: (args: { workspaceId: string }) => Promise<{
+    status: string
+    ideaId: string
+    trackId: string | null
+    score: number | null
+  } | null>
+  grillGetSession: (args: { ideaId: string }) => Promise<unknown | null>
+  grillSaveAnswers: (args: {
+    sessionId: string
+    questionStates: Record<string, unknown>
+  }) => Promise<void>
+  onGrillStatusChanged: (
+    cb: (data: { status: string; ideaId: string; trackId: string | null; score: number | null }) => void
   ) => () => void
 }
 

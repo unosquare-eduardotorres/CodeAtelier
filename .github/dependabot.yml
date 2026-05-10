@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    # Prioritize Anthropic SDK updates
+    allow:
+      - dependency-type: "all"
+    groups:
+      anthropic-sdk:
+        patterns:
+          - "@anthropic-ai/*"
+      electron:
+        patterns:
+          - "electron"
+          - "electron-*"
+          - "@electron-toolkit/*"
+      testing:
+        patterns:
+          - "playwright*"
+          - "@playwright/*"

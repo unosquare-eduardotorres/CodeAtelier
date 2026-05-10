@@ -1,24 +1,29 @@
-appId: com.agent-studio.app
+appId: com.code-atelier.app
 productName: Code Atelier
 directories:
   buildResources: build
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # Whitelist approach — include ONLY what the packaged app needs.
+  # electron-builder adds production node_modules automatically via its
+  # own dependency resolver. This prevents scanning the full 80K-file
+  # project tree (which OOMs due to .claude/worktrees, sprites, etc.).
+  - out/**
+  - resources/**
+  - package.json
 extraResources:
   - from: src/main/hooks
     to: hooks
     filter:
-      - "*.sh"
+      - '*.sh'
 afterPack: build/afterPack.js
 asarUnpack:
   - resources/**
+  # SDK spawns the claude binary as a child process — must be on real filesystem
+  - node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**
+  # Native addon — must be loadable via dlopen
+  - node_modules/better-sqlite3/**/*.node
 win:
-  executableName: agent-studio
+  executableName: code-atelier
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -26,23 +31,38 @@ nsis:
   createDesktopShortcut: always
 mac:
   hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
-  notarize: false
+  notarize: true
 dmg:
   artifactName: ${name}-${version}.${ext}
+  background: build/background.png
+  iconSize: 80
+  window:
+    width: 540
+    height: 380
+  contents:
+    - x: 130
+      y: 220
+      type: file
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
 linux:
   target:
     - AppImage
     - snap
     - deb
-  maintainer: agent-studio.com
+  maintainer: codeatelier.dev
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
-npmRebuild: false
+npmRebuild: true
+electronVersion: 40.9.3
 publish:
   provider: github
   owner: anthropics

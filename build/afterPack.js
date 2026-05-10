@@ -1,5 +1,4 @@
 // @ts-check
-const { FuseV1Options, FuseVersion, flipFuses } = require('@electron/fuses')
 const path = require('path')
 
 /**
@@ -14,8 +13,15 @@ const path = require('path')
  * @param {import('electron-builder').AfterPackContext} context
  */
 module.exports = async function afterPack(context) {
-  const ext =
-    { darwin: '.app', win32: '.exe', linux: '' }[context.electronPlatformName] || ''
+  let flipFuses, FuseV1Options, FuseVersion
+  try {
+    ;({ flipFuses, FuseV1Options, FuseVersion } = require('@electron/fuses'))
+  } catch {
+    console.warn('[afterPack] @electron/fuses not available — skipping fuse flipping (dev deps pruned)')
+    return
+  }
+
+  const ext = { darwin: '.app', win32: '.exe', linux: '' }[context.electronPlatformName] || ''
   const executableName = context.packager.appInfo.productFilename + ext
   const executablePath = path.join(context.appOutDir, executableName)
 

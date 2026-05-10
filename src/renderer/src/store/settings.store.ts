@@ -39,6 +39,9 @@ interface SettingsState {
   syncError: string | null
   lastSyncResult: SyncResult | null
 
+  // Tech-stack detection
+  detectedTechs: string[] | null
+
   // File content for viewer/editor
   activeFileContent: string | null
   activeFilePath: string | null
@@ -87,6 +90,7 @@ const initialState = {
   isSyncing: false,
   syncError: null,
   lastSyncResult: null,
+  detectedTechs: null,
   activeFileContent: null,
   activeFilePath: null,
   isFileLoading: false,
@@ -132,7 +136,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         return result
       }
 
-      set({ isActivating: false, activationResult: result })
+      set({
+        isActivating: false,
+        activationResult: result,
+        detectedTechs: result.detectedTechs ?? null
+      })
 
       // Store pending CLAUDE.md for user review
       if (result.proposedClaudeMd) {

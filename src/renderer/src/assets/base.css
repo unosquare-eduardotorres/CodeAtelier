@@ -1,14 +1,15 @@
-/* Typography foundation — Code Atelier serif-first brand */
+/* Typography foundation — Code Atelier: Inter for body (screen-optimized), serif for display */
 body {
   font-family:
-    'EB Garamond',
-    'Cormorant Garamond',
-    Georgia,
-    'Times New Roman',
-    serif;
-  font-size: 17px;
-  line-height: 1.72;
+    'Inter',
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
   letter-spacing: 0;
   font-optical-sizing: auto;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }

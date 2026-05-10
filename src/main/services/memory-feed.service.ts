@@ -27,155 +27,6 @@ class MemoryFeedService {
   private isBusy = false
 
   /**
-   * Feed from CLAUDE.md — extract structured memories from the project configuration file.
-   */
-  async feedFromClaudeMd(
-    workspacePath: string,
-    onProgress?: ProgressCallback
-  ): Promise<MemoryFeedResult> {
-    if (this.isBusy) {
-      return {
-        success: false,
-        source: 'claude-md',
-        memoriesCreated: 0,
-        error: 'Another feed is in progress'
-      }
-    }
-
-    const emit = (msg: string, type: MemoryFeedProgress['type'] = 'status'): void => {
-      onProgress?.({ type, message: msg, source: 'claude-md', timestamp: Date.now() })
-    }
-
-    try {
-      this.isBusy = true
-      emit('Reading CLAUDE.md...')
-
-      const claudeMdPath = join(workspacePath, 'CLAUDE.md')
-      if (!existsSync(claudeMdPath)) {
-        emit('No CLAUDE.md found', 'error')
-        return {
-          success: false,
-          source: 'claude-md',
-          memoriesCreated: 0,
-          error: 'No CLAUDE.md found'
-        }
-      }
-
-      const content = readFileSync(claudeMdPath, 'utf-8')
-      if (content.length < 50) {
-        emit('CLAUDE.md too short to extract memories', 'error')
-        return {
-          success: false,
-          source: 'claude-md',
-          memoriesCreated: 0,
-          error: 'CLAUDE.md too short'
-        }
-      }
-
-      emit('Extracting memories from CLAUDE.md...')
-
-      const workspaceId = this.getWorkspaceId(workspacePath)
-      const prompt = `You are a memory extraction engine. Read the following CLAUDE.md project configuration file and extract structured memories.
-
-For each important piece of information, output a JSON object on its own line with these fields:
-- "type": one of "project" (architecture decisions, tech choices) or "reference" (API patterns, conventions)
-- "title": short descriptive title (5-15 words)
-- "content": the extracted knowledge (1-3 sentences)
-- "importance": 1-10 (10 = critical project constraint, 5 = useful convention, 1 = minor detail)
-- "tags": array of relevant tags
-
-Output ONLY valid JSON objects, one per line. No markdown, no explanation. Extract 5-20 memories from:
-
-${content.substring(0, 50000)}`
-
-      const result = await this.spawnSummarizer(prompt, workspacePath)
-      const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-claude-md')
-
-      this.saveFeedTimestamp(workspacePath, 'claude-md')
-      emit(`Created ${memories} memories from CLAUDE.md`, 'complete')
-      return { success: true, source: 'claude-md', memoriesCreated: memories }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      emit(`Feed failed: ${msg}`, 'error')
-      return { success: false, source: 'claude-md', memoriesCreated: 0, error: msg }
-    } finally {
-      this.isBusy = false
-    }
-  }
-
-  /**
-   * Feed from codebase — analyze key project files and extract structural memories.
-   */
-  async feedFromCodebase(
-    workspacePath: string,
-    onProgress?: ProgressCallback
-  ): Promise<MemoryFeedResult> {
-    if (this.isBusy) {
-      return {
-        success: false,
-        source: 'codebase',
-        memoriesCreated: 0,
-        error: 'Another feed is in progress'
-      }
-    }
-
-    const emit = (msg: string, type: MemoryFeedProgress['type'] = 'status'): void => {
-      onProgress?.({ type, message: msg, source: 'codebase', timestamp: Date.now() })
-    }
-
-    try {
-      this.isBusy = true
-      emit('Scanning codebase structure...')
-
-      const keyFiles = this.readKeyFiles(workspacePath)
-      const treeListing = this.getTreeListing(workspacePath)
-
-      if (!keyFiles && !treeListing) {
-        emit('No key files found to analyze', 'error')
-        return {
-          success: false,
-          source: 'codebase',
-          memoriesCreated: 0,
-          error: 'No key files found'
-        }
-      }
-
-      emit('Analyzing codebase structure...')
-
-      const workspaceId = this.getWorkspaceId(workspacePath)
-      const prompt = `You are a codebase analysis engine. Analyze the following project structure and key files, then extract structured memories about the project's architecture, patterns, and conventions.
-
-For each important observation, output a JSON object on its own line with these fields:
-- "type": one of "project" (architecture/tech choices) or "reference" (patterns/conventions)
-- "title": short descriptive title (5-15 words)
-- "content": the extracted knowledge (1-3 sentences)
-- "importance": 1-10
-- "tags": array of relevant tags
-
-Output ONLY valid JSON objects, one per line. No markdown, no explanation.
-
-## Project Tree
-${treeListing}
-
-## Key Files
-${keyFiles}`
-
-      const result = await this.spawnSummarizer(prompt, workspacePath)
-      const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-codebase')
-
-      this.saveFeedTimestamp(workspacePath, 'codebase')
-      emit(`Created ${memories} memories from codebase analysis`, 'complete')
-      return { success: true, source: 'codebase', memoriesCreated: memories }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      emit(`Feed failed: ${msg}`, 'error')
-      return { success: false, source: 'codebase', memoriesCreated: 0, error: msg }
-    } finally {
-      this.isBusy = false
-    }
-  }
-
-  /**
    * Feed from a specific document file — extract memories from .md, .txt, .docx, etc.
    */
   async feedFromDocument(
@@ -192,8 +43,8 @@ ${keyFiles}`
       }
     }
 
-    const emit = (msg: string, type: MemoryFeedProgress['type'] = 'status'): void => {
-      onProgress?.({ type, message: msg, source: 'document', timestamp: Date.now() })
+    const emit = (msg: string, status: MemoryFeedProgress['status'] = 'running'): void => {
+      onProgress?.({ status, message: msg, source: 'document', timestamp: Date.now() })
     }
 
     try {
@@ -241,7 +92,7 @@ ${content.substring(0, 50000)}`
       const memories = this.parseMemoryLines(result, workspaceId, 'memory-feed-document')
 
       this.saveFeedTimestamp(workspacePath, 'document')
-      emit(`Created ${memories} memories from document`, 'complete')
+      emit(`Created ${memories} memories from document`, 'done')
       return { success: true, source: 'document', memoriesCreated: memories }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
@@ -271,7 +122,7 @@ ${content.substring(0, 50000)}`
         // user/feedback memories are cross-workspace
         const memWorkspaceId = data.type === 'user' || data.type === 'feedback' ? null : workspaceId
 
-        memoryRepository.create({
+        const mem = memoryRepository.createIfNotDuplicate({
           workspaceId: memWorkspaceId,
           type: data.type,
           title: data.title,
@@ -281,6 +132,7 @@ ${content.substring(0, 50000)}`
           importance:
             typeof data.importance === 'number' ? Math.min(10, Math.max(1, data.importance)) : 5
         })
+        if (!mem) continue // skip duplicate
         created++
       } catch {
         // Skip malformed lines

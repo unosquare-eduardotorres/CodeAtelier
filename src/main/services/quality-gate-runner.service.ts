@@ -199,7 +199,11 @@ class QualityGateRunnerService {
             if (error) {
               // Process exited with non-zero or timed out
               const output = (stdout || '') + (stderr || '')
-              const summary = this.extractErrorSummary(gate.type, output, error.code)
+              const summary = this.extractErrorSummary(
+                gate.type,
+                output,
+                typeof error.code === 'number' ? error.code : undefined
+              )
               resolve({
                 type: gate.type,
                 passed: false,

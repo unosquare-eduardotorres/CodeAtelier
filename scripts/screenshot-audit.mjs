@@ -1,5 +1,5 @@
 /**
- * Playwright Electron screenshot audit for Agent Studio.
+ * Playwright Electron screenshot audit for Code Atelier.
  * Launches the built app and captures every major page/state.
  *
  * Usage:  node scripts/screenshot-audit.mjs
@@ -47,7 +47,10 @@ async function main() {
   await snap(win, '01-initial-load', 1000)
 
   // Check if we see the Welcome Modal
-  const welcomeVisible = await win.locator('text=Welcome to Code Atelier').count().catch(() => 0)
+  const welcomeVisible = await win
+    .locator('text=Welcome to Code Atelier')
+    .count()
+    .catch(() => 0)
 
   if (welcomeVisible > 0) {
     console.log('--- Page 2: Welcome Modal (Step 1) ---')
@@ -89,13 +92,20 @@ async function main() {
 
   // ─── 3. Try to select a workspace ───
   // Look for any clickable workspace card or Open Folder button
-  const openFolderBtn = win.locator('button:has-text("Open Folder"), button:has-text("Open Project"), button:has-text("Select Folder")').first()
+  const openFolderBtn = win
+    .locator(
+      'button:has-text("Open Folder"), button:has-text("Open Project"), button:has-text("Select Folder")'
+    )
+    .first()
   if ((await openFolderBtn.count()) > 0) {
     await snap(win, '06-open-folder-button-visible')
   }
 
   // Look for existing workspace cards
-  const workspaceItems = win.locator('[role="button"], button').filter({ hasText: /workspace|project/i }).first()
+  const workspaceItems = win
+    .locator('[role="button"], button')
+    .filter({ hasText: /workspace|project/i })
+    .first()
   if ((await workspaceItems.count()) > 0) {
     await workspaceItems.click()
     await sleep(2000)
@@ -141,7 +151,9 @@ async function main() {
     // Click through tabs
     const tabs = ['Agents', 'Skills', 'Team']
     for (let i = 0; i < tabs.length; i++) {
-      const tab = win.locator(`button:has-text("${tabs[i]}"), [role="tab"]:has-text("${tabs[i]}")`).first()
+      const tab = win
+        .locator(`button:has-text("${tabs[i]}"), [role="tab"]:has-text("${tabs[i]}")`)
+        .first()
       if ((await tab.count()) > 0) {
         await tab.click()
         await sleep(1000)
@@ -162,7 +174,10 @@ async function main() {
   console.log('--- Page 8: New Conversation Modal ---')
   await win.keyboard.press('Meta+n')
   await sleep(1000)
-  const modalVisible = await win.locator('[role="dialog"]').count().catch(() => 0)
+  const modalVisible = await win
+    .locator('[role="dialog"]')
+    .count()
+    .catch(() => 0)
   if (modalVisible > 0) {
     await snap(win, '14-new-conversation-modal')
     await win.keyboard.press('Escape')

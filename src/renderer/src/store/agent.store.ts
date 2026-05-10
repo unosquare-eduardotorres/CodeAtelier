@@ -2,19 +2,18 @@ import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
 import type { AgentStatus } from '../../../shared/types'
 
-interface GateResult {
-  type: string
-  passed: boolean
-  summary: string
-}
-
 interface AgentState {
   statuses: AgentStatus[]
   isStopping: boolean
   sessionTokens: number
+  sessionInputTokens: number
+  sessionOutputTokens: number
+  /** Current context window size (point-in-time, from SDK getContextUsage) */
+  contextWindowTokens: number
   lastKnownTokens: Record<string, number>
+  lastKnownInputTokens: Record<string, number>
+  lastKnownOutputTokens: Record<string, number>
   agentOutputs: Record<string, string>
-  gateResults: Record<string, GateResult[]>
   abandonments: Record<string, { pattern: string }>
 
   updateStatus: (status: AgentStatus) => void
@@ -22,7 +21,6 @@ interface AgentState {
   stopAllAgents: () => Promise<void>
   appendOutput: (agentId: string, text: string) => void
   clearOutputs: () => void
-  addGateResult: (agentId: string, gate: GateResult) => void
   markAbandonment: (agentId: string, pattern: string) => void
   clearGateData: () => void
 }
@@ -34,14 +32,18 @@ export const useAgentStore = create<AgentState>((set) => ({
   statuses: previousAgentState?.statuses ?? [],
   isStopping: previousAgentState?.isStopping ?? false,
   sessionTokens: previousAgentState?.sessionTokens ?? 0,
+  sessionInputTokens: previousAgentState?.sessionInputTokens ?? 0,
+  sessionOutputTokens: previousAgentState?.sessionOutputTokens ?? 0,
+  contextWindowTokens: previousAgentState?.contextWindowTokens ?? 0,
   lastKnownTokens: previousAgentState?.lastKnownTokens ?? {},
+  lastKnownInputTokens: previousAgentState?.lastKnownInputTokens ?? {},
+  lastKnownOutputTokens: previousAgentState?.lastKnownOutputTokens ?? {},
   agentOutputs: previousAgentState?.agentOutputs ?? {},
-  gateResults: previousAgentState?.gateResults ?? {},
   abandonments: previousAgentState?.abandonments ?? {},
 
   updateStatus: (status: AgentStatus) => {
     set((state) => {
-      // ── Session token accumulation ──
+      // ── Session token accumulation (total) ──
       const prevTokens = state.lastKnownTokens[status.agentId] ?? 0
       const currentTokens = status.tokenUsage
       // If current < prev, agent was restarted → treat current as a fresh delta
@@ -52,22 +54,48 @@ export const useAgentStore = create<AgentState>((set) => ({
         [status.agentId]: currentTokens
       }
 
+      // ── Session input/output token accumulation ──
+      const prevIn = state.lastKnownInputTokens[status.agentId] ?? 0
+      const curIn = status.inputTokens ?? 0
+      const deltaIn = curIn >= prevIn ? curIn - prevIn : curIn
+
+      const prevOut = state.lastKnownOutputTokens[status.agentId] ?? 0
+      const curOut = status.outputTokens ?? 0
+      const deltaOut = curOut >= prevOut ? curOut - prevOut : curOut
+
+      const newLastKnownInput = {
+        ...state.lastKnownInputTokens,
+        [status.agentId]: curIn
+      }
+      const newLastKnownOutput = {
+        ...state.lastKnownOutputTokens,
+        [status.agentId]: curOut
+      }
+
+      // Extract context window size from the da-vinci agent status (point-in-time value)
+      const contextWindowTokens =
+        status.agentType === 'da-vinci' && status.contextTokens
+          ? status.contextTokens
+          : state.contextWindowTokens
+
+      const sessionUpdate = {
+        sessionTokens: newSessionTokens,
+        sessionInputTokens: state.sessionInputTokens + deltaIn,
+        sessionOutputTokens: state.sessionOutputTokens + deltaOut,
+        contextWindowTokens,
+        lastKnownTokens: newLastKnown,
+        lastKnownInputTokens: newLastKnownInput,
+        lastKnownOutputTokens: newLastKnownOutput
+      }
+
       // ── Existing status array update ──
       const existing = state.statuses.findIndex((s) => s.agentId === status.agentId)
       if (existing >= 0) {
         const updated = [...state.statuses]
         updated[existing] = status
-        return {
-          statuses: updated,
-          sessionTokens: newSessionTokens,
-          lastKnownTokens: newLastKnown
-        }
+        return { statuses: updated, ...sessionUpdate }
       }
-      return {
-        statuses: [...state.statuses, status],
-        sessionTokens: newSessionTokens,
-        lastKnownTokens: newLastKnown
-      }
+      return { statuses: [...state.statuses, status], ...sessionUpdate }
     })
   },
 
@@ -105,18 +133,6 @@ export const useAgentStore = create<AgentState>((set) => ({
     set({ agentOutputs: {} })
   },
 
-  addGateResult: (agentId: string, gate: GateResult) => {
-    set((state) => {
-      const existing = state.gateResults[agentId] ?? []
-      return {
-        gateResults: {
-          ...state.gateResults,
-          [agentId]: [...existing, gate]
-        }
-      }
-    })
-  },
-
   markAbandonment: (agentId: string, pattern: string) => {
     set((state) => ({
       abandonments: {
@@ -127,7 +143,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   },
 
   clearGateData: () => {
-    set({ gateResults: {}, abandonments: {} })
+    set({ abandonments: {} })
   }
 }))
 

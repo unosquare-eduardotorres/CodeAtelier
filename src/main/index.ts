@@ -16,15 +16,88 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
 import { registerAllIpcHandlers } from './ipc'
-import { generalistService, orchestratorService, skillService } from './services'
-import { agentRegistry } from './services/agent-registry'
+import { chatAgentService, skillService } from './services'
 import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
 
+import { initFileWatcherHandler } from './services/file-watcher.handler'
+import { fileWatcherService } from './services/file-watcher.service'
+
 // Initialize electron-log for the main process
 // Must happen before app.whenReady() for early error capture
 log.initialize()
+
+// Fix dock tooltip: Electron defaults to "Electron" in dev mode.
+// Must be set before app.whenReady().
+app.setName('Code Atelier')
+
+// ── Process-level error safety net — never crash silently ──
+process.on('uncaughtException', (error) => {
+  log.error('[Process] Uncaught exception:', error)
+  // Don't exit — let the app continue running if possible
+  // The user may see degraded functionality but won't lose their work
+  reportMainProcessBug(error, 'fatal')
+})
+
+process.on('unhandledRejection', (reason) => {
+  log.error('[Process] Unhandled rejection:', reason)
+  // Same safety — log but don't crash
+  reportMainProcessBug(reason instanceof Error ? reason : new Error(String(reason)), 'error')
+})
+
+/** Report a main-process error to the bug tracker DB + notify renderer */
+function reportMainProcessBug(error: Error, severity: 'error' | 'fatal'): void {
+  try {
+    // Lazy import to avoid circular deps during early bootstrap
+    const { bugRepository } = require('./db/repositories/bug.repository')
+    const { BrowserWindow } = require('electron') as typeof import('electron')
+    const os = require('node:os')
+
+    // Parse source file/line from stack trace
+    let sourceFile: string | undefined
+    let sourceLine: number | undefined
+    let sourceColumn: number | undefined
+    if (error.stack) {
+      const match = error.stack.match(/at .+\((.+):(\d+):(\d+)\)/)
+      if (match) {
+        sourceFile = match[1]
+        sourceLine = parseInt(match[2], 10)
+        sourceColumn = parseInt(match[3], 10)
+      }
+    }
+
+    const result = bugRepository.upsertBug({
+      process: 'main' as const,
+      severity,
+      errorMessage: error.message,
+      stackTrace: error.stack,
+      sourceFile,
+      sourceLine,
+      sourceColumn,
+      appVersion: app.getVersion(),
+      osInfo: `${process.platform} ${os.release()}`
+    })
+
+    if (result.isNew) {
+      const bug = bugRepository.getById(result.bugId)
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          win.webContents.send('bug:new', bug)
+        } catch {
+          // Window may be destroyed
+        }
+      }
+    }
+  } catch {
+    // Bug tracker itself failed — don't crash the crash handler
+    log.error('[BugTracker] Failed to report main process error to bug tracker')
+  }
+}
+
+// Tracer / message-bus bridges were removed with the specialist-pool deletion
+// (migration 66 onward): no multi-agent pipeline means no cross-agent trace
+// spans or message-bus events to persist.
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
@@ -149,6 +222,17 @@ function createWindow(): void {
     )
   }
 
+  // Clean up stale "running" sessions left over from a previous app crash/quit
+  try {
+    const { agentSessionRepository } = require('./db/repositories') as typeof import('./db/repositories')
+    const staleCount = agentSessionRepository.terminateStale()
+    if (staleCount > 0) {
+      log.info(`[Startup] Terminated ${staleCount} stale agent session(s) from previous run`)
+    }
+  } catch (error) {
+    log.warn('[Startup] Failed to clean up stale sessions (non-critical):', error)
+  }
+
   // Prune old events to prevent unbounded DB growth
   try {
     eventLoggerService.prune(30)
@@ -156,16 +240,11 @@ function createWindow(): void {
     dbLogger.debug('Event pruning on startup failed (non-critical):', error)
   }
 
-  // Initialize agent registry from YAML files (single source of truth)
-  try {
-    agentRegistry.loadFromDisk()
-    agentRegistry.startWatching()
-  } catch (error) {
-    dbLogger.warn('Failed to initialize agent registry:', error)
-  }
-
   // Register IPC handlers
   registerAllIpcHandlers(mainWindow)
+
+  // Initialize file watcher handler — connects fs.watch events to Code Graph + Semantic Search
+  initFileWatcherHandler()
 
   // Initialize auto-updater (production only — dev uses electron-vite HMR)
   if (!is.dev) {
@@ -242,7 +321,7 @@ app.on('web-contents-created', (_event, contents) => {
     // Strip any preload scripts from webview
     delete webPreferences.preload
     webPreferences.nodeIntegration = false
-    // Agent Studio does not use webviews — deny all
+    // Code Atelier does not use webviews — deny all
     webviewEvent.preventDefault()
   })
 })
@@ -266,7 +345,7 @@ app.whenReady().then(() => {
     const tray = new Tray(trayIcon)
     tray.setToolTip('Code Atelier')
     // Keep reference to prevent GC
-    ;(app as Record<string, unknown>)._tray = tray
+    ;(app as unknown as Record<string, unknown>)._tray = tray
   }
 
   // ── Crash reporter: captures GPU/renderer native crashes locally ──
@@ -290,7 +369,7 @@ app.whenReady().then(() => {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self'; connect-src 'self'"
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: https://cdn.jsdelivr.net; font-src 'self'; connect-src 'self'"
           ]
         }
       })
@@ -311,7 +390,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   // Quit on all platforms — including macOS.
-  // Agent Studio runs background CLI processes that should be cleaned up
+  // Code Atelier runs background CLI processes that should be cleaned up
   // via the before-quit handler rather than lingering in the dock.
   app.quit()
 })
@@ -329,16 +408,9 @@ app.on('before-quit', async (event) => {
     log.debug('Skill service shutdown error (expected during quit):', e)
   }
 
-  // Cleanup orchestrator
-  try {
-    await orchestratorService.stop()
-  } catch (e) {
-    log.debug('Orchestrator shutdown error (expected during quit):', e)
-  }
-
   // Cleanup generalist (long-lived interactive claude process)
   try {
-    await generalistService.stop()
+    await chatAgentService.stop()
   } catch (e) {
     log.debug('Generalist shutdown error (expected during quit):', e)
   }
@@ -350,8 +422,8 @@ app.on('before-quit', async (event) => {
     log.debug('Memory feed shutdown error (expected during quit):', e)
   }
 
-  // Stop watching agent YAML files
-  agentRegistry.stopWatching()
+  // Stop all file watchers for Code Graph / Semantic Search
+  fileWatcherService.stopAll()
 
   closeDatabase()
   app.quit()

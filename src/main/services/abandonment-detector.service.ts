@@ -3,6 +3,15 @@ import log from 'electron-log/main'
 const abandonmentLogger = log.scope('Abandonment')
 
 /**
+ * Result of checking a specialist's output for abandonment patterns.
+ */
+export interface AbandonmentResult {
+  detected: boolean
+  pattern?: string
+  context?: string
+}
+
+/**
  * Patterns that indicate a specialist is "giving up" rather than completing the task.
  * These are checked against the final accumulated output of a specialist process.
  */
@@ -40,13 +49,6 @@ const FALSE_POSITIVE_GUARDS: RegExp[] = [
   /the issue was/i,
   /here['']s what I did/i
 ]
-
-export interface AbandonmentResult {
-  detected: boolean
-  pattern?: string
-  /** Last N characters of output where pattern was found */
-  context?: string
-}
 
 /**
  * Detects abandonment patterns in specialist output.
@@ -87,6 +89,52 @@ export function detectAbandonment(output: string): AbandonmentResult {
   }
 
   return { detected: false }
+}
+
+// ── Re-engagement prompts ──
+
+const RE_ENGAGEMENT_PROMPTS: Record<string, string> = {
+  direct: `You indicated you cannot complete this task. This is not acceptable.
+You MUST continue working. Try a different approach:
+1. Break the problem into smaller steps
+2. Search the codebase for similar patterns
+3. Simplify your implementation
+4. Focus on the core requirement, not edge cases
+Resume work now.`,
+
+  premature: `You claimed to have tried everything, but the task is not complete.
+The quality gates have not passed. You have NOT exhausted all options:
+1. Re-read the error messages carefully
+2. Check the test output for specific failure reasons
+3. Look at existing passing tests for patterns
+4. Try the simplest possible fix first
+Continue working.`,
+
+  deflection: `You attempted to defer this task to a human. You are the assigned specialist.
+Do not suggest manual intervention. Instead:
+1. Identify the specific blocker
+2. Research the error or missing dependency
+3. Implement a workaround if the ideal solution is blocked
+4. Document what you tried in comments
+Keep working on this task.`
+}
+
+/**
+ * Returns a re-engagement prompt appropriate for the detected abandonment type.
+ * Used by the task loop to inject motivational context into retry attempts.
+ */
+export function getReEngagementPrompt(detection: AbandonmentResult): string {
+  const pattern = detection.pattern ?? ''
+  if (/give up|cannot|unable|stuck|impossible|beyond/i.test(pattern)) {
+    return RE_ENGAGEMENT_PROMPTS.direct
+  }
+  if (/tried everything|done what I can|exhausted|out of ideas/i.test(pattern)) {
+    return RE_ENGAGEMENT_PROMPTS.premature
+  }
+  if (/you should|manually|human|recommend you/i.test(pattern)) {
+    return RE_ENGAGEMENT_PROMPTS.deflection
+  }
+  return RE_ENGAGEMENT_PROMPTS.direct // fallback
 }
 
 /**

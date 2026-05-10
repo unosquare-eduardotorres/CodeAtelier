@@ -1,115 +1,123 @@
 import { execSync } from 'node:child_process'
+import { BrowserWindow } from 'electron'
 import log from 'electron-log/main'
 import { checkpointRepository } from '../db/repositories/checkpoint.repository'
 import { eventLoggerService } from './event-logger.service'
-import type { DecomposedTask, TaskExecutionProgress } from '../../shared/types'
+import { IPC_CHANNELS } from '../../shared/constants'
 
 const checkpointLogger = log.scope('Checkpoint')
 
-export interface CheckpointState {
-  /** Active task IDs at time of checkpoint */
+export interface CheckpointApprovalRequest {
+  id: string
+  type: 'phase_gate' | 'merge_approval' | 'destructive_action'
+  title: string
+  summary: string
+  details: {
+    what: string
+    why: string
+    risk: string
+    changedFiles?: string[]
+    testResults?: string
+  }
+  createdAt: string
+}
+
+interface PendingCheckpointApproval {
+  resolve: (approved: boolean) => void
+  checkpoint: CheckpointApprovalRequest
+}
+
+/**
+ * Shape of a checkpoint's saved state as read by checkpoint-context.tool.ts.
+ * Checkpoints are now produced by the destructive-action confirmation flow only —
+ * the old pre-execution multi-specialist snapshot path was removed.
+ */
+interface CheckpointState {
   activeTaskIds: string[]
-  /** Completed task IDs at time of checkpoint */
   completedTaskIds: string[]
-  /** Task results (taskId → output summary) */
   taskResults: Record<string, string>
-  /** Task statuses */
-  taskStatuses: Record<string, TaskExecutionProgress['status']>
-  /** Full task plan for re-execution */
-  tasks?: DecomposedTask[]
-  /** Any additional metadata */
+  taskStatuses: Record<string, 'pending' | 'running' | 'completed' | 'failed' | 'skipped'>
   metadata?: Record<string, unknown>
 }
 
 /**
- * Checkpoint service — snapshots orchestration state before risky operations
- * (parallel execution, multi-specialist tasks) to enable rollback on failure.
- *
- * Saves: git state (branch + commit SHA), task progress, and task plan.
+ * Checkpoint service — exposes read-only access to previously-saved checkpoint
+ * snapshots (see checkpoint-context.tool.ts) and a destructive `restoreGitState`
+ * action driven from the UI. Write-path checkpoint creation lives with the
+ * callers that still need it (currently: none in the live code path).
  */
 class CheckpointService {
+  private pendingApprovals = new Map<string, PendingCheckpointApproval>()
+
   /**
-   * Creates a checkpoint before execution begins.
-   * Captures git state and task plan for potential rollback.
+   * Requests user approval before proceeding with a critical operation.
+   * Pauses execution and sends a request to the renderer; resolves when the user responds.
+   * Auto-approves after 5 minutes to prevent indefinite blocking.
    */
-  createCheckpoint(opts: {
-    conversationId: string
-    workspaceId?: string
-    workspacePath: string
-    label: string
-    state: CheckpointState
-  }): string {
-    let gitBranch: string | undefined
-    let gitCommitSha: string | undefined
-
-    try {
-      gitBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-        cwd: opts.workspacePath,
-        encoding: 'utf-8',
-        timeout: 5000
-      }).trim()
-
-      gitCommitSha = execSync('git rev-parse HEAD', {
-        cwd: opts.workspacePath,
-        encoding: 'utf-8',
-        timeout: 5000
-      }).trim()
-    } catch (err) {
-      checkpointLogger.warn('Failed to capture git state for checkpoint:', err)
+  async requestApproval(
+    request: Omit<CheckpointApprovalRequest, 'id' | 'createdAt'>
+  ): Promise<boolean> {
+    const id = `chk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const checkpoint: CheckpointApprovalRequest = {
+      ...request,
+      id,
+      createdAt: new Date().toISOString()
     }
 
-    const checkpoint = checkpointRepository.create({
-      conversationId: opts.conversationId,
-      workspaceId: opts.workspaceId,
-      label: opts.label,
-      state: opts.state as unknown as Record<string, unknown>,
-      gitBranch,
-      gitCommitSha,
-      activeTaskIds: opts.state.activeTaskIds
+    return new Promise<boolean>((resolve) => {
+      this.pendingApprovals.set(id, { resolve, checkpoint })
+
+      // Send to renderer via focused window
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      if (win) {
+        win.webContents.send(IPC_CHANNELS.CHECKPOINT_APPROVAL_REQUEST, checkpoint)
+      } else {
+        // No window — auto-approve to avoid blocking
+        this.pendingApprovals.delete(id)
+        resolve(true)
+      }
+
+      // Safety timeout — auto-approve after 5 minutes
+      setTimeout(
+        () => {
+          if (this.pendingApprovals.has(id)) {
+            checkpointLogger.warn(`Checkpoint approval timed out — auto-approving: ${id}`)
+            this.resolveApproval(id, true)
+          }
+        },
+        5 * 60 * 1000
+      )
     })
-
-    eventLoggerService.logCheckpointCreated({
-      conversationId: opts.conversationId,
-      workspaceId: opts.workspaceId,
-      checkpointId: checkpoint.id,
-      label: opts.label
-    })
-
-    checkpointLogger.info(
-      `Checkpoint "${opts.label}" created: ${checkpoint.id} (git: ${gitBranch}@${gitCommitSha?.slice(0, 7) ?? 'unknown'})`
-    )
-
-    // Prune old checkpoints — keep last 5 per conversation
-    checkpointRepository.pruneKeepRecent(opts.conversationId, 5)
-
-    return checkpoint.id
   }
 
   /**
-   * Creates a pre-execution checkpoint automatically before parallel/sequential execution.
+   * Resolves a pending approval — called from the IPC handler when the user responds.
+   * Also fires the appropriate declarative hook (checkpoint_approved/rejected).
    */
-  createPreExecutionCheckpoint(opts: {
-    conversationId: string
-    workspaceId?: string
-    workspacePath: string
-    tasks: DecomposedTask[]
-  }): string {
-    const taskCount = opts.tasks.length
-    const specialistNames = [...new Set(opts.tasks.map((t) => t.specialist))].join(', ')
+  resolveApproval(checkpointId: string, approved: boolean): void {
+    const pending = this.pendingApprovals.get(checkpointId)
+    if (!pending) return
+    this.pendingApprovals.delete(checkpointId)
+    checkpointLogger.info(
+      `Checkpoint ${approved ? 'approved' : 'rejected'}: ${checkpointId} (${pending.checkpoint.type})`
+    )
 
-    return this.createCheckpoint({
-      conversationId: opts.conversationId,
-      workspaceId: opts.workspaceId,
-      workspacePath: opts.workspacePath,
-      label: `Pre-execution: ${taskCount} tasks (${specialistNames})`,
-      state: {
-        activeTaskIds: [],
-        completedTaskIds: [],
-        taskResults: {},
-        taskStatuses: Object.fromEntries(opts.tasks.map((t) => [t.id, 'pending' as const])),
-        tasks: opts.tasks
-      }
-    })
+    // Fire declarative hook
+    import('./hook-engine.service')
+      .then(({ hookEngine }) => {
+        const event = approved ? 'checkpoint_approved' : 'checkpoint_rejected'
+        hookEngine
+          .executeHooks(event as import('./hook-engine.service').HookEvent, {
+            checkpointId,
+            type: pending.checkpoint.type
+          })
+          .catch((err) => checkpointLogger.warn(`Hook error (${event}):`, err))
+      })
+      .catch(() => {
+        /* hook engine not available */
+      })
+
+    pending.resolve(approved)
   }
 
   /**
@@ -130,35 +138,6 @@ class CheckpointService {
       }
     } catch {
       checkpointLogger.error(`Failed to parse checkpoint state: ${checkpointId}`)
-      return null
-    }
-  }
-
-  /**
-   * Gets the latest checkpoint for a conversation.
-   */
-  getLatestCheckpoint(conversationId: string): {
-    id: string
-    label: string
-    state: CheckpointState
-    gitBranch?: string
-    gitCommitSha?: string
-    createdAt: string
-  } | null {
-    const record = checkpointRepository.findLatest(conversationId)
-    if (!record) return null
-
-    try {
-      const state = JSON.parse(record.stateJson) as CheckpointState
-      return {
-        id: record.id,
-        label: record.label,
-        state,
-        gitBranch: record.gitBranch ?? undefined,
-        gitCommitSha: record.gitCommitSha ?? undefined,
-        createdAt: record.createdAt
-      }
-    } catch {
       return null
     }
   }

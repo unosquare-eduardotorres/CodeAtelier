@@ -1,7 +1,12 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { Idea } from '../../shared/types'
-import { ideaRepository, conversationRepository, memoryRepository } from '../db/repositories'
+import type { Idea, LLMProvider } from '../../shared/types'
+import {
+  ideaRepository,
+  conversationRepository,
+  memoryRepository,
+  workspaceRepository
+} from '../db/repositories'
 import { validateSender } from './validate-sender'
 
 /**
@@ -126,11 +131,18 @@ export function registerIdeaIpc(): void {
         if (conv) return { idea, conversation: conv }
       }
 
+      // Read workspace LLM provider for conversation creation
+      const wsRow = workspaceRepository.findById(args.workspaceId)
+      const wsSettings = JSON.parse(wsRow?.settingsJson ?? '{}')
+      const llmProvider: LLMProvider = wsSettings.llmProvider ?? 'claude'
+
       // Create a new conversation for the grill session
       const conv = conversationRepository.create(
         args.workspaceId,
         `💡 Grill: ${idea.title}`,
-        'plan'
+        'plan',
+        undefined,
+        llmProvider
       )
 
       // Link it to the idea and update status
@@ -152,8 +164,19 @@ export function registerIdeaIpc(): void {
       const idea = ideaRepository.findById(args.ideaId)
       if (!idea) throw new Error('Idea not found')
 
+      // Read workspace LLM provider for conversation creation
+      const wsRowDirect = workspaceRepository.findById(args.workspaceId)
+      const wsSettingsDirect = JSON.parse(wsRowDirect?.settingsJson ?? '{}')
+      const llmProviderDirect: LLMProvider = wsSettingsDirect.llmProvider ?? 'claude'
+
       // Create conversation with idea title
-      const conv = conversationRepository.create(args.workspaceId, idea.title, 'plan')
+      const conv = conversationRepository.create(
+        args.workspaceId,
+        idea.title,
+        'plan',
+        undefined,
+        llmProviderDirect
+      )
 
       // Mark idea as completed
       ideaRepository.setConvertedConversation(args.ideaId, conv.id)

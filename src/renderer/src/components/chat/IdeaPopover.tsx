@@ -4,11 +4,19 @@ import { useIdeaStore, useWorkspaceStore } from '@renderer/store'
 
 interface IdeaPopoverProps {
   onClose: () => void
+  onSaved?: () => void
+  initialTitle?: string
+  initialDescription?: string
 }
 
-export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.Element {
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
+export default function IdeaPopover({
+  onClose,
+  onSaved,
+  initialTitle,
+  initialDescription
+}: IdeaPopoverProps): React.JSX.Element {
+  const [title, setTitle] = useState(initialTitle ?? '')
+  const [description, setDescription] = useState(initialDescription ?? '')
   const [isSaving, setIsSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const { createIdea } = useIdeaStore()
@@ -20,6 +28,7 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
     try {
       await createIdea(activeWorkspace.id, title.trim(), description.trim())
       setSaved(true)
+      onSaved?.()
       setTimeout(() => onClose(), 800)
     } catch (error) {
       console.error('Failed to save idea:', error)
@@ -68,8 +77,8 @@ export default function IdeaPopover({ onClose }: IdeaPopoverProps): React.JSX.El
           <div className="p-4 space-y-3">
             <p className="text-xs text-text-secondary leading-relaxed">
               Save this idea for later. You can find it in{' '}
-              <span className="text-text-primary font-medium">Workspace Settings → Ideas</span>, then
-              refine it with &quot;Grill Me&quot; or convert it directly into a work item.
+              <span className="text-text-primary font-medium">Workspace Settings → Ideas</span>,
+              then refine it with &quot;Grill Me&quot; or convert it directly into a work item.
             </p>
             <input
               type="text"

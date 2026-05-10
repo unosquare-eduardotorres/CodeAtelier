@@ -1,16 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import {
-  Database,
-  Search,
-  Trash2,
-  FileText,
-  Code2,
-  Upload,
-  Moon,
-  Sparkles,
-  RefreshCw
-} from 'lucide-react'
-import { useWorkspaceStore, useMemoryStore, useDreamStore } from '@renderer/store'
+import { Database, Search, Trash2, Upload, Sparkles, RefreshCw } from 'lucide-react'
+import { useWorkspaceStore, useMemoryStore } from '@renderer/store'
 import { SettingsCard } from '@renderer/components/common'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import type { Memory, MemoryType, WorkspaceFeedTimestamps } from '../../../../shared/types'
@@ -34,7 +24,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
     setSearchQuery,
     startFeed
   } = useMemoryStore()
-  const { triggerDream, currentRun } = useDreamStore()
   const [filterType, setFilterType] = useState<MemoryType | 'all'>('all')
   const [feedTimestamps, setFeedTimestamps] = useState<WorkspaceFeedTimestamps>({})
   const [showDiffModal, setShowDiffModal] = useState(false)
@@ -76,7 +65,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
     [activeWorkspace?.id, searchMemories, loadMemories, setSearchQuery]
   )
 
-  const handleRegenerateAndFeed = async (): Promise<void> => {
+  const handleRegenerateClaudeMd = async (): Promise<void> => {
     if (!activeWorkspace?.repoPath) return
     setIsRegenerating(true)
     try {
@@ -99,44 +88,16 @@ export default function MemorySettingsPage(): React.JSX.Element {
     if (!activeWorkspace?.repoPath) return
     setIsConfirmingRegenerate(true)
     try {
-      // 1. Write the approved CLAUDE.md to disk
+      // Write the approved CLAUDE.md to disk — no memory feed needed,
+      // CLAUDE.md is already injected via system prompt Layer 4
       await window.api.confirmClaudeMd({
         workspacePath: activeWorkspace.repoPath,
         content: editedContent
       })
-      // 2. Feed it into memories
-      startFeed('claude-md')
-      await window.api.memoryFeedClaudeMd({
-        workspacePath: activeWorkspace.repoPath
-      })
       setShowDiffModal(false)
       setRegenerateResult(null)
-      if (activeWorkspace.id) {
-        loadMemories(activeWorkspace.id)
-        refreshFeedTimestamps(activeWorkspace.id)
-      }
     } finally {
       setIsConfirmingRegenerate(false)
-    }
-  }
-
-  const handleFeedClaudeMd = async (): Promise<void> => {
-    if (!activeWorkspace?.repoPath) return
-    startFeed('claude-md')
-    await window.api.memoryFeedClaudeMd({ workspacePath: activeWorkspace.repoPath })
-    if (activeWorkspace.id) {
-      loadMemories(activeWorkspace.id)
-      refreshFeedTimestamps(activeWorkspace.id)
-    }
-  }
-
-  const handleFeedCodebase = async (): Promise<void> => {
-    if (!activeWorkspace?.repoPath) return
-    startFeed('codebase')
-    await window.api.memoryFeedCodebase({ workspacePath: activeWorkspace.repoPath })
-    if (activeWorkspace.id) {
-      loadMemories(activeWorkspace.id)
-      refreshFeedTimestamps(activeWorkspace.id)
     }
   }
 
@@ -150,12 +111,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
       loadMemories(activeWorkspace.id)
       refreshFeedTimestamps(activeWorkspace.id)
     }
-  }
-
-  const handleTriggerDream = async (): Promise<void> => {
-    if (!activeWorkspace?.id) return
-    await triggerDream(activeWorkspace.id)
-    loadMemories(activeWorkspace.id)
   }
 
   const filteredMemories =
@@ -180,12 +135,13 @@ export default function MemorySettingsPage(): React.JSX.Element {
         <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
           Feed Sources
         </h3>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
+          {/* Regenerate CLAUDE.md — writes file only, no memory feed */}
           <button
-            onClick={handleRegenerateAndFeed}
+            onClick={handleRegenerateClaudeMd}
             disabled={feedStatus === 'running' || isRegenerating}
-            title="AI-generates a CLAUDE.md from project sources, lets you review it, then writes to disk and feeds into memories"
-            aria-label="Regenerate & Feed CLAUDE.md — AI-generate from project sources, review, then feed"
+            title="AI-generates a CLAUDE.md from project sources, lets you review it, then writes to disk"
+            aria-label="Regenerate CLAUDE.md — AI-generate from project sources and write to disk"
             className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="flex items-center gap-2">
@@ -194,32 +150,15 @@ export default function MemorySettingsPage(): React.JSX.Element {
                 className={`text-mode-plan-text ${isRegenerating ? 'animate-spin' : ''}`}
               />
               <span className="text-sm font-medium text-text-primary">
-                {isRegenerating ? 'Generating...' : 'Regenerate & Feed CLAUDE.md'}
+                {isRegenerating ? 'Generating...' : 'Regenerate CLAUDE.md'}
               </span>
             </div>
             <p className="text-xs text-text-muted leading-relaxed">
-              AI-generate from project sources, review, then feed into memories
+              AI-generate from project sources and write to disk
             </p>
-            <FeedTimestamp timestamp={feedTimestamps['claude-md']} />
           </button>
 
-          <button
-            onClick={handleFeedCodebase}
-            disabled={feedStatus === 'running'}
-            title="Scans key project files (package.json, tsconfig, directory tree) and creates structural memories about your codebase"
-            aria-label="Feed Codebase — Analyze project structure, dependencies, and key files for architectural context"
-            className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <div className="flex items-center gap-2">
-              <Code2 size={14} className="text-info" />
-              <span className="text-sm font-medium text-text-primary">Feed Codebase</span>
-            </div>
-            <p className="text-xs text-text-muted leading-relaxed">
-              Analyze project structure, dependencies, and key files for architectural context
-            </p>
-            <FeedTimestamp timestamp={feedTimestamps['codebase']} />
-          </button>
-
+          {/* Feed Document — unique value */}
           <button
             onClick={handleFeedDocument}
             disabled={feedStatus === 'running'}
@@ -237,37 +176,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
             <FeedTimestamp timestamp={feedTimestamps['document']} />
           </button>
 
-          <button
-            onClick={handleFeedClaudeMd}
-            disabled={feedStatus === 'running'}
-            title="Reads existing CLAUDE.md from disk and extracts memories without regenerating (skip if you just want to re-extract)"
-            aria-label="Feed Existing CLAUDE.md — Extract memories from existing CLAUDE.md without regenerating"
-            className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <div className="flex items-center gap-2">
-              <FileText size={14} className="text-text-muted" />
-              <span className="text-sm font-medium text-text-primary">Feed Existing CLAUDE.md</span>
-            </div>
-            <p className="text-xs text-text-muted leading-relaxed">
-              Extract memories from existing CLAUDE.md without regenerating
-            </p>
-          </button>
-
-          <button
-            onClick={handleTriggerDream}
-            disabled={!!currentRun}
-            title="Consolidates and deduplicates existing memories using AI, merging overlapping entries and updating importance scores"
-            aria-label="Dream — Deduplicate, merge, and score existing memories using AI consolidation"
-            className="flex flex-col gap-1.5 p-3 rounded bg-surface-overlay border border-border-subtle hover:bg-surface-float hover:border-border-default transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <div className="flex items-center gap-2">
-              <Moon size={14} className="text-primary-text" />
-              <span className="text-sm font-medium text-text-primary">Dream (Consolidate)</span>
-            </div>
-            <p className="text-xs text-text-muted leading-relaxed">
-              Deduplicate, merge, and score existing memories using AI consolidation
-            </p>
-          </button>
         </div>
       </div>
 
@@ -303,7 +211,11 @@ export default function MemorySettingsPage(): React.JSX.Element {
                   color: 'bg-mode-plan-muted text-mode-plan-text'
                 },
                 { value: 'user', label: 'User', color: 'bg-info-muted text-info' },
-                { value: 'feedback', label: 'Feedback', color: 'bg-mode-build-muted text-mode-build-text' }
+                {
+                  value: 'feedback',
+                  label: 'Feedback',
+                  color: 'bg-mode-build-muted text-mode-build-text'
+                }
               ] as const
             ).map(({ value, label, color }) => (
               <button
@@ -340,60 +252,26 @@ export default function MemorySettingsPage(): React.JSX.Element {
                 </h3>
               </div>
               <p className="text-xs text-text-secondary mb-4 leading-relaxed">
-                Memories give your AI agents persistent context across conversations. They're
+                Memories give your AI agents persistent context across conversations. They&apos;re
                 extracted automatically during chats, or you can seed them from your project files.
               </p>
               <div className="space-y-2.5">
                 <div className="flex items-start gap-3">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-mode-plan-muted text-mode-plan-text text-xs font-bold flex-shrink-0 mt-0.5">
-                    1
-                  </span>
-                  <div>
-                    <span className="text-xs font-medium text-text-primary">
-                      Regenerate & Feed CLAUDE.md
-                    </span>
-                    <span className="text-xs text-text-muted ml-1">
-                      — AI-generates and extracts project conventions
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-info-muted text-info text-xs font-bold flex-shrink-0 mt-0.5">
-                    2
-                  </span>
-                  <div>
-                    <span className="text-xs font-medium text-text-primary">Feed Codebase</span>
-                    <span className="text-xs text-text-muted ml-1">
-                      — Scans project structure and key files
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
                   <span className="flex items-center justify-center w-5 h-5 rounded-full bg-success-muted text-success text-xs font-bold flex-shrink-0 mt-0.5">
-                    3
+                    1
                   </span>
                   <div>
                     <span className="text-xs font-medium text-text-primary">Feed Documents</span>
                     <span className="text-xs text-text-muted ml-1">
-                      — Import any additional docs your agents should know
+                      — Import specs, docs, or design files your agents should know
                     </span>
                   </div>
                 </div>
-                <div className="flex items-start gap-3">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary-muted text-primary-text text-xs font-bold flex-shrink-0 mt-0.5">
-                    4
-                  </span>
-                  <div>
-                    <span className="text-xs font-medium text-text-primary">Dream</span>
-                    <span className="text-xs text-text-muted ml-1">
-                      — Consolidate after 10+ memories to deduplicate and score
-                    </span>
-                  </div>
-                </div>
+
               </div>
               <p className="text-xs text-text-muted mt-4 italic">
-                Memories are also created automatically during conversations — start chatting and
-                they'll accumulate over time.
+                Memories are created from conversations (via ```memory blocks) and document feeds.
+                Project context from CLAUDE.md is injected automatically via the system prompt.
               </p>
             </SettingsCard>
           ) : (
@@ -461,6 +339,11 @@ function MemoryCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <span className={`px-2 py-0.5 text-xs rounded-full ${badge.color}`}>{badge.label}</span>
+            {!memory.workspaceId && (
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-surface-overlay text-text-muted border border-border-subtle">
+                Global
+              </span>
+            )}
             {memory.importance >= 7 && (
               <span className="text-xs text-mode-build-text">★ High importance</span>
             )}

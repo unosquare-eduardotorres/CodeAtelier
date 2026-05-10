@@ -252,7 +252,9 @@ export default function SyncReviewModal({
                 >
                   <span className="text-lg">{specialist.icon}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-text-primary">{specialist.displayName}</p>
+                    <p className="text-sm font-medium text-text-primary">
+                      {specialist.displayName}
+                    </p>
                     <p className="text-xs text-text-muted">YAML file removed from workspace</p>
                   </div>
                   <span className="text-xs text-danger font-medium">REMOVED</span>

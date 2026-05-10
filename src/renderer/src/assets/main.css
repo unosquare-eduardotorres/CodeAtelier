@@ -1,9 +1,10 @@
 @import 'tailwindcss';
 @plugin "@tailwindcss/typography";
+@import './fonts.css';
 @import './base.css';
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Design Token System — Semantic Colors for Agent Studio
+   Design Token System — Semantic Colors for Code Atelier
    4-layer surface system + semantic text/border/accent colors
    ═══════════════════════════════════════════════════════════════════════════ */
 @theme {
@@ -13,10 +14,10 @@
      ═══════════════════════════════════════════════════════════════════════ */
 
   /* ── Surface layers (dark → light) ── */
-  --color-surface-base: #090D0F; /* Near-black obsidian: app shell, titlebar, status bar */
-  --color-surface-raised: #111C21; /* Deep teal-black: sidebars, panels */
+  --color-surface-base: #090d0f; /* Near-black obsidian: app shell, titlebar, status bar */
+  --color-surface-raised: #111c21; /* Deep teal-black: sidebars, panels */
   --color-surface-overlay: #162228; /* Dark muted teal: cards, chat bubbles, dropdowns */
-  --color-surface-float: #1E2C30; /* Elevated dark: modals, popovers, tooltips */
+  --color-surface-float: #1e2c30; /* Elevated dark: modals, popovers, tooltips */
 
   /* ── Border layers (gold-based) ── */
   --color-border-subtle: rgba(184, 151, 106, 0.15); /* Between same-level surfaces */
@@ -24,75 +25,95 @@
   --color-border-strong: rgba(184, 151, 106, 0.45); /* Emphasis borders */
 
   /* ── Text hierarchy (gold tones on dark) ── */
-  --color-text-primary: #C8B89A; /* Bright Gold: headings, important text */
-  --color-text-body: #8A9A9E; /* Mist: body text, chat messages */
-  --color-text-secondary: #6A7A7E; /* Fog: labels, secondary info */
-  --color-text-muted: #5A6A6E; /* Dim (bumped for WCAG AA): timestamps, meta */
+  --color-text-primary: #c8b89a; /* Bright Gold: headings, important text */
+  --color-text-body: #afc2c6; /* Mist — bumped ~12% for long-read comfort (5.1:1 contrast on overlay bg) */
+  --color-text-secondary: #6a7a7e; /* Fog: labels, secondary info */
+  --color-text-muted: #5a6a6e; /* Dim (bumped for WCAG AA): timestamps, meta */
+
+  /* ── Code text (warm parchment — softer than body, warmer than grey) ── */
+  --color-code-text: #d4cfc4;
+  --color-code-inline: #88c4ba;  /* Soft teal: inline code in prose — distinct hue from warm code-block parchment */
+  --color-text-emphasis: #c4d0d4; /* Cool bright: bold/emphasis text — stands out via brightness, not warmth */
 
   /* ── Primary accent (Atelier Gold) ── */
-  --color-primary: #B8976A;
-  --color-primary-hover: #C8B89A;
+  --color-primary: #b8976a;
+  --color-primary-hover: #c8b89a;
   --color-primary-muted: rgba(184, 151, 106, 0.15);
-  --color-primary-text: #C8B89A;
+  --color-primary-text: #c8b89a;
 
   /* ── Accent (Jewel Copper — ornamental highlights, links) ── */
-  --color-accent: #C4714A;
+  --color-accent: #c4714a;
   --color-accent-muted: rgba(196, 113, 74, 0.15);
 
   /* ── Deep Teal / Forest Green accent (for mode badges, active states) ── */
-  --color-teal: #1F6B5E;
-  --color-teal-light: #2A8A78;
+  --color-teal: #1f6b5e;
+  --color-teal-light: #2a8a78;
   --color-teal-muted: rgba(31, 107, 94, 0.18);
-  --color-teal-text: #6DC4B2;
-  --color-forest: #1A4A38;
-  --color-forest-light: #5DB88A;
+  --color-teal-text: #6dc4b2;
+  --color-forest: #1a4a38;
+  --color-forest-light: #5db88a;
 
   /* ── Semantic status ── */
-  --color-success: #5DB88A;
+  --color-success: #5db88a;
   --color-success-muted: rgba(93, 184, 138, 0.15);
-  --color-warning: #D49353;
+  --color-warning: #d49353;
   --color-warning-muted: rgba(212, 147, 83, 0.15);
-  --color-danger: #C46B6B;
+  --color-danger: #c46b6b;
   --color-danger-muted: rgba(196, 107, 107, 0.15);
-  --color-info: #6B9EC4;
+  --color-info: #6b9ec4;
   --color-info-muted: rgba(107, 158, 196, 0.15);
 
   /* ── Mode tokens (Plan / Build) ── */
-  --color-mode-plan: #3C4B46; /* Forest Teal — Precision pillar */
+  --color-mode-plan: #3c4b46; /* Forest Teal — Precision pillar */
   --color-mode-plan-muted: rgba(60, 75, 70, 0.3);
-  --color-mode-plan-text: #8A9A9E;
+  --color-mode-plan-text: #8a9a9e;
   --color-mode-plan-border: rgba(60, 75, 70, 0.3);
 
-  --color-mode-build: #6A4638; /* Terracotta — Artistry pillar */
+  --color-mode-build: #6a4638; /* Terracotta — Artistry pillar */
   --color-mode-build-muted: rgba(106, 70, 56, 0.3);
-  --color-mode-build-text: #D49353;
+  --color-mode-build-text: #d49353;
   --color-mode-build-border: rgba(106, 70, 56, 0.3);
 
+  /* Plan Card accent — distinctive sky blue for identification */
+  --color-plan-card: #0ea5e9;
+  --color-plan-card-muted: rgba(14, 165, 233, 0.12);
+  --color-plan-card-border: rgba(14, 165, 233, 0.3);
+  --color-plan-card-text: #7dd3fc;
+  --color-plan-card-section-bg: rgba(14, 165, 233, 0.06);
+  --color-plan-card-accent: #6dc4b2;
+  --color-plan-card-phase-bg: rgba(31, 107, 94, 0.12);
+  --color-plan-card-phase-border: rgba(31, 107, 94, 0.25);
+
   /* ── Panel / Pillar colors (Four Pillars of Craftsmanship) ── */
-  --color-panel-olive: #3A3531; /* Architecture */
-  --color-panel-terracotta: #6A4638; /* Artistry */
-  --color-panel-teal: #3C4B46; /* Precision */
+  --color-panel-olive: #3a3531; /* Architecture */
+  --color-panel-terracotta: #6a4638; /* Artistry */
+  --color-panel-teal: #3c4b46; /* Precision */
   --color-panel-navy: #283337; /* Vision */
 
   /* ── Agent-specific colors ── */
-  --color-agent-react: #7ABFDB;
-  --color-agent-dotnet: #9B7FD4;
-  --color-agent-agentic: #D4A843;
-  --color-agent-postgres: #6B9EC4;
-  --color-agent-ux: #C87A9B;
-  --color-agent-git: #8A9A9E;
-  --color-agent-requirements: #5DB88A;
-  --color-agent-codeplanner: #8A9A8E;
-  --color-agent-execution: #D49353;
-  --color-agent-cicd: #C46B6B;
-  --color-agent-cloud: #5BB8A8;
+  --color-agent-react: #7abfdb;
+  --color-agent-dotnet: #9b7fd4;
+  --color-agent-agentic: #d4a843;
+  --color-agent-postgres: #6b9ec4;
+  --color-agent-ux: #c87a9b;
+  --color-agent-git: #8a9a9e;
+  --color-agent-requirements: #5db88a;
+  --color-agent-codeplanner: #8a9a8e;
+  --color-agent-execution: #d49353;
+  --color-agent-cicd: #c46b6b;
+  --color-agent-cloud: #5bb8a8;
 
   /* ── Special-purpose tokens ── */
-  --color-user-bubble: rgba(184, 151, 106, 0.06); /* User message background */
-  --color-grill: #C4714A; /* Grill mode accent (Jewel Copper) */
+  --color-user-bubble: rgba(
+    184,
+    151,
+    106,
+    0.1
+  ); /* User message background (bumped for clearer separation) */
+  --color-grill: #c4714a; /* Grill mode accent (Jewel Copper) */
   --color-grill-muted: rgba(196, 113, 74, 0.15);
   --color-gold-glow: rgba(184, 151, 106, 0.15); /* Radial glow behind focal elements */
-  --color-gold-muted: #8B6F4A; /* Muted Gold for gradient endpoints */
+  --color-gold-muted: #8b6f4a; /* Muted Gold for gradient endpoints */
 
   /* ── Component tokens (3rd layer) ── */
   --color-button-primary-bg: var(--color-primary);
@@ -102,7 +123,7 @@
   --color-card-bg: rgba(184, 151, 106, 0.02); /* Near-transparent gold overlay */
   --color-card-border: var(--color-border-subtle);
 
-  --color-input-bg: #0D1618; /* Slightly lighter than surface-base */
+  --color-input-bg: #0d1618; /* Slightly lighter than surface-base */
   --color-input-border: var(--color-border-default);
   --color-input-focus: var(--color-primary);
 
@@ -126,8 +147,8 @@
 
   /* ── Code Atelier typography ── */
   --ca-font-display: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
-  --ca-font-body: 'EB Garamond', 'Cormorant Garamond', Georgia, serif;
-  --ca-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace;
+  --ca-font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --ca-font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 /* ── Reduced-motion: accessibility-first ── */
@@ -152,8 +173,9 @@
 
 /* ── Hover lift — Code Atelier card/button hover pattern ── */
 .hover-lift {
-  transition: transform var(--duration-normal) var(--ease-out),
-              box-shadow var(--duration-normal) var(--ease-out);
+  transition:
+    transform var(--duration-normal) var(--ease-out),
+    box-shadow var(--duration-normal) var(--ease-out);
 }
 .hover-lift:hover {
   transform: translateY(-2px);
@@ -162,8 +184,8 @@
 
 /* ── Code Atelier button utilities ── */
 .btn-primary {
-  background: linear-gradient(135deg, #B8976A, #8B6F4A);
-  color: #090D0F;
+  background: linear-gradient(135deg, #b8976a, #8b6f4a);
+  color: #090d0f;
   font-family: var(--ca-font-display);
   font-weight: 500;
   font-size: 16px;
@@ -172,8 +194,9 @@
   padding: 14px 40px;
   border-radius: 2px;
   border: none;
-  transition: transform var(--duration-normal) var(--ease-out),
-              box-shadow var(--duration-normal) var(--ease-out);
+  transition:
+    transform var(--duration-normal) var(--ease-out),
+    box-shadow var(--duration-normal) var(--ease-out);
 }
 .btn-primary:hover {
   transform: translateY(-2px);
@@ -182,7 +205,7 @@
 
 .btn-secondary {
   background: transparent;
-  color: #B8976A;
+  color: #b8976a;
   font-family: var(--ca-font-display);
   font-weight: 500;
   font-size: 16px;
@@ -191,8 +214,9 @@
   padding: 14px 40px;
   border-radius: 2px;
   border: 1px solid rgba(184, 151, 106, 0.3);
-  transition: transform var(--duration-normal) var(--ease-out),
-              box-shadow var(--duration-normal) var(--ease-out);
+  transition:
+    transform var(--duration-normal) var(--ease-out),
+    box-shadow var(--duration-normal) var(--ease-out);
 }
 .btn-secondary:hover {
   transform: translateY(-2px);
@@ -217,21 +241,34 @@
   }
 
   /* ── Code Atelier heading typography ── */
-  h1, h2, h3, h4, h5, h6 {
-    font-family: var(--ca-font-display);
-    font-weight: 400;
+  h1,
+  h2 {
+    font-family: var(--ca-font-body);
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--ca-font-body);
+    font-weight: 600;
     color: var(--color-text-primary);
   }
 
   /* ── Code/monospace override ── */
-  code, pre, .font-mono, kbd, samp {
+  code,
+  pre,
+  .font-mono,
+  kbd,
+  samp {
     font-family: var(--ca-font-mono);
   }
 
   /* ── Text selection ── */
   ::selection {
     background: rgba(184, 151, 106, 0.3);
-    color: #C8B89A;
+    color: #c8b89a;
   }
 
   /* ── Standardized transitions for all interactive elements ── */
@@ -266,213 +303,323 @@
   a {
     cursor: pointer;
   }
+}
 
-  /* ── Prose: readability for chat messages ── */
-  .prose {
-    --tw-prose-body: var(--color-text-body);
-    --tw-prose-headings: var(--color-text-primary);
-    --tw-prose-bold: var(--color-text-primary);
-    --tw-prose-links: var(--color-accent);
-    --tw-prose-code: var(--color-primary-text);
-    --tw-prose-bullets: var(--color-text-secondary);
-    --tw-prose-counters: var(--color-text-secondary);
-    font-size: 17px;
-    line-height: 1.72;
-    max-width: 72ch; /* 60-75ch for optimal readability */
-  }
+/* ═══════════════════════════════════════════════════════════════════════════
+   Prose overrides — UN-LAYERED so they beat @tailwindcss/typography plugin.
+   The typography plugin injects into a layer, so these un-layered rules
+   win the cascade without needing !important.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
-  .prose p {
-    margin-top: 0.5em;
-    margin-bottom: 0.5em;
-  }
+/* ── Prose: readability for chat messages ── */
+.prose {
+  --tw-prose-body: var(--color-text-body);
+  --tw-prose-headings: var(--color-text-primary);
+  --tw-prose-bold: var(--color-text-emphasis);    /* cool bright, not gold */
+  --tw-prose-links: var(--color-accent);
+  --tw-prose-code: var(--color-code-inline);      /* soft teal, not gold */
+  --tw-prose-bullets: var(--color-text-secondary);
+  --tw-prose-counters: var(--color-text-secondary);
+  color: var(--color-text-body); /* explicit — don't rely on Tailwind prose-invert for dark mode */
+  font-size: 14px;        /* was 15px — tighter for chat density */
+  line-height: 1.55;      /* was 1.65 — less vertical air */
+  max-width: none;        /* let bubble container percentage caps handle width — responsive across resolutions */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 
-  /* Headings — Cormorant Garamond, weight 400 (elegance from the typeface) */
-  .prose h1,
-  .prose h2,
-  .prose h3,
-  .prose h4 {
-    color: var(--color-text-primary);
-    font-family: var(--ca-font-display);
-    font-weight: 400;
-    letter-spacing: 0.02em;
-  }
+/* Body text color on all prose children — overrides Tailwind typography defaults */
+.prose p,
+.prose li,
+.prose dd,
+.prose figcaption,
+.prose > *:not(h1):not(h2):not(h3):not(h4):not(pre):not(blockquote):not(table):not(hr) {
+  color: var(--color-text-body);
+}
 
-  .prose h1 {
-    font-size: 2em; /* ~34px — clear dominant heading */
-    margin-top: 1.2em;
-    margin-bottom: 0.6em;
-  }
+.prose p {
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+}
 
-  .prose h2 {
-    font-size: 1.6em; /* ~27px — clear step from h3 */
-    margin-top: 1.1em;
-    margin-bottom: 0.5em;
-  }
+/* Headings — all levels use Inter 600 for consistent UI typography */
+.prose h1,
+.prose h2 {
+  color: var(--color-text-primary);
+  font-family: var(--ca-font-body);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.prose h3,
+.prose h4 {
+  color: var(--color-text-primary);
+  font-family: var(--ca-font-body);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
 
-  .prose h3 {
-    font-size: 1.3em; /* ~22px — clear step from body */
-    margin-top: 0.9em;
-    margin-bottom: 0.4em;
-  }
+.prose h1 {
+  font-size: 1.2em;       /* was 1.35em — flatter hierarchy */
+  margin-top: 0.7em;
+  margin-bottom: 0.35em;
+}
 
-  .prose h4 {
-    font-size: 1.1em; /* ~19px */
-    margin-top: 0.8em;
-    margin-bottom: 0.35em;
-  }
+.prose h2 {
+  font-size: 1.1em;       /* was 1.2em */
+  margin-top: 0.6em;
+  margin-bottom: 0.3em;
+}
 
-  /* Bold — brighter than body text */
-  .prose strong {
-    color: var(--color-text-primary);
-    font-weight: 600;
-  }
+.prose h3 {
+  font-size: 1.05em;      /* was 1.1em */
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+}
 
-  /* Bullet & numbered lists — better spacing and marker color */
-  .prose ul,
-  .prose ol {
-    padding-left: 1.25em;
-    margin-top: 0.4em;
-    margin-bottom: 0.4em;
-  }
+.prose h4 {
+  font-size: 1em;         /* was 1.05em — same as body, bold is enough */
+  margin-top: 0.4em;
+  margin-bottom: 0.2em;
+}
 
-  .prose li {
-    margin-top: 0.2em;
-    margin-bottom: 0.2em;
-    padding-left: 0.25em;
-  }
+/* Bold — cool bright emphasis (not gold) */
+.prose strong {
+  color: var(--color-text-emphasis);    /* cool bright — emphasis via brightness, not warmth */
+  font-weight: 600;
+}
 
-  .prose li::marker {
-    color: var(--color-text-secondary);
-  }
+/* ── Pill badge: only on list items that contain nested sub-lists (category headers) ── */
+.prose li:has(> ul, > ol) > strong:first-child,
+.prose li:has(> ul, > ol) > p:first-child > strong:first-child {
+  display: inline-block;
+  background: var(--color-primary-muted);
+  color: var(--color-primary-text);
+  padding: 0.1em 0.6em;
+  border-radius: 9999px;
+  font-size: 0.88em;
+  font-weight: 600;
+  letter-spacing: 0.015em;
+  border: 1px solid rgba(184, 151, 106, 0.25);
+  margin-right: 0.2em;
+  vertical-align: baseline;
+}
 
-  /* Inline code — distinct from body, pill-shaped */
-  .prose :not(pre) > code {
-    font-size: 0.88em;
-    padding: 0.15em 0.4em;
-    border-radius: 0.3em;
-    background: var(--color-surface-float);
-    color: var(--color-primary-text);
-    font-weight: 500;
-    border: 1px solid var(--color-border-subtle);
-  }
+/* Bullet & numbered lists — better spacing and marker color */
+.prose ul,
+.prose ol {
+  padding-left: 1.25em;
+  margin-top: 0.6em;
+  margin-bottom: 0.6em;
+}
 
-  /* Code blocks — 15px for extended code reading comfort */
-  .prose pre {
-    font-size: 15px;
-  }
+.prose li {
+  margin-top: 0.35em;
+  margin-bottom: 0.35em;
+  padding-left: 0.25em;
+}
 
-  .prose code {
-    font-size: 15px;
-  }
+/* ── Section divider: subtle line before lists that follow a paragraph ── */
+.prose p + ul,
+.prose p + ol {
+  margin-top: 1em;
+  padding-top: 0.75em;
+  border-top: 1px solid var(--color-border-subtle);
+}
 
-  /* ── Tables — the big fix ── */
-  .prose table {
-    border-collapse: separate;
-    border-spacing: 0;
-    width: 100%;
-    font-size: 14px;
-    margin-top: 0.75em;
-    margin-bottom: 0.75em;
-    border: 1px solid var(--color-border-default);
-    border-radius: 0.5em;
-    overflow: hidden;
-  }
+/* ── Section divider: after a list before a trailing paragraph ── */
+.prose ul + p,
+.prose ol + p {
+  margin-top: 1em;
+  padding-top: 0.75em;
+  border-top: 1px solid var(--color-border-subtle);
+}
 
-  .prose thead {
-    background: var(--color-surface-base);
-  }
+.prose ol > li::marker {
+  color: var(--color-primary);
+  font-weight: 600;
+}
 
-  .prose thead tr {
-    border-bottom: 2px solid var(--color-border-default);
-  }
+.prose ul > li::marker {
+  color: var(--color-text-secondary);
+}
 
-  .prose th {
-    padding: 0.6em 0.85em;
-    text-align: left;
-    font-weight: 600;
-    color: var(--color-text-primary);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    border-bottom: 2px solid var(--color-border-default);
-  }
+/* ── Inline code — teal: distinct hue from body and headings, no box ── */
+.prose :not(pre) > code {
+  font-size: 0.88em;
+  padding: 0;
+  background: none;
+  color: var(--color-code-inline);    /* #88c4ba soft teal — clearly code, not prose */
+  font-weight: 600;
+  border: none;
+  border-radius: 0;
+}
 
-  .prose td {
-    padding: 0.5em 0.85em;
-    border-bottom: 1px solid var(--color-border-subtle);
-    color: var(--color-text-body);
-    vertical-align: top;
-  }
+/* ── Agent questions — visual highlight so user-facing questions stand out ── */
+.prose .agent-question {
+  margin-top: 0.75em;
+  padding: 0.6em 0.85em;
+  border-left: 3px solid var(--color-info);
+  border-radius: 0 0.375rem 0.375rem 0;
+  background: var(--color-info-muted);
+}
 
-  .prose tbody tr:last-child td {
-    border-bottom: none;
-  }
+.prose .agent-question p {
+  color: var(--color-text-emphasis);     /* cool bright — cohesive with info-blue card */
+  font-weight: 600;
+  margin: 0;
+}
 
-  .prose tbody tr:hover {
-    background: var(--color-surface-raised);
-  }
+/* ── Arrow indicators — teal functional markers ── */
+.prose .arrow-indicator {
+  color: var(--color-teal-text);    /* #6dc4b2 teal — functional marker, not decorative gold */
+  font-weight: 700;
+  padding: 0 0.1em;
+}
 
-  /* Zebra striping for better scanability on tables with 4+ rows */
-  .prose tbody tr:nth-child(even) {
-    background: rgba(184, 151, 106, 0.02);
-  }
+/* ── Next Steps — visual highlight so actionable next-step sections stand out ── */
+.prose .agent-next-steps {
+  margin-top: 0.75em;
+  padding: 0.6em 0.85em;
+  border-left: 3px solid var(--color-info);
+  border-radius: 0 0.375rem 0.375rem 0;
+  background: var(--color-info-muted);
+}
 
-  .prose tbody tr:nth-child(even):hover {
-    background: var(--color-surface-raised);
-  }
+.prose .agent-next-steps h1,
+.prose .agent-next-steps h2,
+.prose .agent-next-steps h3,
+.prose .agent-next-steps h4,
+.prose .agent-next-steps h5,
+.prose .agent-next-steps h6 {
+  color: var(--color-text-body);
+  margin-top: 0;
+}
 
-  /* Links inside prose */
-  .prose a {
-    color: var(--color-accent);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
+.prose .agent-next-steps p,
+.prose .agent-next-steps li {
+  color: var(--color-text-body);
+}
 
-  .prose a:hover {
-    color: var(--color-primary-text);
-  }
+/* Code blocks — match body font size for consistency */
+.prose pre {
+  font-size: 14px;
+}
 
-  /* Blockquotes */
-  .prose blockquote {
-    border-left: 3px solid var(--color-primary);
-    padding-left: 1em;
-    color: var(--color-text-secondary);
-    font-style: italic;
-    margin-top: 0.75em;
-    margin-bottom: 0.75em;
-  }
+.prose pre code {
+  color: var(--color-code-text);
+}
 
-  /* Horizontal rule styling */
-  .prose hr {
-    border: none;
-    height: 1px;
-    background: linear-gradient(to right, transparent, var(--color-border-default), transparent);
-    margin-top: 1.25em;
-    margin-bottom: 1.25em;
-  }
+.prose code {
+  font-size: 14px;
+}
 
-  /* ── Emoji in headings — consistent size, prevent baseline shift ── */
-  .prose h1 .emoji,
-  .prose h2 .emoji,
-  .prose h3 .emoji {
-    display: inline-block;
-    width: 1.1em;
-    height: 1.1em;
-    vertical-align: -0.15em;
-    margin-right: 0.3em;
-  }
+/* ── Tables — the big fix ── */
+.prose table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 14px;
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+  border: 1px solid var(--color-border-default);
+  border-radius: 0.5em;
+  overflow: hidden;
+}
 
-  /* ── Table column optimization ── */
-  .prose td code {
-    word-break: break-all;
-    max-width: 280px;
-    display: inline-block;
-  }
+.prose thead {
+  background: var(--color-surface-base);
+}
 
-  .prose td:first-child {
-    white-space: nowrap;
-    font-weight: 500;
-  }
+.prose thead tr {
+  border-bottom: 2px solid var(--color-border-default);
+}
+
+.prose th {
+  padding: 0.6em 0.85em;
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 2px solid var(--color-border-default);
+}
+
+.prose td {
+  padding: 0.5em 0.85em;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-body);
+  vertical-align: top;
+}
+
+.prose tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.prose tbody tr:hover {
+  background: var(--color-surface-raised);
+}
+
+/* Zebra striping for better scanability on tables with 4+ rows */
+.prose tbody tr:nth-child(even) {
+  background: rgba(184, 151, 106, 0.02);
+}
+
+.prose tbody tr:nth-child(even):hover {
+  background: var(--color-surface-raised);
+}
+
+/* Links inside prose */
+.prose a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.prose a:hover {
+  color: var(--color-primary-text);
+}
+
+/* Blockquotes */
+.prose blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding-left: 1em;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+}
+
+/* Horizontal rule styling */
+.prose hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--color-border-default), transparent);
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
+}
+
+/* ── Emoji in headings — consistent size, prevent baseline shift ── */
+.prose h1 .emoji,
+.prose h2 .emoji,
+.prose h3 .emoji {
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.15em;
+  margin-right: 0.3em;
+}
+
+/* ── Table column optimization ── */
+.prose td code {
+  word-break: break-all;
+  max-width: 280px;
+  display: inline-block;
+}
+
+.prose td:first-child {
+  white-space: nowrap;
+  font-weight: 500;
 }
 
 /* Custom scrollbar styling — gold-tinted for Code Atelier */
@@ -486,7 +633,7 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(184, 151, 106, 0.20);
+  background: rgba(184, 151, 106, 0.2);
   border-radius: 3px;
 }
 
@@ -506,6 +653,47 @@ body::after {
   opacity: 0.04;
   mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Completed-message reveal — full response appears at once after streaming
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes message-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-message-reveal {
+  animation: message-reveal 0.3s var(--ease-out) forwards;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Typing dots — pulsing bounce for the "thinking" indicator
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes typing-dot-bounce {
+  0%, 80%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: var(--color-primary-text);
+  display: inline-block;
+  animation: typing-dot-bounce 1.4s ease-in-out infinite;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -535,7 +723,8 @@ body::after {
    Floating bounce animation for WelcomeScreen icons
    ═══════════════════════════════════════════════════════════════════════════ */
 @keyframes float-bounce {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0px) rotate(var(--float-rotate-start, 0deg));
   }
   50% {
@@ -544,13 +733,49 @@ body::after {
 }
 
 @keyframes float-drift {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateX(0px) translateY(0px) rotate(var(--float-rotate-start, 0deg));
   }
   33% {
-    transform: translateX(var(--drift-x, 6px)) translateY(var(--float-distance, -10px)) rotate(var(--float-rotate-end, 5deg));
+    transform: translateX(var(--drift-x, 6px)) translateY(var(--float-distance, -10px))
+      rotate(var(--float-rotate-end, 5deg));
   }
   66% {
-    transform: translateX(calc(var(--drift-x, 6px) * -0.5)) translateY(calc(var(--float-distance, -10px) * 0.5)) rotate(var(--float-rotate-start, 0deg));
+    transform: translateX(calc(var(--drift-x, 6px) * -0.5))
+      translateY(calc(var(--float-distance, -10px) * 0.5)) rotate(var(--float-rotate-start, 0deg));
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ChatItem icon — processing glow (soft pulsing ring)
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes chat-icon-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0);
+  }
+  50% {
+    box-shadow: 0 0 8px 3px rgba(14, 165, 233, 0.35);
+  }
+}
+
+@keyframes chat-icon-complete {
+  0% {
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0);
+  }
+  30% {
+    box-shadow: 0 0 12px 4px rgba(14, 165, 233, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0);
+  }
+}
+
+.chat-icon-processing {
+  animation: chat-icon-pulse 2s ease-in-out infinite;
+}
+
+.chat-icon-complete {
+  animation: chat-icon-complete 0.8s var(--ease-out) forwards;
 }

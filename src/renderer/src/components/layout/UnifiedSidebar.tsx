@@ -1,23 +1,10 @@
 import { useState, useEffect } from 'react'
-import {
-  Plus,
-  MessageSquare,
-  FolderOpen,
-  ChevronLeft,
-  ChevronRight,
-  Settings
-} from 'lucide-react'
+import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight, Settings } from 'lucide-react'
 import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
-import {
-  ChatItem,
-  UnsavedChangesDialog,
-  CompleteDialog,
-  NewConversationModal
-} from '@renderer/components/chat'
+import { ChatItem, UnsavedChangesDialog, CompleteDialog } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
 import { SETTINGS_MENU } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
-import type { ConversationMode } from '../../../../shared/types'
 
 type SidebarTab = 'chats' | 'settings'
 
@@ -28,28 +15,24 @@ interface UnifiedSidebarProps {
   activeSettingsTab: SettingsTab
   onSettingsTabChange: (tab: SettingsTab) => void
   onViewChange: (view: 'chat' | 'settings') => void
+  onNewChat?: () => void
 }
 
 export default function UnifiedSidebar({
   isCollapsed: externalCollapsed,
   onToggleCollapse,
-  onCreateIdea,
   activeSettingsTab,
   onSettingsTabChange,
-  onViewChange
+  onViewChange,
+  onNewChat
 }: UnifiedSidebarProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<SidebarTab>('chats')
   const { activeWorkspace } = useWorkspaceStore()
-  const {
-    loadConversations,
-    createConversation,
-    selectConversation,
-    closeConversation,
-    renameConversation,
-    sendMessage
-  } = useChatActions()
+  const { loadConversations, selectConversation, closeConversation, renameConversation } =
+    useChatActions()
   const conversations = useChatStore((s) => s.conversations)
   const activeConversation = useChatStore((s) => s.activeConversation)
+  const isStreaming = useChatStore((s) => s.isStreaming)
 
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -59,7 +42,7 @@ export default function UnifiedSidebar({
     fileCount: number
   } | null>(null)
   const [completeFromUnsaved, setCompleteFromUnsaved] = useState<string | null>(null)
-  const [showNewChatModal, setShowNewChatModal] = useState(false)
+  // showNewChatModal state removed — new chat is now handled inline via onNewChat prop
   const isCollapsed = externalCollapsed ?? internalCollapsed
   const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c))
 
@@ -77,28 +60,9 @@ export default function UnifiedSidebar({
   }, [activeWorkspace, loadConversations])
 
   const handleNewChat = (): void => {
-    setShowNewChatModal(true)
-  }
-
-  const handleCreateChat = async (data: {
-    title: string
-    description?: string
-    mode: ConversationMode
-    attachments?: string[]
-    useIsolatedBranch?: boolean
-  }): Promise<void> => {
-    if (!activeWorkspace) return
-    await createConversation(activeWorkspace.id, data.mode, data.title)
-    if (data.description) {
-      await sendMessage(data.description, data.attachments)
-    }
-    if (data.useIsolatedBranch) {
-      console.info(
-        '[NewConversationModal] Isolated branch requested — worktree integration pending'
-      )
-    }
-    setShowNewChatModal(false)
-    // Ensure we're on the chats tab when a chat is created
+    // Clear active conversation so ChatPanel renders NewChatPage inline
+    useChatStore.setState({ activeConversation: null, messages: [] })
+    onNewChat?.()
     handleTabChange('chats')
   }
 
@@ -180,7 +144,7 @@ export default function UnifiedSidebar({
                     activeConversation?.id === conv.id
                       ? 'bg-primary text-white'
                       : 'bg-surface-overlay text-text-secondary hover:bg-surface-float'
-                  }`}
+                  } ${isStreaming && activeConversation?.id === conv.id ? 'chat-icon-processing' : ''}`}
                   title={conv.title}
                   aria-label={`Open conversation: ${conv.title}`}
                 >
@@ -190,25 +154,53 @@ export default function UnifiedSidebar({
             </>
           )}
           {activeTab === 'settings' && (
-            <div className="space-y-0.5 w-full px-1.5">
-              {SETTINGS_MENU.map((item) => {
-                const Icon = item.icon
-                const isActive = activeSettingsTab === item.id
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => onSettingsTabChange(item.id)}
-                    className={`flex items-center justify-center w-full px-2 py-2 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                      isActive
-                        ? 'bg-primary-muted text-primary-text border border-primary/20'
-                        : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
-                    }`}
-                    title={item.label}
-                  >
-                    <Icon size={16} className={isActive ? undefined : item.iconColor} />
-                  </button>
-                )
-              })}
+            <div className="w-full px-1.5">
+              {/* Tools group (collapsed — icons only) */}
+              <div className="space-y-0.5">
+                {SETTINGS_MENU.filter((item) => item.group === 'tools').map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeSettingsTab === item.id
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onSettingsTabChange(item.id)}
+                      className={`flex items-center justify-center w-full px-2 py-2 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                        isActive
+                          ? 'bg-primary-muted text-primary-text border border-primary/20'
+                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
+                      }`}
+                      title={item.label}
+                    >
+                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Divider */}
+              <div className="my-2 mx-1 border-t border-border-subtle" />
+
+              {/* Configuration group (collapsed — icons only) */}
+              <div className="space-y-0.5">
+                {SETTINGS_MENU.filter((item) => item.group === 'configuration').map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeSettingsTab === item.id
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onSettingsTabChange(item.id)}
+                      className={`flex items-center justify-center w-full px-2 py-2 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                        isActive
+                          ? 'bg-primary-muted text-primary-text border border-primary/20'
+                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
+                      }`}
+                      title={item.label}
+                    >
+                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -275,6 +267,7 @@ export default function UnifiedSidebar({
                     key={conv.id}
                     conversation={conv}
                     isActive={activeConversation?.id === conv.id}
+                    isStreaming={isStreaming && activeConversation?.id === conv.id}
                     onSelect={(id) => {
                       selectConversation(id)
                       // Ensure main content shows chat when selecting a conversation
@@ -312,8 +305,44 @@ export default function UnifiedSidebar({
 
           {activeTab === 'settings' && (
             <nav className="p-2">
+              {/* Tools group */}
+              <div className="px-3 pt-1 pb-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  Tools
+                </span>
+              </div>
               <div className="space-y-0.5">
-                {SETTINGS_MENU.map((item) => {
+                {SETTINGS_MENU.filter((item) => item.group === 'tools').map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeSettingsTab === item.id
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onSettingsTabChange(item.id)}
+                      className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 px-3 py-2 ${
+                        isActive
+                          ? 'bg-primary-muted text-primary-text border border-primary/20'
+                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
+                      }`}
+                    >
+                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
+                      <span>{item.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Divider between groups */}
+              <div className="my-2 mx-2 border-t border-border-subtle" />
+
+              {/* Configuration group */}
+              <div className="px-3 pt-1 pb-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  Configuration
+                </span>
+              </div>
+              <div className="space-y-0.5">
+                {SETTINGS_MENU.filter((item) => item.group === 'configuration').map((item) => {
                   const Icon = item.icon
                   const isActive = activeSettingsTab === item.id
                   return (
@@ -390,13 +419,6 @@ export default function UnifiedSidebar({
           setCompleteFromUnsaved(null)
         }}
         onCancel={() => setCompleteFromUnsaved(null)}
-      />
-
-      <NewConversationModal
-        isOpen={showNewChatModal}
-        onClose={() => setShowNewChatModal(false)}
-        onSubmit={handleCreateChat}
-        onCreateIdea={onCreateIdea}
       />
     </>
   )

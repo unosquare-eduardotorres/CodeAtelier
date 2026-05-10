@@ -10,7 +10,8 @@ import {
   Loader2,
   Trash2,
   FileText,
-  GitBranch
+  GitBranch,
+  Key
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
@@ -22,18 +23,16 @@ import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
-import {
-  SkillDetailPage,
-  ActivationBanner
-} from '@renderer/components/settings'
+import AuthSettingsTab from './AuthSettingsTab'
+import { SkillDetailPage, ActivationBanner } from '@renderer/components/settings'
 import TeamPage from '@renderer/components/settings/TeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
 import SyncBanner from '@renderer/components/settings/SyncBanner'
 import SyncReviewModal from '@renderer/components/settings/SyncReviewModal'
-
 type SettingsTab =
   | 'models'
   | 'repository'
+  | 'auth'
   | 'team'
   | 'ideas'
   | 'memory'
@@ -43,6 +42,7 @@ type SettingsTab =
 const SETTINGS_MENU: { id: SettingsTab; label: string; icon: LucideIcon; iconColor?: string }[] = [
   { id: 'models', label: 'Models', icon: Cpu, iconColor: 'text-success' },
   { id: 'repository', label: 'Repository', icon: GitBranch, iconColor: 'text-accent' },
+  { id: 'auth', label: 'Auth', icon: Key, iconColor: 'text-warning' },
   { id: 'team', label: 'Team', icon: Users, iconColor: 'text-info' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning' },
   { id: 'memory', label: 'Memory', icon: Database, iconColor: 'text-mode-plan-text' },
@@ -187,7 +187,9 @@ export default function WorkspaceSettingsPage({
         </nav>
 
         {/* Content area */}
-        <div className={`flex-1 ${activeTab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        <div
+          className={`flex-1 ${activeTab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}
+        >
           {/* Delete All buttons for team tab */}
           {activeTab === 'team' && workspacePath && !needsActivation && !isActivating && (
             <div className="px-6 pt-4 flex justify-end gap-2">
@@ -226,6 +228,7 @@ export default function WorkspaceSettingsPage({
 
           {activeTab === 'models' && <ModelConfigTab />}
           {activeTab === 'repository' && <RepositorySettingsTab />}
+          {activeTab === 'auth' && <AuthSettingsTab />}
 
           {activeTab === 'team' && workspacePath && (
             <div className="flex-1 flex flex-col min-h-0">
@@ -291,8 +294,20 @@ export default function WorkspaceSettingsPage({
                 </p>
                 <IdeasList
                   onNavigateToChat={onBack}
-                  onOpenGrillSession={(ideaId, conversationId, ideaTitle, isNewSession, ideaDescription) =>
-                    setActiveGrill({ ideaId, conversationId, ideaTitle, ideaDescription, isNewSession })
+                  onOpenGrillSession={(
+                    ideaId,
+                    conversationId,
+                    ideaTitle,
+                    isNewSession,
+                    ideaDescription
+                  ) =>
+                    setActiveGrill({
+                      ideaId,
+                      conversationId,
+                      ideaTitle,
+                      ideaDescription,
+                      isNewSession
+                    })
                   }
                 />
               </div>

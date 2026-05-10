@@ -2,34 +2,118 @@ import { type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type { LogFunctions } from 'electron-log'
 import type { AgentStatus } from '../../shared/types'
+import { MCP_TOOLS } from '../../shared/constants'
 import { buildEnvWithPath } from './env-utils'
 import { agentSessionRepository } from '../db/repositories'
 
-/** Circuit breaker — prevent infinite tool-calling loops (inspired by DevTeam's max_iterations) */
-const MAX_TOOL_CALLS_PER_INTERACTION = 75
+/**
+ * Hard ceiling on the number of tool invocations a single agent interaction
+ * may issue before the circuit breaker aborts the stream. Prevents runaway
+ * loops (~50 tool calls typically indicates a stuck agent).
+ */
+const MAX_TOOL_CALLS_PER_INTERACTION = 50
+
+/** Detect if Write content is a structured plan the LLM should have emitted inline */
+function isPlanContent(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content)
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      typeof parsed.title === 'string' &&
+      (Array.isArray(parsed.sections) || Array.isArray(parsed.steps))
+    )
+  } catch {
+    return false
+  }
+}
 
 export interface StreamChunk {
-  type: 'text' | 'tool_use' | 'tool_result' | 'error' | 'status'
+  type:
+    | 'text'
+    | 'tool_use'
+    | 'tool_result'
+    | 'tool_progress'
+    | 'error'
+    | 'status'
+    | 'turn_boundary'
+    | 'subagent_start'
+    | 'subagent_progress'
+    | 'subagent_complete'
+    | 'rate_limit'
+    | 'compact_boundary'
+    | 'api_retry'
+    | 'prompt_suggestion'
+    | 'files_persisted'
+    | 'hook_lifecycle'
+    | 'session_state'
+    | 'auth_status'
+    | 'tool_use_summary'
+    | 'session_recovery'
   content?: string
   toolName?: string
   toolInput?: string
+  toolId?: string
   error?: string
+  /** Elapsed time in seconds for tool_progress */
+  elapsedSeconds?: number
+  /** Rate limit info for rate_limit type */
+  rateLimit?: {
+    status: 'allowed' | 'allowed_warning' | 'rejected'
+    utilization?: number
+    resetsAt?: number
+    rateLimitType?: string
+  }
+  /** API retry info */
+  retryInfo?: {
+    attempt: number
+    maxRetries: number
+    retryDelayMs: number
+    errorStatus: number | null
+  }
+  /** Files persisted list */
+  persistedFiles?: Array<{ filename: string; fileId: string }>
+  /** Session recovery phase */
+  recoveryPhase?: 'started' | 'building_context' | 'resuming' | 'completed' | 'failed'
+  /** Hook lifecycle info */
+  hookInfo?: {
+    hookId: string
+    hookName: string
+    hookEvent: string
+    phase: 'started' | 'progress' | 'response'
+    output?: string
+    outcome?: 'success' | 'error' | 'cancelled'
+  }
+}
+
+/** Strip workspace prefix from an absolute path to produce a relative display path. */
+function toRelativePath(absolutePath: string, workspacePath?: string): string {
+  if (!workspacePath || !absolutePath.startsWith(workspacePath)) return absolutePath
+  const relative = absolutePath.slice(workspacePath.length)
+  return relative.startsWith('/') ? relative.slice(1) : relative
 }
 
 /**
  * Extracts a human-readable summary from raw tool input for display in the UI.
  */
-export function summarizeToolInput(toolName: string, input: Record<string, unknown>): string {
+export function summarizeToolInput(
+  toolName: string,
+  input: Record<string, unknown>,
+  workspacePath?: string
+): string {
   switch (toolName) {
     case 'Bash':
       return (input.description as string) || (input.command as string) || ''
     case 'Read':
-      return (input.file_path as string) || ''
+      return toRelativePath((input.file_path as string) || '', workspacePath)
     case 'Write':
     case 'Edit':
-      return (input.file_path as string) || ''
+      return toRelativePath((input.file_path as string) || '', workspacePath)
     case 'Grep':
-      return `/${input.pattern as string}/` + (input.path ? ` in ${input.path}` : '')
+      return (
+        `/${input.pattern as string}/` +
+        (input.path ? ` in ${toRelativePath(input.path as string, workspacePath)}` : '')
+      )
     case 'Glob':
       return (input.pattern as string) || ''
     case 'WebSearch':
@@ -41,13 +125,85 @@ export function summarizeToolInput(toolName: string, input: Record<string, unkno
       return 'Task management'
     case 'TaskOutput':
       return `Reading output of task ${(input.id as string)?.slice(0, 7) ?? ''}…`
+
+    // ── MCP tools: Code Graph (Phase 1) ──
+    case MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name:
+      return `graph_map${input.focusFiles ? ` (focus: ${(input.focusFiles as string[]).length} files)` : ''}`
+    case MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name:
+      return `search: ${(input.query as string) || ''}`
+    case MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name:
+      return `dead code${input.path ? ` in ${input.path}` : ''}`
+
+    // ── MCP tools: Code Graph (Phase 2 — Navigation) ──
+    case MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name:
+      return `outline: ${toRelativePath((input.filePath as string) || '', workspacePath)}`
+    case MCP_TOOLS.CODE_GRAPH.FIND_CALLERS.name:
+      return `callers of: ${(input.symbolName as string) || ''}`
+    case MCP_TOOLS.CODE_GRAPH.FIND_CALLEES.name:
+      return `callees of: ${(input.symbolName as string) || ''}`
+    case MCP_TOOLS.CODE_GRAPH.FIND_REFERENCES.name:
+      return `refs: ${(input.symbolName as string) || ''}`
+    case MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENCIES.name:
+      return `deps: ${toRelativePath((input.filePath as string) || '', workspacePath)}`
+    case MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENTS.name:
+      return `dependents: ${toRelativePath((input.filePath as string) || '', workspacePath)}`
+
+    // ── MCP tools: Code Graph (Phase 3 — Analysis) ──
+    case MCP_TOOLS.CODE_GRAPH.SYMBOL_HOTSPOTS.name:
+      return `hotspots${input.path ? ` in ${input.path}` : ''}`
+    case MCP_TOOLS.CODE_GRAPH.COUPLING_ANALYSIS.name:
+      return `coupling${input.path ? ` in ${input.path}` : ''}`
+    case MCP_TOOLS.CODE_GRAPH.CIRCULAR_DEPENDENCIES.name:
+      return `cycles${input.path ? ` in ${input.path}` : ''}`
+    case MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name:
+      return `boundaries (depth: ${input.depth ?? 2})`
+
+    // ── MCP tools: Code Analysis ──
+    case MCP_TOOLS.CODE_ANALYSIS.TODO_SCANNER.name:
+      return 'scan TODOs'
+    case MCP_TOOLS.CODE_ANALYSIS.DEPENDENCY_HEALTH.name:
+      return 'dependency health'
+    case MCP_TOOLS.CODE_ANALYSIS.TEST_COVERAGE_MAP.name:
+      return 'test coverage map'
+
+    // ── MCP tools: Semantic Search ──
+    case MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name:
+      return `semantic: ${(input.query as string) || ''}`
+
+    // ── MCP tools: Git Context ──
+    case MCP_TOOLS.GIT_CONTEXT.GIT_LOG.name:
+      return `git log${input.path ? ` ${toRelativePath(input.path as string, workspacePath)}` : ''}`
+    case MCP_TOOLS.GIT_CONTEXT.GIT_DIFF.name:
+      return `git diff${input.path ? ` ${toRelativePath(input.path as string, workspacePath)}` : ''}`
+    case MCP_TOOLS.GIT_CONTEXT.GIT_BLAME.name:
+      return `git blame ${toRelativePath((input.path as string) || '', workspacePath)}`
+
+    // ── MCP tools: Checkpoint Context ──
+    case MCP_TOOLS.CHECKPOINT_CONTEXT.LIST_CHECKPOINTS.name:
+      return 'list checkpoints'
+    case MCP_TOOLS.CHECKPOINT_CONTEXT.GET_CHECKPOINT.name:
+      return `checkpoint ${(input.checkpointId as string)?.slice(0, 7) ?? ''}…`
+
+    // ── MCP tools: GitHub Context ──
+    case MCP_TOOLS.GITHUB_CONTEXT.GET_PR_STATUS.name:
+      return `PR #${(input.prNumber as string) || ''}`
+    case MCP_TOOLS.GITHUB_CONTEXT.LIST_PR_COMMENTS.name:
+      return `PR #${(input.prNumber as string) || ''} comments`
+    case MCP_TOOLS.GITHUB_CONTEXT.LIST_ISSUES.name:
+      return 'list issues'
+
     default:
+      // Generic MCP tool fallback — extract server + tool name for any unhandled MCP tools
+      if (toolName.startsWith('mcp__')) {
+        const parts = toolName.split('__')
+        return parts.length >= 3 ? `${parts[1]}/${parts[2]}` : toolName
+      }
       return ''
   }
 }
 
 /**
- * Shared base class for agent services (Generalist, Orchestrator).
+ * Shared base class for agent services (Generalist and specialist workers).
  * Extracts common stream-json parsing, buffer management, env building, and error handling.
  */
 export abstract class AgentBaseService extends EventEmitter {
@@ -55,10 +211,15 @@ export abstract class AgentBaseService extends EventEmitter {
   protected buffer: string = ''
   protected currentStatus: AgentStatus['status'] = 'idle'
   protected tokenUsage: number = 0
+  protected inputTokens: number = 0
+  protected outputTokens: number = 0
+  protected cacheReadTokens: number = 0
+  protected cacheCreationTokens: number = 0
   protected startedAt: number = 0
   protected messageStartedAt: number = 0
   protected hasEmittedContent: boolean = false
   protected currentToolName: string | null = null
+  protected currentToolId: string | null = null
   protected currentToolInput: string = ''
   protected toolIdToName: Map<string, string> = new Map()
   /** Track tool IDs already processed via streaming (content_block_start/stop) to skip duplicates from full messages */
@@ -67,12 +228,21 @@ export abstract class AgentBaseService extends EventEmitter {
   protected toolCallCount: number = 0
   /** When true, all further stdout output is ignored (circuit breaker tripped) */
   protected circuitBroken = false
+  /** Workspace directory — used to relativize file paths in tool summaries */
+  protected cwd: string | undefined
 
   /** Database session ID for token tracking */
   protected dbSessionId: string | null = null
 
   /** Scoped logger — each subclass provides its own scope */
   protected abstract readonly log: LogFunctions
+
+  constructor() {
+    super()
+    this.on('error', (err) => {
+      this.log.error('[AgentBase:unhandled-error]', err)
+    })
+  }
 
   abstract getStatus(): AgentStatus
 
@@ -101,12 +271,49 @@ export abstract class AgentBaseService extends EventEmitter {
   }
 
   /**
+   * Links the DB session to a conversation after the conversation ID becomes known.
+   * Use for long-lived agents (e.g. generalist) where conversationId is not available at start().
+   */
+  protected updateDbSessionConversation(conversationId: string): void {
+    if (!this.dbSessionId) return
+    try {
+      agentSessionRepository.updateConversationId(this.dbSessionId, conversationId)
+    } catch (err) {
+      this.log.error('Failed to update DB session conversationId:', err)
+    }
+  }
+
+  /**
+   * Flushes current token usage to the DB session without completing it.
+   * Use for long-lived agents (e.g. generalist) so the dashboard shows live data.
+   */
+  protected flushTokenUsage(): void {
+    if (!this.dbSessionId) return
+    try {
+      agentSessionRepository.updateTokenUsage(this.dbSessionId, this.tokenUsage, {
+        input: this.inputTokens,
+        output: this.outputTokens,
+        cacheRead: this.cacheReadTokens,
+        cacheCreation: this.cacheCreationTokens
+      })
+    } catch (err) {
+      this.log.error('Failed to flush token usage:', err)
+    }
+  }
+
+  /**
    * Completes the DB session record with final status and token usage.
    */
   protected completeDbSession(status: 'completed' | 'failed' | 'terminated'): void {
     if (!this.dbSessionId) return
     try {
-      agentSessionRepository.complete(this.dbSessionId, status, this.tokenUsage)
+      agentSessionRepository.completeWithBreakdown(this.dbSessionId, status, {
+        total: this.tokenUsage,
+        input: this.inputTokens,
+        output: this.outputTokens,
+        cacheRead: this.cacheReadTokens,
+        cacheCreation: this.cacheCreationTokens
+      })
     } catch (err) {
       this.log.error('Failed to complete DB session:', err)
     }
@@ -131,13 +338,18 @@ export abstract class AgentBaseService extends EventEmitter {
 
       try {
         const event = JSON.parse(trimmed)
-        this.processStreamEvent(event)
+        try {
+          this.processStreamEvent(event)
+        } catch (processError) {
+          this.log.error('Error processing stream event:', processError, trimmed.substring(0, 200))
+        }
       } catch {
         if (trimmed) {
-          this.emit('chunk', {
-            type: 'text',
-            content: trimmed
-          } as StreamChunk)
+          try {
+            this.emit('chunk', { type: 'text', content: trimmed } as StreamChunk)
+          } catch (emitError) {
+            this.log.error('Failed to emit raw chunk:', emitError)
+          }
         }
       }
     }
@@ -184,7 +396,10 @@ export abstract class AgentBaseService extends EventEmitter {
                 this.emit('chunk', {
                   type: 'tool_use',
                   toolName,
-                  toolInput: toolInput ? summarizeToolInput(toolName, toolInput) : undefined
+                  toolId,
+                  toolInput: toolInput
+                    ? summarizeToolInput(toolName, toolInput, this.cwd)
+                    : undefined
                 } as StreamChunk)
 
                 // Plan file safety net (full-message path): When Claude CLI writes a plan to
@@ -195,16 +410,17 @@ export abstract class AgentBaseService extends EventEmitter {
                 if (
                   toolName === 'Write' &&
                   toolInput &&
+                  typeof toolInput.content === 'string' &&
                   typeof toolInput.file_path === 'string' &&
-                  (toolInput.file_path as string).includes('.claude/plans/') &&
-                  typeof toolInput.content === 'string'
+                  ((toolInput.file_path as string).includes('.claude/plans/') ||
+                    isPlanContent(toolInput.content as string))
                 ) {
                   this.emit('chunk', {
                     type: 'text',
                     content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`
                   } as StreamChunk)
                   this.log.info(
-                    'Injected plan content from Write to .claude/plans/ (full-message path)'
+                    `Injected plan content from Write to ${toolInput.file_path} (full-message path)`
                   )
                 }
               }
@@ -243,7 +459,8 @@ export abstract class AgentBaseService extends EventEmitter {
                 }
                 this.emit('chunk', {
                   type: 'tool_result',
-                  toolName
+                  toolName,
+                  toolId: toolUseId
                 } as StreamChunk)
               }
             }
@@ -293,6 +510,7 @@ export abstract class AgentBaseService extends EventEmitter {
 
           this.currentStatus = 'reviewing'
           this.currentToolName = contentBlock.name as string
+          this.currentToolId = contentBlock.id as string
           this.currentToolInput = ''
           const toolId = contentBlock.id as string
           if (toolId) {
@@ -311,7 +529,10 @@ export abstract class AgentBaseService extends EventEmitter {
           this.emit('chunk', {
             type: 'tool_use',
             toolName: contentBlock.name as string,
-            toolInput: toolInput ? summarizeToolInput(this.currentToolName, toolInput) : undefined
+            toolId: contentBlock.id as string,
+            toolInput: toolInput
+              ? summarizeToolInput(this.currentToolName, toolInput, this.cwd)
+              : undefined
           } as StreamChunk)
         } else if (contentBlock?.type === 'text' && contentBlock.text) {
           this.emit('chunk', {
@@ -326,12 +547,39 @@ export abstract class AgentBaseService extends EventEmitter {
       case 'content_block_stop': {
         // If we were tracking a tool call, emit tool_result to mark it complete
         if (this.currentToolName) {
+          // Plan file safety net (streaming path): When the LLM writes plan content
+          // via a Write tool call, intercept it and emit as a ````plan block so
+          // the UI renders a PlanCard instead of showing a file write.
+          if (this.currentToolName === 'Write' && this.currentToolInput) {
+            try {
+              const toolInput = JSON.parse(this.currentToolInput)
+              if (
+                typeof toolInput.content === 'string' &&
+                typeof toolInput.file_path === 'string' &&
+                ((toolInput.file_path as string).includes('.claude/plans/') ||
+                  isPlanContent(toolInput.content as string))
+              ) {
+                this.emit('chunk', {
+                  type: 'text',
+                  content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`
+                } as StreamChunk)
+                this.log.info(
+                  `Injected plan content from Write to ${toolInput.file_path} (streaming path)`
+                )
+              }
+            } catch {
+              // currentToolInput may be incomplete JSON — skip plan injection
+            }
+          }
+
           this.emit('chunk', {
             type: 'tool_result',
             toolName: this.currentToolName,
+            toolId: this.currentToolId ?? undefined,
             content: this.currentToolInput || undefined
           } as StreamChunk)
           this.currentToolName = null
+          this.currentToolId = null
           this.currentToolInput = ''
         }
         break
@@ -378,6 +626,9 @@ export abstract class AgentBaseService extends EventEmitter {
           type: 'error',
           error: (event.error as Record<string, string>)?.message ?? 'Unknown error'
         } as StreamChunk)
+        // Emit complete so the UI isn't stuck — if the CLI recovers and sends
+        // a result event later, handleOutput will start a new interaction cycle
+        this.emit('complete')
         break
       }
 
@@ -412,7 +663,7 @@ export abstract class AgentBaseService extends EventEmitter {
   /**
    * Override in subclasses to handle `system` init events.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   protected onSystemEvent(_event: Record<string, unknown>): void {
     // Default: no-op — subclasses override for session tracking
   }
@@ -435,6 +686,7 @@ export abstract class AgentBaseService extends EventEmitter {
    * Handles process exit — flushes buffer and updates status.
    */
   protected handleExit(code: number | null): void {
+    this.emit('processExit', code)
     this.log.info(`Process exited with code ${code}`)
 
     if (this.buffer.trim()) {

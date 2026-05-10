@@ -108,9 +108,9 @@ const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
 }
 ```
 
-**Flow**: Generalist emits `handoff` event → IPC sends `CHAT_HANDOFF` to renderer → UI transitions to plan execution → Orchestrator spawns.
+**Flow**: Generalist emits `handoff` event → IPC sends `CHAT_HANDOFF` to renderer → UI transitions to plan execution → Coordinator spawns.
 
-### Orchestrator Task Decomposition
+### Coordinator Task Decomposition
 
 ```typescript
 // Uses DECOMPOSITION_SYSTEM_PROMPT
@@ -130,7 +130,7 @@ interface DecomposedTask {
 ### Skill Matching
 
 ```typescript
-// orchestrator.service.ts — matchSkill()
+// generalist.service.ts — matchSkill()
 // Semantic matching: message text → active skills
 const matchedSkill = await this.matchSkill(message, activeSkills)
 // Augments prompt with skill context + specialist routing
@@ -141,7 +141,7 @@ const matchedSkill = await this.matchSkill(message, activeSkills)
 ```typescript
 // Session persistence per conversation:
 // Generalist: sessionMap = Map<conversationId, claudeSessionId>
-// Orchestrator: sessionMap = Map<conversationId, claudeSessionId>
+// Coordinator: sessionMap = Map<conversationId, claudeSessionId>
 
 // Resume with: --resume <sessionId>
 // Session ID captured from stream-json result events

@@ -8,3 +8,13 @@ out
 .claude/worktrees/
 e2e/screenshots/
 e2e/test-results/
+.repomap.tags.cache/
+description-cache.db
+chroma/
+.agentstudio/
+
+# Agent Studio worktrees
+.agent-studio/
+
+# Coverage reports (c8)
+coverage/

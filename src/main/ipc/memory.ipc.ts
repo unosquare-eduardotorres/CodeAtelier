@@ -100,26 +100,6 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
   // ── Memory Feed ──
 
   ipcMain.handle(
-    IPC_CHANNELS.MEMORY_FEED_CLAUDE_MD,
-    async (event, args: { workspacePath: string }) => {
-      validateSender(event)
-      return memoryFeedService.feedFromClaudeMd(args.workspacePath, (progress) => {
-        mainWindow.webContents.send(IPC_CHANNELS.MEMORY_FEED_PROGRESS, progress)
-      })
-    }
-  )
-
-  ipcMain.handle(
-    IPC_CHANNELS.MEMORY_FEED_CODEBASE,
-    async (event, args: { workspacePath: string }) => {
-      validateSender(event)
-      return memoryFeedService.feedFromCodebase(args.workspacePath, (progress) => {
-        mainWindow.webContents.send(IPC_CHANNELS.MEMORY_FEED_PROGRESS, progress)
-      })
-    }
-  )
-
-  ipcMain.handle(
     IPC_CHANNELS.MEMORY_FEED_DOCUMENT,
     async (event, args: { workspacePath: string; filePath: string }) => {
       validateSender(event)

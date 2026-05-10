@@ -14,8 +14,7 @@ export default function GrillEvaluationCard({
   feedback,
   questions
 }: GrillEvaluationCardProps): React.JSX.Element {
-  const scoreColor =
-    score >= 70 ? 'text-success' : score >= 40 ? 'text-accent' : 'text-danger'
+  const scoreColor = score >= 70 ? 'text-success' : score >= 40 ? 'text-accent' : 'text-danger'
   const scoreBg =
     score >= 70
       ? 'bg-success-muted border-success/30'
@@ -35,9 +34,7 @@ export default function GrillEvaluationCard({
           >
             {score}/100
           </span>
-          {scoreLabel && (
-            <span className="text-xs text-accent/70 font-medium">{scoreLabel}</span>
-          )}
+          {scoreLabel && <span className="text-xs text-accent/70 font-medium">{scoreLabel}</span>}
         </div>
       </div>
 
@@ -49,7 +46,7 @@ export default function GrillEvaluationCard({
       )}
 
       {/* Questions */}
-      {questions.length > 0 && (
+      {questions?.length > 0 && (
         <div className="px-5 py-3 space-y-3">
           <span className="text-xs font-medium text-accent uppercase tracking-wide">
             Questions ({questions.length})
@@ -59,9 +56,9 @@ export default function GrillEvaluationCard({
               <span className="font-medium text-text-primary">
                 {i + 1}. {q.header || q.question}
               </span>
-              {q.options.length > 0 && (
+              {q.options?.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {q.options.map((o) => (
+                  {q.options?.map((o) => (
                     <span
                       key={o.label}
                       className={`px-2 py-0.5 text-xs rounded-full border ${
@@ -69,6 +66,7 @@ export default function GrillEvaluationCard({
                           ? 'border-success/30 bg-success-muted text-success'
                           : 'border-border-subtle bg-surface-base text-text-muted'
                       }`}
+                      title={o.recommendedReason || undefined}
                     >
                       {o.label}
                       {o.recommended ? ' ✓' : ''}

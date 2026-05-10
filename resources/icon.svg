@@ -1,41 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
-  <rect width="1024" height="1024" rx="224" fill="#1C272D"/>
-  <rect x="24" y="24" width="976" height="976" rx="200" fill="none" stroke="#B8976A" stroke-width="2" opacity="0.08"/>
-  
-  <!-- Triple diamond -->
-  <g transform="translate(512,440)">
-    <rect x="-280" y="-280" width="560" height="560" rx="24" transform="rotate(45)" stroke="#B8976A" stroke-width="14" fill="none"/>
-    <rect x="-244" y="-244" width="488" height="488" rx="16" transform="rotate(45)" stroke="#B8976A" stroke-width="4" fill="none" opacity="0.2"/>
-    <rect x="-210" y="-210" width="420" height="420" rx="12" transform="rotate(45)" stroke="#B8976A" stroke-width="2" fill="none" opacity="0.1"/>
+  <!-- Apple HIG: 824×824 squircle centered in 1024, 100px transparent gutter -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#1C272D"/>
+
+  <!-- Triple diamond — compact, thick strokes, centered with breathing room -->
+  <g transform="translate(512,512)">
+    <!-- Outer diamond — bold primary stroke -->
+    <rect x="-185" y="-185" width="370" height="370" rx="16" transform="rotate(45)" stroke="#B8976A" stroke-width="28" fill="none"/>
+    <!-- Middle diamond — visible secondary -->
+    <rect x="-155" y="-155" width="310" height="310" rx="10" transform="rotate(45)" stroke="#B8976A" stroke-width="12" fill="none" opacity="0.5"/>
+    <!-- Inner diamond — subtle tertiary with translucent fill for depth -->
+    <rect x="-128" y="-128" width="256" height="256" rx="8" transform="rotate(45)" stroke="#B8976A" stroke-width="7" fill="#B8976A" fill-opacity="0.04" opacity="0.4"/>
   </g>
-  
-  <!-- Cardinal jewels (copper) -->
-  <circle cx="512" cy="44" r="26" fill="#C4714A"/>
-  <circle cx="512" cy="44" r="16" fill="#D4885A" opacity="0.5"/>
-  <circle cx="512" cy="44" r="8" fill="#E8A070" opacity="0.35"/>
-  <circle cx="512" cy="836" r="20" fill="#C4714A" opacity="0.3"/>
-  <circle cx="116" cy="440" r="20" fill="#C4714A" opacity="0.22"/>
-  <circle cx="908" cy="440" r="20" fill="#C4714A" opacity="0.22"/>
-  
-  <!-- Diagonal jewels (gold) -->
-  <circle cx="216" cy="196" r="12" fill="#B8976A" opacity="0.15"/>
-  <circle cx="808" cy="196" r="12" fill="#B8976A" opacity="0.15"/>
-  <circle cx="216" cy="684" r="12" fill="#B8976A" opacity="0.12"/>
-  <circle cx="808" cy="684" r="12" fill="#B8976A" opacity="0.12"/>
-  
+
+  <!-- Cardinal jewels (copper) — on diamond vertices -->
+  <circle cx="512" cy="250" r="30" fill="#C4714A"/>
+  <circle cx="512" cy="250" r="18" fill="#D4885A" opacity="0.6"/>
+  <circle cx="512" cy="250" r="9" fill="#E8A070" opacity="0.4"/>
+  <circle cx="512" cy="774" r="28" fill="#C4714A" opacity="0.85"/>
+  <circle cx="250" cy="512" r="28" fill="#C4714A" opacity="0.8"/>
+  <circle cx="774" cy="512" r="28" fill="#C4714A" opacity="0.8"/>
+
+  <!-- Diagonal jewels (gold) — between vertices -->
+  <circle cx="300" cy="362" r="18" fill="#B8976A" opacity="0.6"/>
+  <circle cx="724" cy="362" r="18" fill="#B8976A" opacity="0.6"/>
+  <circle cx="300" cy="662" r="18" fill="#B8976A" opacity="0.55"/>
+  <circle cx="724" cy="662" r="18" fill="#B8976A" opacity="0.55"/>
+
   <!-- Tick marks at cardinal points -->
-  <line x1="512" y1="76" x2="512" y2="128" stroke="#B8976A" stroke-width="2.5" opacity="0.2"/>
-  <line x1="512" y1="752" x2="512" y2="804" stroke="#B8976A" stroke-width="2.5" opacity="0.15"/>
-  <line x1="148" y1="440" x2="200" y2="440" stroke="#B8976A" stroke-width="2.5" opacity="0.15"/>
-  <line x1="824" y1="440" x2="876" y2="440" stroke="#B8976A" stroke-width="2.5" opacity="0.15"/>
-  
-  <!-- Code brackets -->
-  <text x="512" y="470" fill="#C8B89A" font-size="176" font-family="JetBrains Mono,Menlo,monospace" font-weight="400" text-anchor="middle" letter-spacing="-4">&lt;/&gt;</text>
-  
-  <!-- ATELIER text -->
-  <line x1="280" y1="920" x2="744" y2="920" stroke="#B8976A" stroke-width="2" opacity="0.15"/>
-  <text x="512" y="936" fill="#B8976A" font-size="56" font-family="Georgia,Times New Roman,serif" font-weight="400" text-anchor="middle" letter-spacing="28">ATELIER</text>
-  <line x1="280" y1="956" x2="744" y2="956" stroke="#B8976A" stroke-width="2" opacity="0.15"/>
-  <circle cx="268" cy="938" r="8" fill="#C4714A" opacity="0.25"/>
-  <circle cx="756" cy="938" r="8" fill="#C4714A" opacity="0.25"/>
+  <line x1="512" y1="286" x2="512" y2="324" stroke="#B8976A" stroke-width="3" opacity="0.25"/>
+  <line x1="512" y1="700" x2="512" y2="738" stroke="#B8976A" stroke-width="3" opacity="0.2"/>
+  <line x1="282" y1="512" x2="320" y2="512" stroke="#B8976A" stroke-width="3" opacity="0.2"/>
+  <line x1="704" y1="512" x2="742" y2="512" stroke="#B8976A" stroke-width="3" opacity="0.2"/>
+
+  <!-- Code brackets — extra bold -->
+  <text x="512" y="542" fill="#C8B89A" font-size="140" font-family="JetBrains Mono,Menlo,monospace" font-weight="800" text-anchor="middle" letter-spacing="-4" stroke="#C8B89A" stroke-width="5">&lt;/&gt;</text>
 </svg>

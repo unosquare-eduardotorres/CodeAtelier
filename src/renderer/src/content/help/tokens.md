@@ -43,11 +43,11 @@ flowchart LR
 
 The Tokens tab shows you:
 
-| Metric | What it tells you |
-|--------|------------------|
-| **Session tokens** | Total tokens used in your current session (since opening the app) |
-| **Conversation tokens** | Tokens used in the active conversation |
-| **Per-message usage** | Approximate tokens used by each individual message |
+| Metric                  | What it tells you                                                 |
+| ----------------------- | ----------------------------------------------------------------- |
+| **Session tokens**      | Total tokens used in your current session (since opening the app) |
+| **Conversation tokens** | Tokens used in the active conversation                            |
+| **Per-message usage**   | Approximate tokens used by each individual message                |
 
 You can also see a quick token count in the **bottom-right status bar** of the app, which updates in real-time as you chat.
 
@@ -58,16 +58,20 @@ You can also see a quick token count in the **bottom-right status bar** of the a
 Several factors influence how many tokens a conversation uses:
 
 ### Context Size
+
 The more code and context an agent needs to understand, the more input tokens are used. A question about a single file uses fewer tokens than a question about the entire project architecture.
 
 ### Model Choice
+
 More powerful models (like Opus) tend to generate longer, more detailed responses, using more output tokens. Faster models (like Haiku) produce shorter responses.
 
 ### Conversation Length
+
 As a conversation gets longer, each new message includes more history for context. This means later messages in a long conversation use more input tokens than early messages.
 
 ### Specialist Agents
-When the Orchestrator delegates work to multiple specialists, each specialist uses its own tokens. A complex task assigned to 3 specialists uses roughly 3x the tokens of a simple single-agent task.
+
+When the Generalist delegates work to multiple specialists, each specialist uses its own tokens. A complex task assigned to 3 specialists uses roughly 3x the tokens of a simple single-agent task.
 
 ---
 
@@ -76,15 +80,19 @@ When the Orchestrator delegates work to multiple specialists, each specialist us
 Here are some practical tips to use tokens efficiently:
 
 ### Start New Conversations for New Topics
+
 Long conversations accumulate context. If you're switching to a completely different task, start a fresh conversation rather than continuing in the same one.
 
 ### Use the Right Model for the Task
+
 Don't use Opus for simple questions that Haiku could handle. See the **Models** section for guidance on choosing the right model.
 
 ### Be Specific in Your Requests
+
 Vague requests often lead to back-and-forth clarification, using more tokens. A specific, well-described request gets you the right answer faster.
 
 ### Use Plan Mode First
+
 For complex tasks, start in **Plan mode**. The planning phase uses fewer tokens than building, and a good plan leads to more efficient building.
 
 ---
@@ -94,6 +102,7 @@ For complex tasks, start in **Plan mode**. The planning phase uses fewer tokens 
 Your Claude Max subscription includes a generous token allowance. Code Atelier itself doesn't impose additional limits — your usage is governed by your Claude subscription terms.
 
 If you approach your subscription's usage limits, you may notice:
+
 - Slower response times
 - Rate limiting messages
 - Temporary pauses between messages

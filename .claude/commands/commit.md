@@ -1,6 +1,7 @@
 Review all staged and unstaged changes, then create a well-structured commit.
 
 Steps:
+
 1. Run `git status` and `git diff` to understand what changed
 2. Run `git log --oneline -5` to match the repository's commit message style
 3. Stage relevant files (avoid secrets, large binaries, .env files)

@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Monitor, ChevronLeft, ChevronRight, OctagonX, RotateCcw } from 'lucide-react'
+import {
+  Monitor,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  OctagonX,
+  RotateCcw
+} from 'lucide-react'
 import { useAgentStore, useSpecialistStore, useChatStore } from '@renderer/store'
 import { AgentStatusCard } from '@renderer/components/agents'
+import SpecialistInspector from './SpecialistInspector'
 
 function formatTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
@@ -12,18 +21,19 @@ function formatTokens(count: number): string {
 interface AgentMonitorProps {
   isCollapsed?: boolean
   onToggleCollapse?: () => void
+  variant?: 'side' | 'bottom'
 }
 
 export default function AgentMonitor({
   isCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  variant = 'side'
 }: AgentMonitorProps): React.JSX.Element {
   const statuses = useAgentStore((s) => s.statuses)
   const stopAllAgents = useAgentStore((s) => s.stopAllAgents)
   const isStopping = useAgentStore((s) => s.isStopping)
   const sessionTokens = useAgentStore((s) => s.sessionTokens)
   const appendOutput = useAgentStore((s) => s.appendOutput)
-  const addGateResult = useAgentStore((s) => s.addGateResult)
   const markAbandonment = useAgentStore((s) => s.markAbandonment)
   const specialists = useSpecialistStore((s) => s.specialists)
   const loadSpecialists = useSpecialistStore((s) => s.loadSpecialists)
@@ -33,6 +43,10 @@ export default function AgentMonitor({
     { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
   >([])
   const [showCheckpoints, setShowCheckpoints] = useState(false)
+  const [inspecting, setInspecting] = useState<{
+    sessionId: string
+    subagentId: string
+  } | null>(null)
 
   // Load specialists on mount so AgentStatusCard can read metadata from DB
   useEffect(() => {
@@ -55,13 +69,8 @@ export default function AgentMonitor({
     return cleanup
   }, [handleTaskChunk])
 
-  // Listen for gate failure events
-  useEffect(() => {
-    const cleanup = window.api.onGateFailure((data) => {
-      addGateResult(data.specialist, data.gate)
-    })
-    return cleanup
-  }, [addGateResult])
+  // Gate failure events removed post-migration-66 (specialist-pool deleted).
+  // Abandonment detection events are still wired below for legacy display.
 
   // Listen for abandonment detection events
   useEffect(() => {
@@ -70,6 +79,24 @@ export default function AgentMonitor({
     })
     return cleanup
   }, [markAbandonment])
+
+  // Handle specialist inspection — open the inspector panel for a specialist
+  const handleInspect = useCallback(
+    async (agentId: string) => {
+      const sessionId = activeConversation?.claudeSessionId
+      if (!sessionId) return
+      try {
+        const subagents = await window.api.sdkListSubagents({ sessionId })
+        const match = subagents.find((s) => s.includes(agentId)) || subagents[0]
+        if (match) {
+          setInspecting({ sessionId, subagentId: match })
+        }
+      } catch (err) {
+        console.error('Failed to list subagents:', err)
+      }
+    },
+    [activeConversation?.claudeSessionId]
+  )
 
   // Fetch checkpoints when conversation changes or all agents complete
   const allComplete =
@@ -115,6 +142,28 @@ export default function AgentMonitor({
 
   // Collapsed state: slim bar
   if (isCollapsed) {
+    if (variant === 'bottom') {
+      return (
+        <div className="flex items-center gap-3 px-3 py-2 bg-surface-raised w-full">
+          <button
+            onClick={onToggleCollapse}
+            className="p-1.5 rounded-lg hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
+            aria-label="Expand agent panel"
+            title="Expand agent panel"
+          >
+            <ChevronUp size={14} />
+          </button>
+          <Monitor size={14} className="text-primary-text" />
+          <span className="text-xs text-text-secondary font-medium">Agent Monitor</span>
+          {activeCount > 0 && (
+            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-surface-base">
+              {activeCount}
+            </span>
+          )}
+        </div>
+      )
+    }
+
     return (
       <div className="flex flex-col items-center w-12 bg-surface-raised border-l border-border-subtle flex-shrink-0">
         {/* Header area — matches sidebar header height for continuous border line */}
@@ -131,7 +180,7 @@ export default function AgentMonitor({
         <div className="flex flex-col items-center gap-2 py-3">
           <Monitor size={16} className="text-primary-text" />
           {activeCount > 0 && (
-            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-white">
+            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-surface-base">
               {activeCount}
             </span>
           )}
@@ -140,8 +189,16 @@ export default function AgentMonitor({
     )
   }
 
+  const CollapseIcon = variant === 'bottom' ? ChevronDown : ChevronRight
+
   return (
-    <div className="flex flex-col h-full bg-surface-raised border-l border-border-subtle w-[350px] flex-shrink-0">
+    <div
+      className={
+        variant === 'bottom'
+          ? 'flex flex-col h-full bg-surface-raised w-full'
+          : 'flex flex-col h-full bg-surface-raised border-l border-border-subtle w-[350px] flex-shrink-0'
+      }
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
         <div className="flex items-center gap-2">
@@ -150,7 +207,7 @@ export default function AgentMonitor({
         </div>
         <div className="flex items-center gap-2">
           {activeCount > 0 && (
-            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-white">
+            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-[10px] font-semibold text-surface-base">
               {activeCount}
             </span>
           )}
@@ -171,23 +228,44 @@ export default function AgentMonitor({
             aria-label="Collapse agent panel"
             title="Collapse agent panel"
           >
-            <ChevronRight size={16} />
+            <CollapseIcon size={16} />
           </button>
         </div>
       </div>
 
-      {/* Agent list */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {visibleStatuses.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <Monitor size={32} className="text-border-default mb-3" />
-            <p className="text-sm text-text-secondary mb-1">No agents active</p>
-            <p className="text-xs text-text-muted">Agents will appear here when processing tasks</p>
-          </div>
-        ) : (
-          visibleStatuses.map((status) => <AgentStatusCard key={status.agentId} status={status} />)
-        )}
-      </div>
+      {/* Agent list or Specialist Inspector */}
+      {inspecting ? (
+        <SpecialistInspector
+          sessionId={inspecting.sessionId}
+          subagentId={inspecting.subagentId}
+          onClose={() => setInspecting(null)}
+        />
+      ) : (
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          {visibleStatuses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <Monitor size={32} className="text-border-default mb-3" />
+              <p className="text-sm text-text-secondary mb-1">No agents active</p>
+              <p className="text-xs text-text-muted">
+                Agents will appear here when processing tasks
+              </p>
+            </div>
+          ) : (
+            visibleStatuses.map((status) => (
+              <div
+                key={status.agentId}
+                onClick={() => handleInspect(status.agentId)}
+                className="cursor-pointer"
+              >
+                <AgentStatusCard
+                  status={status}
+                  isSubagent={status.agentId.startsWith('subagent:')}
+                />
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Checkpoints section */}
       {checkpoints.length > 0 && (

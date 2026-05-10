@@ -1,0 +1,78 @@
+diff --git a/node_modules/@huggingface/transformers/dist/transformers.node.cjs b/node_modules/@huggingface/transformers/dist/transformers.node.cjs
+index 6cb09ae..caad23b 100644
+--- a/node_modules/@huggingface/transformers/dist/transformers.node.cjs
++++ b/node_modules/@huggingface/transformers/dist/transformers.node.cjs
+@@ -11357,12 +11357,12 @@ var sn = k(() => {
+   "use strict";
+   Ht();
+   Bt = async (a) => {
+-    if (typeof a == "string") if (false) try {
+-      let { readFile: r } = Hr("node:fs/promises");
++    if (typeof a == "string") if (typeof process !== "undefined") try {
++      let { readFile: r } = await import("node:fs/promises");
+       return new Uint8Array(await r(a));
+     } catch (r) {
+       if (r.code === "ERR_FS_FILE_TOO_LARGE") {
+-        let { createReadStream: s } = Hr("node:fs"), f = s(a), i = [];
++        let { createReadStream: s } = await import("node:fs"), f = s(a), i = [];
+         for await (let d of f) i.push(d);
+         return new Uint8Array(Buffer.concat(i));
+       }
+@@ -12511,7 +12511,7 @@ var ORT_SYMBOL = /* @__PURE__ */ Symbol.for("onnxruntime");
+ if (ORT_SYMBOL in globalThis) {
+   ONNX = globalThis[ORT_SYMBOL];
+ } else if (apis.IS_NODE_ENV) {
+-  ONNX = ONNX_NODE;
++  ONNX = ort_webgpu_bundle_min_exports;
+   switch (process.platform) {
+     case "win32":
+       supportedDevices.push("dml");
+@@ -12527,7 +12527,8 @@ if (ORT_SYMBOL in globalThis) {
+   }
+   supportedDevices.push("webgpu");
+   supportedDevices.push("cpu");
+-  defaultDevices = ["cpu"];
++  supportedDevices.push("wasm");
++  defaultDevices = ["wasm"];
+ } else {
+   ONNX = ort_webgpu_bundle_min_exports;
+   if (apis.IS_WEBNN_AVAILABLE) {
+diff --git a/node_modules/@huggingface/transformers/dist/transformers.node.mjs b/node_modules/@huggingface/transformers/dist/transformers.node.mjs
+index bacb354..061fcd6 100644
+--- a/node_modules/@huggingface/transformers/dist/transformers.node.mjs
++++ b/node_modules/@huggingface/transformers/dist/transformers.node.mjs
+@@ -10397,12 +10397,12 @@ var sn = k(() => {
+   "use strict";
+   Ht();
+   Bt = async (a) => {
+-    if (typeof a == "string") if (false) try {
+-      let { readFile: r } = Hr("node:fs/promises");
++    if (typeof a == "string") if (typeof process !== "undefined") try {
++      let { readFile: r } = await import("node:fs/promises");
+       return new Uint8Array(await r(a));
+     } catch (r) {
+       if (r.code === "ERR_FS_FILE_TOO_LARGE") {
+-        let { createReadStream: s } = Hr("node:fs"), f = s(a), i = [];
++        let { createReadStream: s } = await import("node:fs"), f = s(a), i = [];
+         for await (let d of f) i.push(d);
+         return new Uint8Array(Buffer.concat(i));
+       }
+@@ -11551,7 +11551,7 @@ var ORT_SYMBOL = /* @__PURE__ */ Symbol.for("onnxruntime");
+ if (ORT_SYMBOL in globalThis) {
+   ONNX = globalThis[ORT_SYMBOL];
+ } else if (apis.IS_NODE_ENV) {
+-  ONNX = ONNX_NODE;
++  ONNX = ort_webgpu_bundle_min_exports;
+   switch (process.platform) {
+     case "win32":
+       supportedDevices.push("dml");
+@@ -11567,7 +11567,8 @@ if (ORT_SYMBOL in globalThis) {
+   }
+   supportedDevices.push("webgpu");
+   supportedDevices.push("cpu");
+-  defaultDevices = ["cpu"];
++  supportedDevices.push("wasm");
++  defaultDevices = ["wasm"];
+ } else {
+   ONNX = ort_webgpu_bundle_min_exports;
+   if (apis.IS_WEBNN_AVAILABLE) {

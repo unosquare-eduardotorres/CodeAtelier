@@ -5,6 +5,7 @@ interface SpecialistRow {
   id: string
   agent_id: string
   display_name: string
+  description: string | null
   icon: string
   color: string
   prompt: string | null
@@ -13,6 +14,7 @@ interface SpecialistRow {
   source_yaml: string | null
   alias: string | null
   avatar_url: string | null
+  is_core: number
   created_at: string
   updated_at: string
 }
@@ -27,6 +29,13 @@ interface SkillRow {
   last_updated_date: string | null
   created_at: string
   updated_at: string
+  summary_full: string | null
+  summary_standard: string | null
+  summary_minimal: string | null
+  summary_hash: string | null
+  tier1_json: string | null
+  tier2_instructions: string | null
+  enrichment_json: string | null
 }
 
 function mapRow(row: SpecialistRow): Specialist {
@@ -34,6 +43,7 @@ function mapRow(row: SpecialistRow): Specialist {
     id: row.id,
     agentId: row.agent_id,
     displayName: row.display_name,
+    description: row.description ?? '',
     icon: row.icon,
     color: row.color,
     prompt: row.prompt ?? '',
@@ -42,6 +52,7 @@ function mapRow(row: SpecialistRow): Specialist {
     sourceYaml: row.source_yaml ?? null,
     alias: row.alias ?? null,
     avatarUrl: row.avatar_url ?? null,
+    isCore: row.is_core === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -57,13 +68,21 @@ function mapSkillRow(row: SkillRow): Skill {
     isActive: row.is_active === 1,
     lastUpdatedDate: row.last_updated_date,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    summaryFull: row.summary_full ?? null,
+    summaryStandard: row.summary_standard ?? null,
+    summaryMinimal: row.summary_minimal ?? null,
+    summaryHash: row.summary_hash ?? null,
+    tier1Json: row.tier1_json ?? null,
+    tier2Instructions: row.tier2_instructions ?? null,
+    enrichmentJson: row.enrichment_json ?? null
   }
 }
 
 export interface CreateSpecialistInput {
   agentId: string
   displayName: string
+  description?: string
   icon?: string
   color?: string
   prompt?: string
@@ -74,6 +93,7 @@ export interface CreateSpecialistInput {
 
 export interface UpdateSpecialistInput {
   displayName?: string
+  description?: string
   icon?: string
   color?: string
   prompt?: string
@@ -117,19 +137,38 @@ export class SpecialistRepository {
     return rows.map(mapRow)
   }
 
+  /**
+   * Find the workspace's Project Specialist IF it has finished building
+   * (build_status = 'ready'). Returns null when no specialist exists for the
+   * workspace or it's still pending/building/failed.
+   *
+   * Used by the DaVinci adapter to detect mid-session readiness transitions
+   * and propose a swap via ask_user.
+   */
+  findReadyByWorkspace(workspaceId: string): Specialist | null {
+    const db = getDatabase()
+    const row = db
+      .prepare(
+        `SELECT * FROM specialists WHERE workspace_id = ? AND build_status = 'ready' LIMIT 1`
+      )
+      .get(workspaceId) as SpecialistRow | undefined
+    return row ? mapRow(row) : null
+  }
+
   create(data: CreateSpecialistInput): Specialist {
     const db = getDatabase()
     const row = db
       .prepare(
         `
-      INSERT INTO specialists (agent_id, display_name, icon, color, prompt, priority, source_yaml, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO specialists (agent_id, display_name, description, icon, color, prompt, priority, source_yaml, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING *
     `
       )
       .get(
         data.agentId,
         data.displayName,
+        data.description ?? null,
         data.icon ?? '🔧',
         data.color ?? '#6366F1',
         data.prompt ?? '',
@@ -148,6 +187,10 @@ export class SpecialistRepository {
     if (data.displayName !== undefined) {
       sets.push('display_name = ?')
       values.push(data.displayName)
+    }
+    if (data.description !== undefined) {
+      sets.push('description = ?')
+      values.push(data.description)
     }
     if (data.icon !== undefined) {
       sets.push('icon = ?')
@@ -234,7 +277,24 @@ export class SpecialistRepository {
     )
   }
 
+  /** Get active skills assigned to a specialist (only skills with is_active = 1) */
   getSkills(specialistId: string): Skill[] {
+    const db = getDatabase()
+    const rows = db
+      .prepare(
+        `
+      SELECT s.* FROM skills s
+      INNER JOIN specialist_skills ss ON ss.skill_id = s.id
+      WHERE ss.specialist_id = ? AND s.is_active = 1
+      ORDER BY s.name ASC
+    `
+      )
+      .all(specialistId) as SkillRow[]
+    return rows.map(mapSkillRow)
+  }
+
+  /** Get all skills assigned to a specialist (including inactive — for Settings UI) */
+  getAllSkills(specialistId: string): Skill[] {
     const db = getDatabase()
     const rows = db
       .prepare(
@@ -264,46 +324,25 @@ export class SpecialistRepository {
     return rows.map(mapRow)
   }
 
-  upsertByAgentId(data: CreateSpecialistInput): Specialist {
-    const db = getDatabase()
-    const existing = this.findByAgentId(data.agentId)
-    if (existing) {
-      // Update existing — preserve user customizations (alias, avatarUrl)
-      const row = db
-        .prepare(
-          `
-        UPDATE specialists SET
-          display_name = COALESCE(?, display_name),
-          icon = COALESCE(?, icon),
-          color = COALESCE(?, color),
-          prompt = COALESCE(?, prompt),
-          priority = COALESCE(?, priority),
-          source_yaml = COALESCE(?, source_yaml),
-          updated_at = datetime('now')
-        WHERE agent_id = ?
-        RETURNING *
-      `
-        )
-        .get(
-          data.displayName,
-          data.icon ?? null,
-          data.color ?? null,
-          data.prompt ?? null,
-          data.priority ?? null,
-          data.sourceYaml ?? null,
-          data.agentId
-        ) as SpecialistRow
-      return mapRow(row)
-    }
-    return this.create(data)
-  }
-
   findAllWithSkills(): (Specialist & { skills: Skill[] })[] {
     const specialists = this.findAll()
     return specialists.map((s) => ({
       ...s,
-      skills: this.getSkills(s.id)
+      skills: this.getAllSkills(s.id)
     }))
+  }
+
+  reorderPriorities(orderedIds: string[]): void {
+    const db = getDatabase()
+    const stmt = db.prepare(
+      "UPDATE specialists SET priority = ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    const transaction = db.transaction(() => {
+      orderedIds.forEach((id, index) => {
+        stmt.run(index + 1, id)
+      })
+    })
+    transaction()
   }
 
   canDelete(id: string): { allowed: boolean; blockingSkills?: string[] } {

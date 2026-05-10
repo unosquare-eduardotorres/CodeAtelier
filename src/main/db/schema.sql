@@ -18,18 +18,23 @@ CREATE TABLE IF NOT EXISTS conversations (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   summary TEXT,
-  claude_session_id TEXT
+  claude_session_id TEXT,
+  llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm'))
 );
 
 -- Messages: individual chat messages
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('user', 'coordinator', 'specialist', 'generalist')),
+  -- Layer 2 (migration 69): new canonical value is 'da-vinci'. Legacy
+  -- 'generalist' accepted so historical migrations (2, 31, …) replay cleanly
+  -- on fresh installs; migration 69 rewrites any surviving 'generalist' rows.
+  role TEXT NOT NULL CHECK (role IN ('user', 'specialist', 'da-vinci', 'generalist')),
   agent_id TEXT,
   content_md TEXT NOT NULL,
   attachments_json TEXT DEFAULT '[]',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  parent_message_id TEXT REFERENCES messages(id)
 );
 
 -- Attachments: context files uploaded by user
@@ -54,6 +59,10 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   ended_at TEXT,
   token_usage INTEGER DEFAULT 0,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cache_read_tokens INTEGER DEFAULT 0,
+  cache_creation_tokens INTEGER DEFAULT 0,
   stdout_log_path TEXT,
   conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
   workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -62,7 +71,9 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   complexity_tier TEXT
 );
 
--- Specialists: dynamic agent definitions (app-global)
+-- Specialists: per-workspace Project Specialists + the app-global Generalist row.
+-- After migration 66: workspace_id is nullable (only the Generalist row leaves it NULL).
+-- Every other specialist is bound to exactly one workspace via the unique index below.
 CREATE TABLE IF NOT EXISTS specialists (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   agent_id TEXT NOT NULL UNIQUE,
@@ -73,9 +84,23 @@ CREATE TABLE IF NOT EXISTS specialists (
   priority INTEGER NOT NULL DEFAULT 100,
   is_active INTEGER NOT NULL DEFAULT 1,
   source_yaml TEXT DEFAULT NULL,
+  alias TEXT DEFAULT NULL,
+  avatar_url TEXT DEFAULT NULL,
+  is_core INTEGER NOT NULL DEFAULT 0,
+  -- Project Specialist columns (nullable on the Generalist row)
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  build_status TEXT NOT NULL DEFAULT 'ready' CHECK (build_status IN ('pending', 'building', 'ready', 'failed')),
+  stack_fingerprint TEXT,
+  detected_techs TEXT DEFAULT '[]' CHECK (json_valid(detected_techs)),
+  last_built_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- A workspace has at most one Project Specialist. The Generalist row has workspace_id=NULL
+-- and is excluded from this constraint by the partial index.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_specialists_workspace_unique
+  ON specialists(workspace_id) WHERE workspace_id IS NOT NULL;
 
 -- Skills: importable .MD skill files (app-global)
 CREATE TABLE IF NOT EXISTS skills (
@@ -90,11 +115,27 @@ CREATE TABLE IF NOT EXISTS skills (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Junction: many-to-many specialists <-> skills
+-- Junction: many-to-many specialists <-> skills.
+-- is_enabled controls whether a skill is currently contributing to the specialist's
+-- prompt/MCP. After migration 66 every attached skill starts disabled (is_enabled=0).
 CREATE TABLE IF NOT EXISTS specialist_skills (
   specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
   skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+  is_enabled INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (specialist_id, skill_id)
+);
+
+-- Conversation specialist activation: one row per conversation pointing to
+-- the workspace's Project Specialist. Nearly vestigial today (single row per
+-- conv); kept for UI history + skill-enablement semantics.
+CREATE TABLE IF NOT EXISTS conversation_specialists (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(conversation_id, specialist_id)
 );
 
 -- File changes tracked per conversation (for selective git commit)
@@ -107,30 +148,18 @@ CREATE TABLE IF NOT EXISTS conversation_file_changes (
   UNIQUE(conversation_id, file_path)
 );
 
--- Git worktrees for agent isolation during parallel execution
-CREATE TABLE IF NOT EXISTS agent_worktrees (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  agent_id TEXT NOT NULL,
-  task_id TEXT NOT NULL,
-  worktree_path TEXT NOT NULL,
-  branch_name TEXT NOT NULL,
-  base_branch TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  merged_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
-
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
+CREATE INDEX IF NOT EXISTS idx_conversation_specialists_conversation ON conversation_specialists(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_specialists_specialist ON conversation_specialists(specialist_id);
+CREATE INDEX IF NOT EXISTS idx_specialist_history_conversation ON specialist_conversation_history(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_specialist_history_specialist ON specialist_conversation_history(specialist_id);
+CREATE INDEX IF NOT EXISTS idx_specialist_history_conversation_created ON specialist_conversation_history(conversation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id);
 
@@ -171,24 +200,6 @@ CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
 CREATE INDEX IF NOT EXISTS idx_memories_context ON memories(workspace_id, type, importance DESC);
 
--- Dream runs: consolidation cycles that process and refine memories
-CREATE TABLE IF NOT EXISTS dream_runs (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'running'
-    CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
-  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('startup', 'idle', 'manual')),
-  memories_created INTEGER DEFAULT 0,
-  memories_merged INTEGER DEFAULT 0,
-  memories_pruned INTEGER DEFAULT 0,
-  token_usage INTEGER DEFAULT 0,
-  started_at TEXT NOT NULL DEFAULT (datetime('now')),
-  ended_at TEXT,
-  error_message TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_dream_runs_workspace ON dream_runs(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_dream_runs_status ON dream_runs(status);
-
 -- User profile: app-wide identity (singleton row)
 CREATE TABLE IF NOT EXISTS user_profile (
   id TEXT PRIMARY KEY DEFAULT 'default',
@@ -198,12 +209,25 @@ CREATE TABLE IF NOT EXISTS user_profile (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Core agent aliases: personality overrides for generalist & orchestrator
+-- Core agent aliases: personality overrides for generalist & coordinator
 CREATE TABLE IF NOT EXISTS core_agent_aliases (
-  agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('generalist', 'coordinator')),
+  -- Both values accepted — see note on messages.role above.
+  agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('da-vinci', 'generalist')),
   alias TEXT DEFAULT NULL,
   avatar_key TEXT DEFAULT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Core agent prompts: editable system prompts for generalist
+CREATE TABLE IF NOT EXISTS core_agent_prompts (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  agent_role TEXT NOT NULL CHECK (agent_role IN ('da-vinci', 'generalist')),
+  mode TEXT NOT NULL CHECK (mode IN ('plan', 'build')),
+  prompt_text TEXT NOT NULL,
+  default_prompt_text TEXT NOT NULL,
+  is_custom INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(agent_role, mode)
 );
 
 -- Events: structured audit log for agent lifecycle, gates, escalations
@@ -215,12 +239,13 @@ CREATE TABLE IF NOT EXISTS events (
   event_type TEXT NOT NULL,
   category TEXT NOT NULL CHECK (category IN (
     'session', 'agent', 'escalation', 'gate', 'abandonment',
-    'checkpoint', 'hook', 'budget', 'error'
+    'checkpoint', 'hook', 'budget', 'error', 'telemetry'
   )),
   message TEXT NOT NULL,
   data_json TEXT DEFAULT '{}',
   agent_id TEXT,
   model TEXT,
+  sequence_number INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
@@ -242,17 +267,225 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 );
 CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation ON checkpoints(conversation_id);
 
--- Gate results: quality gate pass/fail records from specialist output
-CREATE TABLE IF NOT EXISTS gate_results (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  session_id TEXT,
-  conversation_id TEXT,
-  task_id TEXT,
-  agent_id TEXT,
-  gate_type TEXT NOT NULL CHECK (gate_type IN ('test', 'lint', 'typecheck', 'build')),
-  passed INTEGER NOT NULL DEFAULT 0,
-  summary TEXT NOT NULL,
+-- App-level key-value preferences
+CREATE TABLE IF NOT EXISTS app_preferences (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Unified Storage: Code Intelligence Tables ───────────────────────────────
+
+-- Preprocessed code units for semantic search
+CREATE TABLE IF NOT EXISTS code_chunks (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  directory TEXT NOT NULL,
+  symbol_name TEXT NOT NULL,
+  symbol_kind TEXT NOT NULL,
+  class_name TEXT,
+  signature TEXT NOT NULL,
+  start_line INTEGER NOT NULL,
+  end_line INTEGER NOT NULL,
+  language TEXT NOT NULL,
+  body TEXT NOT NULL,
+  embed_text TEXT NOT NULL,
+  is_public INTEGER NOT NULL DEFAULT 1,
+  is_async INTEGER NOT NULL DEFAULT 0,
+  has_docstring INTEGER NOT NULL DEFAULT 0,
+  line_count INTEGER NOT NULL,
+  file_mtime REAL NOT NULL,
+  indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(workspace_id, file_path, symbol_name, start_line)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_workspace ON code_chunks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_file ON code_chunks(workspace_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_chunks_symbol ON code_chunks(workspace_id, symbol_name);
+CREATE INDEX IF NOT EXISTS idx_chunks_kind ON code_chunks(workspace_id, symbol_kind);
+CREATE INDEX IF NOT EXISTS idx_chunks_language ON code_chunks(workspace_id, language);
+
+-- Vector embeddings stored as BLOBs (768 floats x 4 bytes = 3,072 bytes per vector)
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+  chunk_id TEXT PRIMARY KEY REFERENCES code_chunks(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  embedding BLOB NOT NULL,
+  model TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_gate_results_conversation ON gate_results(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_gate_results_task ON gate_results(task_id);
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_workspace ON chunk_embeddings(workspace_id);
+
+-- AI-generated code descriptions (replaces description-cache.db)
+CREATE TABLE IF NOT EXISTS chunk_descriptions (
+  key TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  description TEXT NOT NULL,
+  model TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  symbol_name TEXT NOT NULL,
+  generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_descriptions_workspace ON chunk_descriptions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_descriptions_file ON chunk_descriptions(file_path);
+
+-- Cached symbol relationships from code graph / repomap
+CREATE TABLE IF NOT EXISTS code_graph_edges (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  source_file TEXT NOT NULL,
+  source_symbol TEXT NOT NULL,
+  target_file TEXT NOT NULL,
+  target_symbol TEXT NOT NULL,
+  edge_type TEXT NOT NULL CHECK (edge_type IN ('calls', 'imports', 'extends', 'implements', 'references')),
+  page_rank REAL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_workspace ON code_graph_edges(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_graph_source ON code_graph_edges(workspace_id, source_file, source_symbol);
+CREATE INDEX IF NOT EXISTS idx_graph_target ON code_graph_edges(workspace_id, target_file, target_symbol);
+
+-- Tree-sitter tags (def + ref) per workspace — enables incremental re-indexing via mtime
+CREATE TABLE IF NOT EXISTS code_graph_tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  rel_fname TEXT NOT NULL,
+  fname TEXT NOT NULL,
+  line INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('def', 'ref')),
+  file_mtime REAL NOT NULL,
+  indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(workspace_id, rel_fname, line, name, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cg_tags_workspace ON code_graph_tags(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_cg_tags_file ON code_graph_tags(workspace_id, rel_fname);
+CREATE INDEX IF NOT EXISTS idx_cg_tags_name ON code_graph_tags(workspace_id, name);
+CREATE INDEX IF NOT EXISTS idx_cg_tags_kind ON code_graph_tags(workspace_id, kind);
+
+-- Per-file PageRank scores — pre-computed during indexing for instant lookups
+CREATE TABLE IF NOT EXISTS code_graph_ranks (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  rel_fname TEXT NOT NULL,
+  page_rank REAL NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (workspace_id, rel_fname)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cg_ranks_workspace ON code_graph_ranks(workspace_id);
+
+-- Indexing state for code graph (separate from semantic search indexing_state)
+CREATE TABLE IF NOT EXISTS code_graph_state (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'idle',
+  total_files INTEGER NOT NULL DEFAULT 0,
+  processed_files INTEGER NOT NULL DEFAULT 0,
+  total_tags INTEGER NOT NULL DEFAULT 0,
+  total_edges INTEGER NOT NULL DEFAULT 0,
+  last_completed_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Persistent indexing progress per workspace (resume-after-crash)
+CREATE TABLE IF NOT EXISTS indexing_state (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'idle',
+  total_files INTEGER NOT NULL DEFAULT 0,
+  processed_files INTEGER NOT NULL DEFAULT 0,
+  total_chunks INTEGER NOT NULL DEFAULT 0,
+  processed_chunks INTEGER NOT NULL DEFAULT 0,
+  embedding_model TEXT,
+  last_completed_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Inter-Agent Communication ──────────────────────────────────────────────
+
+-- ── Per-Turn Token Usage ──────────────────────────────────────────────────
+
+-- Fine-grained token usage per turn for cost debugging and cache rate trends
+CREATE TABLE IF NOT EXISTS turn_usage (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  session_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  turn_number INTEGER NOT NULL,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cache_read_tokens INTEGER DEFAULT 0,
+  cache_creation_tokens INTEGER DEFAULT 0,
+  context_tokens INTEGER DEFAULT 0,
+  model TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id);
+
+-- ── Workspace Health: Audit Runs & Results ────────────────────────────────────
+
+-- Audit runs (multiple per workspace — history of up to 10 kept by repository)
+CREATE TABLE IF NOT EXISTS audit_runs (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL DEFAULT 'light' CHECK (mode IN ('light', 'deep')),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'running', 'completed', 'partial', 'cancelled')),
+  overall_score INTEGER,
+  selected_tracks TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(selected_tracks)),
+  detected_techs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(detected_techs)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_runs_workspace
+  ON audit_runs(workspace_id);
+
+-- Individual auditor results within a run
+CREATE TABLE IF NOT EXISTS audit_results (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  audit_run_id TEXT NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+  track_id TEXT NOT NULL,
+  score INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+  findings TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(findings)),
+  summary TEXT DEFAULT '',
+  skills_used TEXT DEFAULT '[]' CHECK (json_valid(skills_used)),
+  started_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_results_run ON audit_results(audit_run_id);
+
+-- Grill sessions: persistent grill evaluation state
+CREATE TABLE IF NOT EXISTS grill_sessions (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  idea_id TEXT NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  track_id TEXT,
+  status TEXT NOT NULL DEFAULT 'idle'
+    CHECK (status IN ('idle', 'evaluating', 'awaiting_answers', 'completed', 'cancelled', 'failed')),
+  current_score INTEGER,
+  score_label TEXT,
+  feedback TEXT,
+  iteration_count INTEGER DEFAULT 0,
+  messages TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(messages)),
+  track_scores TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(track_scores)),
+  history TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(history)),
+  question_states TEXT DEFAULT NULL,
+  current_iteration TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_grill_sessions_idea ON grill_sessions(idea_id);
+CREATE INDEX IF NOT EXISTS idx_grill_sessions_workspace ON grill_sessions(workspace_id);
+
+

@@ -13,7 +13,7 @@ For example, you might add an idea like:
 > **Title:** Add dark mode support
 > **Description:** Users should be able to toggle between light and dark themes. The preference should persist across sessions.
 
-Later, when you chat with your AI team and say *"Let's work on that dark mode feature,"* the Generalist already knows what you're referring to.
+Later, when you chat with your AI team and say _"Let's work on that dark mode feature,"_ the Generalist already knows what you're referring to.
 
 ```mermaid
 stateDiagram-v2

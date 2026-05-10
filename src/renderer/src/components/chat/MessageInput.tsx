@@ -13,16 +13,28 @@ import {
   MicOff
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
+import {
+  useChatStore,
+  useChatActions,
+  useWorkspaceStore,
+  useConversationSpecialistActions,
+  useConversationSpecialists,
+  useConversationTokenEstimates,
+  useSpecialistWarningPreferences,
+  useAppPreferenceActions,
+  useSpecialistStore
+} from '@renderer/store'
 import { useVoiceInput } from '@renderer/hooks'
 import { ConfirmDialog } from '@renderer/components/common'
 import CompleteDialog from './CompleteDialog'
 import IdeaPopover from './IdeaPopover'
 import VoiceIndicator from './VoiceIndicator'
+import SpecialistWarningDialog, { type SpecialistWarningType } from './SpecialistWarningDialog'
 
 interface MessageInputProps {
   attachments: string[]
   onClearAttachments: () => void
+  onStartGrillMe?: () => Promise<void>
 }
 
 const SLASH_COMMANDS: Array<{
@@ -77,13 +89,26 @@ const SLASH_COMMANDS: Array<{
 
 export default function MessageInput({
   attachments,
-  onClearAttachments
+  onClearAttachments,
+  onStartGrillMe
 }: MessageInputProps): React.JSX.Element {
-  const [text, setText] = useState('')
+  const activeConversation = useChatStore((s) => s.activeConversation)
+  const currentConversationId = activeConversation?.id ?? ''
+  const draftText = useChatStore((s) => s.draftTexts[currentConversationId] ?? '')
+  const { setDraftText, clearDraftText } = useChatActions()
+  const [text, setText] = useState(draftText)
+  const [promptSuggestion, setPromptSuggestion] = useState<string | null>(null)
   const [showStopConfirm, setShowStopConfirm] = useState(false)
   const [showCompleteDialog, setShowCompleteDialog] = useState(false)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [showIdeaPopover, setShowIdeaPopover] = useState(false)
+  const [showSpecialistWarning, setShowSpecialistWarning] = useState(false)
+  const [specialistWarningType, setSpecialistWarningType] =
+    useState<SpecialistWarningType>('always')
+  const [pendingSend, setPendingSend] = useState<{
+    content: string
+    attachments?: string[]
+  } | null>(null)
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const {
@@ -92,16 +117,35 @@ export default function MessageInput({
     clearDisplay,
     appendLocalMessage,
     completeConversation,
-    closeConversation,
-    startGrillSession
+    closeConversation
   } = useChatActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
-  const activeConversation = useChatStore((s) => s.activeConversation)
-  const hasPendingGrillQuestions = useChatStore(
-    (s) => (s.grillSession?.pendingQuestions?.length ?? 0) > 0
+  const conversationId = activeConversation?.id
+  const conversationSpecialists = useConversationSpecialists(conversationId)
+  const conversationTokenEstimates = useConversationTokenEstimates(conversationId)
+  const agentStatus = useWorkspaceStore((s) => s.agentStatus)
+  const { hydrateConversationSpecialists } = useConversationSpecialistActions()
+  const { specialistWarningBuild, specialistWarningPlan, specialistWarningAlways } =
+    useSpecialistWarningPreferences()
+  const { loadPreferences } = useAppPreferenceActions()
+  const isInitializing = agentStatus === 'starting'
+  const workspaceSpecialists = useSpecialistStore((s) => s.specialists)
+  const coreSpecialistIds = useMemo(
+    () => new Set(workspaceSpecialists.filter((s) => s.isCore).map((s) => s.id)),
+    [workspaceSpecialists]
   )
-  const orchestratorStatus = useWorkspaceStore((s) => s.orchestratorStatus)
-  const isInitializing = orchestratorStatus === 'starting'
+  const activeSpecialistCount = useMemo(
+    () =>
+      conversationSpecialists.filter(
+        (specialist) => specialist.isActive && !coreSpecialistIds.has(specialist.specialistId)
+      ).length,
+    [conversationSpecialists, coreSpecialistIds]
+  )
+  const estimatedSpecialistTokens = useMemo(
+    () =>
+      conversationTokenEstimates.reduce((total, estimate) => total + estimate.estimatedTokens, 0),
+    [conversationTokenEstimates]
+  )
 
   // Voice mode state
   const [voiceEnabled, setVoiceEnabled] = useState(false)
@@ -144,6 +188,45 @@ export default function MessageInput({
     adjustHeight()
   }, [text, adjustHeight])
 
+  useEffect(() => {
+    void loadPreferences().catch(() => undefined)
+  }, [loadPreferences])
+
+  useEffect(() => {
+    if (!conversationId) return
+    void hydrateConversationSpecialists(conversationId).catch(() => undefined)
+  }, [conversationId, hydrateConversationSpecialists])
+
+  // Sync local text to draft store (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (currentConversationId) setDraftText(currentConversationId, text)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [text, currentConversationId, setDraftText])
+
+  // Restore draft when conversation changes
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on conversation switch
+    setText(useChatStore.getState().draftTexts[currentConversationId] ?? '')
+  }, [currentConversationId])
+
+  // Listen for prompt suggestions from SDK
+  useEffect(() => {
+    const cleanup = window.api.onPromptSuggestion((data) => {
+      if (data.conversationId === currentConversationId) {
+        setPromptSuggestion(data.suggestion)
+      }
+    })
+    return cleanup
+  }, [currentConversationId])
+
+  // Clear suggestion when user starts typing or conversation changes
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state clear when input changes
+    if (text) setPromptSuggestion(null)
+  }, [text])
+
   // Slash command filtering
   const filteredCommands = useMemo(() => {
     if (!text.startsWith('/')) return []
@@ -152,11 +235,6 @@ export default function MessageInput({
   }, [text])
 
   const showCommands = text.startsWith('/') && filteredCommands.length > 0
-
-  // Reset selected index when filtered commands change
-  useEffect(() => {
-    setSelectedCommandIndex(0)
-  }, [filteredCommands.length])
 
   // Push-to-talk keyboard shortcut: hold V when input not focused
   useEffect(() => {
@@ -191,6 +269,30 @@ export default function MessageInput({
     }
   }, [voiceEnabled, isVoiceSupported, isListening, startListening, stopListening])
 
+  const getWarningTypeForCurrentMode = useCallback((): SpecialistWarningType | null => {
+    if (!activeConversation || activeSpecialistCount === 0) return null
+    if (specialistWarningAlways) return 'always'
+    if (activeConversation.mode === 'build' && specialistWarningBuild) return 'build'
+    if (activeConversation.mode === 'plan' && specialistWarningPlan) return 'plan'
+    return null
+  }, [
+    activeConversation,
+    activeSpecialistCount,
+    specialistWarningAlways,
+    specialistWarningBuild,
+    specialistWarningPlan
+  ])
+
+  const executeSend = useCallback(
+    async (content: string, sendAttachments?: string[]): Promise<void> => {
+      setText('')
+      if (currentConversationId) clearDraftText(currentConversationId)
+      onClearAttachments()
+      await sendMessage(content, sendAttachments)
+    },
+    [onClearAttachments, sendMessage, currentConversationId, clearDraftText]
+  )
+
   const handleSend = async (): Promise<void> => {
     const trimmed = text.trim()
     if (!trimmed || isStreaming || !activeConversation) return
@@ -213,8 +315,15 @@ export default function MessageInput({
 
       if (cmd === '/compact') {
         setText('')
-        await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined)
         onClearAttachments()
+        const extractNuance = trimmed.toLowerCase().includes('--nuance')
+        try {
+          await window.api.compactConversation({ extractNuance })
+        } catch (err) {
+          appendLocalMessage(
+            `**Compact failed:** ${err instanceof Error ? err.message : String(err)}`
+          )
+        }
         return
       }
 
@@ -226,10 +335,9 @@ export default function MessageInput({
 
       if (cmd === '/grillme') {
         setText('')
-        startGrillSession()
-        const grillPrompt = `[GRILL MODE ACTIVATED]\n\nInterview me relentlessly about every aspect of this plan until we reach a shared understanding. Present 2-5 related questions per batch, grouped by topic. Mark your recommended option using the "recommended" field in the JSON. If a question can be answered by exploring the codebase, explore it instead of asking.\n\nReview the conversation above and start grilling me about the items, pending decisions, and unclear requirements.`
-        await sendMessage(grillPrompt, attachments.length > 0 ? attachments : undefined)
-        onClearAttachments()
+        if (onStartGrillMe) {
+          await onStartGrillMe()
+        }
         return
       }
 
@@ -267,9 +375,18 @@ export default function MessageInput({
       }
     }
 
-    setText('')
-    await sendMessage(trimmed, attachments.length > 0 ? attachments : undefined)
-    onClearAttachments()
+    const warningType = getWarningTypeForCurrentMode()
+    if (warningType) {
+      setSpecialistWarningType(warningType)
+      setPendingSend({
+        content: trimmed,
+        attachments: attachments.length > 0 ? [...attachments] : undefined
+      })
+      setShowSpecialistWarning(true)
+      return
+    }
+
+    await executeSend(trimmed, attachments.length > 0 ? attachments : undefined)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -306,7 +423,7 @@ export default function MessageInput({
     }
   }
 
-  const isDisabled = isStreaming || !activeConversation || isInitializing || hasPendingGrillQuestions
+  const isDisabled = isStreaming || !activeConversation || isInitializing
 
   return (
     <>
@@ -318,6 +435,25 @@ export default function MessageInput({
           error={voiceError}
           onDismissError={clearVoiceError}
         />
+      )}
+
+      {/* Prompt suggestion chip — positioned above input for visibility */}
+      {promptSuggestion && !isStreaming && (
+        <div className="mb-1.5">
+          <button
+            onClick={() => {
+              sendMessage(promptSuggestion)
+              setPromptSuggestion(null)
+            }}
+            className="text-xs text-primary-text bg-primary/10 px-3 py-1 rounded-full hover:bg-primary/20 transition-colors"
+            title={promptSuggestion}
+          >
+            💡{' '}
+            {promptSuggestion.length > 80
+              ? promptSuggestion.slice(0, 77) + '...'
+              : promptSuggestion}
+          </button>
+        </div>
       )}
 
       <div className="relative flex-1 min-w-0 flex items-end gap-2">
@@ -353,18 +489,19 @@ export default function MessageInput({
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            setSelectedCommandIndex(0)
+          }}
           onKeyDown={handleKeyDown}
           placeholder={
-            hasPendingGrillQuestions
-              ? 'Answer the grill questions above to continue...'
-              : isInitializing
-                ? 'Waiting for AI agent to initialize...'
-                : !activeConversation
-                  ? 'Select or create a conversation...'
-                  : activeConversation.mode === 'plan'
-                    ? `Ask anything — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
-                    : `Describe what to build — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
+            isInitializing
+              ? 'Waiting for AI agent to initialize...'
+              : !activeConversation
+                ? 'Select or create a conversation...'
+                : activeConversation.mode === 'plan'
+                  ? `Ask anything — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
+                  : `Describe what to build — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
           }
           disabled={isDisabled}
           rows={1}
@@ -396,7 +533,13 @@ export default function MessageInput({
         </button>
 
         {/* Idea popover */}
-        {showIdeaPopover && <IdeaPopover onClose={() => setShowIdeaPopover(false)} />}
+        {showIdeaPopover && (
+          <IdeaPopover
+            onClose={() => setShowIdeaPopover(false)}
+            onSaved={() => setText('')}
+            initialTitle={text.trim()}
+          />
+        )}
 
         {/* Voice mic button — visible when voice mode enabled */}
         {voiceEnabled && isVoiceSupported && (
@@ -475,6 +618,26 @@ export default function MessageInput({
           setShowCloseConfirm(false)
         }}
         onCancel={() => setShowCloseConfirm(false)}
+      />
+
+      <SpecialistWarningDialog
+        isOpen={showSpecialistWarning}
+        warningType={specialistWarningType}
+        activeSpecialistCount={activeSpecialistCount}
+        estimatedTokens={estimatedSpecialistTokens}
+        onCancel={() => {
+          setShowSpecialistWarning(false)
+          setPendingSend(null)
+        }}
+        onConfirm={() => {
+          // Close dialog immediately — don't await the send
+          const pending = pendingSend
+          setShowSpecialistWarning(false)
+          setPendingSend(null)
+          if (pending) {
+            void executeSend(pending.content, pending.attachments)
+          }
+        }}
       />
     </>
   )

@@ -23,13 +23,13 @@ When an agent needs context beyond what's in the code itself, it can reference t
 
 Code Atelier can read several file formats:
 
-| Format | Extensions | Best For |
-|--------|-----------|----------|
-| **Text** | .txt | Plain text notes |
-| **Markdown** | .md | Formatted documentation |
-| **PDF** | .pdf | Formal documents, specs |
-| **Word** | .docx | Business documents |
-| **PowerPoint** | .pptx | Presentation decks |
+| Format         | Extensions | Best For                |
+| -------------- | ---------- | ----------------------- |
+| **Text**       | .txt       | Plain text notes        |
+| **Markdown**   | .md        | Formatted documentation |
+| **PDF**        | .pdf       | Formal documents, specs |
+| **Word**       | .docx      | Business documents      |
+| **PowerPoint** | .pptx      | Presentation decks      |
 
 ---
 

@@ -1,29 +1,32 @@
 import { ipcMain, app, type BrowserWindow } from 'electron'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import simpleGit from 'simple-git'
 import {
   conversationRepository,
+  conversationSpecialistRepository,
   messageRepository,
   fileChangeRepository,
-  workspaceRepository
+  workspaceRepository,
+  turnUsageRepository,
+  specialistRepository
 } from '../db/repositories'
-import {
-  generalistService,
-  orchestratorService,
-  gitWorktreeService
-} from '../services'
+import { chatAgentService, fileService } from '../services'
+import { modelConfigService } from '../services/model-config.service'
+import { contextWindowResolver } from '../services/context-window-resolver'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { ConversationMode } from '../../shared/types'
-import { memoryService } from '../services/memory.service'
+import type { ConversationMode, ContextUsageLevel, LLMProvider } from '../../shared/types'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
-import { isMemoryEnabled } from './chat-shared'
 
 const log = chatIpcLogger
 
-export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Conversation CRUD — create, delete, rename, reorder, list, get messages
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function registerConversationCrudIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.CHAT_GET_CONVERSATIONS,
     async (event, args: { workspaceId: string }) => {
@@ -39,7 +42,17 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.CHAT_CREATE_CONVERSATION,
-    async (event, args: { workspaceId: string; title?: string; mode?: ConversationMode }) => {
+    async (
+      event,
+      args: {
+        workspaceId: string
+        title?: string
+        mode?: ConversationMode
+        personaSpecialistId?: string
+        llmProvider?: LLMProvider
+        mcpOverrides?: Record<string, boolean>
+      }
+    ) => {
       validateSender(event)
 
       if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
@@ -55,7 +68,46 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
         throw new Error('Invalid mode: must be "plan" or "build"')
       }
 
-      return conversationRepository.create(args.workspaceId, args.title, args.mode)
+      // Validate persona specialist if provided
+      if (args.personaSpecialistId) {
+        const specialist = specialistRepository.findById(args.personaSpecialistId)
+        if (!specialist) throw new Error('Invalid persona specialist ID')
+      }
+
+      // Per-conversation LLM provider: explicit selection → workspace setting → 'claude'
+      const wsRow = workspaceRepository.findById(args.workspaceId)
+      const settings = JSON.parse(wsRow?.settingsJson ?? '{}')
+      const llmProvider: LLMProvider =
+        (args.llmProvider as LLMProvider) ?? settings.llmProvider ?? 'claude'
+
+      const conversation = conversationRepository.create(
+        args.workspaceId,
+        args.title,
+        args.mode,
+        args.personaSpecialistId,
+        llmProvider,
+        args.mcpOverrides
+      )
+      conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
+
+      // Auto-attach the workspace's Project Specialist (if one exists).
+      // After migration 66 there's exactly one per workspace, so we just
+      // upsert it into conversation_specialists to keep per-conversation
+      // activation tracking intact.
+      try {
+        const projectSpecialist = specialistRepository.findByAgentId(
+          `workspace-specialist-${args.workspaceId}`
+        )
+        if (projectSpecialist) {
+          conversationSpecialistRepository.upsert(conversation.id, projectSpecialist.id, {
+            isActive: true
+          })
+        }
+      } catch (e) {
+        log.warn('Project Specialist auto-attach failed:', e)
+      }
+
+      return conversation
     }
   )
 
@@ -92,37 +144,9 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
       const { conversationId } = args
 
       // Same cleanup as /close — stop agents and clear all data
-      if (orchestratorService.isRunning()) {
-        await orchestratorService.stop()
-      }
-      orchestratorService.clearSession(conversationId)
-      generalistService.clearSession(conversationId)
+      chatAgentService.clearSession(conversationId)
 
       conversationRepository.delete(conversationId)
-    }
-  )
-
-  ipcMain.handle(
-    IPC_CHANNELS.CHAT_UPDATE_MODE,
-    async (event, args: { conversationId: string; mode: ConversationMode }) => {
-      validateSender(event)
-
-      if (!args || typeof args.conversationId !== 'string') {
-        throw new Error('Invalid conversation ID')
-      }
-
-      const validModes = ['plan', 'build']
-      if (!validModes.includes(args.mode)) {
-        throw new Error('Invalid mode')
-      }
-
-      const updated = conversationRepository.updateMode(args.conversationId, args.mode)
-      if (!updated) throw new Error('Conversation not found')
-
-      // Mode is persisted to DB — CLI restart is deferred until next message send
-      log.info(`Mode updated to "${args.mode}" in DB (CLI restart deferred until next send)`)
-
-      return updated
     }
   )
 
@@ -161,6 +185,313 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
     }
   )
 
+  // ── Reorder conversations ──
+  ipcMain.handle(
+    IPC_CHANNELS.CONVERSATION_REORDER,
+    async (event, args: { orderedIds: string[] }) => {
+      validateSender(event)
+      if (!args?.orderedIds || !Array.isArray(args.orderedIds)) {
+        throw new Error('Invalid orderedIds')
+      }
+      conversationRepository.reorderConversations(args.orderedIds)
+    }
+  )
+
+  // ── Resume at checkpoint — undo to a specific message point ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_RESUME_AT,
+    async (event, args: { conversationId: string; messageId: string }) => {
+      validateSender(event)
+      if (!args?.messageId || typeof args.messageId !== 'string') {
+        throw new Error('Invalid messageId')
+      }
+      await chatAgentService.resumeAt(args.messageId)
+    }
+  )
+
+  // ── Update per-conversation external MCP overrides ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_UPDATE_MCP_OVERRIDES,
+    async (event, args: { conversationId: string; overrides: Record<string, boolean> }) => {
+      validateSender(event)
+      if (
+        !args ||
+        typeof args.conversationId !== 'string' ||
+        args.conversationId.trim().length === 0
+      ) {
+        throw new Error('Invalid conversation ID')
+      }
+      if (!args.overrides || typeof args.overrides !== 'object' || Array.isArray(args.overrides)) {
+        throw new Error('Invalid overrides object')
+      }
+      const updated = conversationRepository.updateMcpOverrides(args.conversationId, args.overrides)
+      if (!updated) throw new Error('Conversation not found')
+      return updated
+    }
+  )
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Chat Mode — mode switching, persona, context usage
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function registerChatModeIpc(): void {
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_UPDATE_MODE,
+    async (event, args: { conversationId: string; mode: ConversationMode }) => {
+      validateSender(event)
+
+      if (!args || typeof args.conversationId !== 'string') {
+        throw new Error('Invalid conversation ID')
+      }
+
+      const validModes = ['plan', 'build']
+      if (!validModes.includes(args.mode)) {
+        throw new Error('Invalid mode')
+      }
+
+      const updated = conversationRepository.updateMode(args.conversationId, args.mode)
+      if (!updated) throw new Error('Conversation not found')
+
+      // Mode is persisted to DB — CLI restart is deferred until next message send
+      log.info(`Mode updated to "${args.mode}" in DB (CLI restart deferred until next send)`)
+
+      return updated
+    }
+  )
+
+  // ── Swap DaVinci → ready Project Specialist ──
+  // Triggered when the user accepts an ask_user { action: 'swap-to-specialist' }
+  // proposal. Re-runs chatAgentService.start() so resolveAdapter() picks the
+  // ProjectSpecialistRoleAdapter (build_status is now 'ready'), which tears
+  // down the DaVinci session and rebuilds as the specialist.
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_SWAP_TO_SPECIALIST,
+    async (event, args: { workspaceId?: string; workspacePath?: string }) => {
+      validateSender(event)
+      if (
+        !args ||
+        (typeof args.workspaceId !== 'string' && typeof args.workspacePath !== 'string')
+      ) {
+        throw new Error('Invalid swap args — workspaceId or workspacePath required')
+      }
+
+      const workspace = args.workspaceId
+        ? workspaceRepository.findById(args.workspaceId)
+        : workspaceRepository.findByPath(args.workspacePath!)
+      if (!workspace) throw new Error('Workspace not found')
+
+      // Persist consent — resolveAdapter() reads this flag to decide whether to
+      // pick the ProjectSpecialistRoleAdapter. Until set, the workspace stays on DaVinci.
+      const settings = JSON.parse(workspace.settingsJson || '{}') as Record<string, unknown>
+      settings.specialistSwapAccepted = true
+      workspaceRepository.updateSettings(workspace.id, settings)
+
+      // Re-start so resolveAdapter() now picks the ProjectSpecialistRoleAdapter,
+      // which tears down the DaVinci session and rebuilds as the specialist.
+      await chatAgentService.start(workspace.repoPath)
+      log.info(`[chat:swap] User accepted swap for workspace=${workspace.id}`)
+    }
+  )
+
+  // ── Update generalist persona (mid-conversation persona switch) ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_UPDATE_PERSONA,
+    async (event, args: { conversationId: string; personaSpecialistId: string | null }) => {
+      validateSender(event)
+      if (!args || typeof args.conversationId !== 'string') {
+        throw new Error('Invalid conversation ID')
+      }
+      if (args.personaSpecialistId) {
+        const specialist = specialistRepository.findById(args.personaSpecialistId)
+        if (!specialist) throw new Error('Invalid persona specialist ID')
+      }
+      const updated = conversationRepository.updatePersona(
+        args.conversationId,
+        args.personaSpecialistId
+      )
+      if (!updated) throw new Error('Conversation not found')
+
+      await chatAgentService.switchPersona(args.personaSpecialistId, args.conversationId)
+      log.info(`Persona → "${args.personaSpecialistId ?? 'Da Vinci'}" for ${args.conversationId}`)
+      return updated
+    }
+  )
+
+  // ── Context usage: return token consumption for a conversation ──
+  // Strategy: SDK-first (accurate, live) → DB fallback (historical/idle)
+  ipcMain.handle(
+    IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE,
+    async (event, args: { conversationId: string }) => {
+      validateSender(event)
+      if (!args?.conversationId) throw new Error('Invalid conversation ID')
+
+      // ── Strategy 1: Use SDK native context usage (accurate, live) ──
+      const activeQuery = chatAgentService.getActiveQuery()
+      const currentConvId = chatAgentService.getCurrentConversationId()
+
+      if (activeQuery && currentConvId === args.conversationId) {
+        try {
+          const sdkUsage = await activeQuery.getContextUsage()
+          if (sdkUsage && typeof sdkUsage === 'object' && 'totalTokens' in sdkUsage) {
+            const sdk = sdkUsage as {
+              totalTokens: number
+              maxTokens: number
+              percentage?: number
+              model?: string
+              categories?: {
+                name: string
+                tokens: number
+                color: string
+                isDeferred?: boolean
+              }[]
+              mcpTools?: {
+                name: string
+                serverName: string
+                tokens: number
+                isLoaded?: boolean
+              }[]
+              systemTools?: { name: string; tokens: number }[]
+              deferredBuiltinTools?: { name: string; tokens: number; isLoaded: boolean }[]
+              memoryFiles?: { path: string; type: string; tokens: number }[]
+              autoCompactThreshold?: number
+              isAutoCompactEnabled?: boolean
+            }
+            // For local LLMs: SDK reports the backend's working limit (oMLX scales
+            // it down, Ollama defaults by VRAM). Override with the resolved model
+            // context window so the UI shows the real capability.
+            let effectiveMaxTokens = sdk.maxTokens
+            const conversation = conversationRepository.findById(args.conversationId)
+            if (conversation) {
+              const workspace = workspaceRepository.findById(conversation.workspaceId)
+              if (workspace && modelConfigService.isLocalProvider(workspace.repoPath)) {
+                const llmConfig = modelConfigService.getLocalLLMConfig(workspace.repoPath)
+                const settings = JSON.parse(workspace.settingsJson || '{}')
+                const userOverride = settings.localContextWindow as number | undefined
+                const resolved = await contextWindowResolver.resolve(llmConfig, userOverride)
+                if (resolved > sdk.maxTokens) {
+                  log.info(
+                    `[ContextUsage] Overriding SDK maxTokens ${sdk.maxTokens} → ${resolved} (${llmConfig.backend})`
+                  )
+                  effectiveMaxTokens = resolved
+                }
+              }
+            }
+
+            const percentage =
+              sdk.percentage && effectiveMaxTokens === sdk.maxTokens
+                ? sdk.percentage
+                : Math.round((sdk.totalTokens / effectiveMaxTokens) * 100)
+            // Quality window scales with context window: 50% of max, capped at 500K
+            // For 1M context: 500K quality window. For 200K context: 100K quality window.
+            const effectiveQualityWindow = Math.min(Math.round(effectiveMaxTokens * 0.5), 500_000)
+            const qualityPercentage = Math.round((sdk.totalTokens / effectiveQualityWindow) * 100)
+            const level: ContextUsageLevel =
+              qualityPercentage > 80
+                ? 'critical'
+                : qualityPercentage > 60
+                  ? 'red'
+                  : qualityPercentage > 40
+                    ? 'yellow'
+                    : 'green'
+            const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
+              qualityPercentage <= 40
+                ? 'excellent'
+                : qualityPercentage <= 60
+                  ? 'good'
+                  : qualityPercentage <= 80
+                    ? 'moderate'
+                    : 'low'
+
+            return {
+              conversationId: args.conversationId,
+              inputTokens: sdk.totalTokens,
+              contextWindowSize: effectiveMaxTokens,
+              percentage,
+              level,
+              qualityLevel,
+              categories: sdk.categories,
+              breakdown: {
+                categories: sdk.categories,
+                mcpTools: sdk.mcpTools,
+                systemTools: sdk.systemTools,
+                deferredBuiltinTools: sdk.deferredBuiltinTools,
+                memoryFiles: sdk.memoryFiles,
+                autoCompactThreshold: sdk.autoCompactThreshold,
+                isAutoCompactEnabled: sdk.isAutoCompactEnabled
+              },
+              model: sdk.model,
+              source: 'sdk' as const
+            }
+          }
+        } catch (err) {
+          log.warn('SDK getContextUsage failed, falling back to DB:', err)
+          // Fall through to DB-based calculation
+        }
+      }
+
+      // ── Strategy 2: DB fallback (historical/idle conversations) ──
+      const lastTurn = turnUsageRepository.getLastTurn(args.conversationId)
+      // Prefer context_tokens (SDK-reported, accounts for post-compaction state)
+      // over summing raw API fields (which reflect pre-compaction totals).
+      const inputTokens =
+        lastTurn?.contextTokens && lastTurn.contextTokens > 0
+          ? lastTurn.contextTokens
+          : (lastTurn?.inputTokens ?? 0) +
+            (lastTurn?.cacheReadTokens ?? 0) +
+            (lastTurn?.cacheCreationTokens ?? 0)
+
+      // Resolve context window — use full resolution chain for local LLMs, Claude's 1M otherwise
+      let contextWindowSize = 1_000_000
+      const dbConversation = conversationRepository.findById(args.conversationId)
+      if (dbConversation) {
+        const dbWorkspace = workspaceRepository.findById(dbConversation.workspaceId)
+        if (dbWorkspace && modelConfigService.isLocalProvider(dbWorkspace.repoPath)) {
+          const llmConfig = modelConfigService.getLocalLLMConfig(dbWorkspace.repoPath)
+          const settings = JSON.parse(dbWorkspace.settingsJson || '{}')
+          const userOverride = settings.localContextWindow as number | undefined
+          contextWindowSize = await contextWindowResolver.resolve(llmConfig, userOverride)
+        }
+      }
+      // Quality window scales with context window: 50% of max, capped at 500K
+      const effectiveQualityWindow = Math.min(Math.round(contextWindowSize * 0.5), 500_000)
+      const percentage = Math.round((inputTokens / contextWindowSize) * 100)
+      const qualityPercentage = Math.round((inputTokens / effectiveQualityWindow) * 100)
+      const level: ContextUsageLevel =
+        qualityPercentage > 80
+          ? 'critical'
+          : qualityPercentage > 60
+            ? 'red'
+            : qualityPercentage > 40
+              ? 'yellow'
+              : 'green'
+      const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
+        qualityPercentage <= 40
+          ? 'excellent'
+          : qualityPercentage <= 60
+            ? 'good'
+            : qualityPercentage <= 80
+              ? 'moderate'
+              : 'low'
+
+      return {
+        conversationId: args.conversationId,
+        inputTokens,
+        contextWindowSize,
+        percentage,
+        level,
+        qualityLevel,
+        source: 'db' as const
+      }
+    }
+  )
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Chat Completion & Images — close, complete, clipboard images, image reading
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function registerChatCompletionIpc(): void {
   // ── /close: delete conversation and all associated data ──
   ipcMain.handle(IPC_CHANNELS.CHAT_CLOSE, async (event, args: { conversationId: string }) => {
     validateSender(event)
@@ -169,23 +500,10 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
     const { conversationId } = args
 
     // Stop running agents for this conversation
-    if (orchestratorService.isRunning()) {
-      await orchestratorService.stop()
-    }
-    orchestratorService.clearSession(conversationId)
-    generalistService.clearSession(conversationId)
-
-    // Clean up worktrees for this conversation
-    const workspacePath = generalistService.getWorkspacePath()
-    if (workspacePath) {
-      try {
-        await gitWorktreeService.pruneAll(workspacePath)
-      } catch (error) {
-        log.warn('Failed to prune worktrees on close:', error)
-      }
-    }
+    chatAgentService.clearSession(conversationId)
 
     // Clean up branches (local + remote if PR was merged)
+    const workspacePath = chatAgentService.getWorkspacePath()
     try {
       const conv = conversationRepository.findById(conversationId)
       if (conv?.branchName && workspacePath) {
@@ -220,33 +538,6 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
       log.warn('Branch cleanup failed:', e)
     }
 
-    // Log conversation context as a project memory before close
-    try {
-      if (workspacePath && isMemoryEnabled(workspacePath)) {
-        const conversation = conversationRepository.findById(conversationId)
-        const allWs = workspaceRepository.findAll()
-        const ws = allWs.find((w) => w.repoPath === workspacePath)
-        if (conversation && ws) {
-          // Get last few messages for a summary
-          const messages = messageRepository.findByConversation(conversationId)
-          const lastMsgs = messages
-            .slice(-5)
-            .map((m) => m.contentMd.substring(0, 200))
-            .join(' | ')
-          memoryService.create({
-            workspaceId: ws.id,
-            type: 'project',
-            title: `Conversation: ${conversation.title}`,
-            content: lastMsgs || 'No messages',
-            tags: ['conversation-close'],
-            importance: 3
-          })
-        }
-      }
-    } catch (e) {
-      log.warn('Memory update failed on /close:', e)
-    }
-
     // Delete conversation (cascades: file_changes, messages, attachments, agent_worktrees)
     conversationRepository.delete(conversationId)
   })
@@ -276,21 +567,10 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
 
       const git = simpleGit(workspace.repoPath)
 
-      // 1b. Merge any remaining active worktrees before committing
+      // Post-migration-66: no worktrees to merge (specialist-pool deleted).
+      // Direct git flow commits against the workspace repo.
       try {
-        const mergeResult = await gitWorktreeService.mergeAll(conversationId)
-        if (mergeResult.conflicted) {
-          log.warn(
-            `Merge conflict during /complete for agent ${mergeResult.conflicted.agentId}:`,
-            mergeResult.conflicted.files
-          )
-          throw new Error(
-            `Merge conflict from agent "${mergeResult.conflicted.agentId}" on files: ${mergeResult.conflicted.files.join(', ')}. Resolve conflicts before completing.`
-          )
-        }
-        if (mergeResult.merged.length > 0) {
-          log.info(`Merged ${mergeResult.merged.length} worktrees during /complete`)
-        }
+        log.debug(`No worktrees to merge for conversation ${conversationId}`)
       } catch (error) {
         if ((error as Error).message.includes('Merge conflict')) {
           throw error
@@ -379,28 +659,8 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
           }
         }
 
-        // Log completion as a project memory
-        try {
-          if (isMemoryEnabled(workspace.repoPath)) {
-            memoryService.create({
-              workspaceId: workspace.id,
-              type: 'project',
-              title: `Completed: ${commitMessage.substring(0, 80)}`,
-              content: `Branch: ${branchName}\nCommit: ${commitHash}\nFiles: ${filesToStage.join(', ')}${prUrl ? `\nPR: ${prUrl}` : ''}`,
-              tags: ['completion', 'git-commit'],
-              importance: 6
-            })
-          }
-        } catch (e) {
-          log.warn('Memory update failed on /complete:', e)
-        }
-
         // 8. Cleanup: stop agents, clear DB data, delete conversation
-        if (orchestratorService.isRunning()) {
-          await orchestratorService.stop()
-        }
-        orchestratorService.clearSession(conversationId)
-        generalistService.clearSession(conversationId)
+        chatAgentService.clearSession(conversationId)
         fileChangeRepository.clearByConversation(conversationId)
         conversationRepository.delete(conversationId)
 
@@ -418,31 +678,66 @@ export function registerChatLifecycleIpc(mainWindow: BrowserWindow): void {
     }
   )
 
-  ipcMain.handle(IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE, async (event, args: { dataUrl: string }) => {
+  ipcMain.handle(
+    IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE,
+    async (event, args: { dataUrl: string; conversationId: string }) => {
+      validateSender(event)
+
+      if (!args?.dataUrl || typeof args.dataUrl !== 'string') {
+        throw new Error('Invalid image data')
+      }
+
+      // Extract base64 data from data URL
+      const matches = args.dataUrl.match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/)
+      if (!matches) {
+        throw new Error('Invalid image data URL format')
+      }
+
+      const ext = matches[1]
+      const base64Data = matches[2]
+      const buffer = Buffer.from(base64Data, 'base64')
+
+      // Save to conversation-scoped directory
+      const imageDir = join(
+        app.getPath('userData'),
+        'chat-images',
+        args.conversationId || 'unsorted'
+      )
+      mkdirSync(imageDir, { recursive: true })
+
+      const filename = `clipboard-${Date.now()}.${ext}`
+      const filePath = join(imageDir, filename)
+      writeFileSync(filePath, buffer)
+
+      return filePath
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.READ_IMAGE_BASE64, async (event, args: { filePath: string }) => {
     validateSender(event)
 
-    if (!args?.dataUrl || typeof args.dataUrl !== 'string') {
-      throw new Error('Invalid image data')
+    if (!args?.filePath || typeof args.filePath !== 'string') {
+      throw new Error('Invalid file path')
     }
 
-    // Extract base64 data from data URL
-    const matches = args.dataUrl.match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/)
-    if (!matches) {
-      throw new Error('Invalid image data URL format')
+    // Security: only allow reading from chat-images directory
+    const chatImagesDir = join(app.getPath('userData'), 'chat-images')
+    const resolved = resolve(args.filePath)
+    if (!resolved.startsWith(chatImagesDir)) {
+      throw new Error('Access denied: file is outside chat-images directory')
     }
 
-    const ext = matches[1]
-    const base64Data = matches[2]
-    const buffer = Buffer.from(base64Data, 'base64')
-
-    // Save to temp directory
-    const tempDir = join(app.getPath('userData'), 'clipboard-images')
-    mkdirSync(tempDir, { recursive: true })
-
-    const filename = `clipboard-${Date.now()}.${ext}`
-    const filePath = join(tempDir, filename)
-    writeFileSync(filePath, buffer)
-
-    return filePath
+    const { base64, mimeType } = fileService.readImageAsBase64(resolved)
+    return `data:${mimeType};base64,${base64}`
   })
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Main entry point — orchestrates all chat lifecycle IPC registrations
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export function registerChatLifecycleIpc(_mainWindow: BrowserWindow): void {
+  registerConversationCrudIpc()
+  registerChatModeIpc()
+  registerChatCompletionIpc()
 }

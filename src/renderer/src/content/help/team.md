@@ -10,9 +10,7 @@ Code Atelier uses a **team-based** approach to AI assistance:
 
 1. **The Generalist** — Your primary point of contact. You chat directly with this agent. It understands your project and can answer questions, explain code, and handle straightforward tasks on its own.
 
-2. **The Orchestrator** — A behind-the-scenes coordinator. When a task is too complex for the Generalist alone, the Orchestrator figures out which specialist(s) should handle it and coordinates their work.
-
-3. **Specialists** — Expert agents focused on specific areas. For example:
+2. **Specialists** — Expert agents focused on specific areas. For example:
    - A **React Architect** for frontend UI work
    - A **Database Architect** for SQL and data modeling
    - A **Testing Specialist** for writing tests
@@ -21,17 +19,15 @@ Code Atelier uses a **team-based** approach to AI assistance:
 ```mermaid
 flowchart TD
   You["🧑 You"] <-->|"chat"| Gen["🤖 Generalist\n— Your main contact —"]
-  Gen -->|"complex task"| Orch["🎯 Orchestrator\n— Coordinator —"]
-  Orch --> S1["⚛️ React\nArchitect"]
-  Orch --> S2["🗄️ Database\nArchitect"]
-  Orch --> S3["🧪 Testing\nSpecialist"]
-  Orch --> S4["🔀 Git/GitHub\nSpecialist"]
-  Orch --> S5["🎨 UX/UI\nSpecialist"]
-  Orch --> Sn["... 9 more"]
+  Gen -->|"complex task"| S1["⚛️ React\nArchitect"]
+  Gen -->|"complex task"| S2["🗄️ Database\nArchitect"]
+  Gen -->|"complex task"| S3["🧪 Testing\nSpecialist"]
+  Gen -->|"complex task"| S4["🔀 Git/GitHub\nSpecialist"]
+  Gen -->|"complex task"| S5["🎨 UX/UI\nSpecialist"]
+  Gen -->|"complex task"| Sn["... 9 more"]
 
   style You fill:#7c3aed,color:#fff,stroke:#7c3aed
   style Gen fill:#2563eb,color:#fff,stroke:#2563eb
-  style Orch fill:#d97706,color:#fff,stroke:#d97706
   style S1 fill:#059669,color:#fff,stroke:#059669
   style S2 fill:#059669,color:#fff,stroke:#059669
   style S3 fill:#059669,color:#fff,stroke:#059669
@@ -40,7 +36,7 @@ flowchart TD
   style Sn fill:#059669,color:#fff,stroke:#059669
 ```
 
-> You don't need to pick which specialist to use — the Orchestrator does this automatically based on your request. Just describe what you need, and the right expert gets assigned.
+> You don't need to pick which specialist to use — the Generalist handles delegation automatically based on your request. Just describe what you need, and the right expert gets assigned.
 
 ---
 
@@ -57,13 +53,13 @@ The Team tab displays each agent with:
 
 ## Agent Statuses
 
-| Status | What it means |
-|--------|---------------|
-| **Idle** | The agent is available but not currently working |
-| **Thinking** | The agent is analyzing your request or planning its approach |
-| **Writing** | The agent is actively generating code or documentation |
-| **Reviewing** | The agent is reviewing code or verifying its work |
-| **Error** | Something went wrong — check the agent panel for details |
+| Status        | What it means                                                |
+| ------------- | ------------------------------------------------------------ |
+| **Idle**      | The agent is available but not currently working             |
+| **Thinking**  | The agent is analyzing your request or planning its approach |
+| **Writing**   | The agent is actively generating code or documentation       |
+| **Reviewing** | The agent is reviewing code or verifying its work            |
+| **Error**     | Something went wrong — check the agent panel for details     |
 
 You can also see live agent activity in the **Agent Panel** on the right side of the screen (toggle with **Cmd+J** / **Ctrl+J**).
 
@@ -74,7 +70,7 @@ You can also see live agent activity in the **Agent Panel** on the right side of
 Code Atelier comes with a default set of 14 specialists covering the most common development tasks. You can customize your team in the **Specialists** section of the settings:
 
 - **Enable/disable** specific specialists based on your project's needs
-- **Adjust priorities** to tell the Orchestrator which agents to prefer
+- **Adjust priorities** to tell the Generalist which agents to prefer
 - **View agent configurations** to understand each specialist's capabilities
 
 See the **Specialists** help section for detailed configuration instructions.
@@ -89,24 +85,21 @@ When you send a complex request, multiple agents may work simultaneously:
 sequenceDiagram
   participant You
   participant Generalist
-  participant Orchestrator
   participant React as React Architect
   participant DB as DB Architect
   participant Test as Testing Specialist
 
   You->>Generalist: "Add login page with validation and storage"
-  Generalist->>Orchestrator: Task requires multiple specialists
 
   par Parallel Execution
-    Orchestrator->>React: Build login form UI
-    Orchestrator->>DB: Create user table & queries
-    Orchestrator->>Test: Write tests for login feature
+    Generalist->>React: Build login form UI
+    Generalist->>DB: Create user table & queries
+    Generalist->>Test: Write tests for login feature
   end
 
-  React-->>Orchestrator: UI complete
-  DB-->>Orchestrator: Schema + queries ready
-  Test-->>Orchestrator: Tests written
-  Orchestrator-->>Generalist: All subtasks complete
+  React-->>Generalist: UI complete
+  DB-->>Generalist: Schema + queries ready
+  Test-->>Generalist: Tests written
   Generalist-->>You: "Here's your login page! 🎉"
 ```
 
@@ -117,7 +110,7 @@ You can watch this collaboration happen in real-time through the Agent Panel.
 ## Frequently Asked Questions
 
 **Q: Can I talk directly to a specific specialist?**
-Currently, all communication goes through the Generalist, which routes to the appropriate specialist. This ensures the Orchestrator maintains context and coordinates between agents effectively.
+Currently, all communication goes through the Generalist, which routes to the appropriate specialist. This keeps task context centralized while specialists execute focused work.
 
 **Q: What if a specialist makes a mistake?**
 Just tell the Generalist what went wrong. It will either fix the issue itself or re-assign it to the appropriate specialist with your feedback.

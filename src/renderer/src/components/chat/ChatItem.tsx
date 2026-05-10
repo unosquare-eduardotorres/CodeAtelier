@@ -1,13 +1,22 @@
 import { useState, useRef, useEffect } from 'react'
-import { Trash2, Pencil, MessageCircle } from 'lucide-react'
-import type { Conversation } from '../../../../shared/types'
+import { Trash2, Pencil, GripVertical, Cloud, Monitor } from 'lucide-react'
+import type { Conversation, ContextUsage } from '../../../../shared/types'
+import ContextBadge from './ContextBadge'
 
 interface ChatItemProps {
   conversation: Conversation
   isActive: boolean
+  isStreaming?: boolean
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onRename: (id: string, title: string) => void
+  contextUsage?: ContextUsage
+  draggable?: boolean
+  onDragStart?: (e: React.DragEvent, id: string) => void
+  onDragOver?: (e: React.DragEvent) => void
+  onDragLeave?: (e: React.DragEvent) => void
+  onDrop?: (e: React.DragEvent, id: string) => void
+  isDragOver?: boolean
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -28,13 +37,36 @@ function formatRelativeTime(dateStr: string): string {
 export default function ChatItem({
   conversation,
   isActive,
+  isStreaming = false,
   onSelect,
   onDelete,
-  onRename
+  onRename,
+  contextUsage,
+  draggable = false,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  isDragOver = false
 }: ChatItemProps): React.JSX.Element {
   const [isEditing, setIsEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(conversation.title)
+  const [showComplete, setShowComplete] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const wasStreamingRef = useRef(false)
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    if (wasStreamingRef.current && !isStreaming) {
+      // Streaming just ended — trigger completion flash
+      setShowComplete(true)
+      timer = setTimeout(() => setShowComplete(false), 800)
+    }
+    wasStreamingRef.current = isStreaming
+    return (): void => {
+      if (timer) clearTimeout(timer)
+    }
+  }, [isStreaming])
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -78,11 +110,16 @@ export default function ChatItem({
         isActive
           ? 'bg-primary-muted border-l-2 border-l-primary border border-primary/20'
           : 'hover:bg-surface-overlay border-l-2 border-l-transparent border border-transparent'
-      }`}
+      }${isDragOver ? ' ring-2 ring-primary/50 bg-primary-muted/30' : ''}`}
       onClick={() => !isEditing && onSelect(conversation.id)}
       role="button"
       tabIndex={0}
       aria-label={`Open conversation: ${conversation.title}`}
+      draggable={draggable && !isEditing}
+      onDragStart={(e) => onDragStart?.(e, conversation.id)}
+      onDragOver={(e) => onDragOver?.(e)}
+      onDragLeave={(e) => onDragLeave?.(e)}
+      onDrop={(e) => onDrop?.(e, conversation.id)}
       onKeyDown={(e) => {
         if (!isEditing && (e.key === 'Enter' || e.key === ' ')) {
           e.preventDefault()
@@ -90,12 +127,28 @@ export default function ChatItem({
         }
       }}
     >
+      {draggable && (
+        <div className="hidden group-hover:flex items-center text-text-muted cursor-grab active:cursor-grabbing flex-shrink-0">
+          <GripVertical size={12} />
+        </div>
+      )}
+
       <div
-        className={`flex items-center justify-center w-8 h-8 rounded-lg ${
-          isActive ? 'bg-primary/20 text-primary-text' : 'bg-surface-overlay text-text-muted'
-        }`}
+        className={`flex items-center justify-center w-8 h-8 rounded-lg transition-shadow ${
+          conversation.llmProvider === 'local-llm'
+            ? isActive
+              ? 'bg-teal/20 text-teal-text'
+              : 'bg-teal-muted text-teal-text'
+            : isActive
+              ? 'bg-info/15 text-info'
+              : 'bg-info-muted text-info'
+        } ${isStreaming ? 'chat-icon-processing' : showComplete ? 'chat-icon-complete' : ''}`}
       >
-        <MessageCircle size={14} />
+        {conversation.llmProvider === 'local-llm' ? (
+          <Monitor size={14} />
+        ) : (
+          <Cloud size={14} />
+        )}
       </div>
 
       <div className="flex-1 min-w-0">
@@ -121,8 +174,22 @@ export default function ChatItem({
             {conversation.title}
           </div>
         )}
-        <div className="text-xs text-text-muted truncate">
-          {formatRelativeTime(conversation.createdAt)}
+        <div className="flex items-center gap-1.5 text-xs text-text-muted truncate">
+          <span>{formatRelativeTime(conversation.createdAt)}</span>
+          {/* Provider pill */}
+          <span
+            className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+              conversation.llmProvider === 'local-llm'
+                ? 'bg-teal-muted text-teal-text'
+                : 'bg-info-muted text-info'
+            }`}
+            title={conversation.llmProvider === 'local-llm' ? 'Local LLM' : 'Claude'}
+          >
+            {conversation.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
+          </span>
+          {contextUsage && contextUsage.percentage > 0 && (
+            <ContextBadge percentage={contextUsage.percentage} level={contextUsage.level} compact />
+          )}
         </div>
       </div>
 

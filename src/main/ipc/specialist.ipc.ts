@@ -2,12 +2,13 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { specialistRepository } from '../db/repositories'
 import type { CreateSpecialistInput, UpdateSpecialistInput } from '../db/repositories'
+
 import { validateSender } from './validate-sender'
 
 export function registerSpecialistIpc(): void {
   ipcMain.handle(IPC_CHANNELS.SPECIALIST_LIST, async (event) => {
     validateSender(event)
-    return specialistRepository.findAll()
+    return specialistRepository.findAllWithSkills()
   })
 
   ipcMain.handle(IPC_CHANNELS.SPECIALIST_GET, async (event, args: { id: string }) => {
@@ -22,8 +23,8 @@ export function registerSpecialistIpc(): void {
       throw new Error(`Specialist not found: ${args.id}`)
     }
 
-    // Attach skills to the specialist
-    specialist.skills = specialistRepository.getSkills(args.id)
+    // Attach all skills (including inactive) for the Settings UI
+    specialist.skills = specialistRepository.getAllSkills(args.id)
     return specialist
   })
 
@@ -64,6 +65,12 @@ export function registerSpecialistIpc(): void {
       throw new Error('Invalid specialist ID')
     }
 
+    // Block deletion of core agents (generalist, coordinator, user)
+    const specialist = specialistRepository.findById(args.id)
+    if (specialist?.isCore) {
+      throw new Error('Cannot delete core agents')
+    }
+
     const canDeleteResult = specialistRepository.canDelete(args.id)
     if (!canDeleteResult.allowed) {
       throw new Error(
@@ -72,6 +79,14 @@ export function registerSpecialistIpc(): void {
     }
 
     specialistRepository.delete(args.id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SPECIALIST_REORDER, async (event, args: { orderedIds: string[] }) => {
+    validateSender(event)
+    if (!Array.isArray(args?.orderedIds) || args.orderedIds.length === 0) {
+      throw new Error('Invalid ordered IDs')
+    }
+    specialistRepository.reorderPriorities(args.orderedIds)
   })
 
   ipcMain.handle(

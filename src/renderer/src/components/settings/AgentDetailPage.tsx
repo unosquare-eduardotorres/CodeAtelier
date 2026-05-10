@@ -75,7 +75,9 @@ export default function AgentDetailPage({
         <span className="text-sm font-semibold text-text-primary">{displayName}</span>
         <span
           className={`px-1.5 py-0.5 text-[10px] rounded-full font-medium ${
-            agent.isDeployed ? 'bg-success-muted text-success' : 'bg-surface-overlay/30 text-text-muted'
+            agent.isDeployed
+              ? 'bg-success-muted text-success'
+              : 'bg-surface-overlay/30 text-text-muted'
           }`}
         >
           {agent.isDeployed ? 'Deployed' : 'Not deployed'}

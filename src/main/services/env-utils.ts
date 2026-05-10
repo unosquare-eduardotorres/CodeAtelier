@@ -9,6 +9,7 @@ import { delimiter } from 'node:path'
 export function buildEnvWithPath(): NodeJS.ProcessEnv {
   const env = { ...process.env }
   delete env.CLAUDECODE
+  delete env.CLAUDE_CODE_ENTRYPOINT
 
   // Add common bin paths — later additions get higher priority (prepended to PATH).
   // Order: ~/.local/bin (lowest) → /opt/homebrew/bin → /usr/local/bin (highest)

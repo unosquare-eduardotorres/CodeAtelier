@@ -202,8 +202,35 @@ export class MemoryRepository {
   }
 
   /**
+   * Create a memory only if no similar memory already exists with equal or higher importance.
+   * Uses findSimilar() to check for duplicates before inserting.
+   * Returns the created Memory, or null if a duplicate was detected and skipped.
+   */
+  createIfNotDuplicate(params: {
+    workspaceId: string | null
+    type: MemoryType
+    title: string
+    content: string
+    tags?: string[]
+    sourceConversationId?: string
+    sourceAgentId?: string
+    importance?: number
+  }): Memory | null {
+    const effectiveWorkspaceId = params.workspaceId ?? ''
+    const existing = this.findSimilar(effectiveWorkspaceId, params.title)
+
+    if (existing.length > 0) {
+      // If a similar memory exists with equal or higher importance, skip
+      const dominated = existing.some((m) => m.importance >= (params.importance ?? 5))
+      if (dominated) return null
+    }
+
+    return this.create(params)
+  }
+
+  /**
    * Find duplicate memories by checking for similar titles within the same workspace.
-   * Used during dream consolidation.
+   * Used during dedup-on-create.
    */
   findSimilar(workspaceId: string, title: string, excludeId?: string): Memory[] {
     const db = getDatabase()

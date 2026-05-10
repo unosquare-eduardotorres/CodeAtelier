@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Bot, RefreshCw, Trash2, Loader2, Rocket, Save, Power, PowerOff } from 'lucide-react'
+import { Bot, RefreshCw, Trash2, Loader2, Sparkles, Save, Power, PowerOff } from 'lucide-react'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import { ConfirmDialog } from '@renderer/components/common'
 import CodeEditor from './CodeEditor'
@@ -148,7 +148,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
     setHasEditorChanges(value !== initialContent)
   }
 
-  const handleDeployAll = async (): Promise<void> => {
+  const handleAutoActivate = async (): Promise<void> => {
     setIsDeploying(true)
     try {
       await deployAll(workspacePath)
@@ -168,27 +168,25 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <Bot size={32} className="text-border-default mb-3" />
-        <h4 className="text-sm font-medium text-text-secondary mb-2">
-          No specialists deployed yet
-        </h4>
+        <h4 className="text-sm font-medium text-text-secondary mb-2">No specialists active yet</h4>
         <p className="text-xs text-text-muted max-w-sm mb-4">
-          Deploy the preset of specialist agents to this workspace. Each agent starts inactive —
-          activate the ones you need for your project.
+          Activate specialist agents for this workspace. Each agent can be individually activated or
+          deactivated as needed for your project.
         </p>
         <button
-          onClick={handleDeployAll}
+          onClick={handleAutoActivate}
           disabled={isDeploying}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isDeploying ? (
             <>
               <Loader2 size={14} className="animate-spin" />
-              Deploying...
+              Activating...
             </>
           ) : (
             <>
-              <Rocket size={14} />
-              Deploy Agents &amp; Skills
+              <Sparkles size={14} />
+              Auto-Activate Agents
             </>
           )}
         </button>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { ScrollText, ChevronDown, ChevronRight, Inbox } from 'lucide-react'
+import { useWorkspaceStore } from '@renderer/store'
 
 interface EventRecord {
   id: string
@@ -62,13 +63,14 @@ export default function EventLogPage(): React.JSX.Element {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [limit, setLimit] = useState(200)
   const [isLoading, setIsLoading] = useState(true)
+  const { activeWorkspace } = useWorkspaceStore()
 
   useEffect(() => {
     let cancelled = false
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true)
     window.api
-      .getRecentEvents({ limit })
+      .getRecentEvents({ workspaceId: activeWorkspace?.id, limit })
       .then((data) => {
         if (!cancelled) setEvents(data)
       })
@@ -80,7 +82,7 @@ export default function EventLogPage(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [limit])
+  }, [limit, activeWorkspace?.id])
 
   const filtered = filter === 'all' ? events : events.filter((e) => e.category === filter)
 

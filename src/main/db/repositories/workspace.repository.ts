@@ -51,6 +51,13 @@ export class WorkspaceRepository {
     return row ? mapRow(row) : undefined
   }
 
+  findByPath(repoPath: string): Workspace | undefined {
+    const db = getDatabase()
+    const stmt = db.prepare('SELECT * FROM workspaces WHERE repo_path = ?')
+    const row = stmt.get(repoPath) as WorkspaceRow | undefined
+    return row ? mapRow(row) : undefined
+  }
+
   updateLastOpened(id: string): Workspace | undefined {
     const db = getDatabase()
     const stmt = db.prepare(`

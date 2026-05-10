@@ -31,18 +31,18 @@ This Skill should be used when the task involves **UI structure, visual design d
 
 ## Rule Categories by Priority
 
-| Priority | Category            | Impact   | Key Checks (Must Have)                                                |
-| -------- | ------------------- | -------- | --------------------------------------------------------------------- |
-| 1        | Accessibility       | CRITICAL | Contrast 4.5:1, Alt text, Keyboard nav, Aria-labels                   |
-| 2        | Touch & Interaction | CRITICAL | Min size 44x44px, 8px+ spacing, Loading feedback                      |
-| 3        | Performance         | HIGH     | WebP/AVIF, Lazy loading, Reserve space (CLS < 0.1)                    |
-| 4        | Style Selection     | HIGH     | Match product type, Consistency, SVG icons (no emoji)                 |
-| 5        | Layout & Responsive | HIGH     | Mobile-first breakpoints, Viewport meta, No horizontal scroll         |
-| 6        | Typography & Color  | MEDIUM   | Base 16px, Line-height 1.5, Semantic color tokens                     |
-| 7        | Animation           | MEDIUM   | Duration 150-300ms, Motion conveys meaning, Spatial continuity        |
-| 8        | Forms & Feedback    | MEDIUM   | Visible labels, Error near field, Progressive disclosure              |
-| 9        | Navigation Patterns | HIGH     | Predictable back, Bottom nav <=5, Deep linking                        |
-| 10       | Charts & Data       | LOW      | Legends, Tooltips, Accessible colors                                  |
+| Priority | Category            | Impact   | Key Checks (Must Have)                                         |
+| -------- | ------------------- | -------- | -------------------------------------------------------------- |
+| 1        | Accessibility       | CRITICAL | Contrast 4.5:1, Alt text, Keyboard nav, Aria-labels            |
+| 2        | Touch & Interaction | CRITICAL | Min size 44x44px, 8px+ spacing, Loading feedback               |
+| 3        | Performance         | HIGH     | WebP/AVIF, Lazy loading, Reserve space (CLS < 0.1)             |
+| 4        | Style Selection     | HIGH     | Match product type, Consistency, SVG icons (no emoji)          |
+| 5        | Layout & Responsive | HIGH     | Mobile-first breakpoints, Viewport meta, No horizontal scroll  |
+| 6        | Typography & Color  | MEDIUM   | Base 16px, Line-height 1.5, Semantic color tokens              |
+| 7        | Animation           | MEDIUM   | Duration 150-300ms, Motion conveys meaning, Spatial continuity |
+| 8        | Forms & Feedback    | MEDIUM   | Visible labels, Error near field, Progressive disclosure       |
+| 9        | Navigation Patterns | HIGH     | Predictable back, Bottom nav <=5, Deep linking                 |
+| 10       | Charts & Data       | LOW      | Legends, Tooltips, Accessible colors                           |
 
 > **Detailed rules for each category**: See `references/quick-reference.md`
 

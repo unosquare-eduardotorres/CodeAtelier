@@ -1,52 +1,33 @@
-# Agent Studio
+# Code Atelier
 
 > AI-Powered Development Team — running locally on your machine.
 
-Agent Studio is a desktop application that transforms software development by providing a coordinated team of specialist AI agents, orchestrated intelligently, all running locally through your Claude Max subscription via Claude CLI. No API keys. No proxy servers. Just your machine.
+Code Atelier is a desktop application that puts a single, opinionated AI engineer in each workspace — running locally through your Claude Max subscription via Claude CLI. No API keys. No proxy servers. Just your machine.
 
 ## How It Works
 
 ```mermaid
 flowchart LR
-    You([You]) <-->|chat| G["🎨 Da Vinci<br/>(Generalist)"]
-    G -->|handoff| O["🎼 Stravinsky<br/>(Orchestrator)"]
-    O -->|spawn| S1["⚛️ React Architect"]
-    O -->|spawn| S2["⚡ Electron Architect"]
-    O -->|spawn| S3["🗄️ DB Architect"]
-    O -->|spawn| S4["... +11 more"]
+    You([You]) <-->|chat| R["Workspace Agent<br/>DaVinci or Project Specialist"]
+    R --> MCP["MCP Toolbox<br/>code-graph · semantic-search<br/>git · checkpoint · github<br/>control-actions"]
+    R --> CLI[("Claude CLI<br/>+ Claude Max")]
 
-    style G fill:#7c3aed,color:#fff,stroke:#7c3aed
-    style O fill:#f59e0b,color:#fff,stroke:#f59e0b
-    style S1 fill:#3b82f6,color:#fff,stroke:#3b82f6
-    style S2 fill:#3b82f6,color:#fff,stroke:#3b82f6
-    style S3 fill:#3b82f6,color:#fff,stroke:#3b82f6
-    style S4 fill:#64748b,color:#fff,stroke:#64748b
+    style R fill:#7c3aed,color:#fff,stroke:#7c3aed
+    style MCP fill:#3b82f6,color:#fff,stroke:#3b82f6
+    style CLI fill:#dc2626,color:#fff,stroke:#dc2626
 ```
 
-1. **Chat with the Generalist** — a long-lived Claude CLI session that understands your entire codebase
-2. **Automatic handoffs** — when a task requires specialized skills, the Generalist delegates to the Orchestrator
-3. **Parallel specialists** — the Orchestrator spawns the right specialist agents to work simultaneously
+1. **One agent per workspace.** Every workspace runs exactly one role — DaVinci (default) or a Project Specialist (LLM-tailored for the workspace's stack).
+2. **Same pipeline, different identity.** Both roles share mode rules, MCP servers, intent detection, and memory persistence. Only the system-prompt identity differs.
+3. **Local-first.** Everything runs on your machine via Claude CLI.
 
-## Agent Team
+## The two roles
 
-| Icon | Agent | Alias | Role |
-|---|---|---|---|
-| 🎨 | **Generalist** | **Da Vinci** | Always-on assistant, read-only codebase analysis, detects handoffs |
-| 🎼 | **Orchestrator** | **Stravinsky** | Spawned on-demand, coordinates specialists with appropriate permissions |
-| ⚛️ | React Architect | | Frontend architecture, components, state management |
-| ⚡ | Electron Architect | | Desktop app patterns, IPC, native integration |
-| 🤖 | Agentic Architect | | AI agent design, Claude CLI integration |
-| 🟣 | .NET Architect | | Backend services, API design |
-| 🗄️ | DB Architect | | SQLite patterns, schema design, migrations |
-| 🎨 | UX/UI Specialist | | Design system, accessibility, user experience |
-| 🔀 | Git/GitHub Specialist | | Branching, PRs, workflow automation |
-| 🚀 | CI/CD DevOps | | Build pipelines, packaging, distribution |
-| ☁️ | Cloud Infrastructure | | Deployment, hosting, infrastructure |
-| 📝 | Code Planner | | Task decomposition, implementation strategy |
-| 📅 | Execution Planner | | Sequencing, dependency resolution |
-| 📋 | Requirements Specialist | | Specification, acceptance criteria |
-| 📐 | Docs & Diagrams | | Documentation, Mermaid diagrams, design docs |
-| 🛠️ | Generalist Developer | | Full-stack implementation, broad coverage |
+**DaVinci** — the default assistant, available per workspace with no setup. Can optionally take on a persona by borrowing a Project Specialist's identity.
+
+**Project Specialist** — an opinionated, LLM-tailored expert built from your workspace's detected stack + CLAUDE.md. Built on demand, rebuilt when the stack drifts.
+
+Both adapters share the same execution model, MCP toolbox, and plan/build mode rules. The specialist is the persona; the adapter is the execution. Details: `docs/architecture/project-specialist-refactor.md`.
 
 ## Tech Stack
 
@@ -113,8 +94,8 @@ src/
 ├── main/              # Main process (Node.js)
 │   ├── index.ts       # App lifecycle, window creation
 │   ├── ipc/           # IPC handler modules (20+ domains)
-│   ├── services/      # Business logic (orchestrator, specialist pool, brain)
-│   └── db/            # SQLite database (schema, repositories)
+│   ├── services/      # Business logic (role adapters, prompt assembly, MCP config, specialist builder)
+│   └── db/            # SQLite database (schema, repositories, migrations)
 ├── preload/           # Secure bridge (contextBridge only)
 ├── renderer/src/      # React frontend (no Node.js access)
 │   ├── components/    # Feature-based: agents/, chat/, welcome/, settings/, workspace/
@@ -123,8 +104,7 @@ src/
 └── shared/            # Cross-process types + IPC channel constants
 
 .claude/
-├── agents/            # 16 agent YAML definitions
-└── skills/            # 17 skill modules (SKILL.md + references/)
+└── skills/            # SKILL.md modules (each may include references/)
 ```
 
 ## Architecture
@@ -158,43 +138,22 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    User([User message]) --> G
+    U([User message]) --> S[AgentSessionService]
+    S --> A{Role Adapter}
+    A -->|da-vinci| D[DaVinciRoleAdapter]
+    A -->|project-specialist| P[ProjectSpecialistRoleAdapter]
+    D --> Q[claude CLI stream]
+    P --> Q
+    Q --> S
+    S -->|chunk / intent / memory| U
 
-    subgraph Always On
-        G["🎨 Da Vinci (Generalist)<br/><i>long-lived claude session</i><br/>read-only · plan mode"]
-    end
-
-    G -->|detects handoff| O
-
-    subgraph On Demand
-        O["🎼 Stravinsky (Orchestrator)<br/><i>claude -p per handoff</i><br/>mode-appropriate permissions"]
-    end
-
-    O -->|spawns| pool
-
-    subgraph pool [Specialist Pool — parallel]
-        S1["⚛️ React Architect<br/>Opus · 31,999 think tokens"]
-        S2["🗄️ DB Architect<br/>Sonnet · 10,000 think tokens"]
-        S3["🎨 UX/UI Specialist<br/>Haiku · 0 think tokens"]
-    end
-
-    S1 -->|result| O
-    S2 -->|result| O
-    S3 -->|result| O
-    O -->|aggregated response| G
-    G -->|reply| User
-
-    style G fill:#7c3aed,color:#fff,stroke:#7c3aed
-    style O fill:#f59e0b,color:#fff,stroke:#f59e0b
-    style S1 fill:#3b82f6,color:#fff,stroke:#3b82f6
-    style S2 fill:#3b82f6,color:#fff,stroke:#3b82f6
-    style S3 fill:#3b82f6,color:#fff,stroke:#3b82f6
+    style D fill:#7c3aed,color:#fff,stroke:#7c3aed
+    style P fill:#059669,color:#fff,stroke:#059669
 ```
 
-- **Generalist**: Long-lived `claude` CLI session in `--permission-mode plan` (read-only)
-- **Orchestrator**: Spawned per handoff via `claude -p` with mode-appropriate permissions
-- **Specialists**: One-shot `claude -p` commands, run in parallel
-- **Thinking budgets**: Opus = 31,999 tokens, Sonnet = 10,000, Haiku = 0
+- `AgentSessionService` owns lifecycle (start, send, switchMode, stop).
+- Role adapters provide `buildPrompts`, `buildMcpConfig`, `buildControlCallbacks`, `emitDetectedIntents`.
+- Mode permissions come from `buildModePermissions`; MCP toolbox from `buildWorkspaceMcpConfig`. Both shared across roles.
 
 ### Electron Process Model
 

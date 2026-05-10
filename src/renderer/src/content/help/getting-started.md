@@ -16,19 +16,16 @@ Here's how it works at a high level:
 flowchart LR
   You["🧑 You"] -->|"chat"| G["🤖 Generalist"]
   G -->|"simple task"| R1["✅ Direct Response"]
-  G -->|"complex task"| O["🎯 Orchestrator"]
-  O -->|"assign"| S1["⚛️ React\nArchitect"]
-  O -->|"assign"| S2["🗄️ Database\nArchitect"]
-  O -->|"assign"| S3["🧪 Testing\nSpecialist"]
-  S1 -->|"result"| O
-  S2 -->|"result"| O
-  S3 -->|"result"| O
-  O -->|"combined result"| G
+  G -->|"complex task"| S1["⚛️ React\nArchitect"]
+  G -->|"complex task"| S2["🗄️ Database\nArchitect"]
+  G -->|"complex task"| S3["🧪 Testing\nSpecialist"]
+  S1 -->|"result"| G
+  S2 -->|"result"| G
+  S3 -->|"result"| G
   G -->|"response"| You
 
   style You fill:#7c3aed,color:#fff,stroke:#7c3aed
   style G fill:#2563eb,color:#fff,stroke:#2563eb
-  style O fill:#d97706,color:#fff,stroke:#d97706
   style S1 fill:#059669,color:#fff,stroke:#059669
   style S2 fill:#059669,color:#fff,stroke:#059669
   style S3 fill:#059669,color:#fff,stroke:#059669
@@ -71,7 +68,7 @@ Conversations are how you interact with your AI team.
 2. Choose a **mode**:
    - **Plan mode** — The AI analyzes your request and creates a plan before doing anything. Great for complex tasks.
    - **Build mode** — The AI jumps straight into implementation. Best for straightforward requests.
-3. Type your first message — try something like: *"What does this project do? Give me a quick overview."*
+3. Type your first message — try something like: _"What does this project do? Give me a quick overview."_
 4. Press **Enter** to send
 
 The Generalist agent will analyze your codebase and respond. If your request requires specialized work, you'll see specialist agents activate in the **Agent Panel** on the right side of the screen.
@@ -82,13 +79,13 @@ The Generalist agent will analyze your codebase and respond. If your request req
 
 Here's a quick tour of the main areas:
 
-| Area | Where | What it does |
-|------|-------|--------------|
-| **Header Bar** | Top of the screen | Navigate between Home, Workspace Settings, App Settings, and Help |
-| **Chat Sidebar** | Left panel | Lists your conversations; create new ones here |
-| **Chat Panel** | Center | Where you read and send messages |
-| **Agent Panel** | Right panel | Shows which specialist agents are active and what they're doing |
-| **Status Bar** | Bottom | Shows your current workspace, conversation mode, and token usage |
+| Area             | Where             | What it does                                                      |
+| ---------------- | ----------------- | ----------------------------------------------------------------- |
+| **Header Bar**   | Top of the screen | Navigate between Home, Workspace Settings, App Settings, and Help |
+| **Chat Sidebar** | Left panel        | Lists your conversations; create new ones here                    |
+| **Chat Panel**   | Center            | Where you read and send messages                                  |
+| **Agent Panel**  | Right panel       | Shows which specialist agents are active and what they're doing   |
+| **Status Bar**   | Bottom            | Shows your current workspace, conversation mode, and token usage  |
 
 ```mermaid
 block-beta
@@ -106,14 +103,14 @@ block-beta
 
 **Keyboard shortcuts you'll use often:**
 
-| Shortcut | Action |
-|----------|--------|
-| **Cmd+N** / **Ctrl+N** | New conversation |
-| **Cmd+B** / **Ctrl+B** | Toggle sidebar |
-| **Cmd+J** / **Ctrl+J** | Toggle agent panel |
+| Shortcut               | Action                             |
+| ---------------------- | ---------------------------------- |
+| **Cmd+N** / **Ctrl+N** | New conversation                   |
+| **Cmd+B** / **Ctrl+B** | Toggle sidebar                     |
+| **Cmd+J** / **Ctrl+J** | Toggle agent panel                 |
 | **Cmd+.** / **Ctrl+.** | Switch between Plan and Build mode |
-| **Cmd+/** / **Ctrl+/** | Open Help |
-| **Esc** | Go back / close current panel |
+| **Cmd+/** / **Ctrl+/** | Open Help                          |
+| **Esc**                | Go back / close current panel      |
 
 ---
 
@@ -137,9 +134,9 @@ The settings are organized into tabs. Here's what each one does (see the dedicat
 
 Now that you're set up, here are some things to try:
 
-- **Ask the AI to explain your codebase** — *"Walk me through the architecture of this project"*
-- **Request a code change** — *"Add input validation to the user registration form"*
-- **Get a code review** — *"Review the changes in the last commit and suggest improvements"*
+- **Ask the AI to explain your codebase** — _"Walk me through the architecture of this project"_
+- **Request a code change** — _"Add input validation to the user registration form"_
+- **Get a code review** — _"Review the changes in the last commit and suggest improvements"_
 - **Configure your AI models** — Go to Settings > Models to pick the right balance of speed and intelligence
 
 Each section in this Help manual goes deeper into a specific feature. Use the table of contents on the left to jump to any topic.

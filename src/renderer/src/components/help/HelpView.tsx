@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { ChevronLeft, Menu } from 'lucide-react'
 import { useHelpStore } from '@renderer/store/help.store'
 import type { HelpSection } from '@renderer/store/help.store'
@@ -47,7 +47,6 @@ const SECTION_CONTENT: Record<HelpSection, string> = {
 
 export default function HelpView({ onBack }: HelpViewProps): React.JSX.Element {
   const { activeSection, initFromStorage } = useHelpStore()
-  const [content, setContent] = useState<string>('')
   const [showMobileTOC, setShowMobileTOC] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
 
@@ -56,9 +55,11 @@ export default function HelpView({ onBack }: HelpViewProps): React.JSX.Element {
     initFromStorage()
   }, [initFromStorage])
 
-  // Set content when section changes (synchronous — no loading state needed)
+  // Derive content from activeSection — no state needed
+  const content = useMemo(() => SECTION_CONTENT[activeSection] ?? '', [activeSection])
+
+  // Scroll to top when section changes
   useEffect(() => {
-    setContent(SECTION_CONTENT[activeSection] ?? '')
     contentRef.current?.scrollTo({ top: 0, behavior: 'instant' })
   }, [activeSection])
 

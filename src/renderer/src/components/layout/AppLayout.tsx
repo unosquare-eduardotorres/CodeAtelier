@@ -1,21 +1,24 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
-  Monitor,
   Bot,
   Zap,
   Home,
   Sliders,
-  Building2,
   ClipboardList,
   Hammer,
+  Braces,
+  SearchCode,
   ZoomIn,
   ZoomOut,
-  CircleHelp
+  CircleHelp,
+  Bug,
+  ArrowUp,
+  ArrowDown,
+  Flame,
+  ShieldCheck
 } from 'lucide-react'
 import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
-import { AgentMonitor } from '@renderer/components/agents'
-import { PixelOfficePanel } from '@renderer/components/pixel-office'
 import { WorkspaceSettingsContent } from '@renderer/components/workspace'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import { SettingsPage } from '@renderer/components/settings'
@@ -25,57 +28,153 @@ import {
   UpdateBanner,
   MemoryFeedBanner,
   BudgetWarningBanner,
-  ErrorBoundary
+  ErrorBoundary,
+  ToastContainer,
+  TokenDetailsModal
 } from '@renderer/components/common'
-import { NewConversationModal } from '@renderer/components/chat'
+import { BugTrackerPage } from '@renderer/components/bugs'
 import {
   useWorkspaceStore,
   useAgentStore,
   useChatStore,
   useChatActions,
-  usePixelOfficeStore,
-  useIdeaStore
+  useIdeaStore,
+  useConversationSpecialistActions,
+  useSpecialistStore,
+  useToastStore,
+  useBugStore,
+  useAuditStore
 } from '@renderer/store'
-import type { ConversationMode } from '../../../../shared/types'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
-/** Extracted orchestrator status dot — avoids recreating on every AppLayout render */
-function OrchestratorDot({ status }: { status: string }): React.JSX.Element {
+/** Extracted agent status dot — avoids recreating on every AppLayout render */
+function AgentStatusDot({ status }: { status: string }): React.JSX.Element {
   const dotBase = 'w-2 h-2 rounded-full inline-block'
   switch (status) {
     case 'running':
-      return <span className={`${dotBase} bg-success`} title="Orchestrator running" />
+      return <span className={`${dotBase} bg-success`} title="Agent ready" />
     case 'starting':
-      return (
-        <span className={`${dotBase} bg-warning animate-pulse`} title="Orchestrator starting" />
-      )
+      return <span className={`${dotBase} bg-warning animate-pulse`} title="Agent starting" />
     case 'error':
-      return <span className={`${dotBase} bg-danger`} title="Orchestrator error" />
+      return <span className={`${dotBase} bg-danger`} title="Agent error" />
     default:
-      return <span className={`${dotBase} bg-text-muted`} title="Orchestrator stopped" />
+      return <span className={`${dotBase} bg-text-muted`} title="Agent stopped" />
   }
 }
 
 export default function AppLayout(): React.JSX.Element {
-  const [showAgentPanel, setShowAgentPanel] = useState(false)
-  const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [view, setView] = useState<'chat' | 'app-settings' | 'help'>('chat')
+  const [view, setView] = useState<'chat' | 'app-settings' | 'help' | 'bugs'>('chat')
   const [sidebarView, setSidebarView] = useState<'chat' | 'settings'>('chat')
   const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('ideas')
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
-  const orchestratorStatus = useWorkspaceStore((s) => s.orchestratorStatus)
+  const agentStatus = useWorkspaceStore((s) => s.agentStatus)
   const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
-  const statuses = useAgentStore((s) => s.statuses)
-  const sessionTokens = useAgentStore((s) => s.sessionTokens)
-  const { createConversation, updateMode, sendMessage } = useChatActions()
+  const sessionOutputTokens = useAgentStore((s) => s.sessionOutputTokens)
+  const contextWindowTokens = useAgentStore((s) => s.contextWindowTokens)
+  const { updateMode, setCompactSuggestion } = useChatActions()
+  const [tokenModalOpen, setTokenModalOpen] = useState(false)
   const activeConversation = useChatStore((s) => s.activeConversation)
+  const { hydrateConversationSpecialists } = useConversationSpecialistActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
-  const [showNewChatModal, setShowNewChatModal] = useState(false)
-  const { isVisible: showPixelOffice, togglePanel: togglePixelOffice } = usePixelOfficeStore()
-  const { createIdea } = useIdeaStore()
+  const [showNewChat, setShowNewChat] = useState(false)
+  const { createIdea, startGrill } = useIdeaStore()
   const [zoomFactor, setZoomFactor] = useState(1.0)
+  const [appVersion, setAppVersion] = useState<string>('')
+
+  // Load app version once on mount
+  useEffect(() => {
+    window.api.getPlatformInfo().then((info) => setAppVersion(info.appVersion))
+  }, [])
+
+  // Bug tracker + toast
+  const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
+  const fetchBugCount = useBugStore((s) => s.fetchCount)
+  const addToast = useToastStore((s) => s.addToast)
+
+  // Audit status for status bar indicator
+  const auditRunning = useAuditStore((s) => s.isRunning)
+  const auditRerunning = useAuditStore((s) => s.rerunningTrackId)
+  const isAuditActive = auditRunning || !!auditRerunning
+  const isAuditPaused = useAuditStore((s) => s.isPaused)
+  const lastAuditScore = useAuditStore((s) => s.currentRun?.overallScore ?? null)
+  const loadLatestAudit = useAuditStore((s) => s.loadLatest)
+  const handleAuditComplete = useAuditStore((s) => s.handleComplete)
+
+  // Global audit listeners — keeps status bar in sync even when HealthPage is not mounted
+  useEffect(() => {
+    if (!activeWorkspace) return
+    loadLatestAudit(activeWorkspace.id)
+    const unsub = window.api.onAuditComplete(handleAuditComplete)
+    return unsub
+  }, [activeWorkspace?.id, loadLatestAudit, handleAuditComplete])
+
+  // Grill status for status bar indicator
+  const [grillStatus, setGrillStatus] = useState<{
+    status: string
+    ideaId: string
+    trackId: string | null
+    score: number | null
+  } | null>(null)
+
+  useEffect(() => {
+    if (!activeWorkspace) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on workspace change
+      setGrillStatus(null)
+      return
+    }
+    window.api.grillGetStatus({ workspaceId: activeWorkspace.id }).then(setGrillStatus)
+    const unsub = window.api.onGrillStatusChanged(setGrillStatus)
+    return unsub
+  }, [activeWorkspace?.id])
+
+  /** Navigate to the grill session for a given idea */
+  const handleNavigateToGrill = useCallback(
+    (_ideaId: string) => {
+      // Navigate to Ideas tab (workspace settings) — the grill session will show
+      setWorkspaceSettingsTab('ideas')
+      setSidebarView('settings')
+      // The ideas list will show the active grill for this idea
+    },
+    []
+  )
+
+  // MCP tools from Da Vinci status (moved from ChatPanel header to status bar)
+  const activeMcpTools = useAgentStore((s) => {
+    const davinci = s.statuses.find((st) => st.agentType === 'da-vinci')
+    return davinci?.activeMcpTools
+  })
+
+  // Context usage for status bar (read from chat store)
+  const contextUsage = useChatStore((s) =>
+    s.activeConversation ? s.contextUsages[s.activeConversation.id] : undefined
+  )
+  const [pendingGrill, setPendingGrill] = useState<{
+    ideaId: string
+    conversationId: string
+    ideaTitle: string
+    ideaDescription?: string
+    isNewSession?: boolean
+  } | null>(null)
+
+  // Auto-reset showNewChat when a conversation is selected
+  useEffect(() => {
+    if (activeConversation) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on selection change
+      setShowNewChat(false)
+    }
+  }, [activeConversation])
+
+  // Bug tracker: fetch count + listen for new bugs
+  useEffect(() => {
+    fetchBugCount()
+    const unsub = window.api.onNewBug(() => {
+      addToast({ message: 'A new bug was created', type: 'bug', onClickNavigate: 'bugs' })
+      fetchBugCount()
+    })
+    return unsub
+  }, [fetchBugCount, addToast])
 
   // Load initial zoom and subscribe to changes
   useEffect(() => {
@@ -94,21 +193,25 @@ export default function AppLayout(): React.JSX.Element {
     window.api.zoomReset()
   }, [])
 
-  const activeAgentCount = statuses.filter(
-    (s) => s.status === 'thinking' || s.status === 'writing' || s.status === 'reviewing'
-  ).length
+  const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
+  const loadSpecialists = useSpecialistStore((state) => state.loadSpecialists)
 
-  // #7 - Auto-open agent panel when agents activate
-  const prevAgentCount = useRef(0)
+  // Ensure workspace specialists are loaded for downstream components
   useEffect(() => {
-    const wasZero = prevAgentCount.current === 0
-    prevAgentCount.current = activeAgentCount
-
-    if (wasZero && activeAgentCount > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setShowAgentPanel(true)
+    if (workspaceSpecialists.length === 0) {
+      void loadSpecialists().catch(() => undefined)
     }
-  }, [activeAgentCount])
+  }, [workspaceSpecialists.length, loadSpecialists])
+
+  useEffect(() => {
+    if (!activeConversation?.id) {
+      return
+    }
+
+    void hydrateConversationSpecialists(activeConversation.id).catch((error) => {
+      console.error('[AppLayout] Failed to hydrate conversation specialists:', error)
+    })
+  }, [activeConversation?.id, hydrateConversationSpecialists])
 
   // Navigate back — Esc key handler priority
   const navigateBack = useCallback(() => {
@@ -147,11 +250,6 @@ export default function AppLayout(): React.JSX.Element {
         return
       }
 
-      if (isMeta && e.key === 'j') {
-        e.preventDefault()
-        setShowAgentPanel((prev) => !prev)
-      }
-
       if (isMeta && e.key === 'b') {
         e.preventDefault()
         setSidebarCollapsed((prev) => !prev)
@@ -160,7 +258,9 @@ export default function AppLayout(): React.JSX.Element {
       if (isMeta && e.key === 'n') {
         e.preventDefault()
         if (activeWorkspace) {
-          setShowNewChatModal(true)
+          // Clear active conversation so ChatPanel shows NewChatPage inline
+          useChatStore.setState({ activeConversation: null, messages: [] })
+          setShowNewChat(true)
         }
       }
 
@@ -174,11 +274,6 @@ export default function AppLayout(): React.JSX.Element {
       if (isMeta && e.key === '/') {
         e.preventDefault()
         setView((prev) => (prev === 'help' ? 'chat' : 'help'))
-      }
-
-      if (isMeta && e.shiftKey && e.key === 'o') {
-        e.preventDefault()
-        togglePixelOffice()
       }
 
       // Zoom shortcuts — ⌘+/⌘= to zoom in, ⌘- to zoom out, ⌘0 to reset
@@ -195,7 +290,7 @@ export default function AppLayout(): React.JSX.Element {
         window.api.zoomReset()
       }
     },
-    [activeWorkspace, togglePixelOffice, activeConversation, updateMode, isStreaming, navigateBack]
+    [activeWorkspace, activeConversation, updateMode, isStreaming, navigateBack]
   )
 
   useEffect(() => {
@@ -214,42 +309,58 @@ export default function AppLayout(): React.JSX.Element {
     setSidebarView('chat')
   }
 
+  const handleFixInNewChat = (): void => {
+    // Clear active conversation so ChatPanel shows NewChatPage
+    useChatStore.setState({ activeConversation: null, messages: [] })
+    setShowNewChat(true)
+    setView('chat')
+    setSidebarView('chat')
+  }
+
   const handleOpenIdeas = (): void => {
     setWorkspaceSettingsTab('ideas')
     setSidebarView('settings')
   }
 
-  const handleCreateIdea = async (data: {
-    title: string
-    description?: string
-  }): Promise<void> => {
+  const handleCreateIdea = async (data: { title: string; description?: string }): Promise<void> => {
     if (!activeWorkspace) return
     await createIdea(activeWorkspace.id, data.title, data.description ?? '')
     handleOpenIdeas()
   }
 
-  const handleCreateChat = async (data: {
-    title: string
-    description?: string
-    mode: ConversationMode
-    attachments?: string[]
-    useIsolatedBranch?: boolean
-  }): Promise<void> => {
-    if (!activeWorkspace) return
-    await createConversation(activeWorkspace.id, data.mode, data.title)
-    if (data.description) {
-      await sendMessage(data.description, data.attachments)
-    }
-    if (data.useIsolatedBranch) {
-      // TODO: integrate worktree IPC — creates a git worktree for this conversation
-      console.info(
-        '[NewConversationModal] Isolated branch requested — worktree integration pending'
+  const handleStartGrillMe = async (): Promise<void> => {
+    if (!activeWorkspace || !activeConversation) return
+
+    try {
+      // 1. Create an idea from the conversation title
+      const idea = await createIdea(activeWorkspace.id, activeConversation.title, '')
+
+      // 2. Start a grill session on the new idea
+      const { idea: updatedIdea, conversation: grillConversation } = await startGrill(
+        idea.id,
+        activeWorkspace.id
       )
+
+      // 3. Navigate to Ideas tab with the grill page open
+      setWorkspaceSettingsTab('ideas')
+      setSidebarView('settings')
+      setPendingGrill({
+        ideaId: updatedIdea.id,
+        conversationId: grillConversation.id,
+        ideaTitle: updatedIdea.title,
+        ideaDescription: updatedIdea.description,
+        isNewSession: true
+      })
+    } catch (error) {
+      console.error('[AppLayout] Failed to start grill from /grillme command:', error)
     }
-    setShowNewChatModal(false)
   }
 
   const renderMainContent = (): React.JSX.Element => {
+    if (view === 'bugs') {
+      return <BugTrackerPage onBack={() => setView('chat')} />
+    }
+
     if (view === 'help') {
       return <HelpView onBack={() => setView('chat')} />
     }
@@ -269,12 +380,22 @@ export default function AppLayout(): React.JSX.Element {
         <WorkspaceSettingsContent
           tab={workspaceSettingsTab}
           onNavigateToChat={handleNavigateToChat}
+          onFixInNewChat={handleFixInNewChat}
+          pendingGrill={pendingGrill}
+          onPendingGrillConsumed={() => setPendingGrill(null)}
         />
       )
     }
 
     // Default: chat
-    return <ChatPanel onCreateIdea={handleCreateIdea} />
+    return (
+      <ChatPanel
+        onCreateIdea={handleCreateIdea}
+        onStartGrillMe={handleStartGrillMe}
+        showNewChat={showNewChat}
+        onNewChatDismiss={() => setShowNewChat(false)}
+      />
+    )
   }
 
   // Determine if sidebar should show (chat view or workspace settings view)
@@ -314,6 +435,19 @@ export default function AppLayout(): React.JSX.Element {
             <Sliders size={16} />
           </button>
           <button
+            onClick={() => setView(view === 'bugs' ? 'chat' : 'bugs')}
+            className={`relative p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'bugs' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
+            title="Bug Tracker"
+            aria-label="Bug Tracker"
+          >
+            <Bug size={16} />
+            {unresolvedBugCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[14px] h-[14px] px-0.5 text-[9px] font-bold bg-red-500 text-white rounded-full">
+                {unresolvedBugCount > 99 ? '99+' : unresolvedBugCount}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setView(view === 'help' ? 'chat' : 'help')}
             className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'help' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
@@ -345,49 +479,33 @@ export default function AppLayout(): React.JSX.Element {
               activeSettingsTab={workspaceSettingsTab}
               onSettingsTabChange={setWorkspaceSettingsTab}
               onViewChange={setSidebarView}
+              onNewChat={() => setShowNewChat(true)}
             />
           </Sidebar>
         )}
 
-        {/* Main content area */}
+        {/* Main content — full width (no right panel) */}
         <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
-
-        {/* Agent monitor panel — only in chat view */}
-        {showAgentPanel && view === 'chat' && (
-          <ErrorBoundary
-            fallback={
-              <div className="w-64 flex items-center justify-center p-4 text-sm text-danger bg-surface-raised border-l border-border-subtle">
-                Agent panel error — click to retry
-              </div>
-            }
-          >
-            <AgentMonitor
-              isCollapsed={agentPanelCollapsed}
-              onToggleCollapse={() => setAgentPanelCollapsed((prev) => !prev)}
-            />
-          </ErrorBoundary>
-        )}
       </div>
 
-      {/* Pixel Office panel — only in chat view */}
-      {showPixelOffice && view === 'chat' && (
-        <ErrorBoundary
-          fallback={
-            <div className="p-4 text-sm text-danger bg-surface-raised border-t border-border-subtle">
-              Pixel Office error — click to retry
-            </div>
-          }
-        >
-          <PixelOfficePanel />
-        </ErrorBoundary>
-      )}
+      {/* Toast notifications */}
+      <ToastContainer onNavigate={(target) => setView(target as typeof view)} />
+
+      {/* Token details modal */}
+      <TokenDetailsModal
+        isOpen={tokenModalOpen}
+        conversationId={activeConversation?.id ?? null}
+        contextWindowTokens={contextWindowTokens}
+        liveOutputTokens={sessionOutputTokens}
+        onClose={() => setTokenModalOpen(false)}
+      />
 
       {/* Status bar */}
       <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-[13px]">
         <div className="flex items-center gap-4">
           {activeWorkspace ? (
             <span className="flex items-center gap-1.5 text-text-secondary">
-              <OrchestratorDot status={orchestratorStatus} />
+              <AgentStatusDot status={agentStatus} />
               <Bot size={12} className="text-primary-text" />
               {activeWorkspace.name}
             </span>
@@ -395,34 +513,176 @@ export default function AppLayout(): React.JSX.Element {
             <span className="text-text-muted">No workspace selected</span>
           )}
 
+          {appVersion && (
+            <span className="text-[11px] text-text-muted font-mono border-l border-border-subtle pl-3 ml-1">
+              v{appVersion}
+            </span>
+          )}
+
           {activeConversation && (
-            <>
-              <span
-                className={`text-xs px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
-                  activeConversation.mode === 'plan'
-                    ? 'bg-mode-plan-muted text-mode-plan-text'
-                    : 'bg-mode-build-muted text-mode-build-text'
-                }`}
-              >
-                {activeConversation.mode === 'plan' ? (
-                  <ClipboardList size={10} />
-                ) : (
-                  <Hammer size={10} />
-                )}
-                {activeConversation.mode === 'plan' ? 'Plan' : 'Build'}
-              </span>
-              <span className="text-text-muted truncate max-w-[200px]">
-                {activeConversation.title}
-              </span>
-            </>
+            <span
+              className={`text-xs px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
+                activeConversation.mode === 'plan'
+                  ? 'bg-mode-plan-muted text-mode-plan-text'
+                  : 'bg-mode-build-muted text-mode-build-text'
+              }`}
+            >
+              {activeConversation.mode === 'plan' ? (
+                <ClipboardList size={10} />
+              ) : (
+                <Hammer size={10} />
+              )}
+              {activeConversation.mode === 'plan' ? 'Plan' : 'Build'}
+            </span>
           )}
         </div>
 
         <div className="flex items-center gap-4">
+          {/* MCP tool indicators */}
+          {activeMcpTools && activeMcpTools.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              {activeMcpTools.includes('code-graph') && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400"
+                  title="Code Graph active"
+                >
+                  <Braces size={10} /> CG
+                </span>
+              )}
+              {activeMcpTools.includes('semantic-search') && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-sky-400"
+                  title="Semantic Search active"
+                >
+                  <SearchCode size={10} /> Sem
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Context — clickable, opens CompactContextModal (only in chat view) */}
           <span className="flex items-center gap-1.5 text-text-muted">
-            <Zap size={11} />
-            {sessionTokens > 0 ? `${(sessionTokens / 1000).toFixed(1)}k tokens` : '0 tokens'}
+            {sidebarView === 'chat' && contextUsage && contextUsage.percentage > 0 && (
+              <button
+                type="button"
+                onClick={() =>
+                  setCompactSuggestion({
+                    level: contextUsage.level,
+                    inputTokens: contextUsage.inputTokens,
+                    breakdown: contextUsage.breakdown,
+                    isLocalProvider: activeConversation?.llmProvider === 'local-llm'
+                  })
+                }
+                className={`hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-border-default rounded ${
+                  contextUsage.level === 'critical' || contextUsage.level === 'red'
+                    ? 'text-danger'
+                    : contextUsage.level === 'yellow'
+                      ? 'text-warning'
+                      : 'text-text-secondary'
+                }`}
+                title="Click for context breakdown and compact options"
+              >
+                {contextUsage.percentage}% context
+              </button>
+            )}
+
+            {/* Token IN / OUT — clickable, opens TokenDetailsModal */}
+            <button
+              type="button"
+              onClick={() => setTokenModalOpen(true)}
+              className="flex items-center gap-1.5 hover:text-text-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-border-default rounded"
+              title="Click for token breakdown (context window / output / cache)"
+            >
+              <Zap size={11} />
+              <span className="flex items-center gap-0.5 tabular-nums">
+                <ArrowUp size={10} />
+                {contextWindowTokens >= 1000
+                  ? `${(contextWindowTokens / 1000).toFixed(1)}k`
+                  : String(contextWindowTokens)}
+              </span>
+              <span className="flex items-center gap-0.5 tabular-nums">
+                <ArrowDown size={10} />
+                {sessionOutputTokens >= 1000
+                  ? `${(sessionOutputTokens / 1000).toFixed(1)}k`
+                  : String(sessionOutputTokens)}
+              </span>
+            </button>
           </span>
+
+          {/* Audit status — always visible */}
+          <div className="flex items-center gap-1.5 border-l border-border-subtle pl-3 ml-1">
+            {isAuditActive && !isAuditPaused ? (
+              /* Running — red (matches Grill "Grilling…") */
+              <div className="flex items-center gap-1 text-[11px] text-danger bg-danger/10 rounded px-1.5 py-0.5">
+                <ShieldCheck size={11} className="animate-pulse" />
+                <span className="font-medium">Auditing…</span>
+              </div>
+            ) : isAuditPaused ? (
+              /* Paused — purple (matches Grill "Needs Attention") */
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceSettingsTab('health')
+                  setSidebarView('settings')
+                }}
+                className="flex items-center gap-1 text-[11px] text-purple-400 bg-purple-400/10 hover:bg-purple-400/20 rounded px-1.5 py-0.5 transition-colors"
+                title="Audit paused — click to resume"
+              >
+                <ShieldCheck size={11} />
+                <span className="font-medium">Paused</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceSettingsTab('health')
+                  setSidebarView('settings')
+                }}
+                className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary rounded px-1.5 py-0.5 transition-colors"
+                title={lastAuditScore !== null ? `Last audit score: ${lastAuditScore}` : 'Run a workspace audit'}
+              >
+                <ShieldCheck size={11} />
+                {lastAuditScore !== null && (
+                  <span className="font-mono text-[10px]">{lastAuditScore}</span>
+                )}
+              </button>
+            )}
+          </div>
+
+          {/* Grill status — always visible */}
+          <div className="flex items-center gap-1.5 border-l border-border-subtle pl-3 ml-1">
+            {grillStatus?.status === 'evaluating' ? (
+              <button
+                onClick={() => handleNavigateToGrill(grillStatus.ideaId)}
+                className="flex items-center gap-1 text-[11px] text-danger bg-danger/10 hover:bg-danger/20 rounded px-1.5 py-0.5 transition-colors"
+                title="Grill in progress"
+              >
+                <Flame size={11} className="animate-pulse" />
+                <span className="font-medium">Grilling…</span>
+              </button>
+            ) : grillStatus?.status === 'awaiting_answers' ? (
+              <button
+                onClick={() => handleNavigateToGrill(grillStatus.ideaId)}
+                className="flex items-center gap-1 text-[11px] text-purple-400 bg-purple-400/10 hover:bg-purple-400/20 rounded px-1.5 py-0.5 transition-colors"
+                title="Grill needs your answers"
+              >
+                <Flame size={11} />
+                <span className="font-medium">Needs Attention</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceSettingsTab('ideas')
+                  setSidebarView('settings')
+                }}
+                className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary rounded px-1.5 py-0.5 transition-colors"
+                title="Grill an idea"
+              >
+                <Flame size={11} />
+              </button>
+            )}
+          </div>
 
           {/* Zoom controls */}
           <div className="flex items-center gap-0.5 border-l border-border-subtle pl-3 ml-1">
@@ -451,45 +711,8 @@ export default function AppLayout(): React.JSX.Element {
             </button>
           </div>
 
-          <button
-            onClick={togglePixelOffice}
-            className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-              showPixelOffice
-                ? 'text-primary-text bg-primary-muted'
-                : 'text-text-muted hover:text-text-secondary'
-            }`}
-            aria-label={showPixelOffice ? 'Hide pixel office' : 'Show pixel office'}
-            aria-pressed={showPixelOffice}
-            title={`Pixel Office (${isMac ? '⌘' : 'Ctrl+'}⇧O)`}
-          >
-            <Building2 size={12} />
-            <span>Office</span>
-          </button>
-
-          <button
-            onClick={() => setShowAgentPanel(!showAgentPanel)}
-            className={`flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-              showAgentPanel
-                ? 'text-primary-text bg-primary-muted'
-                : 'text-text-muted hover:text-text-secondary'
-            }`}
-            aria-label={showAgentPanel ? 'Hide agent panel' : 'Show agent panel'}
-            aria-pressed={showAgentPanel}
-            title={`Toggle Agent Panel (${isMac ? '⌘' : 'Ctrl+'}J)`}
-          >
-            <Monitor size={12} />
-            <span>Agents{activeAgentCount > 0 ? ` (${activeAgentCount})` : ''}</span>
-          </button>
         </div>
       </div>
-
-      {/* New conversation modal (triggered by Cmd+N) */}
-      <NewConversationModal
-        isOpen={showNewChatModal}
-        onClose={() => setShowNewChatModal(false)}
-        onSubmit={handleCreateChat}
-        onCreateIdea={handleCreateIdea}
-      />
     </div>
   )
 }

@@ -7,20 +7,15 @@ import type {
   Message,
   AgentStatus,
   Specialist,
+  ConversationSpecialist,
   Skill,
   WorkspaceClaudeStatus,
   ActivationResult,
   ActivationProgressEvent,
   DiscoveredSkill,
   DiscoveredAgent,
-  DecomposedTask,
-  ExecutionStrategy,
-  TaskPlan,
-  TaskExecutionProgress,
   FileChange,
   CompleteResult,
-  AgentWorktree,
-  MergeAllResult,
   SyncDiff,
   SyncResult,
   Memory,
@@ -28,8 +23,6 @@ import type {
   MemoryFeedProgress,
   MemoryFeedResult,
   WorkspaceFeedTimestamps,
-  DreamRun,
-  DreamProgress,
   TokenSummary,
   AgentSessionRecord,
   GrillQuestion,
@@ -38,7 +31,30 @@ import type {
   RepoInfo,
   UserProfile,
   CoreAgentAlias,
-  MarketplaceSpecialist
+  CoreAgentPrompt,
+  SubscriptionCheckResult,
+  AutoConfigureResult,
+  SpecialistTokenEstimate,
+  AppPreferences,
+  EmbeddingModelStatus,
+  EmbeddingModelProgress,
+  OllamaStatus,
+  PullProgress,
+  IndexingState,
+  CodeGraphIndexingState,
+  ContextUsage,
+  StructuredPlan,
+  AuditRun,
+  AuditMode,
+  AuditTrackId,
+  AuditFinding,
+  AuditProgressEvent,
+  AuditResult,
+  AuditStreamChunkEvent,
+  AuditIntermediateEvent,
+  LLMProvider,
+  UpdateConfig,
+  SemanticSearchResult
 } from '../shared/types'
 
 const api = {
@@ -65,15 +81,24 @@ const api = {
     settings: Record<string, unknown>
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS, args),
 
-  saveClipboardImage: (args: { dataUrl: string }): Promise<string> =>
+  updateAuthSettings: (args: {
+    workspaceId: string
+    authMode: string
+    anthropicApiKey?: string
+  }): Promise<{ success: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_UPDATE_AUTH, args),
+
+  saveClipboardImage: (args: { dataUrl: string; conversationId: string }): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE, args),
+
+  readImageBase64: (args: { filePath: string }): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.READ_IMAGE_BASE64, args),
 
   // ── Chat ──
   sendMessage: (args: {
     conversationId: string
     text: string
     attachments?: string[]
-  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_SEND, args),
+  }): Promise<{ requestId: string }> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_SEND, args),
 
   getConversations: (args: { workspaceId: string }): Promise<Conversation[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_CONVERSATIONS, args),
@@ -82,7 +107,23 @@ const api = {
     workspaceId: string
     title?: string
     mode?: ConversationMode
+    personaSpecialistId?: string
+    llmProvider?: LLMProvider
+    mcpOverrides?: Record<string, boolean>
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
+
+  updatePersona: (args: {
+    conversationId: string
+    personaSpecialistId: string | null
+  }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_PERSONA, args),
+
+  updateMcpOverrides: (args: {
+    conversationId: string
+    overrides: Record<string, boolean>
+  }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_MCP_OVERRIDES, args),
+
+  checkExternalMcp: (args: { command: string }): Promise<{ available: boolean; path?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP, args),
 
   getMessages: (args: { conversationId: string }): Promise<Message[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES, args),
@@ -100,13 +141,15 @@ const api = {
 
   stopGeneration: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_STOP),
 
-  compactConversation: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT),
+  compactConversation: (args?: { extractNuance?: boolean }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT, args),
 
-  executePlan: (args: {
-    conversationId: string
-    strategy: ExecutionStrategy
-    tasks: DecomposedTask[]
-  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_EXECUTE_PLAN, args),
+  /**
+   * Accept DaVinci's specialist-swap proposal — tears down the DaVinci session
+   * and rebuilds as the workspace's ready Project Specialist.
+   */
+  swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_SWAP_TO_SPECIALIST, args),
 
   // Chat commands
   completeConversation: (args: {
@@ -131,9 +174,17 @@ const api = {
 
   stopAllAgents: (): Promise<string[]> => ipcRenderer.invoke(IPC_CHANNELS.AGENT_STOP_ALL),
 
-  // ── Orchestrator ──
-  startOrchestrator: (workspacePath: string): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.ORCHESTRATOR_START, workspacePath),
+  /** Strategy M: Cache efficiency metrics for dashboard */
+  getCacheEfficiency: (): Promise<{
+    hitRate: number
+    savedTokens: number
+    totalInput: number
+    turns: number
+  }> => ipcRenderer.invoke(IPC_CHANNELS.AGENT_CACHE_EFFICIENCY),
+
+  // ── Agent Lifecycle ──
+  startAgent: (workspacePath: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AGENT_START, workspacePath),
 
   // ── Specialists ──
   listSpecialists: (): Promise<Specialist[]> => ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_LIST),
@@ -171,25 +222,93 @@ const api = {
   removeSkillFromSpecialist: (args: { specialistId: string; skillId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_REMOVE_SKILL, args),
 
-  // ── Specialist Marketplace ──
-  deploySpecialist: (args: { workspacePath: string; specialistId: string }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_DEPLOY, args),
+  reorderSpecialists: (args: { orderedIds: string[] }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_REORDER, args),
 
-  undeploySpecialist: (args: { workspacePath: string; specialistId: string }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_UNDEPLOY, args),
+  // ── Conversation Specialist Activation (skill gating) ──
+  listConvSpecialists: (args: { conversationId: string }): Promise<ConversationSpecialist[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_LIST, args),
 
-  updateSpecialistConfig: (args: {
-    id: string
-    displayName?: string
-    icon?: string
-    color?: string
-    alias?: string | null
-    avatarUrl?: string | null
-    priority?: number
-  }): Promise<Specialist> => ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_UPDATE_CONFIG, args),
+  upsertConvSpecialist: (args: {
+    conversationId: string
+    specialistId: string
+    isActive?: boolean
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_UPSERT, args),
 
-  getMarketplace: (args: { workspacePath: string }): Promise<MarketplaceSpecialist[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.SPECIALIST_GET_MARKETPLACE, args),
+  removeConvSpecialist: (args: { conversationId: string; specialistId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_REMOVE, args),
+
+  resetConvSpecialists: (args: { conversationId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_RESET, args),
+
+  estimateConvTokens: (args: { conversationId: string }): Promise<SpecialistTokenEstimate[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONV_SPECIALIST_ESTIMATE, args),
+
+  // ── App Preferences ──
+  getAppPreferences: (): Promise<AppPreferences> =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_PREFERENCE_GET_ALL),
+
+  setAppPreference: (args: { key: string; value: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_PREFERENCE_SET, args),
+
+  // ── Project Specialist (per-workspace agent) ──
+  getProjectSpecialist: (args: { workspaceId: string }): Promise<unknown | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_GET, args),
+
+  buildProjectSpecialist: (args: { workspaceId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_BUILD, args),
+
+  rebuildProjectSpecialistPrompt: (args: { specialistId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_REBUILD_PROMPT, args),
+
+  rebuildProjectSpecialistSkills: (args: { specialistId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_REBUILD_SKILLS, args),
+
+  updateProjectSpecialistPrompt: (args: {
+    specialistId: string
+    prompt: string
+  }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_UPDATE_PROMPT, args),
+
+  toggleProjectSpecialistSkill: (args: {
+    specialistId: string
+    skillId: string
+    enabled: boolean
+  }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_TOGGLE_SKILL, args),
+
+  attachProjectSpecialistSkill: (args: {
+    specialistId: string
+    skillId: string
+  }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_ATTACH_SKILL, args),
+
+  detachProjectSpecialistSkill: (args: {
+    specialistId: string
+    skillId: string
+  }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_DETACH_SKILL, args),
+
+  getProjectSpecialistDrift: (args: { workspaceId: string }): Promise<unknown | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_GET_DRIFT, args),
+
+  refreshProjectSpecialistRecommendations: (args: {
+    specialistId: string
+  }): Promise<{ ok: true }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_SPECIALIST_REFRESH_RECOMMENDATIONS, args),
+
+  onProjectSpecialistBuildProgress: (
+    callback: (data: { specialistId: string; phase: string; message: string; at: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { specialistId: string; phase: string; message: string; at: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.PROJECT_SPECIALIST_BUILD_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.PROJECT_SPECIALIST_BUILD_PROGRESS, handler)
+    }
+  },
 
   // ── Skills ──
   listSkills: (): Promise<Skill[]> => ipcRenderer.invoke(IPC_CHANNELS.SKILL_LIST),
@@ -269,27 +388,6 @@ const api = {
   deployAll: (args: { workspacePath: string }): Promise<{ agents: number; skills: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DEPLOY_ALL, args),
 
-  // ── Worktrees ──
-  listWorktrees: (args: { conversationId: string }): Promise<AgentWorktree[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_LIST, args),
-
-  getWorktreeDiff: (args: { worktreeId: string }): Promise<string> =>
-    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_GET_DIFF, args),
-
-  mergeWorktree: (args: {
-    worktreeId: string
-  }): Promise<{ success: boolean; conflictedFiles?: string[] }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_MERGE, args),
-
-  mergeAllWorktrees: (args: { conversationId: string }): Promise<MergeAllResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_MERGE_ALL, args),
-
-  abandonWorktree: (args: { worktreeId: string }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_ABANDON, args),
-
-  // ── Pixel Office ──
-  popoutPixelOffice: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PIXEL_OFFICE_POPOUT),
-
   // ── Agent Sync ──
   computeSyncDiff: (args: { workspacePath: string }): Promise<SyncDiff> =>
     ipcRenderer.invoke(IPC_CHANNELS.SYNC_COMPUTE_DIFF, args),
@@ -336,16 +434,10 @@ const api = {
   memoryGetFeedTimestamps: (args: { workspaceId: string }): Promise<WorkspaceFeedTimestamps> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_GET_FEED_TIMESTAMPS, args),
 
-  memoryFeedClaudeMd: (args: { workspacePath: string }): Promise<MemoryFeedResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CLAUDE_MD, args),
-
   memoryRegenerateClaudeMd: (args: {
     workspacePath: string
   }): Promise<{ success: boolean; content: string; existing: string | null; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REGENERATE_CLAUDE_MD, args),
-
-  memoryFeedCodebase: (args: { workspacePath: string }): Promise<MemoryFeedResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CODEBASE, args),
 
   memoryFeedDocument: (args: {
     workspacePath: string
@@ -358,27 +450,6 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.MEMORY_FEED_PROGRESS, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_FEED_PROGRESS, handler)
-    }
-  },
-
-  // ── Dream (auto consolidation) ──
-  triggerDream: (args: { workspaceId: string }): Promise<DreamRun> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DREAM_TRIGGER, args),
-
-  cancelDream: (args: { workspaceId: string }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DREAM_CANCEL, args),
-
-  getDreamStatus: (args: { workspaceId: string }): Promise<DreamRun | null> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DREAM_GET_STATUS, args),
-
-  getDreamHistory: (args: { workspaceId: string; limit?: number }): Promise<DreamRun[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.DREAM_GET_HISTORY, args),
-
-  onDreamProgress: (callback: (data: DreamProgress) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: DreamProgress): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.DREAM_PROGRESS, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.DREAM_PROGRESS, handler)
     }
   },
 
@@ -435,6 +506,11 @@ const api = {
 
   installUpdate: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_INSTALL),
 
+  getUpdateConfig: (): Promise<UpdateConfig> => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_GET_CONFIG),
+
+  setUpdateConfig: (config: Partial<UpdateConfig>): Promise<UpdateConfig> =>
+    ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SET_CONFIG, config),
+
   // ── Events (main → renderer) with cleanup ──
   onActivationProgress: (callback: (data: ActivationProgressEvent) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: ActivationProgressEvent): void =>
@@ -451,6 +527,7 @@ const api = {
       role: string
       taskId?: string
       specialist?: string
+      requestId?: string
       toolActivity?: {
         id: string
         toolName: string
@@ -458,10 +535,18 @@ const api = {
         input?: string
         startedAt?: number
         completedAt?: number
+        elapsedSeconds?: number
       }
       compactNeeded?: {
         level: string
         inputTokens: number
+        breakdown?: import('../shared/types').ContextUsageBreakdown
+      }
+      turnBoundary?: boolean
+      turnId?: string
+      budgetCapReached?: {
+        message: string
+        canContinue: boolean
       }
     }) => void
   ): (() => void) => {
@@ -473,16 +558,25 @@ const api = {
         role: string
         taskId?: string
         specialist?: string
+        requestId?: string
         toolActivity?: {
           id: string
           toolName: string
           status: 'running' | 'completed' | 'error'
           startedAt?: number
           completedAt?: number
+          elapsedSeconds?: number
         }
         compactNeeded?: {
           level: string
           inputTokens: number
+          breakdown?: import('../shared/types').ContextUsageBreakdown
+        }
+        turnBoundary?: boolean
+        turnId?: string
+        budgetCapReached?: {
+          message: string
+          canContinue: boolean
         }
       }
     ): void => callback(data)
@@ -493,38 +587,25 @@ const api = {
   },
 
   onMessageComplete: (
-    callback: (data: { conversationId: string; messageId: string; taskId?: string }) => void
-  ): (() => void) => {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      data: { conversationId: string; messageId: string; taskId?: string }
-    ): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, handler)
-    }
-  },
-
-  onHandoff: (
     callback: (data: {
       conversationId: string
-      summary: string
-      specialists: string[]
-      mode: string
+      messageId: string
+      taskId?: string
+      requestId?: string
     }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
       data: {
         conversationId: string
-        summary: string
-        specialists: string[]
-        mode: string
+        messageId: string
+        taskId?: string
+        requestId?: string
       }
     ): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.CHAT_HANDOFF, handler)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, handler)
     return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_HANDOFF, handler)
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, handler)
     }
   },
 
@@ -562,23 +643,69 @@ const api = {
     }
   },
 
-  onGrillEvaluation: (
+  onAskQuestion: (
     callback: (data: {
       conversationId: string
-      score: number
-      scoreLabel: string
-      feedback: string
       questions: GrillQuestion[]
+      action?: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; questions: GrillQuestion[]; action?: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_ASK_QUESTION, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_ASK_QUESTION, handler)
+    }
+  },
+
+  onPlan: (
+    callback: (data: {
+      conversationId: string
+      rawContent: string
+      structuredPlan: StructuredPlan | null
+      beforePlan: string
+      afterPlan: string
     }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
       data: {
         conversationId: string
+        rawContent: string
+        structuredPlan: StructuredPlan | null
+        beforePlan: string
+        afterPlan: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_PLAN, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_PLAN, handler)
+    }
+  },
+
+  onGrillEvaluation: (
+    callback: (data: {
+      conversationId: string
+      trackId?: string
+      score: number
+      scoreLabel: string
+      feedback: string
+      questions: GrillQuestion[]
+      suggestedNextTrack?: { trackId: string; reason: string }
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        conversationId: string
+        trackId?: string
         score: number
         scoreLabel: string
         feedback: string
         questions: GrillQuestion[]
+        suggestedNextTrack?: { trackId: string; reason: string }
       }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_GRILL_EVALUATION, handler)
@@ -587,28 +714,38 @@ const api = {
     }
   },
 
-  onTaskPlan: (callback: (data: TaskPlan) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: TaskPlan): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.CHAT_TASK_PLAN, handler)
+  onTaskRetry: (
+    callback: (data: {
+      taskId: string
+      specialist: string
+      attempt: number
+      maxRetries: number
+      escalation?: { fromModel: string; toModel: string }
+      reason: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        taskId: string
+        specialist: string
+        attempt: number
+        maxRetries: number
+        escalation?: { fromModel: string; toModel: string }
+        reason: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.AGENT_TASK_RETRY, handler)
     return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_TASK_PLAN, handler)
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TASK_RETRY, handler)
     }
   },
 
-  onTaskProgress: (callback: (data: TaskExecutionProgress) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: TaskExecutionProgress): void =>
-      callback(data)
-    ipcRenderer.on(IPC_CHANNELS.CHAT_TASK_PROGRESS, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_TASK_PROGRESS, handler)
-    }
-  },
-
-  onOrchestratorReady: (callback: () => void): (() => void) => {
+  onAgentReady: (callback: () => void): (() => void) => {
     const handler = (): void => callback()
-    ipcRenderer.on(IPC_CHANNELS.ORCHESTRATOR_READY, handler)
+    ipcRenderer.on(IPC_CHANNELS.AGENT_READY, handler)
     return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.ORCHESTRATOR_READY, handler)
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_READY, handler)
     }
   },
 
@@ -632,6 +769,9 @@ const api = {
       status: string
       elapsedMs: number
       tokenUsage: number
+      inputTokens?: number
+      outputTokens?: number
+      activeMcpTools?: string[]
     }) => void
   ): (() => void) => {
     const handler = (
@@ -642,6 +782,9 @@ const api = {
         status: string
         elapsedMs: number
         tokenUsage: number
+        inputTokens?: number
+        outputTokens?: number
+        activeMcpTools?: string[]
       }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.AGENT_STATUS_UPDATE, handler)
@@ -718,17 +861,20 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.DOCS_RENDER_MERMAID, args),
 
   // ── GitHub ──
-  saveGitHubToken: (args: { workspaceId: string; token: string }): Promise<{ login: string }> =>
+  saveGitHubToken: (args: {
+    workspaceId: string
+    token: string
+  }): Promise<{ login: string; tokenType: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GITHUB_SAVE_TOKEN, args),
 
   validateGitHubToken: (args: {
     token: string
-  }): Promise<{ valid: boolean; login: string; scopes: string[] }> =>
+  }): Promise<{ valid: boolean; login: string; scopes: string[]; tokenType: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GITHUB_VALIDATE_TOKEN, args),
 
   getGitHubStatus: (args: {
     workspaceId: string
-  }): Promise<{ configured: boolean; login?: string }> =>
+  }): Promise<{ configured: boolean; login?: string; tokenType?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GITHUB_GET_STATUS, args),
 
   removeGitHubToken: (args: { workspaceId: string }): Promise<void> =>
@@ -749,6 +895,48 @@ const api = {
   }): Promise<{ hasChanges: boolean; fileCount: number; files: string[] }> =>
     ipcRenderer.invoke(IPC_CHANNELS.REPO_HAS_UNSAVED_CHANGES, args),
 
+  // ── Code Changes ──
+  getFileDetails: (args: {
+    conversationId: string
+  }): Promise<
+    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DETAILS, args),
+
+  getFileDiff: (args: {
+    conversationId: string
+    filePath: string
+  }): Promise<{ oldContent: string; newContent: string; language: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DIFF, args),
+
+  commitFiles: (args: {
+    conversationId: string
+    filePaths: string[]
+    message: string
+  }): Promise<{ commitHash: string }> => ipcRenderer.invoke(IPC_CHANNELS.REPO_COMMIT_FILES, args),
+
+  repoPush: (args: { conversationId: string }): Promise<{ branch: string; remote: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_PUSH, args),
+
+  getPushStatus: (args: {
+    conversationId: string
+  }): Promise<{ branch: string; commitsAhead: number; hasRemote: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_PUSH_STATUS, args),
+
+  generateCommitMessage: (args: {
+    conversationId: string
+    filePaths: string[]
+  }): Promise<{ message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE, args),
+
+  createPr: (args: {
+    conversationId: string
+    title: string
+    body: string
+    base: string
+    head: string
+  }): Promise<{ url: string; number: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_CREATE_PR, args),
+
   // ── User Profile ──
   getUserProfile: (): Promise<UserProfile | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.USER_PROFILE_GET),
@@ -761,10 +949,31 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_LIST),
 
   upsertCoreAgentAlias: (args: {
-    agentRole: 'generalist' | 'coordinator'
+    agentRole: 'da-vinci'
     alias: string | null
     avatarKey: string | null
   }): Promise<CoreAgentAlias> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_UPSERT, args),
+
+  // ── Core Agent Prompts ──
+  listCoreAgentPrompts: (): Promise<CoreAgentPrompt[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_LIST),
+
+  getCoreAgentPrompt: (args: {
+    agentRole: 'da-vinci'
+    mode: 'plan' | 'build'
+  }): Promise<CoreAgentPrompt | undefined> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_GET, args),
+
+  upsertCoreAgentPrompt: (args: {
+    agentRole: 'da-vinci'
+    mode: 'plan' | 'build'
+    promptText: string
+  }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT, args),
+
+  resetCoreAgentPrompt: (args: {
+    agentRole: 'da-vinci'
+    mode: 'plan' | 'build'
+  }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_RESET, args),
 
   // ── Renderer Logging Bridge ──
   log: (args: {
@@ -796,7 +1005,9 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_ITEM_IN_FOLDER, filePath),
 
   // ── Checkpoints ──
-  listCheckpoints: (args: { conversationId: string }): Promise<
+  listCheckpoints: (args: {
+    conversationId: string
+  }): Promise<
     { id: string; label: string; gitBranch?: string; gitCommitSha?: string; createdAt: string }[]
   > => ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_LIST, args),
 
@@ -806,14 +1017,29 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_RESTORE, args),
 
   // ── Cost Tracking ──
-  getCostSummary: (args: { workspaceId: string }): Promise<{
+  getCostSummary: (args: {
+    workspaceId: string
+  }): Promise<{
     totalCostCents: number
     totalTokens: number
     sessionCount: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheHitRate: number
     byAgent: { agentType: string; costCents: number; tokens: number; sessions: number }[]
   }> => ipcRenderer.invoke(IPC_CHANNELS.COST_GET_WORKSPACE_SUMMARY, args),
 
-  checkBudget: (args: { workspaceId: string }): Promise<{
+  getConversationCost: (args: { conversationId: string }): Promise<number> =>
+    ipcRenderer.invoke(IPC_CHANNELS.COST_GET_CONVERSATION, args),
+
+  getWorkspaceConversationCosts: (args: {
+    workspaceId: string
+  }): Promise<{ conversationId: string; costCents: number; totalTokens: number }[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.COST_GET_WORKSPACE_CONVERSATIONS, args),
+
+  checkBudget: (args: {
+    workspaceId: string
+  }): Promise<{
     currentCostCents: number
     dailyBudgetCents: number
     sessionBudgetCents: number
@@ -846,11 +1072,7 @@ const api = {
   },
 
   onBudgetExceeded: (
-    callback: (data: {
-      workspaceId: string
-      currentCostCents: number
-      budgetCents: number
-    }) => void
+    callback: (data: { workspaceId: string; currentCostCents: number; budgetCents: number }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
@@ -863,7 +1085,10 @@ const api = {
   },
 
   // ── Events (audit log) ──
-  getRecentEvents: (args?: { limit?: number }): Promise<
+  getRecentEvents: (args?: {
+    workspaceId?: string
+    limit?: number
+  }): Promise<
     {
       id: string
       sessionId: string | null
@@ -898,22 +1123,7 @@ const api = {
     }[]
   > => ipcRenderer.invoke(IPC_CHANNELS.EVENTS_GET_BY_CONVERSATION, args),
 
-  // ── Gate Results ──
-  getGateResults: (args: { conversationId: string }): Promise<
-    {
-      id: string
-      sessionId: string | null
-      conversationId: string | null
-      taskId: string | null
-      agentId: string | null
-      gateType: string
-      passed: boolean
-      summary: string
-      createdAt: string
-    }[]
-  > => ipcRenderer.invoke(IPC_CHANNELS.GATE_RESULTS_GET, args),
-
-  // ── Agent Events (from specialist pool) ──
+  // ── Agent Events ──
   onAbandonmentDetected: (
     callback: (data: { taskId: string; specialist: string; pattern: string }) => void
   ): (() => void) => {
@@ -927,25 +1137,657 @@ const api = {
     }
   },
 
-  onGateFailure: (
+  // ── Checkpoint Approval ──
+  onCheckpointApprovalRequest: (
     callback: (data: {
-      taskId: string
-      specialist: string
-      gate: { type: string; passed: boolean; summary: string }
+      id: string
+      type: 'phase_gate' | 'merge_approval' | 'destructive_action'
+      title: string
+      summary: string
+      details: {
+        what: string
+        why: string
+        risk: string
+        changedFiles?: string[]
+        testResults?: string
+      }
+      createdAt: string
     }) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
       data: {
-        taskId: string
-        specialist: string
-        gate: { type: string; passed: boolean; summary: string }
+        id: string
+        type: 'phase_gate' | 'merge_approval' | 'destructive_action'
+        title: string
+        summary: string
+        details: {
+          what: string
+          why: string
+          risk: string
+          changedFiles?: string[]
+          testResults?: string
+        }
+        createdAt: string
       }
     ): void => callback(data)
-    ipcRenderer.on(IPC_CHANNELS.AGENT_GATE_FAILURE, handler)
+    ipcRenderer.on(IPC_CHANNELS.CHECKPOINT_APPROVAL_REQUEST, handler)
     return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_GATE_FAILURE, handler)
+      ipcRenderer.removeListener(IPC_CHANNELS.CHECKPOINT_APPROVAL_REQUEST, handler)
     }
+  },
+
+  respondCheckpointApproval: (checkpointId: string, approved: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_APPROVAL_RESPONSE, { checkpointId, approved }),
+
+  // ── Hooks ──
+  listHooks: (): Promise<
+    Array<{
+      event: string
+      name: string
+      command: string
+      blocking: boolean
+      condition?: { mode?: string; model?: string; agent?: string }
+      timeout?: number
+    }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.HOOKS_LIST),
+
+  reloadHooks: (args: {
+    workspacePath: string
+  }): Promise<
+    Array<{
+      event: string
+      name: string
+      command: string
+      blocking: boolean
+      condition?: { mode?: string; model?: string; agent?: string }
+      timeout?: number
+    }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.HOOKS_RELOAD, args),
+
+  // ── AI Subscriptions ──
+  validateSubscriptions: (): Promise<SubscriptionCheckResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_VALIDATE_ALL),
+  checkClaudeCli: (): Promise<{
+    installed: boolean
+    version: string | null
+    error: string | null
+  }> => ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_CHECK_CLAUDE_CLI),
+  autoConfigureClaude: (): Promise<AutoConfigureResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE),
+
+  // ── Embedding Provider ──
+  embeddingCheckStatus: (): Promise<EmbeddingModelStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_CHECK_STATUS),
+
+  embeddingInitialize: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE),
+
+  onEmbeddingModelProgress: (callback: (data: EmbeddingModelProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: EmbeddingModelProgress): void =>
+      callback(data)
+    ipcRenderer.on(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, handler)
+    }
+  },
+
+  onEmbeddingModelReady: (callback: () => void): (() => void) => {
+    const handler = (): void => callback()
+    ipcRenderer.on(IPC_CHANNELS.EMBEDDING_MODEL_READY, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EMBEDDING_MODEL_READY, handler)
+    }
+  },
+
+  onEmbeddingModelError: (callback: (error: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, error: string): void => callback(error)
+    ipcRenderer.on(IPC_CHANNELS.EMBEDDING_MODEL_ERROR, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EMBEDDING_MODEL_ERROR, handler)
+    }
+  },
+
+  // ── Ollama — @deprecated for semantic search (still used by Local LLM chat) ──
+  ollamaCheckStatus: (args?: { baseUrl?: string }): Promise<OllamaStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_CHECK_STATUS, args),
+
+  ollamaPullModel: (args: { model: string; baseUrl?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_PULL_MODEL, args),
+
+  ollamaCancelPull: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_CANCEL_PULL),
+
+  ollamaRemoveModel: (args: { model: string; baseUrl?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_REMOVE_MODEL, args),
+
+  ollamaStart: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.OLLAMA_START),
+
+  // ── oMLX ──
+  omlxCheckStatus: (args?: {
+    baseUrl?: string
+    apiKey?: string
+  }): Promise<import('../shared/types').OmlxExtendedStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMLX_CHECK_STATUS, args),
+
+  omlxStart: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.OMLX_START),
+
+  omlxAdminUrl: (args?: { baseUrl?: string }): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMLX_ADMIN_URL, args),
+
+  omlxLoadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMLX_LOAD_MODEL, args),
+
+  omlxUnloadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMLX_UNLOAD_MODEL, args),
+
+  // ── Platform ──
+  getPlatformInfo: (): Promise<import('../shared/types').PlatformInfo> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLATFORM_INFO),
+
+  onOllamaPullProgress: (callback: (data: PullProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: PullProgress): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.OLLAMA_PULL_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.OLLAMA_PULL_PROGRESS, handler)
+    }
+  },
+
+  onOllamaPullComplete: (callback: (model: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, model: string): void => callback(model)
+    ipcRenderer.on(IPC_CHANNELS.OLLAMA_PULL_COMPLETE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.OLLAMA_PULL_COMPLETE, handler)
+    }
+  },
+
+  onOllamaPullError: (callback: (error: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, error: string): void => callback(error)
+    ipcRenderer.on(IPC_CHANNELS.OLLAMA_PULL_ERROR, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.OLLAMA_PULL_ERROR, handler)
+    }
+  },
+
+  // ── Indexing (semantic search) ──
+  indexingStart: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_START, args),
+
+  indexingPause: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_PAUSE, args),
+
+  indexingResume: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_RESUME, args),
+
+  indexingCancel: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_CANCEL, args),
+
+  indexingGetStatus: (args: { workspaceId: string }): Promise<IndexingState> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_GET_STATUS, args),
+
+  loadPersistedIndex: (args: {
+    workspaceId: string
+  }): Promise<{ loaded: boolean; status: string; symbolCount?: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_LOAD_PERSISTED, args),
+
+  onIndexingProgress: (callback: (state: IndexingState) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: IndexingState): void =>
+      callback(state)
+    ipcRenderer.on(IPC_CHANNELS.INDEXING_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.INDEXING_PROGRESS, handler)
+    }
+  },
+
+  // ── Semantic Search query ──
+  semanticSearchQuery: (args: {
+    workspaceId: string
+    query: string
+    nResults?: number
+  }): Promise<SemanticSearchResult[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SEMANTIC_SEARCH_QUERY, args),
+
+  // ── Code Graph (persisted repomap) ──
+  codeGraphIndexStart: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CODE_GRAPH_INDEX_START, args),
+
+  codeGraphGetStatus: (args: { workspaceId: string }): Promise<CodeGraphIndexingState> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CODE_GRAPH_GET_STATUS, args),
+
+  codeGraphHasIndex: (args: { workspaceId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CODE_GRAPH_HAS_INDEX, args),
+
+  onCodeGraphProgress: (callback: (state: CodeGraphIndexingState) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: CodeGraphIndexingState): void =>
+      callback(state)
+    ipcRenderer.on(IPC_CHANNELS.CODE_GRAPH_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CODE_GRAPH_PROGRESS, handler)
+    }
+  },
+
+  // ── Context Usage ──
+  getContextUsage: (args: { conversationId: string }): Promise<ContextUsage> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE, args),
+
+  // ── Conversation Reorder ──
+  reorderConversations: (args: { orderedIds: string[] }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_REORDER, args),
+
+  // ── SDK Events ──
+  onRateLimitEvent: (
+    callback: (data: {
+      status: string
+      utilization?: number
+      resetsAt?: number
+      rateLimitType?: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { status: string; utilization?: number; resetsAt?: number; rateLimitType?: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_RATE_LIMIT, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_RATE_LIMIT, handler)
+    }
+  },
+
+  onPromptSuggestion: (
+    callback: (data: { conversationId: string; suggestion: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; suggestion: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_PROMPT_SUGGESTION, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_PROMPT_SUGGESTION, handler)
+    }
+  },
+
+  onApiRetry: (
+    callback: (data: {
+      attempt: number
+      maxRetries: number
+      retryDelayMs: number
+      errorStatus: number | null
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        attempt: number
+        maxRetries: number
+        retryDelayMs: number
+        errorStatus: number | null
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_API_RETRY, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_API_RETRY, handler)
+    }
+  },
+
+  onSessionState: (callback: (data: { state: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { state: string }): void =>
+      callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_SESSION_STATE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_SESSION_STATE, handler)
+    }
+  },
+
+  onSessionRecovery: (
+    callback: (data: { conversationId: string; phase: string; message: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; phase: string; message: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_SESSION_RECOVERY, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_SESSION_RECOVERY, handler)
+    }
+  },
+
+  onAuthStatus: (
+    callback: (data: { message: string; requestId?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { message: string; requestId?: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_AUTH_STATUS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_AUTH_STATUS, handler)
+    }
+  },
+
+  onFilesPersisted: (
+    callback: (data: { conversationId: string; files: string[]; requestId?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { conversationId: string; files: string[]; requestId?: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_FILES_PERSISTED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_FILES_PERSISTED, handler)
+    }
+  },
+
+  onHookLifecycle: (
+    callback: (data: { hookName?: string; hookState?: string; requestId?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { hookName?: string; hookState?: string; requestId?: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_HOOK_LIFECYCLE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_HOOK_LIFECYCLE, handler)
+    }
+  },
+
+  onStateChange: (
+    callback: (data: {
+      conversationId: string | null
+      from: string
+      to: string
+      event: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        conversationId: string | null
+        from: string
+        to: string
+        event: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.CHAT_STATE_CHANGE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STATE_CHANGE, handler)
+    }
+  },
+
+  // ── SDK Control — Query instance methods ──
+  sdkStopTask: (args: { taskId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_STOP_TASK, args),
+
+  sdkSupportedModels: (): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.SDK_SUPPORTED_MODELS),
+
+  // SDK Subagent inspection (0.2.96+)
+  sdkListSubagents: (args: { sessionId: string }): Promise<string[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_LIST_SUBAGENTS, args),
+
+  sdkGetSubagentMessages: (args: { sessionId: string; subagentId: string }): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SDK_GET_SUBAGENT_MESSAGES, args),
+
+  // Elicitation — MCP server user input requests
+  elicitationRespond: (args: {
+    action: string
+    content?: Record<string, unknown>
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.ELICITATION_RESPONSE, args),
+
+  onElicitationRequest: (callback: (data: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, data: unknown): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.ELICITATION_REQUEST, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.ELICITATION_REQUEST, handler)
+  },
+
+  // SDK Elicitation (enriched — via elicitation.service)
+  onSdkElicitationRequest: (callback: (data: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, data: unknown): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_ELICITATION_REQUEST, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.SDK_ELICITATION_REQUEST, handler)
+  },
+
+  sdkElicitationRespond: (args: {
+    requestId: string
+    action: string
+    content?: Record<string, unknown>
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.SDK_ELICITATION_RESPONSE, args),
+
+  // Session Management (SDK top-level functions)
+  sessionList: (args?: { dir?: string; limit?: number; offset?: number }): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST, args),
+
+  sessionGetInfo: (args: { sessionId: string; dir?: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_INFO, args),
+
+  sessionGetMessages: (args: {
+    sessionId: string
+    dir?: string
+    includeSystemMessages?: boolean
+  }): Promise<unknown[]> => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_MESSAGES, args),
+
+  sessionRename: (args: { sessionId: string; title: string; dir?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_RENAME, args),
+
+  sessionTag: (args: { sessionId: string; tag: string | null; dir?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_TAG, args),
+
+  sessionFork: (args: {
+    sessionId: string
+    upToMessageId?: string
+    title?: string
+    dir?: string
+  }): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC_CHANNELS.SESSION_FORK, args),
+
+  // Session mutation — branch a conversation (legacy alias)
+  sdkForkSession: (args: {
+    sessionId: string
+    upToMessageId?: string
+  }): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC_CHANNELS.SDK_FORK_SESSION, args),
+
+  // Chat resume at checkpoint — undo to a specific message point
+  chatResumeAt: (args: { conversationId: string; messageId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_RESUME_AT, args),
+
+  // ── Bug Tracker ──
+  reportBug: (input: {
+    process: 'main' | 'renderer' | 'preload'
+    severity: 'error' | 'fatal'
+    errorMessage: string
+    stackTrace?: string
+    sourceFile?: string
+    sourceLine?: number
+    sourceColumn?: number
+    componentName?: string
+    activeView?: string
+    workspaceId?: string
+    agentId?: string
+    appVersion: string
+    osInfo?: string
+  }): Promise<{ isNew: boolean; bugId: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_REPORT, input),
+
+  getBugs: (filters?: {
+    process?: 'main' | 'renderer' | 'preload'
+    isResolved?: boolean
+    workspaceId?: string
+    sortBy?: 'last_seen_at' | 'occurrence_count' | 'severity'
+    sortDir?: 'asc' | 'desc'
+  }): Promise<unknown[]> => ipcRenderer.invoke(IPC_CHANNELS.BUG_LIST, filters),
+
+  getBug: (args: { id: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_GET, args),
+
+  resolveBug: (args: { id: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_RESOLVE, args),
+
+  unresolveBug: (args: { id: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_UNRESOLVE, args),
+
+  deleteBug: (args: { id: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_DELETE, args),
+
+  updateBugNote: (args: { id: string; note: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_UPDATE_NOTE, args),
+
+  getBugCount: (): Promise<number> => ipcRenderer.invoke(IPC_CHANNELS.BUG_COUNT),
+
+  onNewBug: (callback: (bug: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, bug: unknown): void => callback(bug)
+    ipcRenderer.on(IPC_CHANNELS.BUG_NEW, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BUG_NEW, handler)
+  },
+
+  // ── Audit (Workspace Health) ──
+  auditStart: (args: {
+    workspaceId: string
+    mode: AuditMode
+    tracks: AuditTrackId[]
+    llmProvider?: LLMProvider
+  }): Promise<AuditRun> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_START, args),
+
+  auditCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_CANCEL),
+
+  auditGetLatest: (args: { workspaceId: string }): Promise<AuditRun | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_LATEST, args),
+
+  auditConvertFindings: (args: {
+    workspaceId: string
+    findings: AuditFinding[]
+  }): Promise<{ conversationId: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_CONVERT_FINDINGS, args),
+
+  auditRerunTrack: (args: {
+    workspaceId: string
+    trackId: AuditTrackId
+    mode: AuditMode
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_RERUN_TRACK, args),
+
+  auditResume: (args: { workspaceId: string }): Promise<AuditRun | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_RESUME, args),
+
+  auditExportMarkdown: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_EXPORT_MARKDOWN, args),
+
+  auditGetHistory: (args: { workspaceId: string; limit?: number }): Promise<AuditRun[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_HISTORY, args),
+
+  onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_PROGRESS, handler)
+  },
+
+  onAuditResult: (cb: (data: AuditResult) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditResult): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_RESULT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_RESULT, handler)
+  },
+
+  onAuditComplete: (cb: (data: AuditRun) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditRun): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_COMPLETE, handler)
+  },
+
+  onAuditStreamChunk: (cb: (data: AuditStreamChunkEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditStreamChunkEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_STREAM_CHUNK, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_STREAM_CHUNK, handler)
+  },
+
+  onAuditIntermediate: (cb: (data: AuditIntermediateEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: AuditIntermediateEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.AUDIT_INTERMEDIATE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_INTERMEDIATE, handler)
+  },
+
+  // ── Grill (dedicated agent) ──
+  grillEvaluate: (args: {
+    workspaceId: string
+    trackId: string
+    ideaTitle: string
+    ideaDescription: string
+    iterationHistory?: string
+    previousScore?: number
+    ideaId?: string
+    llmProvider?: LLMProvider
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_EVALUATE, args),
+
+  grillCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_CANCEL),
+
+  onGrillStreamChunk: (
+    cb: (data: { type: string; content?: string; toolActivity?: Record<string, unknown> }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { type: string; content?: string; toolActivity?: Record<string, unknown> }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.GRILL_STREAM_CHUNK, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STREAM_CHUNK, handler)
+  },
+
+  onGrillEvaluationResult: (
+    cb: (data: {
+      trackId?: string
+      score: number
+      scoreLabel: string
+      feedback: string
+      questions: GrillQuestion[]
+      suggestedNextTrack?: { trackId: string; reason: string }
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        trackId?: string
+        score: number
+        scoreLabel: string
+        feedback: string
+        questions: GrillQuestion[]
+        suggestedNextTrack?: { trackId: string; reason: string }
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.GRILL_EVALUATION_RESULT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_EVALUATION_RESULT, handler)
+  },
+
+  onGrillStreamComplete: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on(IPC_CHANNELS.GRILL_STREAM_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STREAM_COMPLETE, handler)
+  },
+
+  grillCondenseRequirement: (args: { text: string }): Promise<{ condensed: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT, args),
+
+  grillGetStatus: (args: {
+    workspaceId: string
+  }): Promise<{
+    status: string
+    ideaId: string
+    trackId: string | null
+    score: number | null
+  } | null> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_GET_STATUS, args),
+
+  grillGetSession: (args: { ideaId: string }): Promise<unknown | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GRILL_GET_SESSION, args),
+
+  grillSaveAnswers: (args: {
+    sessionId: string
+    questionStates: Record<string, unknown>
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_SAVE_ANSWERS, args),
+
+  onGrillStatusChanged: (
+    cb: (data: {
+      status: string
+      ideaId: string
+      trackId: string | null
+      score: number | null
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { status: string; ideaId: string; trackId: string | null; score: number | null }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.GRILL_STATUS_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STATUS_CHANGED, handler)
   }
 } as const
 

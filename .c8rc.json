@@ -1,0 +1,27 @@
+{
+  "all": true,
+  "src": ["src"],
+  "include": [
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.tsx",
+    "src/shared/**/*.ts"
+  ],
+  "exclude": [
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.d.ts",
+    "src/**/index.ts",
+    "src/main/db/migrations/**",
+    "e2e/**",
+    "out/**",
+    "dist/**"
+  ],
+  "reporter": ["text", "text-summary", "html", "lcov"],
+  "report-dir": "./coverage",
+  "exclude-after-remap": true,
+  "skip-full": false,
+  "clean": true
+}

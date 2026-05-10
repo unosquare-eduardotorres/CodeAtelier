@@ -1,39 +1,47 @@
 import { useEffect, useCallback } from 'react'
+import { useBugCapture } from '@renderer/hooks/useBugCapture'
 import { AppLayout } from '@renderer/components/layout'
-import { PixelOfficeFullscreen } from '@renderer/components/pixel-office'
-import { WelcomeModal } from '@renderer/components/common'
+import {
+  WelcomeModal,
+  CheckpointApprovalModal,
+  ElicitationModal,
+  UpdateAvailableModal
+} from '@renderer/components/common'
 import {
   useWorkspaceStore,
+  useChatStore,
   useChatActions,
   useAgentStore,
   useUpdateStore,
   useMemoryStore,
-  useDreamStore,
   useProfileStore
 } from '@renderer/store'
-import type { ConversationMode, TaskPlan } from '../../shared/types'
-
-// Check if this window was opened as a Pixel Office pop-out
-const isPixelOfficePopout =
-  new URLSearchParams(window.location.search).get('view') === 'pixel-office'
+import type { ConversationPhase } from '../../shared/types'
+import { rendererLog } from '@renderer/utils/logger'
 
 function App(): React.JSX.Element {
+  // Global error capture → bug tracker
+  useBugCapture()
+
   // Workspace actions (stable refs — individual selectors prevent full-store re-renders)
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces)
-  const setOrchestratorReady = useWorkspaceStore((s) => s.setOrchestratorReady)
+  const setAgentReady = useWorkspaceStore((s) => s.setAgentReady)
 
   // Chat actions (already uses useShallow internally)
   const {
     appendStreamChunk,
+    updateStreamingIdentity,
     finalizeStream,
-    setHandoff,
+    finalizeTurnBubble,
     addToolActivity,
     updateToolActivity,
-    setTaskPlan,
-    updateTaskProgress,
     setCompactSuggestion,
+    setBudgetCapBanner,
     endGrillSession,
-    setGrillQuestions
+    setGrillQuestions,
+    setPendingQuestions,
+    setConversationState,
+    loadContextUsage
   } = useChatActions()
 
   // Agent actions
@@ -46,9 +54,8 @@ function App(): React.JSX.Element {
   const setProgress = useUpdateStore((s) => s.setProgress)
   const setError = useUpdateStore((s) => s.setError)
 
-  // Memory & Dream actions
+  // Memory actions
   const onMemoryFeedProgress = useMemoryStore((s) => s.onFeedProgress)
-  const onDreamProgress = useDreamStore((s) => s.onProgress)
 
   // Profile state + actions
   const isProfileLoading = useProfileStore((s) => s.isLoading)
@@ -71,11 +78,51 @@ function App(): React.JSX.Element {
 
     // Set up IPC event listeners for streaming
     const unsubChunk = window.api.onMessageChunk((data) => {
+      // Ignore chunks for non-active conversation
+      const activeConvId = useChatStore.getState().activeConversation?.id
+      if (activeConvId && data.conversationId !== activeConvId) {
+        return
+      }
+
+      // Handle turn boundaries — finalize current bubble and start a new one
+      if (data.turnBoundary && data.turnId) {
+        finalizeTurnBubble(
+          data.turnId,
+          data.role as 'da-vinci' | 'specialist',
+          (data as Record<string, unknown>).specialist as string | undefined
+        )
+        return
+      }
       if (data.chunk) {
-        appendStreamChunk(data.chunk, data.role as 'generalist' | 'coordinator', data.taskId)
+        appendStreamChunk(
+          data.chunk,
+          data.role as 'da-vinci' | 'specialist',
+          data.taskId,
+          data.specialist,
+          data.requestId
+        )
+      }
+      // Update streaming identity even on tool-only chunks (empty text)
+      // so the thinking indicator shows the correct agent name
+      if (!data.chunk && data.role) {
+        updateStreamingIdentity(
+          data.role as 'da-vinci' | 'specialist',
+          data.taskId,
+          data.specialist
+        )
       }
       if (data.toolActivity) {
-        if (data.toolActivity.status === 'running') {
+        if (
+          data.toolActivity.elapsedSeconds !== undefined &&
+          data.toolActivity.status === 'running'
+        ) {
+          // Progress update — update elapsed time without changing status
+          updateToolActivity({
+            id: data.toolActivity.id,
+            toolName: data.toolActivity.toolName,
+            elapsedSeconds: data.toolActivity.elapsedSeconds
+          })
+        } else if (data.toolActivity.status === 'running') {
           addToolActivity({
             id: data.toolActivity.id,
             toolName: data.toolActivity.toolName,
@@ -85,6 +132,7 @@ function App(): React.JSX.Element {
           })
         } else {
           updateToolActivity({
+            id: data.toolActivity.id,
             toolName: data.toolActivity.toolName,
             status: data.toolActivity.status,
             input: data.toolActivity.input,
@@ -93,20 +141,39 @@ function App(): React.JSX.Element {
         }
       }
       if (data.compactNeeded) {
-        setCompactSuggestion(data.compactNeeded)
+        if (data.compactNeeded.level === 'compacted') {
+          // Auto-compaction completed — refresh context usage silently.
+          // Clear any stale compact suggestion that was showing pre-compaction data.
+          setCompactSuggestion(null)
+          if (data.conversationId) {
+            void loadContextUsage(data.conversationId)
+          }
+        } else {
+          setCompactSuggestion(data.compactNeeded)
+        }
+      }
+      if (data.budgetCapReached) {
+        setBudgetCapBanner({
+          conversationId: data.conversationId,
+          message: data.budgetCapReached.message,
+          canContinue: data.budgetCapReached.canContinue
+        })
       }
     })
 
     const unsubComplete = window.api.onMessageComplete((data) => {
-      finalizeStream(data.messageId, data.taskId)
-    })
-
-    const unsubHandoff = window.api.onHandoff((data) => {
-      setHandoff({
-        summary: data.summary,
-        specialists: data.specialists,
-        mode: data.mode as ConversationMode
-      })
+      // Ignore completions for non-active conversation
+      const activeConvId = useChatStore.getState().activeConversation?.id
+      if (activeConvId && data.conversationId !== activeConvId) {
+        rendererLog.info(
+          `[finalizeStream] Ignoring complete for non-active conversation ${data.conversationId}`
+        )
+        return
+      }
+      rendererLog.info(
+        `[PIPELINE:renderer:message-complete] messageId=${data.messageId} taskId=${data.taskId ?? 'none'}`
+      )
+      finalizeStream(data.messageId, data.taskId, data.requestId)
     })
 
     const unsubGrillComplete = window.api.onGrillComplete((data) => {
@@ -117,16 +184,12 @@ function App(): React.JSX.Element {
       setGrillQuestions(data.questions)
     })
 
-    const unsubTaskPlan = window.api.onTaskPlan((data) => {
-      setTaskPlan(data as TaskPlan)
+    const unsubAskQuestion = window.api.onAskQuestion((data) => {
+      setPendingQuestions(data.questions, data.action)
     })
 
-    const unsubTaskProgress = window.api.onTaskProgress((data) => {
-      updateTaskProgress(data)
-    })
-
-    const unsubReady = window.api.onOrchestratorReady(() => {
-      setOrchestratorReady()
+    const unsubReady = window.api.onAgentReady(() => {
+      setAgentReady()
     })
 
     const unsubAgent = window.api.onAgentStatusUpdate((data) => {
@@ -140,16 +203,20 @@ function App(): React.JSX.Element {
           | 'reviewing'
           | 'completed'
           | 'failed',
+        currentTask: data.currentTask,
         elapsedMs: data.elapsedMs,
         tokenUsage: data.tokenUsage,
+        inputTokens: data.inputTokens,
+        outputTokens: data.outputTokens,
         model: data.model,
-        complexityTier: data.complexityTier
+        complexityTier: data.complexityTier,
+        activeMcpTools: data.activeMcpTools
       })
     })
 
     // Auto-update event listeners
     const unsubUpdateAvailable = window.api.onUpdateAvailable((info) => {
-      setAvailable(info.version, info.releaseNotes)
+      setAvailable(info.version, info.releaseNotes, info.releaseDate)
     })
     const unsubUpdateNotAvailable = window.api.onUpdateNotAvailable(() => {
       setNotAvailable()
@@ -169,19 +236,32 @@ function App(): React.JSX.Element {
       onMemoryFeedProgress(progress)
     })
 
-    // Dream progress listener
-    const unsubDreamProgress = window.api.onDreamProgress((progress) => {
-      onDreamProgress(progress)
+    // Conversation state machine mirror — keep renderer in sync with backend state
+    const unsubStateChange = window.api.onStateChange((data) => {
+      // Guard: ignore state changes from a non-active conversation to prevent
+      // cross-conversation state bleed (same pattern as onMessageChunk/onMessageComplete)
+      const activeConvId = useChatStore.getState().activeConversation?.id
+      if (activeConvId && data.conversationId && data.conversationId !== activeConvId) {
+        rendererLog.info(
+          `[StateMachine:renderer] IGNORED ${data.from} → ${data.to} (conv=${data.conversationId}, active=${activeConvId})`
+        )
+        return
+      }
+      rendererLog.info(`[StateMachine:renderer] ${data.from} → ${data.to} (event=${data.event})`)
+      setConversationState({
+        phase: data.to as ConversationPhase | 'idle' | 'error' | 'stopped',
+        from: data.from,
+        event: data.event,
+        conversationId: data.conversationId
+      })
     })
 
     return () => {
       unsubChunk()
       unsubComplete()
-      unsubHandoff()
       unsubGrillComplete()
       unsubGrillQuestion()
-      unsubTaskPlan()
-      unsubTaskProgress()
+      unsubAskQuestion()
       unsubReady()
       unsubAgent()
       unsubUpdateAvailable()
@@ -190,36 +270,33 @@ function App(): React.JSX.Element {
       unsubUpdateProgress()
       unsubUpdateError()
       unsubMemoryFeed()
-      unsubDreamProgress()
+      unsubStateChange()
     }
   }, [
     loadProfile,
     loadWorkspaces,
     appendStreamChunk,
+    updateStreamingIdentity,
     finalizeStream,
-    setHandoff,
-    setTaskPlan,
-    updateTaskProgress,
     addToolActivity,
     updateToolActivity,
     updateStatus,
-    setOrchestratorReady,
+    setAgentReady,
     setCompactSuggestion,
+    setBudgetCapBanner,
     endGrillSession,
     setGrillQuestions,
+    setPendingQuestions,
     setAvailable,
     setNotAvailable,
     setDownloaded,
     setProgress,
     setError,
     onMemoryFeedProgress,
-    onDreamProgress
+    finalizeTurnBubble,
+    setConversationState,
+    loadContextUsage
   ])
-
-  // Pop-out mode: render only the Pixel Office fullscreen
-  if (isPixelOfficePopout) {
-    return <PixelOfficeFullscreen />
-  }
 
   // Brief loading state while profile loads
   if (isProfileLoading) {
@@ -243,7 +320,14 @@ function App(): React.JSX.Element {
     return <WelcomeModal onComplete={handleWelcomeComplete} />
   }
 
-  return <AppLayout />
+  return (
+    <>
+      <AppLayout />
+      <CheckpointApprovalModal />
+      <ElicitationModal />
+      <UpdateAvailableModal />
+    </>
+  )
 }
 
 export default App
