@@ -40,6 +40,7 @@ export const IPC_CHANNELS = {
   CHAT_COMPLETE: 'chat:complete',
   CHAT_CLOSE: 'chat:close',
   CHAT_GET_FILE_CHANGES: 'chat:getFileChanges',
+  CHAT_SWITCH_BRANCH: 'chat:switchBranch',
   /** Session recovery: stale session auto-heal progress events */
   CHAT_SESSION_RECOVERY: 'chat:sessionRecovery',
   /** State machine transitions — renderer mirrors backend conversation state */
@@ -202,8 +203,6 @@ export const IPC_CHANNELS = {
   REPO_INIT: 'repo:init',
   REPO_SET_REMOTE: 'repo:setRemote',
   REPO_GET_INFO: 'repo:getInfo',
-  REPO_HAS_UNSAVED_CHANGES: 'repo:hasUnsavedChanges',
-
   // Code Changes
   REPO_GET_FILE_DETAILS: 'repo:getFileDetails',
   REPO_GET_FILE_DIFF: 'repo:getFileDiff',
@@ -339,6 +338,9 @@ export const IPC_CHANNELS = {
   // SDK Session — session mutation methods
   SDK_FORK_SESSION: 'sdk:forkSession',
 
+  // SDK Diagnostics (0.2.138+) — @alpha
+  SDK_RESOLVE_SETTINGS: 'sdk:resolveSettings',
+
   // SDK Elicitation (enriched — via elicitation.service)
   SDK_ELICITATION_REQUEST: 'sdk:elicitationRequest',
   SDK_ELICITATION_RESPONSE: 'sdk:elicitationResponse',
@@ -401,6 +403,9 @@ export const IPC_CHANNELS = {
   GRILL_GET_SESSION: 'grill:getSession',
   GRILL_SAVE_ANSWERS: 'grill:saveAnswers',
   GRILL_STATUS_CHANGED: 'grill:statusChanged',
+
+  // Project Creation
+  PROJECT_CREATE: 'project:create',
 
   // External MCP Integrations
   WORKSPACE_CHECK_EXTERNAL_MCP: 'workspace:check-external-mcp',

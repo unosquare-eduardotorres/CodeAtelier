@@ -1,12 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
-import {
-  ChatItem,
-  UnsavedChangesDialog,
-  CompleteDialog,
-  NewConversationModal
-} from '@renderer/components/chat'
+import { ChatItem, NewConversationModal } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
 import type { ConversationMode } from '../../../../shared/types'
 
@@ -37,12 +32,6 @@ export default function ChatSidebar({
 
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const [unsavedTarget, setUnsavedTarget] = useState<{
-    id: string
-    files: string[]
-    fileCount: number
-  } | null>(null)
-  const [completeFromUnsaved, setCompleteFromUnsaved] = useState<string | null>(null)
   const [showNewChatModal, setShowNewChatModal] = useState(false)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const dragItemId = useRef<string | null>(null)
@@ -258,24 +247,7 @@ export default function ChatSidebar({
                   if (target && target.title === 'New Conversation') {
                     closeConversation(id)
                   } else {
-                    // Check for unsaved changes before showing delete dialog
-                    window.api
-                      .hasUnsavedChanges({ conversationId: id })
-                      .then((result) => {
-                        if (result.hasChanges) {
-                          setUnsavedTarget({
-                            id,
-                            files: result.files,
-                            fileCount: result.fileCount
-                          })
-                        } else {
-                          setDeleteTarget(id)
-                        }
-                      })
-                      .catch(() => {
-                        // Fallback to regular delete
-                        setDeleteTarget(id)
-                      })
+                    setDeleteTarget(id)
                   }
                 }}
                 onRename={renameConversation}
@@ -299,47 +271,6 @@ export default function ChatSidebar({
           }
         }}
         onCancel={() => setDeleteTarget(null)}
-      />
-
-      {/* Unsaved changes dialog */}
-      <UnsavedChangesDialog
-        isOpen={unsavedTarget !== null}
-        files={unsavedTarget?.files ?? []}
-        fileCount={unsavedTarget?.fileCount ?? 0}
-        onCancel={() => setUnsavedTarget(null)}
-        onDiscard={async () => {
-          if (unsavedTarget) {
-            await closeConversation(unsavedTarget.id)
-            setUnsavedTarget(null)
-          }
-        }}
-        onCommit={() => {
-          if (unsavedTarget) {
-            setCompleteFromUnsaved(unsavedTarget.id)
-            setUnsavedTarget(null)
-          }
-        }}
-      />
-
-      {/* Complete dialog triggered from unsaved changes */}
-      <CompleteDialog
-        isOpen={completeFromUnsaved !== null}
-        conversationTitle={
-          conversations.find((c) => c.id === completeFromUnsaved)?.title ?? 'Untitled'
-        }
-        conversationId={completeFromUnsaved ?? ''}
-        onConfirm={async (branchName, commitMessage, description) => {
-          await window.api.completeConversation({
-            conversationId: completeFromUnsaved!,
-            branchName,
-            commitMessage,
-            description
-          })
-          // Remove from local state
-          useChatStore.getState().loadConversations(activeWorkspace!.id)
-          setCompleteFromUnsaved(null)
-        }}
-        onCancel={() => setCompleteFromUnsaved(null)}
       />
 
       {/* New conversation modal */}

@@ -359,16 +359,6 @@ export interface ActivationProgressEvent {
   timestamp: number
 }
 
-// ── File Change Tracking ──
-
-export interface FileChange {
-  id: string
-  conversationId: string
-  filePath: string
-  changeType: 'created' | 'modified' | 'deleted'
-  createdAt: string
-}
-
 export interface CompleteResult {
   branch: string
   commitHash: string
@@ -530,6 +520,15 @@ export interface GrillEvaluation {
   feedback: string
   questions: GrillQuestion[]
   suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
+}
+
+/** A single Q→A decision captured during the greenfield project wizard grill */
+export interface GrillDecision {
+  trackId: GrillTrackId
+  questionId: string
+  questionText: string
+  selectedOption: string
+  otherText?: string
 }
 
 /** A single Q→A decision captured during a Grill session */

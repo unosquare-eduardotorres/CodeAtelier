@@ -1,4 +1,14 @@
-import { Check, FileCode, FileMinus, FilePlus, Minus, Square, CheckSquare } from 'lucide-react'
+import {
+  Check,
+  FileCode,
+  FileMinus,
+  FilePlus,
+  Minus,
+  Square,
+  CheckSquare,
+  GitBranch,
+  Settings
+} from 'lucide-react'
 import type { FileChangeDetail } from '@renderer/store'
 
 interface FileChangeListProps {
@@ -10,6 +20,8 @@ interface FileChangeListProps {
   onSelectAll: () => void
   onDeselectAll: () => void
   isLoading: boolean
+  isGitConfigured?: boolean
+  onNavigateToSettings?: () => void
 }
 
 const CHANGE_TYPE_CONFIG = {
@@ -41,21 +53,46 @@ export default function FileChangeList({
   onToggleCheck,
   onSelectAll,
   onDeselectAll,
-  isLoading
+  isLoading,
+  isGitConfigured = true,
+  onNavigateToSettings
 }: FileChangeListProps): React.JSX.Element {
   const allChecked = files.length > 0 && checkedFiles.size === files.length
   const someChecked = checkedFiles.size > 0 && checkedFiles.size < files.length
 
   if (files.length === 0 && !isLoading) {
+    // State A — No git repo
+    if (!isGitConfigured) {
+      return (
+        <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col items-center justify-center px-4 py-12 text-center">
+          <div className="w-12 h-12 rounded-full bg-warning-muted flex items-center justify-center mb-3">
+            <GitBranch size={24} className="text-warning" />
+          </div>
+          <p className="text-sm font-medium text-text-primary mb-1">Git is not configured</p>
+          <p className="text-xs text-text-secondary mb-3">
+            Set up a repository to track your changes
+          </p>
+          {onNavigateToSettings && (
+            <button
+              onClick={onNavigateToSettings}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-white hover:brightness-110 transition-colors"
+            >
+              <Settings size={12} />
+              Set up Repository
+            </button>
+          )}
+        </div>
+      )
+    }
+
+    // State B — Git configured, no changes
     return (
       <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col items-center justify-center px-4 py-12 text-center">
         <div className="w-12 h-12 rounded-full bg-success-muted flex items-center justify-center mb-3">
           <Check size={24} className="text-success" />
         </div>
         <p className="text-sm font-medium text-text-primary mb-1">No uncommitted changes</p>
-        <p className="text-xs text-text-secondary">
-          All file changes in this conversation have been committed.
-        </p>
+        <p className="text-xs text-text-secondary">All file changes have been committed.</p>
       </div>
     )
   }

@@ -1,9 +1,11 @@
-import { useCallback } from 'react'
-import { Bot, FolderOpen, Plus, Mic, Keyboard, Flame } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { Bot, FolderOpen, Plus, Sparkles, Mic, Keyboard, Flame } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { useWorkspaceCardsData } from '@renderer/hooks/useWorkspaceCardsData'
+import { ConfirmDialog } from '@renderer/components/common'
 import FloatingIconField from './FloatingIconField'
 import WorkspaceCard from './WorkspaceCard'
+import CreateProjectWizard from './CreateProjectWizard'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 const metaKey = isMac ? '⌘' : 'Ctrl+'
@@ -58,9 +60,34 @@ function AddWorkspaceCard({ onClick }: AddWorkspaceCardProps): React.JSX.Element
   )
 }
 
+/**
+ * "Create New Project" dashed card — opens the wizard.
+ */
+function CreateProjectCard({ onClick }: { onClick: () => void }): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex flex-col items-center justify-center gap-3 w-full min-h-[12rem] text-center p-4 rounded-2xl border-2 border-dashed border-border-default hover:border-primary/50 hover:bg-surface-overlay/60 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+    >
+      <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary-muted border border-primary/30 text-primary-text group-hover:border-primary/50 transition-colors">
+        <Sparkles size={18} />
+      </div>
+      <div>
+        <div className="text-sm font-medium text-text-secondary group-hover:text-text-primary transition-colors">
+          Create New Project
+        </div>
+        <div className="text-xs text-text-muted mt-0.5">Start from scratch with AI guidance</div>
+      </div>
+    </button>
+  )
+}
+
 export default function WelcomeScreen(): React.JSX.Element {
-  const { workspaces, openWorkspace, createWorkspace } = useWorkspaceStore()
+  const { workspaces, openWorkspace, createWorkspace, deleteWorkspace } = useWorkspaceStore()
   const cardData = useWorkspaceCardsData(workspaces)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [showWizard, setShowWizard] = useState(false)
 
   const handleAddWorkspace = useCallback(async (): Promise<void> => {
     try {
@@ -105,9 +132,11 @@ export default function WelcomeScreen(): React.JSX.Element {
                 workspace={ws}
                 data={cardData[ws.id]}
                 onOpen={openWorkspace}
+                onDelete={(id) => setDeleteTarget(id)}
               />
             ))}
             <AddWorkspaceCard onClick={handleAddWorkspace} />
+            <CreateProjectCard onClick={() => setShowWizard(true)} />
           </div>
 
           {workspaces.length === 0 && (
@@ -143,6 +172,34 @@ export default function WelcomeScreen(): React.JSX.Element {
           <span className="text-xs text-text-muted">v1.0.0</span>
         </div>
       </div>
+
+      {/* Confirm dialog for workspace removal */}
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        title="Remove Workspace"
+        message="Remove this workspace from Code Atelier? Your project files will not be deleted."
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteWorkspace(deleteTarget)
+          }
+          setDeleteTarget(null)
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
+      {/* Create New Project wizard overlay */}
+      {showWizard && (
+        <CreateProjectWizard
+          onClose={() => setShowWizard(false)}
+          onCreated={(workspaceId) => {
+            setShowWizard(false)
+            openWorkspace(workspaceId)
+          }}
+        />
+      )}
     </div>
   )
 }

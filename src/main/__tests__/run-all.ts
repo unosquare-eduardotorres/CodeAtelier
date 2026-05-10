@@ -76,8 +76,6 @@ import '../ipc/__tests__/validate-args.test'
 import '../db/repositories/__tests__/message.repository.test'
 import '../db/repositories/__tests__/conversation.repository.test'
 import '../db/repositories/__tests__/workspace.repository.test'
-import '../db/repositories/__tests__/file-change.repository.test'
-
 // Single summary at the end — awaits all pending async tests, prints totals,
 // and exits with code 1 on any failure.
 import { summaryAsync } from '../services/__tests__/test-harness'

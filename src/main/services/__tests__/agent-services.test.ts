@@ -98,6 +98,26 @@ describe('summarizeToolInput', () => {
     assert.equal(result, 'Task management')
   })
 
+  test('TaskCreate — returns task management label', () => {
+    const result = summarizeToolInput('TaskCreate', {})
+    assert.equal(result, 'Task management')
+  })
+
+  test('TaskGet — returns task management label', () => {
+    const result = summarizeToolInput('TaskGet', {})
+    assert.equal(result, 'Task management')
+  })
+
+  test('TaskUpdate — returns task management label', () => {
+    const result = summarizeToolInput('TaskUpdate', {})
+    assert.equal(result, 'Task management')
+  })
+
+  test('TaskList — returns task management label', () => {
+    const result = summarizeToolInput('TaskList', {})
+    assert.equal(result, 'Task management')
+  })
+
   test('TaskOutput — returns truncated task id', () => {
     const result = summarizeToolInput('TaskOutput', {
       id: 'abc1234567890'

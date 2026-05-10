@@ -214,7 +214,10 @@ export class ChatStreamService {
     conversationLifecycle.onDispose(() => {
       this.streamingLock = false
       this.activeRequestId = null
-      this.currentStreamingRole = 'da-vinci'
+      // Don't reset currentStreamingRole to a hardcoded 'da-vinci' —
+      // it should retain the per-stream value until the next stream starts.
+      // Resetting to 'da-vinci' corrupts any event forwarders that fire
+      // between dispose and the next stream() call (e.g. compactNeeded).
     })
     conversationLifecycle.onDispose(() => {
       chatAgentService.removeListener('chunk', onChunk)
@@ -288,6 +291,7 @@ export class ChatStreamService {
 
     // ── Setup shared state for listeners ──
     const streamedContent = { value: '' }
+    const planInjected = { value: false }
     const workspacePath = chatAgentService.getWorkspacePath() ?? undefined
 
     // ── Step 4: Define listeners ──
@@ -426,6 +430,13 @@ export class ChatStreamService {
     // Must ALSO send the block as a chunk so the renderer's streamingContent includes it
     // (finalizeStream builds contentMd from renderer-side streamingContent, not the DB).
     const onPlanEvent = (data: PlanDetectedEvent): void => {
+      // Guard: only one plan per stream — skip subsequent emit_plan calls
+      if (planInjected.value) {
+        log.warn('[PIPELINE:plan-skipped] Plan already injected this stream — skipping duplicate')
+        return
+      }
+      planInjected.value = true
+
       const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
       streamedContent.value += planBlock
       this.mainWindow.webContents.send(

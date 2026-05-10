@@ -457,6 +457,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // CLI mode sync is deferred — will happen automatically on next message send
     // No need to restart the CLI process just because the user switched conversations
+
+    // Branch-per-conversation: switch git branch if conversation has one
+    if (conversation.branchName) {
+      try {
+        const result = await window.api.switchBranch({ conversationId: id })
+        if (result.switched) {
+          // Refresh repoInfo so status bar shows the new branch
+          const workspace = useWorkspaceStore.getState().activeWorkspace
+          if (workspace) {
+            useWorkspaceStore.getState().loadRepoInfo(workspace.id)
+          }
+        }
+      } catch (e) {
+        rendererLog.warn('Branch switch failed:', e)
+      }
+    }
   },
 
   renameConversation: async (id: string, title: string) => {

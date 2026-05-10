@@ -1,6 +1,5 @@
 import type { BrowserWindow } from 'electron'
 import { app } from 'electron'
-import { fileChangeRepository } from '../db/repositories'
 import { bugRepository } from '../db/repositories/bug.repository'
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
@@ -339,20 +338,6 @@ export function forwardChunkToRenderer(
     // Control tools are internal — don't show as tool activity in the UI
     if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
 
-    // Track file changes for Write/Edit tools (native + MCP variants)
-    const isWriteTool = chunk.toolName === 'Write' || chunk.toolName?.endsWith('__Write')
-    const isEditTool = chunk.toolName === 'Edit' || chunk.toolName?.endsWith('__Edit')
-    if ((isWriteTool || isEditTool) && chunk.toolInput) {
-      try {
-        fileChangeRepository.track(
-          conversationId,
-          chunk.toolInput,
-          isWriteTool ? 'created' : 'modified'
-        )
-      } catch (e) {
-        log.warn('Failed to track file change:', e)
-      }
-    }
     mainWindow.webContents.send(
       IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
       createToolActivityChunk({
@@ -380,31 +365,9 @@ export function forwardChunkToRenderer(
         const parsed = JSON.parse(chunk.content) as Record<string, unknown>
         toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
 
-        // Safety net: detect plan file writes and inject content as a plan block
-        // so the UI renders a PlanCard even when Claude CLI writes plans to files.
-        // We extract the content from the tool input JSON (available at tool_result time)
-        // instead of reading from disk, avoiding the timing bug where the file doesn't exist yet.
-        if (
-          chunk.toolName === 'Write' &&
-          typeof parsed.file_path === 'string' &&
-          parsed.file_path.includes('.claude/plans/') &&
-          typeof parsed.content === 'string'
-        ) {
-          const planBlock = `\n\n\`\`\`\`plan\n${parsed.content}\n\`\`\`\`\n`
-          contentAccumulator.value += planBlock
-          mainWindow.webContents.send(
-            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-            createTextChunk({
-              conversationId,
-              requestId,
-              text: planBlock,
-              role,
-              specialist: specialistMeta?.specialist,
-              taskId: specialistMeta?.taskId
-            })
-          )
-          log.info('Injected plan content from Write to .claude/plans/', parsed.file_path)
-        }
+        // Plan injection removed — agent-base.service.ts handles plan block injection
+        // at content_block_stop (streaming path) and in the assistant message handler
+        // (full-message path). The duplicate safety net here caused double plan blocks.
       } catch {
         toolInputSummary = chunk.content.slice(0, 120)
       }

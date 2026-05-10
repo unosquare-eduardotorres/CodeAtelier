@@ -8,7 +8,8 @@ import {
   remarkEmojiSpan,
   remarkHighlightQuestions,
   remarkHighlightNextSteps,
-  remarkStyledArrows
+  remarkStyledArrows,
+  remarkStripStrayBackticks
 } from './remark-plugins'
 import { CodeBlock } from './CodeBlock'
 import type {
@@ -31,6 +32,7 @@ import type { ChatBubbleSize } from '../../../../shared/types'
 import { Avatar, ImageLightbox, Skeleton } from '@renderer/components/common'
 import { CORE_AGENT_DEFAULTS, USER_AVATAR_KEY } from '@renderer/utils/agentIdentity'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
+import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
 
 /** Chat actions needed by MessageBubble — passed as props to avoid N×useShallow subscriptions */
 export interface MessageBubbleActions {
@@ -123,36 +125,12 @@ const BUBBLE_SIZE_CLASSES: Record<
 }
 
 // Module-level constants — stable references, never recreated on render
-const REMARK_PLUGINS_BASE = [remarkGfm, remarkBreaks, remarkEmojiSpan, remarkStyledArrows]
+const REMARK_PLUGINS_BASE = [remarkGfm, remarkBreaks, remarkEmojiSpan, remarkStyledArrows, remarkStripStrayBackticks]
 const REMARK_PLUGINS = [...REMARK_PLUGINS_BASE, remarkHighlightQuestions, remarkHighlightNextSteps]
 const REHYPE_PLUGINS = [rehypeRaw]
 
-/** Strip stray backtick text nodes from React children (left over after markdown inline-code parsing) */
-function stripStrayBackticks(children: React.ReactNode): React.ReactNode[] | null | undefined {
-  return React.Children.map(children, (child) => {
-    if (typeof child === 'string') {
-      const stripped = child.replace(/`/g, '')
-      return stripped || null
-    }
-    if (React.isValidElement(child) && (child.props as Record<string, unknown>)?.children) {
-      const childProps = child.props as Record<string, unknown>
-      return React.cloneElement(child, {
-        ...childProps,
-        children: stripStrayBackticks(childProps.children as React.ReactNode)
-      } as Record<string, unknown>)
-    }
-    return child
-  })
-}
-
 // Module-level markdown components — stable reference, avoids ReactMarkdown full re-render
 const markdownComponents = {
-  p: ({ children }: { children?: React.ReactNode }) => <p>{stripStrayBackticks(children)}</p>,
-  li: ({ children }: { children?: React.ReactNode }) => <li>{stripStrayBackticks(children)}</li>,
-  strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong>{stripStrayBackticks(children)}</strong>
-  ),
-  em: ({ children }: { children?: React.ReactNode }) => <em>{stripStrayBackticks(children)}</em>,
   pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
     const isBlock = className?.includes('language-')
@@ -215,11 +193,13 @@ const markdownComponents = {
 /**
  * Resolves the display identity (name, subtitle, avatar, color) for a message.
  *
- * Visual identity is driven exclusively by the message's own role + agentId — NOT
- * by `activeConversation.personaSpecialistId`. Persona is a backend prompt-overlay
- * concept (see DaVinciRoleAdapter.setPersona): it shapes how DaVinci writes, but
- * the bubble still belongs to DaVinci. A real specialist response carries
- * role='specialist' and renders the specialist's identity.
+ * Visual identity is driven primarily by the message's own role + agentId.
+ * However, when the workspace has a **ready** Project Specialist, messages
+ * tagged 'da-vinci' are overridden to show the specialist's identity — the
+ * specialist IS the only active agent and any stale 'da-vinci' role tags
+ * (from lifecycle dispose races or error paths) should not surface as
+ * "Generalist." Persona is a backend prompt-overlay concept and does NOT
+ * affect visual identity here.
  */
 function useMessageIdentity(message: Message): {
   displayName: string
@@ -231,8 +211,13 @@ function useMessageIdentity(message: Message): {
   const activeConversation = useChatStore((s) => s.activeConversation)
   const workspaces = useWorkspaceStore((s) => s.workspaces)
 
+  // Resolve the workspace's project specialist (if any) for identity override
+  const workspaceId = activeConversation?.workspaceId
+  const projectSpecialist = useProjectSpecialistStore((s) =>
+    workspaceId ? s.byWorkspace[workspaceId] : null
+  )
+
   return useMemo(() => {
-    const workspaceId = activeConversation?.workspaceId
     const mannequinKey = workspaceId
       ? getWorkspaceMannequin(workspaceId, workspaces)
       : 'mannequin-main'
@@ -247,8 +232,21 @@ function useMessageIdentity(message: Message): {
       }
     }
 
+    // ── Specialist override ──
+    // When the workspace has a ready specialist, ALL non-user messages
+    // tagged 'da-vinci' should show the specialist identity — the specialist
+    // IS the only active agent. Any 'da-vinci' role tags are stale artefacts.
+    if (message.role === 'da-vinci' && projectSpecialist?.buildStatus === 'ready') {
+      return {
+        displayName: projectSpecialist.displayName,
+        subtitle: null,
+        avatarKey: mannequinKey,
+        accentColor: projectSpecialist.color ?? '#F59E0B'
+      }
+    }
+
     if (message.role === 'da-vinci') {
-      // DaVinci is always DaVinci — persona is a backend prompt overlay, not a visual swap.
+      // DaVinci is always DaVinci — only reached when NO specialist is active.
       const coreSpec = specialists.find((s) => s.agentId === 'da-vinci')
       const defaults = CORE_AGENT_DEFAULTS['da-vinci']
       return {
@@ -279,7 +277,7 @@ function useMessageIdentity(message: Message): {
       avatarKey: mannequinKey,
       accentColor: '#6366F1'
     }
-  }, [message.role, message.agentId, specialists, activeConversation?.workspaceId, workspaces])
+  }, [message.role, message.agentId, specialists, workspaces, workspaceId, projectSpecialist])
 }
 
 /** Renders a single image attachment inside a message bubble using data URIs */

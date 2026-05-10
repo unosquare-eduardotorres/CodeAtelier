@@ -55,8 +55,8 @@ export const TIER_LIMITS: Record<ContextWindowTier, ContextTierLimits> = {
     compactAutoThreshold: 80_000,
   },
   large: {
-    maxTurnsPlan: 20,
-    maxTurnsBuild: 35,
+    maxTurnsPlan: 30,
+    maxTurnsBuild: 50,
     readLineLimit: 300,
     toolResultBudgetChars: 200_000, // Same as Claude — 262K is roomy
     compactSuggestThreshold: 120_000,

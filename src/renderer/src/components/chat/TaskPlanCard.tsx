@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkStripStrayBackticks } from './remark-plugins'
 import type { StructuredPlan, PlanType, PlanRootCause, PlanPhase } from '../../../../shared/types'
 import { MermaidDiagram } from '@renderer/components/common'
 
@@ -175,6 +176,12 @@ export default function TaskPlanCard({
     [structuredPlan]
   )
 
+  // Simple plan: ≤2 low-risk, low-complexity phases → flat layout, no accordion
+  const isSimplePlan =
+    visiblePhases.length > 0 &&
+    visiblePhases.length <= 2 &&
+    visiblePhases.every((p) => p.risk !== 'high' && p.complexity <= 5)
+
   const [userClicked, setUserClicked] = useState(false)
   const hasUserChosen = userClicked
 
@@ -191,17 +198,12 @@ export default function TaskPlanCard({
 
   // ── Section renderers (extracted for layout composition) ──
 
-  const titleSection = structuredPlan && (
+  // Title is already shown in the card header — only render the summary here
+  const titleSection = structuredPlan?.summary ? (
     <div className="border-l-4 border-[var(--color-plan-card)] pl-4 bg-surface-overlay rounded-r">
-      <h3 className="text-lg font-semibold text-[var(--color-plan-card-text)] flex items-center gap-2">
-        <ClipboardList size={18} className="text-[var(--color-plan-card)]" />
-        {structuredPlan.title}
-      </h3>
-      {structuredPlan.summary && (
-        <p className="text-sm text-text-body mt-1.5 leading-relaxed">{structuredPlan.summary}</p>
-      )}
+      <p className="text-sm text-text-body leading-relaxed">{structuredPlan.summary}</p>
     </div>
-  )
+  ) : null
 
   // Summary is now rendered inline with titleSection — this is kept as a no-op for backward compat
   const summarySection = false
@@ -213,7 +215,7 @@ export default function TaskPlanCard({
         Problem Analysis
       </div>
       <div className="text-sm text-text-body prose prose-sm prose-invert max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{structuredPlan.problemSummary}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>{structuredPlan.problemSummary}</ReactMarkdown>
       </div>
       {structuredPlan.rootCause && (
         <div className="mt-3 pt-3 border-t border-[var(--color-plan-card-border)]">
@@ -221,7 +223,7 @@ export default function TaskPlanCard({
             Root Cause
           </div>
           <div className="text-sm text-text-body prose prose-sm prose-invert max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{structuredPlan.rootCause}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>{structuredPlan.rootCause}</ReactMarkdown>
           </div>
         </div>
       )}
@@ -239,7 +241,7 @@ export default function TaskPlanCard({
         Current State
       </div>
       <div className="text-sm text-text-body prose prose-sm prose-invert max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{structuredPlan.currentState}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>{structuredPlan.currentState}</ReactMarkdown>
       </div>
     </div>
   )
@@ -264,7 +266,9 @@ export default function TaskPlanCard({
     </div>
   )
 
-  const phasesSection = visiblePhases.length > 0 && <PhasesList phases={visiblePhases} />
+  const phasesSection = visiblePhases.length > 0 && (
+    <PhasesList phases={visiblePhases} simple={isSimplePlan} />
+  )
 
   const filesChangedSection = visibleFilesChanged.length > 0 && (
     <div className="space-y-2">
@@ -387,7 +391,8 @@ export default function TaskPlanCard({
       </div>
     )
 
-  const implementationOrderSection = structuredPlan?.implementationOrder &&
+  const implementationOrderSection = !isSimplePlan &&
+    structuredPlan?.implementationOrder &&
     structuredPlan.implementationOrder.length > 0 &&
     visiblePhases.length > 0 && (
       <div className="rounded border-l-3 border-info bg-surface-base/20 pl-4 pr-3 py-3">
@@ -457,7 +462,7 @@ export default function TaskPlanCard({
             <span className="text-sm font-semibold text-mode-plan-text">{section.heading}</span>
           </div>
           <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>{section.content}</ReactMarkdown>
           </div>
           {section.mermaid && (
             <div className="px-4 pb-4">
@@ -603,7 +608,7 @@ export default function TaskPlanCard({
       )}
       {isInlinePlan && !structuredPlan && (
         <div className="px-5 py-4 prose prose-sm prose-invert max-w-none">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{planContent!}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>{planContent!}</ReactMarkdown>
         </div>
       )}
 
@@ -666,7 +671,7 @@ function RootCausesList({ rootCauses }: { rootCauses: PlanRootCause[] }): React.
             Root Cause {rc.id} — {rc.title}
           </div>
           <div className="text-sm text-text-body prose prose-sm prose-invert max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{rc.description}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>{rc.description}</ReactMarkdown>
           </div>
           {rc.symptom && (
             <div className="mt-2 text-xs text-text-secondary">
@@ -680,15 +685,17 @@ function RootCausesList({ rootCauses }: { rootCauses: PlanRootCause[] }): React.
 }
 
 function ComplexityIndicator({ score }: { score: number }): React.JSX.Element {
+  // Compact 5-bar version — maps 1-10 score to 5 filled segments
+  const filled = Math.ceil(score / 2)
   return (
     <div className="flex items-center gap-1" title={`Complexity: ${score}/10`}>
       <span className="text-xs text-text-secondary mr-0.5">{score}</span>
       <div className="flex gap-px">
-        {Array.from({ length: 10 }, (_, i) => (
+        {Array.from({ length: 5 }, (_, i) => (
           <div
             key={i}
-            className={`w-1.5 h-3 rounded-sm ${
-              i < score
+            className={`w-1 h-2.5 rounded-sm ${
+              i < filled
                 ? score <= 3
                   ? 'bg-success'
                   : score <= 6
@@ -713,7 +720,13 @@ function RiskDot({ risk }: { risk: 'low' | 'medium' | 'high' }): React.JSX.Eleme
   )
 }
 
-function PhasesList({ phases }: { phases: PlanPhase[] }): React.JSX.Element {
+function PhasesList({
+  phases,
+  simple = false
+}: {
+  phases: PlanPhase[]
+  simple?: boolean
+}): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
 
   const toggle = (id: number): void => {
@@ -725,26 +738,78 @@ function PhasesList({ phases }: { phases: PlanPhase[] }): React.JSX.Element {
     })
   }
 
+  // Risk-colored left border per phase
+  const riskBorderColor = (risk: 'low' | 'medium' | 'high'): string =>
+    risk === 'low' ? 'border-l-success' : risk === 'medium' ? 'border-l-warning' : 'border-l-danger'
+
+  // Shared phase content (description + files)
+  const renderPhaseContent = (phase: PlanPhase): React.JSX.Element => (
+    <div className="px-4 pb-4 border-t border-[var(--color-plan-card-phase-border)]">
+      <div className="pt-3 text-sm text-text-body prose prose-sm prose-invert max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>
+          {phase.description}
+        </ReactMarkdown>
+      </div>
+      {phase.files && phase.files.length > 0 && (
+        <div className="mt-3">
+          <div className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
+            Files
+          </div>
+          <div className="space-y-1">
+            {phase.files.map((f, fi) => (
+              <div key={`phase-file-${fi}`} className="flex items-baseline gap-2 text-xs py-0.5">
+                <span className="text-[var(--color-plan-card)] font-mono shrink-0 bg-[var(--color-plan-card-muted)] px-1.5 py-0.5 rounded">
+                  {shortenPath(f.file)}
+                </span>
+                <span className="text-text-secondary">{f.change}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-        <ClipboardList size={14} className="text-[var(--color-plan-card-accent)]" />
-        Implementation Phases
-      </div>
+      {/* Header — hidden in simple mode */}
+      {!simple && (
+        <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+          <ClipboardList size={14} className="text-[var(--color-plan-card-accent)]" />
+          Implementation Phases
+        </div>
+      )}
       <div className="space-y-2">
         {phases.map((phase) => {
-          const isOpen = expanded.has(phase.id)
+          const isOpen = simple || expanded.has(phase.id)
           return (
             <div
               key={`phase-${phase.id}`}
-              className="rounded border border-[var(--color-plan-card-phase-border)] bg-[var(--color-plan-card-phase-bg)] overflow-hidden"
+              className={`rounded border border-[var(--color-plan-card-phase-border)] ${riskBorderColor(phase.risk)} border-l-4 bg-[var(--color-plan-card-phase-bg)] overflow-hidden`}
             >
-              <button
-                type="button"
-                onClick={() => toggle(phase.id)}
-                className="w-full flex flex-col gap-1 px-4 py-3 text-left hover:bg-[var(--color-plan-card-section-bg)] transition-colors"
-              >
-                <div className="flex items-center gap-2 w-full">
+              {/* Title row — inline in simple mode, accordion button otherwise */}
+              {simple ? (
+                <div className="flex items-center gap-2 w-full px-4 py-3">
+                  <span className="w-5 h-5 rounded bg-[var(--color-plan-card-muted)] text-[var(--color-plan-card)] text-xs flex items-center justify-center font-mono shrink-0">
+                    {phase.id}
+                  </span>
+                  <span className="text-sm font-medium text-text-primary truncate flex-1">
+                    {phase.title}
+                  </span>
+                  <div className="flex items-center gap-3 shrink-0 text-xs">
+                    <ComplexityIndicator score={phase.complexity} />
+                    {phase.fileCount != null && (
+                      <span className="text-text-secondary">~{phase.fileCount} files</span>
+                    )}
+                    <RiskDot risk={phase.risk} />
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => toggle(phase.id)}
+                  className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-[var(--color-plan-card-section-bg)] transition-colors"
+                >
                   {isOpen ? (
                     <ChevronDown size={14} className="text-text-secondary shrink-0" />
                   ) : (
@@ -753,42 +818,20 @@ function PhasesList({ phases }: { phases: PlanPhase[] }): React.JSX.Element {
                   <span className="w-5 h-5 rounded bg-[var(--color-plan-card-muted)] text-[var(--color-plan-card)] text-xs flex items-center justify-center font-mono shrink-0">
                     {phase.id}
                   </span>
-                  <span className="text-sm font-medium text-text-primary truncate">
+                  <span className="text-sm font-medium text-text-primary truncate flex-1">
                     {phase.title}
                   </span>
-                </div>
-                <div className="flex items-center gap-3 ml-[calc(14px+8px+20px+8px)] text-xs">
-                  <ComplexityIndicator score={phase.complexity} />
-                  {phase.fileCount != null && (
-                    <span className="text-text-secondary">~{phase.fileCount} files</span>
-                  )}
-                  <RiskDot risk={phase.risk} />
-                </div>
-              </button>
-              {isOpen && (
-                <div className="px-4 pb-4 border-t border-[var(--color-plan-card-phase-border)]">
-                  <div className="pt-3 text-sm text-text-body prose prose-sm prose-invert max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{phase.description}</ReactMarkdown>
+                  {/* Right-aligned inline metadata */}
+                  <div className="flex items-center gap-3 shrink-0 text-xs">
+                    <ComplexityIndicator score={phase.complexity} />
+                    {phase.fileCount != null && (
+                      <span className="text-text-secondary">~{phase.fileCount} files</span>
+                    )}
+                    <RiskDot risk={phase.risk} />
                   </div>
-                  {phase.files && phase.files.length > 0 && (
-                    <div className="mt-3">
-                      <div className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
-                        Files
-                      </div>
-                      <div className="grid grid-cols-[minmax(160px,auto)_1fr] gap-x-3 gap-y-1.5 text-xs">
-                        {phase.files.map((f, fi) => (
-                          <React.Fragment key={`phase-file-${fi}`}>
-                            <span className="text-[var(--color-plan-card)] font-mono truncate">
-                              {shortenPath(f.file)}
-                            </span>
-                            <span className="text-text-secondary">{f.change}</span>
-                          </React.Fragment>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                </button>
               )}
+              {isOpen && renderPhaseContent(phase)}
             </div>
           )
         })}

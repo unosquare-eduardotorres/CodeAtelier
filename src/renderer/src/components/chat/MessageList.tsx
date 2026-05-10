@@ -8,6 +8,7 @@ import {
   useWorkspaceStore
 } from '@renderer/store'
 import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
+import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 import { MessageBubble, GrillQuestionCard, ToolActivityBlock } from '@renderer/components/chat'
 import IdeaPopover from './IdeaPopover'
@@ -127,6 +128,11 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     (s) => s.activeConversation?.workspaceId ?? null
   )
   const workspaces = useWorkspaceStore((s) => s.workspaces)
+
+  // Resolve the workspace's project specialist for thinking indicator override
+  const projectSpecialist = useProjectSpecialistStore((s) =>
+    activeConversationWorkspaceId ? s.byWorkspace[activeConversationWorkspaceId] : null
+  )
   const specialistMannequinKey = useMemo(
     () =>
       activeConversationWorkspaceId
@@ -152,7 +158,19 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         accentColor: '#F59E0B'
       }
     }
-    // Default: generalist (Da Vinci)
+
+    // When the workspace has a ready specialist, always show the specialist
+    // even if streamingRole is 'da-vinci' (stale default or corrupted by
+    // lifecycle dispose). The specialist IS the only active agent.
+    if (projectSpecialist?.buildStatus === 'ready') {
+      return {
+        name: projectSpecialist.displayName,
+        avatarKey: specialistMannequinKey,
+        accentColor: projectSpecialist.color ?? '#F59E0B'
+      }
+    }
+
+    // Default: generalist (Da Vinci) — only when no specialist is active
     return {
       name: generalistAlias,
       avatarKey: thinkingAvatarKey,
@@ -165,7 +183,8 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     specialistMannequinKey,
     generalistAlias,
     thinkingAvatarKey,
-    thinkingAccentColor
+    thinkingAccentColor,
+    projectSpecialist
   ])
 
   // Aggregate all tool activities across segments + current for the thinking indicator
@@ -508,6 +527,8 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                   <span className="typing-dot" style={{ animationDelay: '150ms' }} />
                   <span className="typing-dot" style={{ animationDelay: '300ms' }} />
                 </div>
+                {/* Placeholder text — gives the user something to read while tools execute */}
+                <p className="text-sm text-text-muted italic">Let me take a look…</p>
                 {/* Tool activity feed — shows ALL tools (completed + running) via ToolActivityBlock */}
                 {allStreamingTools.length > 0 && (
                   <div className="mt-2">

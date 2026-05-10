@@ -39,13 +39,15 @@ interface ChatPanelProps {
   onStartGrillMe?: () => Promise<void>
   showNewChat?: boolean
   onNewChatDismiss?: () => void
+  onNavigateToSettings?: () => void
 }
 
 export default function ChatPanel({
   onCreateIdea,
   onStartGrillMe,
   showNewChat,
-  onNewChatDismiss
+  onNewChatDismiss,
+  onNavigateToSettings
 }: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, agentStatus } = useWorkspaceStore()
   const { createConversation, sendMessage, loadContextUsage, updateMode } = useChatActions()
@@ -400,7 +402,7 @@ export default function ChatPanel({
             )}
 
             {/* Repo/GitHub warning banner */}
-            <RepoWarningBanner />
+            <RepoWarningBanner onNavigateToSettings={onNavigateToSettings} />
 
             {/* Session recovery banner */}
             {sessionRecovery && (
@@ -503,7 +505,10 @@ export default function ChatPanel({
         )}
 
         {activeTab === 'code-changes' && (
-          <CodeChangesPanel conversationId={activeConversation.id} />
+          <CodeChangesPanel
+            conversationId={activeConversation.id}
+            onNavigateToSettings={onNavigateToSettings}
+          />
         )}
       </div>
     </>

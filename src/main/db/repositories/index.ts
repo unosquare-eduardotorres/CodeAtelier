@@ -10,8 +10,6 @@ export {
 export { AppPreferenceRepository, appPreferenceRepository } from './app-preference.repository'
 export { SkillRepository, skillRepository } from './skill.repository'
 export type { CreateSkillInput, UpdateSkillInput } from './skill.repository'
-export { FileChangeRepository, fileChangeRepository } from './file-change.repository'
-export type { FileChange } from './file-change.repository'
 export { AgentSessionRepository, agentSessionRepository } from './agent-session.repository'
 export type { AgentSession, TokenSummary } from './agent-session.repository'
 export { IdeaRepository, ideaRepository } from './idea.repository'

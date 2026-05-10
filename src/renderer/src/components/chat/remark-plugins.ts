@@ -117,6 +117,24 @@ export const remarkHighlightNextSteps: Plugin<[], Root> = () => {
 }
 
 /**
+ * Remark plugin: strips orphan backtick characters from text nodes.
+ *
+ * After remark parses matching backtick pairs into `inlineCode` nodes,
+ * any backticks remaining in `text` nodes are unmatched artefacts (e.g.,
+ * from rehype-raw interference with HTML-like content inside backticks).
+ * This plugin removes them.
+ */
+export const remarkStripStrayBackticks: Plugin<[], Root> = () => {
+  return (tree) => {
+    visit(tree, 'text', (node: Text) => {
+      if (node.value.includes('`')) {
+        node.value = node.value.replace(/`/g, '')
+      }
+    })
+  }
+}
+
+/**
  * Remark plugin: wraps arrow characters (→, ←, ⟶, ⟹, ↔) in a styled
  * <span class="arrow-indicator"> so they stand out from surrounding body text.
  */

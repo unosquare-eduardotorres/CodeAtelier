@@ -1,7 +1,7 @@
 # SDK Feature Adoption — Master Plan
 
-> **Last updated**: 2026-04-08
-> **SDK version**: `@anthropic-ai/claude-agent-sdk` (current installed)
+> **Last updated**: 2026-05-09
+> **SDK version**: `@anthropic-ai/claude-agent-sdk@0.2.138`
 
 ---
 
@@ -308,7 +308,7 @@ These are query-option additions that unlock new features with minimal code.
 | `supportedCommands()` | Low value — no slash command UI planned |
 | `reloadPlugins()` | We don't use plugins — MCP servers are managed differently |
 | `tool()` function | We use `createSdkMcpServer()` — no raw tool definitions needed |
-| `unstable_v2_*` functions | Alpha API — not stable enough for production |
+| `unstable_v2_*` functions | Deprecated in 0.2.133 — use `query()` instead |
 | `plugins` option | We use in-process MCP servers instead |
 | `continue` option | We use `resume` with sessionMap |
 | `forkSession` query option | We use top-level `forkSession()` function |
@@ -341,3 +341,4 @@ These are query-option additions that unlock new features with minimal code.
 | 2026-04-08 | Skip `plugins` option | `createSdkMcpServer()` covers all our custom tool needs |
 | 2026-04-08 | Prioritize `env` CLIENT_APP first in Phase 3 | Trivial to implement, immediate analytics benefit |
 | 2026-04-08 | `taskBudget` marked as Phase 3 despite @alpha | Low risk — simple passthrough, graceful degradation if API changes |
+| 2026-05-09 | SDK bumped to 0.2.138 | TodoWrite deprecated → added TaskCreate/TaskUpdate/TaskGet/TaskList to disallowedTools and summarizeToolInput; resolveSettings() wired for diagnostics; result origin captured |

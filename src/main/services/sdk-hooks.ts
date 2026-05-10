@@ -370,18 +370,6 @@ export function createSessionEndHook(onEnd: () => void): HookCallback {
   }
 }
 
-/** FileChanged hook — real-time file tracking */
-export function createFileChangedHook(
-  onFileChanged: (filePath: string, changeType: string) => void
-): HookCallback {
-  return async (input) => {
-    const filePath = (input as Record<string, unknown>).file_path as string
-    const changeType = (input as Record<string, unknown>).change_type as string
-    onFileChanged(filePath, changeType)
-    return {}
-  }
-}
-
 /**
  * PermissionDenied hook — surfaces SDK-denied tool calls to the UI.
  * With PermissionMode: 'auto', the SDK's model classifier may deny certain

@@ -134,7 +134,8 @@ describe('Context Window Tiers', () => {
   })
 
   test('large tier matches Claude-like defaults', () => {
-    assert.equal(TIER_LIMITS.large.maxTurnsBuild, 35)
+    assert.equal(TIER_LIMITS.large.maxTurnsPlan, 30)
+    assert.equal(TIER_LIMITS.large.maxTurnsBuild, 50)
     assert.equal(TIER_LIMITS.large.readLineLimit, 300)
     assert.equal(TIER_LIMITS.large.toolResultBudgetChars, 200_000)
   })
@@ -171,7 +172,8 @@ describe('Context Window Tiers', () => {
   test('262K model gets large tier with full limits', () => {
     const config = getLocalLlmContextConfig(262_144)
     assert.equal(config._tier, 'large')
-    assert.equal(config._tierLimits!.maxTurnsBuild, 35)
+    assert.equal(config._tierLimits!.maxTurnsPlan, 30)
+    assert.equal(config._tierLimits!.maxTurnsBuild, 50)
     assert.equal(config._tierLimits!.readLineLimit, 300)
     assert.equal(config._tierLimits!.toolResultBudgetChars, 200_000)
   })

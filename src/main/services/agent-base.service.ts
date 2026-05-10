@@ -122,6 +122,10 @@ export function summarizeToolInput(
       return (input.url as string) || ''
     case 'TodoRead':
     case 'TodoWrite':
+    case 'TaskCreate':
+    case 'TaskGet':
+    case 'TaskUpdate':
+    case 'TaskList':
       return 'Task management'
     case 'TaskOutput':
       return `Reading output of task ${(input.id as string)?.slice(0, 7) ?? ''}…`
@@ -224,6 +228,8 @@ export abstract class AgentBaseService extends EventEmitter {
   protected toolIdToName: Map<string, string> = new Map()
   /** Track tool IDs already processed via streaming (content_block_start/stop) to skip duplicates from full messages */
   protected processedToolIds: Set<string> = new Set()
+  /** One plan block per run — prevents duplicate plan injection from multiple Write calls */
+  protected planBlockInjected = false
   /** Counts tool calls in the current interaction for circuit-breaker protection */
   protected toolCallCount: number = 0
   /** When true, all further stdout output is ignored (circuit breaker tripped) */
@@ -406,8 +412,9 @@ export abstract class AgentBaseService extends EventEmitter {
                 // .claude/plans/ via its built-in plan mode, extract the content from the tool
                 // input and emit it as a ```plan block so the UI renders a PlanCard.
                 // The streaming path (content_block_start/stop) handles this via
-                // forwardChunkToRenderer instead — processedToolIds prevents duplication.
+                // processedToolIds — planBlockInjected prevents duplication across both paths.
                 if (
+                  !this.planBlockInjected &&
                   toolName === 'Write' &&
                   toolInput &&
                   typeof toolInput.content === 'string' &&
@@ -415,6 +422,7 @@ export abstract class AgentBaseService extends EventEmitter {
                   ((toolInput.file_path as string).includes('.claude/plans/') ||
                     isPlanContent(toolInput.content as string))
                 ) {
+                  this.planBlockInjected = true
                   this.emit('chunk', {
                     type: 'text',
                     content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`
@@ -554,11 +562,13 @@ export abstract class AgentBaseService extends EventEmitter {
             try {
               const toolInput = JSON.parse(this.currentToolInput)
               if (
+                !this.planBlockInjected &&
                 typeof toolInput.content === 'string' &&
                 typeof toolInput.file_path === 'string' &&
                 ((toolInput.file_path as string).includes('.claude/plans/') ||
                   isPlanContent(toolInput.content as string))
               ) {
+                this.planBlockInjected = true
                 this.emit('chunk', {
                   type: 'text',
                   content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`

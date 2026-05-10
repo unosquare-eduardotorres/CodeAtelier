@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Trash2 } from 'lucide-react'
 import type { Workspace } from '../../../../shared/types'
 
 /**
@@ -63,7 +63,12 @@ function DescriptionSkeleton(): React.JSX.Element {
   )
 }
 
-export default function WorkspaceCard({ workspace, data, onOpen }: Props): React.JSX.Element {
+export default function WorkspaceCard({
+  workspace,
+  data,
+  onOpen,
+  onDelete
+}: Props): React.JSX.Element {
   const isLoading = data === undefined
   const active = data?.chatCounts.active ?? 0
   const total = data?.chatCounts.total ?? 0
@@ -83,10 +88,26 @@ export default function WorkspaceCard({ workspace, data, onOpen }: Props): React
           <div className="text-sm font-medium text-text-primary truncate">{workspace.name}</div>
           <div className="text-xs text-text-muted truncate">{workspace.repoPath}</div>
         </div>
-        <ChevronRight
-          size={16}
-          className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-        />
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {onDelete && (
+            <button
+              type="button"
+              className="hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete(workspace.id)
+              }}
+              aria-label={`Remove workspace: ${workspace.name}`}
+              title="Remove workspace"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+          <ChevronRight
+            size={16}
+            className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity"
+          />
+        </div>
       </div>
 
       {/* Description (2-line clamp, skeleton while loading) */}

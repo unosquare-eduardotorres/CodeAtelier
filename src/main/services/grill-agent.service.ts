@@ -12,6 +12,7 @@ import type { GrillTrackId, GrillEvaluation } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
 import { AgentSessionService } from './agent-session.service'
 import { GrillRoleAdapter } from './role-adapters/grill.adapter'
+import { GreenfieldGrillRoleAdapter } from './role-adapters/greenfield-grill.adapter'
 
 const grillLog = log.scope('grill-agent')
 
@@ -90,6 +91,83 @@ export class GrillAgentService extends EventEmitter {
       }
     } catch (err) {
       grillLog.error(`[grill:${params.trackId}] failed:`, err)
+    } finally {
+      try {
+        await this.session.stop()
+      } catch {
+        /* best-effort cleanup */
+      }
+      this.session = null
+      this.running = false
+      this.emit('complete')
+    }
+  }
+
+  /**
+   * Run a greenfield grill evaluation (for new project ideas — no workspace/code).
+   * Emits: 'stream' (chunk), 'evaluation' (parsed result), 'complete'
+   */
+  async evaluateGreenfield(params: {
+    trackId: GrillTrackId
+    projectName: string
+    projectDescription: string
+    iterationHistory?: string
+    previousScore?: number
+    llmProvider?: import('../../shared/types').LLMProvider
+  }): Promise<void> {
+    grillLog.info(
+      `[grill] evaluateGreenfield called — track=${params.trackId} project="${params.projectName}"`
+    )
+
+    if (this.running) {
+      grillLog.warn('[grill] Already running — ignoring duplicate start')
+      return
+    }
+
+    this.running = true
+
+    const adapter = new GreenfieldGrillRoleAdapter({
+      trackId: params.trackId,
+      projectName: params.projectName,
+      projectDescription: params.projectDescription,
+      iterationHistory: params.iterationHistory,
+      previousScore: params.previousScore,
+      llmProvider: params.llmProvider
+    })
+
+    this.session = new AgentSessionService(adapter)
+
+    // Wire streaming events for live output
+    this.session.on('chunk', (chunk: StreamChunk) => {
+      this.emit('stream', { chunk })
+    })
+
+    try {
+      // Use OS temp dir as working directory (no workspace exists yet)
+      const os = await import('node:os')
+      const workDir = os.tmpdir()
+
+      await this.session.start(workDir, 'plan')
+
+      const syntheticConvId = `greenfield-grill-${params.trackId}-${Date.now()}`
+      const effectiveMessage = params.iterationHistory
+        ? `Re-evaluate based on updated decisions:\n\n${params.iterationHistory}`
+        : 'Begin your evaluation.'
+      await this.session.send(effectiveMessage, syntheticConvId, [])
+
+      const responseText = this.session.getStreamedContent()
+      const evaluation = this.parseGrillEvaluation(responseText)
+
+      if (evaluation) {
+        grillLog.info(`[grill:greenfield:${params.trackId}] completed — score=${evaluation.score}`)
+        this.emit('evaluation', evaluation)
+      } else {
+        grillLog.warn(
+          `[grill:greenfield:${params.trackId}] completed but no grill-evaluation block found`
+        )
+      }
+    } catch (err) {
+      grillLog.error(`[grill:greenfield:${params.trackId}] failed:`, err)
     } finally {
       try {
         await this.session.stop()

@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { chatAgentService } from '../services'
 import { validateSender } from './validate-sender'
@@ -134,6 +135,22 @@ export function registerSdkControlIpc(): void {
     const subagentId = requireString(obj, 'subagentId', channel)
     const { getSubagentMessages } = await import('@anthropic-ai/claude-agent-sdk')
     return getSubagentMessages(sessionId, subagentId)
+  })
+
+  // ── SDK Diagnostics (@alpha — 0.2.138+) ──────────────────────────────────
+
+  // resolveSettings() — inspect effective merged SDK settings without spawning
+  // a CLI process. Useful for diagnostics and settings validation.
+  ipcMain.handle(IPC_CHANNELS.SDK_RESOLVE_SETTINGS, async (event) => {
+    validateSender(event)
+    try {
+      const { resolveSettings } = await import('@anthropic-ai/claude-agent-sdk')
+      const settings = await resolveSettings()
+      return { success: true, settings }
+    } catch (error) {
+      log.error('resolveSettings failed:', error)
+      return { success: false, error: (error as Error).message }
+    }
   })
 
   // ── Session branching ────────────────────────────────────────────────────

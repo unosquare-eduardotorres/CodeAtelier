@@ -14,7 +14,6 @@ import type {
   ActivationProgressEvent,
   DiscoveredSkill,
   DiscoveredAgent,
-  FileChange,
   CompleteResult,
   SyncDiff,
   SyncResult,
@@ -54,7 +53,9 @@ import type {
   AuditIntermediateEvent,
   LLMProvider,
   UpdateConfig,
-  SemanticSearchResult
+  SemanticSearchResult,
+  GrillDecision,
+  GrillTrackScore
 } from '../shared/types'
 
 const api = {
@@ -69,6 +70,15 @@ const api = {
 
   deleteWorkspace: (args: { id: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DELETE, args),
+
+  createProject: (args: {
+    name: string
+    parentFolder: string
+    description: string
+    grillDecisions?: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+    tempGrillSessionId?: string
+  }): Promise<Workspace> => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CREATE, args),
 
   selectDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_DIRECTORY),
@@ -162,8 +172,11 @@ const api = {
   closeConversation: (args: { conversationId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_CLOSE, args),
 
-  getFileChanges: (args: { conversationId: string }): Promise<FileChange[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_FILE_CHANGES, args),
+  getFileChanges: (args: {
+    conversationId: string
+  }): Promise<
+    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_FILE_CHANGES, args),
 
   generatePrDescription: (args: { conversationId: string }): Promise<{ description: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION, args),
@@ -890,10 +903,10 @@ const api = {
   getRepoInfo: (args: { workspaceId: string }): Promise<RepoInfo> =>
     ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_INFO, args),
 
-  hasUnsavedChanges: (args: {
+  switchBranch: (args: {
     conversationId: string
-  }): Promise<{ hasChanges: boolean; fileCount: number; files: string[] }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.REPO_HAS_UNSAVED_CHANGES, args),
+  }): Promise<{ switched: boolean; branch: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_SWITCH_BRANCH, args),
 
   // ── Code Changes ──
   getFileDetails: (args: {
@@ -1581,6 +1594,13 @@ const api = {
     upToMessageId?: string
   }): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC_CHANNELS.SDK_FORK_SESSION, args),
 
+  // SDK Diagnostics (@alpha — 0.2.138+)
+  resolveSettings: (): Promise<{
+    success: boolean
+    settings?: Record<string, unknown>
+    error?: string
+  }> => ipcRenderer.invoke(IPC_CHANNELS.SDK_RESOLVE_SETTINGS),
+
   // Chat resume at checkpoint — undo to a specific message point
   chatResumeAt: (args: { conversationId: string; messageId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_RESUME_AT, args),
@@ -1708,6 +1728,8 @@ const api = {
     previousScore?: number
     ideaId?: string
     llmProvider?: LLMProvider
+    greenfield?: boolean
+    projectName?: string
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_EVALUATE, args),
 
   grillCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_CANCEL),

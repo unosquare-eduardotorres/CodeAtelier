@@ -2,6 +2,7 @@ import React, { useEffect } from 'react'
 import { FileText, FileWarning, Loader2, BookOpen, MessageCircle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkStripStrayBackticks } from '../chat/remark-plugins'
 import { useDocsStore, useWorkspaceStore } from '@renderer/store'
 import { MermaidDiagram } from '@renderer/components/common'
 import type { DocFile } from '../../../../shared/types'
@@ -62,7 +63,7 @@ function DocumentViewer({ content }: { content: string }): React.JSX.Element {
 
   return (
     <div className="prose prose-invert prose-sm max-w-none px-6 py-4">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]} components={markdownComponents}>
         {content}
       </ReactMarkdown>
     </div>
