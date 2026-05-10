@@ -5,6 +5,7 @@ import { resolve, basename } from 'node:path'
 import simpleGit from 'simple-git'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { workspaceRepository } from '../db/repositories'
+import { repoService } from '../services/repo.service'
 import { validateSender } from './validate-sender'
 import { agentSyncService } from '../services/agent-sync.service'
 import { fileWatcherService } from '../services/file-watcher.service'
@@ -95,6 +96,16 @@ export function registerWorkspaceIpc(): void {
         }
       } catch (err) {
         dbLogger.warn('Failed to seed Project Specialist on workspace create:', err)
+      }
+
+      // Auto-init git repo if not already a git repository
+      if (!isGitRepo) {
+        try {
+          await repoService.initRepo(normalizedPath)
+          dbLogger.info(`Auto-initialized git repo at ${normalizedPath}`)
+        } catch (err) {
+          dbLogger.warn('Auto-init git failed (non-fatal):', err)
+        }
       }
 
       return workspace

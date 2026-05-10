@@ -233,6 +233,14 @@ export class GrillSessionRepository {
     ).run(trackId, id)
   }
 
+  /** Link a temporary grill session to a newly created workspace */
+  linkToWorkspace(sessionId: string, workspaceId: string): void {
+    const db = getDatabase()
+    db.prepare(
+      `UPDATE grill_sessions SET workspace_id = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(workspaceId, sessionId)
+  }
+
   /** Get active sessions for a workspace (evaluating or awaiting_answers) */
   getActiveForWorkspace(workspaceId: string): GrillSession[] {
     const db = getDatabase()

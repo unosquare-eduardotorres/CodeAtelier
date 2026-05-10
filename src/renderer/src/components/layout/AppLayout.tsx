@@ -4,8 +4,6 @@ import {
   Zap,
   Home,
   Sliders,
-  ClipboardList,
-  Hammer,
   Braces,
   SearchCode,
   ZoomIn,
@@ -15,7 +13,8 @@ import {
   ArrowUp,
   ArrowDown,
   Flame,
-  ShieldCheck
+  ShieldCheck,
+  GitBranch
 } from 'lucide-react'
 import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
@@ -82,6 +81,30 @@ export default function AppLayout(): React.JSX.Element {
   const { createIdea, startGrill } = useIdeaStore()
   const [zoomFactor, setZoomFactor] = useState(1.0)
   const [appVersion, setAppVersion] = useState<string>('')
+  const [currentBranch, setCurrentBranch] = useState<string | null>(null)
+  const [isGitRepo, setIsGitRepo] = useState(false)
+  const repoInfo = useWorkspaceStore((s) => s.repoInfo)
+
+  // Branch indicator — refresh on workspace/conversation change + repoInfo
+  useEffect(() => {
+    if (!activeWorkspace) {
+      setCurrentBranch(null)
+      setIsGitRepo(false)
+      return
+    }
+    if (activeConversation?.branchName) {
+      setCurrentBranch(activeConversation.branchName)
+      setIsGitRepo(true)
+    } else if (repoInfo) {
+      setIsGitRepo(repoInfo.isRepo)
+      setCurrentBranch(repoInfo.isRepo ? repoInfo.currentBranch : null)
+    } else {
+      window.api.getRepoInfo({ workspaceId: activeWorkspace.id }).then((info) => {
+        setIsGitRepo(info.isRepo)
+        setCurrentBranch(info.isRepo ? info.currentBranch : null)
+      })
+    }
+  }, [activeWorkspace?.id, activeConversation?.id, activeConversation?.branchName, repoInfo])
 
   // Load app version once on mount
   useEffect(() => {
@@ -394,6 +417,10 @@ export default function AppLayout(): React.JSX.Element {
         onStartGrillMe={handleStartGrillMe}
         showNewChat={showNewChat}
         onNewChatDismiss={() => setShowNewChat(false)}
+        onNavigateToSettings={() => {
+          setWorkspaceSettingsTab('repository')
+          setSidebarView('settings')
+        }}
       />
     )
   }
@@ -519,21 +546,35 @@ export default function AppLayout(): React.JSX.Element {
             </span>
           )}
 
-          {activeConversation && (
-            <span
-              className={`text-xs px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
-                activeConversation.mode === 'plan'
-                  ? 'bg-mode-plan-muted text-mode-plan-text'
-                  : 'bg-mode-build-muted text-mode-build-text'
+          {/* Branch indicator — always visible when workspace is active */}
+          {activeWorkspace && (
+            <button
+              type="button"
+              onClick={() => {
+                setWorkspaceSettingsTab('repository')
+                setSidebarView('settings')
+              }}
+              className={`flex items-center gap-1.5 text-[11px] font-mono border-l border-border-subtle pl-3 ml-1 rounded px-1.5 py-0.5 transition-colors ${
+                isGitRepo
+                  ? 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
+                  : 'text-danger bg-danger/10 hover:bg-danger/20'
               }`}
+              title={
+                isGitRepo
+                  ? `Branch: ${currentBranch}`
+                  : 'No git repository — click to configure'
+              }
             >
-              {activeConversation.mode === 'plan' ? (
-                <ClipboardList size={10} />
+              <GitBranch size={11} />
+              {isGitRepo ? (
+                <span className="truncate max-w-[160px]">{currentBranch}</span>
               ) : (
-                <Hammer size={10} />
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" />
+                  <span>No repo</span>
+                </>
               )}
-              {activeConversation.mode === 'plan' ? 'Plan' : 'Build'}
-            </span>
+            </button>
           )}
         </div>
 

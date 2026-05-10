@@ -18,7 +18,6 @@ import type {
   SyncResult,
   ExecutionStrategy,
   InvestigationDepth,
-  FileChange,
   CompleteResult,
   GrillProposedTask,
   GrillQuestion,
@@ -60,7 +59,9 @@ import type {
   AuditStreamChunkEvent,
   AuditIntermediateEvent,
   LLMProvider,
-  UpdateConfig
+  UpdateConfig,
+  GrillDecision,
+  GrillTrackScore
 } from '../shared/types'
 
 interface Api {
@@ -69,6 +70,14 @@ interface Api {
   createWorkspace: (args: { name: string; repoPath: string }) => Promise<Workspace>
   openWorkspace: (args: { id: string }) => Promise<Workspace>
   deleteWorkspace: (args: { id: string }) => Promise<void>
+  createProject: (args: {
+    name: string
+    parentFolder: string
+    description: string
+    grillDecisions?: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+    tempGrillSessionId?: string
+  }) => Promise<Workspace>
   selectDirectory: () => Promise<string | null>
   getWorkspaceSettings: (args: { workspaceId: string }) => Promise<Record<string, unknown>>
   updateWorkspaceSettings: (args: {
@@ -127,7 +136,11 @@ interface Api {
     description: string
   }) => Promise<CompleteResult>
   closeConversation: (args: { conversationId: string }) => Promise<void>
-  getFileChanges: (args: { conversationId: string }) => Promise<FileChange[]>
+  getFileChanges: (args: {
+    conversationId: string
+  }) => Promise<
+    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+  >
   generatePrDescription: (args: { conversationId: string }) => Promise<{ description: string }>
 
   // Agents
@@ -451,9 +464,9 @@ interface Api {
   initRepo: (args: { workspaceId: string }) => Promise<void>
   setRepoRemote: (args: { workspaceId: string; remoteUrl: string }) => Promise<void>
   getRepoInfo: (args: { workspaceId: string }) => Promise<RepoInfo>
-  hasUnsavedChanges: (args: {
+  switchBranch: (args: {
     conversationId: string
-  }) => Promise<{ hasChanges: boolean; fileCount: number; files: string[] }>
+  }) => Promise<{ switched: boolean; branch: string | null }>
 
   // Code Changes
   getFileDetails: (args: {
@@ -796,6 +809,13 @@ interface Api {
     dir?: string
   }) => Promise<{ sessionId: string }>
 
+  // SDK Diagnostics (@alpha — 0.2.138+)
+  resolveSettings(): Promise<{
+    success: boolean
+    settings?: Record<string, unknown>
+    error?: string
+  }>
+
   // Chat resume at checkpoint
   chatResumeAt: (args: { conversationId: string; messageId: string }) => Promise<void>
 
@@ -870,6 +890,8 @@ interface Api {
     previousScore?: number
     ideaId?: string
     llmProvider?: LLMProvider
+    greenfield?: boolean
+    projectName?: string
   }) => Promise<void>
   grillCancel: () => Promise<void>
   onGrillStreamChunk: (

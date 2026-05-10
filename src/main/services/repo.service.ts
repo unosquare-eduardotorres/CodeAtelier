@@ -156,34 +156,22 @@ export class RepoService {
   }
 
   /**
-   * Check if a conversation has uncommitted file changes in the workspace.
-   * Cross-references tracked file changes in DB with actual git status.
+   * Check if the workspace has any uncommitted file changes via git status.
    */
   async hasUncommittedChanges(
-    repoPath: string,
-    trackedFiles: string[]
+    repoPath: string
   ): Promise<{ hasChanges: boolean; fileCount: number; files: string[] }> {
-    if (trackedFiles.length === 0) {
-      return { hasChanges: false, fileCount: 0, files: [] }
-    }
-
     try {
       const git = simpleGit(repoPath)
       const status = await git.status()
-      const changedPaths = new Set([
+      const files = [
         ...status.modified,
         ...status.created,
         ...status.not_added,
         ...status.deleted,
         ...status.renamed.map((r) => r.to)
-      ])
-
-      const uncommittedFiles = trackedFiles.filter((fp) => changedPaths.has(fp))
-      return {
-        hasChanges: uncommittedFiles.length > 0,
-        fileCount: uncommittedFiles.length,
-        files: uncommittedFiles
-      }
+      ]
+      return { hasChanges: files.length > 0, fileCount: files.length, files }
     } catch (e) {
       logger.warn('Failed to check uncommitted changes:', e)
       return { hasChanges: false, fileCount: 0, files: [] }
@@ -191,15 +179,10 @@ export class RepoService {
   }
 
   /**
-   * Get detailed uncommitted file status for a conversation.
-   * Cross-references tracked files from DB with actual git status.
+   * Get detailed uncommitted file status for all files in the workspace.
+   * Returns ALL uncommitted files from git status (no DB cross-reference).
    */
-  async getUncommittedFileDetails(
-    repoPath: string,
-    trackedFiles: string[]
-  ): Promise<FileDetailEntry[]> {
-    if (trackedFiles.length === 0) return []
-
+  async getUncommittedFileDetails(repoPath: string): Promise<FileDetailEntry[]> {
     try {
       const git = simpleGit(repoPath)
       const status = await git.status()
@@ -208,23 +191,23 @@ export class RepoService {
         ...status.staged,
         ...status.renamed.filter((r) => status.staged.includes(r.to)).map((r) => r.to)
       ])
-      const modifiedSet = new Set(status.modified)
-      const createdSet = new Set([...status.created, ...status.not_added])
-      const deletedSet = new Set(status.deleted)
-      const allChanged = new Set([
-        ...modifiedSet,
-        ...createdSet,
-        ...deletedSet,
-        ...status.renamed.map((r) => r.to)
-      ])
 
-      return trackedFiles
-        .filter((fp) => allChanged.has(fp))
-        .map((fp) => ({
-          filePath: fp,
-          changeType: deletedSet.has(fp) ? 'deleted' : createdSet.has(fp) ? 'created' : 'modified',
-          staged: stagedSet.has(fp)
-        }))
+      const entries: FileDetailEntry[] = []
+
+      for (const fp of status.modified) {
+        entries.push({ filePath: fp, changeType: 'modified', staged: stagedSet.has(fp) })
+      }
+      for (const fp of [...status.created, ...status.not_added]) {
+        entries.push({ filePath: fp, changeType: 'created', staged: stagedSet.has(fp) })
+      }
+      for (const fp of status.deleted) {
+        entries.push({ filePath: fp, changeType: 'deleted', staged: stagedSet.has(fp) })
+      }
+      for (const r of status.renamed) {
+        entries.push({ filePath: r.to, changeType: 'modified', staged: stagedSet.has(r.to) })
+      }
+
+      return entries
     } catch (e) {
       logger.warn('Failed to get uncommitted file details:', e)
       return []

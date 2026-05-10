@@ -6,12 +6,12 @@ import {
   conversationRepository,
   conversationSpecialistRepository,
   messageRepository,
-  fileChangeRepository,
   workspaceRepository,
   turnUsageRepository,
   specialistRepository
 } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
+import { repoService } from '../services/repo.service'
 import { modelConfigService } from '../services/model-config.service'
 import { contextWindowResolver } from '../services/context-window-resolver'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -107,6 +107,30 @@ function registerConversationCrudIpc(): void {
         log.warn('Project Specialist auto-attach failed:', e)
       }
 
+      // Branch-per-conversation: auto-create branch if enabled in workspace settings
+      if (settings.gitAutoBranch) {
+        try {
+          const git = simpleGit(wsRow!.repoPath)
+          const isRepo = await git.checkIsRepo()
+          if (isRepo) {
+            const title = conversation.title || 'new-conversation'
+            const slug = title
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-|-$/g, '')
+              .slice(0, 50)
+            const branchName = `chat/${slug}-${conversation.id.slice(0, 8)}`
+
+            await git.checkoutLocalBranch(branchName)
+            conversationRepository.updateBranchName(conversation.id, branchName)
+            conversation.branchName = branchName
+            log.info(`Auto-created branch: ${branchName}`)
+          }
+        } catch (e) {
+          log.warn('Auto-branch creation failed (non-fatal):', e)
+        }
+      }
+
       return conversation
     }
   )
@@ -175,13 +199,71 @@ function registerConversationCrudIpc(): void {
     }
   )
 
-  // ── Get file changes tracked for a conversation ──
+  // ── Get file changes from git status for a conversation's workspace ──
   ipcMain.handle(
     IPC_CHANNELS.CHAT_GET_FILE_CHANGES,
     async (event, args: { conversationId: string }) => {
       validateSender(event)
       if (!args?.conversationId) throw new Error('Invalid conversation ID')
-      return fileChangeRepository.findByConversation(args.conversationId)
+
+      const conversation = conversationRepository.findById(args.conversationId)
+      if (!conversation) throw new Error('Conversation not found')
+      const workspace = workspaceRepository.findById(conversation.workspaceId)
+      if (!workspace) throw new Error('Workspace not found')
+
+      return repoService.getUncommittedFileDetails(workspace.repoPath)
+    }
+  )
+
+  // ── Switch git branch for a conversation ──
+  ipcMain.handle(
+    IPC_CHANNELS.CHAT_SWITCH_BRANCH,
+    async (event, args: { conversationId: string }) => {
+      validateSender(event)
+      if (!args?.conversationId) throw new Error('Missing conversationId')
+
+      const conversation = conversationRepository.findById(args.conversationId)
+      if (!conversation?.branchName) return { switched: false, branch: null }
+
+      const workspace = workspaceRepository.findById(conversation.workspaceId)
+      if (!workspace) throw new Error('Workspace not found')
+
+      const git = simpleGit(workspace.repoPath)
+      const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD'])
+
+      // Already on the right branch
+      if (currentBranch === conversation.branchName) {
+        return { switched: false, branch: conversation.branchName }
+      }
+
+      // Auto-WIP-commit uncommitted changes on current branch
+      const status = await git.status()
+      const dirtyFiles = [
+        ...status.modified,
+        ...status.created,
+        ...status.not_added,
+        ...status.deleted,
+        ...status.renamed.map((r) => r.to)
+      ]
+      if (dirtyFiles.length > 0) {
+        try {
+          await git.add(dirtyFiles)
+          await git.commit('WIP: auto-save from conversation switch')
+          log.info(`WIP commit on ${currentBranch} (${dirtyFiles.length} files)`)
+        } catch (e) {
+          log.warn('WIP auto-commit failed (proceeding with checkout):', e)
+        }
+      }
+
+      // Switch to conversation's branch
+      try {
+        await git.checkout(conversation.branchName)
+        log.info(`Switched to branch: ${conversation.branchName}`)
+        return { switched: true, branch: conversation.branchName }
+      } catch (e) {
+        log.warn(`Failed to switch to branch ${conversation.branchName}:`, e)
+        throw new Error(`Failed to switch to branch: ${conversation.branchName}`)
+      }
     }
   )
 
@@ -578,9 +660,16 @@ function registerChatCompletionIpc(): void {
         log.warn('Worktree merge during /complete encountered an issue:', error)
       }
 
-      // 2. Get tracked file changes for this conversation
-      const fileChanges = fileChangeRepository.findByConversation(conversationId)
-      if (fileChanges.length === 0) throw new Error('No file changes tracked for this conversation')
+      // 2. Get ALL uncommitted files from git status
+      const status = await git.status()
+      const changedPaths = [
+        ...status.modified,
+        ...status.created,
+        ...status.not_added,
+        ...status.deleted,
+        ...status.renamed.map((r) => r.to)
+      ]
+      if (changedPaths.length === 0) throw new Error('No uncommitted changes in workspace')
 
       // 3. Create feature branch — use user-provided name or auto-generate
       const branchName =
@@ -595,28 +684,8 @@ function registerChatCompletionIpc(): void {
       await git.checkoutLocalBranch(branchName)
 
       try {
-        // 4. Stage only tracked files (filter to files that actually exist in git status)
-        const status = await git.status()
-        const changedPaths = new Set([
-          ...status.modified,
-          ...status.created,
-          ...status.not_added,
-          ...status.deleted,
-          ...status.renamed.map((r) => r.to)
-        ])
-
-        const filesToStage = fileChanges
-          .map((fc) => fc.filePath)
-          .filter((fp) => changedPaths.has(fp))
-
-        if (filesToStage.length === 0) {
-          // All tracked files are already committed or reverted — nothing to stage
-          await git.checkout(currentBranch)
-          await git.deleteLocalBranch(branchName, true)
-          throw new Error('No uncommitted changes found for tracked files')
-        }
-
-        await git.add(filesToStage)
+        // 4. Stage all uncommitted files
+        await git.add(changedPaths)
 
         // 5. Commit with message + description
         const fullMessage = description ? `${commitMessage}\n\n${description}` : commitMessage
@@ -659,9 +728,8 @@ function registerChatCompletionIpc(): void {
           }
         }
 
-        // 8. Cleanup: stop agents, clear DB data, delete conversation
+        // 8. Cleanup: stop agents, delete conversation
         chatAgentService.clearSession(conversationId)
-        fileChangeRepository.clearByConversation(conversationId)
         conversationRepository.delete(conversationId)
 
         return { branch: branchName, commitHash, prUrl }

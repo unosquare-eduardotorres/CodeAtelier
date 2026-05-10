@@ -138,21 +138,10 @@ CREATE TABLE IF NOT EXISTS conversation_specialists (
   UNIQUE(conversation_id, specialist_id)
 );
 
--- File changes tracked per conversation (for selective git commit)
-CREATE TABLE IF NOT EXISTS conversation_file_changes (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  file_path TEXT NOT NULL,
-  change_type TEXT NOT NULL DEFAULT 'modified' CHECK (change_type IN ('created', 'modified', 'deleted')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(conversation_id, file_path)
-);
-
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_file_changes_conversation ON conversation_file_changes(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
 CREATE INDEX IF NOT EXISTS idx_conversation_specialists_conversation ON conversation_specialists(conversation_id);

@@ -12,6 +12,7 @@ import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
 import { Avatar } from '@renderer/components/common'
 import { CodeBlock } from '../chat/CodeBlock'
+import { remarkStripStrayBackticks } from '../chat/remark-plugins'
 import ToolActivityBlock from '../chat/ToolActivityBlock'
 import type { ToolActivity } from '../../../../shared/types'
 
@@ -21,32 +22,8 @@ interface GrillMessageBubbleProps {
   isStreaming: boolean
 }
 
-/** Strip stray backticks from markdown content — prevents rendering artefacts */
-function stripStrayBackticks(children: React.ReactNode): React.ReactNode {
-  return React.Children.map(children, (child) => {
-    if (typeof child === 'string') {
-      const stripped = child.replace(/`/g, '')
-      return stripped || null
-    }
-    if (React.isValidElement(child) && (child.props as Record<string, unknown>)?.children) {
-      const childProps = child.props as Record<string, unknown>
-      return React.cloneElement(child, {
-        ...childProps,
-        children: stripStrayBackticks(childProps.children as React.ReactNode)
-      } as Record<string, unknown>)
-    }
-    return child
-  })
-}
-
 // Module-level markdown components — stable reference, avoids ReactMarkdown full re-render
 const markdownComponents = {
-  p: ({ children }: { children?: React.ReactNode }) => <p>{stripStrayBackticks(children)}</p>,
-  li: ({ children }: { children?: React.ReactNode }) => <li>{stripStrayBackticks(children)}</li>,
-  strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong>{stripStrayBackticks(children)}</strong>
-  ),
-  em: ({ children }: { children?: React.ReactNode }) => <em>{stripStrayBackticks(children)}</em>,
   pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
     const isBlock = className?.includes('language-')
@@ -79,7 +56,7 @@ export default function GrillMessageBubble({
           {content ? (
             <div className="prose max-w-none overflow-hidden text-sm">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkBreaks]}
+                remarkPlugins={[remarkGfm, remarkBreaks, remarkStripStrayBackticks]}
                 rehypePlugins={[rehypeRaw]}
                 components={markdownComponents}
               >

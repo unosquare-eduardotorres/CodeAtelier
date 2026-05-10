@@ -21,6 +21,8 @@ export interface StreamState {
   resultText?: string
   terminalReason?: TerminalReason
   sessionTitle?: string
+  /** Origin of the result — distinguishes user-prompted vs task-notification (SDK 0.2.126+) */
+  resultOrigin?: string
   /**
    * Total length (chars) of text already streamed to the renderer via
    * text_delta events. Used to compute the "missed delta" when the SDK's
@@ -225,6 +227,13 @@ export function* normalizeMessage(
     }
 
     state.resultText = msg.result as string | undefined
+
+    // Capture origin for distinguishing user-prompted vs task-notification results (SDK 0.2.126+)
+    const origin = msg.origin as string | undefined
+    if (origin) {
+      state.resultOrigin = origin
+      sdkLog.info(`[TELEMETRY:result-origin] origin=${origin}`)
+    }
 
     // Extract terminal reason (SDK 0.2.96+)
     const rawTerminalReason = msg.terminal_reason as string | undefined

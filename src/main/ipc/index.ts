@@ -40,6 +40,7 @@ import { registerProjectSpecialistIpc } from './project-specialist.ipc'
 import { registerPlatformIpc } from './platform.ipc'
 import { registerAuditIpc } from './audit.ipc'
 import { registerGrillIpc } from './grill.ipc'
+import { registerProjectIpc } from './project.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerWorkspaceIpc()
@@ -83,4 +84,5 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerPlatformIpc()
   registerAuditIpc(mainWindow)
   registerGrillIpc(mainWindow)
+  registerProjectIpc()
 }

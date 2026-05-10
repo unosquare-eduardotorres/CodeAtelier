@@ -203,7 +203,9 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
           'ToolSearch',
           'ExitPlanMode',
           'AskUserQuestion',
-          'TodoWrite' // Prevent grill from modifying todos
+          'TodoWrite', // deprecated — kept for backward compat
+          'TaskCreate', // new Task tools (SDK 0.2.136+)
+          'TaskUpdate'
         ]
       }
     }
@@ -284,7 +286,9 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
         'ToolSearch',
         'ExitPlanMode',
         'AskUserQuestion',
-        'TodoWrite' // Prevent grill from modifying todos
+        'TodoWrite', // deprecated — kept for backward compat
+        'TaskCreate', // new Task tools (SDK 0.2.136+)
+        'TaskUpdate'
       ]
     }
   }

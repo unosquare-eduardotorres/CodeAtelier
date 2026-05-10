@@ -1,16 +1,19 @@
 import { useEffect } from 'react'
-import { useCodeChangesStore } from '@renderer/store'
+import { useCodeChangesStore, useWorkspaceStore } from '@renderer/store'
 import FileChangeList from './FileChangeList'
 import FileDiffView from './FileDiffView'
 import CommitBar from './CommitBar'
 
 interface CodeChangesPanelProps {
   conversationId: string
+  onNavigateToSettings?: () => void
 }
 
 export default function CodeChangesPanel({
-  conversationId
+  conversationId,
+  onNavigateToSettings
 }: CodeChangesPanelProps): React.JSX.Element {
+  const repoInfo = useWorkspaceStore((s) => s.repoInfo)
   const files = useCodeChangesStore((s) => s.files)
   const selectedFile = useCodeChangesStore((s) => s.selectedFile)
   const checkedFiles = useCodeChangesStore((s) => s.checkedFiles)
@@ -45,6 +48,8 @@ export default function CodeChangesPanel({
           onSelectAll={selectAll}
           onDeselectAll={deselectAll}
           isLoading={isLoadingFiles}
+          isGitConfigured={repoInfo?.isRepo ?? false}
+          onNavigateToSettings={onNavigateToSettings}
         />
 
         {/* Right: Diff view */}

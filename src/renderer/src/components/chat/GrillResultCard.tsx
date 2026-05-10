@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkStripStrayBackticks } from './remark-plugins'
 import { RefreshCw, ClipboardList, LayoutList, Flame } from 'lucide-react'
 import type { GrillProposedTask } from '../../../../shared/types'
 
@@ -28,7 +29,7 @@ export default function GrillResultCard({
 
       {/* Summary content */}
       <div className="px-5 py-4 prose prose-sm prose-invert max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>{summary}</ReactMarkdown>
       </div>
 
       {/* Proposed tasks preview */}

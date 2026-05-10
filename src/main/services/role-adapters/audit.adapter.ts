@@ -213,7 +213,9 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
           'ToolSearch',
           'ExitPlanMode',
           'AskUserQuestion',
-          'TodoWrite'
+          'TodoWrite', // deprecated — kept for backward compat
+          'TaskCreate', // new Task tools (SDK 0.2.136+)
+          'TaskUpdate'
         ]
       }
     }
@@ -295,7 +297,9 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
         'ToolSearch',
         'ExitPlanMode',
         'AskUserQuestion',
-        'TodoWrite' // Prevent audit from modifying todos
+        'TodoWrite', // deprecated — kept for backward compat
+        'TaskCreate', // new Task tools (SDK 0.2.136+)
+        'TaskUpdate'
       ]
     }
   }

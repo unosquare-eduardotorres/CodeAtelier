@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
+import { remarkStripStrayBackticks } from '../chat/remark-plugins'
 import {
   Bot,
   RefreshCw,
@@ -508,7 +509,7 @@ export default function SpecialistPage(): React.JSX.Element {
               prose-ul:text-text-body prose-li:text-text-body
               prose-a:text-accent"
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]} rehypePlugins={[rehypeRaw]}>
               {specialist.prompt || '*No prompt generated yet. Click Rebuild to generate.*'}
             </ReactMarkdown>
           </div>

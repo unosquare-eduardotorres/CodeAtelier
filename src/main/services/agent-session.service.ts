@@ -120,6 +120,7 @@ export class AgentSessionService extends AgentBaseService {
   private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 160_000
   private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 190_000
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
+  private static readonly MAX_TURN_CONTINUATIONS = 3
 
   private workspacePath: string | null = null
   private workspaceId: string | null = null
@@ -150,6 +151,11 @@ export class AgentSessionService extends AgentBaseService {
   private lastContextTokens: number | undefined
 
   private pendingResumeAt: string | undefined
+
+  /** Auto-continue on max_turns: how many times we've resumed so far this message. */
+  private maxTurnsContinuations = 0
+  /** Stashed executeStream options for replay on max_turns auto-continue. */
+  private lastStreamOpts: ExecuteStreamOptions | null = null
 
   private controlToolState: ControlToolState = {
     plan: false,
@@ -497,6 +503,7 @@ export class AgentSessionService extends AgentBaseService {
 
     this.currentStatus = 'thinking'
     this.hasEmittedContent = false
+    this.planBlockInjected = false
     this._lastTimedOut = false
     this.messageStartedAt = Date.now()
     this.processedToolIds.clear()
@@ -504,6 +511,8 @@ export class AgentSessionService extends AgentBaseService {
     this.updateDbSessionConversation(conversationId)
     this.accumulatedText = ''
     this.circuitBreaker.reset()
+    this.maxTurnsContinuations = 0
+    this.lastStreamOpts = null
     this.controlToolState = { plan: false, askUser: false, memory: false }
     this.emit('statusUpdate', this.getStatus())
   }
@@ -608,6 +617,9 @@ export class AgentSessionService extends AgentBaseService {
   // ── Stream orchestration ──────────────────────────────────────────
 
   private async executeStream(opts: ExecuteStreamOptions): Promise<void> {
+    // Stash for max_turns auto-continue replay (handleStreamError needs these)
+    this.lastStreamOpts = opts
+
     const {
       sdkPrompt,
       systemPrompt,
@@ -711,11 +723,13 @@ export class AgentSessionService extends AgentBaseService {
         isBuildMode,
         recoveryDepth,
         timedOut,
-        streamState
+        streamState,
+        mcpResult,
+        llmProvider
       })
     } catch (error) {
       clearTimeout(interactionTimer)
-      this.handleStreamError(error as Error, timedOut, recoveryDepth)
+      await this.handleStreamError(error as Error, timedOut, recoveryDepth)
     }
   }
 
@@ -830,14 +844,14 @@ export class AgentSessionService extends AgentBaseService {
       permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
       allowedTools,
       disallowedTools,
-      // Tier-aware turn limits: small=8/12, medium=15/25, large=20/35, Claude=20/35
+      // Tier-aware turn limits: small=8/12, medium=15/25, large=30/50, Claude=30/50
       maxTurns: isLocal
         ? isBuildMode
           ? (tierLimits?.maxTurnsBuild ?? 12)
           : (tierLimits?.maxTurnsPlan ?? 8)
         : isBuildMode
-          ? 35
-          : 20,
+          ? 50
+          : 30,
 
       // Session resume: disabled for local (Ollama has no SDK sessions)
       resume: isLocal ? undefined : sessionId,
@@ -878,20 +892,6 @@ export class AgentSessionService extends AgentBaseService {
           content: `⚠️ Permission denied: ${toolName} — ${reason}`
         } as StreamChunk)
       },
-      onFileChanged: (filePath: string, changeType: string) => {
-        if (!this.currentConversationId) return
-        const relativePath = filePath.startsWith(this.workspacePath!)
-          ? filePath.slice(this.workspacePath!.length).replace(/^\//, '')
-          : filePath
-        const mappedType: 'created' | 'modified' | 'deleted' =
-          changeType === 'create' ? 'created' : changeType === 'delete' ? 'deleted' : 'modified'
-        try {
-          const { fileChangeRepository } = require('../db/repositories')
-          fileChangeRepository.track(this.currentConversationId, relativePath, mappedType)
-        } catch (err) {
-          this.log.warn('Failed to track file change from SDK hook:', err)
-        }
-      },
       onSubagentStart: (agentId: string, description: string) => {
         this.log.info(`[PIPELINE:subagent-start] agent=${agentId} desc=${description}`)
       },
@@ -908,20 +908,6 @@ export class AgentSessionService extends AgentBaseService {
       ...(mcpServers ? { mcpServers } : {}),
       onPostCompact: async (preTokens: number, postTokens: number) => {
         this.log.info(`[Compaction] ${preTokens} → ${postTokens} tokens`)
-        const activeQuery = this.sdkExecutor.getActiveQuery()
-        if (activeQuery && this.currentConversationId) {
-          const { fileChangeRepository } = await import('../db/repositories')
-          const files = fileChangeRepository.findByConversation(this.currentConversationId)
-          for (const file of files) {
-            try {
-              const { statSync } = await import('fs')
-              const stat = statSync(file.filePath)
-              await activeQuery.seedReadState(file.filePath, Math.floor(stat.mtimeMs))
-            } catch {
-              /* file may have been deleted — skip */
-            }
-          }
-        }
 
         // Update in-memory + DB metrics with post-compaction value so subsequent
         // getContextUsage calls (SDK or DB fallback) return the compacted size.
@@ -1309,9 +1295,19 @@ export class AgentSessionService extends AgentBaseService {
     recoveryDepth: number
     timedOut: boolean
     streamState: StreamLoopState
+    mcpResult: AdapterMcpResult
+    llmProvider: LLMProvider
   }): Promise<void> {
-    const { conversationId, systemPrompt, isBuildMode, recoveryDepth, timedOut, streamState } =
-      params
+    const {
+      conversationId,
+      systemPrompt,
+      isBuildMode,
+      recoveryDepth,
+      timedOut,
+      streamState,
+      mcpResult,
+      llmProvider
+    } = params
 
     if (!streamState.messageStopReceived && !this.circuitBreaker.isBroken && !timedOut) {
       this.log.warn(
@@ -1322,6 +1318,42 @@ export class AgentSessionService extends AgentBaseService {
     this.log.info(
       `[PIPELINE:response-complete] conversationId=${conversationId} textLen=${this.accumulatedText.length}`
     )
+
+    // ── Auto-continue on max_turns ──────────────────────────────────
+    // When the SDK stops at the turn limit but has more work to do,
+    // automatically resume the session with a continuation prompt.
+    if (
+      streamState.lastTerminalReason === 'max_turns' &&
+      this.maxTurnsContinuations < AgentSessionService.MAX_TURN_CONTINUATIONS
+    ) {
+      this.maxTurnsContinuations++
+      this.log.info(
+        `[PIPELINE:max-turns-continue] continuation=${this.maxTurnsContinuations}/${AgentSessionService.MAX_TURN_CONTINUATIONS} ` +
+          `conversationId=${conversationId}`
+      )
+
+      // Notify the renderer that we're auto-continuing
+      this.emit('chunk', {
+        type: 'text',
+        content: `\n\n_Continuing... (turn limit reached, auto-resuming ${this.maxTurnsContinuations}/${AgentSessionService.MAX_TURN_CONTINUATIONS})_\n\n`
+      } as StreamChunk)
+
+      // Re-enter the stream loop with a continuation prompt.
+      // The session is preserved via resume, so context is not lost.
+      await this.executeStream({
+        sdkPrompt: isBuildMode
+          ? 'Continue implementing from where you left off. Do not repeat completed work.'
+          : 'Continue your analysis from where you left off. Do not repeat completed work.',
+        systemPrompt,
+        sessionId: this.sessionMap.get(conversationId),
+        conversationId,
+        turnCount: this.turnCounts.get(conversationId) ?? 1,
+        isBuildMode,
+        mcpResult,
+        llmProvider
+      })
+      return // executeStream handles its own finalization
+    }
 
     const skipNudgeReasons = new Set([
       'max_turns',
@@ -1394,8 +1426,54 @@ export class AgentSessionService extends AgentBaseService {
     this.emit('complete')
   }
 
-  private handleStreamError(error: Error, timedOut: boolean, recoveryDepth = 0): void {
+  private async handleStreamError(
+    error: Error,
+    timedOut: boolean,
+    recoveryDepth = 0
+  ): Promise<void> {
     this.sdkAbortController = null
+
+    // ── Auto-continue on max_turns error ────────────────────────────
+    // The SDK may throw "Reached maximum number of turns (N)" instead
+    // of terminating gracefully via the meta chunk. Handle both paths.
+    const isMaxTurns =
+      !timedOut &&
+      error.name !== 'AbortError' &&
+      error.message?.includes('maximum number of turns')
+
+    if (
+      isMaxTurns &&
+      this.lastStreamOpts &&
+      this.maxTurnsContinuations < AgentSessionService.MAX_TURN_CONTINUATIONS
+    ) {
+      this.maxTurnsContinuations++
+      const { conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider } =
+        this.lastStreamOpts
+      this.log.info(
+        `[PIPELINE:max-turns-continue-error] continuation=${this.maxTurnsContinuations}/${AgentSessionService.MAX_TURN_CONTINUATIONS} ` +
+          `conversationId=${conversationId}`
+      )
+
+      this.emit('chunk', {
+        type: 'text',
+        content: `\n\n_Continuing... (turn limit reached, auto-resuming ${this.maxTurnsContinuations}/${AgentSessionService.MAX_TURN_CONTINUATIONS})_\n\n`
+      } as StreamChunk)
+
+      await this.executeStream({
+        sdkPrompt: isBuildMode
+          ? 'Continue implementing from where you left off. Do not repeat completed work.'
+          : 'Continue your analysis from where you left off. Do not repeat completed work.',
+        systemPrompt,
+        sessionId: this.sessionMap.get(conversationId),
+        conversationId,
+        turnCount: this.turnCounts.get(conversationId) ?? 1,
+        isBuildMode,
+        mcpResult,
+        llmProvider
+      })
+      return // executeStream handles its own finalization
+    }
+
     if (error.name === 'AbortError') {
       if (timedOut) {
         this.log.error('SDK query timed out')

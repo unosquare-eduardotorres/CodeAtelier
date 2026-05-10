@@ -117,8 +117,6 @@ export class ConversationRepository {
 
   delete(id: string): void {
     const db = getDatabase()
-    // Delete file changes, messages, then the conversation
-    db.prepare('DELETE FROM conversation_file_changes WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
   }
@@ -151,6 +149,11 @@ export class ConversationRepository {
     const stmt = db.prepare('SELECT claude_session_id FROM conversations WHERE id = ?')
     const row = stmt.get(id) as { claude_session_id: string | null } | undefined
     return row?.claude_session_id ?? undefined
+  }
+
+  updateBranchName(id: string, branchName: string): void {
+    const db = getDatabase()
+    db.prepare('UPDATE conversations SET branch_name = ? WHERE id = ?').run(branchName, id)
   }
 
   updatePrInfo(id: string, prUrl: string, prNumber: number, branchName: string): void {

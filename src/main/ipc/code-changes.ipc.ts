@@ -6,7 +6,6 @@ import { repoService } from '../services/repo.service'
 import { githubService } from '../services/github.service'
 import {
   workspaceRepository,
-  fileChangeRepository,
   conversationRepository,
   messageRepository
 } from '../db/repositories'
@@ -42,10 +41,7 @@ export function registerCodeChangesIpc(): void {
       if (!args?.conversationId) throw new Error('Missing conversationId')
 
       const { repoPath } = resolveRepoPath(args.conversationId)
-      const fileChanges = fileChangeRepository.findByConversation(args.conversationId)
-      const trackedFiles = fileChanges.map((fc) => fc.filePath)
-
-      return repoService.getUncommittedFileDetails(repoPath, trackedFiles)
+      return repoService.getUncommittedFileDetails(repoPath)
     }
   )
 
@@ -74,26 +70,6 @@ export function registerCodeChangesIpc(): void {
 
       const { repoPath } = resolveRepoPath(args.conversationId)
       const result = await repoService.commitFiles(repoPath, args.filePaths, args.message)
-
-      // Remove committed files from the tracked file changes in DB
-      const remaining = fileChangeRepository.findByConversation(args.conversationId)
-      const committedSet = new Set(args.filePaths)
-      for (const fc of remaining) {
-        if (committedSet.has(fc.filePath)) {
-          // We don't have a single-file delete, so we track and re-insert the rest
-          // Actually, the simplest approach: clear committed files from the set
-        }
-      }
-
-      // Clear committed files from DB — re-insert only the ones NOT committed
-      const allTracked = fileChangeRepository.findByConversation(args.conversationId)
-      fileChangeRepository.clearByConversation(args.conversationId)
-      for (const fc of allTracked) {
-        if (!committedSet.has(fc.filePath)) {
-          fileChangeRepository.track(args.conversationId, fc.filePath, fc.changeType)
-        }
-      }
-
       return result
     }
   )
@@ -129,8 +105,6 @@ export function registerCodeChangesIpc(): void {
       }
 
       const messages = messageRepository.findByConversation(args.conversationId)
-      const fileChanges = fileChangeRepository.findByConversation(args.conversationId)
-      const selectedFiles = fileChanges.filter((fc) => args.filePaths.includes(fc.filePath))
 
       const prompt = `You are generating a concise git commit message. Follow conventional commit style.
 
@@ -142,8 +116,8 @@ ${messages
   .map((m) => `[${m.role}]: ${m.contentMd.slice(0, 300)}`)
   .join('\n')}
 
-## Files to commit (${selectedFiles.length}):
-${selectedFiles.map((fc) => `- ${fc.changeType}: ${fc.filePath}`).join('\n')}
+## Files to commit (${args.filePaths.length}):
+${args.filePaths.map((fp) => `- ${fp}`).join('\n')}
 
 Respond with ONLY the commit message, no preamble or explanation.`
 
@@ -186,10 +160,10 @@ Respond with ONLY the commit message, no preamble or explanation.`
       } catch (e) {
         logger.warn('AI commit message generation failed, falling back to simple message:', e)
         // Fallback: generate a simple message from file paths
-        const fileNames = selectedFiles.map((fc) => fc.filePath.split('/').pop()).join(', ')
+        const fileNames = args.filePaths.map((fp) => fp.split('/').pop()).join(', ')
         return {
           message:
-            `update ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}: ${fileNames}`.slice(
+            `update ${args.filePaths.length} file${args.filePaths.length > 1 ? 's' : ''}: ${fileNames}`.slice(
               0,
               72
             )
