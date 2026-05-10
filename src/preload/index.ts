@@ -561,6 +561,11 @@ const api = {
         message: string
         canContinue: boolean
       }
+      contextUsageUpdate?: {
+        inputTokens: number
+        contextWindowSize: number
+        percentage: number
+      }
     }) => void
   ): (() => void) => {
     const handler = (
@@ -590,6 +595,11 @@ const api = {
         budgetCapReached?: {
           message: string
           canContinue: boolean
+        }
+        contextUsageUpdate?: {
+          inputTokens: number
+          contextWindowSize: number
+          percentage: number
         }
       }
     ): void => callback(data)

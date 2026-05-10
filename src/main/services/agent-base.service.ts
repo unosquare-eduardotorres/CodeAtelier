@@ -50,6 +50,7 @@ export interface StreamChunk {
     | 'auth_status'
     | 'tool_use_summary'
     | 'session_recovery'
+    | 'context_usage_update'
   content?: string
   toolName?: string
   toolInput?: string
@@ -75,6 +76,12 @@ export interface StreamChunk {
   persistedFiles?: Array<{ filename: string; fileId: string }>
   /** Session recovery phase */
   recoveryPhase?: 'started' | 'building_context' | 'resuming' | 'completed' | 'failed'
+  /** Live context usage update — emitted each turn for real-time badge updates */
+  contextUsageUpdate?: {
+    inputTokens: number
+    contextWindowSize: number
+    percentage: number
+  }
   /** Hook lifecycle info */
   hookInfo?: {
     hookId: string

@@ -391,7 +391,15 @@ export default function TaskPlanCard({
       </div>
     )
 
+  // Hide implementation order when it matches the natural phase sequence (always redundant)
+  const isNaturalOrder =
+    structuredPlan?.implementationOrder &&
+    visiblePhases.length > 0 &&
+    structuredPlan.implementationOrder.length === visiblePhases.length &&
+    structuredPlan.implementationOrder.every((phaseId, i) => phaseId === visiblePhases[i].id)
+
   const implementationOrderSection = !isSimplePlan &&
+    !isNaturalOrder &&
     structuredPlan?.implementationOrder &&
     structuredPlan.implementationOrder.length > 0 &&
     visiblePhases.length > 0 && (
@@ -770,67 +778,91 @@ function PhasesList({
     </div>
   )
 
+  // Simple mode: flat step list without heavy card wrappers
+  if (simple) {
+    return (
+      <div className="space-y-4">
+        {phases.map((phase) => (
+          <div key={`phase-simple-${phase.id}`}>
+            {/* Lightweight step header — no card box */}
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="w-5 h-5 rounded bg-[var(--color-plan-card-muted)] text-[var(--color-plan-card)] text-xs flex items-center justify-center font-mono shrink-0">
+                {phase.id}
+              </span>
+              <span className="text-sm font-medium text-text-primary flex-1">
+                {phase.title}
+              </span>
+              <div className="flex items-center gap-3 shrink-0 text-xs">
+                <ComplexityIndicator score={phase.complexity} />
+                {phase.fileCount != null && (
+                  <span className="text-text-secondary">~{phase.fileCount} files</span>
+                )}
+                <RiskDot risk={phase.risk} />
+              </div>
+            </div>
+            {/* Content rendered inline — no border, no card padding */}
+            <div className="pl-7 text-sm text-text-body prose prose-sm prose-invert max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>
+                {phase.description}
+              </ReactMarkdown>
+            </div>
+            {phase.files && phase.files.length > 0 && (
+              <div className="pl-7 mt-2 space-y-1">
+                {phase.files.map((f, fi) => (
+                  <div key={`phase-file-${fi}`} className="flex items-baseline gap-2 text-xs py-0.5">
+                    <span className="text-[var(--color-plan-card)] font-mono shrink-0 bg-[var(--color-plan-card-muted)] px-1.5 py-0.5 rounded">
+                      {shortenPath(f.file)}
+                    </span>
+                    <span className="text-text-secondary">{f.change}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-2">
-      {/* Header — hidden in simple mode */}
-      {!simple && (
-        <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-          <ClipboardList size={14} className="text-[var(--color-plan-card-accent)]" />
-          Implementation Phases
-        </div>
-      )}
+      <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+        <ClipboardList size={14} className="text-[var(--color-plan-card-accent)]" />
+        Implementation Phases
+      </div>
       <div className="space-y-2">
         {phases.map((phase) => {
-          const isOpen = simple || expanded.has(phase.id)
+          const isOpen = expanded.has(phase.id)
           return (
             <div
               key={`phase-${phase.id}`}
               className={`rounded border border-[var(--color-plan-card-phase-border)] ${riskBorderColor(phase.risk)} border-l-4 bg-[var(--color-plan-card-phase-bg)] overflow-hidden`}
             >
-              {/* Title row — inline in simple mode, accordion button otherwise */}
-              {simple ? (
-                <div className="flex items-center gap-2 w-full px-4 py-3">
-                  <span className="w-5 h-5 rounded bg-[var(--color-plan-card-muted)] text-[var(--color-plan-card)] text-xs flex items-center justify-center font-mono shrink-0">
-                    {phase.id}
-                  </span>
-                  <span className="text-sm font-medium text-text-primary truncate flex-1">
-                    {phase.title}
-                  </span>
-                  <div className="flex items-center gap-3 shrink-0 text-xs">
-                    <ComplexityIndicator score={phase.complexity} />
-                    {phase.fileCount != null && (
-                      <span className="text-text-secondary">~{phase.fileCount} files</span>
-                    )}
-                    <RiskDot risk={phase.risk} />
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => toggle(phase.id)}
-                  className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-[var(--color-plan-card-section-bg)] transition-colors"
-                >
-                  {isOpen ? (
-                    <ChevronDown size={14} className="text-text-secondary shrink-0" />
-                  ) : (
-                    <ChevronRight size={14} className="text-text-secondary shrink-0" />
+              <button
+                type="button"
+                onClick={() => toggle(phase.id)}
+                className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-[var(--color-plan-card-section-bg)] transition-colors"
+              >
+                {isOpen ? (
+                  <ChevronDown size={14} className="text-text-secondary shrink-0" />
+                ) : (
+                  <ChevronRight size={14} className="text-text-secondary shrink-0" />
+                )}
+                <span className="w-5 h-5 rounded bg-[var(--color-plan-card-muted)] text-[var(--color-plan-card)] text-xs flex items-center justify-center font-mono shrink-0">
+                  {phase.id}
+                </span>
+                <span className="text-sm font-medium text-text-primary truncate flex-1">
+                  {phase.title}
+                </span>
+                {/* Right-aligned inline metadata */}
+                <div className="flex items-center gap-3 shrink-0 text-xs">
+                  <ComplexityIndicator score={phase.complexity} />
+                  {phase.fileCount != null && (
+                    <span className="text-text-secondary">~{phase.fileCount} files</span>
                   )}
-                  <span className="w-5 h-5 rounded bg-[var(--color-plan-card-muted)] text-[var(--color-plan-card)] text-xs flex items-center justify-center font-mono shrink-0">
-                    {phase.id}
-                  </span>
-                  <span className="text-sm font-medium text-text-primary truncate flex-1">
-                    {phase.title}
-                  </span>
-                  {/* Right-aligned inline metadata */}
-                  <div className="flex items-center gap-3 shrink-0 text-xs">
-                    <ComplexityIndicator score={phase.complexity} />
-                    {phase.fileCount != null && (
-                      <span className="text-text-secondary">~{phase.fileCount} files</span>
-                    )}
-                    <RiskDot risk={phase.risk} />
-                  </div>
-                </button>
-              )}
+                  <RiskDot risk={phase.risk} />
+                </div>
+              </button>
               {isOpen && renderPhaseContent(phase)}
             </div>
           )

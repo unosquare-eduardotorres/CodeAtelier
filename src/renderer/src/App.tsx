@@ -159,6 +159,40 @@ function App(): React.JSX.Element {
           canContinue: data.budgetCapReached.canContinue
         })
       }
+      if (data.contextUsageUpdate) {
+        // Live context badge update during streaming — push token counts
+        // so the badge refreshes every turn instead of only on completion.
+        const convId = data.conversationId
+        if (convId) {
+          const { inputTokens, contextWindowSize, percentage } = data.contextUsageUpdate
+          const effectiveQualityWindow = Math.min(
+            Math.round(contextWindowSize * 0.5),
+            500_000
+          )
+          const qualityPct = Math.round((inputTokens / effectiveQualityWindow) * 100)
+          const level =
+            qualityPct > 80
+              ? 'critical'
+              : qualityPct > 60
+                ? 'red'
+                : qualityPct > 40
+                  ? 'yellow'
+                  : 'green'
+          useChatStore.setState((state) => ({
+            contextUsages: {
+              ...state.contextUsages,
+              [convId]: {
+                ...state.contextUsages[convId],
+                conversationId: convId,
+                inputTokens,
+                contextWindowSize,
+                percentage,
+                level: level as 'green' | 'yellow' | 'red' | 'critical'
+              }
+            }
+          }))
+        }
+      }
     })
 
     const unsubComplete = window.api.onMessageComplete((data) => {

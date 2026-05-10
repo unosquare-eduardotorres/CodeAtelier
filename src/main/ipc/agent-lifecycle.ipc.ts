@@ -23,8 +23,9 @@ export function registerAgentLifecycleIpc(mainWindow: BrowserWindow): void {
     }
 
     // Already running for this workspace — re-send ready event so the renderer
-    // transitions out of 'starting' state (fixes Home → re-select same workspace)
-    if (chatAgentService.isRunning() && chatAgentService.getWorkspacePath() === workspacePath) {
+    // transitions out of 'starting' state (fixes Home → re-select same workspace,
+    // HMR double-mounts, and auto-open refreshes that would otherwise abort an active stream)
+    if (chatAgentService.getWorkspacePath() === workspacePath) {
       log.info(
         'Chat agent already running for:',
         workspacePath,

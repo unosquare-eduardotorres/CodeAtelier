@@ -31,8 +31,11 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk'
 import {
   BUDGET_CAP_MODE_MULTIPLIERS,
+  CLAUDE_1M_CONTEXT_WINDOW,
+  CLAUDE_DEFAULT_CONTEXT_WINDOW,
   MCP_TOOLS,
-  RECOMMENDED_LOCAL_MODELS
+  RECOMMENDED_LOCAL_MODELS,
+  supportsContext1M
 } from '../../shared/constants'
 import { chatAgentLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
@@ -42,6 +45,7 @@ import type { SDKExecuteOptions, SDKExecuteResult } from './sdk-executor'
 import { createBuildModeSandbox } from './sandbox-config'
 import {
   CLAUDE_1M_CONTEXT_CONFIG,
+  CLAUDE_200K_CONTEXT_CONFIG,
   CLAUDE_ECONOMY_CONTEXT_CONFIG,
   getLocalLlmContextConfig,
   resolveContextTier,
@@ -101,24 +105,13 @@ interface ExecuteStreamOptions {
 export class AgentSessionService extends AgentBaseService {
   protected readonly log = chatAgentLogger
 
-  // Compaction defaults — tuned for the 1M context window (context-1m-2025-08-07).
-  //   Anthropic's docs: cache + creation + read all count toward the context
-  //   window, so these thresholds operate on the full context-pressure metric,
-  //   not the cheap cache-discounted billing metric.
-  //
-  //   With context management active (context-management.ts), the SDK's internal
-  //   five-layer pipeline handles tool clearing at ~300K and server-side compaction
-  //   at ~600K. These app-level thresholds act as a safety net:
-  //     Suggest at 70% (700K) — catches anything the SDK pipeline missed
-  //     Auto at 85% (850K) — hard limit before overflow
-  //
-  //   Prior values were 600K/800K — raised because server-side strategies now
-  //   handle the early/mid tiers, and double-prompting the user was wasteful.
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 700_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 850_000
-  // Economy preference uses a smaller effective window (200K-class models).
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 160_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 190_000
+  // Compaction defaults — initialization values before applyCompactionThresholds runs.
+  // The real thresholds are resolved dynamically based on the model's effective context
+  // window (200K for Opus/Haiku, 1M for Sonnet) — see resolveCompactionThresholds().
+  // These statics serve as the fallback initialization; 60%/75% of 200K (the most
+  // common default since Da Vinci plan mode uses Opus).
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 120_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 150_000
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
   private static readonly MAX_TURN_CONTINUATIONS = 3
 
@@ -148,7 +141,11 @@ export class AgentSessionService extends AgentBaseService {
   private compactAutoThreshold = AgentSessionService.DEFAULT_COMPACT_AUTO_THRESHOLD
   private compactSuggested = false
   private compactCount = 0
+  /** Turns elapsed since last compact suggestion — re-suggest every 3 turns if dismissed. */
+  private turnsSinceCompactSuggestion = 0
   private lastContextTokens: number | undefined
+  /** Effective context window for the current session (model-aware: 200K for Opus, 1M for Sonnet). */
+  private effectiveContextWindow: number | undefined
 
   private pendingResumeAt: string | undefined
 
@@ -233,7 +230,26 @@ export class AgentSessionService extends AgentBaseService {
     mode?: ConversationMode,
     resumeSessionId?: string
   ): Promise<void> {
+    // Don't abort an active stream if we're re-starting for the same workspace.
+    // This prevents HMR, React strict mode, or auto-open from killing in-flight queries.
+    if (
+      this.sdkAbortController &&
+      this.workspacePath === workspacePath &&
+      this.currentStatus !== 'idle' &&
+      this.currentStatus !== 'failed'
+    ) {
+      this.log.info(
+        `[start] Skipping restart — stream active for same workspace: ${workspacePath}`
+      )
+      return
+    }
+
     if (this.sdkAbortController) {
+      this.log.warn(
+        `[start] Aborting active sdkAbortController — ` +
+          `currentWorkspace=${this.workspacePath} newWorkspace=${workspacePath} ` +
+          `status=${this.currentStatus} conversationId=${this.currentConversationId}`
+      )
       this.sdkAbortController.abort()
       this.sdkAbortController = null
     }
@@ -254,6 +270,7 @@ export class AgentSessionService extends AgentBaseService {
     this.accumulatedText = ''
     this.compactCount = 0
     this.compactSuggested = false
+    this.turnsSinceCompactSuggestion = 0
     this.tokenTracker.resetSession()
 
     // Resolve workspace id + cost preference
@@ -463,6 +480,7 @@ export class AgentSessionService extends AgentBaseService {
     this.log.info(`[compaction] compact #${this.compactCount + 1}`)
     this.compactCount++
     this.compactSuggested = false
+    this.turnsSinceCompactSuggestion = 0
     // Adapters wire /compact into their own prompt assembler — signal via invalidate.
     this.adapter.onConversationSwitch(this.currentConversationId)
   }
@@ -816,15 +834,39 @@ export class AgentSessionService extends AgentBaseService {
       )
     }
 
+    // For 200K models: force SDK auto-compact to trigger earlier (80% of window)
+    // The default ~95% leaves only 10K headroom, insufficient for large tool turns.
+    if (!isLocal && !supportsContext1M(finalModel)) {
+      envOverrides = {
+        ...(envOverrides ?? {}),
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '80'
+      }
+    }
+
     // Resolve context management config — needed for maxTurns and hook parameterization
     const localContextWindow = isLocal
       ? (passedLocalCtxWindow ?? this.resolveLocalContextWindow())
       : undefined
+
+    // ── Model-aware context window resolution ──
+    // The context-1m beta only works with Sonnet models. Opus/Haiku get 200K.
+    const supports1M = !isLocal && supportsContext1M(finalModel)
+    const effectiveContextWindow = isLocal
+      ? localContextWindow!
+      : supports1M
+        ? CLAUDE_1M_CONTEXT_WINDOW
+        : CLAUDE_DEFAULT_CONTEXT_WINDOW
+
+    // Store on instance for live context badge updates during streaming
+    this.effectiveContextWindow = effectiveContextWindow
+
     const contextManagement = isLocal
       ? getLocalLlmContextConfig(localContextWindow!)
-      : this.costPreference === 'economy'
-        ? CLAUDE_ECONOMY_CONTEXT_CONFIG
-        : CLAUDE_1M_CONTEXT_CONFIG
+      : supports1M
+        ? (this.costPreference === 'economy'
+            ? CLAUDE_ECONOMY_CONTEXT_CONFIG
+            : CLAUDE_1M_CONTEXT_CONFIG)
+        : CLAUDE_200K_CONTEXT_CONFIG
     const tierLimits = contextManagement._tierLimits
 
     // Diagnostic: log tier resolution for local LLMs
@@ -835,6 +877,19 @@ export class AgentSessionService extends AgentBaseService {
           `readLimit=${tierLimits.readLineLimit} toolBudget=${tierLimits.toolResultBudgetChars}`
       )
     }
+
+    // Diagnostic: log compact config so we can trace why compaction did/didn't fire
+    const resolvedAutoCompactWindow = isLocal
+      ? localContextWindow!
+      : supports1M
+        ? effectiveContextWindow
+        : Math.round(effectiveContextWindow * 0.80)
+    this.log.info(
+      `[PIPELINE:compact-config] model=${finalModel} effectiveWindow=${effectiveContextWindow} ` +
+        `autoCompactWindow=${isLocal ? 'disabled' : resolvedAutoCompactWindow} ` +
+        `suggestThreshold=${this.compactSuggestThreshold} autoThreshold=${this.compactAutoThreshold} ` +
+        `compactCount=${this.compactCount}`
+    )
 
     return {
       prompt: sdkPrompt,
@@ -872,10 +927,17 @@ export class AgentSessionService extends AgentBaseService {
       promptSuggestions: isLocal ? false : true,
       includeHookEvents: true,
       autoCompactEnabled: isLocal ? false : true,
-      contextWindowSize: isLocal ? localContextWindow : 1_000_000, // 1M with context-1m beta
+      // For 200K models (Opus/Haiku), shrink the autoCompactWindow so the SDK's
+      // internal compaction fires earlier (~80% of window = 128K instead of 160K).
+      // For 1M models, pass the full effective window — they have ample headroom.
+      contextWindowSize: isLocal
+        ? localContextWindow!
+        : supports1M
+          ? effectiveContextWindow
+          : Math.round(effectiveContextWindow * 0.80), // 200K × 0.8 = 160K
       contextManagement,
       enableFileCheckpointing: isLocal ? false : true,
-      betas: isLocal ? undefined : ['context-1m-2025-08-07'],
+      betas: isLocal ? undefined : supports1M ? ['context-1m-2025-08-07'] : undefined,
       fallbackModel: isLocal
         ? undefined
         : resolvedModel !== 'claude-sonnet-4-6'
@@ -925,6 +987,7 @@ export class AgentSessionService extends AgentBaseService {
         // event chain with level='compacted' — renderer refreshes silently
         // instead of opening the compact modal.
         this.compactSuggested = false
+        this.turnsSinceCompactSuggestion = 0
         this.emit('compactNeeded', {
           level: 'compacted',
           inputTokens: postTokens,
@@ -1124,6 +1187,21 @@ export class AgentSessionService extends AgentBaseService {
       }
     }
 
+    // Push live context update to the renderer — allows the badge to update
+    // during streaming instead of only on completion.
+    if (totalContextTokens > 0) {
+      const effectiveWindow = this.effectiveContextWindow ?? CLAUDE_DEFAULT_CONTEXT_WINDOW
+      this.emit('chunk', {
+        type: 'context_usage_update',
+        content: '',
+        contextUsageUpdate: {
+          inputTokens: totalContextTokens,
+          contextWindowSize: effectiveWindow,
+          percentage: Math.round((totalContextTokens / effectiveWindow) * 100),
+        }
+      } as StreamChunk)
+    }
+
     this.checkCompaction(totalContextTokens, breakdown)
 
     // Store the SDK context window total separately — preserves the original
@@ -1174,6 +1252,25 @@ export class AgentSessionService extends AgentBaseService {
       // Recovery context is adapter-agnostic: just recent messages.
       // (The Generalist adapter injects its own richer summary.)
       streamState.sessionRecoveryNeeded = true
+      return 'break'
+    }
+
+    // Intercept SDK abort errors that weren't user-initiated
+    if (
+      chunk.type === 'error' &&
+      chunk.error?.includes('Claude Code process aborted by user') &&
+      this.currentStatus !== 'idle'
+    ) {
+      this.log.warn(
+        `[PIPELINE:unexpected-abort] Session was aborted without user action — ` +
+          `status=${this.currentStatus} conversationId=${conversationId}`
+      )
+      // Rewrite the error to something more helpful
+      this.emit('chunk', {
+        type: 'error',
+        error:
+          'The agent session was interrupted unexpectedly. This can happen during app reloads. Please resend your message to continue.'
+      } as StreamChunk)
       return 'break'
     }
 
@@ -1518,20 +1615,37 @@ export class AgentSessionService extends AgentBaseService {
       const limits = TIER_LIMITS[tier]
       this.compactSuggestThreshold = limits.compactSuggestThreshold
       this.compactAutoThreshold = limits.compactAutoThreshold
-    } else if (this.costPreference === 'economy') {
-      this.compactSuggestThreshold =
-        (settings.compactSuggestThreshold as number) ??
-        AgentSessionService.DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY
-      this.compactAutoThreshold =
-        (settings.compactAutoThreshold as number) ??
-        AgentSessionService.DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY
     } else {
+      // Resolve the effective context window for this model — 1M beta only applies to Sonnet
+      const modelAction = `${this.adapter.role}:${this.currentMode}` as ModelAction
+      const model = modelConfigService.getModel(this.workspacePath!, modelAction)
+      const supports1M = supportsContext1M(model)
+      const effectiveWindow = supports1M
+        ? CLAUDE_1M_CONTEXT_WINDOW
+        : CLAUDE_DEFAULT_CONTEXT_WINDOW
+      const defaults = this.resolveCompactionThresholds(effectiveWindow)
+
       this.compactSuggestThreshold =
-        (settings.compactSuggestThreshold as number) ??
-        AgentSessionService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
+        (settings.compactSuggestThreshold as number) ?? defaults.suggest
       this.compactAutoThreshold =
-        (settings.compactAutoThreshold as number) ??
-        AgentSessionService.DEFAULT_COMPACT_AUTO_THRESHOLD
+        (settings.compactAutoThreshold as number) ?? defaults.auto
+    }
+  }
+
+  /**
+   * Compute compaction thresholds proportional to the actual context window.
+   * For 200K windows, compact earlier (60%/75%) since there's less headroom —
+   * a single large tool turn can consume 20-30K tokens.
+   * For 1M windows, use the original ratios (70%/85%) — ample room.
+   */
+  private resolveCompactionThresholds(effectiveContextWindow: number): {
+    suggest: number
+    auto: number
+  } {
+    const isSmallWindow = effectiveContextWindow <= 200_000
+    return {
+      suggest: Math.round(effectiveContextWindow * (isSmallWindow ? 0.60 : 0.70)),
+      auto: Math.round(effectiveContextWindow * (isSmallWindow ? 0.75 : 0.85)),
     }
   }
 
@@ -1545,22 +1659,32 @@ export class AgentSessionService extends AgentBaseService {
     const isLocal = this.llmProvider === 'local-llm'
 
     if (inputTokens >= autoThreshold) {
-      this.log.warn(`Context very large (${inputTokens} input tokens) — prompting user to compact`)
+      this.log.warn(
+        `[PIPELINE:compact-critical] Context at ${inputTokens} tokens ` +
+        `(threshold=${autoThreshold}) — critical notification`
+      )
+      // Critical always fires (no compactSuggested gate) — user must act.
       this.emit('compactNeeded', {
         level: 'critical',
         inputTokens,
         breakdown,
         isLocalProvider: isLocal
       })
-    } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
-      this.compactSuggested = true
-      this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
-      this.emit('compactNeeded', {
-        level: 'suggest',
-        inputTokens,
-        breakdown,
-        isLocalProvider: isLocal
-      })
+    } else if (inputTokens >= suggestThreshold) {
+      // Re-suggest every 3 turns after initial suggestion (user may have dismissed)
+      if (!this.compactSuggested || this.turnsSinceCompactSuggestion >= 3) {
+        this.compactSuggested = true
+        this.turnsSinceCompactSuggestion = 0
+        this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
+        this.emit('compactNeeded', {
+          level: 'suggest',
+          inputTokens,
+          breakdown,
+          isLocalProvider: isLocal
+        })
+      } else {
+        this.turnsSinceCompactSuggestion++
+      }
     } else if (inputTokens >= warningThreshold && !this.compactSuggested) {
       this.log.info(
         `[PIPELINE:compact-warning] Context approaching threshold (${inputTokens}/${suggestThreshold} tokens)`

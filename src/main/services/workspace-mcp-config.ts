@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import type { McpServerConfig, McpStdioServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { MCP_TOOLS, EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
 import type { ConversationMode } from '../../shared/types'
@@ -58,6 +60,66 @@ function isLocalMcpEnabled(
 ): boolean {
   if (!localMcpActive) return true
   return localMcpActive[serverId] !== false
+}
+
+/**
+ * Resolve a stdio command to an absolute path.
+ * Checks known install paths first (handles packaged macOS apps where
+ * GUI PATH is minimal). Falls back to the bare command name for PATH lookup.
+ */
+function resolveStdioCommand(command: string, knownPaths?: readonly string[]): string {
+  if (knownPaths) {
+    for (const p of knownPaths) {
+      const resolved = p.replace(/^~/, homedir())
+      if (existsSync(resolved)) return resolved
+    }
+  }
+  return command
+}
+
+/**
+ * Mount external MCP stdio servers based on per-message activation flags.
+ * Shared between local LLM and Claude code paths.
+ *
+ * Key behaviors:
+ * - `alwaysLoad: true` forces tools into the prompt (not deferred behind ToolSearch,
+ *   which is globally blocked in this app).
+ * - `env` forwards process environment keys listed in the integration definition
+ *   (e.g. JAVA_HOME, MAESTRO_CLOUD_API_KEY) — only includes keys that are actually set.
+ */
+function mountExternalMcps(
+  servers: Record<string, McpServerConfig>,
+  allowedTools: string[] | undefined,
+  mode: ConversationMode,
+  externalMcpActive: Record<string, boolean>
+): void {
+  for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+    if (externalMcpActive[integration.id]) {
+      const stdioConfig: McpStdioServerConfig = {
+        type: 'stdio',
+        command: resolveStdioCommand(integration.command, integration.commandPaths),
+        args: [...integration.args],
+        alwaysLoad: true,
+        ...(integration.envKeys?.length
+          ? {
+              env: Object.fromEntries(
+                integration.envKeys
+                  .filter((k) => process.env[k])
+                  .map((k) => [k, process.env[k]!])
+              )
+            }
+          : {})
+      }
+      servers[integration.id] = stdioConfig
+
+      // Plan mode: only read-only tools. Build mode: all tools.
+      if (allowedTools !== undefined) {
+        const modeTools =
+          mode === 'plan' ? integration.planModeToolNames : integration.toolNames
+        allowedTools.push(...modeTools)
+      }
+    }
+  }
 }
 
 /**
@@ -154,6 +216,10 @@ export function buildWorkspaceMcpConfig(opts: {
             MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
             MCP_TOOLS.CONTROL_ACTIONS.EMIT_MEMORY.name
           ]
+
+    // ── External MCP Servers (stdio) — also available for local LLMs ──
+    const externalActive = opts.featureFlags.externalMcpActive ?? {}
+    mountExternalMcps(servers, localAllowed, opts.mode, externalActive)
 
     // For small tier: explicitly disallow the tools we didn't allow — defense-in-depth
     const smallTierDisallowed = tier === 'small'
@@ -285,23 +351,7 @@ export function buildWorkspaceMcpConfig(opts: {
   // ── External MCP Servers (stdio) ──
   // Conditionally mounted based on per-message flags from the conversation MCP overrides.
   const externalActive = opts.featureFlags.externalMcpActive ?? {}
-  for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
-    if (externalActive[integration.id]) {
-      const stdioConfig: McpStdioServerConfig = {
-        type: 'stdio',
-        command: integration.command,
-        args: [...integration.args]
-      }
-      servers[integration.id] = stdioConfig
-
-      // Plan mode: only read-only tools. Build mode: all tools.
-      if (allowedTools !== undefined) {
-        const modeTools =
-          opts.mode === 'plan' ? integration.planModeToolNames : integration.toolNames
-        allowedTools.push(...modeTools)
-      }
-    }
-  }
+  mountExternalMcps(servers, allowedTools, opts.mode, externalActive)
 
   const mcpServers = Object.keys(servers).length > 0 ? servers : undefined
 

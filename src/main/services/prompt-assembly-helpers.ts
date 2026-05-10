@@ -16,6 +16,7 @@ import {
   GIT_CONTEXT_GUIDANCE_PROMPT,
   GITHUB_CONTEXT_GUIDANCE_PROMPT,
   IMAGE_ATTACHMENTS_PROMPT,
+  MAESTRO_GUIDANCE_PROMPT,
   MEMORY_PROTOCOL_PROMPT,
   REPOMAP_GUIDANCE_PROMPT,
   SEMANTIC_SEARCH_GUIDANCE_PROMPT
@@ -30,6 +31,8 @@ export interface PromptFeatureFlags {
   repomapEnabled: boolean
   semanticSearchEnabled: boolean
   githubConfigured: boolean
+  /** External MCPs active for this chat (e.g. { maestro: true }) — drives prompt guidance injection */
+  externalMcpActive?: Record<string, boolean>
 }
 
 /**
@@ -69,6 +72,11 @@ export function appendMcpToolGuidance(
 
   if (!basePrompt.includes('## Code Analysis')) {
     appendSections.push(CODE_ANALYSIS_GUIDANCE_PROMPT)
+  }
+
+  // External MCP guidance — only when toggled ON for this chat
+  if (featureFlags.externalMcpActive?.['maestro'] && !basePrompt.includes('## Maestro')) {
+    appendSections.push(MAESTRO_GUIDANCE_PROMPT)
   }
 
   if (appendSections.length === 0) return basePrompt

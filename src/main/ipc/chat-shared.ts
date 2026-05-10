@@ -545,5 +545,15 @@ export function forwardChunkToRenderer(
       message: chunk.content,
       ...(requestId ? { requestId } : {})
     })
+  } else if (chunk.type === 'context_usage_update') {
+    // Forward live context usage to renderer — badge updates during streaming
+    mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      conversationId,
+      chunk: '',
+      role,
+      ...(requestId ? { requestId } : {}),
+      ...(specialistMeta?.specialist ? { specialist: specialistMeta.specialist } : {}),
+      contextUsageUpdate: (chunk as unknown as { contextUsageUpdate: unknown }).contextUsageUpdate
+    })
   }
 }

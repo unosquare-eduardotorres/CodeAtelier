@@ -170,6 +170,9 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       githubConfigured: this.githubConfigured
     }
 
+    // Resolve which external MCPs are active for this chat — drives prompt guidance
+    const externalMcpActive = this.resolveExternalMcpActive(ctx.workspaceId, ctx.conversationId)
+
     const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
 
     const systemPrompt = this.promptAssembler.buildSystemPromptForTurn({
@@ -180,7 +183,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       workspaceId: ctx.workspaceId,
       conversationId: ctx.conversationId,
       mode: ctx.mode,
-      featureFlags: mcpFlags,
+      featureFlags: { ...mcpFlags, externalMcpActive },
       costPreference: ctx.costPreference,
       personaSpecialistId: this.currentPersonaSpecialistId,
       personaData: this.currentPersonaData,
@@ -209,26 +212,19 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       githubConfigured: this.githubConfigured
     }
 
-    // Resolve external + local MCP active states from conversation overrides
-    const externalMcpActive: Record<string, boolean> = {}
+    // Resolve external MCP active states via shared helper (same logic as buildPrompts)
+    const externalMcpActive = this.resolveExternalMcpActive(ctx.workspaceId, ctx.conversationId)
+
+    // Resolve per-chat local MCP active state from conversation overrides
     const localMcpActive: Record<string, boolean> = {}
     try {
-      const ws = ctx.workspaceId ? workspaceRepository.findById(ctx.workspaceId) : null
-      const wsSettings = ws ? JSON.parse(ws.settingsJson || '{}') : {}
       const conv = ctx.conversationId ? conversationRepository.findById(ctx.conversationId) : null
       const chatOverrides = conv?.mcpOverrides ?? {}
-
-      for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
-        externalMcpActive[integration.id] =
-          !!wsSettings[`${integration.id}Available`] && !!chatOverrides[integration.id]
-      }
-
-      // Derive per-chat local MCP active state from conversation overrides
       for (const lm of LOCAL_MCP_INTEGRATIONS) {
         localMcpActive[lm.id] = chatOverrides[lm.id] !== false
       }
-    } catch {
-      /* non-fatal — keep all external MCPs disabled, local MCPs enabled */
+    } catch (err) {
+      this.log.error('[adapter:local-mcp] Failed to resolve local MCP overrides:', err)
     }
 
     return buildWorkspaceMcpConfig({
@@ -367,5 +363,30 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
 
   clearConversation(conversationId: string): void {
     this.promptAssembler.clearConversation(conversationId)
+  }
+
+  /**
+   * Read workspace settings + conversation overrides to determine which
+   * external MCPs are active for this chat. Used by both buildPrompts
+   * (prompt guidance injection) and buildMcpConfig (tool mounting).
+   */
+  private resolveExternalMcpActive(
+    workspaceId: string | null,
+    conversationId: string | null
+  ): Record<string, boolean> {
+    const result: Record<string, boolean> = {}
+    try {
+      const ws = workspaceId ? workspaceRepository.findById(workspaceId) : null
+      const wsSettings = ws ? JSON.parse(ws.settingsJson || '{}') : {}
+      const conv = conversationId ? conversationRepository.findById(conversationId) : null
+      const chatOverrides = conv?.mcpOverrides ?? {}
+      for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+        result[integration.id] =
+          !!wsSettings[`${integration.id}Available`] && !!chatOverrides[integration.id]
+      }
+    } catch (err) {
+      this.log.error('[adapter:external-mcp] Failed to resolve MCP state:', err)
+    }
+    return result
   }
 }

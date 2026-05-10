@@ -464,6 +464,35 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   haiku: 'claude-haiku-4-5-20251001'
 } as const
 
+// ── Context Window Sizing ────────────────────────────────────────────
+
+/**
+ * Models that support the context-1m-2025-08-07 beta.
+ * SDK docs: "Sonnet 4/4.5 only" — Opus and Haiku use the default 200K window.
+ */
+export const CONTEXT_1M_SUPPORTED_MODELS = [
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5-20250514',
+  'claude-sonnet-4-20250514',
+] as const
+
+/** Default context window when the 1M beta is NOT active (Opus/Haiku) */
+export const CLAUDE_DEFAULT_CONTEXT_WINDOW = 200_000
+
+/** Extended context window when the 1M beta IS active (Sonnet models only) */
+export const CLAUDE_1M_CONTEXT_WINDOW = 1_000_000
+
+/**
+ * Check whether a model string supports the 1M context beta.
+ * Matches exact IDs from CONTEXT_1M_SUPPORTED_MODELS or any `claude-sonnet-*` prefix.
+ */
+export function supportsContext1M(model: string): boolean {
+  return (
+    (CONTEXT_1M_SUPPORTED_MODELS as readonly string[]).includes(model) ||
+    model.startsWith('claude-sonnet')
+  )
+}
+
 /** Human-readable metadata for each model action — used in the Models config UI */
 export const MODEL_ACTIONS_META: Record<
   import('./types').ModelAction,
@@ -1208,6 +1237,8 @@ export interface ExternalMcpDefinition {
   toolNames: string[]
   /** Read-only tools allowed in plan mode */
   planModeToolNames: string[]
+  /** Known absolute install paths (checked when command isn't on PATH) */
+  commandPaths?: string[]
   /** Category for UI grouping */
   category: 'testing' | 'deployment' | 'monitoring' | 'other'
 
@@ -1235,6 +1266,7 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     icon: 'Smartphone',
     command: 'maestro',
     args: ['mcp'],
+    commandPaths: ['~/.maestro/bin/maestro'],
     envKeys: ['JAVA_HOME', 'MAESTRO_CLOUD_API_KEY'],
     tokenImpact: 'high',
     toolCount: 8,

@@ -76,6 +76,26 @@ Use **mcp__code-analysis__todo_scanner** to quantify tech debt markers (TODO/FIX
 Use **mcp__code-analysis__test_coverage_map** to find untested source files by convention (no coverage runner needed).
 Use **mcp__code-analysis__dependency_health** for package.json audits — optionally checks npm outdated.`
 
+export const MAESTRO_GUIDANCE_PROMPT = `## Maestro Mobile Testing — Tool Guide
+
+You have **Maestro MCP tools** available for driving real mobile devices and emulators.
+
+### Workflow
+1. \`mcp__maestro__list_devices\` — discover available devices/emulators first
+2. \`mcp__maestro__inspect_screen\` — read the live UI hierarchy before interacting
+3. \`mcp__maestro__cheat_sheet\` — reference Maestro YAML commands (don't guess syntax)
+4. \`mcp__maestro__run\` — execute test flows (inline YAML, .yaml files, or directories)
+5. \`mcp__maestro__take_screenshot\` — capture visual state for verification
+
+### Cloud Testing
+- \`mcp__maestro__list_cloud_devices\` → \`mcp__maestro__run_on_cloud\` → \`mcp__maestro__get_cloud_status\`
+
+### Rules
+- Always call \`list_devices\` before \`run\` — never assume a device is connected.
+- Always call \`cheat_sheet\` before writing YAML — don't hallucinate Maestro commands.
+- Always call \`inspect_screen\` before interacting with UI elements — use real element IDs/labels.
+- In Plan mode: inspect and screenshot only. Don't run flows.`
+
 export const DIRECT_ANSWER_BOOST_PROMPT = `## Direct Answer Mode
 CRITICAL: For follow-up questions about the current conversation ("why did you suggest X?", "what does Y mean?"), ALWAYS answer from your conversation history. Do NOT read files for conversational follow-ups.
 

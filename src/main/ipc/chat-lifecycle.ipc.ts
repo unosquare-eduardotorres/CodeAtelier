@@ -14,7 +14,12 @@ import { chatAgentService, fileService } from '../services'
 import { repoService } from '../services/repo.service'
 import { modelConfigService } from '../services/model-config.service'
 import { contextWindowResolver } from '../services/context-window-resolver'
-import { IPC_CHANNELS } from '../../shared/constants'
+import {
+  CLAUDE_DEFAULT_CONTEXT_WINDOW,
+  CLAUDE_1M_CONTEXT_WINDOW,
+  IPC_CHANNELS,
+  supportsContext1M
+} from '../../shared/constants'
 import type { ConversationMode, ContextUsageLevel, LLMProvider } from '../../shared/types'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
@@ -523,16 +528,24 @@ function registerChatModeIpc(): void {
             (lastTurn?.cacheReadTokens ?? 0) +
             (lastTurn?.cacheCreationTokens ?? 0)
 
-      // Resolve context window — use full resolution chain for local LLMs, Claude's 1M otherwise
-      let contextWindowSize = 1_000_000
+      // Resolve context window — model-aware for Claude, full resolution chain for local LLMs
+      let contextWindowSize = CLAUDE_DEFAULT_CONTEXT_WINDOW
       const dbConversation = conversationRepository.findById(args.conversationId)
       if (dbConversation) {
         const dbWorkspace = workspaceRepository.findById(dbConversation.workspaceId)
-        if (dbWorkspace && modelConfigService.isLocalProvider(dbWorkspace.repoPath)) {
-          const llmConfig = modelConfigService.getLocalLLMConfig(dbWorkspace.repoPath)
-          const settings = JSON.parse(dbWorkspace.settingsJson || '{}')
-          const userOverride = settings.localContextWindow as number | undefined
-          contextWindowSize = await contextWindowResolver.resolve(llmConfig, userOverride)
+        if (dbWorkspace) {
+          if (modelConfigService.isLocalProvider(dbWorkspace.repoPath)) {
+            const llmConfig = modelConfigService.getLocalLLMConfig(dbWorkspace.repoPath)
+            const settings = JSON.parse(dbWorkspace.settingsJson || '{}')
+            const userOverride = settings.localContextWindow as number | undefined
+            contextWindowSize = await contextWindowResolver.resolve(llmConfig, userOverride)
+          } else {
+            // Resolve whether the model used in this workspace supports the 1M beta
+            const model = modelConfigService.getModel(dbWorkspace.repoPath, 'da-vinci:plan')
+            contextWindowSize = supportsContext1M(model)
+              ? CLAUDE_1M_CONTEXT_WINDOW
+              : CLAUDE_DEFAULT_CONTEXT_WINDOW
+          }
         }
       }
       // Quality window scales with context window: 50% of max, capped at 500K

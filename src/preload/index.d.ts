@@ -358,6 +358,11 @@ interface Api {
         message: string
         canContinue: boolean
       }
+      contextUsageUpdate?: {
+        inputTokens: number
+        contextWindowSize: number
+        percentage: number
+      }
     }) => void
   ) => () => void
   onMessageComplete: (

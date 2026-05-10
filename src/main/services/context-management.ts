@@ -2,13 +2,24 @@
  * Context management configuration for Claude sessions.
  *
  * Implements a three-tier cascade (cheapest first):
- *   Tier 1 — PREVENTIVE: Fix autoCompact settings, output budgeting hooks
- *   Tier 2 — SERVER-SIDE EDITING: Tool result clearing, thinking block clearing (zero LLM cost)
- *   Tier 3 — COMPACTION: Server-side summarization (LLM cost, last resort)
+ *   Tier 1 — PREVENTIVE: SDK hooks (ReadLimit, BashOutputCap, ToolResultBudget)
+ *   Tier 2 — SDK AUTO-COMPACT: autoCompactEnabled + autoCompactWindow via Settings
+ *   Tier 3 — APP-LEVEL NUDGE: compactSuggestThreshold / compactAutoThreshold → UI modal
  *
- * The SDK subprocess (Claude Code) handles the five-layer compaction pipeline
- * internally when autoCompactEnabled is true. This module configures the
- * thresholds and exclusion rules that feed into that pipeline.
+ * ⚠️ IMPORTANT: The clearToolResults*, clearThinking*, and serverCompaction*
+ * fields in ContextManagementConfig are NOT forwarded to the SDK. The Claude
+ * Agent SDK's Settings type only accepts autoCompactEnabled, autoCompactWindow,
+ * and compactInstructions. These fields serve as:
+ *   - Tier metadata for hook parameterization (_tierLimits, _tier)
+ *   - App-level diagnostics and UI threshold configuration
+ *   - Future-proofing for when the SDK adds server-side clearing APIs
+ *   - Documentation of the intended compaction strategy
+ *
+ * The SDK subprocess (Claude Code) handles the compaction pipeline internally
+ * when autoCompactEnabled is true. The contextWindowSize passed to the SDK
+ * controls when auto-compact fires (~80-95% of that value). For 200K models
+ * (Opus/Haiku), we shrink contextWindowSize to 160K and set
+ * CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80 so compaction fires at ~128K tokens.
  */
 
 // ── Context Window Tiers ─────────────────────────────────────────────
@@ -66,8 +77,13 @@ export const TIER_LIMITS: Record<ContextWindowTier, ContextTierLimits> = {
 
 // ── Context Management Config ────────────────────────────────────────
 
+/**
+ * App-level context management config. Passed as `contextManagement` to the SDK
+ * but the SDK only reads `compactionInstructions` from it — all other fields are
+ * consumed by app-level hooks and UI logic, NOT by the SDK's compaction engine.
+ */
 export interface ContextManagementConfig {
-  // ── Tier 2a: Tool result clearing ──
+  // ── App-level: Tool result clearing (not SDK-forwarded) ──
   /** Enable tool result clearing */
   clearToolResults: boolean
   /** Token threshold to trigger tool clearing */
@@ -135,6 +151,25 @@ export const CLAUDE_ECONOMY_CONTEXT_CONFIG: ContextManagementConfig = {
   clearToolResultsMinClear: 20_000,
   serverCompactionTrigger: 150_000,
   clearThinkingKeepTurns: 1
+} as const
+
+/**
+ * Config for Claude sessions using the default 200K context window (Opus, Haiku).
+ * The context-1m beta is NOT active — thresholds scaled proportionally to 200K.
+ */
+export const CLAUDE_200K_CONTEXT_CONFIG: ContextManagementConfig = {
+  clearToolResults: true,
+  clearToolResultsTrigger: 60_000,    // 30% of 200K
+  clearToolResultsKeep: 3,
+  clearToolResultsMinClear: 10_000,
+  clearToolResultsExclude: [...CLAUDE_1M_CONTEXT_CONFIG.clearToolResultsExclude],
+
+  clearThinking: true,
+  clearThinkingKeepTurns: 1,
+
+  serverCompaction: true,
+  serverCompactionTrigger: 120_000,   // 60% of 200K
+  compactionInstructions: CLAUDE_1M_CONTEXT_CONFIG.compactionInstructions,
 } as const
 
 /** Local LLM mode — tier-aware configuration for context management */
