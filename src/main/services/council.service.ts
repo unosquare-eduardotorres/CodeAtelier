@@ -75,6 +75,10 @@ interface CouncilSessionEntry {
 }
 
 // ── Service ────────────────────────────────────────────────────────────
+// TODO: DRY — CouncilService, GrillAgentService, AuditAgentService, and
+// MpaOrchestrationService all share identical isRunning/isRunningForWorkspace/
+// shutdown/cancel boilerplate (~20 lines each). Extract a shared
+// MultiWorkspaceEvaluatorBase<T extends { running: boolean }> abstract class.
 
 export class CouncilService extends EventEmitter {
   private sessions = new Map<string, CouncilSessionEntry>()

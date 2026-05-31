@@ -66,7 +66,8 @@ export default function CompleteDialog({
           const lines = typed.map((fc) => `- ${fc.changeType}: ${fc.filePath}`)
           setPrDescription(lines.length > 0 ? `Changes:\n${lines.join('\n')}` : '')
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[CompleteDialog] Non-fatal: file changes load failed:', err)
           setFileChanges([])
           setPrDescription('')
         })
@@ -79,7 +80,8 @@ export default function CompleteDialog({
           setInsights(result)
           setInsightsLoading(false)
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[CompleteDialog] Non-fatal: insights load failed:', err)
           setInsightsLoading(false)
         })
 
@@ -91,7 +93,8 @@ export default function CompleteDialog({
           setPrDescription(result.description)
           setIsGenerating(false)
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[CompleteDialog] Non-fatal: PR description generation failed:', err)
           setGenerationError('Failed to auto-generate. You can write one manually.')
           setIsGenerating(false)
         })
