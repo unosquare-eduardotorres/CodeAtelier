@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 import type { ProcessedChunk, ChunkMetadata } from '../../services/preprocessing.service'
 
 interface CodeChunkRow {
@@ -28,7 +28,10 @@ interface CodeChunkRow {
  * Repository for the `code_chunks` table.
  * Stores preprocessed code units for semantic search indexing.
  */
-export class CodeChunkRepository {
+export class CodeChunkRepository extends BaseRepository<CodeChunkRow, CodeChunk> {
+  protected readonly tableName = 'code_chunks'
+  protected mapRow(row: CodeChunkRow): CodeChunk { return mapRow(row) }
+
   /**
    * Bulk upsert preprocessed chunks for a workspace.
    * Uses INSERT OR REPLACE to update existing chunks when code changes.
@@ -38,7 +41,7 @@ export class CodeChunkRepository {
     chunks: ProcessedChunk[],
     fileMtimes: Map<string, number>
   ): void {
-    const db = getDatabase()
+    const db = this.db()
     const stmt = db.prepare(`
       INSERT OR REPLACE INTO code_chunks
         (id, workspace_id, file_path, file_name, directory, symbol_name, symbol_kind,
@@ -82,7 +85,7 @@ export class CodeChunkRepository {
    * Load all chunks for a workspace, reconstructing ProcessedChunk objects.
    */
   findByWorkspace(workspaceId: string): ProcessedChunk[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT * FROM code_chunks WHERE workspace_id = ?')
       .all(workspaceId) as CodeChunkRow[]
@@ -93,7 +96,7 @@ export class CodeChunkRepository {
    * Load chunks for a single file in a workspace.
    */
   findByFile(workspaceId: string, filePath: string): ProcessedChunk[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT * FROM code_chunks WHERE workspace_id = ? AND file_path = ?')
       .all(workspaceId, filePath) as CodeChunkRow[]
@@ -104,7 +107,7 @@ export class CodeChunkRepository {
    * Remove all chunks for a specific file (used when file changes or is deleted).
    */
   deleteByFile(workspaceId: string, filePath: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const result = db
       .prepare('DELETE FROM code_chunks WHERE workspace_id = ? AND file_path = ?')
       .run(workspaceId, filePath)
@@ -115,7 +118,7 @@ export class CodeChunkRepository {
    * Clear the entire workspace index.
    */
   deleteByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const result = db.prepare('DELETE FROM code_chunks WHERE workspace_id = ?').run(workspaceId)
     return result.changes
   }
@@ -125,7 +128,7 @@ export class CodeChunkRepository {
    * Used for incremental indexing: compare DB mtimes with filesystem mtimes.
    */
   getFileMtimes(workspaceId: string): Map<string, number> {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT DISTINCT file_path, file_mtime FROM code_chunks WHERE workspace_id = ?')
       .all(workspaceId) as Array<{ file_path: string; file_mtime: number }>
@@ -141,7 +144,7 @@ export class CodeChunkRepository {
    * Count total chunks for a workspace.
    */
   countByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare('SELECT COUNT(*) as count FROM code_chunks WHERE workspace_id = ?')
       .get(workspaceId) as { count: number }

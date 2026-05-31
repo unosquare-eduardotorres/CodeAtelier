@@ -24,8 +24,9 @@ export default function AuthSettingsTab(): React.JSX.Element {
           setApiKey(settings.anthropicApiKey as string)
         }
       })
-      .catch(() => {
+      .catch((err) => {
         // Settings unavailable — use defaults
+        console.warn('[AuthSettingsTab] Non-fatal: settings load failed:', err)
       })
   }, [activeWorkspace])
 

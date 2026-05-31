@@ -1,5 +1,3 @@
-import type { SDKExecuteOptions } from './sdk-executor'
-
 /**
  * Build-mode sandbox config.
  *
@@ -9,7 +7,7 @@ import type { SDKExecuteOptions } from './sdk-executor'
  * entirely — trying to whitelist individual commands is a losing game
  * (dev servers, Docker, make, Python scripts, etc. all need full access).
  */
-export function createBuildModeSandbox(): SDKExecuteOptions['sandbox'] {
+export function createBuildModeSandbox(): { enabled: boolean } {
   return {
     enabled: false
   }

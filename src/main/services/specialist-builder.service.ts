@@ -31,9 +31,10 @@ import type { TechStackResult } from './tech-stack-detector.service'
 import { renderTemplate, type PromptSlotValues } from './project-specialist-prompt-template'
 import { buildEnvWithPath } from './env-utils'
 import { modelConfigService } from './model-config.service'
+import { resolvePromptVerbosity } from '../../shared/constants'
 import { skillEnrichmentService } from './skill-enrichment.service'
 import type { SkillEnrichment } from './skill-enrichment.service'
-import { skillRepository } from '../db/repositories'
+import { skillRepository, workspaceRepository } from '../db/repositories'
 
 const buildLog = log.scope('specialist-builder')
 
@@ -61,6 +62,10 @@ interface SpecialistRow {
   build_status: 'pending' | 'building' | 'ready' | 'failed'
   stack_fingerprint: string | null
   detected_techs: string
+  last_built_at?: string
+  updated_at?: string
+  skill_recommendations_hash?: string | null
+  skill_recommendations_json?: string | null
 }
 
 interface WorkspaceRow {
@@ -219,10 +224,7 @@ export class SpecialistBuilderService {
       // ask_user swap proposal. Existing sessions (still DaVinci) can still
       // trigger the manual swap flow for the current conversation.
       try {
-        const wsRow = db
-          .prepare(`SELECT settings_json FROM workspaces WHERE id = ?`)
-          .get(workspace.id) as { settings_json: string } | undefined
-        const wsSettings = JSON.parse(wsRow?.settings_json || '{}') as Record<string, unknown>
+        const wsSettings = workspaceRepository.getSettings(workspace.id)
         if (!wsSettings.specialistSwapAccepted) {
           wsSettings.specialistSwapAccepted = true
           db.prepare(`UPDATE workspaces SET settings_json = ? WHERE id = ?`).run(
@@ -358,26 +360,26 @@ export class SpecialistBuilderService {
   private buildSlotValues(
     specialist: SpecialistRow,
     workspace: WorkspaceRow,
-    techResult: TechStackResult
+    _techResult: TechStackResult
   ): Partial<PromptSlotValues> {
-    const stackSummary =
-      techResult.detectedTechs.length > 0
-        ? techResult.detectedTechs.join(', ')
-        : 'no specific tech stack detected'
     const enabledSkills = this.readEnabledSkills(specialist.id)
-
     return {
       workspaceName: workspace.name,
-      stackSummary,
       enabledSkills
     }
   }
+
+  /** Hard cap on specialist skill section size (chars). Matches DaVinci's 4K budget. */
+  private static readonly SKILL_BUDGET_CHARS = 4000
 
   /**
    * Read `specialist_skills.is_enabled = 1` rows for this specialist and
    * format them as a bullet list of skill names + descriptions. The builder
    * injects this into the prompt so enabled skills actually influence the
    * Project Specialist's behavior.
+   *
+   * Capped at SKILL_BUDGET_CHARS to prevent unbounded prompt growth when
+   * many skills are enabled.
    */
   private readEnabledSkills(specialistId: string): string {
     const db = getDatabase()
@@ -394,9 +396,19 @@ export class SpecialistBuilderService {
     if (rows.length === 0) {
       return '(no skills enabled yet — enable from the Skills tab)'
     }
-    return rows
-      .map((r) => `- **${r.name}**${r.description ? ` — ${r.description}` : ''}`)
-      .join('\n')
+
+    const lines: string[] = []
+    let totalChars = 0
+    for (const r of rows) {
+      const line = `- **${r.name}**${r.description ? ` — ${r.description}` : ''}`
+      if (totalChars + line.length > SpecialistBuilderService.SKILL_BUDGET_CHARS && lines.length > 0) {
+        lines.push(`_(${rows.length - lines.length} more skills omitted — budget cap reached)_`)
+        break
+      }
+      lines.push(line)
+      totalChars += line.length + 1 // +1 for newline
+    }
+    return lines.join('\n')
   }
 
   /**
@@ -431,6 +443,8 @@ export class SpecialistBuilderService {
     detectedTechs: string[]
     claudeMdReference: string
     skeleton: string
+    /** When 'lean', instructs the builder to produce a shorter identity (~250 words) */
+    verbosity?: 'full' | 'lean'
   }): string {
     const techList =
       params.detectedTechs.length > 0 ? params.detectedTechs.join(', ') : '(none detected)'
@@ -441,7 +455,22 @@ export class SpecialistBuilderService {
       '',
       `DETECTED STACK: ${techList}`,
       '',
-      `REFERENCE (for DOMAIN inference only — DO NOT quote, paraphrase, list, or reproduce structure):`,
+      `CRITICAL LAYERING CONTEXT:`,
+      `At runtime, your output is sandwiched between two other prompt layers the model already sees:`,
+      `- BEFORE yours: a Mode Section with operational rules (tool budgets, plan/build constraints).`,
+      `- AFTER yours: the project's full CLAUDE.md — conventions, project structure, tech stack,`,
+      `  anti-patterns, key commands, and error handling patterns.`,
+      ``,
+      `Your prompt MUST NOT repeat ANY fact from CLAUDE.md. No tech stack lists, no directory trees,`,
+      `no convention rules, no command references. Those are already in context. Repeating them wastes`,
+      `tokens and dilutes your signal.`,
+      ``,
+      `YOUR JOB: Write the JUDGMENT layer — how this engineer THINKS about this codebase.`,
+      `Encode decision-making instincts, priority ordering, trade-off preferences, and architectural`,
+      `reflexes that help the model make better choices when rules are ambiguous or multiple valid`,
+      `approaches exist.`,
+      '',
+      `REFERENCE (for domain and pattern inference — DO NOT quote, list, or reproduce):`,
       `---`,
       params.claudeMdReference,
       `---`,
@@ -449,30 +478,40 @@ export class SpecialistBuilderService {
       `Write a first-person identity prompt with EXACTLY these sections, in order, and nothing else:`,
       '',
       `## Your identity`,
-      `3-5 sentences. Who this engineer is. Their seniority and concrete experience with each detected`,
-      `tech. The domain they operate in (infer from the reference — e.g. "healthcare SaaS", "devtools",`,
-      `"fintech"). Their default stance (opinionated, pragmatic, security-aware, test-driven, etc.).`,
+      `3-4 sentences. The domain this project operates in (infer from reference — e.g. "developer`,
+      `tooling", "fintech", "healthcare SaaS"). Your engineering stance (opinionated, pragmatic,`,
+      `security-first, test-driven, etc.). What makes you effective on THIS codebase specifically —`,
+      `not generic engineering virtues.`,
       '',
-      `## Your tech-stack stance`,
-      `2-5 bullet points with CONCRETE opinions about the detected techs. Shape: "I prefer X over Y`,
-      `because Z", "I never Y — instead I Z." Opinions MUST be specific to the detected stack. No`,
-      `generic software-engineering platitudes.`,
+      `## Decision heuristics`,
+      `3-5 bullet points. How you approach problems in THIS codebase. Shape:`,
+      `- "When I face [situation], I [action] because [reason specific to this project]."`,
+      `- "Before [common task], I always check [specific thing] first."`,
+      `- "I default to [approach] over [alternative] in this codebase because [project-specific reason]."`,
+      `These MUST be derived from the project's architecture and conventions — not generic engineering wisdom.`,
       '',
-      `## Domain context`,
-      `1-2 sentences: what this project does and who its users are. Infer from the reference. Nothing`,
-      `invented.`,
+      `## Architecture instincts`,
+      `2-4 bullet points. Boundaries, patterns, and safety defaults you enforce:`,
+      `- Security or trust boundaries you never cross without explicit confirmation`,
+      `- Patterns you reach for when adding new features (e.g. where new modules go, how they wire up)`,
+      `- What you check first when estimating the blast radius of a change`,
+      `These MUST reference actual architectural patterns visible in the reference — not platitudes.`,
       '',
       `## Output style`,
-      `Keep the existing "clean markdown / repo-relative paths / numbered plan steps" bullets verbatim`,
-      `from the skeleton.`,
+      `Keep these bullets verbatim from the skeleton:`,
+      `- Clean markdown. Code blocks with language tags.`,
+      `- Repo-relative paths.`,
+      `- Numbered steps with file targets when proposing plans.`,
       '',
       `HARD RULES:`,
-      `- No directory trees.`,
-      `- No bulleted lists of other agents, skills, or commands.`,
-      `- No absolute file paths or command transcripts.`,
-      `- Under 400 words total.`,
-      `- Identity is FIRST PERSON ("I am…", "I prefer…", "I push back on…").`,
-      `- Return the FINAL prompt verbatim — no preamble, no fences, no trailing commentary.`,
+      `- DO NOT list technologies, frameworks, or versions — CLAUDE.md covers that.`,
+      `- DO NOT describe project structure or directory layout — CLAUDE.md covers that.`,
+      `- DO NOT state conventions or anti-patterns as bullet lists — CLAUDE.md covers that.`,
+      `- No directory trees, no command transcripts, no bulleted lists of agents or skills.`,
+      `- Under ${params.verbosity === 'lean' ? '250' : '400'} words total.`,
+      `- FIRST PERSON throughout ("I", "my", "I prefer", "I check").`,
+      `- Every heuristic bullet must be SPECIFIC to this project — delete any that could apply to any codebase.`,
+      `- Return the FINAL prompt only — no preamble, no fences, no trailing commentary.`,
       '',
       `SKELETON (fallback only, if you truly cannot produce a better version):`,
       `---`,
@@ -492,15 +531,16 @@ export class SpecialistBuilderService {
   ): Promise<string> {
     const { spawn } = await import('node:child_process')
 
-    const claudeMdReference = this.readClaudeMd(workspacePath, 3_000)
+    const claudeMdReference = this.readClaudeMd(workspacePath, 5_000)
+    const resolvedModel = modelConfigService.getModel(workspacePath, 'project-specialist:plan')
+    const verbosity = resolvePromptVerbosity(resolvedModel)
     const metaPrompt = this.buildMetaPrompt({
       workspaceName,
       detectedTechs,
       claudeMdReference,
-      skeleton
+      skeleton,
+      verbosity
     })
-
-    const resolvedModel = modelConfigService.getModel(workspacePath, 'project-specialist:plan')
 
     return new Promise<string>((resolve, reject) => {
       const env = buildEnvWithPath()

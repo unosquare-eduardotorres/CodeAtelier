@@ -70,9 +70,7 @@ export default function RepoWarningBanner({
     return (
       <div className="flex items-center gap-2 px-4 py-2 bg-info-muted border-b border-info/20">
         <Info size={14} className="text-info flex-shrink-0" />
-        <span className="text-xs text-info flex-1">
-          Connect GitHub to enable pull requests
-        </span>
+        <span className="text-xs text-info flex-1">Connect GitHub to enable pull requests</span>
         {onNavigateToSettings && (
           <button
             onClick={onNavigateToSettings}

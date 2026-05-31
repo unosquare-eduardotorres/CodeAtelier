@@ -41,8 +41,16 @@ import { registerPlatformIpc } from './platform.ipc'
 import { registerAuditIpc } from './audit.ipc'
 import { registerGrillIpc } from './grill.ipc'
 import { registerProjectIpc } from './project.ipc'
+import { registerInsightsIpc } from './insights.ipc'
+import { registerMpaIpc } from './mpa.ipc'
+import { registerPermissionIpc } from './permission.ipc'
+import { registerCouncilIpc } from './council.ipc'
+import { initSessionEventRouter } from '../services/session-event-router'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
+  // Initialize session event router FIRST — other IPC handlers may need it
+  initSessionEventRouter(mainWindow)
+
   registerWorkspaceIpc()
   registerChatIpc(mainWindow)
   registerAgentIpc(mainWindow)
@@ -85,4 +93,8 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerAuditIpc(mainWindow)
   registerGrillIpc(mainWindow)
   registerProjectIpc()
+  registerInsightsIpc()
+  registerMpaIpc(mainWindow)
+  registerPermissionIpc()
+  registerCouncilIpc(mainWindow)
 }

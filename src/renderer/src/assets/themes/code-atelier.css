@@ -1,0 +1,142 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Code Atelier — Renaissance-inspired gold/teal palette (default theme)
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="code-atelier"] {
+  /* ── Surface layers (dark → light) ── */
+  --color-surface-base: #090d0f;
+  --color-surface-raised: #111c21;
+  --color-surface-overlay: #162228;
+  --color-surface-float: #1e2c30;
+
+  /* ── Border layers (gold-based) ── */
+  --color-border-subtle: rgba(184, 151, 106, 0.15);
+  --color-border-default: rgba(184, 151, 106, 0.28);
+  --color-border-strong: rgba(184, 151, 106, 0.45);
+
+  /* ── Text hierarchy (gold tones on dark) ── */
+  --color-text-primary: #c8b89a;
+  --color-text-body: #afc2c6;
+  --color-text-secondary: #6a7a7e;
+  --color-text-muted: #5a6a6e;
+
+  /* ── Code text ── */
+  --color-code-text: #d4cfc4;
+  --color-code-inline: #88c4ba;
+  --color-text-emphasis: #c4d0d4;
+
+  /* ── Primary accent (Atelier Gold) ── */
+  --color-primary: #b8976a;
+  --color-primary-hover: #c8b89a;
+  --color-primary-muted: rgba(184, 151, 106, 0.15);
+  --color-primary-text: #c8b89a;
+
+  /* ── Accent (Jewel Copper) ── */
+  --color-accent: #c4714a;
+  --color-accent-muted: rgba(196, 113, 74, 0.15);
+
+  /* ── Deep Teal / Forest Green ── */
+  --color-teal: #1f6b5e;
+  --color-teal-light: #2a8a78;
+  --color-teal-muted: rgba(31, 107, 94, 0.18);
+  --color-teal-text: #6dc4b2;
+  --color-forest: #1a4a38;
+  --color-forest-light: #5db88a;
+
+  /* ── Semantic status ── */
+  --color-success: #5db88a;
+  --color-success-muted: rgba(93, 184, 138, 0.15);
+  --color-warning: #d49353;
+  --color-warning-muted: rgba(212, 147, 83, 0.15);
+  --color-danger: #c46b6b;
+  --color-danger-muted: rgba(196, 107, 107, 0.15);
+  --color-info: #6b9ec4;
+  --color-info-muted: rgba(107, 158, 196, 0.15);
+
+  /* ── Mode tokens (Plan / Build / Danger) ── */
+  --color-mode-plan: #3c4b46;
+  --color-mode-plan-muted: rgba(60, 75, 70, 0.3);
+  --color-mode-plan-text: #8a9a9e;
+  --color-mode-plan-border: rgba(60, 75, 70, 0.3);
+
+  --color-mode-build: #6a4638;
+  --color-mode-build-muted: rgba(106, 70, 56, 0.3);
+  --color-mode-build-text: #d49353;
+  --color-mode-build-border: rgba(106, 70, 56, 0.3);
+
+  --color-mode-danger: #6b2020;
+  --color-mode-danger-muted: rgba(107, 32, 32, 0.3);
+  --color-mode-danger-text: #e05252;
+  --color-mode-danger-border: rgba(107, 32, 32, 0.4);
+
+  /* ── Plan Card ── */
+  --color-plan-card: #0ea5e9;
+  --color-plan-card-muted: rgba(14, 165, 233, 0.12);
+  --color-plan-card-border: rgba(14, 165, 233, 0.3);
+  --color-plan-card-text: #7dd3fc;
+  --color-plan-card-section-bg: rgba(14, 165, 233, 0.06);
+  --color-plan-card-accent: #6dc4b2;
+  --color-plan-card-phase-bg: rgba(31, 107, 94, 0.12);
+  --color-plan-card-phase-border: rgba(31, 107, 94, 0.25);
+
+  /* ── Panel / Pillar colors ── */
+  --color-panel-olive: #3a3531;
+  --color-panel-terracotta: #6a4638;
+  --color-panel-teal: #3c4b46;
+  --color-panel-navy: #283337;
+
+  /* ── Agent-specific colors ── */
+  --color-agent-react: #7abfdb;
+  --color-agent-dotnet: #9b7fd4;
+  --color-agent-agentic: #d4a843;
+  --color-agent-postgres: #6b9ec4;
+  --color-agent-ux: #c87a9b;
+  --color-agent-git: #8a9a9e;
+  --color-agent-requirements: #5db88a;
+  --color-agent-codeplanner: #8a9a8e;
+  --color-agent-execution: #d49353;
+  --color-agent-cicd: #c46b6b;
+  --color-agent-cloud: #5bb8a8;
+
+  /* ── Special-purpose tokens ── */
+  --color-user-bubble: rgba(184, 151, 106, 0.1);
+  --color-grill: #c4714a;
+  --color-grill-muted: rgba(196, 113, 74, 0.15);
+  --color-gold-glow: rgba(184, 151, 106, 0.15);
+  --color-gold-muted: #8b6f4a;
+
+  /* ── Component tokens ── */
+  --color-button-primary-bg: var(--color-primary);
+  --color-button-primary-hover: var(--color-primary-hover);
+  --color-button-danger-bg: var(--color-danger);
+
+  --color-card-bg: rgba(184, 151, 106, 0.02);
+  --color-card-border: var(--color-border-subtle);
+
+  --color-input-bg: #0d1618;
+  --color-input-border: var(--color-border-default);
+  --color-input-focus: var(--color-primary);
+
+  --color-modal-bg: var(--color-surface-float);
+  --color-modal-border: var(--color-border-default);
+
+  --color-sidebar-bg: var(--color-surface-raised);
+  --color-sidebar-active: var(--color-primary-muted);
+
+  /* ── Zebra stripe for tables ── */
+  --color-table-zebra: rgba(184, 151, 106, 0.02);
+
+  /* ── Scrollbar ── */
+  --color-scrollbar-thumb: rgba(184, 151, 106, 0.2);
+  --color-scrollbar-thumb-hover: rgba(184, 151, 106, 0.35);
+
+  /* ── Selection ── */
+  --color-selection-bg: rgba(184, 151, 106, 0.3);
+  --color-selection-text: #c8b89a;
+
+  /* ── Hover lift shadow ── */
+  --color-hover-shadow: rgba(184, 151, 106, 0.12);
+
+  /* ── Specialist radial gradient ── */
+  --color-specialist-glow: rgba(184, 151, 106, 0.08);
+  --color-specialist-mid: rgba(30, 46, 51, 0.4);
+}

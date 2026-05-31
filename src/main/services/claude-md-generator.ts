@@ -8,6 +8,7 @@
 
 import log from 'electron-log'
 import type { GrillDecision, GrillTrackScore } from '../../shared/types'
+import { modelConfigService } from './model-config.service'
 
 const genLog = log.scope('claude-md-gen')
 
@@ -33,14 +34,7 @@ export async function generateClaudeMd(params: {
   }
 
   try {
-    const { query } = await import('@anthropic-ai/claude-agent-sdk')
-    const { authProvider } = await import('./auth-provider')
-
-    // Ensure API key is in env
-    const apiKey = authProvider.getApiKey()
-    if (apiKey && !process.env.ANTHROPIC_API_KEY) {
-      process.env.ANTHROPIC_API_KEY = apiKey
-    }
+    const { execFileSync } = await import('node:child_process')
 
     const decisionsText = formatDecisions(grillDecisions)
     const scoresText = formatTrackScores(trackScores)
@@ -92,28 +86,21 @@ Generate a well-structured markdown document with the following sections:
 - Do NOT invent decisions that weren't made — mark gaps with "TBD" if the grill didn't cover them
 - Keep total length between 200-500 lines`
 
-    const abortController = new AbortController()
-    const timeout = setTimeout(() => abortController.abort(), 60_000)
+    // Use modelConfigService to resolve the model — respects user overrides
+    // and avoids hardcoding a specific model version.
+    const resolvedModel = modelConfigService.getModel(undefined, 'activation')
 
-    const result = query({
-      prompt,
-      options: {
-        model: 'claude-sonnet-4-20250514',
-        systemPrompt,
-        permissionMode: 'bypassPermissions',
-        maxTurns: 1,
-        abortController
-      }
+    const content = execFileSync('claude', [
+      '-p', prompt,
+      '--model', resolvedModel,
+      '--system-prompt', systemPrompt,
+      '--permission-mode', 'plan',
+      '--max-turns', '1',
+      '--output-format', 'text'
+    ], {
+      encoding: 'utf-8',
+      timeout: 60_000
     })
-
-    let content = ''
-    for await (const msg of result) {
-      if (msg.type === 'assistant' && typeof msg.message === 'string') {
-        content += msg.message
-      }
-    }
-
-    clearTimeout(timeout)
 
     const trimmed = content.trim()
     if (trimmed.length < 50) {

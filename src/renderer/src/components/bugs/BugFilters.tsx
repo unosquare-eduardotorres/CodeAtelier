@@ -5,7 +5,10 @@ interface BugFiltersProps {
   onFilterChange: (filters: Partial<BugFiltersType>) => void
 }
 
-export default function BugFilters({ filters, onFilterChange }: BugFiltersProps): React.JSX.Element {
+export default function BugFilters({
+  filters,
+  onFilterChange
+}: BugFiltersProps): React.JSX.Element {
   return (
     <div className="flex items-center gap-3 flex-wrap">
       {/* Process filter */}

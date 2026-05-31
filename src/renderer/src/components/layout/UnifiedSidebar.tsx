@@ -32,7 +32,7 @@ export default function UnifiedSidebar({
     useChatActions()
   const conversations = useChatStore((s) => s.conversations)
   const activeConversation = useChatStore((s) => s.activeConversation)
-  const isStreaming = useChatStore((s) => s.isStreaming)
+  const streamingConversationIds = useChatStore((s) => s.streamingConversationIds)
 
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -138,7 +138,7 @@ export default function UnifiedSidebar({
                     activeConversation?.id === conv.id
                       ? 'bg-primary text-white'
                       : 'bg-surface-overlay text-text-secondary hover:bg-surface-float'
-                  } ${isStreaming && activeConversation?.id === conv.id ? 'chat-icon-processing' : ''}`}
+                  } ${streamingConversationIds.has(conv.id) ? 'chat-icon-processing' : ''}`}
                   title={conv.title}
                   aria-label={`Open conversation: ${conv.title}`}
                 >
@@ -261,7 +261,7 @@ export default function UnifiedSidebar({
                     key={conv.id}
                     conversation={conv}
                     isActive={activeConversation?.id === conv.id}
-                    isStreaming={isStreaming && activeConversation?.id === conv.id}
+                    isStreaming={streamingConversationIds.has(conv.id)}
                     onSelect={(id) => {
                       selectConversation(id)
                       // Ensure main content shows chat when selecting a conversation

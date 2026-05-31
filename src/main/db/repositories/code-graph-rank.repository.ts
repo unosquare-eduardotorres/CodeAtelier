@@ -1,17 +1,22 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 
 /**
  * Repository for the `code_graph_ranks` table.
  * Stores pre-computed PageRank scores per file for instant lookups
  * during graph_map generation and decompose() file ranking.
  */
-export class CodeGraphRankRepository {
+export class CodeGraphRankRepository extends BaseRepository<{ workspace_id: string; rel_fname: string; page_rank: number }, { relFname: string; pageRank: number }> {
+  protected readonly tableName = 'code_graph_ranks'
+  protected mapRow(row: { workspace_id: string; rel_fname: string; page_rank: number }): { relFname: string; pageRank: number } {
+    return { relFname: row.rel_fname, pageRank: row.page_rank }
+  }
+
   /**
    * Bulk upsert PageRank scores for a workspace.
    * Replaces all existing ranks atomically.
    */
   upsertRanks(workspaceId: string, ranks: Map<string, number>): void {
-    const db = getDatabase()
+    const db = this.db()
 
     const transaction = db.transaction(() => {
       db.prepare('DELETE FROM code_graph_ranks WHERE workspace_id = ?').run(workspaceId)
@@ -33,7 +38,7 @@ export class CodeGraphRankRepository {
    * Get all PageRank scores for a workspace.
    */
   findByWorkspace(workspaceId: string): Map<string, number> {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT rel_fname, page_rank FROM code_graph_ranks WHERE workspace_id = ?')
       .all(workspaceId) as { rel_fname: string; page_rank: number }[]
@@ -49,7 +54,7 @@ export class CodeGraphRankRepository {
    * Get the PageRank score for a specific file.
    */
   getRank(workspaceId: string, relFname: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare('SELECT page_rank FROM code_graph_ranks WHERE workspace_id = ? AND rel_fname = ?')
       .get(workspaceId, relFname) as { page_rank: number } | undefined
@@ -60,7 +65,7 @@ export class CodeGraphRankRepository {
    * Delete all ranks for a workspace.
    */
   deleteByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const result = db
       .prepare('DELETE FROM code_graph_ranks WHERE workspace_id = ?')
       .run(workspaceId)
@@ -71,7 +76,7 @@ export class CodeGraphRankRepository {
    * Count total ranked files for a workspace.
    */
   countByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare('SELECT COUNT(*) as count FROM code_graph_ranks WHERE workspace_id = ?')
       .get(workspaceId) as { count: number }
@@ -82,7 +87,7 @@ export class CodeGraphRankRepository {
    * Get top-ranked files for a workspace, ordered by PageRank descending.
    */
   getTopRanked(workspaceId: string, limit: number): string[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare(
         'SELECT rel_fname FROM code_graph_ranks WHERE workspace_id = ? ORDER BY page_rank DESC LIMIT ?'

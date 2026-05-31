@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { GitBranch, FileText, Loader2, AlertTriangle } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
+import InsightsSummary, { type ConversationInsights } from './InsightsSummary'
 
 interface CompleteDialogProps {
   isOpen: boolean
@@ -29,6 +30,8 @@ export default function CompleteDialog({
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationError, setGenerationError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [insights, setInsights] = useState<ConversationInsights | null>(null)
+  const [insightsLoading, setInsightsLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -63,9 +66,23 @@ export default function CompleteDialog({
           const lines = typed.map((fc) => `- ${fc.changeType}: ${fc.filePath}`)
           setPrDescription(lines.length > 0 ? `Changes:\n${lines.join('\n')}` : '')
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[CompleteDialog] Non-fatal: file changes load failed:', err)
           setFileChanges([])
           setPrDescription('')
+        })
+
+      // Fetch session insights
+      setInsightsLoading(true)
+      window.api
+        .getConversationInsights({ conversationId })
+        .then((result) => {
+          setInsights(result)
+          setInsightsLoading(false)
+        })
+        .catch((err) => {
+          console.warn('[CompleteDialog] Non-fatal: insights load failed:', err)
+          setInsightsLoading(false)
         })
 
       // Auto-generate PR description
@@ -76,7 +93,8 @@ export default function CompleteDialog({
           setPrDescription(result.description)
           setIsGenerating(false)
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[CompleteDialog] Non-fatal: PR description generation failed:', err)
           setGenerationError('Failed to auto-generate. You can write one manually.')
           setIsGenerating(false)
         })
@@ -223,6 +241,13 @@ export default function CompleteDialog({
           )}
           {generationError && <p className="text-xs text-warning mt-1">{generationError}</p>}
         </div>
+
+        {/* Session Insights */}
+        <InsightsSummary
+          insights={insights}
+          loading={insightsLoading}
+          filesChanged={fileChanges.length}
+        />
 
         {/* File changes list */}
         {fileChanges.length > 0 && (

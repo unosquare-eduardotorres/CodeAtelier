@@ -3,11 +3,7 @@ import type { BrowserWindow } from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 
-export type ConversationState =
-  | 'idle'
-  | 'chat-agent-streaming'
-  | 'error'
-  | 'stopped'
+export type ConversationState = 'idle' | 'chat-agent-streaming' | 'error' | 'stopped'
 
 export type ConversationTransition =
   | 'sendMessage'

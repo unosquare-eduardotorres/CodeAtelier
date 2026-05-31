@@ -1,13 +1,13 @@
 import type { StreamChunk } from './agent-base.service'
-import type { SDKExecuteResult } from './sdk-executor'
-import type { SDKExecutor } from './sdk-executor'
+import type { ExecutorResult } from './executor-types'
+import type { CLIExecutor } from './cli-executor'
 import { DA_VINCI_AGENT_ID } from '../../shared/constants'
 import { chatAgentLogger } from '../logger'
 import { conversationRepository } from '../db/repositories'
 
 export interface RecoveryNudgeOptions {
-  /** SDK executor to perform the 1-turn text-only recovery call */
-  sdkExecutor: SDKExecutor
+  /** CLI executor to perform the 1-turn text-only recovery call */
+  cliExecutor: CLIExecutor
   /** System prompt for the recovery query context */
   systemPrompt: string
   /** Workspace path for model resolution */
@@ -22,6 +22,8 @@ export interface RecoveryNudgeOptions {
   conversationId: string
   /** Number of tool calls made (for fallback message) */
   toolCallCount: number
+  /** Names of the last tool(s) called (for context-specific recovery prompt) */
+  lastToolNames?: string[]
   /** Callback to capture new session ID from recovery response */
   onSessionCapture: (sessionId: string) => void
   /** Callback to emit stream chunks to the renderer */
@@ -40,11 +42,11 @@ export interface RecoveryNudgeResult {
 /**
  * Handles the "silent tool completion" recovery strategy.
  *
- * When the SDK stream ends after tool calls without producing a text summary,
+ * When the stream ends after tool calls without producing a text summary,
  * this service fires a 1-turn text-only nudge to extract a summary from the model.
  * If the nudge also fails, it produces a user-facing fallback message.
  *
- * This is a complete sub-interaction with its own SDK call, session handling,
+ * This is a complete sub-interaction with its own executor call, session handling,
  * and fallback logic — isolated from the main stream loop.
  */
 export class RecoveryNudgeService {
@@ -62,27 +64,32 @@ export class RecoveryNudgeService {
     let recovered = false
     let recoveredText = ''
 
+    // Build context-specific recovery prompt when tool names are available
+    const toolContext = opts.lastToolNames?.length
+      ? ` Your previous call(s) used ${opts.lastToolNames.join(', ')}.`
+      : ''
+
     try {
-      for await (const chunk of opts.sdkExecutor.execute({
-        prompt: opts.isBuildMode
-          ? '[System: Your previous response ended after tool calls without providing a summary to the user. Please summarize what you found or executed in 2-5 sentences. Do NOT use any tools — just summarize from what you already read or ran.]'
-          : '[System: Your previous response ended after tool calls without providing a summary to the user. Please summarize what you found in 2-5 sentences. Do NOT use any tools — just summarize from what you already read.]',
+      for await (const chunk of opts.cliExecutor.execute({
+        prompt: (() => {
+          const action = opts.isBuildMode ? 'found or executed' : 'found'
+          const source = opts.isBuildMode ? 'read or ran' : 'read'
+          return `[System: Your previous response ended after tool calls without providing a summary to the user.${toolContext} Please summarize what you ${action} in 2-5 sentences. Do NOT use any tools — just summarize from what you already ${source}.]`
+        })(),
         systemPrompt: opts.systemPrompt,
         model: opts.model,
         cwd: opts.workspacePath,
-        permissionMode: opts.isBuildMode ? 'bypassPermissions' : 'default',
+        permissionMode: opts.isBuildMode ? 'bypassPermissions' : 'plan',
         allowedTools: [], // No tools — text summary only
         disallowedTools: ['Agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion'],
         maxTurns: 1,
         resume: opts.sessionId,
         agentId: DA_VINCI_AGENT_ID,
         // Recovery is lightweight summarization — omit thinking entirely.
-        // 'disabled' is Claude-specific and breaks local LLMs (invalid signature).
-        // Without this param, Claude uses server defaults (fine for a 1-turn summary).
         effort: 'low'
       })) {
         if ('_meta' in chunk && chunk._meta) {
-          const meta = chunk._meta as SDKExecuteResult
+          const meta = chunk._meta as ExecutorResult
           if (meta.sessionId && opts.conversationId) {
             opts.onSessionCapture(meta.sessionId)
             try {

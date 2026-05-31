@@ -25,15 +25,12 @@ import type {
 } from '../agent-session.types'
 import type { ControlActionCallbacks } from '../control-actions.tool'
 import { workspaceRepository } from '../../db/repositories'
-import { codeGraphMcpService } from '../code-graph.tool'
-import { semanticSearchMcpService } from '../semantic-search.tool'
-import { gitContextMcpService } from '../git-context.tool'
-import { codeAnalysisMcpService } from '../code-analysis.tool'
 import { renderAuditPrompt } from '../audit-prompt-templates'
 import { detectTechStack } from '../tech-stack-detector.service'
 import { chatAgentLogger } from '../../logger'
 import { appendMcpToolGuidance, type PromptFeatureFlags } from '../prompt-assembly-helpers'
-import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
+import { modelConfigService } from '../model-config.service'
+import { buildReadOnlyToolConfig } from './evaluation-mcp-config'
 
 export class AuditRoleAdapter implements AgentRoleAdapter {
   readonly role = 'audit' as const
@@ -52,8 +49,8 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
   private systemPrompt: string | null = null
 
   // Feature flags read on session start
-  private repomapEnabled = false
-  private semanticSearchEnabled = false
+  private repomapEnabled = true
+  private semanticSearchEnabled = true
 
   constructor(params: {
     workspaceId: string
@@ -75,12 +72,9 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
   async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
     // Read workspace settings for MCP flags
     try {
-      const workspace = workspaceRepository.findById(this.workspaceId)
-      if (workspace) {
-        const settings = JSON.parse(workspace.settingsJson || '{}')
-        this.repomapEnabled = !!settings.repomapEnabled
-        this.semanticSearchEnabled = !!settings.semanticSearchEnabled
-      }
+      const settings = workspaceRepository.getSettings(this.workspaceId)
+      this.repomapEnabled = settings.repomapEnabled !== false
+      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
     } catch {
       /* non-fatal */
     }
@@ -104,21 +98,29 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
       }
     })()
 
+    // Resolve model for lean prompt optimization (Opus 4.8+ gets compressed guidance)
+    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
+    const resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, 'audit')
+
     this.systemPrompt = renderAuditPrompt({
       trackId: this.trackId,
       workspaceName,
       detectedTechs,
       skillContent: this.skillContent,
-      roundContext: this.roundContext
+      roundContext: this.roundContext,
+      model: resolvedModel
     })
 
     // Append MCP tool guidance (same as DaVinci/Grill) so the agent knows how to use custom tools
     const featureFlags: PromptFeatureFlags = {
       repomapEnabled: this.repomapEnabled,
       semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: false // auditors don't mount GitHub tools
+      githubConfigured: false, // auditors don't mount GitHub tools
+      includeGitContext: this.llmProvider !== 'local-llm',
+      includeCheckpoint: false // auditors don't mount checkpoint tools
     }
-    this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags)
+
+    this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags, resolvedModel)
 
     this.log.info(
       `[audit-adapter] ${this.trackId} audit started for workspace=${this.workspaceId} mode=${this.mode}`
@@ -146,162 +148,14 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
   }
 
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
-    // Local LLM path — mount code-graph, semantic-search (if enabled), code-analysis.
-    // Skip git-context to save tokens (Bash + git CLI equivalent).
-    if (this.llmProvider === 'local-llm') {
-      const servers: Record<string, McpServerConfig> = {}
-
-      // Code graph (conditional on workspace flag)
-      if (this.repomapEnabled && ctx.workspaceId) {
-        Object.assign(
-          servers,
-          codeGraphMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
-        )
-      }
-      // Semantic search (conditional on workspace flag)
-      if (this.semanticSearchEnabled && ctx.workspaceId) {
-        Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(ctx.workspaceId))
-      }
-      // Code analysis: always on for audits
-      Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(ctx.workspacePath))
-
-      return {
-        ...(Object.keys(servers).length > 0 ? { mcpServers: servers } : {}),
-        allowedTools: [
-          'Read',
-          'Glob',
-          'Grep',
-          'WebSearch',
-          'WebFetch',
-          // Code graph (if mounted)
-          ...(this.repomapEnabled && ctx.workspaceId
-            ? [
-                'mcp__code-graph__graph_map',
-                'mcp__code-graph__search_identifiers',
-                'mcp__code-graph__find_dead_code',
-                'mcp__code-graph__file_outline',
-                'mcp__code-graph__find_callers',
-                'mcp__code-graph__find_callees',
-                'mcp__code-graph__find_references',
-                'mcp__code-graph__file_dependencies',
-                'mcp__code-graph__file_dependents',
-                'mcp__code-graph__symbol_hotspots',
-                'mcp__code-graph__coupling_analysis',
-                'mcp__code-graph__circular_dependencies',
-                'mcp__code-graph__module_boundary_health'
-              ]
-            : []),
-          // Semantic search (if mounted)
-          ...(this.semanticSearchEnabled && ctx.workspaceId
-            ? [
-                'mcp__semantic-search__semantic_search',
-                'mcp__semantic-search__similar_code',
-                'mcp__semantic-search__codebase_concepts'
-              ]
-            : []),
-          // Code analysis (always)
-          'mcp__code-analysis__todo_scanner',
-          'mcp__code-analysis__dependency_health',
-          'mcp__code-analysis__test_coverage_map'
-        ],
-        disallowedTools: [
-          'Write',
-          'Edit',
-          'Bash',
-          'ListDir',
-          'Agent',
-          'ToolSearch',
-          'ExitPlanMode',
-          'AskUserQuestion',
-          'TodoWrite', // deprecated — kept for backward compat
-          'TaskCreate', // new Task tools (SDK 0.2.136+)
-          'TaskUpdate'
-        ]
-      }
-    }
-
-    const servers: Record<string, McpServerConfig> = {}
-
-    // Code graph (conditional on workspace flag)
-    if (this.repomapEnabled && ctx.workspaceId) {
-      Object.assign(
-        servers,
-        codeGraphMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
-      )
-    }
-
-    // Semantic search (conditional on workspace flag)
-    if (this.semanticSearchEnabled && ctx.workspaceId) {
-      Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(ctx.workspaceId))
-    }
-
-    // Git context: always on
-    Object.assign(servers, gitContextMcpService.getMcpServersConfig(ctx.workspacePath))
-
-    // Code analysis: always on for audits
-    Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(ctx.workspacePath))
-
-    // Read-only — NO control-actions MCP, NO checkpoint-context, NO github-context
-
-    return {
-      ...(Object.keys(servers).length > 0 ? { mcpServers: servers } : {}),
-      // Explicit allow-list: read-only tools only
-      allowedTools: [
-        'Read',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch',
-        // Code graph MCP tools (if mounted)
-        ...(this.repomapEnabled && ctx.workspaceId
-          ? [
-              'mcp__code-graph__graph_map',
-              'mcp__code-graph__search_identifiers',
-              'mcp__code-graph__find_dead_code',
-              'mcp__code-graph__file_outline',
-              'mcp__code-graph__find_callers',
-              'mcp__code-graph__find_callees',
-              'mcp__code-graph__find_references',
-              'mcp__code-graph__file_dependencies',
-              'mcp__code-graph__file_dependents',
-              'mcp__code-graph__symbol_hotspots',
-              'mcp__code-graph__coupling_analysis',
-              'mcp__code-graph__circular_dependencies',
-              'mcp__code-graph__module_boundary_health'
-            ]
-          : []),
-        // Semantic search (if mounted)
-        ...(this.semanticSearchEnabled && ctx.workspaceId
-          ? [
-              'mcp__semantic-search__semantic_search',
-              'mcp__semantic-search__similar_code',
-              'mcp__semantic-search__codebase_concepts'
-            ]
-          : []),
-        // Git context (always)
-        'mcp__git-context__git_log',
-        'mcp__git-context__git_diff',
-        'mcp__git-context__git_blame',
-        // Code analysis (always)
-        'mcp__code-analysis__todo_scanner',
-        'mcp__code-analysis__dependency_health',
-        'mcp__code-analysis__test_coverage_map'
-      ],
-      // Explicitly block all write + agent tools
-      disallowedTools: [
-        'Write',
-        'Edit',
-        'Bash',
-        'ListDir',
-        'Agent',
-        'ToolSearch',
-        'ExitPlanMode',
-        'AskUserQuestion',
-        'TodoWrite', // deprecated — kept for backward compat
-        'TaskCreate', // new Task tools (SDK 0.2.136+)
-        'TaskUpdate'
-      ]
-    }
+    // Use the shared read-only tool config — same pattern as grill/council adapters.
+    // Local LLMs skip git-context to save tokens (Bash + git CLI equivalent).
+    return buildReadOnlyToolConfig({
+      repomapEnabled: this.repomapEnabled,
+      semanticSearchEnabled: this.semanticSearchEnabled,
+      hasWorkspace: !!ctx.workspaceId,
+      includeGitContext: this.llmProvider !== 'local-llm'
+    })
   }
 
   buildControlCallbacks(_params: {
@@ -333,7 +187,7 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
 
   onSessionStop(): void {
     this.systemPrompt = null
-    this.repomapEnabled = false
-    this.semanticSearchEnabled = false
+    this.repomapEnabled = true
+    this.semanticSearchEnabled = true
   }
 }

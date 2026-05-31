@@ -1,21 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import {
-  Bot,
-  Zap,
-  Home,
-  Sliders,
-  Braces,
-  SearchCode,
-  ZoomIn,
-  ZoomOut,
-  CircleHelp,
-  Bug,
-  ArrowUp,
-  ArrowDown,
-  Flame,
-  ShieldCheck,
-  GitBranch
-} from 'lucide-react'
+import { Home, Sliders, CircleHelp, Bug } from 'lucide-react'
 import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
 import { WorkspaceSettingsContent } from '@renderer/components/workspace'
@@ -31,36 +15,34 @@ import {
   ToastContainer,
   TokenDetailsModal
 } from '@renderer/components/common'
+import { NotificationStack } from '@renderer/components/notifications'
+import { useBackgroundSessionListeners } from '@renderer/hooks/useBackgroundSessionListeners'
 import { BugTrackerPage } from '@renderer/components/bugs'
 import {
   useWorkspaceStore,
   useAgentStore,
   useChatStore,
   useChatActions,
-  useIdeaStore,
   useConversationSpecialistActions,
   useSpecialistStore,
-  useToastStore,
   useBugStore,
-  useAuditStore
+  useAuditStore,
+  useIndexingStore,
+  useMpaStore
 } from '@renderer/store'
+import { useCouncilStore } from '@renderer/store/council.store'
+
+import StatusBar from './StatusBar'
+import {
+  useAppKeyboardShortcuts,
+  useAppZoom,
+  useBranchIndicator,
+  useGrillStatus,
+  useWorkspaceListeners,
+  useNavigationHandlers
+} from './hooks'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
-
-/** Extracted agent status dot — avoids recreating on every AppLayout render */
-function AgentStatusDot({ status }: { status: string }): React.JSX.Element {
-  const dotBase = 'w-2 h-2 rounded-full inline-block'
-  switch (status) {
-    case 'running':
-      return <span className={`${dotBase} bg-success`} title="Agent ready" />
-    case 'starting':
-      return <span className={`${dotBase} bg-warning animate-pulse`} title="Agent starting" />
-    case 'error':
-      return <span className={`${dotBase} bg-danger`} title="Agent error" />
-    default:
-      return <span className={`${dotBase} bg-text-muted`} title="Agent stopped" />
-  }
-}
 
 export default function AppLayout(): React.JSX.Element {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -69,7 +51,6 @@ export default function AppLayout(): React.JSX.Element {
   const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('ideas')
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const agentStatus = useWorkspaceStore((s) => s.agentStatus)
-  const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
   const sessionOutputTokens = useAgentStore((s) => s.sessionOutputTokens)
   const contextWindowTokens = useAgentStore((s) => s.contextWindowTokens)
   const { updateMode, setCompactSuggestion } = useChatActions()
@@ -78,101 +59,8 @@ export default function AppLayout(): React.JSX.Element {
   const { hydrateConversationSpecialists } = useConversationSpecialistActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
   const [showNewChat, setShowNewChat] = useState(false)
-  const { createIdea, startGrill } = useIdeaStore()
-  const [zoomFactor, setZoomFactor] = useState(1.0)
   const [appVersion, setAppVersion] = useState<string>('')
-  const [currentBranch, setCurrentBranch] = useState<string | null>(null)
-  const [isGitRepo, setIsGitRepo] = useState(false)
   const repoInfo = useWorkspaceStore((s) => s.repoInfo)
-
-  // Branch indicator — refresh on workspace/conversation change + repoInfo
-  useEffect(() => {
-    if (!activeWorkspace) {
-      setCurrentBranch(null)
-      setIsGitRepo(false)
-      return
-    }
-    if (activeConversation?.branchName) {
-      setCurrentBranch(activeConversation.branchName)
-      setIsGitRepo(true)
-    } else if (repoInfo) {
-      setIsGitRepo(repoInfo.isRepo)
-      setCurrentBranch(repoInfo.isRepo ? repoInfo.currentBranch : null)
-    } else {
-      window.api.getRepoInfo({ workspaceId: activeWorkspace.id }).then((info) => {
-        setIsGitRepo(info.isRepo)
-        setCurrentBranch(info.isRepo ? info.currentBranch : null)
-      })
-    }
-  }, [activeWorkspace?.id, activeConversation?.id, activeConversation?.branchName, repoInfo])
-
-  // Load app version once on mount
-  useEffect(() => {
-    window.api.getPlatformInfo().then((info) => setAppVersion(info.appVersion))
-  }, [])
-
-  // Bug tracker + toast
-  const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
-  const fetchBugCount = useBugStore((s) => s.fetchCount)
-  const addToast = useToastStore((s) => s.addToast)
-
-  // Audit status for status bar indicator
-  const auditRunning = useAuditStore((s) => s.isRunning)
-  const auditRerunning = useAuditStore((s) => s.rerunningTrackId)
-  const isAuditActive = auditRunning || !!auditRerunning
-  const isAuditPaused = useAuditStore((s) => s.isPaused)
-  const lastAuditScore = useAuditStore((s) => s.currentRun?.overallScore ?? null)
-  const loadLatestAudit = useAuditStore((s) => s.loadLatest)
-  const handleAuditComplete = useAuditStore((s) => s.handleComplete)
-
-  // Global audit listeners — keeps status bar in sync even when HealthPage is not mounted
-  useEffect(() => {
-    if (!activeWorkspace) return
-    loadLatestAudit(activeWorkspace.id)
-    const unsub = window.api.onAuditComplete(handleAuditComplete)
-    return unsub
-  }, [activeWorkspace?.id, loadLatestAudit, handleAuditComplete])
-
-  // Grill status for status bar indicator
-  const [grillStatus, setGrillStatus] = useState<{
-    status: string
-    ideaId: string
-    trackId: string | null
-    score: number | null
-  } | null>(null)
-
-  useEffect(() => {
-    if (!activeWorkspace) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on workspace change
-      setGrillStatus(null)
-      return
-    }
-    window.api.grillGetStatus({ workspaceId: activeWorkspace.id }).then(setGrillStatus)
-    const unsub = window.api.onGrillStatusChanged(setGrillStatus)
-    return unsub
-  }, [activeWorkspace?.id])
-
-  /** Navigate to the grill session for a given idea */
-  const handleNavigateToGrill = useCallback(
-    (_ideaId: string) => {
-      // Navigate to Ideas tab (workspace settings) — the grill session will show
-      setWorkspaceSettingsTab('ideas')
-      setSidebarView('settings')
-      // The ideas list will show the active grill for this idea
-    },
-    []
-  )
-
-  // MCP tools from Da Vinci status (moved from ChatPanel header to status bar)
-  const activeMcpTools = useAgentStore((s) => {
-    const davinci = s.statuses.find((st) => st.agentType === 'da-vinci')
-    return davinci?.activeMcpTools
-  })
-
-  // Context usage for status bar (read from chat store)
-  const contextUsage = useChatStore((s) =>
-    s.activeConversation ? s.contextUsages[s.activeConversation.id] : undefined
-  )
   const [pendingGrill, setPendingGrill] = useState<{
     ideaId: string
     conversationId: string
@@ -180,6 +68,59 @@ export default function AppLayout(): React.JSX.Element {
     ideaDescription?: string
     isNewSession?: boolean
   } | null>(null)
+
+  // Multi-workspace: listen for background session status + permission events
+  useBackgroundSessionListeners()
+
+  // ── Extracted hooks ──
+  const zoomFactor = useAppZoom()
+  const { currentBranch, isGitRepo } = useBranchIndicator(activeWorkspace, activeConversation, repoInfo)
+  const grillStatus = useGrillStatus(activeWorkspace?.id)
+  useWorkspaceListeners(activeWorkspace, setWorkspaceSettingsTab, setSidebarView)
+  const {
+    handleGoHome,
+    handleNavigateToChat,
+    handleFixInNewChat,
+    handleCreateIdea,
+    handleStartGrillMe,
+    handleNavigateToGrill
+  } = useNavigationHandlers(
+    activeWorkspace,
+    activeConversation,
+    setView,
+    setSidebarView,
+    setWorkspaceSettingsTab,
+    setShowNewChat,
+    setPendingGrill
+  )
+
+  const mpaStatus = useMpaStore((s) => s.isRunning || s.status.status === 'paused' ? s.status : null)
+  const councilPhase = useCouncilStore((s) => s.isActive ? s.phase : null)
+
+  // Load app version once on mount
+  useEffect(() => {
+    window.api.getPlatformInfo().then((info) => setAppVersion(info.appVersion))
+  }, [])
+
+  // Bug tracker + audit status for UI
+  const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
+  const auditRunning = useAuditStore((s) => s.isRunning)
+  const auditRerunning = useAuditStore((s) => s.rerunningTrackId)
+  const isAuditActive = auditRunning || !!auditRerunning
+  const isAuditPaused = useAuditStore((s) => s.isPaused)
+  const lastAuditScore = useAuditStore((s) => s.currentRun?.overallScore ?? null)
+
+  // MCP tools from Da Vinci status
+  const activeMcpTools = useAgentStore((s) => {
+    const davinci = s.statuses.find((st) => st.agentType === 'da-vinci')
+    return davinci?.activeMcpTools
+  })
+
+  // Context usage for status bar
+  const contextUsage = useChatStore((s) =>
+    s.activeConversation ? s.contextUsages[s.activeConversation.id] : undefined
+  )
+  const indexingState = useIndexingStore((s) => s.indexingState)
 
   // Auto-reset showNewChat when a conversation is selected
   useEffect(() => {
@@ -189,32 +130,9 @@ export default function AppLayout(): React.JSX.Element {
     }
   }, [activeConversation])
 
-  // Bug tracker: fetch count + listen for new bugs
-  useEffect(() => {
-    fetchBugCount()
-    const unsub = window.api.onNewBug(() => {
-      addToast({ message: 'A new bug was created', type: 'bug', onClickNavigate: 'bugs' })
-      fetchBugCount()
-    })
-    return unsub
-  }, [fetchBugCount, addToast])
-
-  // Load initial zoom and subscribe to changes
-  useEffect(() => {
-    window.api.zoomGet().then(setZoomFactor).catch(console.error)
-    const unsub = window.api.onZoomChanged((factor) => setZoomFactor(factor))
-    return unsub
-  }, [])
-
-  const handleZoomIn = useCallback(() => {
-    window.api.zoomIn()
-  }, [])
-  const handleZoomOut = useCallback(() => {
-    window.api.zoomOut()
-  }, [])
-  const handleZoomReset = useCallback(() => {
-    window.api.zoomReset()
-  }, [])
+  const handleZoomIn = useCallback(() => { window.api.zoomIn() }, [])
+  const handleZoomOut = useCallback(() => { window.api.zoomOut() }, [])
+  const handleZoomReset = useCallback(() => { window.api.zoomReset() }, [])
 
   const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
   const loadSpecialists = useSpecialistStore((state) => state.loadSpecialists)
@@ -227,10 +145,7 @@ export default function AppLayout(): React.JSX.Element {
   }, [workspaceSpecialists.length, loadSpecialists])
 
   useEffect(() => {
-    if (!activeConversation?.id) {
-      return
-    }
-
+    if (!activeConversation?.id) return
     void hydrateConversationSpecialists(activeConversation.id).catch((error) => {
       console.error('[AppLayout] Failed to hydrate conversation specialists:', error)
     })
@@ -238,179 +153,52 @@ export default function AppLayout(): React.JSX.Element {
 
   // Navigate back — Esc key handler priority
   const navigateBack = useCallback(() => {
-    // Priority order:
-    // 1. If on app-settings or help page → go back to chat
-    // 2. If sidebar is on settings tab → switch back to chats tab
-    // 3. Otherwise → no-op (already at default chat view)
-
-    if (view === 'help') {
-      setView('chat')
-      return
-    }
-    if (view === 'app-settings') {
+    if (view === 'help' || view === 'app-settings') {
       setView('chat')
       return
     }
     if (sidebarView === 'settings') {
       setSidebarView('chat')
-      return
     }
   }, [view, sidebarView])
 
-  // #18 - Keyboard shortcuts
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      const isMeta = e.metaKey || e.ctrlKey
-
-      // Esc key — navigate back (context-aware)
-      if (e.key === 'Escape') {
-        const tag = (document.activeElement as HTMLElement)?.tagName
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-        // Skip if a modal/dialog is open (portals render into body)
-        if (document.querySelector('[role="dialog"]')) return
-        e.preventDefault()
-        navigateBack()
-        return
-      }
-
-      if (isMeta && e.key === 'b') {
-        e.preventDefault()
-        setSidebarCollapsed((prev) => !prev)
-      }
-
-      if (isMeta && e.key === 'n') {
-        e.preventDefault()
-        if (activeWorkspace) {
-          // Clear active conversation so ChatPanel shows NewChatPage inline
-          useChatStore.setState({ activeConversation: null, messages: [] })
-          setShowNewChat(true)
-        }
-      }
-
-      if (isMeta && e.key === '.') {
-        e.preventDefault()
-        if (activeConversation && !isStreaming) {
-          updateMode(activeConversation.mode === 'plan' ? 'build' : 'plan')
-        }
-      }
-
-      if (isMeta && e.key === '/') {
-        e.preventDefault()
-        setView((prev) => (prev === 'help' ? 'chat' : 'help'))
-      }
-
-      // Zoom shortcuts — ⌘+/⌘= to zoom in, ⌘- to zoom out, ⌘0 to reset
-      if (isMeta && (e.key === '=' || e.key === '+')) {
-        e.preventDefault()
-        window.api.zoomIn()
-      }
-      if (isMeta && e.key === '-') {
-        e.preventDefault()
-        window.api.zoomOut()
-      }
-      if (isMeta && e.key === '0') {
-        e.preventDefault()
-        window.api.zoomReset()
-      }
-    },
-    [activeWorkspace, activeConversation, updateMode, isStreaming, navigateBack]
-  )
-
-  useEffect(() => {
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
-
-  const handleGoHome = (): void => {
-    clearActiveWorkspace()
-    setView('chat')
-    setSidebarView('chat')
-  }
-
-  const handleNavigateToChat = (): void => {
-    setView('chat')
-    setSidebarView('chat')
-  }
-
-  const handleFixInNewChat = (): void => {
-    // Clear active conversation so ChatPanel shows NewChatPage
-    useChatStore.setState({ activeConversation: null, messages: [] })
-    setShowNewChat(true)
-    setView('chat')
-    setSidebarView('chat')
-  }
-
-  const handleOpenIdeas = (): void => {
-    setWorkspaceSettingsTab('ideas')
-    setSidebarView('settings')
-  }
-
-  const handleCreateIdea = async (data: { title: string; description?: string }): Promise<void> => {
-    if (!activeWorkspace) return
-    await createIdea(activeWorkspace.id, data.title, data.description ?? '')
-    handleOpenIdeas()
-  }
-
-  const handleStartGrillMe = async (): Promise<void> => {
-    if (!activeWorkspace || !activeConversation) return
-
-    try {
-      // 1. Create an idea from the conversation title
-      const idea = await createIdea(activeWorkspace.id, activeConversation.title, '')
-
-      // 2. Start a grill session on the new idea
-      const { idea: updatedIdea, conversation: grillConversation } = await startGrill(
-        idea.id,
-        activeWorkspace.id
-      )
-
-      // 3. Navigate to Ideas tab with the grill page open
-      setWorkspaceSettingsTab('ideas')
-      setSidebarView('settings')
-      setPendingGrill({
-        ideaId: updatedIdea.id,
-        conversationId: grillConversation.id,
-        ideaTitle: updatedIdea.title,
-        ideaDescription: updatedIdea.description,
-        isNewSession: true
-      })
-    } catch (error) {
-      console.error('[AppLayout] Failed to start grill from /grillme command:', error)
-    }
-  }
+  // Keyboard shortcuts — extracted to dedicated hook
+  useAppKeyboardShortcuts({
+    activeWorkspace,
+    activeConversation,
+    isStreaming,
+    updateMode,
+    navigateBack,
+    setSidebarCollapsed,
+    setView,
+    setShowNewChat
+  })
 
   const renderMainContent = (): React.JSX.Element => {
     if (view === 'bugs') {
       return <BugTrackerPage onBack={() => setView('chat')} />
     }
-
     if (view === 'help') {
       return <HelpView onBack={() => setView('chat')} />
     }
-
     if (view === 'app-settings') {
       return <SettingsPage onBack={() => setView('chat')} />
     }
-
-    // No workspace → show welcome/home screen
     if (!activeWorkspace) {
       return <WelcomeScreen />
     }
-
-    // When sidebar's settings tab is active, show selected settings content
     if (sidebarView === 'settings') {
       return (
         <WorkspaceSettingsContent
           tab={workspaceSettingsTab}
           onNavigateToChat={handleNavigateToChat}
           onFixInNewChat={handleFixInNewChat}
+          onSettingsTabChange={(t) => setWorkspaceSettingsTab(t)}
           pendingGrill={pendingGrill}
           onPendingGrillConsumed={() => setPendingGrill(null)}
         />
       )
     }
-
-    // Default: chat
     return (
       <ChatPanel
         onCreateIdea={handleCreateIdea}
@@ -425,7 +213,6 @@ export default function AppLayout(): React.JSX.Element {
     )
   }
 
-  // Determine if sidebar should show (chat view or workspace settings view)
   const showLeftSidebar = view === 'chat' && activeWorkspace !== null
 
   return (
@@ -435,17 +222,16 @@ export default function AppLayout(): React.JSX.Element {
         className={`h-10 flex-shrink-0 bg-surface-base border-b border-border-subtle flex items-center pr-4 relative ${isMac ? 'pl-[80px]' : 'pl-20'}`}
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        {/* Centered title */}
         <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-text-secondary pointer-events-none">
           Code Atelier
         </span>
 
-        {/* Right-aligned buttons */}
         <div
           className="flex items-center gap-1.5 ml-auto relative z-10"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <button
+            type="button"
             onClick={handleGoHome}
             className="p-2.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
             title="Home"
@@ -454,6 +240,7 @@ export default function AppLayout(): React.JSX.Element {
             <Home size={16} />
           </button>
           <button
+            type="button"
             onClick={() => setView(view === 'app-settings' ? 'chat' : 'app-settings')}
             className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'app-settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title="Settings"
@@ -462,6 +249,7 @@ export default function AppLayout(): React.JSX.Element {
             <Sliders size={16} />
           </button>
           <button
+            type="button"
             onClick={() => setView(view === 'bugs' ? 'chat' : 'bugs')}
             className={`relative p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'bugs' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title="Bug Tracker"
@@ -475,6 +263,7 @@ export default function AppLayout(): React.JSX.Element {
             )}
           </button>
           <button
+            type="button"
             onClick={() => setView(view === 'help' ? 'chat' : 'help')}
             className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'help' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
@@ -485,18 +274,11 @@ export default function AppLayout(): React.JSX.Element {
         </div>
       </div>
 
-      {/* Auto-update banner */}
       <UpdateBanner />
-
-      {/* Memory feed progress banner */}
       <MemoryFeedBanner />
-
-      {/* Budget warning/exceeded banner */}
       <BudgetWarningBanner />
 
-      {/* Main content */}
       <div className="flex flex-1 min-h-0">
-        {/* Left sidebar — unified with Chats + Settings tabs */}
         {showLeftSidebar && (
           <Sidebar>
             <UnifiedSidebar
@@ -511,14 +293,12 @@ export default function AppLayout(): React.JSX.Element {
           </Sidebar>
         )}
 
-        {/* Main content — full width (no right panel) */}
         <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
       </div>
 
-      {/* Toast notifications */}
       <ToastContainer onNavigate={(target) => setView(target as typeof view)} />
+      <NotificationStack />
 
-      {/* Token details modal */}
       <TokenDetailsModal
         isOpen={tokenModalOpen}
         conversationId={activeConversation?.id ?? null}
@@ -527,233 +307,45 @@ export default function AppLayout(): React.JSX.Element {
         onClose={() => setTokenModalOpen(false)}
       />
 
-      {/* Status bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-[13px]">
-        <div className="flex items-center gap-4">
-          {activeWorkspace ? (
-            <span className="flex items-center gap-1.5 text-text-secondary">
-              <AgentStatusDot status={agentStatus} />
-              <Bot size={12} className="text-primary-text" />
-              {activeWorkspace.name}
-            </span>
-          ) : (
-            <span className="text-text-muted">No workspace selected</span>
-          )}
-
-          {appVersion && (
-            <span className="text-[11px] text-text-muted font-mono border-l border-border-subtle pl-3 ml-1">
-              v{appVersion}
-            </span>
-          )}
-
-          {/* Branch indicator — always visible when workspace is active */}
-          {activeWorkspace && (
-            <button
-              type="button"
-              onClick={() => {
-                setWorkspaceSettingsTab('repository')
-                setSidebarView('settings')
-              }}
-              className={`flex items-center gap-1.5 text-[11px] font-mono border-l border-border-subtle pl-3 ml-1 rounded px-1.5 py-0.5 transition-colors ${
-                isGitRepo
-                  ? 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
-                  : 'text-danger bg-danger/10 hover:bg-danger/20'
-              }`}
-              title={
-                isGitRepo
-                  ? `Branch: ${currentBranch}`
-                  : 'No git repository — click to configure'
-              }
-            >
-              <GitBranch size={11} />
-              {isGitRepo ? (
-                <span className="truncate max-w-[160px]">{currentBranch}</span>
-              ) : (
-                <>
-                  <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" />
-                  <span>No repo</span>
-                </>
-              )}
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-4">
-          {/* MCP tool indicators */}
-          {activeMcpTools && activeMcpTools.length > 0 && (
-            <div className="flex items-center gap-1.5">
-              {activeMcpTools.includes('code-graph') && (
-                <span
-                  className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400"
-                  title="Code Graph active"
-                >
-                  <Braces size={10} /> CG
-                </span>
-              )}
-              {activeMcpTools.includes('semantic-search') && (
-                <span
-                  className="inline-flex items-center gap-1 text-[10px] font-medium text-sky-400"
-                  title="Semantic Search active"
-                >
-                  <SearchCode size={10} /> Sem
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Context — clickable, opens CompactContextModal (only in chat view) */}
-          <span className="flex items-center gap-1.5 text-text-muted">
-            {sidebarView === 'chat' && contextUsage && contextUsage.percentage > 0 && (
-              <button
-                type="button"
-                onClick={() =>
-                  setCompactSuggestion({
-                    level: contextUsage.level,
-                    inputTokens: contextUsage.inputTokens,
-                    breakdown: contextUsage.breakdown,
-                    isLocalProvider: activeConversation?.llmProvider === 'local-llm'
-                  })
-                }
-                className={`hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-border-default rounded ${
-                  contextUsage.level === 'critical' || contextUsage.level === 'red'
-                    ? 'text-danger'
-                    : contextUsage.level === 'yellow'
-                      ? 'text-warning'
-                      : 'text-text-secondary'
-                }`}
-                title="Click for context breakdown and compact options"
-              >
-                {contextUsage.percentage}% context
-              </button>
-            )}
-
-            {/* Token IN / OUT — clickable, opens TokenDetailsModal */}
-            <button
-              type="button"
-              onClick={() => setTokenModalOpen(true)}
-              className="flex items-center gap-1.5 hover:text-text-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-border-default rounded"
-              title="Click for token breakdown (context window / output / cache)"
-            >
-              <Zap size={11} />
-              <span className="flex items-center gap-0.5 tabular-nums">
-                <ArrowUp size={10} />
-                {contextWindowTokens >= 1000
-                  ? `${(contextWindowTokens / 1000).toFixed(1)}k`
-                  : String(contextWindowTokens)}
-              </span>
-              <span className="flex items-center gap-0.5 tabular-nums">
-                <ArrowDown size={10} />
-                {sessionOutputTokens >= 1000
-                  ? `${(sessionOutputTokens / 1000).toFixed(1)}k`
-                  : String(sessionOutputTokens)}
-              </span>
-            </button>
-          </span>
-
-          {/* Audit status — always visible */}
-          <div className="flex items-center gap-1.5 border-l border-border-subtle pl-3 ml-1">
-            {isAuditActive && !isAuditPaused ? (
-              /* Running — red (matches Grill "Grilling…") */
-              <div className="flex items-center gap-1 text-[11px] text-danger bg-danger/10 rounded px-1.5 py-0.5">
-                <ShieldCheck size={11} className="animate-pulse" />
-                <span className="font-medium">Auditing…</span>
-              </div>
-            ) : isAuditPaused ? (
-              /* Paused — purple (matches Grill "Needs Attention") */
-              <button
-                type="button"
-                onClick={() => {
-                  setWorkspaceSettingsTab('health')
-                  setSidebarView('settings')
-                }}
-                className="flex items-center gap-1 text-[11px] text-purple-400 bg-purple-400/10 hover:bg-purple-400/20 rounded px-1.5 py-0.5 transition-colors"
-                title="Audit paused — click to resume"
-              >
-                <ShieldCheck size={11} />
-                <span className="font-medium">Paused</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setWorkspaceSettingsTab('health')
-                  setSidebarView('settings')
-                }}
-                className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary rounded px-1.5 py-0.5 transition-colors"
-                title={lastAuditScore !== null ? `Last audit score: ${lastAuditScore}` : 'Run a workspace audit'}
-              >
-                <ShieldCheck size={11} />
-                {lastAuditScore !== null && (
-                  <span className="font-mono text-[10px]">{lastAuditScore}</span>
-                )}
-              </button>
-            )}
-          </div>
-
-          {/* Grill status — always visible */}
-          <div className="flex items-center gap-1.5 border-l border-border-subtle pl-3 ml-1">
-            {grillStatus?.status === 'evaluating' ? (
-              <button
-                onClick={() => handleNavigateToGrill(grillStatus.ideaId)}
-                className="flex items-center gap-1 text-[11px] text-danger bg-danger/10 hover:bg-danger/20 rounded px-1.5 py-0.5 transition-colors"
-                title="Grill in progress"
-              >
-                <Flame size={11} className="animate-pulse" />
-                <span className="font-medium">Grilling…</span>
-              </button>
-            ) : grillStatus?.status === 'awaiting_answers' ? (
-              <button
-                onClick={() => handleNavigateToGrill(grillStatus.ideaId)}
-                className="flex items-center gap-1 text-[11px] text-purple-400 bg-purple-400/10 hover:bg-purple-400/20 rounded px-1.5 py-0.5 transition-colors"
-                title="Grill needs your answers"
-              >
-                <Flame size={11} />
-                <span className="font-medium">Needs Attention</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setWorkspaceSettingsTab('ideas')
-                  setSidebarView('settings')
-                }}
-                className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary rounded px-1.5 py-0.5 transition-colors"
-                title="Grill an idea"
-              >
-                <Flame size={11} />
-              </button>
-            )}
-          </div>
-
-          {/* Zoom controls */}
-          <div className="flex items-center gap-0.5 border-l border-border-subtle pl-3 ml-1">
-            <button
-              onClick={handleZoomOut}
-              className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-secondary transition-colors"
-              aria-label="Zoom out"
-              title={`Zoom Out (${isMac ? '⌘' : 'Ctrl+'}−)`}
-            >
-              <ZoomOut size={12} />
-            </button>
-            <button
-              onClick={handleZoomReset}
-              className="px-1 py-0.5 rounded hover:bg-surface-overlay text-text-muted hover:text-text-secondary transition-colors min-w-[36px] text-center"
-              title={`Reset Zoom (${isMac ? '⌘' : 'Ctrl+'}0)`}
-            >
-              <span className="text-[11px] font-mono">{Math.round(zoomFactor * 100)}%</span>
-            </button>
-            <button
-              onClick={handleZoomIn}
-              className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-secondary transition-colors"
-              aria-label="Zoom in"
-              title={`Zoom In (${isMac ? '⌘' : 'Ctrl+'}+)`}
-            >
-              <ZoomIn size={12} />
-            </button>
-          </div>
-
-        </div>
-      </div>
+      <StatusBar
+        activeWorkspace={activeWorkspace}
+        agentStatus={agentStatus}
+        appVersion={appVersion}
+        currentBranch={currentBranch}
+        isGitRepo={isGitRepo}
+        activeMcpTools={activeMcpTools}
+        contextUsage={contextUsage}
+        contextWindowTokens={contextWindowTokens}
+        sessionOutputTokens={sessionOutputTokens}
+        zoomFactor={zoomFactor}
+        isAuditActive={isAuditActive}
+        isAuditPaused={isAuditPaused}
+        lastAuditScore={lastAuditScore}
+        grillStatus={grillStatus}
+        mpaStatus={mpaStatus}
+        councilPhase={councilPhase}
+        indexingState={indexingState}
+        sidebarView={sidebarView}
+        onNavigateToSettings={(tab) => {
+          setWorkspaceSettingsTab(tab as SettingsTab)
+          setSidebarView('settings')
+        }}
+        onOpenContextModal={() => {
+          if (contextUsage) {
+            setCompactSuggestion({
+              level: contextUsage.level,
+              inputTokens: contextUsage.inputTokens,
+              breakdown: contextUsage.breakdown,
+              isLocalProvider: activeConversation?.llmProvider === 'local-llm'
+            })
+          }
+        }}
+        onOpenTokenModal={() => setTokenModalOpen(true)}
+        onNavigateToGrill={handleNavigateToGrill}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onZoomReset={handleZoomReset}
+      />
     </div>
   )
 }

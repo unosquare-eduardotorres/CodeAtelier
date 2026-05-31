@@ -1,5 +1,7 @@
 import { ChevronRight, Trash2 } from 'lucide-react'
 import type { Workspace } from '../../../../shared/types'
+import WorkspaceStatusIndicator from '../workspace/WorkspaceStatusIndicator'
+import { useBackgroundSessionStore } from '@renderer/store'
 
 /**
  * View-model for a workspace card on the welcome screen.
@@ -63,6 +65,23 @@ function DescriptionSkeleton(): React.JSX.Element {
   )
 }
 
+/** Inline badge showing pending permission count for a workspace card. */
+function PermissionBadgeCard({ workspaceId }: { workspaceId: string }): React.JSX.Element | null {
+  const count = useBackgroundSessionStore((s) =>
+    s.pendingPermissions.filter(
+      (p) => p.workspaceId === workspaceId && p.badgeFallback
+    ).length
+  )
+
+  if (count === 0) return null
+
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400">
+      ⚠ {count} pending
+    </span>
+  )
+}
+
 export default function WorkspaceCard({
   workspace,
   data,
@@ -74,10 +93,17 @@ export default function WorkspaceCard({
   const total = data?.chatCounts.total ?? 0
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onOpen(workspace.id)}
-      className="group flex flex-col gap-3 w-full text-left p-4 rounded-2xl bg-surface-overlay border border-border-subtle hover:border-primary/40 hover:bg-surface-float/80 shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen(workspace.id)
+        }
+      }}
+      className="group flex flex-col gap-3 w-full text-left p-4 rounded-2xl bg-surface-overlay border border-border-subtle hover:border-primary/40 hover:bg-surface-float/80 shadow-sm transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
     >
       {/* Header: avatar + name + chevron */}
       <div className="flex items-center gap-3">
@@ -87,6 +113,7 @@ export default function WorkspaceCard({
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium text-text-primary truncate">{workspace.name}</div>
           <div className="text-xs text-text-muted truncate">{workspace.repoPath}</div>
+          <WorkspaceStatusIndicator workspaceId={workspace.id} />
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           {onDelete && (
@@ -129,7 +156,7 @@ export default function WorkspaceCard({
         <CapabilityChip emoji="🎓" label="Specialist" active={!!data?.capabilities.specialist} />
       </div>
 
-      {/* Footer pills: Active / Total */}
+      {/* Footer pills: Active / Total + Permission badge */}
       <div className="flex items-center gap-2 pt-1 border-t border-border-subtle">
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary-muted text-primary-text">
           Active {active}
@@ -137,7 +164,8 @@ export default function WorkspaceCard({
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-surface-base text-text-secondary">
           Total {total}
         </span>
+        <PermissionBadgeCard workspaceId={workspace.id} />
       </div>
-    </button>
+    </div>
   )
 }

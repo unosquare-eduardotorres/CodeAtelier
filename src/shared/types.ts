@@ -1,5 +1,11 @@
 // ── Data Models ──
-export type ConversationMode = 'plan' | 'build'
+export type ConversationMode = 'plan' | 'build' | 'danger'
+
+/** Thinking effort level — controls reasoning depth (thinking budget + temperature) */
+export type ThinkingEffort = 'low' | 'medium' | 'high'
+
+/** Prompt verbosity level — controls how much guardrailing the system prompt includes */
+export type PromptVerbosity = 'full' | 'lean'
 
 /**
  * Which agent role is driving an AgentSessionService.
@@ -12,7 +18,10 @@ export type ConversationMode = 'plan' | 'build'
  * rewrote persisted values from `'generalist'` to `'da-vinci'` so the DB and
  * the type line up.
  */
-export type AgentRole = 'da-vinci' | 'project-specialist' | 'audit' | 'grill'
+export type AgentRole = 'da-vinci' | 'project-specialist' | 'audit' | 'grill' | 'mpa-planner' | 'mpa-builder' | 'mpa-verifier' | 'council-member' | 'council-chairman'
+
+/** Communication tone for AI responses — workspace default + per-conversation override */
+export type CommunicationTone = 'default' | 'calm' | 'optimistic' | 'brutal' | 'caveman'
 
 /** Tracks which phase of the conversation lifecycle is active */
 export type ConversationPhase = 'da-vinci-responding' | 'specialist-executing'
@@ -35,7 +44,7 @@ export interface CoreAgentAlias {
 export interface CoreAgentPrompt {
   id: string
   agentRole: 'da-vinci'
-  mode: 'plan' | 'build'
+  mode: 'plan' | 'build' | 'danger'
   promptText: string
   defaultPromptText: string
   isCustom: boolean
@@ -77,6 +86,12 @@ export interface Conversation {
   llmProvider: LLMProvider
   /** Per-chat external MCP toggles (e.g. { maestro: true }) */
   mcpOverrides?: Record<string, boolean>
+  /** Per-conversation communication tone override (null = use workspace default) */
+  communicationTone?: CommunicationTone | null
+  /** Per-conversation thinking effort level */
+  effort?: ThinkingEffort
+  /** Per-conversation thinking budget cap — max thinking tokens per turn (0 = no limit) */
+  thinkingBudget?: number
 }
 
 export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
@@ -110,6 +125,8 @@ export interface ContextUsage {
   percentage: number
   level: ContextUsageLevel
   qualityLevel?: 'excellent' | 'good' | 'moderate' | 'low'
+  /** Prompt cache hit rate (0–100) — ratio of cache-read tokens to total input. */
+  cacheHitRate?: number
   /** SDK-native breakdown by category (system prompt, tools, messages, etc.) */
   categories?: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
   /** Full Claude Code-style breakdown for the compact-context modal. */
@@ -139,6 +156,8 @@ export interface AgentStatus {
   status: 'idle' | 'thinking' | 'writing' | 'reviewing' | 'completed' | 'failed'
   currentTask?: string
   elapsedMs: number
+  /** Workspace this status belongs to (multi-workspace concurrent sessions). */
+  workspaceId?: string
   /** Running sum of billing tokens (input+output) across all turns — used for cost tracking. */
   tokenUsage: number
   /** Running sum of input tokens (excludes cache read/creation). */
@@ -156,6 +175,39 @@ export interface AgentStatus {
   complexityTier?: ComplexityTier
   // Active MCP tool servers — populated by generalist to indicate which intelligence tools are enabled
   activeMcpTools?: string[]
+}
+
+// ── Multi-Workspace Permission Types ──
+
+export type PermissionType = 'elicitation' | 'askQuestion' | 'mpaApproval'
+
+export interface PendingPermission {
+  id: string
+  workspaceId: string
+  workspaceName: string
+  type: PermissionType
+  summary: string
+  /** Whether the permission can be resolved inline (approve/deny) vs needing full context */
+  isSimple: boolean
+  payload: unknown
+  receivedAt: number
+  /** True after toast timeout — indicates permission should show as sidebar badge instead */
+  badgeFallback?: boolean
+}
+
+export interface PermissionResponse {
+  permissionId: string
+  workspaceId: string
+  type: PermissionType
+  response: 'approve' | 'deny' | { answer: string } | { approved: boolean; feedback?: string }
+}
+
+export interface CompletionNotification {
+  workspaceId: string
+  workspaceName: string
+  service: 'chat' | 'grill' | 'audit' | 'mpa'
+  status: 'completed' | 'failed'
+  summary: string
 }
 
 // ── Tool Activity ──
@@ -264,6 +316,9 @@ export interface SpecialistTokenEstimate {
 
 export type ChatBubbleSize = 'small' | 'medium' | 'large' | 'xl'
 
+/** Visual theme for the entire application */
+export type AppTheme = 'code-atelier' | 'neon-forge' | 'porcelain'
+
 /** GitHub PAT type — classic uses OAuth scopes, fine-grained uses granular permissions */
 export type GitHubTokenType = 'classic' | 'fine-grained' | 'unknown'
 
@@ -286,6 +341,7 @@ export interface AppPreferences {
   specialistWarningPlan: boolean
   specialistWarningAlways: boolean
   chatBubbleSize: ChatBubbleSize
+  appTheme: AppTheme
   updateSource: UpdateSourceProvider
   updateDrivePath: string
   updateGithubOwner: string
@@ -421,6 +477,11 @@ export type ModelAction =
   | 'memoryFeed'
   | 'activation'
   | 'haiku'
+  | 'audit'
+  | 'grill'
+  | 'council-member'
+  | 'council-chairman'
+  | 'grill:plan'
 
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
@@ -661,7 +722,7 @@ export interface ControlToolState {
 export type AgentIntent =
   | { type: 'response'; content: string }
   | { type: 'plan'; plan: PlanDetectedEvent }
-  | { type: 'askUser'; questions: GrillQuestion[]; action?: string }
+  | { type: 'askUser'; questions: GrillQuestion[]; action?: string; requestId?: string }
   | { type: 'grillQuestion'; questions: GrillQuestion[] }
   | {
       type: 'grillComplete'
@@ -823,7 +884,7 @@ export interface SubscriptionCheckResult {
   sdkHealth?: {
     sdkVersion: string | null
     modelsAvailable: string[]
-    opus47Available: boolean
+    opus48Available: boolean
     error: string | null
   }
 }
@@ -907,6 +968,8 @@ export interface IndexingState {
     | 'preprocessing'
     | 'indexing-files'
     | 'indexing-chunks'
+    | 'embedding'
+    | 'enriching'
     | 'paused'
     | 'complete'
     | 'error'
@@ -921,6 +984,10 @@ export interface IndexingState {
   descriptionsCached: number
   descriptionsTotal: number
   descriptionsProcessed: number
+  /** Description source for the current run: 'heuristic' | 'ai' | 'none' */
+  descriptionSource?: 'heuristic' | 'ai' | 'none'
+  /** Estimated time remaining in human-readable form */
+  estimatedRemaining?: string
   currentFile?: string
   error?: string
 }
@@ -979,7 +1046,75 @@ export type LLMProvider = 'claude' | 'local-llm'
 export type LocalLLMBackend = 'ollama' | 'omlx'
 
 /** Local LLM execution strategy */
-export type LocalLLMStrategy = 'sdk-passthrough' | 'native'
+export type LocalLLMStrategy = 'default' | 'native'
+
+/**
+ * Executor backend — which runtime drives AI interactions.
+ * - 'cli' — Interactive Claude CLI (stream-json mode) — subscription billing
+ * - 'opencode' — OpenCode multi-provider runtime (@opencode-ai/sdk)
+ *
+ * Stored in workspace settings_json.executorBackend. Default: 'cli'.
+ */
+export type ExecutorBackend = 'cli' | 'opencode'
+
+/**
+ * Typed workspace settings — single source of truth for keys stored in
+ * `workspaces.settings_json`. All fields are optional because settings
+ * are accumulated incrementally as the user configures things.
+ */
+export interface WorkspaceSettings {
+  // ── Executor / Provider ──
+  executorBackend?: ExecutorBackend
+  llmProvider?: LLMProvider
+  costPreference?: CostPreference
+  communicationTone?: CommunicationTone
+
+  // ── Budget ──
+  budgetCapUsd?: number
+  sessionBudgetUsd?: number
+  dailyBudgetUsd?: number
+
+  // ── Context / Compaction ──
+  localContextWindow?: number
+  autoCompactEnabled?: boolean
+  compactSuggestThreshold?: number
+  compactAutoThreshold?: number
+  contextPrimingEnabled?: boolean
+
+  // ── Feature Flags ──
+  enableCodeGraph?: boolean
+  enableSemanticSearch?: boolean
+  enableGitContext?: boolean
+  repomapEnabled?: boolean
+  semanticSearchEnabled?: boolean
+  semanticSearchDescriptions?: boolean
+  memoryEnabled?: boolean
+  localMcpActive?: boolean
+  gitAutoBranch?: boolean
+  specialistSwapAccepted?: boolean
+
+  // ── Local LLM ──
+  descriptionModel?: string
+
+  // ── OpenCode ──
+  openCodeProvider?: string
+  openCodeModel?: string
+  openCodeBaseUrl?: string
+  openCodeApiKey?: string
+
+  // ── GitHub ──
+  githubTokenEncrypted?: string
+  githubToken?: string
+  githubLogin?: string
+  githubTokenType?: string
+
+  // ── Misc ──
+  additionalDirectories?: string[]
+  modelOverrides?: Record<string, unknown>
+
+  /** Catch-all for forward-compatibility */
+  [key: string]: unknown
+}
 
 /** Configuration for local LLM provider */
 export interface LocalLLMConfig {
@@ -1113,6 +1248,16 @@ export interface AuditStreamChunkEvent {
 /** Memory tier for hardware-aware model recommendations */
 export type MemoryTier = '8gb' | '16gb' | '32gb' | '48gb+'
 
+/**
+ * Tool calling quality level for local models.
+ * - 'none'      — No tool calling support; analysis/chat only
+ * - 'basic'     — Tool calls work but format compliance varies
+ * - 'good'      — Reliable tool calls, occasional format issues
+ * - 'native'    — Built-in tool calling support, reliable format
+ * - 'excellent'  — Best-in-class tool calling, native format compliance
+ */
+export type ToolCallingQuality = 'none' | 'basic' | 'good' | 'native' | 'excellent'
+
 /** Recommended local model entry */
 export interface RecommendedLocalModel {
   /** Model ID for Ollama backend (e.g. 'qwen3-coder:30b') */
@@ -1126,8 +1271,171 @@ export interface RecommendedLocalModel {
   quantization?: string
   minMemoryGB: number
   memoryTier: MemoryTier
-  toolCalling: 'basic' | 'good' | 'native' | 'excellent'
+  toolCalling: ToolCallingQuality
   description: string
   recommended?: boolean
   mlxOptimized?: boolean
+  /** Notes about tool calling behavior (e.g. format quirks, retry recommendations) */
+  toolCallingNotes?: string
+  /**
+   * Whether the model supports parallel tool calls (multiple tool_use blocks in one response).
+   * Models like Qwen3-Coder and DeepSeek-Coder-V3 support this natively.
+   */
+  supportsParallelTools?: boolean
+  /**
+   * Whether the model emits <think> blocks for reasoning display.
+   * Qwen3 and DeepSeek models typically do this.
+   */
+  supportsThinking?: boolean
+}
+
+// ── Council Types ──
+
+/** The five council advisor roles — thinking styles with built-in tension */
+export type CouncilAdvisorRole =
+  | 'contrarian'
+  | 'first-principles'
+  | 'expansionist'
+  | 'outsider'
+  | 'executor'
+
+/** What the council is evaluating */
+export type CouncilInputType = 'plan' | 'requirement' | 'question'
+
+/** Current phase of the council process */
+export type CouncilPhase =
+  | 'framing'       // Step 1: context enrichment
+  | 'deliberating'  // Step 2: 5 parallel advisor sessions
+  | 'peer-review'   // Step 3: anonymous peer review
+  | 'synthesizing'  // Step 4: chairman synthesis
+  | 'complete'
+  | 'cancelled'
+  | 'failed'
+
+/** Status of an individual council member */
+export type CouncilMemberStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+/** Advisor verdict on the input */
+export type CouncilAdvisorVerdict = 'proceed-with-changes' | 'needs-revision' | 'rethink'
+
+/** Evidence backing an advisor's finding */
+export interface CouncilEvidence {
+  file: string
+  finding: string
+}
+
+/** Structured output from a single council advisor */
+export interface CouncilReview {
+  advisorRole: CouncilAdvisorRole
+  score: number
+  verdict: CouncilAdvisorVerdict
+  keyFindings: string[]
+  blindSpots: string[]
+  evidence: CouncilEvidence[]
+  summary: string
+}
+
+/** Peer review output — each reviewer evaluates anonymized responses */
+export interface CouncilPeerReview {
+  reviewerRole: CouncilAdvisorRole
+  strongestResponse: string // 'A' through 'E'
+  strongestReason: string
+  biggestBlindSpot: string // 'A' through 'E'
+  blindSpotDescription: string
+  missedByAll: string
+}
+
+/** Priority of a revision recommendation */
+export type CouncilRevisionPriority = 'high' | 'medium' | 'low'
+
+/** A single revision recommendation from the chairman */
+export interface CouncilRevision {
+  priority: CouncilRevisionPriority
+  description: string
+  consensus: string // e.g. '3/5 advisors'
+  evidence: string
+}
+
+/** Chairman's synthesized verdict — the final output */
+export interface CouncilVerdict {
+  overallScore: number
+  sections: {
+    agrees: string
+    clashes: string
+    blindSpots: string
+    recommendation: string
+    oneThingFirst: string
+  }
+  revisions: CouncilRevision[]
+  individualScores: Record<CouncilAdvisorRole, number>
+  rankingsMatrix: Record<string, unknown>
+}
+
+/** Full council session state */
+export interface CouncilSession {
+  id: string
+  workspaceId: string
+  conversationId?: string
+  inputType: CouncilInputType
+  inputContent: string
+  phase: CouncilPhase
+  reviews: CouncilReview[]
+  peerReviews: CouncilPeerReview[]
+  verdict: CouncilVerdict | null
+  memberStatuses: Record<CouncilAdvisorRole, CouncilMemberStatus>
+  createdAt: string
+  completedAt?: string
+}
+
+// ── Grill Structured Plan ──────────────────────────────────────────────────
+
+/** Structured plan generated during the grill completion phase */
+export interface GrillStructuredPlan {
+  /** Version for forward compatibility */
+  version: 1
+  /** Idea title */
+  title: string
+  /** Executive summary (2-3 sentences) */
+  summary: string
+  /** Goal classification */
+  goalType: 'feature' | 'refactor' | 'bugfix' | 'tests'
+  /** All grill decisions organized by track */
+  decisions: Array<{
+    trackId: string
+    trackName: string
+    score: number
+    items: Array<{
+      question: string
+      answer: string
+      rationale: string
+    }>
+  }>
+  /** Implementation plan items */
+  items: Array<{
+    id: string
+    title: string
+    description: string
+    scope: 'backend' | 'frontend' | 'database' | 'shared' | 'tests'
+    files: string[]
+    dependsOn: string[]
+    includesTests: boolean
+  }>
+  /** Identified risks */
+  risks: string[]
+  /** Constraints derived from grill decisions */
+  constraints: string[]
+  /** Original idea description */
+  originalDescription: string
+  /** Full requirement document (markdown) */
+  requirementDocument: string
+}
+
+/** Framed input passed to all council members */
+export interface CouncilFramedInput {
+  planContent: string
+  structuredPlan: StructuredPlan | null
+  originalUserRequest: string
+  workspaceContext: string
+  filesInScope: string[]
+  inputType: CouncilInputType
 }

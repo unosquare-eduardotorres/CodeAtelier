@@ -21,6 +21,7 @@ npm run test:all
 ### Runner
 
 Code Atelier uses a **custom tsx-based test runner** (no Jest/Vitest). Tests use:
+
 - `node:assert/strict` for assertions
 - A shared `test-harness.ts` providing `test()`, `describe()`, `summary()`
 - Manual fakes/stubs for mocking (no framework)
@@ -82,6 +83,7 @@ e2e/
 ### Using Test Helpers
 
 #### ScriptedClaudeClient (claude-mock.ts)
+
 ```typescript
 import { ScriptedClaudeClient, createTextOnlyClient } from './helpers/claude-mock'
 
@@ -99,6 +101,7 @@ const client = new ScriptedClaudeClient([
 ```
 
 #### Service Factories (agent-factory.ts)
+
 ```typescript
 import { createConversationStateMachine, createIntentRouter } from './helpers/agent-factory'
 
@@ -148,12 +151,12 @@ npm run test:cov:check
 
 ### Where to find the report
 
-| Output | Path | Use |
-|---|---|---|
-| Clickable HTML report | `coverage/index.html` | Open in a browser to drill file-by-file |
-| LCOV file | `coverage/lcov.info` | VS Code Coverage Gutters, Codecov, SonarQube |
-| Console summary | stdout | Per-file table + overall totals |
-| JSON summary | `coverage/coverage-summary.json` | Programmatic / CI consumption |
+| Output                | Path                             | Use                                          |
+| --------------------- | -------------------------------- | -------------------------------------------- |
+| Clickable HTML report | `coverage/index.html`            | Open in a browser to drill file-by-file      |
+| LCOV file             | `coverage/lcov.info`             | VS Code Coverage Gutters, Codecov, SonarQube |
+| Console summary       | stdout                           | Per-file table + overall totals              |
+| JSON summary          | `coverage/coverage-summary.json` | Programmatic / CI consumption                |
 
 ### Configuration
 
@@ -169,25 +172,25 @@ npm run test:cov:check
 
 First measured run via `npm run test:cov`:
 
-| Metric | % | Notes |
-|---|---:|---|
-| Lines | **15.75%** | Pulled down by 0% renderer (components / stores / hooks) |
-| Branches | **70.22%** | High because branches are mostly inside well-tested service logic |
-| Functions | **46.75%** | ~half of all functions are exercised by the existing suite |
-| Statements | **15.75%** | Tracks lines |
+| Metric     |          % | Notes                                                             |
+| ---------- | ---------: | ----------------------------------------------------------------- |
+| Lines      | **15.75%** | Pulled down by 0% renderer (components / stores / hooks)          |
+| Branches   | **70.22%** | High because branches are mostly inside well-tested service logic |
+| Functions  | **46.75%** | ~half of all functions are exercised by the existing suite        |
+| Statements | **15.75%** | Tracks lines                                                      |
 
 Per-area highlights (from the same run):
 
-| Area | Lines % |
-|---|---:|
-| `src/main/db` | 81.57% |
-| `src/main/services/role-adapters` | 54.00% |
-| `src/main/db/repositories` | 40.60% |
-| `src/main/services` (overall) | 34.23% |
-| `src/main/services/sdk-executor` | 27.95% |
-| `src/main/ipc` | 6.41% |
-| `src/renderer/**` | 0.00% (all subtrees) |
-| `src/shared/constants.ts` | 99.86% |
+| Area                              |              Lines % |
+| --------------------------------- | -------------------: |
+| `src/main/db`                     |               81.57% |
+| `src/main/services/role-adapters` |               54.00% |
+| `src/main/db/repositories`        |               40.60% |
+| `src/main/services` (overall)     |               34.23% |
+| `src/main/services/sdk-executor`  |               27.95% |
+| `src/main/ipc`                    |                6.41% |
+| `src/renderer/**`                 | 0.00% (all subtrees) |
+| `src/shared/constants.ts`         |               99.86% |
 
 ### Thresholds
 
@@ -197,6 +200,7 @@ The current `test:cov:check` floor is **lines 30 / functions 30 / branches 25**.
 plan is built. Branches and functions both clear the floor.
 
 Recommended next moves (out of scope for this change):
+
 1. Drop `lines` to ~15 / `functions` to ~45 / `branches` to ~70 to "lock in"
    today's baseline as a no-regression gate, then ratchet up.
 2. Wire `test:cov:check` into CI once the threshold matches reality.

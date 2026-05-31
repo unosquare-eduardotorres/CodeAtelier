@@ -14,12 +14,13 @@ CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT 'New Conversation',
-  mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build')),
+  mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build', 'danger')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   summary TEXT,
   claude_session_id TEXT,
-  llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm'))
+  llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm')),
+  effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))
 );
 
 -- Messages: individual chat messages
@@ -211,7 +212,7 @@ CREATE TABLE IF NOT EXISTS core_agent_aliases (
 CREATE TABLE IF NOT EXISTS core_agent_prompts (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   agent_role TEXT NOT NULL CHECK (agent_role IN ('da-vinci', 'generalist')),
-  mode TEXT NOT NULL CHECK (mode IN ('plan', 'build')),
+  mode TEXT NOT NULL CHECK (mode IN ('plan', 'build', 'danger')),
   prompt_text TEXT NOT NULL,
   default_prompt_text TEXT NOT NULL,
   is_custom INTEGER NOT NULL DEFAULT 0,
@@ -315,6 +316,7 @@ CREATE TABLE IF NOT EXISTS chunk_descriptions (
   model TEXT NOT NULL,
   file_path TEXT NOT NULL,
   symbol_name TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'ai',
   generated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -390,6 +392,8 @@ CREATE TABLE IF NOT EXISTS indexing_state (
   total_chunks INTEGER NOT NULL DEFAULT 0,
   processed_chunks INTEGER NOT NULL DEFAULT 0,
   embedding_model TEXT,
+  checkpoint_offset INTEGER NOT NULL DEFAULT 0,
+  description_source TEXT NOT NULL DEFAULT 'none',
   last_completed_at TEXT,
   last_error TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))

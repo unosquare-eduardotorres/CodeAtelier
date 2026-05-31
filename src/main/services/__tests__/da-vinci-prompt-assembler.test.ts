@@ -16,21 +16,25 @@ import { test, describe } from './test-harness'
 import { createPromptAssembler } from './helpers/agent-factory'
 
 /** Default options for buildEffectiveMessage */
-function defaultMessageOpts(overrides?: Partial<{
-  message: string
-  conversationId: string
-  hasImages: boolean
-  turnCount: number
-  sessionId: string | undefined
-  mode: string
-}>) {
+function defaultMessageOpts(
+  overrides?: Partial<{
+    message: string
+    conversationId: string
+    hasImages: boolean
+    turnCount: number
+    sessionId: string | undefined
+    mode: string
+    model: string | undefined
+  }>
+) {
   return {
     message: overrides?.message ?? 'Hello world',
     conversationId: overrides?.conversationId ?? 'conv-1',
     hasImages: overrides?.hasImages ?? false,
     turnCount: overrides?.turnCount ?? 1,
     sessionId: overrides?.sessionId ?? undefined,
-    mode: (overrides?.mode ?? 'plan') as 'plan' | 'build'
+    mode: (overrides?.mode ?? 'plan') as 'plan' | 'build' | 'danger',
+    model: overrides?.model ?? undefined
   }
 }
 
@@ -84,18 +88,18 @@ describe('DaVinciPromptAssembler', () => {
     assert.equal(assembler.getPendingContextSize('conv-1'), 0)
     // Turn count should be reset — next increment returns 1
     assert.equal(assembler.incrementTurnCount('conv-1'), 1)
-    // buildEffectiveMessage should have no injections (except conditional prefix)
+    // buildEffectiveMessage should have no injections (except conditional prefix + mode-context)
     const result = assembler.buildEffectiveMessage(defaultMessageOpts({ turnCount: 5 }))
-    assert.ok(!result.includes('context'), 'Pending context should be cleared')
+    assert.ok(!result.includes('specialist execution'), 'Pending context should be cleared')
     assert.ok(!result.includes('compact'), 'Pending compaction should be cleared')
     assert.ok(!result.includes('Auto Memory'), 'Memory context should be cleared')
   })
 
   test('clearConversation_removes_single_conversation_turn_count', () => {
     const { assembler } = createPromptAssembler()
-    assembler.incrementTurnCount('conv-1')  // → 1
-    assembler.incrementTurnCount('conv-1')  // → 2
-    assembler.incrementTurnCount('conv-2')  // → 1
+    assembler.incrementTurnCount('conv-1') // → 1
+    assembler.incrementTurnCount('conv-1') // → 2
+    assembler.incrementTurnCount('conv-2') // → 1
 
     // Clear only conv-1
     assembler.clearConversation('conv-1')
@@ -141,16 +145,10 @@ describe('DaVinciPromptAssembler', () => {
       result.includes('Mode switched from plan to build'),
       'Should contain mode switch context'
     )
-    assert.ok(
-      result.includes('full permissions'),
-      'Build mode should mention full permissions'
-    )
+    assert.ok(result.includes('<mode-context>'), 'Build mode context should be injected')
     // Mode switch should be consumed
     const result2 = assembler.buildEffectiveMessage(defaultMessageOpts())
-    assert.ok(
-      !result2.includes('Mode switched'),
-      'Mode switch should be consumed after first use'
-    )
+    assert.ok(!result2.includes('Mode switched'), 'Mode switch should be consumed after first use')
   })
 
   test('buildEffectiveMessage_injects_memory_on_turn_1_and_2', () => {
@@ -219,6 +217,20 @@ describe('DaVinciPromptAssembler', () => {
     assert.ok(
       !result.includes('[PROJECT SPECIALIST READY'),
       'null signal should not inject anything'
+    )
+  })
+
+  test('buildEffectiveMessage_uses_lean_mode_block_for_opus_48', () => {
+    const { assembler } = createPromptAssembler()
+    const result = assembler.buildEffectiveMessage(
+      defaultMessageOpts({ model: 'claude-opus-4-8' })
+    )
+    // Lean plan mode block is shorter and doesn't contain certain sections
+    assert.ok(result.includes('<mode-context>'), 'Should contain mode-context block')
+    // The lean plan mode doesn't have "### Questions vs. Plans — Know the Difference (IMPORTANT)"
+    assert.ok(
+      !result.includes('Know the Difference (IMPORTANT)'),
+      'Opus 4.8 should use lean plan mode section'
     )
   })
 

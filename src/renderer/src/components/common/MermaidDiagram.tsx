@@ -1,10 +1,36 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertTriangle, Copy, Check, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
+import { useAppTheme } from '@renderer/store'
 
 interface MermaidDiagramProps {
   definition: string
   id?: string
   className?: string
+}
+
+/**
+ * Reads computed CSS custom properties to build Mermaid themeVariables.
+ * This ensures diagrams match the active app theme.
+ */
+function buildMermaidThemeVars(): Record<string, string> {
+  const cs = getComputedStyle(document.documentElement)
+  const v = (name: string): string => cs.getPropertyValue(name).trim()
+  return {
+    primaryColor: v('--color-surface-float'),
+    primaryTextColor: v('--color-text-primary'),
+    primaryBorderColor: v('--color-border-default'),
+    lineColor: v('--color-primary'),
+    secondaryColor: v('--color-panel-navy'),
+    tertiaryColor: v('--color-surface-overlay'),
+    noteBkgColor: v('--color-panel-navy'),
+    noteTextColor: v('--color-text-secondary'),
+    actorBkg: v('--color-surface-float'),
+    actorBorder: v('--color-border-default'),
+    actorTextColor: v('--color-text-primary'),
+    signalColor: v('--color-primary'),
+    labelBoxBkgColor: v('--color-surface-overlay'),
+    labelTextColor: v('--color-text-primary')
+  }
 }
 
 /**
@@ -16,36 +42,35 @@ interface MermaidDiagramProps {
  */
 let mermaidInstance: typeof import('mermaid').default | null = null
 let mermaidReady: Promise<typeof import('mermaid').default> | null = null
+let lastThemeId: string | null = null
 
-function getMermaid(): Promise<typeof import('mermaid').default> {
-  if (mermaidInstance) return Promise.resolve(mermaidInstance)
+function getMermaid(themeId: string): Promise<typeof import('mermaid').default> {
+  // Re-initialize if theme changed since last init
+  if (mermaidInstance && lastThemeId === themeId) return Promise.resolve(mermaidInstance)
+
+  // If theme changed, bust the cache to reinitialize
+  if (lastThemeId !== themeId) {
+    mermaidInstance = null
+    mermaidReady = null
+  }
+
   if (mermaidReady) return mermaidReady
 
   mermaidReady = import('mermaid').then((mod) => {
     const m = (mod.default as unknown as { default: typeof mod.default }).default ?? mod.default
+
+    // Detect if the current theme is light (porcelain) for mermaid base theme
+    const isLight = themeId === 'porcelain'
+
     m.initialize({
       startOnLoad: false,
-      theme: 'dark',
+      theme: isLight ? 'default' : 'dark',
       securityLevel: 'loose', // 'strict' blocks gitGraph and some other diagram types
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      themeVariables: {
-        primaryColor: '#1E2E33',
-        primaryTextColor: '#C8B89A',
-        primaryBorderColor: 'rgba(184, 151, 106, 0.3)',
-        lineColor: '#B8976A',
-        secondaryColor: '#283337',
-        tertiaryColor: '#1C272D',
-        noteBkgColor: '#283337',
-        noteTextColor: '#8A9A9E',
-        actorBkg: '#1E2E33',
-        actorBorder: 'rgba(184, 151, 106, 0.3)',
-        actorTextColor: '#C8B89A',
-        signalColor: '#B8976A',
-        labelBoxBkgColor: '#1C272D',
-        labelTextColor: '#C8B89A'
-      }
+      themeVariables: buildMermaidThemeVars()
     })
     mermaidInstance = m
+    lastThemeId = themeId
     return m
   })
 
@@ -65,6 +90,7 @@ export default function MermaidDiagram({
   id,
   className
 }: MermaidDiagramProps): React.JSX.Element {
+  const theme = useAppTheme()
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -99,7 +125,7 @@ export default function MermaidDiagram({
     })
   }, [])
 
-  // Render mermaid diagram
+  // Render mermaid diagram — re-renders when definition or theme changes
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -107,7 +133,7 @@ export default function MermaidDiagram({
 
     const diagramId = id ?? `mermaid-r-${++renderCounter}`
 
-    getMermaid()
+    getMermaid(theme)
       .then((mermaid) => mermaid.render(diagramId, definition.trim()))
       .then(({ svg: renderedSvg }) => {
         if (!cancelled) {
@@ -131,7 +157,7 @@ export default function MermaidDiagram({
     return (): void => {
       cancelled = true
     }
-  }, [definition, id, fitToView])
+  }, [definition, id, theme, fitToView])
 
   // Wheel handler — zoom toward cursor position
   useEffect(() => {

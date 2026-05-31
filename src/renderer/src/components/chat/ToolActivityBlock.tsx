@@ -1,5 +1,16 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, Wrench, Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import {
+  ChevronRight,
+  Wrench,
+  Loader2,
+  Terminal,
+  FileText,
+  Search,
+  GitBranch,
+  Cpu,
+  Bot,
+  Puzzle
+} from 'lucide-react'
 import type { ToolActivity } from '../../../../shared/types'
 import { MCP_DISPLAY_NAMES } from '../../../../shared/constants'
 
@@ -61,6 +72,84 @@ export function getToolDisplayName(toolName: string): string {
   return toolName
 }
 
+// ── Tool category system ──
+
+type ToolCategory = 'shell' | 'file' | 'search' | 'codegraph' | 'git' | 'agent' | 'other'
+
+function getToolCategory(toolName: string): ToolCategory {
+  const name = toolName.toLowerCase()
+  if (name === 'bash' || name === 'execute') return 'shell'
+  if (
+    name === 'read' ||
+    name === 'write' ||
+    name === 'edit' ||
+    name === 'multiedit' ||
+    name === 'notebook_edit' ||
+    name === 'notebook_read'
+  )
+    return 'file'
+  if (name === 'grep' || name === 'glob' || name === 'search') return 'search'
+  if (name === 'agent' || name === 'todoread' || name === 'todowrite') return 'agent'
+  if (name.includes('git') || name.startsWith('mcp__github')) return 'git'
+  if (
+    name.startsWith('mcp__code') ||
+    name.startsWith('mcp__semantic') ||
+    name.startsWith('mcp__checkpoint')
+  )
+    return 'codegraph'
+  return 'other'
+}
+
+const CATEGORY_CONFIG: Record<
+  ToolCategory,
+  { icon: typeof Terminal; badgeBg: string; badgeText: string; dotColor: string }
+> = {
+  shell: {
+    icon: Terminal,
+    badgeBg: 'bg-emerald-500/15',
+    badgeText: 'text-emerald-400',
+    dotColor: 'bg-emerald-400'
+  },
+  file: {
+    icon: FileText,
+    badgeBg: 'bg-blue-500/15',
+    badgeText: 'text-blue-400',
+    dotColor: 'bg-blue-400'
+  },
+  search: {
+    icon: Search,
+    badgeBg: 'bg-amber-500/15',
+    badgeText: 'text-amber-400',
+    dotColor: 'bg-amber-400'
+  },
+  codegraph: {
+    icon: Cpu,
+    badgeBg: 'bg-purple-500/15',
+    badgeText: 'text-purple-400',
+    dotColor: 'bg-purple-400'
+  },
+  git: {
+    icon: GitBranch,
+    badgeBg: 'bg-orange-500/15',
+    badgeText: 'text-orange-400',
+    dotColor: 'bg-orange-400'
+  },
+  agent: {
+    icon: Bot,
+    badgeBg: 'bg-cyan-500/15',
+    badgeText: 'text-cyan-400',
+    dotColor: 'bg-cyan-400'
+  },
+  other: {
+    icon: Puzzle,
+    badgeBg: 'bg-slate-500/15',
+    badgeText: 'text-slate-400',
+    dotColor: 'bg-slate-400'
+  }
+}
+
+// ── Component ──
+
 interface ToolActivityBlockProps {
   activities: ToolActivity[]
   /** When true, the tool list starts expanded (e.g., during streaming). Default false. */
@@ -77,6 +166,7 @@ export default function ToolActivityBlock({
   if (activities.length === 0) return null
 
   const completedCount = activities.filter((a) => a.status === 'completed').length
+  const errorCount = activities.filter((a) => a.status === 'error').length
   const runningCount = activities.filter((a) => a.status === 'running').length
   const runningActivities = activities.filter((a) => a.status === 'running')
 
@@ -92,116 +182,186 @@ export default function ToolActivityBlock({
     })
   }
 
-  /** Render a single tool activity row with optional per-row expand. */
-  const renderActivity = (activity: ToolActivity): React.JSX.Element => {
+  /** Determine if a tool row has content worth expanding */
+  const hasExpandableContent = (activity: ToolActivity): boolean => {
+    // Any tool with a long input, any result, or resultDetail can be expanded
+    if (activity.resultDetail) return true
+    if (activity.result && activity.result.length > 40) return true
+    if (activity.input && activity.input.length > 60) return true
+    return false
+  }
+
+  /** Render a single tool activity as a timeline node */
+  const renderTimelineNode = (
+    activity: ToolActivity,
+    index: number,
+    list: ToolActivity[]
+  ): React.JSX.Element => {
     const isActivityExpanded = expandedIds.has(activity.id)
-    const isLongInput = !!activity.input && activity.input.length > 50
-    const isLongResult = !!activity.result && activity.result.length > 80
-    const hasExpandableContent = isLongInput || isLongResult
+    const expandable = hasExpandableContent(activity)
+    const isLast = index === list.length - 1
+    const category = getToolCategory(activity.toolName)
+    const config = CATEGORY_CONFIG[category]
+    const CategoryIcon = config.icon
+    const isRunning = activity.status === 'running'
+    const isError = activity.status === 'error'
 
     return (
-      <div key={activity.id} className="flex flex-col gap-0.5 text-xs">
-        <div className="flex items-center gap-2 min-w-0">
-          {/* Status icon — SVG with appropriate color and animation */}
-          {activity.status === 'running' ? (
-            <Loader2 size={12} className="text-purple-400 animate-spin flex-shrink-0" />
-          ) : activity.status === 'completed' ? (
-            <CheckCircle2 size={12} className="text-success flex-shrink-0" />
-          ) : (
-            <XCircle size={12} className="text-danger flex-shrink-0" />
-          )}
-
-          {/* Tool name */}
-          <span className="font-mono text-text-body flex-shrink-0">
-            {getToolDisplayName(activity.toolName)}
-          </span>
-
-          {/* Input — full or truncated */}
-          {activity.input && (
-            <span
-              className={`text-text-muted min-w-0 ${isActivityExpanded ? 'break-all whitespace-normal' : 'truncate max-w-[300px]'}`}
-              title={!isActivityExpanded ? activity.input : undefined}
-            >
-              {isActivityExpanded ? activity.input : shortenInput(activity.input)}
-            </span>
-          )}
-
-          {/* Result — full or truncated (non-error) */}
-          {activity.status === 'completed' && activity.result && (
-            <span
-              className={`text-text-muted text-[11px] ml-1 min-w-0 ${isActivityExpanded ? 'break-all whitespace-normal' : 'truncate max-w-[300px]'}`}
-            >
-              — {activity.result}
-            </span>
-          )}
-
-          {/* Error result — shown in red */}
-          {activity.status === 'error' && activity.result && (
-            <span className="text-danger text-[11px] ml-1 min-w-0 truncate max-w-[300px]">
-              — {activity.result}
-            </span>
-          )}
-
-          {/* Elapsed time for running tools */}
-          {activity.status === 'running' && activity.elapsedSeconds !== undefined && (
-            <span className="text-xs text-text-muted ml-1 flex-shrink-0">
-              {activity.elapsedSeconds}s
-            </span>
-          )}
-
-          {/* Expand chevron — shown when input or result is long enough to be cropped */}
-          {hasExpandableContent && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                toggleActivityExpand(activity.id)
-              }}
-              className="text-text-muted hover:text-text-primary flex-shrink-0 ml-auto p-0.5 rounded hover:bg-surface-hover transition-colors"
-              aria-label={isActivityExpanded ? 'Collapse tool details' : 'Expand tool details'}
-            >
-              {isActivityExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-            </button>
+      <div key={activity.id} className="relative flex gap-3 min-w-0">
+        {/* Timeline spine — vertical line + status dot */}
+        <div className="flex flex-col items-center flex-shrink-0 w-4">
+          {/* Dot */}
+          <div className="relative flex-shrink-0">
+            {isRunning ? (
+              <>
+                <div className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse" />
+                <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-purple-400/40 animate-ping" />
+              </>
+            ) : isError ? (
+              <div className="w-2.5 h-2.5 rounded-full bg-danger" />
+            ) : (
+              <div className={`w-2.5 h-2.5 rounded-full ${config.dotColor}`} />
+            )}
+          </div>
+          {/* Connecting line */}
+          {!isLast && (
+            <div className="w-px flex-1 min-h-[12px] bg-border-subtle" />
           )}
         </div>
 
-        {/* Expand panel — monospace text block below tool row */}
-        {isActivityExpanded && (activity.resultDetail || activity.result) && (
-          <div className="ml-6 mt-1 rounded-md bg-surface-base border border-border-subtle p-2 max-h-80 overflow-y-auto">
-            <pre className="text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all leading-relaxed">
-              {activity.resultDetail || activity.result}
-            </pre>
-          </div>
-        )}
+        {/* Content */}
+        <div className={`flex-1 min-w-0 ${isLast ? '' : 'pb-1.5'}`}>
+          {/* Clickable row — entire row is the click target */}
+          <button
+            type="button"
+            onClick={() => expandable && toggleActivityExpand(activity.id)}
+            className={`w-full text-left flex items-center gap-2 min-w-0 rounded-md px-2 py-1 -ml-2 transition-colors group ${
+              expandable ? 'cursor-pointer hover:bg-surface-overlay/50' : 'cursor-default'
+            } ${isActivityExpanded ? 'bg-surface-overlay/40' : ''}`}
+            aria-expanded={expandable ? isActivityExpanded : undefined}
+          >
+            {/* Tool badge — colored pill with category icon */}
+            <span
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium flex-shrink-0 ${config.badgeBg} ${config.badgeText}`}
+            >
+              <CategoryIcon size={10} />
+              {getToolDisplayName(activity.toolName)}
+            </span>
+
+            {/* Summary text — input or result, truncated */}
+            <span className="text-xs text-text-muted min-w-0 flex-1 truncate">
+              {activity.input && shortenInput(activity.input)}
+              {activity.status === 'completed' && activity.result && (
+                <span className="text-text-secondary"> — {activity.result}</span>
+              )}
+              {isError && activity.result && (
+                <span className="text-danger"> — {activity.result}</span>
+              )}
+            </span>
+
+            {/* Right side — elapsed time or expand chevron */}
+            <span className="flex items-center gap-1.5 flex-shrink-0 ml-auto">
+              {isRunning && activity.elapsedSeconds !== undefined && (
+                <span className="text-[11px] text-purple-400 tabular-nums">
+                  {activity.elapsedSeconds}s
+                </span>
+              )}
+              {isRunning && (
+                <Loader2 size={12} className="text-purple-400 animate-spin" />
+              )}
+              {expandable && !isRunning && (
+                <span
+                  className={`text-text-muted transition-transform duration-150 ${
+                    isActivityExpanded ? 'rotate-90' : ''
+                  } opacity-0 group-hover:opacity-100 ${isActivityExpanded ? '!opacity-100' : ''}`}
+                >
+                  <ChevronRight size={12} />
+                </span>
+              )}
+            </span>
+          </button>
+
+          {/* Expand panel — shows input AND output with clear labels */}
+          {isActivityExpanded && (
+            <div className="mt-1 ml-0 rounded-md bg-surface-base border border-border-subtle overflow-hidden">
+              {/* Input section */}
+              {activity.input && activity.input.length > 30 && (
+                <div className="px-3 py-2 border-b border-border-subtle/50">
+                  <span className="text-[10px] uppercase tracking-wider text-text-secondary font-medium">
+                    Input
+                  </span>
+                  <pre className="mt-0.5 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all leading-relaxed">
+                    {activity.input}
+                  </pre>
+                </div>
+              )}
+              {/* Output section */}
+              {(activity.resultDetail || activity.result) && (
+                <div className="px-3 py-2 max-h-64 overflow-y-auto">
+                  <span className="text-[10px] uppercase tracking-wider text-text-secondary font-medium">
+                    {isError ? 'Error' : 'Output'}
+                  </span>
+                  <pre
+                    className={`mt-0.5 text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed ${
+                      isError ? 'text-danger' : 'text-text-muted'
+                    }`}
+                  >
+                    {activity.resultDetail || activity.result}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     )
   }
 
+  // ── Header summary ──
+  const summaryParts: string[] = []
+  if (completedCount > 0) summaryParts.push(`${completedCount} done`)
+  if (runningCount > 0) summaryParts.push(`${runningCount} running`)
+  if (errorCount > 0) summaryParts.push(`${errorCount} failed`)
+
   return (
     <div className="my-2">
+      {/* Header toggle */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
+        className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors group"
       >
-        <Wrench size={12} />
+        <Wrench size={12} className="flex-shrink-0" />
         <span>
-          {runningCount > 0
-            ? `${activities.length} tool${activities.length > 1 ? 's' : ''} (${runningCount} running...)`
-            : `${completedCount} tool${completedCount > 1 ? 's' : ''} used`}
+          {activities.length} tool{activities.length !== 1 ? 's' : ''}
         </span>
-        {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        {runningCount > 0 && (
+          <span className="inline-flex items-center gap-1 text-purple-400">
+            <Loader2 size={10} className="animate-spin" />
+            <span>{runningCount} running</span>
+          </span>
+        )}
+        {runningCount === 0 && (
+          <span className="text-text-muted">
+            ({summaryParts.join(' · ')})
+          </span>
+        )}
+        <ChevronRight
+          size={12}
+          className={`transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
+        />
       </button>
 
-      {/* Always show running tools even when collapsed */}
+      {/* Collapsed — show running tools only as mini timeline */}
       {!isExpanded && runningActivities.length > 0 && (
-        <div className="mt-1.5 ml-4 space-y-1 border-l-2 border-border-subtle pl-3">
-          {runningActivities.map(renderActivity)}
+        <div className="mt-2 ml-3">
+          {runningActivities.map((a, i) => renderTimelineNode(a, i, runningActivities))}
         </div>
       )}
 
-      {/* Expanded: show all activities including completed */}
+      {/* Expanded — full timeline of all activities */}
       {isExpanded && (
-        <div className="mt-1.5 ml-4 space-y-1 border-l-2 border-border-subtle pl-3">
-          {activities.map(renderActivity)}
+        <div className="mt-2 ml-3">
+          {activities.map((a, i) => renderTimelineNode(a, i, activities))}
         </div>
       )}
     </div>

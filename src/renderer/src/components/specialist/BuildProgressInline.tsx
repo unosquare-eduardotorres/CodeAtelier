@@ -36,12 +36,7 @@ export default function BuildProgressInline({
 
   if (!event || !visible) return null
 
-  const Icon =
-    event.phase === 'ready'
-      ? CheckCircle2
-      : event.phase === 'failed'
-        ? XCircle
-        : Loader2
+  const Icon = event.phase === 'ready' ? CheckCircle2 : event.phase === 'failed' ? XCircle : Loader2
   const iconClass =
     event.phase === 'ready'
       ? 'text-emerald-500'

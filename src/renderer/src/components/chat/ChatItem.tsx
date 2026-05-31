@@ -144,11 +144,7 @@ export default function ChatItem({
               : 'bg-info-muted text-info'
         } ${isStreaming ? 'chat-icon-processing' : showComplete ? 'chat-icon-complete' : ''}`}
       >
-        {conversation.llmProvider === 'local-llm' ? (
-          <Monitor size={14} />
-        ) : (
-          <Cloud size={14} />
-        )}
+        {conversation.llmProvider === 'local-llm' ? <Monitor size={14} /> : <Cloud size={14} />}
       </div>
 
       <div className="flex-1 min-w-0">

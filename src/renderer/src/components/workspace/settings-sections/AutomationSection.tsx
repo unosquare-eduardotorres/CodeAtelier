@@ -16,11 +16,9 @@ export default function AutomationSection({
   hasRemote,
   onToggle
 }: AutomationSectionProps): React.JSX.Element {
-  const activeCount = [
-    settings.gitAutoBranch,
-    settings.gitAutoPR,
-    settings.gitAutoCleanup
-  ].filter(Boolean).length
+  const activeCount = [settings.gitAutoBranch, settings.gitAutoPR, settings.gitAutoCleanup].filter(
+    Boolean
+  ).length
 
   return (
     <section>

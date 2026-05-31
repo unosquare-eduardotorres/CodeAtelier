@@ -84,9 +84,7 @@ export const useBugStore = create<BugStore>((set, get) => ({
     set((state) => ({
       bugs: state.bugs.filter((b) => b.id !== id),
       unresolvedCount:
-        bug && !bug.isResolved
-          ? Math.max(0, state.unresolvedCount - 1)
-          : state.unresolvedCount,
+        bug && !bug.isResolved ? Math.max(0, state.unresolvedCount - 1) : state.unresolvedCount,
       selectedBugId: state.selectedBugId === id ? null : state.selectedBugId
     }))
   },

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Lightbulb } from 'lucide-react'
-import { useWorkspaceStore } from '@renderer/store'
+import { useWorkspaceStore, useChatStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
 import EventLogPage from './EventLogPage'
@@ -14,6 +14,8 @@ import CodeIntelligencePage from './CodeIntelligencePage'
 import IntegrationsPage from './IntegrationsPage'
 import SpecialistPage from './SpecialistPage'
 import HealthPage from './HealthPage'
+import GoalPage from './GoalPage'
+import { CouncilView } from './council'
 import { SkillDetailPage } from '@renderer/components/settings'
 import CoreTeamPage from '@renderer/components/settings/CoreTeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
@@ -23,6 +25,7 @@ interface WorkspaceSettingsContentProps {
   tab: SettingsTab
   onNavigateToChat: () => void
   onFixInNewChat: () => void
+  onSettingsTabChange?: (tab: SettingsTab) => void
   pendingGrill?: {
     ideaId: string
     conversationId: string
@@ -37,6 +40,7 @@ export default function WorkspaceSettingsContent({
   tab,
   onNavigateToChat,
   onFixInNewChat,
+  onSettingsTabChange,
   pendingGrill,
   onPendingGrillConsumed
 }: WorkspaceSettingsContentProps): React.JSX.Element {
@@ -108,7 +112,27 @@ export default function WorkspaceSettingsContent({
       className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${tab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}
     >
       {tab === 'specialist' && <SpecialistPage />}
-      {tab === 'health' && <HealthPage onNavigateToChat={onNavigateToChat} onFixInNewChat={onFixInNewChat} />}
+      {tab === 'health' && (
+        <HealthPage onNavigateToChat={onNavigateToChat} onFixInNewChat={onFixInNewChat} />
+      )}
+      {tab === 'goals' && <GoalPage onNavigateToChat={onNavigateToChat} />}
+      {tab === 'council' && (
+        <CouncilView
+          onAcceptAndBuild={() => {
+            onNavigateToChat()
+          }}
+          onRevisePlan={(feedback) => {
+            // Inject council feedback into chat as a local message
+            const { appendLocalMessage } = useChatStore.getState()
+            appendLocalMessage(
+              `🏛️ **Council Review Feedback:**\n\n${feedback}\n\nPlease revise the plan based on this feedback.`,
+              { role: 'user' }
+            )
+            onNavigateToChat()
+          }}
+          onDismiss={() => onNavigateToChat()}
+        />
+      )}
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
       {tab === 'code-intelligence' && <CodeIntelligencePage />}
@@ -132,6 +156,10 @@ export default function WorkspaceSettingsContent({
             onComplete={() => {
               setActiveGrill(null)
               onNavigateToChat()
+            }}
+            onNavigateToGoals={() => {
+              setActiveGrill(null)
+              onSettingsTabChange?.('goals')
             }}
           />
         ) : (

@@ -2,9 +2,14 @@ import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import log from 'electron-log/main'
-import type { QualityGateResult } from './abandonment-detector.service'
-
 const gateLog = log.scope('QualityGateRunner')
+
+/** Quality gate result — test/lint/build pass/fail detection. */
+export interface QualityGateResult {
+  type: 'test' | 'lint' | 'typecheck' | 'build'
+  passed: boolean
+  summary: string
+}
 
 /** Timeout per gate execution (2 minutes) */
 const GATE_TIMEOUT_MS = 120_000

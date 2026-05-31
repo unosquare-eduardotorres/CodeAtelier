@@ -13,8 +13,18 @@
  * intent detection) is identical to DaVinciRoleAdapter.
  */
 
-import type { AgentIntent, ConversationMode, MemoryType } from '../../../shared/types'
-import { EXTERNAL_MCP_INTEGRATIONS, LOCAL_MCP_INTEGRATIONS } from '../../../shared/constants'
+import type {
+  AgentIntent,
+  CommunicationTone,
+  ConversationMode,
+  MemoryType,
+  ModelAction
+} from '../../../shared/types'
+import {
+  EXTERNAL_MCP_INTEGRATIONS,
+  LOCAL_MCP_INTEGRATIONS,
+  RECOMMENDED_LOCAL_MODELS
+} from '../../../shared/constants'
 import type {
   AdapterIntentContext,
   AdapterMcpContext,
@@ -37,9 +47,16 @@ import { githubService } from '../github.service'
 import { intentDetector } from '../intent-detector'
 import { appendMcpToolGuidance, buildConditionalPrefix } from '../prompt-assembly-helpers'
 import { buildWorkspaceMcpConfig } from '../workspace-mcp-config'
-import { BUILD_MODE_SECTION, PLAN_MODE_SECTION } from '../default-prompts'
+import {
+  MODE_CONTEXT_SECTIONS,
+  MODE_CONTEXT_SECTIONS_LEAN,
+  UNIFIED_MODE_SECTION,
+  TONE_STYLE_DIRECTIVES
+} from '../default-prompts'
+import { resolvePromptVerbosity } from '../../../shared/constants'
 import { modelConfigService } from '../model-config.service'
 import { promptBuilder } from '../prompt-builder'
+import { resolveContextTier } from '../context-management'
 
 interface SpecialistSnapshot {
   id: string
@@ -58,8 +75,8 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
   private snapshot: SpecialistSnapshot | null = null
 
   /** Feature flags refreshed from workspace settings each send(). */
-  private repomapEnabled = false
-  private semanticSearchEnabled = false
+  private repomapEnabled = true
+  private semanticSearchEnabled = true
   private githubConfigured = false
 
   /**
@@ -82,6 +99,12 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
   private systemPromptSnapshot: string | null = null
   private systemPromptSnapshotMode: ConversationMode | null = null
   private systemPromptSnapshotConversationId: string | null = null
+  private systemPromptSnapshotTone: CommunicationTone | null = null
+  private systemPromptSnapshotModel: string | null = null
+
+  /** Cached communication tone to avoid DB queries on every turn */
+  private cachedTone: CommunicationTone | null = null
+  private cachedToneConversationId: string | null = null
 
   constructor(params: { workspaceId: string; agentId?: string }) {
     this.workspaceId = params.workspaceId
@@ -122,6 +145,10 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
     this.systemPromptSnapshot = null
     this.systemPromptSnapshotMode = null
     this.systemPromptSnapshotConversationId = null
+    this.systemPromptSnapshotTone = null
+    this.systemPromptSnapshotModel = null
+    this.cachedTone = null
+    this.cachedToneConversationId = null
   }
 
   buildPrompts(ctx: AdapterPromptContext): AdapterPromptResult {
@@ -142,13 +169,53 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       return { systemPrompt: msg, effectiveMessage: ctx.message }
     }
 
-    // Local LLM: condensed prompt — skip skills, memory, caching strategies
+    // ── Resolve effective communication tone (cached to skip DB queries on turns 2+) ──
+    // Resolution chain: conversation override → workspace default → 'default'
+    // Tone rarely changes mid-session — reuse cached value when conversation hasn't changed.
+    let communicationTone: CommunicationTone
+    if (
+      this.cachedTone &&
+      this.cachedToneConversationId === ctx.conversationId &&
+      ctx.turnCount > 1
+    ) {
+      communicationTone = this.cachedTone
+    } else {
+      communicationTone = 'default'
+      try {
+        if (ctx.conversationId) {
+          const conv = conversationRepository.findById(ctx.conversationId)
+          if (conv?.communicationTone) {
+            communicationTone = conv.communicationTone
+          }
+        }
+        if (communicationTone === 'default') {
+          const wsSettings = workspaceRepository.getSettings(this.workspaceId)
+          const wsTone = wsSettings.communicationTone as CommunicationTone | undefined
+          if (wsTone && wsTone !== 'default') communicationTone = wsTone
+        }
+      } catch {
+        /* non-fatal — fallback to default tone */
+      }
+      this.cachedTone = communicationTone
+      this.cachedToneConversationId = ctx.conversationId
+    }
+
+    // Local LLM: condensed prompt — skip skills, memory, caching strategies.
+    // S5: Inject plan-focused directive with context tier for local plan mode.
     if (modelConfigService.isLocalProvider(ctx.workspacePath)) {
+      const localConfig = modelConfigService.getLocalLLMConfig(ctx.workspacePath)
+      // F2: Resolve actual context window from RECOMMENDED_LOCAL_MODELS (mirrors DaVinci adapter)
+      const match = RECOMMENDED_LOCAL_MODELS.find(
+        (m) => m.ollamaId === localConfig.localModel || m.omlxId === localConfig.localModel
+      )
+      const contextTier = resolveContextTier(match?.contextWindow ?? 32_768)
       const systemPrompt = promptBuilder.buildLocalPrompt({
         role: 'da-vinci',
         mode: ctx.mode,
         workspacePath: ctx.workspacePath,
-        budgetTier: 'minimal'
+        budgetTier: 'minimal',
+        contextTier,
+        communicationTone
       })
       return { systemPrompt, effectiveMessage: ctx.message }
     }
@@ -156,26 +223,37 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
     // ── System-prompt assembly with snapshot cache ─────────────────
     // Layering mirrors DaVinci:
     //   [MODE SECTION] → [specialists.prompt — identity] → [CLAUDE.md layer] →
-    //   [MCP guidance turn 1 only]
+    //   [tone overlay (non-default only)] → [MCP guidance turn 1 only]
     //
     // Always rebuild on turn 1 to pick up fresh CLAUDE.md and prompt edits.
-    // On turns 2+ reuse when (conversationId, mode) match the cached snapshot.
+    // On turns 2+ reuse when (conversationId, mode, tone) match the cached snapshot.
+    const isBuildMode = ctx.mode === 'build' || ctx.mode === 'danger'
+    const resolvedModel = modelConfigService.getModel(ctx.workspacePath, `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction)
     const cacheValid =
       ctx.turnCount > 1 &&
       this.systemPromptSnapshot !== null &&
       this.systemPromptSnapshotMode === ctx.mode &&
-      this.systemPromptSnapshotConversationId === ctx.conversationId
+      this.systemPromptSnapshotConversationId === ctx.conversationId &&
+      this.systemPromptSnapshotTone === communicationTone &&
+      this.systemPromptSnapshotModel === (resolvedModel ?? null)
 
     let systemPrompt: string
     if (cacheValid) {
       systemPrompt = this.systemPromptSnapshot as string
     } else {
-      const modeSection = ctx.mode === 'build' ? BUILD_MODE_SECTION : PLAN_MODE_SECTION
+      const modeSection = UNIFIED_MODE_SECTION
       const claudeMdLayer = ctx.workspacePath
         ? promptBuilder.buildClaudeMdLayer(ctx.workspacePath, ctx.mode)
         : ''
       const layers = [modeSection, this.snapshot.prompt]
+      const baselineSkills = promptBuilder.skills.buildBaselineSkillsLayer()
+      if (baselineSkills) layers.push(baselineSkills)
       if (claudeMdLayer) layers.push(claudeMdLayer)
+      // Append communication tone overlay for non-default tones.
+      // Placed after the specialist's own prompt so it takes precedence.
+      if (communicationTone !== 'default') {
+        layers.push(`## Communication Tone Override\n${TONE_STYLE_DIRECTIVES[communicationTone]}`)
+      }
       const basePrompt = layers.join('\n\n')
       // Strategy Λ: Use locked flags so MCP guidance matches the mounted tool set.
       const mcpFlags = this.lockedMcpFlags ?? {
@@ -183,22 +261,39 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
         semanticSearchEnabled: this.semanticSearchEnabled,
         githubConfigured: this.githubConfigured
       }
-      systemPrompt = appendMcpToolGuidance(basePrompt, ctx.turnCount, mcpFlags)
+      // Resolve which external MCPs are active — drives prompt guidance injection
+      const externalMcpActive = this.resolveExternalMcpActive(
+        ctx.workspaceId ?? this.workspaceId,
+        ctx.conversationId
+      )
+      systemPrompt = appendMcpToolGuidance(basePrompt, ctx.turnCount, {
+        ...mcpFlags,
+        externalMcpActive
+      }, resolvedModel)
       this.systemPromptSnapshot = systemPrompt
       this.systemPromptSnapshotMode = ctx.mode
       this.systemPromptSnapshotConversationId = ctx.conversationId
+      this.systemPromptSnapshotTone = communicationTone
+      this.systemPromptSnapshotModel = resolvedModel ?? null
     }
+
+    // Inject <mode-context> block per-message (same as DaVinci assembler).
+    const verbosity = resolvePromptVerbosity(resolvedModel ?? '')
+    const modeSections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
+    const modeBlock = modeSections[ctx.mode] ?? modeSections.plan
+    let effectiveMessage = `<mode-context>\n${modeBlock.trim()}\n</mode-context>\n\n${ctx.message}`
 
     // User-turn prefix (ASK + MEMORY + IMAGE + DIRECT + plan reminder).
     const conditionalPrefix = buildConditionalPrefix({
       message: ctx.message,
       hasImages: ctx.hasImages,
       mode: ctx.mode,
-      turnCount: ctx.turnCount
+      turnCount: ctx.turnCount,
+      model: resolvedModel
     })
-    const effectiveMessage = conditionalPrefix
-      ? `${conditionalPrefix}\n\n---\n\n${ctx.message}`
-      : ctx.message
+    if (conditionalPrefix) {
+      effectiveMessage = `${conditionalPrefix}\n\n---\n\n${effectiveMessage}`
+    }
 
     return { systemPrompt, effectiveMessage }
   }
@@ -214,26 +309,19 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       githubConfigured: this.githubConfigured
     }
 
-    // Resolve external + local MCP active states from conversation overrides
-    const externalMcpActive: Record<string, boolean> = {}
+    // Resolve external MCP active states via shared helper (same logic as buildPrompts)
+    const externalMcpActive = this.resolveExternalMcpActive(ctx.workspaceId, ctx.conversationId)
+
+    // Resolve per-chat local MCP active state from conversation overrides
     const localMcpActive: Record<string, boolean> = {}
     try {
-      const ws = ctx.workspaceId ? workspaceRepository.findById(ctx.workspaceId) : null
-      const wsSettings = ws ? JSON.parse(ws.settingsJson || '{}') : {}
       const conv = ctx.conversationId ? conversationRepository.findById(ctx.conversationId) : null
       const chatOverrides = conv?.mcpOverrides ?? {}
-
-      for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
-        externalMcpActive[integration.id] =
-          !!wsSettings[`${integration.id}Available`] && !!chatOverrides[integration.id]
-      }
-
-      // Derive per-chat local MCP active state from conversation overrides
       for (const lm of LOCAL_MCP_INTEGRATIONS) {
         localMcpActive[lm.id] = chatOverrides[lm.id] !== false
       }
-    } catch {
-      /* non-fatal — keep all external MCPs disabled, local MCPs enabled */
+    } catch (err) {
+      this.log.error('[adapter:local-mcp] Failed to resolve local MCP overrides:', err)
     }
 
     return buildWorkspaceMcpConfig({
@@ -316,8 +404,8 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
 
   onSessionStop(): void {
     this.snapshot = null
-    this.repomapEnabled = false
-    this.semanticSearchEnabled = false
+    this.repomapEnabled = true
+    this.semanticSearchEnabled = true
     this.githubConfigured = false
     this.lockedMcpFlags = null
     this.invalidateSnapshot()
@@ -371,11 +459,10 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       return
     }
     try {
-      const workspace = workspaceRepository.findById(workspaceId)
-      if (!workspace) return
-      const settings = JSON.parse(workspace.settingsJson || '{}')
-      this.repomapEnabled = !!settings.repomapEnabled
-      this.semanticSearchEnabled = !!settings.semanticSearchEnabled
+      if (!workspaceId) return
+      const settings = workspaceRepository.getSettings(workspaceId)
+      this.repomapEnabled = settings.repomapEnabled !== false
+      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
       this.githubConfigured = githubService.isConfigured(workspaceId)
     } catch {
       /* non-fatal */
@@ -402,5 +489,42 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
 
   getMode(): ConversationMode {
     return 'plan'
+  }
+
+  /**
+   * Read workspace settings + conversation overrides to determine which
+   * external MCPs are active for this chat. Used by both buildPrompts
+   * (prompt guidance injection) and buildMcpConfig (tool mounting).
+   */
+  private resolveExternalMcpActive(
+    workspaceId: string | null,
+    conversationId: string | null
+  ): Record<string, boolean> {
+    const result: Record<string, boolean> = {}
+    try {
+      const wsSettings = workspaceId ? workspaceRepository.getSettings(workspaceId) : {}
+      const conv = conversationId ? conversationRepository.findById(conversationId) : null
+      const chatOverrides = conv?.mcpOverrides ?? {}
+
+      this.log.info(
+        `[adapter:resolve-external-mcp] workspaceId=${workspaceId} conversationId=${conversationId} ` +
+          `wsFound=${!!workspaceId} wsSettingsKeys=${Object.keys(wsSettings)
+            .filter((k) => k.includes('Available'))
+            .join(',')} ` +
+          `convFound=${!!conv} chatOverrides=${JSON.stringify(chatOverrides)}`
+      )
+
+      for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+        const wsAvailable = !!wsSettings[`${integration.id}Available`]
+        const chatActive = !!chatOverrides[integration.id]
+        result[integration.id] = wsAvailable && chatActive
+        this.log.info(
+          `[adapter:resolve-external-mcp] ${integration.id}: wsAvailable=${wsAvailable} chatActive=${chatActive} → mounted=${result[integration.id]}`
+        )
+      }
+    } catch (err) {
+      this.log.error('[adapter:external-mcp] Failed to resolve MCP state:', err)
+    }
+    return result
   }
 }

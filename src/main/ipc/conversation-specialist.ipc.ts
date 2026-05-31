@@ -3,107 +3,73 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { conversationSpecialistRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString, optionalBoolean } from './validate-args'
 
 export function registerConversationSpecialistIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.CONV_SPECIALIST_LIST,
-    async (event, args: { conversationId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.CONV_SPECIALIST_LIST
+      const args = requireObject(rawArgs, ch)
+      const conversationId = requireString(args, 'conversationId', ch)
 
-      if (
-        !args ||
-        typeof args.conversationId !== 'string' ||
-        args.conversationId.trim().length === 0
-      ) {
-        throw new Error('Invalid conversation ID')
-      }
-
-      return conversationSpecialistRepository.findByConversation(args.conversationId)
+      return conversationSpecialistRepository.findByConversation(conversationId)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.CONV_SPECIALIST_UPSERT,
-    async (
-      event,
-      args: {
-        conversationId: string
-        specialistId: string
-        isActive?: boolean
-      }
-    ) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.CONV_SPECIALIST_UPSERT
+      const args = requireObject(rawArgs, ch)
+      const conversationId = requireString(args, 'conversationId', ch)
+      const specialistId = requireString(args, 'specialistId', ch)
+      const isActive = optionalBoolean(args, 'isActive', ch)
 
-      if (
-        !args ||
-        typeof args.conversationId !== 'string' ||
-        args.conversationId.trim().length === 0
-      ) {
-        throw new Error('Invalid conversation ID')
-      }
-      if (typeof args.specialistId !== 'string' || args.specialistId.trim().length === 0) {
-        throw new Error('Invalid specialist ID')
-      }
-
-      conversationSpecialistRepository.upsert(args.conversationId, args.specialistId, {
-        isActive: args.isActive
+      conversationSpecialistRepository.upsert(conversationId, specialistId, {
+        isActive
       })
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.CONV_SPECIALIST_REMOVE,
-    async (event, args: { conversationId: string; specialistId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.CONV_SPECIALIST_REMOVE
+      const args = requireObject(rawArgs, ch)
+      const conversationId = requireString(args, 'conversationId', ch)
+      const specialistId = requireString(args, 'specialistId', ch)
 
-      if (
-        !args ||
-        typeof args.conversationId !== 'string' ||
-        args.conversationId.trim().length === 0
-      ) {
-        throw new Error('Invalid conversation ID')
-      }
-      if (typeof args.specialistId !== 'string' || args.specialistId.trim().length === 0) {
-        throw new Error('Invalid specialist ID')
-      }
-
-      conversationSpecialistRepository.remove(args.conversationId, args.specialistId)
+      conversationSpecialistRepository.remove(conversationId, specialistId)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.CONV_SPECIALIST_RESET,
-    async (event, args: { conversationId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.CONV_SPECIALIST_RESET
+      const args = requireObject(rawArgs, ch)
+      const conversationId = requireString(args, 'conversationId', ch)
 
-      if (
-        !args ||
-        typeof args.conversationId !== 'string' ||
-        args.conversationId.trim().length === 0
-      ) {
-        throw new Error('Invalid conversation ID')
-      }
-
-      conversationSpecialistRepository.removeAll(args.conversationId)
-      conversationSpecialistRepository.initFromWorkspaceDefaults(args.conversationId)
+      conversationSpecialistRepository.removeAll(conversationId)
+      conversationSpecialistRepository.initFromWorkspaceDefaults(conversationId)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.CONV_SPECIALIST_ESTIMATE,
-    async (event, args: { conversationId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-
-      if (
-        !args ||
-        typeof args.conversationId !== 'string' ||
-        args.conversationId.trim().length === 0
-      ) {
-        throw new Error('Invalid conversation ID')
-      }
+      const ch = IPC_CHANNELS.CONV_SPECIALIST_ESTIMATE
+      const args = requireObject(rawArgs, ch)
+      const conversationId = requireString(args, 'conversationId', ch)
 
       // Get active specialists for this conversation
-      const overrides = conversationSpecialistRepository.findByConversation(args.conversationId)
+      const overrides = conversationSpecialistRepository.findByConversation(conversationId)
       const activeWithSkills = overrides.filter((o) => o.isActive)
 
       // Calculate real token estimates from actual skill file content

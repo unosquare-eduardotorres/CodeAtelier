@@ -8,25 +8,39 @@ import {
   Monitor,
   Puzzle,
   Smartphone,
-  ChevronDown,
-  ChevronRight,
   Network,
   Search,
   Clock,
   Github,
-  BarChart3
+  BarChart3,
+  MessageSquare,
+  Heart,
+  Sun,
+  Flame,
+  Bone
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useProfileStore, useWorkspaceStore, useAuditStore } from '@renderer/store'
 import { AttachmentDropzone } from '@renderer/components/chat'
-import type { ConversationMode, LLMProvider } from '../../../../shared/types'
-import { EXTERNAL_MCP_INTEGRATIONS, LOCAL_MCP_INTEGRATIONS } from '../../../../shared/constants'
+import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
+import {
+  COMMUNICATION_TONES,
+  EXTERNAL_MCP_INTEGRATIONS,
+  LOCAL_MCP_INTEGRATIONS
+} from '../../../../shared/constants'
 import type { ExternalMcpDefinition, LocalMcpDefinition } from '../../../../shared/constants'
+import ToggleButtonGroup from './ToggleButtonGroup'
+import McpToolsSection from './McpToolsSection'
+
+/** Map tone icon names to Lucide components */
+const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
 
 interface NewChatPageProps {
   onCreateChat: (data: {
     title: string
     description?: string
     mode: ConversationMode
+    communicationTone?: CommunicationTone | null
     attachments?: string[]
     useIsolatedBranch?: boolean
     llmProvider?: LLMProvider
@@ -52,6 +66,7 @@ export default function NewChatPage({
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<ConversationMode>('plan')
+  const [communicationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
   const [llmProvider, setLlmProvider] = useState<LLMProvider>('claude')
@@ -103,7 +118,7 @@ export default function NewChatPage({
         }
         setMcpOverrides((prev) => ({ ...localDefaults, ...prev }))
       })
-      .catch(() => {})
+      .catch((err) => console.warn('[NewChatPage] Non-fatal: workspace settings load failed:', err))
   }, [activeWorkspace])
 
   // Pre-fill from audit fix context on mount (once)
@@ -140,6 +155,7 @@ export default function NewChatPage({
       title: trimmedTitle,
       description: description.trim() || undefined,
       mode,
+      communicationTone,
       attachments: attachments.length > 0 ? attachments : undefined,
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
       llmProvider,
@@ -149,6 +165,7 @@ export default function NewChatPage({
     title,
     description,
     mode,
+    communicationTone,
     attachments,
     useIsolatedBranch,
     llmProvider,
@@ -221,37 +238,55 @@ export default function NewChatPage({
         </div>
 
         {/* Mode Toggle */}
+        <ToggleButtonGroup
+          label="Mode"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'plan', label: 'Plan', icon: ClipboardList, activeClass: 'bg-mode-plan-muted text-mode-plan-text border border-mode-plan-border' },
+            { value: 'build', label: 'Build', icon: Hammer, activeClass: 'bg-mode-build-muted text-mode-build-text border border-mode-build-border' }
+          ]}
+          description={mode === 'plan'
+            ? 'Plan mode — read-only analysis, brainstorming, code review'
+            : 'Build mode — the agent can create and modify files in your workspace'}
+        />
+
+        {/* Communication Tone */}
         <div className="w-full mb-5">
-          <label className="block text-sm font-medium text-text-primary mb-1.5">Mode</label>
-          <div className="flex items-center gap-2 bg-surface-overlay rounded-lg p-1 border border-border-subtle w-fit">
+          <label className="block text-sm font-medium text-text-primary mb-1.5">
+            Tone{' '}
+            <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
+          </label>
+          <div className="flex items-center gap-1.5 flex-wrap">
             <button
-              onClick={() => setMode('plan')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                mode === 'plan'
-                  ? 'bg-mode-plan-muted text-mode-plan-text border border-mode-plan-border'
-                  : 'text-text-secondary hover:text-text-primary'
+              onClick={() => setConversationTone(null)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                communicationTone === null
+                  ? 'bg-primary-muted text-primary-text border border-primary/20'
+                  : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
               }`}
             >
-              <ClipboardList size={16} />
-              Plan
+              Workspace Default
             </button>
-            <button
-              onClick={() => setMode('build')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                mode === 'build'
-                  ? 'bg-mode-build-muted text-mode-build-text border border-mode-build-border'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
-            >
-              <Hammer size={16} />
-              Build
-            </button>
+            {COMMUNICATION_TONES.filter((t) => t.id !== 'default').map((tone) => {
+              const Icon = TONE_ICON_MAP[tone.icon] ?? MessageSquare
+              const isActive = communicationTone === tone.id
+              return (
+                <button
+                  key={tone.id}
+                  onClick={() => setConversationTone(tone.id as CommunicationTone)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                    isActive
+                      ? 'bg-primary-muted text-primary-text border border-primary/20'
+                      : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
+                  }`}
+                >
+                  <Icon size={12} />
+                  {tone.label}
+                </button>
+              )
+            })}
           </div>
-          <p className="text-xs text-text-muted mt-1.5">
-            {mode === 'plan'
-              ? 'Plan mode — read-only analysis, brainstorming, code review'
-              : 'Build mode — the agent can create and modify files in your workspace'}
-          </p>
         </div>
 
         {/* Description */}
@@ -322,147 +357,33 @@ export default function NewChatPage({
         )}
 
         {/* LLM Provider */}
-        <div className="w-full mb-5">
-          <label className="block text-sm font-medium text-text-primary mb-1.5">Provider</label>
-          <div className="flex items-center gap-2 bg-surface-overlay rounded-lg p-1 border border-border-subtle w-fit">
-            <button
-              onClick={() => setLlmProvider('claude')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                llmProvider === 'claude'
-                  ? 'bg-primary-muted text-primary-text border border-primary/30'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
-            >
-              <Cloud size={16} />
-              Claude
-            </button>
-            <button
-              onClick={() => setLlmProvider('local-llm')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                llmProvider === 'local-llm'
-                  ? 'bg-primary-muted text-primary-text border border-primary/30'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
-            >
-              <Monitor size={16} />
-              Local LLM
-            </button>
-          </div>
-          {llmProvider === 'local-llm' && localModelInfo && (
-            <p className="text-xs text-text-muted mt-1.5">
-              Using {localModelInfo.backend === 'omlx' ? '🐧 oMLX' : '🦙 Ollama'} —{' '}
-              {localModelInfo.model}
-            </p>
-          )}
-        </div>
+        <ToggleButtonGroup
+          label="Provider"
+          value={llmProvider}
+          onChange={setLlmProvider}
+          options={[
+            { value: 'claude', label: 'Claude', icon: Cloud, activeClass: 'bg-primary-muted text-primary-text border border-primary/30' },
+            { value: 'local-llm', label: 'Local LLM', icon: Monitor, activeClass: 'bg-primary-muted text-primary-text border border-primary/30' }
+          ]}
+          description={llmProvider === 'local-llm' && localModelInfo
+            ? `Using ${localModelInfo.backend === 'omlx' ? '🐧 oMLX' : '🦙 Ollama'} — ${localModelInfo.model}`
+            : undefined}
+        />
 
         {/* MCP Tools — system + external integrations */}
         {(availableLocalMcps.length > 0 || availableIntegrations.length > 0) && (
-          <div className="w-full mb-5">
-            <button
-              onClick={() => setShowMcpTools(!showMcpTools)}
-              className="flex items-center gap-2.5 text-sm font-medium text-text-primary mb-2"
-            >
-              <Puzzle size={20} className="text-accent" />
-              <span className="text-base font-semibold">MCP Tools</span>
-              <span className="text-xs text-text-muted font-normal">
-                {availableIntegrations.length > 0
-                  ? `(${activeLocalMcps.length + activeExternalMcps.length} active)`
-                  : `(${activeLocalMcps.length} system)`}
-              </span>
-              {showMcpTools ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-
-            {showMcpTools && (
-              <div className="bg-surface-overlay rounded-lg border border-border-subtle overflow-hidden">
-                {/* ── Sub-tab bar — only shown when externals exist ── */}
-                {availableIntegrations.length > 0 && (
-                  <div className="flex items-center border-b border-border-subtle bg-surface-raised/50 px-3 pt-2">
-                    <button
-                      onClick={() => setMcpSubTab('external')}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-t-md transition-colors ${
-                        mcpSubTab === 'external'
-                          ? 'bg-surface-overlay text-text-primary border border-border-default border-b-transparent -mb-px'
-                          : 'text-text-secondary hover:text-text-primary'
-                      }`}
-                    >
-                      External ({availableIntegrations.length})
-                    </button>
-                    <button
-                      onClick={() => setMcpSubTab('system')}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-t-md transition-colors ${
-                        mcpSubTab === 'system'
-                          ? 'bg-surface-overlay text-text-primary border border-border-default border-b-transparent -mb-px'
-                          : 'text-text-secondary hover:text-text-primary'
-                      }`}
-                    >
-                      System ({availableLocalMcps.length})
-                    </button>
-                  </div>
-                )}
-
-                {/* ── Tab content ── */}
-                <div className="p-3 space-y-2">
-                  {availableIntegrations.length === 0 || mcpSubTab === 'system' ? (
-                    /* ───── SYSTEM TAB (or only content when no externals) ───── */
-                    availableLocalMcps.length > 0 ? (
-                      <div className="space-y-1">
-                        {availableIntegrations.length === 0 && (
-                          <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wide">
-                            System Tools
-                          </span>
-                        )}
-                        {availableLocalMcps.map((lm) => (
-                          <McpRow
-                            key={lm.id}
-                            id={lm.id}
-                            displayName={lm.displayName}
-                            icon={lm.icon}
-                            toolCount={lm.toolCount}
-                            tokenImpact={lm.tokenImpact}
-                            description={lm.description}
-                            active={mcpOverrides[lm.id] !== false}
-                            onToggle={() =>
-                              setMcpOverrides((prev) => ({
-                                ...prev,
-                                [lm.id]: prev[lm.id] === false ? true : false
-                              }))
-                            }
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-text-muted text-center py-4">
-                        No system tools available for this workspace.
-                      </p>
-                    )
-                  ) : (
-                    /* ───── EXTERNAL TAB ───── */
-                    <div className="space-y-1">
-                      {availableIntegrations.map((i) => (
-                        <McpRow
-                          key={i.id}
-                          id={i.id}
-                          displayName={i.displayName}
-                          icon={i.icon}
-                          toolCount={i.toolCount}
-                          tokenImpact={i.tokenImpact}
-                          description={i.description}
-                          active={!!mcpOverrides[i.id]}
-                          onToggle={() =>
-                            setMcpOverrides((prev) => ({ ...prev, [i.id]: !prev[i.id] }))
-                          }
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <p className="text-[11px] text-text-muted pt-1">
-                    Disabled tools are not mounted — zero token cost.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
+          <McpToolsSection
+            showMcpTools={showMcpTools}
+            setShowMcpTools={setShowMcpTools}
+            mcpSubTab={mcpSubTab}
+            setMcpSubTab={setMcpSubTab}
+            availableIntegrations={availableIntegrations}
+            availableLocalMcps={availableLocalMcps}
+            mcpOverrides={mcpOverrides}
+            setMcpOverrides={setMcpOverrides}
+            activeLocalMcps={activeLocalMcps}
+            activeExternalMcps={activeExternalMcps}
+          />
         )}
 
         {/* Action buttons */}
@@ -516,7 +437,7 @@ const ICON_MAP: Record<string, React.FC<{ size?: number; className?: string }>> 
   Puzzle
 }
 
-function McpRow({
+export function McpRow({
   id: _id,
   displayName,
   icon,

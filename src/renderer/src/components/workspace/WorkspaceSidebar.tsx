@@ -3,6 +3,7 @@ import { Plus, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { WorkspaceItem } from '@renderer/components/workspace'
 import { ConfirmDialog } from '@renderer/components/common'
+import WorkspaceStatusIndicator from './WorkspaceStatusIndicator'
 
 interface WorkspaceSidebarProps {
   isCollapsed?: boolean
@@ -69,7 +70,7 @@ export default function WorkspaceSidebar({
           <button
             key={ws.id}
             onClick={() => openWorkspace(ws.id)}
-            className={`flex items-center justify-center w-8 h-8 rounded-lg text-xs font-semibold transition-colors ${
+            className={`relative flex items-center justify-center w-8 h-8 rounded-lg text-xs font-semibold transition-colors ${
               activeWorkspace?.id === ws.id
                 ? 'bg-primary text-primary-text'
                 : 'bg-surface-raised text-text-muted hover:bg-surface-overlay'
@@ -78,6 +79,7 @@ export default function WorkspaceSidebar({
             aria-label={`Open workspace: ${ws.name}`}
           >
             {ws.name.charAt(0).toUpperCase()}
+            <WorkspaceStatusIndicator workspaceId={ws.id} compact />
           </button>
         ))}
         <button

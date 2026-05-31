@@ -38,7 +38,10 @@ interface GrillDecisionsViewProps {
 /** Group decisions by iteration + track */
 function groupDecisions(
   decisions: DecisionEntry[]
-): Map<string, { iteration: number; trackId?: GrillTrackId; score?: number; items: DecisionEntry[] }> {
+): Map<
+  string,
+  { iteration: number; trackId?: GrillTrackId; score?: number; items: DecisionEntry[] }
+> {
   const groups = new Map<
     string,
     { iteration: number; trackId?: GrillTrackId; score?: number; items: DecisionEntry[] }
@@ -74,10 +77,7 @@ export default function GrillDecisionsView({
   const showCondenseButton = requirementDocument.length > CONDENSE_THRESHOLD
 
   // Auto-expand all groups initially
-  const allGroupKeys = useMemo(
-    () => Array.from(grouped.keys()),
-    [grouped]
-  )
+  const allGroupKeys = useMemo(() => Array.from(grouped.keys()), [grouped])
 
   // If expandedGroups is empty, treat all as expanded (default open)
   const isExpanded = useCallback(
@@ -85,24 +85,27 @@ export default function GrillDecisionsView({
     [expandedGroups]
   )
 
-  const toggleGroup = useCallback((key: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev)
-      // If first toggle (all were open by default), initialize with all except the toggled one
-      if (prev.size === 0) {
-        for (const k of allGroupKeys) {
-          if (k !== key) next.add(k)
+  const toggleGroup = useCallback(
+    (key: string) => {
+      setExpandedGroups((prev) => {
+        const next = new Set(prev)
+        // If first toggle (all were open by default), initialize with all except the toggled one
+        if (prev.size === 0) {
+          for (const k of allGroupKeys) {
+            if (k !== key) next.add(k)
+          }
+          return next
+        }
+        if (next.has(key)) {
+          next.delete(key)
+        } else {
+          next.add(key)
         }
         return next
-      }
-      if (next.has(key)) {
-        next.delete(key)
-      } else {
-        next.add(key)
-      }
-      return next
-    })
-  }, [allGroupKeys])
+      })
+    },
+    [allGroupKeys]
+  )
 
   const handleCopy = useCallback(async () => {
     const textToCopy = showCondensed && condensedDocument ? condensedDocument : requirementDocument
@@ -111,7 +114,8 @@ export default function GrillDecisionsView({
     setTimeout(() => setCopied(false), 2000)
   }, [requirementDocument, condensedDocument, showCondensed])
 
-  const displayDocument = showCondensed && condensedDocument ? condensedDocument : requirementDocument
+  const displayDocument =
+    showCondensed && condensedDocument ? condensedDocument : requirementDocument
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-6">

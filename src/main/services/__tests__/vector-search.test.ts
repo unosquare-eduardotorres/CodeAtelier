@@ -290,20 +290,21 @@ describe('VectorSearchService.indexProject — phase transitions', () => {
     'utf-8'
   )
 
-  test('EMBEDDING_BATCH_SIZE constant is 16', () => {
+  test('EMBEDDING_BATCH_SIZE constant is 32', () => {
     assert.ok(
-      source.includes('EMBEDDING_BATCH_SIZE = 16'),
-      'Batch size should be 16 for WASM backend throughput/memory balance'
+      source.includes('EMBEDDING_BATCH_SIZE = 32'),
+      'Batch size should be 32 for WASM backend (adaptive retry halves on OOM)'
     )
   })
 
   test('embedding init is deferred until after preprocessing (not before)', () => {
     // The WASM model init must come AFTER preprocessing (which spawns CLI processes)
     // to avoid memory pressure from concurrent CLI + WASM allocation.
-    const preprocessIdx = source.indexOf("state.status = 'preprocessing'")
-    const initIdx = source.indexOf('Initializing embedding model after description phase')
-    const batchLoopIdx = source.indexOf('for (let i = 0; i < processedChunks.length')
-    assert.ok(preprocessIdx > 0, 'Preprocessing phase should exist')
+    // After decomposition, embedding init is in embedChunksWithCheckpoints.
+    const preprocessIdx = source.indexOf('preprocessChunks')
+    const initIdx = source.indexOf('Embedding model init')
+    const batchLoopIdx = source.indexOf('for (let i = startOffset; i < processedChunks.length')
+    assert.ok(preprocessIdx > 0, 'preprocessChunks method should exist')
     assert.ok(initIdx > 0, 'Deferred embedding init comment should exist')
     assert.ok(batchLoopIdx > 0, 'Batch loop should exist')
     assert.ok(initIdx > preprocessIdx, 'Embedding init should come after preprocessing')
@@ -329,8 +330,8 @@ describe('EmbeddingProviderService — WASM config', () => {
     'utf-8'
   )
 
-  test('numThreads is set to 4', () => {
-    assert.ok(source.includes('numThreads = 4'), 'Should use 4 WASM threads')
+  test('numThreads is set to 1 (single-threaded WASM)', () => {
+    assert.ok(source.includes('numThreads = 1'), 'Should use single-threaded WASM (Electron main process constraint)')
   })
 })
 

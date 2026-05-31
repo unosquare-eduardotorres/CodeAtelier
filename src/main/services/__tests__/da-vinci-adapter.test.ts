@@ -10,10 +10,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { DaVinciRoleAdapter } from '../role-adapters/da-vinci.adapter'
 import { specialistRepository } from '../../db/repositories'
-import type {
-  AdapterIntentContext,
-  AgentSessionEventName
-} from '../agent-session.types'
+import type { AdapterIntentContext, AgentSessionEventName } from '../agent-session.types'
 import type { ControlToolState, Specialist } from '../../../shared/types'
 
 describe('DaVinciRoleAdapter', () => {
@@ -112,9 +109,7 @@ describe('DaVinciRoleAdapter', () => {
 
     const intents = emitted.filter((e) => e.evt === 'intent')
     assert.ok(intents.length >= 1, `expected at least 1 intent, got ${intents.length}`)
-    const planIntent = intents.find(
-      (e) => (e.payload as { type: string }).type === 'plan'
-    )
+    const planIntent = intents.find((e) => (e.payload as { type: string }).type === 'plan')
     assert.ok(planIntent, 'expected plan intent to be emitted')
   })
 
@@ -166,16 +161,14 @@ describe('DaVinciRoleAdapter', () => {
         conversationId: null
       })
       // The assembler should now have the signal armed.
-      const msg = adapter
-        .getPromptAssembler()
-        .buildEffectiveMessage({
-          message: 'hi',
-          conversationId: 'c1',
-          hasImages: false,
-          turnCount: 5,
-          sessionId: undefined,
-          mode: 'plan'
-        })
+      const msg = adapter.getPromptAssembler().buildEffectiveMessage({
+        message: 'hi',
+        conversationId: 'c1',
+        hasImages: false,
+        turnCount: 5,
+        sessionId: undefined,
+        mode: 'plan'
+      })
       assert.ok(
         msg.includes('[PROJECT SPECIALIST READY: Payments Specialist]'),
         'sentinel should be injected once'
@@ -222,6 +215,39 @@ describe('DaVinciRoleAdapter', () => {
       assert.ok(
         !msg2.includes('[PROJECT SPECIALIST READY'),
         'should NOT re-prompt for same specialist on subsequent turns'
+      )
+    } finally {
+      restore()
+    }
+  })
+
+  test('refreshFeatureFlags_arms_signal_with_lean_mode_for_opus_48', () => {
+    const adapter = new DaVinciRoleAdapter()
+    const restore = stubReadySpecialist(makeSpecialist('spec-a', 'Payments Specialist'))
+    try {
+      adapter.refreshFeatureFlags({
+        workspacePath: '/tmp',
+        workspaceId: 'ws-1',
+        conversationId: null
+      })
+      const msg = adapter.getPromptAssembler().buildEffectiveMessage({
+        message: 'hi',
+        conversationId: 'c1',
+        hasImages: false,
+        turnCount: 5,
+        sessionId: undefined,
+        mode: 'plan',
+        model: 'claude-opus-4-8'
+      })
+      assert.ok(
+        msg.includes('[PROJECT SPECIALIST READY: Payments Specialist]'),
+        'sentinel should be injected with opus model'
+      )
+      assert.ok(msg.includes('<mode-context>'), 'should contain mode-context block')
+      // The lean plan mode doesn't have "### Questions vs. Plans — Know the Difference (IMPORTANT)"
+      assert.ok(
+        !msg.includes('Know the Difference (IMPORTANT)'),
+        'Opus 4.8 should use lean plan mode section through adapter flow'
       )
     } finally {
       restore()

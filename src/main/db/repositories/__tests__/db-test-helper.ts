@@ -33,7 +33,7 @@ export function seedConversation(
   db: import('better-sqlite3').Database,
   workspaceId: string,
   title = 'Test Conversation',
-  mode: 'plan' | 'build' = 'plan'
+  mode: 'plan' | 'build' | 'danger' = 'plan'
 ): string {
   const row = db
     .prepare(`INSERT INTO conversations (workspace_id, title, mode) VALUES (?, ?, ?) RETURNING id`)

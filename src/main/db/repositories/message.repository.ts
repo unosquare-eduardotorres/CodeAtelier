@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 import type { Message } from '../../../shared/types'
 
 interface MessageRow {
@@ -25,7 +25,10 @@ function mapRow(row: MessageRow): Message {
   }
 }
 
-export class MessageRepository {
+export class MessageRepository extends BaseRepository<MessageRow, Message> {
+  protected readonly tableName = 'messages'
+  protected mapRow(row: MessageRow): Message { return mapRow(row) }
+
   create(
     conversationId: string,
     role: 'user' | 'specialist' | 'da-vinci',
@@ -33,7 +36,7 @@ export class MessageRepository {
     agentId?: string,
     attachmentsJson?: string
   ): Message {
-    const db = getDatabase()
+    const db = this.db()
     const stmt = db.prepare(`
       INSERT INTO messages (conversation_id, role, content_md, agent_id, attachments_json)
       VALUES (?, ?, ?, ?, ?)
@@ -50,7 +53,7 @@ export class MessageRepository {
   }
 
   findByConversation(conversationId: string): Message[] {
-    const db = getDatabase()
+    const db = this.db()
     const stmt = db.prepare(
       'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC'
     )
@@ -58,37 +61,39 @@ export class MessageRepository {
     return rows.map(mapRow)
   }
 
-  /** Save a turn bubble as a child message with a parent reference */
-  createTurnBubble(
-    conversationId: string,
-    parentMessageId: string,
-    role: 'user' | 'specialist' | 'da-vinci',
-    contentMd: string,
-    agentId?: string,
-    attachmentsJson?: string
-  ): Message {
-    const db = getDatabase()
-    const stmt = db.prepare(`
-      INSERT INTO messages (conversation_id, role, content_md, agent_id, attachments_json, parent_message_id)
-      VALUES (?, ?, ?, ?, ?, ?)
-      RETURNING *
-    `)
-    const row = stmt.get(
-      conversationId,
-      role,
-      contentMd,
-      agentId ?? null,
-      attachmentsJson ?? '[]',
-      parentMessageId
-    ) as MessageRow
-    return mapRow(row)
+
+  /**
+   * F5: Fetch only the most recent N messages for a conversation.
+   * Uses SQL LIMIT + DESC ordering to avoid loading the entire history,
+   * then reverses to chronological order in code.
+   */
+  findRecentByConversation(conversationId: string, limit: number): Message[] {
+    const db = this.db()
+    const stmt = db.prepare(
+      'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?'
+    )
+    const rows = stmt.all(conversationId, limit) as MessageRow[]
+    return rows.reverse().map(mapRow)
   }
 
   findById(id: string): Message | undefined {
-    const db = getDatabase()
+    const db = this.db()
     const stmt = db.prepare('SELECT * FROM messages WHERE id = ?')
     const row = stmt.get(id) as MessageRow | undefined
     return row ? mapRow(row) : undefined
+  }
+
+  /**
+   * Delete all messages in a conversation created after a given timestamp.
+   * Used by /rewind to truncate conversation history at a checkpoint.
+   * Returns the number of deleted rows.
+   */
+  truncateAfterTimestamp(conversationId: string, afterTimestamp: string): number {
+    const db = this.db()
+    const result = db
+      .prepare('DELETE FROM messages WHERE conversation_id = ? AND created_at > ?')
+      .run(conversationId, afterTimestamp)
+    return result.changes
   }
 }
 

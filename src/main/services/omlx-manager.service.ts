@@ -119,9 +119,7 @@ class OmlxManagerService {
 
       // Admin API returned non-OK (401 auth required, 404 old version, etc.)
       // Fall back to /v1/models
-      log.info(
-        `[OmlxManager] Admin API returned ${adminRes.status}, falling back to /v1/models`
-      )
+      log.info(`[OmlxManager] Admin API returned ${adminRes.status}, falling back to /v1/models`)
     } catch {
       // Admin API not reachable — try /v1/models fallback
     }

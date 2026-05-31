@@ -10,7 +10,7 @@
  */
 
 import type { AuditTrackId } from '../../shared/types'
-import { AUDIT_TRACKS } from '../../shared/constants'
+import { AUDIT_TRACKS, resolvePromptVerbosity } from '../../shared/constants'
 
 // ── Base Template ──────────────────────────────────────────────────────────
 
@@ -44,18 +44,10 @@ You MUST evaluate and report on EVERY criterion below. Each one must produce at 
 
 ## Instructions
 0. **Narrate your process.** Before each tool call, write a brief sentence explaining what you're about to inspect and why (e.g., "Let me check the database migration files for safety patterns…"). This helps the user follow along in real time.
-
-## Tool Priority Order (MANDATORY)
-1. FIRST: Use Code Graph tools (mcp__code-graph__search_identifiers, mcp__code-graph__file_outline, mcp__code-graph__find_callers, mcp__code-graph__find_references, mcp__code-graph__coupling_analysis, mcp__code-graph__module_boundary_health) to understand structure and relationships
-2. THEN: Use Code Analysis tools (mcp__code-analysis__dependency_health, mcp__code-analysis__test_coverage_map, mcp__code-analysis__todo_scanner) for quantitative metrics
-3. THEN: Use Git Context tools (mcp__git-context__git_log, mcp__git-context__git_diff, mcp__git-context__git_blame) for history and change patterns
-4. LAST RESORT: Use Read/Glob/Grep only for specific details the structured tools cannot provide
-
-You MUST call at least one Code Graph tool AND one Code Analysis tool before falling back to Read or Grep. The tool guidance sections below describe each tool's capabilities — follow their rules.
-
-5. Focus ONLY on {{domain}}-related patterns, issues, and opportunities.
-6. Be concrete — reference specific files, line numbers, and code patterns.
-7. Limit to the top 10–15 most impactful findings.
+1. Use structured tools (Code Graph, Code Analysis) FIRST — see tool guidance sections below. Call at least one Code Graph tool AND one Code Analysis tool before falling back to Read or Grep.
+2. Focus ONLY on {{domain}}-related patterns, issues, and opportunities.
+3. Be concrete — reference specific files, line numbers, and code patterns.
+4. Limit to the top 10–15 most impactful findings.
 
 ## CRITICAL — Progressive Finding Output (MANDATORY)
 
@@ -104,6 +96,46 @@ You have ~15-20 tool calls. Plan your investigation:
 - **If you've used 10+ tools without emitting any audit-finding blocks, STOP and emit findings for what you've found so far.**
 - **Always end with an audit-score block, no matter what.**`
 
+// ── Lean Template (Opus 4.8+) ──────────────────────────────────────────────────
+
+/**
+ * ~50% compressed audit template for Opus 4.8+.
+ * Removes verbose examples, consolidates instructions, keeps critical format rules.
+ */
+const AUDIT_SYSTEM_PROMPT_TEMPLATE_LEAN = `You are the **{{auditorName}}** — a senior specialist performing a read-only workspace health audit.
+
+Respond ONLY in English. Inspect ONLY files within the workspace directory.
+
+## Focus
+{{description}}
+
+## Workspace
+- **Name**: {{workspaceName}}
+- **Stack**: {{stackSummary}}
+
+{{skills}}
+
+## Scoring Criteria
+Evaluate EVERY criterion below. Each must produce at least one audit-finding block:
+{{scoringFocus}}
+
+## Instructions
+Narrate before each tool call. Use structured tools (Code Graph, Code Analysis) FIRST — see tool guidance. Focus on {{domain}}-related patterns only. Be concrete with file paths and line numbers. Limit to 10–15 findings.
+
+## Finding Output (MANDATORY)
+Emit findings as \`\`\`audit-finding JSON blocks in your response text (NOT tool calls):
+{"severity": "high|medium|low|info|critical", "title": "...", "description": "...", "filePath": "...", "recommendation": "..."}
+
+Passing criteria → "info" severity. Zero findings = unacceptable. Emit AS YOU GO.
+
+## Final Score (MANDATORY)
+End with exactly one \`\`\`audit-score block: {"score": N, "summary": "..."}
+Guide: 0-20 critical, 21-40 significant, 41-60 moderate, 61-80 good, 81-100 excellent.
+Read files before scoring. Always emit audit-score, even if out of tool calls.
+
+## Tool Budget
+~15-20 calls. 8-12 investigating, emit findings as you go. 10+ tools without findings → STOP and emit.`
+
 // ── Per-auditor domain prompts ─────────────────────────────────────────────
 
 const AUDITOR_DOMAIN_PROMPTS: Record<AuditTrackId, string> = {
@@ -151,6 +183,27 @@ and keyboard navigation. Look for missing ARIA attributes, unhandled error state
 inconsistent component patterns, and accessibility violations.`
 }
 
+/**
+ * Lean domain prompts for Opus 4.8+ — skip explicit tool name suggestions
+ * (already covered by MCP guidance) to save ~40-60 tokens per audit session.
+ * All 7 tracks have lean variants for consistency.
+ */
+const AUDITOR_DOMAIN_PROMPTS_LEAN: Record<AuditTrackId, string> = {
+  code: `You audit code quality across frontend and backend: SOLID adherence, naming conventions, cyclomatic complexity, error handling, dead code, duplication, and type safety. Look for code smells, overly complex functions, and inconsistent patterns.`,
+
+  testing: `You audit testing strategy: test pyramid balance, critical path coverage, fixture quality, assertion specificity, and CI/CD integration. Look for untested critical paths, brittle tests, and excessive mocking.`,
+
+  architecture: `You audit software architecture: module boundaries and coupling, dependency direction, separation of concerns, API/IPC contract design, and scalability. Look for god modules, tight coupling, leaky abstractions, and circular dependencies.`,
+
+  security: `You audit security posture: input validation, auth patterns, secret management, context isolation (especially Electron), and dependency vulnerabilities. Look for injection risks, exposed secrets, and insecure defaults.`,
+
+  database: `You audit database layers: schema design, migration safety, query patterns, indexing, and data integrity. Look for N+1 queries, missing indexes, and unsafe migrations.`,
+
+  documentation: `You audit documentation: README completeness, inline docs (JSDoc/TSDoc), API docs, CLAUDE.md quality, and decision records. Look for undocumented APIs and stale docs.`,
+
+  'ui-ux': `You audit UI/UX: accessibility (WCAG), error/empty states, loading indicators, component consistency, and keyboard navigation.`
+}
+
 // ── Renderer ────────────────────────────────────────────────────────────────
 
 /** Round context for multi-round audit sessions. */
@@ -167,6 +220,7 @@ export interface AuditPromptParams {
   detectedTechs: string[]
   skillContent?: string // Deep mode only — injected skill text
   roundContext?: RoundContext // Multi-round: scope to specific files
+  model?: string // Model ID for lean prompt verbosity gating
 }
 
 /**
@@ -176,7 +230,10 @@ export interface AuditPromptParams {
  */
 export function renderAuditPrompt(params: AuditPromptParams): string {
   const track = AUDIT_TRACKS[params.trackId]
-  const domainPrompt = AUDITOR_DOMAIN_PROMPTS[params.trackId]
+  const verbosity = resolvePromptVerbosity(params.model ?? '')
+  const domainPrompt = (verbosity === 'lean' && AUDITOR_DOMAIN_PROMPTS_LEAN[params.trackId])
+    || AUDITOR_DOMAIN_PROMPTS[params.trackId]
+  const template = verbosity === 'lean' ? AUDIT_SYSTEM_PROMPT_TEMPLATE_LEAN : AUDIT_SYSTEM_PROMPT_TEMPLATE
 
   const stackSummary =
     params.detectedTechs.length > 0
@@ -187,7 +244,7 @@ export function renderAuditPrompt(params: AuditPromptParams): string {
 
   const skillsSection = params.skillContent ? `## Reference Skills\n${params.skillContent}` : ''
 
-  let prompt = AUDIT_SYSTEM_PROMPT_TEMPLATE.replace('{{auditorName}}', `${track.name} Auditor`)
+  let prompt = template.replace('{{auditorName}}', `${track.name} Auditor`)
     .replace('{{description}}', domainPrompt)
     .replace('{{workspaceName}}', params.workspaceName)
     .replace('{{stackSummary}}', stackSummary)

@@ -51,11 +51,7 @@ export class GrillPersistenceController {
   // ── Public API ────────────────────────────────────────────────────────
 
   /** Start tracking a grill evaluation — creates/updates DB session */
-  async startTracking(
-    ideaId: string,
-    workspaceId: string,
-    trackId: GrillTrackId
-  ): Promise<string> {
+  async startTracking(ideaId: string, workspaceId: string, trackId: GrillTrackId): Promise<string> {
     // Check for existing session for this idea
     let session = grillSessionRepository.findByIdeaId(ideaId)
 
@@ -73,7 +69,9 @@ export class GrillPersistenceController {
     this.activeIdeaId = ideaId
     this.activeTrackId = trackId
 
-    ctrlLog.info(`[grill-persistence] Tracking session=${session.id} idea=${ideaId} track=${trackId}`)
+    ctrlLog.info(
+      `[grill-persistence] Tracking session=${session.id} idea=${ideaId} track=${trackId}`
+    )
     return session.id
   }
 
@@ -102,7 +100,8 @@ export class GrillPersistenceController {
         // Merge tool_use → tool_result by ID
         const existingIdx = lastMsg.toolActivities.findIndex(
           (ta: unknown) =>
-            (ta as Record<string, unknown>).id === (chunkData.toolActivity as Record<string, unknown>).id
+            (ta as Record<string, unknown>).id ===
+            (chunkData.toolActivity as Record<string, unknown>).id
         )
         if (existingIdx >= 0) {
           lastMsg.toolActivities[existingIdx] = {
@@ -126,10 +125,7 @@ export class GrillPersistenceController {
   }
 
   /** Handle evaluation result — persist score + questions, update status */
-  handleEvaluationResult(
-    evaluation: GrillEvaluation,
-    mainWindow: BrowserWindow
-  ): void {
+  handleEvaluationResult(evaluation: GrillEvaluation, mainWindow: BrowserWindow): void {
     // Forward to renderer
     mainWindow.webContents.send(IPC_CHANNELS.GRILL_EVALUATION_RESULT, evaluation)
 
@@ -184,11 +180,7 @@ export class GrillPersistenceController {
     const session = grillSessionRepository.findById(sessionId)
     if (!session) return
 
-    grillSessionRepository.updateQuestionStates(
-      sessionId,
-      questionStates,
-      session.currentIteration
-    )
+    grillSessionRepository.updateQuestionStates(sessionId, questionStates, session.currentIteration)
 
     if (mainWindow) {
       this.emitStatusChange(mainWindow, session.status)

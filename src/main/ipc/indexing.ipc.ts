@@ -27,7 +27,7 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
     const workspace = workspaceRepository.findById(args.workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 
-    const settings = JSON.parse(workspace.settingsJson || '{}')
+    const settings = workspaceRepository.getSettings(workspace.id)
 
     // Get repomap tags via tree-sitter (dynamic import for lazy loading)
     const { getTags, initParser } =

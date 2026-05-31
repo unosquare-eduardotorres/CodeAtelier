@@ -108,7 +108,11 @@ export default function HealthAuditControls({
             <button
               onClick={onResume}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-colors"
-              title={isPaused ? 'Resume paused audit' : 'Resume incomplete tracks from the previous audit'}
+              title={
+                isPaused
+                  ? 'Resume paused audit'
+                  : 'Resume incomplete tracks from the previous audit'
+              }
             >
               <RotateCcw size={12} />
               Resume {!isPaused && incompleteTrackCount > 0 ? `(${incompleteTrackCount})` : ''}

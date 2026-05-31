@@ -2,13 +2,24 @@
  * Context management configuration for Claude sessions.
  *
  * Implements a three-tier cascade (cheapest first):
- *   Tier 1 — PREVENTIVE: Fix autoCompact settings, output budgeting hooks
- *   Tier 2 — SERVER-SIDE EDITING: Tool result clearing, thinking block clearing (zero LLM cost)
- *   Tier 3 — COMPACTION: Server-side summarization (LLM cost, last resort)
+ *   Tier 1 — PREVENTIVE: SDK hooks (ReadLimit, BashOutputCap, ToolResultBudget)
+ *   Tier 2 — SDK AUTO-COMPACT: autoCompactEnabled + autoCompactWindow via Settings
+ *   Tier 3 — APP-LEVEL NUDGE: compactSuggestThreshold / compactAutoThreshold → UI modal
  *
- * The SDK subprocess (Claude Code) handles the five-layer compaction pipeline
- * internally when autoCompactEnabled is true. This module configures the
- * thresholds and exclusion rules that feed into that pipeline.
+ * ⚠️ IMPORTANT: The clearToolResults*, clearThinking*, and serverCompaction*
+ * fields in ContextManagementConfig are NOT forwarded to the SDK. The Claude
+ * Agent SDK's Settings type only accepts autoCompactEnabled, autoCompactWindow,
+ * and compactInstructions. These fields serve as:
+ *   - Tier metadata for hook parameterization (_tierLimits, _tier)
+ *   - App-level diagnostics and UI threshold configuration
+ *   - Future-proofing for when the SDK adds server-side clearing APIs
+ *   - Documentation of the intended compaction strategy
+ *
+ * The SDK subprocess (Claude Code) handles the compaction pipeline internally
+ * when autoCompactEnabled is true. The contextWindowSize passed to the SDK
+ * controls when auto-compact fires (~80-95% of that value). For 200K models
+ * (Opus/Haiku), we shrink contextWindowSize to 160K and set
+ * CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80 so compaction fires at ~128K tokens.
  */
 
 // ── Context Window Tiers ─────────────────────────────────────────────
@@ -18,9 +29,9 @@ export type ContextWindowTier = 'small' | 'medium' | 'large'
 
 /** Resolve tier from context window size in tokens */
 export function resolveContextTier(contextWindow: number): ContextWindowTier {
-  if (contextWindow <= 65_536) return 'small'      // 32K models (Qwen 3B/7B/14B)
-  if (contextWindow <= 131_072) return 'medium'     // 128K models (Gemma 4)
-  return 'large'                                     // 262K models (Qwen 3.6 MoE, Qwen 3 Coder)
+  if (contextWindow <= 65_536) return 'small' // 32K models (Qwen 3B/7B/14B)
+  if (contextWindow <= 131_072) return 'medium' // 128K models (Gemma 4)
+  return 'large' // 262K models (Qwen 3.6 MoE, Qwen 3 Coder)
 }
 
 /** Per-tier operational limits */
@@ -35,16 +46,32 @@ export interface ContextTierLimits {
   /** Compaction thresholds for app-level UI */
   compactSuggestThreshold: number
   compactAutoThreshold: number
+  /**
+   * S11: SDK built-in tools allowed in plan mode (local LLM only).
+   * Restricts the tool schema overhead for small/medium context windows.
+   * Omit or empty array = no restriction (all builtins available).
+   */
+  planBuiltinAllowlist?: string[]
 }
+
+/**
+ * S11: SDK built-in tools allowed in local LLM plan mode.
+ * Small tier: read-only exploration only (saves ~8-10K tokens in tool schemas).
+ * Medium tier: adds Bash for running type-checks / grep commands.
+ * Large tier: no restriction (all builtins available).
+ */
+const LOCAL_PLAN_BUILTIN_SMALL = ['Read', 'Glob', 'Grep'] as const
+const LOCAL_PLAN_BUILTIN_MEDIUM = ['Read', 'Glob', 'Grep', 'Bash'] as const
 
 export const TIER_LIMITS: Record<ContextWindowTier, ContextTierLimits> = {
   small: {
-    maxTurnsPlan: 8,
-    maxTurnsBuild: 12,
-    readLineLimit: 100,             // 100 lines ≈ 1.2K tokens (vs 300 = 3.6K for Claude)
-    toolResultBudgetChars: 30_000,  // ~8.5K tokens — leaves room in 32K
+    maxTurnsPlan: 12, // Increased from 8 — simple plans need ~6 exploration + ~4 writing turns
+    maxTurnsBuild: 15, // Increased from 12 — matched to plan+buffer
+    readLineLimit: 100, // 100 lines ≈ 1.2K tokens (vs 300 = 3.6K for Claude)
+    toolResultBudgetChars: 30_000, // ~8.5K tokens — leaves room in 32K
     compactSuggestThreshold: 16_000,
     compactAutoThreshold: 24_000,
+    planBuiltinAllowlist: [...LOCAL_PLAN_BUILTIN_SMALL]
   },
   medium: {
     maxTurnsPlan: 15,
@@ -53,6 +80,7 @@ export const TIER_LIMITS: Record<ContextWindowTier, ContextTierLimits> = {
     toolResultBudgetChars: 100_000, // ~28K tokens — comfortable in 128K
     compactSuggestThreshold: 60_000,
     compactAutoThreshold: 80_000,
+    planBuiltinAllowlist: [...LOCAL_PLAN_BUILTIN_MEDIUM]
   },
   large: {
     maxTurnsPlan: 30,
@@ -60,14 +88,20 @@ export const TIER_LIMITS: Record<ContextWindowTier, ContextTierLimits> = {
     readLineLimit: 300,
     toolResultBudgetChars: 200_000, // Same as Claude — 262K is roomy
     compactSuggestThreshold: 120_000,
-    compactAutoThreshold: 160_000,
-  },
+    compactAutoThreshold: 160_000
+    // No planBuiltinAllowlist — large tier gets all built-in tools
+  }
 } as const
 
 // ── Context Management Config ────────────────────────────────────────
 
+/**
+ * App-level context management config. Passed as `contextManagement` to the SDK
+ * but the SDK only reads `compactionInstructions` from it — all other fields are
+ * consumed by app-level hooks and UI logic, NOT by the SDK's compaction engine.
+ */
 export interface ContextManagementConfig {
-  // ── Tier 2a: Tool result clearing ──
+  // ── App-level: Tool result clearing (not SDK-forwarded) ──
   /** Enable tool result clearing */
   clearToolResults: boolean
   /** Token threshold to trigger tool clearing */
@@ -137,8 +171,53 @@ export const CLAUDE_ECONOMY_CONTEXT_CONFIG: ContextManagementConfig = {
   clearThinkingKeepTurns: 1
 } as const
 
-/** Local LLM mode — tier-aware configuration for context management */
-export function getLocalLlmContextConfig(contextWindow: number): ContextManagementConfig {
+/**
+ * Config for Claude sessions using the default 200K context window (Opus, Haiku).
+ * The context-1m beta is NOT active — thresholds scaled proportionally to 200K.
+ */
+export const CLAUDE_200K_CONTEXT_CONFIG: ContextManagementConfig = {
+  clearToolResults: true,
+  clearToolResultsTrigger: 60_000, // 30% of 200K
+  clearToolResultsKeep: 3,
+  clearToolResultsMinClear: 10_000,
+  clearToolResultsExclude: [...CLAUDE_1M_CONTEXT_CONFIG.clearToolResultsExclude],
+
+  clearThinking: true,
+  clearThinkingKeepTurns: 1,
+
+  serverCompaction: true,
+  serverCompactionTrigger: 120_000, // 60% of 200K
+  compactionInstructions: CLAUDE_1M_CONTEXT_CONFIG.compactionInstructions
+} as const
+
+/**
+ * S13: Structured compaction instructions for local LLMs.
+ *
+ * Used by both SDK auto-compact (oMLX, S14) and app-level compaction (S7).
+ * The structured template ensures the model produces useful summaries that
+ * preserve file paths and plan progress while discarding raw tool output.
+ */
+export const LOCAL_COMPACTION_INSTRUCTIONS = [
+  'Summarize using this exact structure:',
+  '## Goal: [what the user wants to accomplish]',
+  '## Files Found: [exact file paths explored, one per line]',
+  '## Key Findings: [important code patterns, component locations, line ranges]',
+  '## Plan So Far: [numbered list of changes identified]',
+  '## Next Steps: [what remains to be done]',
+  'Keep file paths exact. Omit file contents (they can be re-read).',
+  'Do NOT include tool call details or conversation meta-data.'
+].join('\n')
+
+/**
+ * Local LLM mode — tier-aware configuration for context management.
+ *
+ * @param contextWindow - The context window size in tokens
+ * @param isOmlx - Whether the backend is oMLX (enables compaction instructions)
+ */
+export function getLocalLlmContextConfig(
+  contextWindow: number,
+  isOmlx = false
+): ContextManagementConfig {
   const tier = resolveContextTier(contextWindow)
   const limits = TIER_LIMITS[tier]
   return {
@@ -146,13 +225,15 @@ export function getLocalLlmContextConfig(contextWindow: number): ContextManageme
     clearToolResultsTrigger: Math.round(contextWindow * 0.3),
     clearToolResultsKeep: tier === 'small' ? 2 : 3,
     clearToolResultsMinClear: Math.round(contextWindow * 0.05),
-    clearToolResultsExclude: [],  // Local has no memory MCP tools to protect
-    clearThinking: false,         // Local LLMs don't use extended thinking
+    clearToolResultsExclude: [], // Local has no memory MCP tools to protect
+    clearThinking: false, // Local LLMs don't use extended thinking
     clearThinkingKeepTurns: 0,
-    serverCompaction: false,      // Local LLMs don't support server-side compaction
-    serverCompactionTrigger: 0,
+    serverCompaction: isOmlx, // S14: oMLX supports server-side compaction via auto-compact
+    serverCompactionTrigger: isOmlx ? Math.round(contextWindow * 0.6) : 0,
+    // S13: Structured compaction instructions for auto-compact quality
+    compactionInstructions: isOmlx ? LOCAL_COMPACTION_INSTRUCTIONS : undefined,
     // Attach tier limits for downstream consumers (hooks, maxTurns, diagnostics)
     _tierLimits: limits,
-    _tier: tier,
+    _tier: tier
   }
 }

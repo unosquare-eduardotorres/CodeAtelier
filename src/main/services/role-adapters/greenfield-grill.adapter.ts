@@ -23,6 +23,19 @@ import type { ControlActionCallbacks } from '../control-actions.tool'
 import { GRILL_TRACKS } from '../../../shared/constants'
 import { intentDetector } from '../intent-detector'
 import { chatAgentLogger } from '../../logger'
+import {
+  buildReEvalBlock,
+  buildGrillEvaluationSchema,
+  buildGrillEvaluationSchemaLean,
+  GRILL_QUESTION_QUALITY_RULES,
+  GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA,
+  GRILL_QUESTION_QUALITY_RULES_LEAN,
+  GRILL_SCORING_RULES,
+  GRILL_SCORING_RULES_LEAN,
+  isGrillLean
+} from './grill-prompt-blocks'
+import { modelConfigService } from '../model-config.service'
+import { sanitizePromptInput } from '../sanitize-prompt-input'
 
 export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
   readonly role = 'grill' as const
@@ -56,7 +69,7 @@ export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
     this.agentId = `greenfield-grill-${params.trackId}-${Date.now()}`
   }
 
-  async onSessionStart(_ctx: AdapterSessionLifecycleCtx): Promise<void> {
+  async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
     // Increase timeout for local LLMs
     if (this.llmProvider === 'local-llm') {
       this.interactionTimeoutMs = 45 * 60_000
@@ -64,7 +77,10 @@ export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
     }
 
     const track = GRILL_TRACKS[this.trackId]
-    this.systemPrompt = this.buildSystemPrompt(track)
+    // Resolve model for lean prompt optimization (Opus 4.8+ gets compressed guidance)
+    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
+    const resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, 'grill')
+    this.systemPrompt = this.buildSystemPrompt(track, resolvedModel)
 
     this.log.info(
       `[greenfield-grill-adapter] ${this.trackId} grill started for project="${this.projectName}"`
@@ -170,15 +186,38 @@ export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
 
   // ── Private: prompt construction ────────────────────────────────────
 
-  private buildSystemPrompt(track: (typeof GRILL_TRACKS)[GrillTrackId]): string {
-    const reEvalBlock =
-      this.previousScore != null
-        ? `\n## Re-evaluation Context
-- Previous score: ${this.previousScore}/100
-- ANCHOR your new score to the previous one. Only change when decisions materially fill or reveal gaps.
-- Do NOT re-ask questions the user already answered — focus on REMAINING gaps.
-- In your analysis, explicitly credit which previous decisions address which criteria.\n`
-        : ''
+  private buildSystemPrompt(track: (typeof GRILL_TRACKS)[GrillTrackId], model?: string): string {
+    const lean = isGrillLean(model)
+    const reEvalBlock = buildReEvalBlock(this.previousScore)
+
+    const evaluationSchema = lean
+      ? buildGrillEvaluationSchemaLean(this.trackId)
+      : buildGrillEvaluationSchema(this.trackId)
+
+    const questionRules = lean
+      ? GRILL_QUESTION_QUALITY_RULES_LEAN
+      : `${GRILL_QUESTION_QUALITY_RULES}\n${GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA}`
+
+    const scoringRules = lean
+      ? GRILL_SCORING_RULES_LEAN
+      : GRILL_SCORING_RULES
+
+    // Lean: compressed instructions — Opus narrates naturally
+    const instructions = lean
+      ? `## Instructions
+0. Narrate your reasoning — explain what’s well-defined and what gaps remain.
+1. Analyze the project idea against each criterion.
+2. Identify decisions made vs. undefined.
+3. Provide markdown analysis of gaps.
+4. ${evaluationSchema}`
+      : `## Instructions
+0. **Narrate your reasoning.** Before each scoring decision, explain what aspects are well-defined and what gaps remain. Help the user understand what makes a well-prepared project brief.
+1. Analyze the project idea against each scoring criterion above.
+2. Identify what decisions have been made and what remains undefined.
+3. Provide your analysis as markdown text — explain what is well-defined and what is missing.
+4. After your analysis, emit EXACTLY ONE structured evaluation block in this format:
+
+${evaluationSchema}`
 
     return `You are a Grill Analyst — a requirement completeness evaluator for a NEW project idea.${reEvalBlock}
 
@@ -194,53 +233,14 @@ Evaluate the completeness of a new project idea for the **${track.name}** track.
 ${track.scoringFocus.map((f) => `- ${f}`).join('\n')}
 
 ## Project Idea
-**${this.projectName}**
+**${sanitizePromptInput(this.projectName)}**
 
-${this.projectDescription || 'No description provided.'}
+${sanitizePromptInput(this.projectDescription || 'No description provided.')}
 
-## Instructions
-0. **Narrate your reasoning.** Before each scoring decision, explain what aspects are well-defined and what gaps remain. Help the user understand what makes a well-prepared project brief.
-1. Analyze the project idea against each scoring criterion above.
-2. Identify what decisions have been made and what remains undefined.
-3. Provide your analysis as markdown text — explain what is well-defined and what is missing.
-4. After your analysis, emit EXACTLY ONE structured evaluation block in this format:
+${instructions}
 
-\`\`\`grill-evaluation
-{
-  "trackId": "${this.trackId}",
-  "score": <number 1-100>,
-  "scoreLabel": "<label: Raw | Warming Up | Medium Rare | Well Done | Perfectly Grilled>",
-  "feedback": "<2-3 sentence summary of gaps>",
-  "questions": [
-    {
-      "id": "q1",
-      "question": "<2-3 sentence question explaining the gap and WHY it matters for implementation>",
-      "header": "<short 3-5 word label>",
-      "options": [
-        { "label": "<concise choice>", "description": "<1-2 sentences: trade-offs, constraints, implications>", "recommended": true, "recommendedReason": "<1 sentence: why this is safest/best given trade-offs>" },
-        { "label": "<alternative>", "description": "<trade-offs>" },
-        { "label": "<another alternative>", "description": "<trade-offs>" }
-      ]
-    }
-  ],
-  "suggestedNextTrack": { "trackId": "<next-track-id>", "reason": "<why>" }
-}
-\`\`\`
+${questionRules}
 
-## Question Quality Rules
-- Each question MUST target a specific implementation decision, not just "what approach?"
-- The "question" field must explain the GAP and its IMPACT (2-3 sentences, not just a label)
-- Each option's "description" field is REQUIRED — explain trade-offs, constraints, or implications
-- At least 2 of the 5 questions must probe EDGE CASES or FAILURE MODES
-- Do NOT ask vague questions like "How should this work?" — ask "What happens when X fails/overflows/conflicts?"
-- The recommended option's "recommendedReason" must reference concrete trade-offs (risk, complexity, reversibility) — not just "this is better"
-- Since there is NO existing codebase, focus questions on DESIGN CHOICES the user needs to make before building
-
-## Rules
-- Score 1-20: Raw — fundamental gaps. Score 21-40: Warming Up. Score 41-60: Medium Rare. Score 61-80: Well Done. Score 81-100: Perfectly Grilled.
-- Include exactly 5 questions targeting the weakest areas.
-- Each question must have 3-4 options with at most 1 recommended. The recommended option MUST include a "recommendedReason" field.
-- suggestedNextTrack is optional — only include if another track would benefit.
-- Do NOT emit any other code blocks with the grill-evaluation language tag.`
+${scoringRules}`
   }
 }

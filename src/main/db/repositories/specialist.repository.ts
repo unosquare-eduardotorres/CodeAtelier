@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 import type { Specialist, Skill } from '../../../shared/types'
 
 interface SpecialistRow {
@@ -104,34 +104,23 @@ export interface UpdateSpecialistInput {
   avatarUrl?: string | null
 }
 
-export class SpecialistRepository {
+export class SpecialistRepository extends BaseRepository<SpecialistRow, Specialist> {
+  protected readonly tableName = 'specialists'
+  protected mapRow(row: SpecialistRow): Specialist { return mapRow(row) }
+
   findAll(): Specialist[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare('SELECT * FROM specialists ORDER BY priority ASC')
       .all() as SpecialistRow[]
     return rows.map(mapRow)
   }
 
-  findById(id: string): Specialist | undefined {
-    const db = getDatabase()
-    const row = db.prepare('SELECT * FROM specialists WHERE id = ?').get(id) as
-      | SpecialistRow
-      | undefined
-    return row ? mapRow(row) : undefined
-  }
-
   findByAgentId(agentId: string): Specialist | undefined {
-    const db = getDatabase()
-    const row = db.prepare('SELECT * FROM specialists WHERE agent_id = ?').get(agentId) as
-      | SpecialistRow
-      | undefined
-    return row ? mapRow(row) : undefined
+    return this.findOneBy('agent_id', agentId)
   }
 
   findActive(): Specialist[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare('SELECT * FROM specialists WHERE is_active = 1 ORDER BY priority ASC')
       .all() as SpecialistRow[]
     return rows.map(mapRow)
@@ -146,8 +135,7 @@ export class SpecialistRepository {
    * and propose a swap via ask_user.
    */
   findReadyByWorkspace(workspaceId: string): Specialist | null {
-    const db = getDatabase()
-    const row = db
+    const row = this.db()
       .prepare(
         `SELECT * FROM specialists WHERE workspace_id = ? AND build_status = 'ready' LIMIT 1`
       )
@@ -156,14 +144,11 @@ export class SpecialistRepository {
   }
 
   create(data: CreateSpecialistInput): Specialist {
-    const db = getDatabase()
-    const row = db
+    const row = this.db()
       .prepare(
-        `
-      INSERT INTO specialists (agent_id, display_name, description, icon, color, prompt, priority, source_yaml, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      RETURNING *
-    `
+        `INSERT INTO specialists (agent_id, display_name, description, icon, color, prompt, priority, source_yaml, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING *`
       )
       .get(
         data.agentId,
@@ -180,7 +165,6 @@ export class SpecialistRepository {
   }
 
   update(id: string, data: UpdateSpecialistInput): Specialist {
-    const db = getDatabase()
     const sets: string[] = []
     const values: unknown[] = []
 
@@ -234,13 +218,11 @@ export class SpecialistRepository {
     sets.push("updated_at = datetime('now')")
     values.push(id)
 
-    const row = db
+    const row = this.db()
       .prepare(
-        `
-      UPDATE specialists SET ${sets.join(', ')}
-      WHERE id = ?
-      RETURNING *
-    `
+        `UPDATE specialists SET ${sets.join(', ')}
+         WHERE id = ?
+         RETURNING *`
       )
       .get(...values) as SpecialistRow | undefined
 
@@ -249,45 +231,39 @@ export class SpecialistRepository {
   }
 
   delete(id: string): void {
-    const db = getDatabase()
-    db.prepare('DELETE FROM specialists WHERE id = ?').run(id)
+    this.db().prepare('DELETE FROM specialists WHERE id = ?').run(id)
   }
 
   deleteAll(): void {
-    const db = getDatabase()
-    db.prepare('DELETE FROM specialist_skills').run()
-    db.prepare('DELETE FROM specialists').run()
+    this.runTransaction(() => {
+      this.db().prepare('DELETE FROM specialist_skills').run()
+      this.db().prepare('DELETE FROM specialists').run()
+    })
   }
 
   assignSkill(specialistId: string, skillId: string): void {
-    const db = getDatabase()
-    db.prepare(
-      `
-      INSERT OR IGNORE INTO specialist_skills (specialist_id, skill_id)
-      VALUES (?, ?)
-    `
-    ).run(specialistId, skillId)
+    this.db()
+      .prepare(
+        `INSERT OR IGNORE INTO specialist_skills (specialist_id, skill_id)
+         VALUES (?, ?)`
+      )
+      .run(specialistId, skillId)
   }
 
   removeSkill(specialistId: string, skillId: string): void {
-    const db = getDatabase()
-    db.prepare('DELETE FROM specialist_skills WHERE specialist_id = ? AND skill_id = ?').run(
-      specialistId,
-      skillId
-    )
+    this.db()
+      .prepare('DELETE FROM specialist_skills WHERE specialist_id = ? AND skill_id = ?')
+      .run(specialistId, skillId)
   }
 
   /** Get active skills assigned to a specialist (only skills with is_active = 1) */
   getSkills(specialistId: string): Skill[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare(
-        `
-      SELECT s.* FROM skills s
-      INNER JOIN specialist_skills ss ON ss.skill_id = s.id
-      WHERE ss.specialist_id = ? AND s.is_active = 1
-      ORDER BY s.name ASC
-    `
+        `SELECT s.* FROM skills s
+         INNER JOIN specialist_skills ss ON ss.skill_id = s.id
+         WHERE ss.specialist_id = ? AND s.is_active = 1
+         ORDER BY s.name ASC`
       )
       .all(specialistId) as SkillRow[]
     return rows.map(mapSkillRow)
@@ -295,30 +271,24 @@ export class SpecialistRepository {
 
   /** Get all skills assigned to a specialist (including inactive — for Settings UI) */
   getAllSkills(specialistId: string): Skill[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare(
-        `
-      SELECT s.* FROM skills s
-      INNER JOIN specialist_skills ss ON ss.skill_id = s.id
-      WHERE ss.specialist_id = ?
-      ORDER BY s.name ASC
-    `
+        `SELECT s.* FROM skills s
+         INNER JOIN specialist_skills ss ON ss.skill_id = s.id
+         WHERE ss.specialist_id = ?
+         ORDER BY s.name ASC`
       )
       .all(specialistId) as SkillRow[]
     return rows.map(mapSkillRow)
   }
 
   findSpecialistsForSkill(skillId: string): Specialist[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare(
-        `
-      SELECT sp.* FROM specialists sp
-      INNER JOIN specialist_skills ss ON ss.specialist_id = sp.id
-      WHERE ss.skill_id = ?
-      ORDER BY sp.priority ASC
-    `
+        `SELECT sp.* FROM specialists sp
+         INNER JOIN specialist_skills ss ON ss.specialist_id = sp.id
+         WHERE ss.skill_id = ?
+         ORDER BY sp.priority ASC`
       )
       .all(skillId) as SpecialistRow[]
     return rows.map(mapRow)
@@ -333,30 +303,25 @@ export class SpecialistRepository {
   }
 
   reorderPriorities(orderedIds: string[]): void {
-    const db = getDatabase()
-    const stmt = db.prepare(
+    const stmt = this.db().prepare(
       "UPDATE specialists SET priority = ?, updated_at = datetime('now') WHERE id = ?"
     )
-    const transaction = db.transaction(() => {
+    this.runTransaction(() => {
       orderedIds.forEach((id, index) => {
         stmt.run(index + 1, id)
       })
     })
-    transaction()
   }
 
   canDelete(id: string): { allowed: boolean; blockingSkills?: string[] } {
-    const db = getDatabase()
     // Find active skills where this specialist is the ONLY specialist assigned
-    const blockingSkills = db
+    const blockingSkills = this.db()
       .prepare(
-        `
-      SELECT s.name FROM skills s
-      INNER JOIN specialist_skills ss ON ss.skill_id = s.id
-      WHERE s.is_active = 1
-        AND ss.specialist_id = ?
-        AND (SELECT COUNT(*) FROM specialist_skills ss2 WHERE ss2.skill_id = s.id) = 1
-    `
+        `SELECT s.name FROM skills s
+         INNER JOIN specialist_skills ss ON ss.skill_id = s.id
+         WHERE s.is_active = 1
+           AND ss.specialist_id = ?
+           AND (SELECT COUNT(*) FROM specialist_skills ss2 WHERE ss2.skill_id = s.id) = 1`
       )
       .all(id) as { name: string }[]
 

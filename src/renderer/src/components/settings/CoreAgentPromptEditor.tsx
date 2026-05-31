@@ -6,7 +6,7 @@ interface CoreAgentPromptEditorProps {
   agentRole: 'da-vinci'
 }
 
-type ModeTab = 'plan' | 'build'
+type ModeTab = 'plan' | 'build' | 'danger'
 
 export default function CoreAgentPromptEditor({
   agentRole

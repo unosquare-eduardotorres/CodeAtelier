@@ -1,0 +1,7 @@
+{
+  "name": "code-atelier-opencode-plugins",
+  "private": true,
+  "dependencies": {
+    "@opencode-ai/plugin": "latest"
+  }
+}

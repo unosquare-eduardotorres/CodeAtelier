@@ -17,6 +17,7 @@ import {
   resolveContextTier,
   TIER_LIMITS
 } from '../context-management'
+import { supportsContext1M } from '../../../shared/constants'
 
 describe('Context Management Config', () => {
   test('1M config has correct trigger thresholds', () => {
@@ -141,15 +142,19 @@ describe('Context Window Tiers', () => {
   })
 
   test('small tier has conservative limits for 32K window', () => {
-    assert.equal(TIER_LIMITS.small.maxTurnsBuild, 12)
-    assert.equal(TIER_LIMITS.small.maxTurnsPlan, 8)
+    assert.equal(TIER_LIMITS.small.maxTurnsBuild, 15)
+    assert.equal(TIER_LIMITS.small.maxTurnsPlan, 12)
     assert.equal(TIER_LIMITS.small.readLineLimit, 100)
     assert.equal(TIER_LIMITS.small.toolResultBudgetChars, 30_000)
   })
 
   test('compaction thresholds increase with tier', () => {
-    assert.ok(TIER_LIMITS.small.compactSuggestThreshold < TIER_LIMITS.medium.compactSuggestThreshold)
-    assert.ok(TIER_LIMITS.medium.compactSuggestThreshold < TIER_LIMITS.large.compactSuggestThreshold)
+    assert.ok(
+      TIER_LIMITS.small.compactSuggestThreshold < TIER_LIMITS.medium.compactSuggestThreshold
+    )
+    assert.ok(
+      TIER_LIMITS.medium.compactSuggestThreshold < TIER_LIMITS.large.compactSuggestThreshold
+    )
     assert.ok(TIER_LIMITS.small.compactAutoThreshold < TIER_LIMITS.medium.compactAutoThreshold)
     assert.ok(TIER_LIMITS.medium.compactAutoThreshold < TIER_LIMITS.large.compactAutoThreshold)
   })
@@ -158,7 +163,7 @@ describe('Context Window Tiers', () => {
     const config = getLocalLlmContextConfig(32_768)
     assert.ok(config._tierLimits)
     assert.equal(config._tier, 'small')
-    assert.equal(config._tierLimits!.maxTurnsBuild, 12)
+    assert.equal(config._tierLimits!.maxTurnsBuild, 15)
     assert.equal(config._tierLimits!.readLineLimit, 100)
     assert.equal(config._tierLimits!.toolResultBudgetChars, 30_000)
   })
@@ -176,6 +181,22 @@ describe('Context Window Tiers', () => {
     assert.equal(config._tierLimits!.maxTurnsBuild, 50)
     assert.equal(config._tierLimits!.readLineLimit, 300)
     assert.equal(config._tierLimits!.toolResultBudgetChars, 200_000)
+  })
+
+  test('Opus 4.8 supports 1M context', () => {
+    assert.ok(supportsContext1M('claude-opus-4-8'))
+  })
+
+  test('Opus 4.7 does NOT support 1M context', () => {
+    assert.ok(!supportsContext1M('claude-opus-4-7'))
+  })
+
+  test('Sonnet supports 1M context', () => {
+    assert.ok(supportsContext1M('claude-sonnet-4-6'))
+  })
+
+  test('Haiku does NOT support 1M context', () => {
+    assert.ok(!supportsContext1M('claude-haiku-4-5-20251001'))
   })
 
   test('Claude configs do NOT have tier metadata', () => {

@@ -78,6 +78,7 @@ src/
 | `planner`            | `.claude/skills/planner/SKILL.md`            | Plan-mode framing, breakdown patterns, scoping discipline        |
 | `security`           | `.claude/skills/security/SKILL.md`           | Threat modeling, secret handling, supply-chain hygiene           |
 | `infrastructure`     | `.claude/skills/infrastructure/SKILL.md`     | Containerization, Terraform, CI/CD, deployment topology          |
+| `coding-discipline`  | `.claude/skills/coding-discipline/SKILL.md`  | Always-on coding principles: think first, simplicity, surgical changes |
 
 ### Electron skill trigger
 
@@ -125,7 +126,8 @@ npm run format        # Prettier
   - `DaVinciRoleAdapter` — default per workspace, long-lived AgentSession.
   - `ProjectSpecialistRoleAdapter` — bound to one workspace, LLM-tailored system prompt.
   - Both share `buildWorkspaceMcpConfig`, `intentDetector.detectAll`, `memoryRepository`, `prompt-assembly-helpers`.
-- **No handoffs, no orchestrator, no SDK sub-agents.** `Agent` and `ToolSearch` tools are blocked globally.
+- **Two executor backends: CLI (Claude Max subscription) and OpenCode (local LLMs via Ollama/oMLX).** `ExecutorBackend = 'cli' | 'opencode'`.
+- **No handoffs, no orchestrator, no sub-agents.** `Agent` and `ToolSearch` tools are blocked globally.
 - **Tool execution runs unattended in build mode** (`permissionMode: 'bypassPermissions'`). Safety relies on the workspace scope guard + `disallowedTools` (Agent, ToolSearch, ExitPlanMode, AskUserQuestion). No in-app permission popup.
 - **IPC**: `window.api.invoke()` → preload `ipcRenderer.invoke` → main `ipcMain.handle`.
 - **Streaming**: `ipcRenderer.on` with cleanup functions from `window.api.on()`.
@@ -147,7 +149,8 @@ npm run format        # Prettier
 - `AGENT_IDS` and `AGENT_META` in `src/shared/constants.ts` — `@deprecated`, use DB specialists
 - Do not add new references to these deprecated constants
 - `specialists.mcp_config` / `specialists.mcp_overrides` — dropped in schema v72. MCP availability is workspace-scoped now (`workspace.settingsJson` flags).
-- SDK SubAgents / `Agent` tool — blocked globally; the architecture no longer delegates.
+- `@anthropic-ai/claude-agent-sdk` — removed entirely. All execution goes through CLI or OpenCode.
+- `Agent` tool — blocked globally; the architecture no longer delegates.
 
 ## Electron documentation
 

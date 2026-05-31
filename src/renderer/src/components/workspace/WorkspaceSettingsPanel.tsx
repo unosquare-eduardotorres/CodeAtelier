@@ -14,7 +14,9 @@ import {
   Bot,
   ShieldCheck,
   Brain,
-  Puzzle
+  Puzzle,
+  Target,
+  Landmark
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
@@ -22,6 +24,8 @@ import { useWorkspaceStore } from '@renderer/store'
 export type SettingsTab =
   | 'specialist'
   | 'health'
+  | 'goals'
+  | 'council'
   | 'models'
   | 'repository'
   | 'code-intelligence'
@@ -45,6 +49,8 @@ export const SETTINGS_MENU: {
 }[] = [
   // ── Tools (interactive / operational) ──
   { id: 'health', label: 'Health', icon: ShieldCheck, iconColor: 'text-success', group: 'tools' },
+  { id: 'goals', label: 'Goals', icon: Target, iconColor: 'text-cyan-400', group: 'tools' },
+  { id: 'council', label: 'Council', icon: Landmark, iconColor: 'text-purple-400', group: 'tools' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning', group: 'tools' },
   // ── Configuration (settings) ──
   {

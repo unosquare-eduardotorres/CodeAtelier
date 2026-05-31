@@ -9,7 +9,7 @@ import { createIntentRouter } from './helpers/agent-factory'
 import type { AgentIntent } from '../../../shared/types'
 
 describe('IntentRouter', () => {
-  test('routes_plan_intent_to_CHAT_PLAN_channel', () => {
+  test('plan_intent_logs_but_does_not_send_IPC', () => {
     const { router, sentMessages } = createIntentRouter()
     const intent: AgentIntent = {
       type: 'plan',
@@ -23,20 +23,16 @@ describe('IntentRouter', () => {
 
     router.route('conv-1', intent)
 
-    assert.equal(sentMessages.length, 1)
-    assert.equal(sentMessages[0].channel, 'chat:plan')
-    const payload = sentMessages[0].payload as Record<string, unknown>
-    assert.equal(payload.conversationId, 'conv-1')
-    assert.equal(payload.rawContent, '## My Plan\n1. Step one')
+    // Plan data reaches the renderer through the streaming pipeline (TaskPlanCard),
+    // so no dedicated IPC channel is needed.
+    assert.equal(sentMessages.length, 0, 'plan intent should not send IPC — data arrives via streaming')
   })
 
   test('routes_askUser_intent_to_CHAT_ASK_QUESTION_channel', () => {
     const { router, sentMessages } = createIntentRouter()
     const intent: AgentIntent = {
       type: 'askUser',
-      questions: [
-        { id: 'q1', question: 'Which DB?', options: [{ label: 'Postgres' }] }
-      ]
+      questions: [{ id: 'q1', question: 'Which DB?', options: [{ label: 'Postgres' }] }]
     }
 
     router.route('conv-2', intent)
@@ -49,45 +45,25 @@ describe('IntentRouter', () => {
     assert.equal((payload.questions as unknown[]).length, 1)
   })
 
-  test('routes_grillQuestion_intent_to_CHAT_GRILL_QUESTION_channel', () => {
+  test('grill_intents_are_no_ops_in_intent_router', () => {
+    // Legacy chat-integrated grill flow is now handled by the dedicated grill system
+    // (grill.ipc.ts). IntentRouter no longer sends CHAT_GRILL_* IPC messages.
     const { router, sentMessages } = createIntentRouter()
-    const intent: AgentIntent = {
+
+    router.route('conv-3', {
       type: 'grillQuestion',
       questions: [
         { id: 'gq1', question: 'What approach?', options: [{ label: 'A' }, { label: 'B' }] }
       ]
-    }
+    })
 
-    router.route('conv-3', intent)
-
-    assert.equal(sentMessages.length, 1)
-    assert.equal(sentMessages[0].channel, 'chat:grillQuestion')
-    const payload = sentMessages[0].payload as Record<string, unknown>
-    assert.equal(payload.conversationId, 'conv-3')
-    assert.equal((payload.questions as unknown[]).length, 1)
-  })
-
-  test('routes_grillComplete_intent_to_CHAT_GRILL_COMPLETE_channel', () => {
-    const { router, sentMessages } = createIntentRouter()
-    const intent: AgentIntent = {
+    router.route('conv-4', {
       type: 'grillComplete',
       summary: 'Requirements gathered successfully',
       proposedTasks: [{ title: 'Task 1', description: 'Do the thing' }]
-    }
+    })
 
-    router.route('conv-4', intent)
-
-    assert.equal(sentMessages.length, 1)
-    assert.equal(sentMessages[0].channel, 'chat:grillComplete')
-    const payload = sentMessages[0].payload as Record<string, unknown>
-    assert.equal(payload.conversationId, 'conv-4')
-    assert.equal(payload.summary, 'Requirements gathered successfully')
-    assert.equal((payload.proposedTasks as unknown[]).length, 1)
-  })
-
-  test('routes_grillEvaluation_intent_to_CHAT_GRILL_EVALUATION_channel', () => {
-    const { router, sentMessages } = createIntentRouter()
-    const intent: AgentIntent = {
+    router.route('conv-5', {
       type: 'grillEvaluation',
       evaluation: {
         score: 7,
@@ -95,16 +71,9 @@ describe('IntentRouter', () => {
         feedback: 'Solid answers',
         questions: [{ id: 'eq1', question: 'Anything else?', options: [] }]
       }
-    }
+    })
 
-    router.route('conv-5', intent)
-
-    assert.equal(sentMessages.length, 1)
-    assert.equal(sentMessages[0].channel, 'chat:grillEvaluation')
-    const payload = sentMessages[0].payload as Record<string, unknown>
-    assert.equal(payload.conversationId, 'conv-5')
-    assert.equal(payload.score, 7)
-    assert.equal(payload.scoreLabel, 'Good')
+    assert.equal(sentMessages.length, 0, 'grill intents should not send IPC — handled by dedicated grill system')
   })
 
   test('does_not_send_IPC_for_response_intent', () => {
@@ -115,5 +84,4 @@ describe('IntentRouter', () => {
 
     assert.equal(sentMessages.length, 0, 'response intent should not send IPC')
   })
-
 })

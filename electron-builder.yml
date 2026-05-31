@@ -4,9 +4,8 @@ directories:
   buildResources: build
 files:
   # Whitelist approach — include ONLY what the packaged app needs.
-  # electron-builder adds production node_modules automatically via its
-  # own dependency resolver. This prevents scanning the full 80K-file
-  # project tree (which OOMs due to .claude/worktrees, sprites, etc.).
+  # node_modules are copied separately via afterPack hook to bypass
+  # electron-builder's dependency resolver (which OOMs on large trees).
   - out/**
   - resources/**
   - package.json
@@ -16,12 +15,14 @@ extraResources:
     filter:
       - '*.sh'
 afterPack: build/afterPack.js
-asarUnpack:
-  - resources/**
-  # SDK spawns the claude binary as a child process — must be on real filesystem
-  - node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**
-  # Native addon — must be loadable via dlopen
-  - node_modules/better-sqlite3/**/*.node
+# ASAR disabled — app loads from loose files in Resources/app/.
+# Required because node_modules are copied via afterPack (not through
+# electron-builder's dependency resolver), so they have no ASAR header entries.
+# Security: macOS code signing + hardened runtime + notarization still protect integrity.
+asar: false
+# Native rebuild handled manually in build-mac.sh (Step 2b) because
+# electron-builder's dep resolver is bypassed (no deps in package.json during build).
+npmRebuild: false
 win:
   executableName: code-atelier
 nsis:
@@ -61,8 +62,7 @@ linux:
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
-npmRebuild: true
-electronVersion: 40.9.3
+electronVersion: 40.10.0
 publish:
   provider: github
   owner: anthropics

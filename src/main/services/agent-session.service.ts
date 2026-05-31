@@ -1,5 +1,12 @@
 /**
- * AgentSessionService — generic long-lived Claude Agent SDK session.
+ * AgentSessionService — generic long-lived AI session runtime.
+ *
+ * Supports two executor backends:
+ *   - 'cli'  — Claude Max (stream-json mode) — subscription billing
+ *   - 'opencode' — OpenCode multi-provider runtime (local LLMs)
+ *
+ * The executor backend is selected via workspace settings (executorBackend).
+ * Default: 'cli'.
  *
  * Phase 1 of the Project Specialist refactor (see
  * docs/architecture/project-specialist-refactor.md). Extracted from
@@ -18,45 +25,26 @@ import type {
   ConversationMode,
   ControlToolState,
   CostPreference,
-  ElicitationEvent,
-  AgentIntent,
+  GrillQuestion,
   ImageAttachment,
   LLMProvider,
+  ExecutorBackend,
   PlanDetectedEvent
 } from '../../shared/types'
-import type {
-  SDKUserMessage,
-  ElicitationRequest,
-  ElicitationResult
-} from '@anthropic-ai/claude-agent-sdk'
-import {
-  BUDGET_CAP_MODE_MULTIPLIERS,
-  MCP_TOOLS,
-  RECOMMENDED_LOCAL_MODELS
-} from '../../shared/constants'
+import type { AgentPromptInput } from './executor-types'
+import { EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
 import { chatAgentLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
-import { SDKExecutor } from './sdk-executor'
-import type { SDKExecuteOptions, SDKExecuteResult } from './sdk-executor'
-import { createBuildModeSandbox } from './sandbox-config'
-import {
-  CLAUDE_1M_CONTEXT_CONFIG,
-  CLAUDE_ECONOMY_CONTEXT_CONFIG,
-  getLocalLlmContextConfig,
-  resolveContextTier,
-  TIER_LIMITS
-} from './context-management'
+import type { ExecutorResult } from './executor-types'
+import { CLIExecutor } from './cli-executor'
+import type { CLIExecuteOptions, CLIExecuteResult } from './cli-executor'
+import { resolveContextTier, TIER_LIMITS } from './context-management'
 import type { ContextWindowTier } from './context-management'
+import { auditContextBudget, estimateToolCount } from './context-budget-auditor'
 import { authProvider } from './auth-provider'
 import { vectorSearchService } from './vector-search.service'
-import { semanticSearchMcpService } from './semantic-search.tool'
-import { codeGraphMcpService } from './code-graph.tool'
-import {
-  conversationRepository,
-  turnUsageRepository,
-  workspaceRepository
-} from '../db/repositories'
+import { conversationRepository, memoryRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import type { ModelAction } from '../../shared/types'
 import { eventLoggerService } from './event-logger.service'
@@ -65,6 +53,20 @@ import { AgentTokenTracker } from './agent-token-tracker'
 import type { CacheEfficiencyReport } from './agent-token-tracker'
 import { AgentCircuitBreaker } from './agent-circuit-breaker'
 import { RecoveryNudgeService } from './agent-recovery-nudge'
+import { ToolActivityAccumulator } from './tool-activity-accumulator'
+import { localPlanStateService } from './local-plan-state.service'
+import { localContextReconstructor } from './local-context-reconstructor'
+import { IpcBridge } from './ipc-bridge'
+import { AgentStreamProcessor } from './agent-stream-processor'
+import { AgentRecoveryManager } from './agent-recovery-manager'
+import { AgentExecutorFactory } from './agent-executor-factory'
+import { openCodeExecutor } from './opencode-executor'
+import type { OpenCodeExecuteResult } from './opencode-executor'
+import { openCodeConfigWriter } from './opencode-config-writer'
+import { openCodeAgentWriter } from './opencode-agent-writer'
+import { CliMcpConfigWriter } from './cli-mcp-config-writer'
+import { primingContextGatherer } from './priming-context-gatherer'
+import type { McpFeatureFlags } from './workspace-mcp-config'
 import type {
   AgentRoleAdapter,
   AgentSessionEventName,
@@ -81,7 +83,7 @@ interface StreamLoopState {
 
 /** Options bag for the executeStream orchestrator. */
 interface ExecuteStreamOptions {
-  sdkPrompt: string | AsyncIterable<SDKUserMessage>
+  sdkPrompt: string | AsyncIterable<AgentPromptInput>
   systemPrompt: string
   sessionId: string | undefined
   conversationId: string
@@ -92,6 +94,30 @@ interface ExecuteStreamOptions {
   recoveryDepth?: number
   /** Pre-resolved local context window size — avoids redundant lookups. */
   localContextWindow?: number
+  /** F3: Pre-resolved context tier — avoids re-resolving per tool_use chunk. */
+  contextTier?: ContextWindowTier
+}
+
+/**
+ * Parse a raw plan payload (from IPC bridge or control-actions) into a
+ * validated PlanDetectedEvent. Handles both well-shaped objects and raw
+ * JSON strings, falling back to null structuredPlan for malformed data.
+ */
+function parsePlanPayload(payload: unknown, beforePlan: string): PlanDetectedEvent {
+  const raw = typeof payload === 'string' ? payload : JSON.stringify(payload)
+  const obj =
+    typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {}
+  return {
+    rawContent: raw,
+    structuredPlan:
+      (obj.structuredPlan as PlanDetectedEvent['structuredPlan']) ??
+      // Direct StructuredPlan object (from SDK onPlan callback)
+      (obj.type !== undefined && obj.phases !== undefined
+        ? (payload as PlanDetectedEvent['structuredPlan'])
+        : null),
+    beforePlan,
+    afterPlan: ''
+  }
 }
 
 /**
@@ -101,25 +127,16 @@ interface ExecuteStreamOptions {
 export class AgentSessionService extends AgentBaseService {
   protected readonly log = chatAgentLogger
 
-  // Compaction defaults — tuned for the 1M context window (context-1m-2025-08-07).
-  //   Anthropic's docs: cache + creation + read all count toward the context
-  //   window, so these thresholds operate on the full context-pressure metric,
-  //   not the cheap cache-discounted billing metric.
-  //
-  //   With context management active (context-management.ts), the SDK's internal
-  //   five-layer pipeline handles tool clearing at ~300K and server-side compaction
-  //   at ~600K. These app-level thresholds act as a safety net:
-  //     Suggest at 70% (700K) — catches anything the SDK pipeline missed
-  //     Auto at 85% (850K) — hard limit before overflow
-  //
-  //   Prior values were 600K/800K — raised because server-side strategies now
-  //   handle the early/mid tiers, and double-prompting the user was wasteful.
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 700_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 850_000
-  // Economy preference uses a smaller effective window (200K-class models).
-  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY = 160_000
-  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY = 190_000
+  // Compaction defaults — initialization values before applyCompactionThresholds runs.
+  // The real thresholds are resolved dynamically based on the model's effective context
+  // window (200K for Opus/Haiku, 1M for Sonnet) — see resolveCompactionThresholds().
+  // These statics serve as the fallback initialization; 60%/75% of 200K (the most
+  // common default since Da Vinci plan mode uses Opus).
+  private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 120_000
+  private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 150_000
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
+  /** Extended timeout when external MCP tools (Maestro, etc.) are active — flows can run 5+ min each. */
+  private static readonly EXTERNAL_MCP_INTERACTION_TIMEOUT_MS = 30 * 60_000 // 30 minutes
   private static readonly MAX_TURN_CONTINUATIONS = 3
 
   private workspacePath: string | null = null
@@ -129,6 +146,8 @@ export class AgentSessionService extends AgentBaseService {
   private currentMode: ConversationMode = 'plan'
   private costPreference: CostPreference = 'balanced'
   private llmProvider: LLMProvider = 'claude'
+  /** Active executor backend — resolved from workspace settings on start(). Default: 'cli'. */
+  private executorBackend: ExecutorBackend = 'cli'
 
   /** Maps conversationId → SDK session_id for resume. */
   private readonly sessionMap = new Map<string, string>()
@@ -138,19 +157,42 @@ export class AgentSessionService extends AgentBaseService {
 
   /** AbortController for the current in-flight query. */
   private sdkAbortController: AbortController | null = null
-  private readonly sdkExecutor = new SDKExecutor()
+  /** OpenCode config path (written to temp dir). */
+  private _openCodeConfigPath: string | undefined
+  /** A-1: Pending priming context parts — consumed by the first execute() call. */
+  private _pendingPrimingContext: Array<{ type: 'text'; text: string }> | undefined
+  /** CLI executor — interactive claude process, subscription billing. */
+  private readonly cliExecutor = new CLIExecutor()
+  /** CLI MCP config writer — generates --mcp-config JSON for Claude CLI sessions. */
+  private readonly mcpConfigWriter = new CliMcpConfigWriter()
+  /** IPC bridge — Unix domain socket for control-actions MCP server ↔ Electron main process. */
+  private ipcBridge: IpcBridge | null = null
 
   private readonly tokenTracker = new AgentTokenTracker()
   private readonly circuitBreaker = new AgentCircuitBreaker()
   private readonly recoveryNudge = new RecoveryNudgeService()
+  /** S8: Tracks tool activity for structured summaries, plan state, and compaction decisions */
+  private readonly toolActivityAccumulator = new ToolActivityAccumulator()
+
+  // ── Delegates (extracted from this file to reduce complexity) ──
+  private readonly streamProcessor: AgentStreamProcessor
+  private readonly recoveryManager: AgentRecoveryManager
+  private readonly executorFactory: AgentExecutorFactory
 
   private compactSuggestThreshold = AgentSessionService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
   private compactAutoThreshold = AgentSessionService.DEFAULT_COMPACT_AUTO_THRESHOLD
   private compactSuggested = false
   private compactCount = 0
+  /** Turns elapsed since last compact suggestion — re-suggest every 3 turns if dismissed. */
+  private turnsSinceCompactSuggestion = 0
   private lastContextTokens: number | undefined
+  /** Effective context window for the current session (model-aware: 200K for Opus, 1M for Sonnet). */
+  private effectiveContextWindow: number | undefined
 
-  private pendingResumeAt: string | undefined
+  // F5: Per-conversation resume target — prevents cross-conversation races.
+  // Previously instance-level, which meant switching conversations could
+  // consume the wrong conversation's resumeAt target.
+  private readonly pendingResumeAt = new Map<string, string>()
 
   /** Auto-continue on max_turns: how many times we've resumed so far this message. */
   private maxTurnsContinuations = 0
@@ -165,6 +207,9 @@ export class AgentSessionService extends AgentBaseService {
 
   constructor(private readonly adapter: AgentRoleAdapter) {
     super()
+    this.streamProcessor = new AgentStreamProcessor(this)
+    this.recoveryManager = new AgentRecoveryManager(this)
+    this.executorFactory = new AgentExecutorFactory(this)
   }
 
   // ── Accessors ─────────────────────────────────────────────────────
@@ -210,8 +255,9 @@ export class AgentSessionService extends AgentBaseService {
     return this._lastTimedOut
   }
 
-  getActiveQuery(): import('@anthropic-ai/claude-agent-sdk').Query | null {
-    return this.sdkExecutor.getActiveQuery()
+  /** @deprecated SDK backend removed. CLI and OpenCode don't expose a Query object. */
+  getActiveQuery(): null {
+    return null
   }
 
   getSessionId(conversationId: string): string | undefined {
@@ -226,6 +272,54 @@ export class AgentSessionService extends AgentBaseService {
     this.sessionMap.delete(conversationId)
   }
 
+  /**
+   * #11: Generate an AI-generated summary of the current session.
+   * Uses OpenCode's native session.summarize() for OpenCode backend,
+   * falls back to the stored conversation summary for other backends.
+   *
+   * Note on CLI backend: Claude CLI has no native summarize command.
+   * Summaries are populated via `extractStructuredSummary` during stream
+   * processing (regex-based extraction from assistant output). The fallback
+   * path below retrieves that stored summary from the conversation repository.
+   */
+  async summarizeSession(conversationId?: string): Promise<string | undefined> {
+    const targetConversationId = conversationId ?? this.currentConversationId
+    if (!targetConversationId) return undefined
+
+    // Try OpenCode native summarize first
+    if (this.executorBackend === 'opencode') {
+      const sessionId = openCodeExecutor.getSessionId(targetConversationId)
+      if (sessionId) {
+        try {
+          const summary = await openCodeExecutor.summarizeSession(sessionId)
+          if (summary) {
+            // Also persist it for future use
+            conversationRepository.updateSummary(targetConversationId, summary)
+            return summary
+          }
+        } catch (err) {
+          this.log.warn('[summarizeSession] OpenCode summarize failed:', err)
+        }
+      }
+    }
+
+    // Fallback: return stored summary (CLI/local-direct rely on extractStructuredSummary)
+    return conversationRepository.getSummary(targetConversationId)
+  }
+
+  /**
+   * Send a user's response to a pending ask_user request.
+   * Called by the IPC handler when the renderer sends back an answer.
+   * Routes through the IPC bridge to the control-actions MCP server.
+   */
+  respondToAskUser(requestId: string, response: string): void {
+    if (this.ipcBridge) {
+      this.ipcBridge.sendAskUserResponse(requestId, response)
+    } else {
+      this.log.warn(`[respondToAskUser] No IPC bridge available for requestId=${requestId}`)
+    }
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────
 
   async start(
@@ -233,7 +327,24 @@ export class AgentSessionService extends AgentBaseService {
     mode?: ConversationMode,
     resumeSessionId?: string
   ): Promise<void> {
+    // Don't abort an active stream if we're re-starting for the same workspace.
+    // This prevents HMR, React strict mode, or auto-open from killing in-flight queries.
+    if (
+      this.sdkAbortController &&
+      this.workspacePath === workspacePath &&
+      this.currentStatus !== 'idle' &&
+      this.currentStatus !== 'failed'
+    ) {
+      this.log.info(`[start] Skipping restart — stream active for same workspace: ${workspacePath}`)
+      return
+    }
+
     if (this.sdkAbortController) {
+      this.log.warn(
+        `[start] Aborting active sdkAbortController — ` +
+          `currentWorkspace=${this.workspacePath} newWorkspace=${workspacePath} ` +
+          `status=${this.currentStatus} conversationId=${this.currentConversationId}`
+      )
       this.sdkAbortController.abort()
       this.sdkAbortController = null
     }
@@ -254,16 +365,27 @@ export class AgentSessionService extends AgentBaseService {
     this.accumulatedText = ''
     this.compactCount = 0
     this.compactSuggested = false
+    this.turnsSinceCompactSuggestion = 0
     this.tokenTracker.resetSession()
 
-    // Resolve workspace id + cost preference
+    // Resolve workspace id + cost preference + executor backend
     try {
       const workspaces = workspaceRepository.findAll()
       const workspace = workspaces.find((w) => w.repoPath === workspacePath)
       if (workspace) this.workspaceId = workspace.id
-      const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
-      this.costPreference = (settings.costPreference as CostPreference) || 'balanced'
-      this.llmProvider = (settings.llmProvider as LLMProvider) || 'claude'
+      const settings = workspace ? workspaceRepository.getSettings(workspace.id) : {}
+      this.costPreference = settings.costPreference || 'balanced'
+      this.llmProvider = settings.llmProvider || 'claude'
+      // Resolve executor backend.
+      // Local LLM → always OpenCode. Claude → CLI (default).
+      if (this.llmProvider === 'local-llm') {
+        this.executorBackend = 'opencode'
+      } else {
+        this.executorBackend = settings.executorBackend || 'cli'
+      }
+      this.log.info(
+        `[start] executorBackend=${this.executorBackend} llmProvider=${this.llmProvider} costPreference=${this.costPreference}`
+      )
       this.applyCompactionThresholds(settings)
     } catch {
       /* non-fatal */
@@ -334,17 +456,9 @@ export class AgentSessionService extends AgentBaseService {
       costPreference: this.costPreference
     })
 
-    const sdkPrompt = this.buildSdkPrompt(effectiveMessage, images)
-
-    const controlCallbacks = this.adapter.buildControlCallbacks({
-      conversationId,
-      emit: (evt, payload) => this.emitAdapterEvent(evt, payload),
-      getAccumulatedText: () => this.accumulatedText
-    })
-    this.wrapControlCallbacks(controlCallbacks)
-
     // Resolve context tier for local LLMs — gates tool selection in MCP config.
     // Resolve the local context window once here; pass it through to avoid redundant lookups.
+    // Declared early because the S6+S12 context injection block below also references these.
     const isLocalForMcp = this.llmProvider === 'local-llm'
     const localContextWindow: number | undefined = isLocalForMcp
       ? this.resolveLocalContextWindow()
@@ -352,6 +466,49 @@ export class AgentSessionService extends AgentBaseService {
     const contextTier: ContextWindowTier | undefined = isLocalForMcp
       ? resolveContextTier(localContextWindow!)
       : undefined
+
+    // S6+S12: Inject conversation context for local LLMs on subsequent turns.
+    // Uses S12 context reconstruction (plan state + messages + summary) as the
+    // primary source. Falls back to S6 conversation summary alone.
+    // Since local LLMs don't have SDK session resume, this carries forward context.
+    let enrichedMessage = effectiveMessage
+    if (this.llmProvider === 'local-llm' && turnCount > 1 && !sessionId) {
+      try {
+        // S12: Full context reconstruction from plan state + messages
+        const localCtxWin = localContextWindow ?? this.resolveLocalContextWindow()
+        const reconstructed = localContextReconstructor.buildContextFromHistory({
+          conversationId,
+          maxTokenBudget: Math.floor(localCtxWin * 0.25), // 25% of context window
+          tier: contextTier ?? resolveContextTier(localCtxWin)
+        })
+        if (reconstructed) {
+          enrichedMessage = `## Previous Context\n${reconstructed}\n\n## Current Request\n${effectiveMessage}`
+          this.log.info(
+            `[S12:context-reconstructed] conversationId=${conversationId} len=${reconstructed.length}`
+          )
+        } else {
+          // S6: Fallback to simple conversation summary
+          const summary = conversationRepository.getSummary(conversationId)
+          if (summary) {
+            enrichedMessage = `## Previous Context\n${summary}\n\n## Current Request\n${effectiveMessage}`
+            this.log.info(
+              `[S6:context-injected] conversationId=${conversationId} summaryLen=${summary.length}`
+            )
+          }
+        }
+      } catch {
+        /* non-fatal — proceed without context */
+      }
+    }
+
+    const sdkPrompt = this.buildSdkPrompt(enrichedMessage, images)
+
+    const controlCallbacks = this.adapter.buildControlCallbacks({
+      conversationId,
+      emit: (evt, payload) => this.emitAdapterEvent(evt, payload),
+      getAccumulatedText: () => this.accumulatedText
+    })
+    this.wrapControlCallbacks(controlCallbacks)
 
     const mcpResult = this.adapter.buildMcpConfig({
       mode: this.currentMode,
@@ -373,24 +530,64 @@ export class AgentSessionService extends AgentBaseService {
       /* non-fatal — keep session default */
     }
 
+    // Start IPC bridge for CLI/OpenCode backends — the control-actions MCP server
+    // sends plan/askUser/memory events through a Unix domain socket.
+    if (this.executorBackend === 'cli' || this.executorBackend === 'opencode') {
+      await this.ensureIpcBridge(conversationId)
+    }
+
+    // S9: Pre-flight context budget audit for local LLMs — catch "system prompt ate
+    // the whole window" before sending the request.
+    if (isLocalForMcp && localContextWindow && contextTier) {
+      const toolCount = estimateToolCount({
+        allowedTools: mcpResult.allowedTools,
+        disallowedTools: mcpResult.disallowedTools ?? [],
+        isLocalProvider: true
+      })
+      auditContextBudget({
+        systemPrompt,
+        toolCount,
+        contextWindow: localContextWindow,
+        tier: contextTier
+      })
+    }
+
     await this.executeStream({
       sdkPrompt,
       systemPrompt,
       sessionId,
       conversationId,
       turnCount,
-      isBuildMode: this.currentMode === 'build',
+      isBuildMode: this.currentMode === 'build' || this.currentMode === 'danger',
       mcpResult,
       llmProvider: conversationProvider,
-      localContextWindow
+      localContextWindow,
+      contextTier
     })
   }
 
-  /** Cancels the current in-flight SDK query (if any). */
+  /** Cancels the current in-flight query (SDK, CLI, or OpenCode). */
   cancelCurrentQuery(): void {
     if (this.sdkAbortController) {
       this.sdkAbortController.abort()
       this.sdkAbortController = null
+    }
+    // CLI backend: also kill the process to stop tool execution
+    if (this.executorBackend === 'cli' && this.cliExecutor.isAlive()) {
+      this.cliExecutor.killProcess().catch(() => {
+        /* non-fatal: CLI process may already be dead — kill is best-effort */
+      })
+    }
+    // #2: OpenCode backend — abort the active session via SDK client
+    if (this.executorBackend === 'opencode') {
+      const conversationId = this.currentConversationId ?? ''
+      const sessionId = openCodeExecutor.getSessionId(conversationId)
+      if (sessionId && openCodeExecutor.isRunning()) {
+        openCodeExecutor.abortSession(sessionId).catch((err) => {
+          this.log.warn('[opencode] Session abort failed:', err)
+        })
+        this.log.info(`[cancelCurrentQuery] OpenCode session ${sessionId} abort requested`)
+      }
     }
   }
 
@@ -399,9 +596,30 @@ export class AgentSessionService extends AgentBaseService {
       this.sdkAbortController.abort()
       this.sdkAbortController = null
     }
+    // Kill CLI process if active
+    if (this.executorBackend === 'cli') {
+      await this.cliExecutor.killProcess()
+    }
+
+    // Clean up CLI MCP config
+    if (this.workspacePath) {
+      this.mcpConfigWriter.dispose(this.workspacePath)
+    }
+
+    // Stop OpenCode server
+    if (this.executorBackend === 'opencode') {
+      await openCodeExecutor.stop()
+      if (this.workspacePath) {
+        openCodeConfigWriter.dispose(this.workspacePath)
+      }
+    }
+    // Stop IPC bridge
+    if (this.ipcBridge) {
+      await this.ipcBridge.stop()
+      this.ipcBridge = null
+    }
+
     if (this.workspaceId) {
-      codeGraphMcpService.dispose(this.workspaceId)
-      semanticSearchMcpService.dispose(this.workspaceId)
       await vectorSearchService.dispose(this.workspaceId)
     }
     this.adapter.onSessionStop()
@@ -409,6 +627,7 @@ export class AgentSessionService extends AgentBaseService {
     this.currentStatus = 'idle'
     this.currentConversationId = null
     this.accumulatedText = ''
+
     // NOTE: keep sessionMap populated — we may resume later.
     this.emit('statusUpdate', this.getStatus())
   }
@@ -426,14 +645,46 @@ export class AgentSessionService extends AgentBaseService {
     // Let the adapter flag a system-prompt rebuild + mode-switch prefix
     this.adapter.onConversationSwitch(this.currentConversationId ?? '')
 
-    const activeQuery = this.sdkExecutor.getActiveQuery()
-    if (activeQuery) {
-      const sdkMode = mode === 'build' ? 'auto' : 'default'
+    if (this.executorBackend === 'cli') {
+      // CLI interactive mode: send control message to change permission mode mid-session.
+      // No restart needed — the control protocol supports set_permission_mode.
+      const cliPermMap: Record<ConversationMode, string> = {
+        plan: 'plan',
+        build: 'auto',
+        danger: 'bypassPermissions'
+      }
+      const cliMode = cliPermMap[mode] ?? 'plan'
+      this.cliExecutor.setPermissionMode(
+        cliMode as 'plan' | 'auto' | 'bypassPermissions'
+      )
+      // F6: Invalidate cached MCP config so the next continueSession turn
+      // rebuilds it with the new mode's permission level.
+      this.executorFactory.invalidateMcpConfigCache()
+      this.log.info(
+        `[PIPELINE:mode-switch] CLI backend — sent set_permission_mode(${cliMode}) + invalidated MCP cache`
+      )
+    } else if (this.executorBackend === 'opencode') {
+      // OpenCode: update the opencode.json permissions and regenerate config.
+      // The new permissions take effect on the next prompt via the config file.
+      this.log.info(
+        `[PIPELINE:mode-switch] OpenCode backend — regenerating config with ${mode} permissions`
+      )
       try {
-        await activeQuery.setPermissionMode(sdkMode)
-        this.log.info(`[PIPELINE:mode-switch] SDK permissionMode set to '${sdkMode}'`)
+        if (this.workspacePath) {
+          const providerConfig = this.resolveOpenCodeProviderConfig()
+          const featureFlags = this.resolveWorkspaceMcpFlags()
+          openCodeConfigWriter.writeConfig({
+            workspacePath: this.workspacePath,
+            workspaceId: this.workspaceId,
+            conversationId: this.currentConversationId,
+            mode,
+            provider: providerConfig,
+            featureFlags,
+            ipcSocketPath: this.ipcBridge?.getSocketPath() ?? undefined
+          })
+        }
       } catch (err) {
-        this.log.warn('[PIPELINE:mode-switch] SDK setPermissionMode failed:', err)
+        this.log.warn('[PIPELINE:mode-switch] OpenCode config update failed:', err)
       }
     }
   }
@@ -443,12 +694,10 @@ export class AgentSessionService extends AgentBaseService {
       throw new Error('Session not running — nothing to compact')
     }
 
-    // Local LLMs: SDK compaction is not available (no session resume).
+    // Local LLMs: compaction is not available (no session resume).
     // Signal the UI to suggest a new conversation instead.
-    if (this.llmProvider === 'local-llm') {
-      this.log.info(
-        '[compaction] Local LLM — SDK compaction unavailable, suggesting new conversation'
-      )
+    if (this.llmProvider === 'local-llm' && this.executorBackend !== 'opencode') {
+      this.log.info('[compaction] Local LLM — compaction unavailable, suggesting new conversation')
       this.emit('compactNeeded', {
         level: 'local-unsupported',
         inputTokens: this.lastContextTokens ?? 0,
@@ -457,23 +706,78 @@ export class AgentSessionService extends AgentBaseService {
       return
     }
 
+    // OpenCode backend: use session command API for compaction
+    if (this.executorBackend === 'opencode') {
+      const openCodeSessionId = openCodeExecutor.getSessionId(this.currentConversationId)
+      if (!openCodeSessionId) {
+        this.log.warn('[compaction] OpenCode — no session found for this conversation')
+        return
+      }
+      this.log.info(
+        `[compaction] OpenCode backend — requesting compact for session ${openCodeSessionId}`
+      )
+      this.compactCount++
+      this.compactSuggested = false
+      // OpenCode handles compaction internally when receiving the compact command
+      // The session.compacted event will be forwarded via normalizeEvent()
+      return
+    }
+
+    // CLI backend: send /compact slash command to the interactive process
+    if (this.executorBackend === 'cli') {
+      if (this.cliExecutor.isAlive()) {
+        this.log.info(`[compaction] CLI backend — sending /compact #${this.compactCount + 1}`)
+        this.compactCount++
+        this.compactSuggested = false
+        this.cliExecutor.compact()
+        return
+      }
+      this.log.warn('[compaction] CLI backend — no active process to compact')
+      return
+    }
+
+    // SDK backend: use session resume for compaction
     const sessionId = this.sessionMap.get(this.currentConversationId)
     if (!sessionId) throw new Error('No session to compact')
 
     this.log.info(`[compaction] compact #${this.compactCount + 1}`)
     this.compactCount++
     this.compactSuggested = false
+    this.turnsSinceCompactSuggestion = 0
     // Adapters wire /compact into their own prompt assembler — signal via invalidate.
     this.adapter.onConversationSwitch(this.currentConversationId)
   }
 
   async resumeAt(messageId: string): Promise<void> {
-    const activeQuery = this.sdkExecutor.getActiveQuery()
-    if (activeQuery) {
-      await activeQuery.rewindFiles(messageId)
+    if (this.executorBackend === 'opencode') {
+      // #1: Use OpenCode's native session.revert() which preserves session
+      // history and restores file snapshots — far better than clearing the
+      // session entirely. Falls back to clearSession() if revert fails.
+      if (this.currentConversationId) {
+        const sessionId = openCodeExecutor.getSessionId(this.currentConversationId)
+        if (sessionId) {
+          try {
+            await openCodeExecutor.revertSession(sessionId, messageId)
+            this.log.info(
+              `[resumeAt] OpenCode — reverted session ${sessionId} to message ${messageId}`
+            )
+          } catch (err) {
+            // Fallback: clear session and create fresh on next message
+            this.log.warn('[resumeAt] OpenCode revert failed, falling back to clearSession:', err)
+            openCodeExecutor.clearSession(this.currentConversationId)
+          }
+        } else {
+          this.log.info('[resumeAt] OpenCode — no session found, will create fresh on next message')
+        }
+      }
     }
-    this.pendingResumeAt = messageId
-    this.log.info(`[resumeAt] pending resume at message=${messageId}`)
+    // F5: CLI mode — store per-conversation to prevent cross-conversation resume races
+    if (this.currentConversationId) {
+      this.pendingResumeAt.set(this.currentConversationId, messageId)
+    }
+    this.log.info(
+      `[resumeAt] pending resume at message=${messageId} conversation=${this.currentConversationId} backend=${this.executorBackend}`
+    )
   }
 
   getStatus(): AgentStatus {
@@ -499,6 +803,16 @@ export class AgentSessionService extends AgentBaseService {
   private resetForNewMessage(conversationId: string): void {
     if (this.currentConversationId && this.currentConversationId !== conversationId) {
       this.log.info(`Conversation switch: ${this.currentConversationId} → ${conversationId}`)
+
+      // F6: Abandon stale in-progress plans for this workspace when switching conversations.
+      // Prevents getLatestForWorkspace() from returning plans from a prior conversation.
+      if (this.workspaceId) {
+        try {
+          localPlanStateService.markAbandonedForWorkspace(this.workspaceId, conversationId)
+        } catch (err) {
+          this.log.warn('[F6:abandon-stale-plans-failed]', err)
+        }
+      }
     }
 
     this.currentStatus = 'thinking'
@@ -511,6 +825,7 @@ export class AgentSessionService extends AgentBaseService {
     this.updateDbSessionConversation(conversationId)
     this.accumulatedText = ''
     this.circuitBreaker.reset()
+    this.toolActivityAccumulator.reset()
     this.maxTurnsContinuations = 0
     this.lastStreamOpts = null
     this.controlToolState = { plan: false, askUser: false, memory: false }
@@ -549,7 +864,7 @@ export class AgentSessionService extends AgentBaseService {
   private buildSdkPrompt(
     effectiveMessage: string,
     images?: ImageAttachment[]
-  ): string | AsyncIterable<SDKUserMessage> {
+  ): string | AsyncIterable<AgentPromptInput> {
     if (!images || images.length === 0) return effectiveMessage
 
     const contentBlocks = [
@@ -564,12 +879,12 @@ export class AgentSessionService extends AgentBaseService {
       { type: 'text' as const, text: effectiveMessage }
     ]
 
-    async function* singleMessage(): AsyncIterable<SDKUserMessage> {
+    async function* singleMessage(): AsyncIterable<AgentPromptInput> {
       yield {
         type: 'user' as const,
         message: { role: 'user' as const, content: contentBlocks },
         parent_tool_use_id: null
-      } as SDKUserMessage
+      } as AgentPromptInput
     }
 
     this.log.info(`Built SDK vision prompt with ${images.length} image(s)`)
@@ -584,12 +899,7 @@ export class AgentSessionService extends AgentBaseService {
     const origPlan = cb.onPlan
     cb.onPlan = (plan) => {
       this.controlToolState.plan = true
-      const planEvent: PlanDetectedEvent = {
-        rawContent: JSON.stringify(plan),
-        structuredPlan: plan,
-        beforePlan: this.accumulatedText,
-        afterPlan: ''
-      }
+      const planEvent = parsePlanPayload(plan, this.accumulatedText)
       this.controlToolState.planIntent = { type: 'plan', plan: planEvent }
       this.emit('plan', planEvent)
       origPlan(plan)
@@ -629,18 +939,31 @@ export class AgentSessionService extends AgentBaseService {
       isBuildMode,
       mcpResult,
       llmProvider,
-      localContextWindow
+      localContextWindow,
+      contextTier: passedContextTier
     } = opts
     const recoveryDepth = opts.recoveryDepth ?? 0
     const MAX_RECOVERY_DEPTH = 1
 
-    const resumeAt = this.pendingResumeAt
-    this.pendingResumeAt = undefined
+    // F5: Consume per-conversation resumeAt and clear to prevent stale reuse
+    const resumeAt = this.pendingResumeAt.get(conversationId)
+    this.pendingResumeAt.delete(conversationId)
     const abortController = new AbortController()
     this.sdkAbortController = abortController
 
-    const timeoutMs =
+    const baseTimeoutMs =
       this.adapter.interactionTimeoutMs ?? AgentSessionService.MAX_INTERACTION_TIMEOUT_MS
+
+    // Extend timeout when external MCP tools (Maestro, etc.) are active — flows can run 5+ min each
+    const hasExternalMcps =
+      mcpResult.mcpServers &&
+      Object.keys(mcpResult.mcpServers).some((id) =>
+        EXTERNAL_MCP_INTEGRATIONS.some((i) => i.id === id)
+      )
+    const timeoutMs = hasExternalMcps
+      ? Math.max(baseTimeoutMs, AgentSessionService.EXTERNAL_MCP_INTERACTION_TIMEOUT_MS)
+      : baseTimeoutMs
+
     let timedOut = false
     const interactionTimer = setTimeout(() => {
       timedOut = true
@@ -665,25 +988,70 @@ export class AgentSessionService extends AgentBaseService {
         sessionRecoveryNeeded: false
       }
 
-      const executeOptions = this.buildSdkExecuteOptions({
-        sdkPrompt,
-        systemPrompt,
-        sessionId,
-        isBuildMode,
-        resumeAt,
-        abortController,
-        mcpResult,
-        llmProvider,
-        localContextWindow
-      })
+      // ── Select executor backend ──
+      // Extract prompt for non-SDK backends. For images, sdkPrompt is an
+      // AsyncIterable<AgentPromptInput> whose single message contains content
+      // blocks (image + text). We extract those blocks so the CLI backend
+      // can send them via stream-json's user message format.
+      let cliPromptInput: string | Array<Record<string, unknown>> = ''
+      if (typeof sdkPrompt === 'string') {
+        cliPromptInput = sdkPrompt
+      } else {
+        // Extract content blocks from AsyncIterable<AgentPromptInput>
+        // (single-message iterable produced by buildSdkPrompt for images)
+        try {
+          for await (const msg of sdkPrompt) {
+            const message = msg.message as { content: Array<Record<string, unknown>> } | undefined
+            if (message?.content) {
+              cliPromptInput = message.content
+              break // Only one message in the iterable
+            }
+          }
+        } catch {
+          cliPromptInput = '[failed to extract image content]'
+        }
+      }
 
-      for await (const chunk of this.sdkExecutor.execute(
-        executeOptions as unknown as SDKExecuteOptions
-      )) {
+      let executorStream: AsyncGenerator<StreamChunk>
+      switch (this.executorBackend) {
+        case 'opencode':
+          executorStream = this.executeOpenCodeStream({
+            prompt: typeof cliPromptInput === 'string'
+              ? cliPromptInput
+              : '[image attachments not supported in opencode mode]',
+            systemPrompt,
+            isBuildMode,
+            abortController,
+            mcpResult
+          })
+          break
+        case 'cli':
+        default: {
+          // Thread goal condition from MPA adapters (if set)
+          const adapterGoal = 'getGoalCondition' in this.adapter
+            ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
+            : null
+          executorStream = this.executeCLIStream({
+            prompt: cliPromptInput,
+            systemPrompt,
+            sessionId,
+            isBuildMode,
+            mode: this.currentMode,
+            resumeAt,
+            abortController,
+            mcpResult,
+            localContextWindow,
+            goal: adapterGoal ?? undefined
+          })
+        }
+          break
+      }
+
+      for await (const chunk of executorStream) {
         if (this.circuitBreaker.isBroken) break
 
         if ('_meta' in chunk && chunk._meta) {
-          await this.processMetaChunk(chunk._meta as SDKExecuteResult, {
+          await this.processMetaChunk(chunk._meta as ExecutorResult, {
             conversationId,
             turnCount,
             streamState
@@ -692,7 +1060,8 @@ export class AgentSessionService extends AgentBaseService {
           const action = this.processContentChunk(chunk, {
             conversationId,
             isBuildMode,
-            streamState
+            streamState,
+            contextTier: passedContextTier
           })
           if (action === 'break') break
           if (action === 'continue') continue
@@ -729,7 +1098,7 @@ export class AgentSessionService extends AgentBaseService {
       })
     } catch (error) {
       clearTimeout(interactionTimer)
-      await this.handleStreamError(error as Error, timedOut, recoveryDepth)
+      await this.handleStreamError(error as Error, timedOut, recoveryDepth, timeoutMs)
     }
   }
 
@@ -739,228 +1108,299 @@ export class AgentSessionService extends AgentBaseService {
    * unknown models (conservative default).
    */
   private resolveLocalContextWindow(): number {
-    if (!this.workspacePath) return 32_768
-    try {
-      const localConfig = modelConfigService.getLocalLLMConfig(this.workspacePath)
-      const model = localConfig.localModel
-      const recommended = RECOMMENDED_LOCAL_MODELS.find(
-        (m) => m.ollamaId === model || m.omlxId === model
-      )
-      return recommended?.contextWindow ?? 32_768
-    } catch {
-      return 32_768
-    }
+    return this.executorFactory.resolveLocalContextWindow()
   }
 
-  private buildSdkExecuteOptions(params: {
-    sdkPrompt: string | AsyncIterable<SDKUserMessage>
+  // ── Feature flag helpers ────────────────────────────────────
+
+  /**
+   * Resolve MCP feature flags from workspace settings.
+   * Single source of truth — called by all executor paths (CLI, local-direct, OpenCode).
+   */
+  private resolveWorkspaceMcpFlags(): McpFeatureFlags {
+    return this.executorFactory.resolveWorkspaceMcpFlags()
+  }
+
+  // ── Local conversation history helpers ──────────────────────────────
+
+  // ── Executor dispatch methods ──────────────────────────────────────
+
+  /**
+   * CLI executor stream — delegates to CLIExecutor.execute().
+   * Uses interactive claude with stream-json mode (subscription billing).
+   */
+  private executeCLIStream(params: {
+    prompt: string | Array<Record<string, unknown>>
     systemPrompt: string
     sessionId: string | undefined
     isBuildMode: boolean
+    mode?: ConversationMode
     resumeAt: string | undefined
     abortController: AbortController
     mcpResult: AdapterMcpResult
-    llmProvider: LLMProvider
     localContextWindow?: number
-  }): Record<string, unknown> {
-    const {
-      sdkPrompt,
-      systemPrompt,
-      sessionId,
-      isBuildMode,
-      resumeAt,
-      abortController,
-      mcpResult,
-      llmProvider,
-      localContextWindow: passedLocalCtxWindow
-    } = params
-    const { mcpServers, allowedTools, disallowedTools } = mcpResult
+    goal?: string
+  }): AsyncGenerator<StreamChunk & { _meta?: CLIExecuteResult }> {
+    const cliOptions = this.buildCLIExecuteOptions(params)
+    return this.cliExecutor.execute(cliOptions)
+  }
 
-    const modelAction = `${this.adapter.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = modelConfigService.getModel(this.workspacePath!, modelAction)
+  /**
+   * OpenCode executor stream — runs through the @opencode-ai/sdk runtime.
+   *
+   * Supports 75+ providers through a single executor. Uses OpenCode's
+   * built-in agent loop, MCP support, and session management.
+   */
+  private async *executeOpenCodeStream(params: {
+    prompt: string
+    systemPrompt: string
+    isBuildMode: boolean
+    abortController: AbortController
+    mcpResult: AdapterMcpResult
+  }): AsyncGenerator<StreamChunk> {
+    const { prompt, isBuildMode, abortController } = params
 
-    let additionalDirectories: string[] | undefined
+    // Resolve provider config from workspace settings (shared helper)
+    let providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
     try {
-      if (this.workspaceId) {
-        const workspace = workspaceRepository.findById(this.workspaceId)
-        if (workspace) {
-          const settings = JSON.parse(workspace.settingsJson || '{}')
-          additionalDirectories = settings.additionalDirectories as string[] | undefined
-        }
-      }
+      providerConfig = this.resolveOpenCodeProviderConfig()
     } catch {
-      /* non-fatal */
-    }
-
-    // ── Local LLM provider overrides ──
-    const isLocal = llmProvider === 'local-llm'
-    let finalModel = resolvedModel
-    let envOverrides: Record<string, string> | undefined
-
-    if (isLocal && this.workspacePath) {
-      const localConfig = modelConfigService.getLocalLLMConfig(this.workspacePath)
-      finalModel = localConfig.localModel
-      const baseUrl = modelConfigService.getLocalBaseUrl(localConfig)
-
-      // Use the real API key if configured, otherwise fall back to dummy
-      const localKey = localConfig.localApiKey || 'local'
-
-      // Both oMLX and Ollama expose Anthropic-compatible endpoints at the base URL
-      envOverrides = {
-        ANTHROPIC_BASE_URL: baseUrl,
-        ANTHROPIC_AUTH_TOKEN: localKey,
-        ANTHROPIC_API_KEY: localKey
+      /* non-fatal — use defaults */
+      providerConfig = {
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-4-6',
+        baseUrl: undefined,
+        apiKey: undefined
       }
-      this.log.info(
-        `[PIPELINE:local-llm] backend=${localConfig.backend} model=${finalModel} baseUrl=${baseUrl}`
-      )
     }
 
-    // Resolve context management config — needed for maxTurns and hook parameterization
-    const localContextWindow = isLocal
-      ? (passedLocalCtxWindow ?? this.resolveLocalContextWindow())
+    // Generate opencode.json config with MCP servers
+    try {
+      const featureFlags = this.resolveWorkspaceMcpFlags()
+
+      // Pass IPC socket path for control-actions bidirectional communication
+      const socketPath = this.ipcBridge?.getSocketPath() ?? undefined
+
+      // Resolve context tier for tier-aware config (compaction, timeouts)
+      const isLocal = this.llmProvider === 'local-llm'
+      let contextTier: ContextWindowTier | undefined
+      if (isLocal) {
+        const ctxWindow = this.resolveLocalContextWindow()
+        contextTier = resolveContextTier(ctxWindow)
+      }
+
+      const configPath = openCodeConfigWriter.writeConfig({
+        workspacePath: this.workspacePath!,
+        workspaceId: this.workspaceId,
+        conversationId: this.currentConversationId,
+        mode: this.currentMode,
+        provider: providerConfig,
+        featureFlags,
+        ipcSocketPath: socketPath,
+        isLocalProvider: isLocal,
+        contextTier
+      })
+
+      // Store config path for server startup
+      this._openCodeConfigPath = configPath
+
+      // #6: Generate OpenCode agent definitions (DaVinci + Specialist)
+      try {
+        openCodeAgentWriter.writeAgents({
+          workspacePath: this.workspacePath!,
+          provider: providerConfig,
+          davinciSystemPrompt: params.systemPrompt,
+          mode: this.currentMode
+        })
+      } catch (agentErr) {
+        this.log.warn('[opencode] Failed to write agent definitions:', agentErr)
+      }
+    } catch (error) {
+      this.log.warn('[opencode] Failed to write config:', error)
+    }
+
+    // Start OpenCode server if not running
+    if (!openCodeExecutor.isRunning()) {
+      try {
+        await openCodeExecutor.start(this.workspacePath!, {
+          configPath: this._openCodeConfigPath,
+          isLocal: this.llmProvider === 'local-llm'
+        })
+      } catch (error) {
+        this.log.error('[opencode] Failed to start server:', error)
+        yield {
+          type: 'error',
+          error: `OpenCode server failed to start: ${(error as Error).message}`
+        }
+        return
+      }
+    }
+
+    // A-1: Prime the session with workspace context before the first real prompt.
+    // Only prime on the first message (no existing session for this conversation).
+    // Gate behind contextPrimingEnabled setting for independent testing.
+    const existingSessionId = this.currentConversationId
+      ? openCodeExecutor.getSessionId(this.currentConversationId)
       : undefined
-    const contextManagement = isLocal
-      ? getLocalLlmContextConfig(localContextWindow!)
-      : this.costPreference === 'economy'
-        ? CLAUDE_ECONOMY_CONTEXT_CONFIG
-        : CLAUDE_1M_CONTEXT_CONFIG
-    const tierLimits = contextManagement._tierLimits
-
-    // Diagnostic: log tier resolution for local LLMs
-    if (isLocal && tierLimits) {
-      this.log.info(
-        `[PIPELINE:local-context-tier] model=${finalModel} contextWindow=${localContextWindow} ` +
-          `tier=${contextManagement._tier} maxTurns=${isBuildMode ? tierLimits.maxTurnsBuild : tierLimits.maxTurnsPlan} ` +
-          `readLimit=${tierLimits.readLineLimit} toolBudget=${tierLimits.toolResultBudgetChars}`
-      )
-    }
-
-    return {
-      prompt: sdkPrompt,
-      systemPrompt,
-      model: finalModel,
-      cwd: this.workspacePath!,
-      permissionMode: isBuildMode ? 'bypassPermissions' : 'default',
-      allowedTools,
-      disallowedTools,
-      // Tier-aware turn limits: small=8/12, medium=15/25, large=30/50, Claude=30/50
-      maxTurns: isLocal
-        ? isBuildMode
-          ? (tierLimits?.maxTurnsBuild ?? 12)
-          : (tierLimits?.maxTurnsPlan ?? 8)
-        : isBuildMode
-          ? 50
-          : 30,
-
-      // Session resume: disabled for local (Ollama has no SDK sessions)
-      resume: isLocal ? undefined : sessionId,
-      ...(resumeAt && !isLocal ? { resumeSessionAt: resumeAt } : {}),
-      abortController,
-      agentId: this.adapter.agentId,
-
-      // Thinking: adaptive for Claude, omitted entirely for local (oMLX/Ollama reject unknown params)
-      thinking: isLocal ? undefined : { type: 'adaptive' },
-      thinkingDisplay: isLocal ? undefined : 'summarized',
-      effort: isLocal ? undefined : resolvedModel.includes('opus') ? 'xhigh' : 'high',
-
-      // Budget: no cap by default (Claude Max subscription = flat rate).
-      // Only apply if user opted into a custom cap via workspace settings.
-      maxBudgetUsd: this.resolveBudgetCap(isLocal, isBuildMode),
-
-      // Features: disabled for local (Ollama doesn't support these SDK features)
-      promptSuggestions: isLocal ? false : true,
-      includeHookEvents: true,
-      autoCompactEnabled: isLocal ? false : true,
-      contextWindowSize: isLocal ? localContextWindow : 1_000_000, // 1M with context-1m beta
-      contextManagement,
-      enableFileCheckpointing: isLocal ? false : true,
-      betas: isLocal ? undefined : ['context-1m-2025-08-07'],
-      fallbackModel: isLocal
-        ? undefined
-        : resolvedModel !== 'claude-sonnet-4-6'
-          ? 'claude-sonnet-4-6'
-          : undefined,
-
-      // Env overrides for Ollama SDK passthrough
-      ...(envOverrides ? { envOverrides } : {}),
-      ...(additionalDirectories?.length ? { additionalDirectories } : {}),
-      onPermissionDenied: (toolName: string, reason: string) => {
-        this.log.info(`[PIPELINE:permission-denied] tool=${toolName} reason=${reason}`)
-        this.emit('chunk', {
-          type: 'status',
-          content: `⚠️ Permission denied: ${toolName} — ${reason}`
-        } as StreamChunk)
-      },
-      onSubagentStart: (agentId: string, description: string) => {
-        this.log.info(`[PIPELINE:subagent-start] agent=${agentId} desc=${description}`)
-      },
-      onSubagentStop: (agentId: string, status: string) => {
-        this.log.info(`[PIPELINE:subagent-stop] agent=${agentId} status=${status}`)
-      },
-      onTaskCreated: (taskId: string, description: string) => {
-        this.log.info(`[PIPELINE:task-created] task=${taskId} desc=${description}`)
-      },
-      onTaskCompleted: (taskId: string, status: string) => {
-        this.log.info(`[PIPELINE:task-completed] task=${taskId} status=${status}`)
-      },
-      sandbox: isBuildMode ? createBuildModeSandbox() : undefined,
-      ...(mcpServers ? { mcpServers } : {}),
-      onPostCompact: async (preTokens: number, postTokens: number) => {
-        this.log.info(`[Compaction] ${preTokens} → ${postTokens} tokens`)
-
-        // Update in-memory + DB metrics with post-compaction value so subsequent
-        // getContextUsage calls (SDK or DB fallback) return the compacted size.
-        this.lastContextTokens = postTokens
-        if (this.currentConversationId) {
-          try {
-            const { turnUsageRepository } = await import('../db/repositories')
-            turnUsageRepository.updateLastTurnContextTokens(this.currentConversationId, postTokens)
-          } catch {
-            /* non-fatal */
-          }
-        }
-
-        // Notify the UI to refresh its context bar. Reuses the compactNeeded
-        // event chain with level='compacted' — renderer refreshes silently
-        // instead of opening the compact modal.
-        this.compactSuggested = false
-        this.emit('compactNeeded', {
-          level: 'compacted',
-          inputTokens: postTokens,
-          isLocalProvider: this.llmProvider === 'local-llm'
-        })
-      },
-      onElicitation: async (request: ElicitationRequest, { signal }: { signal: AbortSignal }) => {
-        this.log.info(
-          `[elicitation] server=${request.serverName} message="${request.message?.substring(0, 80)}"`
-        )
-        const elicitationEvent: ElicitationEvent = {
-          serverName: request.serverName,
-          message: request.message,
-          mode: request.mode ?? 'form',
-          requestedSchema: request.requestedSchema as Record<string, unknown> | undefined,
-          url: request.url,
-          elicitationId: request.elicitationId
-        }
-        this.emit('elicitation', elicitationEvent)
-        return new Promise<ElicitationResult>((resolve) => {
-          const handler = (result: ElicitationResult): void => {
-            this.removeListener('elicitationResponse', handler)
-            resolve(result)
-          }
-          this.on('elicitationResponse', handler)
-          signal.addEventListener(
-            'abort',
-            () => {
-              this.removeListener('elicitationResponse', handler)
-              resolve({ action: 'decline' } as ElicitationResult)
-            },
-            { once: true }
+    if (!existingSessionId) {
+      try {
+        const contextParts = await this.buildPrimingContext(prompt)
+        if (contextParts.length > 0) {
+          // Create a temporary session so primeSession can inject context.
+          // The real session will be created by execute() — priming goes into
+          // the first session created for this conversationId.
+          this.log.info(
+            `[opencode] Priming session with ${contextParts.length} context parts`
           )
-        })
+          // Priming will happen inside execute() after session creation.
+          // Store priming parts for the executor to use.
+          this._pendingPrimingContext = contextParts
+        }
+      } catch (primingErr) {
+        // Non-fatal — priming failure should not block the real prompt
+        this.log.warn('[opencode] Context priming failed:', primingErr)
       }
     }
+
+    // A-1: Consume pending priming context for the first execute call
+    const primingContext = this._pendingPrimingContext
+    this._pendingPrimingContext = undefined
+
+    // Execute through OpenCode — pass conversationId for multi-turn session reuse
+    for await (const chunk of openCodeExecutor.execute({
+      prompt,
+      systemPrompt: params.systemPrompt,
+      provider: providerConfig,
+      cwd: this.workspacePath!,
+      abortController,
+      conversationId: this.currentConversationId ?? undefined,
+      maxTurns: isBuildMode ? 50 : 30,
+      primingContext
+    })) {
+      // Forward chunks, converting OpenCode meta to executor meta format
+      if ('_meta' in chunk && chunk._meta) {
+        const meta = chunk._meta as OpenCodeExecuteResult
+        yield {
+          ...chunk,
+          _meta: {
+            result: meta.result,
+            tokenUsage: meta.tokenUsage,
+            terminalReason: meta.terminalReason ?? 'completed',
+            sessionId: meta.openCodeSessionId
+          }
+        } as StreamChunk & { _meta: unknown }
+      } else {
+        yield chunk
+      }
+    }
+
+    // F9: Sync OpenCode session ID to sessionMap so recovery paths
+    // (agent-recovery-manager) can find the correct session on resume.
+    if (this.currentConversationId) {
+      const ocSessionId = openCodeExecutor.getSessionId(this.currentConversationId)
+      if (ocSessionId) {
+        this.sessionMap.set(this.currentConversationId, ocSessionId)
+      }
+    }
+  }
+
+  /**
+   * A-1: Build context parts for session priming.
+   * Gathers recent git changes, active plan state, and relevant workspace memories
+   * to inject before the first prompt so the session starts warm.
+   * Delegates to PrimingContextGatherer (each source independently testable).
+   */
+  private async buildPrimingContext(
+    userPrompt: string
+  ): Promise<Array<{ type: 'text'; text: string }>> {
+    return primingContextGatherer.gather({
+      workspaceId: this.workspaceId,
+      workspacePath: this.workspacePath,
+      conversationId: this.currentConversationId,
+      userPrompt
+    })
+  }
+
+  /**
+   * Build CLI execute options from session parameters.
+   * Maps the same information that buildSdkExecuteOptions uses to CLI flags.
+   */
+  private buildCLIExecuteOptions(params: {
+    prompt: string | Array<Record<string, unknown>>
+    systemPrompt: string
+    sessionId: string | undefined
+    isBuildMode: boolean
+    mode?: ConversationMode
+    resumeAt: string | undefined
+    abortController: AbortController
+    mcpResult: AdapterMcpResult
+    localContextWindow?: number
+    goal?: string
+  }): CLIExecuteOptions {
+    return this.executorFactory.buildCLIExecuteOptions(params)
+  }
+
+  private buildCLIMcpConfigPath(_params: {
+    isBuildMode: boolean
+    mcpResult: AdapterMcpResult
+  }): string | undefined {
+    return this.executorFactory.buildCLIMcpConfigPath(_params)
+  }
+
+  private resolveHookPaths(): { pre?: string; post?: string } {
+    return this.executorFactory.resolveHookPaths()
+  }
+
+  /**
+   * Resolve external MCP activation flags from the current conversation's chat overrides.
+   */
+  private resolveExternalMcpFlags(): Record<string, boolean> {
+    return this.executorFactory.resolveExternalMcpFlags()
+  }
+
+  /**
+   * Ensure the IPC bridge is running and wired to session events.
+   * The bridge provides a Unix domain socket that externalized MCP servers
+   * (control-actions) connect to for plan/askUser/memory event delivery.
+   */
+  private async ensureIpcBridge(conversationId: string): Promise<void> {
+    if (this.ipcBridge?.isListening()) return
+
+    const bridge = new IpcBridge()
+    await bridge.start()
+    this.ipcBridge = bridge
+
+    // Wire bridge events to session events (same handling as wrapControlCallbacks)
+    bridge.on('plan', (payload: unknown) => {
+      this.controlToolState.plan = true
+      const planEvent = parsePlanPayload(payload, this.accumulatedText)
+      this.controlToolState.planIntent = { type: 'plan', plan: planEvent }
+      this.emit('plan', planEvent)
+      this.log.info(`[ipc-bridge] Plan event received for ${conversationId}`)
+    })
+
+    bridge.on('askUser', (payload: unknown, requestId?: string) => {
+      this.controlToolState.askUser = true
+      const askPayload = payload as { questions: GrillQuestion[]; action?: string }
+      this.controlToolState.askUserIntent = {
+        type: 'askUser',
+        questions: askPayload.questions,
+        action: askPayload.action,
+        requestId
+      }
+      // Include requestId so the renderer can send a response back
+      this.emit('askQuestion', { ...askPayload, requestId })
+      this.log.info(
+        `[ipc-bridge] askUser event received for ${conversationId} requestId=${requestId}`
+      )
+    })
+
+    bridge.on('memory', (_payload: unknown) => {
+      this.controlToolState.memory = true
+      this.log.info(`[ipc-bridge] Memory event received for ${conversationId}`)
+    })
+
+    this.log.info(`[ensureIpcBridge] Bridge started on ${bridge.getSocketPath()}`)
   }
 
   /**
@@ -970,171 +1410,14 @@ export class AgentSessionService extends AgentBaseService {
    * - Claude with user override: base × mode multiplier.
    */
   private resolveBudgetCap(isLocal: boolean, isBuildMode: boolean): number | undefined {
-    if (isLocal) return undefined
-
-    // Check workspace settings for user-defined cap
-    if (!this.workspacePath) return undefined
-    try {
-      const workspace = workspaceRepository.findAll().find((w) => w.repoPath === this.workspacePath)
-      if (!workspace) return undefined
-      const settings = JSON.parse(workspace.settingsJson || '{}')
-      const baseCap = settings.budgetCapUsd as number | undefined
-      if (!baseCap || baseCap <= 0) return undefined // No cap configured
-
-      // Apply mode multiplier
-      const multiplier = isBuildMode
-        ? BUDGET_CAP_MODE_MULTIPLIERS.build
-        : BUDGET_CAP_MODE_MULTIPLIERS.plan
-      return baseCap * multiplier
-    } catch {
-      return undefined
-    }
+    return this.executorFactory.resolveBudgetCap(isLocal, isBuildMode)
   }
 
   private async processMetaChunk(
-    meta: SDKExecuteResult,
-    ctx: {
-      conversationId: string
-      turnCount: number
-      streamState: StreamLoopState
-    }
+    meta: ExecutorResult,
+    ctx: { conversationId: string; turnCount: number; streamState: StreamLoopState }
   ): Promise<void> {
-    const { conversationId, turnCount, streamState } = ctx
-    streamState.messageStopReceived = true
-
-    if (meta.sessionId && conversationId) {
-      this.sessionMap.set(conversationId, meta.sessionId)
-      this.log.info('Session captured for conversation:', conversationId)
-      try {
-        conversationRepository.updateSessionId(conversationId, meta.sessionId)
-      } catch (err) {
-        this.log.error('Failed to persist session ID:', err)
-      }
-    }
-
-    if (meta.sessionTitle && conversationId) {
-      try {
-        const conv = conversationRepository.findById(conversationId)
-        if (conv && (conv.title === 'New Conversation' || conv.title === '')) {
-          conversationRepository.updateTitle(conversationId, meta.sessionTitle)
-          this.log.info(`[PIPELINE:auto-title] "${meta.sessionTitle}" for ${conversationId}`)
-        }
-      } catch (err) {
-        this.log.warn('Failed to auto-name conversation from session_title:', err)
-      }
-    }
-
-    if (meta.terminalReason) {
-      streamState.lastTerminalReason = meta.terminalReason
-      this.log.info(`[PIPELINE:terminal-reason] ${meta.terminalReason} for ${conversationId}`)
-    }
-
-    const { totalTokens } = this.tokenTracker.recordTurn(meta, {
-      turnCount,
-      conversationId,
-      dbSessionId: this.dbSessionId,
-      workspacePath: this.workspacePath!
-    })
-    this.tokenUsage += totalTokens
-    this.inputTokens += meta.tokenUsage.input
-    this.outputTokens += meta.tokenUsage.output
-    this.cacheReadTokens += meta.tokenUsage.cacheReadInputTokens
-    this.cacheCreationTokens += meta.tokenUsage.cacheCreationInputTokens
-
-    let sdkContextData:
-      | {
-          totalTokens?: number
-          categories?: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
-          mcpTools?: {
-            name: string
-            serverName: string
-            tokens: number
-            isLoaded?: boolean
-          }[]
-          systemTools?: { name: string; tokens: number }[]
-          deferredBuiltinTools?: { name: string; tokens: number; isLoaded: boolean }[]
-          memoryFiles?: { path: string; type: string; tokens: number }[]
-          autoCompactThreshold?: number
-          isAutoCompactEnabled?: boolean
-        }
-      | undefined
-    try {
-      const sdkUsage = await this.sdkExecutor.getActiveQuery()?.getContextUsage()
-      sdkContextData = sdkUsage as typeof sdkContextData
-    } catch {
-      /* SDK not available — fallback */
-    }
-
-    if (sdkContextData?.totalTokens) {
-      this.lastContextTokens = sdkContextData.totalTokens
-    }
-
-    const totalContextTokens =
-      sdkContextData?.totalTokens ??
-      meta.tokenUsage.input +
-        meta.tokenUsage.cacheReadInputTokens +
-        meta.tokenUsage.cacheCreationInputTokens
-
-    // Build the Claude Code-style breakdown for the compact-context modal.
-    // Only forward the fields the modal actually renders — keeps the IPC
-    // payload small and avoids leaking SDK shape changes through the protocol.
-    const breakdown = sdkContextData
-      ? ({
-          categories: sdkContextData.categories,
-          mcpTools: sdkContextData.mcpTools,
-          systemTools: sdkContextData.systemTools,
-          deferredBuiltinTools: sdkContextData.deferredBuiltinTools,
-          memoryFiles: sdkContextData.memoryFiles,
-          autoCompactThreshold: sdkContextData.autoCompactThreshold,
-          isAutoCompactEnabled: sdkContextData.isAutoCompactEnabled
-        } as const)
-      : undefined
-
-    // One-shot diagnostic logging — surfaces what's eating the context window
-    // so we can tell whether the bloat is messages, MCP tool definitions, or
-    // skills/CLAUDE.md. Logged once per turn (not committed forever — remove
-    // after we have a sense of typical breakdowns in production).
-    if (breakdown) {
-      try {
-        const fmt = (n?: number): string =>
-          n === undefined ? '?' : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n)
-        const cats = (breakdown.categories ?? [])
-          .map((c) => `${c.name}=${fmt(c.tokens)}${c.isDeferred ? '(deferred)' : ''}`)
-          .join(' | ')
-        const topMcp = (breakdown.mcpTools ?? [])
-          .slice()
-          .sort((a, b) => b.tokens - a.tokens)
-          .slice(0, 5)
-          .map((t) => `${t.serverName}.${t.name}(${fmt(t.tokens)})`)
-          .join(', ')
-        this.log.info(
-          `[PIPELINE:context-breakdown] total=${fmt(totalContextTokens)} | ${cats}` +
-            (topMcp ? ` | top-mcp: ${topMcp}` : '')
-        )
-        // Log context management effectiveness — track whether server-side strategies are working
-        if (breakdown?.autoCompactThreshold != null) {
-          this.log.info(
-            `[PIPELINE:context-mgmt] autoCompactThreshold=${fmt(breakdown.autoCompactThreshold)} ` +
-              `autoCompactEnabled=${breakdown.isAutoCompactEnabled} ` +
-              `compactCount=${this.compactCount}`
-          )
-        }
-      } catch {
-        /* diagnostic logging is best-effort */
-      }
-    }
-
-    this.checkCompaction(totalContextTokens, breakdown)
-
-    // Store the SDK context window total separately — preserves the original
-    // API-reported input_tokens and cache_* fields recorded by recordTurn().
-    if (this.dbSessionId && conversationId && sdkContextData?.totalTokens) {
-      try {
-        turnUsageRepository.updateLastTurnContextTokens(conversationId, sdkContextData.totalTokens)
-      } catch {
-        /* non-fatal */
-      }
-    }
+    await this.streamProcessor.processMetaChunk(meta, ctx)
   }
 
   private processContentChunk(
@@ -1143,105 +1426,17 @@ export class AgentSessionService extends AgentBaseService {
       conversationId: string
       isBuildMode: boolean
       streamState: StreamLoopState
+      contextTier?: ContextWindowTier
     }
   ): 'next' | 'break' | 'continue' | 'return' {
-    const { conversationId, isBuildMode, streamState } = ctx
-
-    if (chunk.type === 'error' && chunk.error?.includes('No conversation found with session ID')) {
-      this.log.warn(
-        `[PIPELINE:session-recovery] Stale session detected for conversationId=${conversationId} — initiating recovery`
-      )
-
-      this.emit('chunk', {
-        type: 'session_recovery',
-        recoveryPhase: 'started',
-        content: 'Session expired — recovering conversation context...'
-      } as StreamChunk)
-
-      this.clearSession(conversationId)
-      try {
-        conversationRepository.updateSessionId(conversationId, '')
-      } catch (err) {
-        this.log.error('[PIPELINE:session-recovery] Failed to clear DB session:', err)
-      }
-
-      this.emit('chunk', {
-        type: 'session_recovery',
-        recoveryPhase: 'building_context',
-        content: 'Rebuilding conversation context from history...'
-      } as StreamChunk)
-
-      // Recovery context is adapter-agnostic: just recent messages.
-      // (The Generalist adapter injects its own richer summary.)
-      streamState.sessionRecoveryNeeded = true
-      return 'break'
-    }
-
-    // Intercept budget cap exceeded — offer the user a choice to continue
-    if (chunk.type === 'error' && chunk.error?.includes('budget cap exceeded')) {
-      this.log.warn(
-        `[PIPELINE:budget-cap-reached] conversationId=${conversationId} — offering continuation`
-      )
-      this.emit('budgetCapReached', {
-        conversationId,
-        message: chunk.error
-      })
-      // Don't emit the raw error to the renderer — the budgetCapReached
-      // event will show a user-friendly banner instead.
-      return 'break'
-    }
-
-    if (chunk.type === 'text' && chunk.content) {
-      this.accumulatedText += chunk.content
-      streamState.hasTextAfterLastTool = true
-    }
-
-    if (chunk.type === 'tool_use') {
-      const isControlTool = chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)
-      if (isControlTool) {
-        this.log.debug(`[PIPELINE:control-tool-use] ${chunk.toolName}`)
-        return 'continue'
-      }
-
-      streamState.hasTextAfterLastTool = false
-      const cbResult = this.circuitBreaker.onToolUse({
-        isBuildMode,
-        accumulatedTextLength: this.accumulatedText.length,
-        conversationId
-      })
-
-      if (cbResult.broken) {
-        this.currentStatus = 'failed'
-        this.emit('statusUpdate', this.getStatus())
-        if (cbResult.errorChunk) {
-          this.emit('chunk', cbResult.errorChunk)
-        }
-        this.emit('complete')
-        return 'return'
-      }
-
-      this.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
-    }
-
-    if (chunk.type === 'prompt_suggestion' && chunk.content) {
-      this.emit('promptSuggestion', {
-        conversationId,
-        suggestion: chunk.content
-      })
-    }
-
-    if (chunk.type === 'text') this.currentStatus = 'writing'
-    if (chunk.type === 'tool_use') this.currentStatus = 'reviewing'
-    this.emit('statusUpdate', this.getStatus())
-    this.emit('chunk', chunk)
-    return 'next'
+    return this.streamProcessor.processContentChunk(chunk, ctx)
   }
 
   private async handleSessionRecovery(params: {
     sessionRecoveryNeeded: boolean
     recoveryDepth: number
     maxRecoveryDepth: number
-    sdkPrompt: string | AsyncIterable<SDKUserMessage>
+    sdkPrompt: string | AsyncIterable<AgentPromptInput>
     systemPrompt: string
     conversationId: string
     turnCount: number
@@ -1249,43 +1444,7 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     llmProvider: LLMProvider
   }): Promise<'continue' | 'returned'> {
-    if (!params.sessionRecoveryNeeded) return 'continue'
-
-    if (params.recoveryDepth >= params.maxRecoveryDepth) {
-      this.log.error('[PIPELINE:session-recovery-depth-exceeded] Max recovery depth reached')
-      this.emit('chunk', {
-        type: 'session_recovery',
-        recoveryPhase: 'failed',
-        content: 'Session recovery failed (max retries). Please start a new conversation.'
-      } as StreamChunk)
-      this.currentStatus = 'failed'
-      this.flushTokenUsage()
-      this.emit('statusUpdate', this.getStatus())
-      this.emit('complete')
-      return 'returned'
-    }
-
-    try {
-      await this.executeStream({
-        sdkPrompt: params.sdkPrompt,
-        systemPrompt: params.systemPrompt,
-        sessionId: undefined,
-        conversationId: params.conversationId,
-        turnCount: params.turnCount,
-        isBuildMode: params.isBuildMode,
-        mcpResult: params.mcpResult,
-        llmProvider: params.llmProvider,
-        recoveryDepth: params.recoveryDepth + 1
-      })
-      return 'returned'
-    } catch (retryError) {
-      this.log.error('[PIPELINE:session-recovery-failed]', retryError)
-      this.currentStatus = 'failed'
-      this.flushTokenUsage()
-      this.emit('statusUpdate', this.getStatus())
-      this.emit('complete')
-      return 'returned'
-    }
+    return this.recoveryManager.handleSessionRecovery(params)
   }
 
   private async finalizeStream(params: {
@@ -1298,280 +1457,86 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     llmProvider: LLMProvider
   }): Promise<void> {
-    const {
-      conversationId,
-      systemPrompt,
-      isBuildMode,
-      recoveryDepth,
-      timedOut,
-      streamState,
-      mcpResult,
-      llmProvider
-    } = params
-
-    if (!streamState.messageStopReceived && !this.circuitBreaker.isBroken && !timedOut) {
-      this.log.warn(
-        `[PIPELINE:stream-incomplete] Stream ended without MessageStop event for conversationId=${conversationId}`
-      )
-    }
-
-    this.log.info(
-      `[PIPELINE:response-complete] conversationId=${conversationId} textLen=${this.accumulatedText.length}`
-    )
-
-    // ── Auto-continue on max_turns ──────────────────────────────────
-    // When the SDK stops at the turn limit but has more work to do,
-    // automatically resume the session with a continuation prompt.
-    if (
-      streamState.lastTerminalReason === 'max_turns' &&
-      this.maxTurnsContinuations < AgentSessionService.MAX_TURN_CONTINUATIONS
-    ) {
-      this.maxTurnsContinuations++
-      this.log.info(
-        `[PIPELINE:max-turns-continue] continuation=${this.maxTurnsContinuations}/${AgentSessionService.MAX_TURN_CONTINUATIONS} ` +
-          `conversationId=${conversationId}`
-      )
-
-      // Notify the renderer that we're auto-continuing
-      this.emit('chunk', {
-        type: 'text',
-        content: `\n\n_Continuing... (turn limit reached, auto-resuming ${this.maxTurnsContinuations}/${AgentSessionService.MAX_TURN_CONTINUATIONS})_\n\n`
-      } as StreamChunk)
-
-      // Re-enter the stream loop with a continuation prompt.
-      // The session is preserved via resume, so context is not lost.
-      await this.executeStream({
-        sdkPrompt: isBuildMode
-          ? 'Continue implementing from where you left off. Do not repeat completed work.'
-          : 'Continue your analysis from where you left off. Do not repeat completed work.',
-        systemPrompt,
-        sessionId: this.sessionMap.get(conversationId),
-        conversationId,
-        turnCount: this.turnCounts.get(conversationId) ?? 1,
-        isBuildMode,
-        mcpResult,
-        llmProvider
-      })
-      return // executeStream handles its own finalization
-    }
-
-    const skipNudgeReasons = new Set([
-      'max_turns',
-      'hook_stopped',
-      'aborted_tools',
-      'aborted_streaming'
-    ])
-    const shouldSkipNudge =
-      streamState.lastTerminalReason && skipNudgeReasons.has(streamState.lastTerminalReason)
-    if (
-      this.circuitBreaker.count > 0 &&
-      !streamState.hasTextAfterLastTool &&
-      !shouldSkipNudge &&
-      !timedOut
-    ) {
-      this.log.warn(
-        `[PIPELINE:recovery-nudge-triggered] conversationId=${conversationId} ` +
-          `toolCalls=${this.circuitBreaker.count} accumulatedTextLen=${this.accumulatedText.length}`
-      )
-      const recoveryResult = await this.recoveryNudge.attemptRecovery({
-        sdkExecutor: this.sdkExecutor,
-        systemPrompt,
-        workspacePath: this.workspacePath!,
-        model: modelConfigService.getModel(this.workspacePath!, this.adapter.role as ModelAction),
-        isBuildMode,
-        sessionId: this.sessionMap.get(conversationId),
-        conversationId,
-        toolCallCount: this.circuitBreaker.count,
-        onSessionCapture: (sid) => this.sessionMap.set(conversationId, sid),
-        onChunk: (chunk) => this.emit('chunk', chunk),
-        onTokens: (tokens) => {
-          this.tokenUsage += tokens
-        }
-      })
-      this.log.info(
-        `[PIPELINE:recovery-nudge-result] recovered=${recoveryResult.recovered} textLen=${recoveryResult.text.length}`
-      )
-      this.accumulatedText += recoveryResult.text
-    }
-
-    // Delegate intent detection to the adapter.
-    this.adapter.emitDetectedIntents({
-      accumulatedText: this.accumulatedText,
-      controlToolState: this.controlToolState,
-      mode: this.currentMode,
-      conversationId,
-      emit: (evt, payload) => this.emitAdapterEvent(evt, payload)
-    })
-
-    // Baseline "response" intent if adapter emitted nothing interesting.
-    if (!this.controlToolState.plan && !this.controlToolState.askUser) {
-      this.emit('intent', {
-        type: 'response',
-        content: this.accumulatedText
-      } as AgentIntent)
-    }
-
-    this.currentStatus = 'idle'
-    this.flushTokenUsage()
-    this.emit('statusUpdate', this.getStatus())
-
-    if (recoveryDepth > 0) {
-      this.emit('chunk', {
-        type: 'session_recovery',
-        recoveryPhase: 'completed',
-        content: 'Session recovered successfully.'
-      } as StreamChunk)
-    }
-
-    this.emit('complete')
+    await this.recoveryManager.finalizeStream(params)
   }
 
   private async handleStreamError(
     error: Error,
     timedOut: boolean,
-    recoveryDepth = 0
+    recoveryDepth = 0,
+    effectiveTimeoutMs?: number
   ): Promise<void> {
-    this.sdkAbortController = null
+    await this.recoveryManager.handleStreamError(error, timedOut, recoveryDepth, effectiveTimeoutMs)
+  }
 
-    // ── Auto-continue on max_turns error ────────────────────────────
-    // The SDK may throw "Reached maximum number of turns (N)" instead
-    // of terminating gracefully via the meta chunk. Handle both paths.
-    const isMaxTurns =
-      !timedOut &&
-      error.name !== 'AbortError' &&
-      error.message?.includes('maximum number of turns')
+  saveCurrentPlanState(conversationId: string): void {
+    this.recoveryManager.saveCurrentPlanState(conversationId)
+  }
 
-    if (
-      isMaxTurns &&
-      this.lastStreamOpts &&
-      this.maxTurnsContinuations < AgentSessionService.MAX_TURN_CONTINUATIONS
-    ) {
-      this.maxTurnsContinuations++
-      const { conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider } =
-        this.lastStreamOpts
-      this.log.info(
-        `[PIPELINE:max-turns-continue-error] continuation=${this.maxTurnsContinuations}/${AgentSessionService.MAX_TURN_CONTINUATIONS} ` +
-          `conversationId=${conversationId}`
-      )
-
-      this.emit('chunk', {
-        type: 'text',
-        content: `\n\n_Continuing... (turn limit reached, auto-resuming ${this.maxTurnsContinuations}/${AgentSessionService.MAX_TURN_CONTINUATIONS})_\n\n`
-      } as StreamChunk)
-
-      await this.executeStream({
-        sdkPrompt: isBuildMode
-          ? 'Continue implementing from where you left off. Do not repeat completed work.'
-          : 'Continue your analysis from where you left off. Do not repeat completed work.',
-        systemPrompt,
-        sessionId: this.sessionMap.get(conversationId),
-        conversationId,
-        turnCount: this.turnCounts.get(conversationId) ?? 1,
-        isBuildMode,
-        mcpResult,
-        llmProvider
-      })
-      return // executeStream handles its own finalization
-    }
-
-    if (error.name === 'AbortError') {
-      if (timedOut) {
-        this.log.error('SDK query timed out')
-        this.emit('chunk', {
-          type: 'error',
-          error: `Response exceeded maximum time (${AgentSessionService.MAX_INTERACTION_TIMEOUT_MS / 60_000} minutes) after ${this.circuitBreaker.count} tool calls. The agent may be stuck. Try simplifying your request.`
-        } as StreamChunk)
-      } else {
-        this.log.info('SDK query cancelled by user')
-      }
-    } else {
-      this.log.error('SDK send failed:', error)
-      this.emit('chunk', {
-        type: 'error',
-        error: `${this.adapter.role} SDK error: ${error.message}`
-      } as StreamChunk)
-    }
-    this.currentStatus = 'failed'
-    this.flushTokenUsage()
-    this.emit('statusUpdate', this.getStatus())
-
-    if (recoveryDepth > 0) {
-      this.emit('chunk', {
-        type: 'session_recovery',
-        recoveryPhase: 'failed',
-        content: 'Session recovery failed. Please start a new conversation.'
-      } as StreamChunk)
-    }
-
-    this.emit('complete')
+  private extractStructuredSummary(conversationId: string): string | null {
+    return this.recoveryManager.extractStructuredSummary(conversationId)
   }
 
   // ── Compaction ────────────────────────────────────────────────────
 
   private applyCompactionThresholds(settings: Record<string, unknown>): void {
-    const isLocal = (settings.llmProvider as string) === 'local-llm'
+    this.streamProcessor.applyCompactionThresholds(settings)
+  }
 
-    if (isLocal) {
-      // Reuse resolveLocalContextWindow() to avoid duplicating model lookup logic
-      const ctx = this.resolveLocalContextWindow()
-      const tier = resolveContextTier(ctx)
-      const limits = TIER_LIMITS[tier]
-      this.compactSuggestThreshold = limits.compactSuggestThreshold
-      this.compactAutoThreshold = limits.compactAutoThreshold
-    } else if (this.costPreference === 'economy') {
-      this.compactSuggestThreshold =
-        (settings.compactSuggestThreshold as number) ??
-        AgentSessionService.DEFAULT_COMPACT_SUGGEST_THRESHOLD_ECONOMY
-      this.compactAutoThreshold =
-        (settings.compactAutoThreshold as number) ??
-        AgentSessionService.DEFAULT_COMPACT_AUTO_THRESHOLD_ECONOMY
-    } else {
-      this.compactSuggestThreshold =
-        (settings.compactSuggestThreshold as number) ??
-        AgentSessionService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
-      this.compactAutoThreshold =
-        (settings.compactAutoThreshold as number) ??
-        AgentSessionService.DEFAULT_COMPACT_AUTO_THRESHOLD
-    }
+  private resolveCompactionThresholds(effectiveContextWindow: number): {
+    suggest: number
+    auto: number
+  } {
+    return this.streamProcessor.resolveCompactionThresholds(effectiveContextWindow)
   }
 
   private checkCompaction(
     inputTokens: number,
     breakdown?: import('../../shared/types').ContextUsageBreakdown
   ): void {
-    const autoThreshold = this.compactAutoThreshold
-    const suggestThreshold = this.compactSuggestThreshold
-    const warningThreshold = Math.floor(suggestThreshold * 0.8)
-    const isLocal = this.llmProvider === 'local-llm'
+    this.streamProcessor.checkCompaction(inputTokens, breakdown)
+  }
 
-    if (inputTokens >= autoThreshold) {
-      this.log.warn(`Context very large (${inputTokens} input tokens) — prompting user to compact`)
-      this.emit('compactNeeded', {
-        level: 'critical',
-        inputTokens,
-        breakdown,
-        isLocalProvider: isLocal
-      })
-    } else if (inputTokens >= suggestThreshold && !this.compactSuggested) {
-      this.compactSuggested = true
-      this.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
-      this.emit('compactNeeded', {
-        level: 'suggest',
-        inputTokens,
-        breakdown,
-        isLocalProvider: isLocal
-      })
-    } else if (inputTokens >= warningThreshold && !this.compactSuggested) {
-      this.log.info(
-        `[PIPELINE:compact-warning] Context approaching threshold (${inputTokens}/${suggestThreshold} tokens)`
-      )
-      this.emit('compactNeeded', {
-        level: 'warning',
-        inputTokens,
-        estimatedNextCost: Math.round(inputTokens * 0.05),
-        breakdown,
-        isLocalProvider: isLocal
-      })
+  /**
+   * Resolve OpenCode provider configuration from workspace settings.
+   * Shared by switchMode() and executeOpenCodeStream() to eliminate duplication.
+   */
+  private resolveOpenCodeProviderConfig(): {
+    providerId: string
+    modelId: string
+    baseUrl: string | undefined
+    apiKey: string | undefined
+  } {
+    let config = {
+      providerId: 'anthropic',
+      modelId: 'claude-sonnet-4-6',
+      baseUrl: undefined as string | undefined,
+      apiKey: undefined as string | undefined
     }
+
+    if (this.workspaceId) {
+      const settings = workspaceRepository.getSettings(this.workspaceId)
+      if (settings.openCodeProvider) {
+        config = {
+          providerId: settings.openCodeProvider ?? 'anthropic',
+          modelId: settings.openCodeModel ?? 'claude-sonnet-4-6',
+          baseUrl: settings.openCodeBaseUrl,
+          apiKey: settings.openCodeApiKey
+        }
+      }
+
+      // Auto-detect: if llmProvider is 'local-llm', configure Ollama
+      if (this.llmProvider === 'local-llm') {
+        const localConfig = modelConfigService.getLocalLLMConfig(this.workspacePath!)
+        config = {
+          providerId: 'ollama',
+          modelId: localConfig.localModel,
+          baseUrl: `http://${localConfig.localHost}:${localConfig.localPort}`,
+          apiKey: localConfig.localApiKey
+        }
+      }
+    }
+
+    return config
   }
 }

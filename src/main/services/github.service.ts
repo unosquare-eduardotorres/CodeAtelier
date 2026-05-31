@@ -31,7 +31,8 @@ export class GitHubService {
       const rawScopes = response.headers['x-oauth-scopes'] ?? ''
       const scopes = rawScopes ? rawScopes.split(',').map((s) => s.trim()) : []
       return { valid: true, login: response.data.login, scopes, tokenType }
-    } catch {
+    } catch (e) {
+      logger.debug('[GitHub] Token validation failed:', e)
       return { valid: false, login: '', scopes: [], tokenType }
     }
   }

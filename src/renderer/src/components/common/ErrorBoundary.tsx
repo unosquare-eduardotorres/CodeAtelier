@@ -25,16 +25,15 @@ export class ErrorBoundary extends Component<Props, State> {
     // Report to bug tracker
     try {
       // Extract component name from component stack
-      const componentName = info.componentStack
-        ?.match(/at (\w+)/)?.[1] ?? undefined
+      const componentName = info.componentStack?.match(/at (\w+)/)?.[1] ?? undefined
 
       // Parse source file/line from error stack
       let sourceFile: string | undefined
       let sourceLine: number | undefined
       let sourceColumn: number | undefined
       if (error.stack) {
-        const match = error.stack.match(/at .+\((.+):(\d+):(\d+)\)/)
-          || error.stack.match(/at (.+):(\d+):(\d+)/)
+        const match =
+          error.stack.match(/at .+\((.+):(\d+):(\d+)\)/) || error.stack.match(/at (.+):(\d+):(\d+)/)
         if (match) {
           sourceFile = match[1]
           sourceLine = parseInt(match[2], 10)

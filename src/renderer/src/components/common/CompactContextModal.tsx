@@ -185,12 +185,22 @@ export default function CompactContextModal({
             />
           </div>
           <p className="mt-2 text-[10px] text-text-muted leading-snug">
-            Includes all conversation history, tool definitions, and cached content — matches
-            Claude Code&apos;s formula. Cache reduces cost, not context size.
+            Includes all conversation history, tool definitions, and cached content — matches Claude
+            Code&apos;s formula. Cache reduces cost, not context size.
           </p>
         </div>
 
         {/* Context Category Breakdown — Claude Code 8-category panel */}
+        {!renderCategories && (
+          <div className="px-5 pb-3">
+            <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5 font-semibold">
+              Breakdown by category
+            </div>
+            <p className="text-[11px] text-text-muted italic">
+              Detailed breakdown unavailable for this executor backend. Total usage shown above.
+            </p>
+          </div>
+        )}
         {renderCategories && renderCategories.length > 0 && (
           <div className="px-5 pb-3">
             <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5 font-semibold">
@@ -220,8 +230,7 @@ export default function CompactContextModal({
                       )}
                     </span>
                     <span className="font-mono flex-shrink-0 tabular-nums">
-                      {fmtTokens(cat.tokens)}{' '}
-                      <span className="text-text-muted">({pct}%)</span>
+                      {fmtTokens(cat.tokens)} <span className="text-text-muted">({pct}%)</span>
                     </span>
                   </div>
                 )
@@ -283,9 +292,9 @@ export default function CompactContextModal({
             <div className="px-5 pb-3">
               <div className="px-3 py-2 rounded-lg bg-danger/5 border border-danger/20">
                 <p className="text-xs text-text-secondary">
-                  <span className="text-danger font-medium">Compaction unavailable</span> —
-                  local LLMs don&apos;t support mid-conversation compaction.
-                  Context resets automatically when you start a new conversation.
+                  <span className="text-danger font-medium">Compaction unavailable</span> — local
+                  LLMs don&apos;t support mid-conversation compaction. Context resets automatically
+                  when you start a new conversation.
                 </p>
               </div>
             </div>

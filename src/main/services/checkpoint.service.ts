@@ -114,7 +114,7 @@ class CheckpointService {
           .catch((err) => checkpointLogger.warn(`Hook error (${event}):`, err))
       })
       .catch(() => {
-        /* hook engine not available */
+        /* non-fatal: hook engine not available — checkpoint proceeds without hooks */
       })
 
     pending.resolve(approved)

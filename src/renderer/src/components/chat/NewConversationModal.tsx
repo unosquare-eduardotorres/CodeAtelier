@@ -1,7 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { ClipboardList, Hammer, GitBranch, Lightbulb, X } from 'lucide-react'
-import type { ConversationMode } from '../../../../shared/types'
+import {
+  ClipboardList,
+  Hammer,
+  GitBranch,
+  Lightbulb,
+  X,
+  MessageSquare,
+  Heart,
+  Sun,
+  Flame,
+  Bone
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import type { CommunicationTone, ConversationMode } from '../../../../shared/types'
+import { COMMUNICATION_TONES } from '../../../../shared/constants'
 import { AttachmentDropzone } from '@renderer/components/chat'
+
+/** Map tone icon names to Lucide components */
+const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
 
 interface NewConversationModalProps {
   isOpen: boolean
@@ -10,6 +26,7 @@ interface NewConversationModalProps {
     title: string
     description?: string
     mode: ConversationMode
+    communicationTone?: CommunicationTone | null
     attachments?: string[]
     useIsolatedBranch?: boolean
   }) => void
@@ -28,6 +45,7 @@ export default function NewConversationModal({
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<ConversationMode>('plan')
+  const [conversationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
@@ -49,6 +67,7 @@ export default function NewConversationModal({
       setTitle('')
       setDescription('')
       setMode('plan')
+      setConversationTone(null)
       setAttachments([])
       setUseIsolatedBranch(false)
     }
@@ -76,10 +95,11 @@ export default function NewConversationModal({
       title: trimmedTitle,
       description: description.trim() || undefined,
       mode,
+      communicationTone: conversationTone,
       attachments: attachments.length > 0 ? attachments : undefined,
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined
     })
-  }, [title, description, mode, attachments, useIsolatedBranch, onSubmit])
+  }, [title, description, mode, conversationTone, attachments, useIsolatedBranch, onSubmit])
 
   const handleCreateIdea = useCallback((): void => {
     const trimmedTitle = title.trim()
@@ -199,6 +219,44 @@ export default function NewConversationModal({
                 ? 'Plan mode — read-only analysis, brainstorming, code review'
                 : 'Build mode — the agent can create and modify files in your workspace'}
             </p>
+          </div>
+
+          {/* Communication Tone */}
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">
+              Tone{' '}
+              <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
+            </label>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                onClick={() => setConversationTone(null)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                  conversationTone === null
+                    ? 'bg-primary-muted text-primary-text border border-primary/20'
+                    : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
+                }`}
+              >
+                Workspace Default
+              </button>
+              {COMMUNICATION_TONES.filter((t) => t.id !== 'default').map((tone) => {
+                const Icon = TONE_ICON_MAP[tone.icon] ?? MessageSquare
+                const isActive = conversationTone === tone.id
+                return (
+                  <button
+                    key={tone.id}
+                    onClick={() => setConversationTone(tone.id as CommunicationTone)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                      isActive
+                        ? 'bg-primary-muted text-primary-text border border-primary/20'
+                        : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
+                    }`}
+                  >
+                    <Icon size={12} />
+                    {tone.label}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* Description */}

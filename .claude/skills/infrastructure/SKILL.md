@@ -1,3 +1,10 @@
+---
+name: infrastructure
+description: >
+  CI/CD pipeline design, deployment automation, monitoring, and release management
+  for desktop and cloud applications. GitHub Actions, Electron packaging, cross-platform distribution.
+---
+
 # Infrastructure Skill — CI/CD & Deployment Patterns
 
 ## Purpose

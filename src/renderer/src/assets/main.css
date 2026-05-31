@@ -2,136 +2,133 @@
 @plugin "@tailwindcss/typography";
 @import './fonts.css';
 @import './base.css';
+@import './themes/index.css';
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Design Token System — Semantic Colors for Code Atelier
-   4-layer surface system + semantic text/border/accent colors
+   Design Token System — Semantic Colors via Theme CSS Variables
+   Tailwind 4 `@theme inline` registers utilities from runtime CSS vars.
+   Actual values come from [data-theme="..."] selectors in ./themes/
    ═══════════════════════════════════════════════════════════════════════════ */
-@theme {
-  /* ═══════════════════════════════════════════════════════════════════════
-     Code Atelier Design Tokens — Renaissance-inspired gold/teal palette
-     See docs/CodeAtelier/Code-Atelier-Brand-System.md for full spec
-     ═══════════════════════════════════════════════════════════════════════ */
+@theme inline {
+  /* ── Surface layers ── */
+  --color-surface-base: var(--color-surface-base);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-overlay: var(--color-surface-overlay);
+  --color-surface-float: var(--color-surface-float);
 
-  /* ── Surface layers (dark → light) ── */
-  --color-surface-base: #090d0f; /* Near-black obsidian: app shell, titlebar, status bar */
-  --color-surface-raised: #111c21; /* Deep teal-black: sidebars, panels */
-  --color-surface-overlay: #162228; /* Dark muted teal: cards, chat bubbles, dropdowns */
-  --color-surface-float: #1e2c30; /* Elevated dark: modals, popovers, tooltips */
+  /* ── Border layers ── */
+  --color-border-subtle: var(--color-border-subtle);
+  --color-border-default: var(--color-border-default);
+  --color-border-strong: var(--color-border-strong);
 
-  /* ── Border layers (gold-based) ── */
-  --color-border-subtle: rgba(184, 151, 106, 0.15); /* Between same-level surfaces */
-  --color-border-default: rgba(184, 151, 106, 0.28); /* Between different-level surfaces */
-  --color-border-strong: rgba(184, 151, 106, 0.45); /* Emphasis borders */
+  /* ── Text hierarchy ── */
+  --color-text-primary: var(--color-text-primary);
+  --color-text-body: var(--color-text-body);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
 
-  /* ── Text hierarchy (gold tones on dark) ── */
-  --color-text-primary: #c8b89a; /* Bright Gold: headings, important text */
-  --color-text-body: #afc2c6; /* Mist — bumped ~12% for long-read comfort (5.1:1 contrast on overlay bg) */
-  --color-text-secondary: #6a7a7e; /* Fog: labels, secondary info */
-  --color-text-muted: #5a6a6e; /* Dim (bumped for WCAG AA): timestamps, meta */
+  /* ── Code text ── */
+  --color-code-text: var(--color-code-text);
+  --color-code-inline: var(--color-code-inline);
+  --color-text-emphasis: var(--color-text-emphasis);
 
-  /* ── Code text (warm parchment — softer than body, warmer than grey) ── */
-  --color-code-text: #d4cfc4;
-  --color-code-inline: #88c4ba;  /* Soft teal: inline code in prose — distinct hue from warm code-block parchment */
-  --color-text-emphasis: #c4d0d4; /* Cool bright: bold/emphasis text — stands out via brightness, not warmth */
+  /* ── Primary accent ── */
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-primary-muted: var(--color-primary-muted);
+  --color-primary-text: var(--color-primary-text);
 
-  /* ── Primary accent (Atelier Gold) ── */
-  --color-primary: #b8976a;
-  --color-primary-hover: #c8b89a;
-  --color-primary-muted: rgba(184, 151, 106, 0.15);
-  --color-primary-text: #c8b89a;
+  /* ── Accent ── */
+  --color-accent: var(--color-accent);
+  --color-accent-muted: var(--color-accent-muted);
 
-  /* ── Accent (Jewel Copper — ornamental highlights, links) ── */
-  --color-accent: #c4714a;
-  --color-accent-muted: rgba(196, 113, 74, 0.15);
-
-  /* ── Deep Teal / Forest Green accent (for mode badges, active states) ── */
-  --color-teal: #1f6b5e;
-  --color-teal-light: #2a8a78;
-  --color-teal-muted: rgba(31, 107, 94, 0.18);
-  --color-teal-text: #6dc4b2;
-  --color-forest: #1a4a38;
-  --color-forest-light: #5db88a;
+  /* ── Teal / Forest ── */
+  --color-teal: var(--color-teal);
+  --color-teal-light: var(--color-teal-light);
+  --color-teal-muted: var(--color-teal-muted);
+  --color-teal-text: var(--color-teal-text);
+  --color-forest: var(--color-forest);
+  --color-forest-light: var(--color-forest-light);
 
   /* ── Semantic status ── */
-  --color-success: #5db88a;
-  --color-success-muted: rgba(93, 184, 138, 0.15);
-  --color-warning: #d49353;
-  --color-warning-muted: rgba(212, 147, 83, 0.15);
-  --color-danger: #c46b6b;
-  --color-danger-muted: rgba(196, 107, 107, 0.15);
-  --color-info: #6b9ec4;
-  --color-info-muted: rgba(107, 158, 196, 0.15);
+  --color-success: var(--color-success);
+  --color-success-muted: var(--color-success-muted);
+  --color-warning: var(--color-warning);
+  --color-warning-muted: var(--color-warning-muted);
+  --color-danger: var(--color-danger);
+  --color-danger-muted: var(--color-danger-muted);
+  --color-info: var(--color-info);
+  --color-info-muted: var(--color-info-muted);
 
-  /* ── Mode tokens (Plan / Build) ── */
-  --color-mode-plan: #3c4b46; /* Forest Teal — Precision pillar */
-  --color-mode-plan-muted: rgba(60, 75, 70, 0.3);
-  --color-mode-plan-text: #8a9a9e;
-  --color-mode-plan-border: rgba(60, 75, 70, 0.3);
+  /* ── Mode tokens ── */
+  --color-mode-plan: var(--color-mode-plan);
+  --color-mode-plan-muted: var(--color-mode-plan-muted);
+  --color-mode-plan-text: var(--color-mode-plan-text);
+  --color-mode-plan-border: var(--color-mode-plan-border);
 
-  --color-mode-build: #6a4638; /* Terracotta — Artistry pillar */
-  --color-mode-build-muted: rgba(106, 70, 56, 0.3);
-  --color-mode-build-text: #d49353;
-  --color-mode-build-border: rgba(106, 70, 56, 0.3);
+  --color-mode-build: var(--color-mode-build);
+  --color-mode-build-muted: var(--color-mode-build-muted);
+  --color-mode-build-text: var(--color-mode-build-text);
+  --color-mode-build-border: var(--color-mode-build-border);
 
-  /* Plan Card accent — distinctive sky blue for identification */
-  --color-plan-card: #0ea5e9;
-  --color-plan-card-muted: rgba(14, 165, 233, 0.12);
-  --color-plan-card-border: rgba(14, 165, 233, 0.3);
-  --color-plan-card-text: #7dd3fc;
-  --color-plan-card-section-bg: rgba(14, 165, 233, 0.06);
-  --color-plan-card-accent: #6dc4b2;
-  --color-plan-card-phase-bg: rgba(31, 107, 94, 0.12);
-  --color-plan-card-phase-border: rgba(31, 107, 94, 0.25);
+  --color-mode-danger: var(--color-mode-danger);
+  --color-mode-danger-muted: var(--color-mode-danger-muted);
+  --color-mode-danger-text: var(--color-mode-danger-text);
+  --color-mode-danger-border: var(--color-mode-danger-border);
 
-  /* ── Panel / Pillar colors (Four Pillars of Craftsmanship) ── */
-  --color-panel-olive: #3a3531; /* Architecture */
-  --color-panel-terracotta: #6a4638; /* Artistry */
-  --color-panel-teal: #3c4b46; /* Precision */
-  --color-panel-navy: #283337; /* Vision */
+  /* ── Plan Card ── */
+  --color-plan-card: var(--color-plan-card);
+  --color-plan-card-muted: var(--color-plan-card-muted);
+  --color-plan-card-border: var(--color-plan-card-border);
+  --color-plan-card-text: var(--color-plan-card-text);
+  --color-plan-card-section-bg: var(--color-plan-card-section-bg);
+  --color-plan-card-accent: var(--color-plan-card-accent);
+  --color-plan-card-phase-bg: var(--color-plan-card-phase-bg);
+  --color-plan-card-phase-border: var(--color-plan-card-phase-border);
+
+  /* ── Panel colors ── */
+  --color-panel-olive: var(--color-panel-olive);
+  --color-panel-terracotta: var(--color-panel-terracotta);
+  --color-panel-teal: var(--color-panel-teal);
+  --color-panel-navy: var(--color-panel-navy);
 
   /* ── Agent-specific colors ── */
-  --color-agent-react: #7abfdb;
-  --color-agent-dotnet: #9b7fd4;
-  --color-agent-agentic: #d4a843;
-  --color-agent-postgres: #6b9ec4;
-  --color-agent-ux: #c87a9b;
-  --color-agent-git: #8a9a9e;
-  --color-agent-requirements: #5db88a;
-  --color-agent-codeplanner: #8a9a8e;
-  --color-agent-execution: #d49353;
-  --color-agent-cicd: #c46b6b;
-  --color-agent-cloud: #5bb8a8;
+  --color-agent-react: var(--color-agent-react);
+  --color-agent-dotnet: var(--color-agent-dotnet);
+  --color-agent-agentic: var(--color-agent-agentic);
+  --color-agent-postgres: var(--color-agent-postgres);
+  --color-agent-ux: var(--color-agent-ux);
+  --color-agent-git: var(--color-agent-git);
+  --color-agent-requirements: var(--color-agent-requirements);
+  --color-agent-codeplanner: var(--color-agent-codeplanner);
+  --color-agent-execution: var(--color-agent-execution);
+  --color-agent-cicd: var(--color-agent-cicd);
+  --color-agent-cloud: var(--color-agent-cloud);
 
   /* ── Special-purpose tokens ── */
-  --color-user-bubble: rgba(
-    184,
-    151,
-    106,
-    0.1
-  ); /* User message background (bumped for clearer separation) */
-  --color-grill: #c4714a; /* Grill mode accent (Jewel Copper) */
-  --color-grill-muted: rgba(196, 113, 74, 0.15);
-  --color-gold-glow: rgba(184, 151, 106, 0.15); /* Radial glow behind focal elements */
-  --color-gold-muted: #8b6f4a; /* Muted Gold for gradient endpoints */
+  --color-user-bubble: var(--color-user-bubble);
+  --color-grill: var(--color-grill);
+  --color-grill-muted: var(--color-grill-muted);
+  --color-gold-glow: var(--color-gold-glow);
+  --color-gold-muted: var(--color-gold-muted);
 
-  /* ── Component tokens (3rd layer) ── */
-  --color-button-primary-bg: var(--color-primary);
-  --color-button-primary-hover: var(--color-primary-hover);
-  --color-button-danger-bg: var(--color-danger);
+  /* ── Component tokens ── */
+  --color-button-primary-bg: var(--color-button-primary-bg);
+  --color-button-primary-hover: var(--color-button-primary-hover);
+  --color-button-danger-bg: var(--color-button-danger-bg);
 
-  --color-card-bg: rgba(184, 151, 106, 0.02); /* Near-transparent gold overlay */
-  --color-card-border: var(--color-border-subtle);
+  --color-card-bg: var(--color-card-bg);
+  --color-card-border: var(--color-card-border);
 
-  --color-input-bg: #0d1618; /* Slightly lighter than surface-base */
-  --color-input-border: var(--color-border-default);
-  --color-input-focus: var(--color-primary);
+  --color-input-bg: var(--color-input-bg);
+  --color-input-border: var(--color-input-border);
+  --color-input-focus: var(--color-input-focus);
 
-  --color-modal-bg: var(--color-surface-float);
-  --color-modal-border: var(--color-border-default);
+  --color-modal-bg: var(--color-modal-bg);
+  --color-modal-border: var(--color-modal-border);
 
-  --color-sidebar-bg: var(--color-surface-raised);
-  --color-sidebar-active: var(--color-primary-muted);
+  --color-sidebar-bg: var(--color-sidebar-bg);
+  --color-sidebar-active: var(--color-sidebar-active);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -171,7 +168,7 @@
   transform: scale(0.97);
 }
 
-/* ── Hover lift — Code Atelier card/button hover pattern ── */
+/* ── Hover lift — card/button hover pattern ── */
 .hover-lift {
   transition:
     transform var(--duration-normal) var(--ease-out),
@@ -179,13 +176,13 @@
 }
 .hover-lift:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 32px rgba(184, 151, 106, 0.12);
+  box-shadow: 0 8px 32px var(--color-hover-shadow);
 }
 
-/* ── Code Atelier button utilities ── */
+/* ── Button utilities ── */
 .btn-primary {
-  background: linear-gradient(135deg, #b8976a, #8b6f4a);
-  color: #090d0f;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-gold-muted));
+  color: var(--color-surface-base);
   font-family: var(--ca-font-display);
   font-weight: 500;
   font-size: 16px;
@@ -200,12 +197,12 @@
 }
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 32px rgba(184, 151, 106, 0.2);
+  box-shadow: 0 8px 32px var(--color-gold-glow);
 }
 
 .btn-secondary {
   background: transparent;
-  color: #b8976a;
+  color: var(--color-primary);
   font-family: var(--ca-font-display);
   font-weight: 500;
   font-size: 16px;
@@ -213,14 +210,14 @@
   letter-spacing: 0.15em;
   padding: 14px 40px;
   border-radius: 2px;
-  border: 1px solid rgba(184, 151, 106, 0.3);
+  border: 1px solid var(--color-border-default);
   transition:
     transform var(--duration-normal) var(--ease-out),
     box-shadow var(--duration-normal) var(--ease-out);
 }
 .btn-secondary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 32px rgba(184, 151, 106, 0.2);
+  box-shadow: 0 8px 32px var(--color-gold-glow);
 }
 
 /* ── UI label utility — uppercase Cormorant for buttons/nav/labels ── */
@@ -240,7 +237,7 @@
     @apply h-screen w-screen overflow-hidden;
   }
 
-  /* ── Code Atelier heading typography ── */
+  /* ── Heading typography ── */
   h1,
   h2 {
     font-family: var(--ca-font-body);
@@ -265,10 +262,10 @@
     font-family: var(--ca-font-mono);
   }
 
-  /* ── Text selection ── */
+  /* ── Text selection — uses theme vars ── */
   ::selection {
-    background: rgba(184, 151, 106, 0.3);
-    color: #c8b89a;
+    background: var(--color-selection-bg);
+    color: var(--color-selection-text);
   }
 
   /* ── Standardized transitions for all interactive elements ── */
@@ -315,15 +312,15 @@
 .prose {
   --tw-prose-body: var(--color-text-body);
   --tw-prose-headings: var(--color-text-primary);
-  --tw-prose-bold: var(--color-text-emphasis);    /* cool bright, not gold */
+  --tw-prose-bold: var(--color-text-emphasis); /* cool bright, not gold */
   --tw-prose-links: var(--color-accent);
-  --tw-prose-code: var(--color-code-inline);      /* soft teal, not gold */
+  --tw-prose-code: var(--color-code-inline); /* soft teal, not gold */
   --tw-prose-bullets: var(--color-text-secondary);
   --tw-prose-counters: var(--color-text-secondary);
   color: var(--color-text-body); /* explicit — don't rely on Tailwind prose-invert for dark mode */
-  font-size: 14px;        /* was 15px — tighter for chat density */
-  line-height: 1.55;      /* was 1.65 — less vertical air */
-  max-width: none;        /* let bubble container percentage caps handle width — responsive across resolutions */
+  font-size: 14px; /* was 15px — tighter for chat density */
+  line-height: 1.55; /* was 1.65 — less vertical air */
+  max-width: none; /* let bubble container percentage caps handle width — responsive across resolutions */
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -359,32 +356,32 @@
 }
 
 .prose h1 {
-  font-size: 1.2em;       /* was 1.35em — flatter hierarchy */
+  font-size: 1.2em; /* was 1.35em — flatter hierarchy */
   margin-top: 0.7em;
   margin-bottom: 0.35em;
 }
 
 .prose h2 {
-  font-size: 1.1em;       /* was 1.2em */
+  font-size: 1.1em; /* was 1.2em */
   margin-top: 0.6em;
   margin-bottom: 0.3em;
 }
 
 .prose h3 {
-  font-size: 1.05em;      /* was 1.1em */
+  font-size: 1.05em; /* was 1.1em */
   margin-top: 0.5em;
   margin-bottom: 0.25em;
 }
 
 .prose h4 {
-  font-size: 1em;         /* was 1.05em — same as body, bold is enough */
+  font-size: 1em; /* was 1.05em — same as body, bold is enough */
   margin-top: 0.4em;
   margin-bottom: 0.2em;
 }
 
 /* Bold — cool bright emphasis (not gold) */
 .prose strong {
-  color: var(--color-text-emphasis);    /* cool bright — emphasis via brightness, not warmth */
+  color: var(--color-text-emphasis); /* cool bright — emphasis via brightness, not warmth */
   font-weight: 600;
 }
 
@@ -399,7 +396,7 @@
   font-size: 0.88em;
   font-weight: 600;
   letter-spacing: 0.015em;
-  border: 1px solid rgba(184, 151, 106, 0.25);
+  border: 1px solid var(--color-border-default);
   margin-right: 0.2em;
   vertical-align: baseline;
 }
@@ -448,10 +445,16 @@
   font-size: 0.88em;
   padding: 0;
   background: none;
-  color: var(--color-code-inline);    /* #88c4ba soft teal — clearly code, not prose */
+  color: var(--color-code-inline); /* #88c4ba soft teal — clearly code, not prose */
   font-weight: 600;
   border: none;
   border-radius: 0;
+}
+
+/* Kill backtick decorations injected by @tailwindcss/typography */
+.prose :not(pre) > code::before,
+.prose :not(pre) > code::after {
+  content: none;
 }
 
 /* ── Agent questions — visual highlight so user-facing questions stand out ── */
@@ -464,14 +467,14 @@
 }
 
 .prose .agent-question p {
-  color: var(--color-text-emphasis);     /* cool bright — cohesive with info-blue card */
+  color: var(--color-text-emphasis); /* cool bright — cohesive with info-blue card */
   font-weight: 600;
   margin: 0;
 }
 
 /* ── Arrow indicators — teal functional markers ── */
 .prose .arrow-indicator {
-  color: var(--color-teal-text);    /* #6dc4b2 teal — functional marker, not decorative gold */
+  color: var(--color-teal-text); /* #6dc4b2 teal — functional marker, not decorative gold */
   font-weight: 700;
   padding: 0 0.1em;
 }
@@ -562,7 +565,7 @@
 
 /* Zebra striping for better scanability on tables with 4+ rows */
 .prose tbody tr:nth-child(even) {
-  background: rgba(184, 151, 106, 0.02);
+  background: var(--color-table-zebra);
 }
 
 .prose tbody tr:nth-child(even):hover {
@@ -622,7 +625,7 @@
   font-weight: 500;
 }
 
-/* Custom scrollbar styling — gold-tinted for Code Atelier */
+/* Custom scrollbar styling — uses theme tokens */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -633,16 +636,17 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(184, 151, 106, 0.2);
+  background: var(--color-scrollbar-thumb);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(184, 151, 106, 0.35);
+  background: var(--color-scrollbar-thumb-hover);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Grain overlay — subtle texture for Code Atelier atmosphere (3% opacity)
+   Grain overlay — subtle texture for dark themes (Code Atelier & Neon Forge)
+   Disabled for Porcelain via --grain-opacity: 0
    ═══════════════════════════════════════════════════════════════════════════ */
 body::after {
   content: '';
@@ -650,7 +654,7 @@ body::after {
   inset: 0;
   z-index: 9999;
   pointer-events: none;
-  opacity: 0.04;
+  opacity: var(--grain-opacity, 0.04);
   mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23g)'/%3E%3C/svg%3E");
 }
@@ -677,7 +681,9 @@ body::after {
    Typing dots — pulsing bounce for the "thinking" indicator
    ═══════════════════════════════════════════════════════════════════════════ */
 @keyframes typing-dot-bounce {
-  0%, 80%, 100% {
+  0%,
+  80%,
+  100% {
     transform: translateY(0);
     opacity: 0.4;
   }

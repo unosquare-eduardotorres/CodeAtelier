@@ -1,4 +1,4 @@
-import type { SDKExecuteResult } from './sdk-executor'
+import type { ExecutorResult } from './executor-types'
 import { turnUsageRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { chatAgentLogger } from '../logger'
@@ -54,7 +54,7 @@ export class AgentTokenTracker {
    * Returns the total tokens consumed (input + output) for the caller to accumulate.
    */
   recordTurn(
-    meta: SDKExecuteResult,
+    meta: ExecutorResult,
     opts: {
       turnCount: number
       conversationId: string
@@ -75,9 +75,10 @@ export class AgentTokenTracker {
     )
 
     // S8 + Strategy M: Log prompt cache effectiveness
+    // Hit rate = cacheRead / (input + cacheRead). cacheCreation is a separate write cost, not input processing.
     if (cacheReadInputTokens > 0 || cacheCreationInputTokens > 0) {
-      const totalInput = meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
-      const cacheHitRate = totalInput > 0 ? (cacheReadInputTokens / totalInput) * 100 : 0
+      const effectiveInput = meta.tokenUsage.input + cacheReadInputTokens
+      const cacheHitRate = effectiveInput > 0 ? (cacheReadInputTokens / effectiveInput) * 100 : 0
       this.log.info(
         `[PIPELINE:prompt-cache] read=${cacheReadInputTokens} creation=${cacheCreationInputTokens} hitRate=${cacheHitRate.toFixed(1)}%`
       )
@@ -90,15 +91,15 @@ export class AgentTokenTracker {
     this.cacheStats.turns++
 
     // Strategy θ: Per-turn cost breakdown for diagnostics
-    const totalInputForRate =
-      meta.tokenUsage.input + cacheReadInputTokens + cacheCreationInputTokens
+    // Hit rate denominator excludes cacheCreation (write cost, not input processing)
+    const effectiveInputForRate = meta.tokenUsage.input + cacheReadInputTokens
     this.turnBreakdown.push({
       turn: opts.turnCount,
       inputTokens: meta.tokenUsage.input,
       outputTokens: meta.tokenUsage.output,
       cacheReadTokens: cacheReadInputTokens,
       cacheCreationTokens: cacheCreationInputTokens,
-      cacheHitRate: totalInputForRate > 0 ? (cacheReadInputTokens / totalInputForRate) * 100 : 0,
+      cacheHitRate: effectiveInputForRate > 0 ? (cacheReadInputTokens / effectiveInputForRate) * 100 : 0,
       timestamp: Date.now()
     })
 
@@ -142,9 +143,9 @@ export class AgentTokenTracker {
   getCacheEfficiency(conversationId?: string | null): CacheEfficiencyReport {
     // If in-memory stats are available, use them (hot path during active session)
     if (this.cacheStats.turns > 0) {
-      const totalWithCache =
-        this.cacheStats.totalInput + this.cacheStats.cacheRead + this.cacheStats.cacheCreation
-      const hitRate = totalWithCache > 0 ? (this.cacheStats.cacheRead / totalWithCache) * 100 : 0
+      // Hit rate = cacheRead / (input + cacheRead). Excludes cacheCreation (write cost).
+      const effectiveInput = this.cacheStats.totalInput + this.cacheStats.cacheRead
+      const hitRate = effectiveInput > 0 ? (this.cacheStats.cacheRead / effectiveInput) * 100 : 0
       return {
         hitRate,
         savedTokens: this.cacheStats.cacheRead,
@@ -166,19 +167,20 @@ export class AgentTokenTracker {
             totalInput += t.inputTokens
             totalCacheRead += t.cacheReadTokens
             totalCacheCreation += t.cacheCreationTokens
-            const totalForRate = t.inputTokens + t.cacheReadTokens + t.cacheCreationTokens
+            const effectiveForRate = t.inputTokens + t.cacheReadTokens
             return {
               turn: t.turnNumber,
               inputTokens: t.inputTokens,
               outputTokens: t.outputTokens,
               cacheReadTokens: t.cacheReadTokens,
               cacheCreationTokens: t.cacheCreationTokens,
-              cacheHitRate: totalForRate > 0 ? (t.cacheReadTokens / totalForRate) * 100 : 0,
+              cacheHitRate: effectiveForRate > 0 ? (t.cacheReadTokens / effectiveForRate) * 100 : 0,
               timestamp: new Date(t.createdAt).getTime()
             }
           })
-          const totalWithCache = totalInput + totalCacheRead + totalCacheCreation
-          const hitRate = totalWithCache > 0 ? (totalCacheRead / totalWithCache) * 100 : 0
+          // Hit rate excludes cacheCreation — it's a write cost, not input processing
+          const effectiveTotal = totalInput + totalCacheRead
+          const hitRate = effectiveTotal > 0 ? (totalCacheRead / effectiveTotal) * 100 : 0
           return {
             hitRate,
             savedTokens: totalCacheRead,

@@ -1,12 +1,13 @@
 /**
- * AuditAgentService — orchestrator for workspace health audits.
+ * AuditAgentService — multi-workspace orchestrator for workspace health audits.
  *
- * A sibling to ChatAgentService that owns its own AgentSessionService.
- * Runs auditors sequentially (one at a time), each with multi-round
- * coverage-tracked sessions. Emits 'progress', 'result',
- * 'intermediate_findings', and 'complete' events for the IPC layer.
+ * Maintains per-workspace state so audits can run concurrently across different
+ * workspaces. Each workspace gets its own running flag, abort controller, and
+ * active session. Events are tagged with workspaceId for IPC routing.
  *
- * Chat stays alive and independent — this service has no overlap with it.
+ * Runs auditors sequentially within a workspace (one at a time), each with
+ * multi-round coverage-tracked sessions. Emits 'progress', 'result',
+ * 'intermediate_findings', 'stream', and 'complete' events for the IPC layer.
  */
 
 import { EventEmitter } from 'node:events'
@@ -75,15 +76,39 @@ export interface AuditCompletePayload {
   overallScore: number | null
 }
 
+// ── Per-workspace state ───────────────────────────────────────────────────
+
+interface AuditWorkspaceState {
+  running: boolean
+  abortController: AbortController | null
+  session: AgentSessionService | null
+}
+
 // ── Service ────────────────────────────────────────────────────────────────
 
 export class AuditAgentService extends EventEmitter {
-  private session: AgentSessionService | null = null
-  private abortController: AbortController | null = null
-  private running = false
+  private workspaceStates = new Map<string, AuditWorkspaceState>()
 
+  /** Check if ANY audit is running (backward compat). */
   get isRunning(): boolean {
-    return this.running
+    for (const state of this.workspaceStates.values()) {
+      if (state.running) return true
+    }
+    return false
+  }
+
+  /** Check if a specific workspace has a running audit. */
+  isRunningForWorkspace(workspaceId: string): boolean {
+    return this.workspaceStates.get(workspaceId)?.running ?? false
+  }
+
+  private getOrCreateState(workspaceId: string): AuditWorkspaceState {
+    let state = this.workspaceStates.get(workspaceId)
+    if (!state) {
+      state = { running: false, abortController: null, session: null }
+      this.workspaceStates.set(workspaceId, state)
+    }
+    return state
   }
 
   /**
@@ -98,18 +123,20 @@ export class AuditAgentService extends EventEmitter {
     auditRunId: string
     llmProvider?: LLMProvider
   }): Promise<void> {
-    if (this.running) {
-      auditLog.warn('[audit] Already running — ignoring duplicate start')
+    const state = this.getOrCreateState(params.workspaceId)
+
+    if (state.running) {
+      auditLog.warn(`[audit] Already running for workspace ${params.workspaceId} — ignoring`)
       return
     }
 
-    this.running = true
-    this.abortController = new AbortController()
+    state.running = true
+    state.abortController = new AbortController()
 
     const completedResults: AuditResultPayload[] = []
 
     for (const trackId of params.selectedTracks) {
-      if (this.abortController.signal.aborted) {
+      if (state.abortController.signal.aborted) {
         this.emit('progress', {
           trackId,
           status: 'cancelled'
@@ -150,29 +177,44 @@ export class AuditAgentService extends EventEmitter {
     // Calculate overall score
     const overallScore = calculateOverallScore(completedResults, AUDIT_TRACKS)
 
-    this.running = false
-    this.abortController = null
+    state.running = false
+    state.abortController = null
     this.emit('complete', { overallScore } satisfies AuditCompletePayload)
   }
 
-  /** Cancel the running audit. Keeps completed results, cancels remaining. */
-  cancel(): void {
-    auditLog.info('[audit] Cancel requested')
-    this.abortController?.abort()
-
-    // If a session is currently running, cancel its query
-    if (this.session) {
-      try {
-        this.session.cancelCurrentQuery()
-      } catch {
-        /* non-fatal */
+  /** Cancel the running audit for a specific workspace (or all if no workspaceId). */
+  cancel(workspaceId?: string): void {
+    if (workspaceId) {
+      auditLog.info(`[audit] Cancel requested for workspace ${workspaceId}`)
+      const state = this.workspaceStates.get(workspaceId)
+      if (state) {
+        state.abortController?.abort()
+        if (state.session) {
+          try {
+            state.session.cancelCurrentQuery()
+          } catch {
+            /* non-fatal */
+          }
+        }
+      }
+    } else {
+      // Cancel all (backward compat)
+      auditLog.info('[audit] Cancel all requested')
+      for (const [, state] of this.workspaceStates) {
+        state.abortController?.abort()
+        if (state.session) {
+          try {
+            state.session.cancelCurrentQuery()
+          } catch {
+            /* non-fatal */
+          }
+        }
       }
     }
   }
 
   /**
    * Run a single track re-run. Emits 'progress', 'result' (no 'complete').
-   * Used for re-running individual auditors from the report view.
    */
   async runSingleTrack(params: {
     workspaceId: string
@@ -181,13 +223,15 @@ export class AuditAgentService extends EventEmitter {
     mode: AuditMode
     llmProvider?: LLMProvider
   }): Promise<void> {
-    if (this.running) {
-      auditLog.warn('[audit:rerun] Already running — ignoring')
+    const state = this.getOrCreateState(params.workspaceId)
+
+    if (state.running) {
+      auditLog.warn(`[audit:rerun] Already running for workspace ${params.workspaceId} — ignoring`)
       return
     }
 
-    this.running = true
-    this.abortController = new AbortController()
+    state.running = true
+    state.abortController = new AbortController()
 
     this.emit('progress', {
       trackId: params.trackId,
@@ -208,8 +252,8 @@ export class AuditAgentService extends EventEmitter {
       }
       this.emit('result', failResult)
     } finally {
-      this.running = false
-      this.abortController = null
+      state.running = false
+      state.abortController = null
     }
   }
 
@@ -222,6 +266,7 @@ export class AuditAgentService extends EventEmitter {
     mode: AuditMode
     llmProvider?: LLMProvider
   }): Promise<AuditResultPayload> {
+    const state = this.getOrCreateState(params.workspaceId)
     let lastError: Error | null = null
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -235,7 +280,7 @@ export class AuditAgentService extends EventEmitter {
       }
 
       try {
-        return await this.executeMultiRoundAudit(params)
+        return await this.executeMultiRoundAudit(params, state)
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err))
         const isRetryable = this.isRetryableError(lastError)
@@ -254,7 +299,6 @@ export class AuditAgentService extends EventEmitter {
     throw lastError!
   }
 
-  /** Determine whether an error is worth retrying. */
   private isRetryableError(err: Error): boolean {
     const msg = err.message.toLowerCase()
     return (
@@ -270,18 +314,20 @@ export class AuditAgentService extends EventEmitter {
 
   // ── Private: multi-round audit orchestration ──────────────────────────
 
-  private async executeMultiRoundAudit(params: {
-    workspaceId: string
-    workspacePath: string
-    trackId: AuditTrackId
-    mode: AuditMode
-    llmProvider?: LLMProvider
-  }): Promise<AuditResultPayload> {
+  private async executeMultiRoundAudit(
+    params: {
+      workspaceId: string
+      workspacePath: string
+      trackId: AuditTrackId
+      mode: AuditMode
+      llmProvider?: LLMProvider
+    },
+    state: AuditWorkspaceState
+  ): Promise<AuditResultPayload> {
     const isLocal = params.llmProvider === 'local-llm'
     const batchSize = this.getBatchSize(isLocal)
     const maxRounds = this.getMaxRounds(isLocal)
 
-    // Phase 1: Discover relevant files for this track
     const discovery = discoverAuditableFiles(params.workspacePath, params.trackId)
     const coverageTracker = new AuditCoverageTracker()
     const allFindings: AuditFinding[] = []
@@ -292,26 +338,23 @@ export class AuditAgentService extends EventEmitter {
       `[audit:${params.trackId}] Discovery found ${discovery.totalFiles} files, batch=${batchSize}, maxRounds=${maxRounds}`
     )
 
-    // Emit discovery summary to UI
     this.emit('progress', {
       trackId: params.trackId,
       status: 'running',
       streamChunk: `📂 Discovered ${discovery.totalFiles} relevant files (${discovery.priorityFiles.length} priority). Starting multi-round inspection...\n\n`
     } satisfies AuditProgressPayload)
 
-    // Phase 2: Run inspection rounds
     let remainingFiles = [...discovery.filePaths]
     let roundNumber = 0
 
     while (
       remainingFiles.length > 0 &&
       roundNumber < maxRounds &&
-      !this.abortController?.signal.aborted
+      !state.abortController?.signal.aborted
     ) {
       roundNumber++
       const batch = remainingFiles.slice(0, batchSize)
 
-      // Pre-round separator + announcement
       this.emit('progress', {
         trackId: params.trackId,
         status: 'running',
@@ -320,10 +363,6 @@ export class AuditAgentService extends EventEmitter {
             ? `\n---\n\n🔍 **Round ${roundNumber}/${maxRounds}** — Inspecting ${batch.length} files...\n\n`
             : `\n\n---\n\n🔄 **Round ${roundNumber}/${maxRounds}** — Inspecting next ${batch.length} files (${remainingFiles.length - batch.length} remaining)...\n\n`
       } satisfies AuditProgressPayload)
-
-      auditLog.info(
-        `[audit:${params.trackId}] Round ${roundNumber}: inspecting ${batch.length} files (${remainingFiles.length} remaining)`
-      )
 
       try {
         const roundResult = await this.runAuditRound({
@@ -338,22 +377,18 @@ export class AuditAgentService extends EventEmitter {
           coverageTracker,
           isFirstRound: roundNumber === 1,
           llmProvider: params.llmProvider
-        })
+        }, state)
 
-        // Collect findings from this round
         allFindings.push(...roundResult.findings)
 
-        // Update remaining files (remove inspected ones)
         const inspected = new Set(coverageTracker.getStats().filesInspected)
         remainingFiles = remainingFiles.filter((f) => !inspected.has(f))
 
-        // If model emitted a score, capture it (last one wins)
         if (roundResult.score !== null) {
           modelScore = roundResult.score
           modelSummary = roundResult.summary
         }
 
-        // Emit intermediate progress to UI
         const stats = coverageTracker.getStats()
         this.emit('progress', {
           trackId: params.trackId,
@@ -361,7 +396,6 @@ export class AuditAgentService extends EventEmitter {
           streamChunk: `\n\n📊 Round ${roundNumber}: ${roundResult.findings.length} finding(s), ${stats.fileCount}/${discovery.totalFiles} files covered\n\n`
         } satisfies AuditProgressPayload)
 
-        // Emit intermediate findings for live UI display
         this.emit('intermediate_findings', {
           trackId: params.trackId,
           findings: allFindings,
@@ -372,7 +406,6 @@ export class AuditAgentService extends EventEmitter {
           batchSize
         } satisfies AuditIntermediateFindingsPayload)
 
-        // Early termination: enough coverage
         if (this.hasAdequateCoverage(allFindings, stats, discovery.totalFiles)) {
           auditLog.info(
             `[audit:${params.trackId}] Adequate coverage reached after round ${roundNumber}`
@@ -385,23 +418,19 @@ export class AuditAgentService extends EventEmitter {
           roundErr instanceof Error ? roundErr.message : roundErr
         )
 
-        // If aborted (cancel/pause), stop immediately — don't continue to next round
-        if (this.abortController?.signal.aborted) {
+        if (state.abortController?.signal.aborted) {
           auditLog.info(`[audit:${params.trackId}] Aborted — stopping multi-round loop`)
           break
         }
 
-        // Move un-inspected files from this batch back to remaining
         const inspected = new Set(coverageTracker.getStats().filesInspected)
         const uninspectedFromBatch = batch.filter((f) => !inspected.has(f))
         remainingFiles = [...uninspectedFromBatch, ...remainingFiles.slice(batch.length)]
 
-        // If we have findings from previous rounds, continue; otherwise re-throw
         if (allFindings.length === 0 && roundNumber === 1) {
           throw roundErr
         }
 
-        // Emit error notice and continue to next round
         this.emit('progress', {
           trackId: params.trackId,
           status: 'running',
@@ -412,10 +441,6 @@ export class AuditAgentService extends EventEmitter {
 
     // Phase 3: Compute final result with coverage gate
     const stats = coverageTracker.getStats()
-
-    // Score resolution: model-emitted score wins, otherwise infer from findings.
-    // Guard: if the only findings are synthetic recovery "info" entries (no model score),
-    // the inferred score of 100 is misleading — cap at 50 ("inconclusive").
     let finalScore: number
     if (modelScore != null) {
       finalScore = modelScore
@@ -437,12 +462,6 @@ export class AuditAgentService extends EventEmitter {
     gated.coveragePercent =
       discovery.totalFiles > 0 ? Math.round((stats.fileCount / discovery.totalFiles) * 100) : null
 
-    auditLog.info(
-      `[audit:${params.trackId}] completed — score=${gated.score}, findings=${gated.findings.length}, ` +
-        `coverage=${stats.fileCount}/${discovery.totalFiles} (${gated.coveragePercent ?? '?'}%), ` +
-        `sufficient=${gated.isSufficient}`
-    )
-
     return {
       trackId: params.trackId,
       score: gated.score,
@@ -457,20 +476,22 @@ export class AuditAgentService extends EventEmitter {
 
   // ── Private: single round execution ───────────────────────────────────
 
-  private async runAuditRound(params: {
-    workspaceId: string
-    workspacePath: string
-    trackId: AuditTrackId
-    mode: AuditMode
-    batch: string[]
-    roundNumber: number
-    previousFindings: AuditFinding[]
-    remainingFileCount: number
-    coverageTracker: AuditCoverageTracker
-    isFirstRound: boolean
-    llmProvider?: LLMProvider
-  }): Promise<{ findings: AuditFinding[]; score: number | null; summary: string }> {
-    // Build round context for the adapter (rounds > 1 get continuation context)
+  private async runAuditRound(
+    params: {
+      workspaceId: string
+      workspacePath: string
+      trackId: AuditTrackId
+      mode: AuditMode
+      batch: string[]
+      roundNumber: number
+      previousFindings: AuditFinding[]
+      remainingFileCount: number
+      coverageTracker: AuditCoverageTracker
+      isFirstRound: boolean
+      llmProvider?: LLMProvider
+    },
+    state: AuditWorkspaceState
+  ): Promise<{ findings: AuditFinding[]; score: number | null; summary: string }> {
     const roundContext = params.isFirstRound
       ? undefined
       : {
@@ -488,13 +509,12 @@ export class AuditAgentService extends EventEmitter {
       llmProvider: params.llmProvider
     })
 
-    this.session = new AgentSessionService(adapter)
+    const session = new AgentSessionService(adapter)
+    state.session = session
 
-    // Wire coverage tracker + streaming
-    this.session.on('chunk', (chunk: StreamChunk) => {
+    session.on('chunk', (chunk: StreamChunk) => {
       params.coverageTracker.onChunk(chunk)
 
-      // Filter raw API error text — replace with user-friendly notice
       if (chunk.type === 'text' && chunk.content && this.isApiErrorText(chunk.content)) {
         auditLog.warn(
           `[audit:${params.trackId}] Suppressed API error from stream: ${chunk.content.slice(0, 150)}`
@@ -507,7 +527,6 @@ export class AuditAgentService extends EventEmitter {
         return
       }
 
-      // Continue emitting progress for status tracking (backwards compat)
       if (chunk.type === 'text' && chunk.content) {
         this.emit('progress', {
           trackId: params.trackId,
@@ -515,35 +534,26 @@ export class AuditAgentService extends EventEmitter {
           streamChunk: chunk.content
         } satisfies AuditProgressPayload)
       }
-      // Forward the full chunk for chat-like rendering
       this.emit('stream', { trackId: params.trackId, chunk })
     })
 
     try {
-      // Start session in plan mode (read-only)
-      await this.session.start(params.workspacePath, 'plan')
+      await session.start(params.workspacePath, 'plan')
 
-      // Build the message for this round
       const message = params.isFirstRound
         ? 'Begin your audit.'
         : this.buildContinuationPrompt(params)
 
       const syntheticConvId = `audit-${params.trackId}-r${params.roundNumber}-${Date.now()}`
-      await this.session.send(message, syntheticConvId, [])
+      await session.send(message, syntheticConvId, [])
 
-      // ── Check if session was killed by timeout ──
-      if (this.session.wasTimedOut()) {
+      if (session.wasTimedOut()) {
         auditLog.warn(`[audit:${params.trackId}] Round ${params.roundNumber} timed out`)
-        // Still parse what we got — partial findings are valuable
       }
 
-      // Collect the full response
-      const responseText = this.session.getStreamedContent()
-
-      // Parse structured JSON from the auditor's response
+      const responseText = session.getStreamedContent()
       const parsed = parseAuditResponse(responseText)
 
-      // ── Recovery: if first round, no findings, long response — try tool-free nudge ──
       if (
         params.isFirstRound &&
         parsed.score === 0 &&
@@ -560,11 +570,11 @@ export class AuditAgentService extends EventEmitter {
       }
     } finally {
       try {
-        await this.session.stop()
+        await session.stop()
       } catch {
         /* best-effort cleanup */
       }
-      this.session = null
+      state.session = null
     }
   }
 
@@ -579,13 +589,7 @@ export class AuditAgentService extends EventEmitter {
     )
 
     try {
-      const { query } = await import('@anthropic-ai/claude-agent-sdk')
-      const { authProvider } = await import('./auth-provider')
-
-      const apiKey = authProvider.getApiKey()
-      if (apiKey && !process.env.ANTHROPIC_API_KEY) {
-        process.env.ANTHROPIC_API_KEY = apiKey
-      }
+      const { execFileSync } = await import('node:child_process')
 
       const nudgePrompt =
         `Your previous audit analysis is below. You investigated the codebase but did not emit any finding blocks.\n\n` +
@@ -594,33 +598,18 @@ export class AuditAgentService extends EventEmitter {
         '```json\n{"score": <0-100>, "summary": "<2-3 sentences>", "findings": [{"severity": "...", "title": "...", "description": "...", "filePath": "...", "recommendation": "..."}]}\n```\n\n' +
         `Score conservatively. Include findings for what you DID inspect. Output ONLY the JSON block.`
 
-      const nudgeResult = query({
-        prompt: nudgePrompt,
-        options: {
-          model: modelConfigService.getModel(params.workspacePath, 'da-vinci:plan'),
-          systemPrompt: 'You are an audit result formatter. Output only the requested JSON block.',
-          permissionMode: 'default',
-          maxTurns: 1,
-          abortController: new AbortController()
-        }
+      const nudgeText = execFileSync('claude', [
+        '-p', nudgePrompt,
+        '--model', modelConfigService.getModel(params.workspacePath, 'da-vinci:plan'),
+        '--system-prompt', 'You are an audit result formatter. Output only the requested JSON block.',
+        '--permission-mode', 'plan',
+        '--max-turns', '1',
+        '--output-format', 'text'
+      ], {
+        encoding: 'utf-8',
+        timeout: 60_000,
+        cwd: params.workspacePath
       })
-
-      let nudgeText = ''
-      for await (const msg of nudgeResult) {
-        const m = msg as Record<string, unknown>
-        if (m.type === 'stream_event') {
-          const event = m.event as Record<string, unknown> | undefined
-          if (event?.type === 'content_block_delta') {
-            const delta = event.delta as Record<string, unknown> | undefined
-            if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-              nudgeText += delta.text
-            }
-          }
-        }
-        if (m.type === 'result' && typeof m.result === 'string') {
-          nudgeText = m.result
-        }
-      }
 
       const nudgeParsed = parseAuditResponse(nudgeText)
 
@@ -638,30 +627,26 @@ export class AuditAgentService extends EventEmitter {
       auditLog.warn(`[audit:${params.trackId}] Tool-free recovery failed:`, nudgeErr)
     }
 
-    auditLog.warn(
-      `[audit:${params.trackId}] No structured result extracted — preserving analysis text as report`
-    )
-
-    // Preserve the analysis text as the summary so the user sees what the auditor found.
-    // Take the last ~1500 chars which typically contain the conclusion/summary.
     const analysisText = responseText.trim()
     const preservedSummary =
       analysisText.length > 1500 ? analysisText.slice(-1500).trim() : analysisText
 
-    // Create a synthetic "info" finding so the report always has content to show.
-    // Without this, the UI shows an empty report which looks like a silent failure.
     const syntheticFinding: AuditFinding = {
       id: randomUUID(),
       severity: 'info',
       title: `${params.trackId} audit analysis completed`,
-      description: preservedSummary || 'The auditor completed its analysis but did not emit structured findings. Review the stream output above for details.',
-      recommendation: 'Re-run this audit track to attempt structured extraction. If the issue persists, the codebase may use patterns the auditor cannot parse into discrete findings.'
+      description:
+        preservedSummary ||
+        'The auditor completed its analysis but did not emit structured findings. Review the stream output above for details.',
+      recommendation:
+        'Re-run this audit track to attempt structured extraction. If the issue persists, the codebase may use patterns the auditor cannot parse into discrete findings.'
     }
 
     return {
       findings: [syntheticFinding],
       score: null,
-      summary: preservedSummary || 'Audit analysis completed — structured findings could not be extracted.'
+      summary:
+        preservedSummary || 'Audit analysis completed — structured findings could not be extracted.'
     }
   }
 
@@ -684,7 +669,6 @@ export class AuditAgentService extends EventEmitter {
     return isLocal ? 15 : 5
   }
 
-  /** Build a continuation prompt for rounds > 1. */
   private buildContinuationPrompt(params: {
     trackId: AuditTrackId
     batch: string[]
@@ -704,29 +688,33 @@ export class AuditAgentService extends EventEmitter {
     )
   }
 
-  /** Summarize previous findings for continuation context. */
   private summarizePreviousFindings(findings: AuditFinding[]): string {
     if (findings.length === 0) return 'No findings yet.'
     return findings
-      .slice(-10) // Last 10 to avoid context overflow
+      .slice(-10)
       .map(
         (f) => `- [${f.severity.toUpperCase()}] ${f.title}${f.filePath ? ` (${f.filePath})` : ''}`
       )
       .join('\n')
   }
 
-  /** Check if we have enough coverage to stop early. */
   private hasAdequateCoverage(
     findings: AuditFinding[],
     stats: AuditCoverageStats,
     totalFiles: number
   ): boolean {
-    // Stop if we've inspected >= 60% of files OR have enough diverse findings
     const coveragePercent = totalFiles > 0 ? stats.fileCount / totalFiles : 0
     const hasEnoughFindings = findings.length >= 8
     const hasEnoughCoverage = coveragePercent >= 0.6
 
     return hasEnoughFindings && hasEnoughCoverage
+  }
+
+  /** Graceful shutdown — cancel all audits and clear state. Called on app quit. */
+  async shutdown(): Promise<void> {
+    auditLog.info(`[audit] Shutdown initiated — ${this.workspaceStates.size} active states`)
+    this.cancel() // Cancels all workspace audits
+    this.workspaceStates.clear()
   }
 }
 
@@ -736,9 +724,6 @@ function calculateOverallScore(
   results: AuditResultPayload[],
   tracks: Record<AuditTrackId, AuditTrack>
 ): number | null {
-  // Include all completed tracks in the weighted average — even score 0 is a valid
-  // result (the auditor ran, inspected files, and found critical issues). Only
-  // exclude non-completed tracks (failed/cancelled/pending).
   const completed = results.filter((r) => r.status === 'completed')
   if (completed.length === 0) return null
 

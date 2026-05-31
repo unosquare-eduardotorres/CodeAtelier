@@ -1,0 +1,626 @@
+/**
+ * OpenCodeEventNormalizer — maps OpenCode SSE events to StreamChunks.
+ * Extracted from the 438-line normalizeEvent switch statement in opencode-executor.ts.
+ *
+ * Each handler method is focused on a single event type (5-30 lines each).
+ */
+
+import type { StreamChunk } from './agent-base.service'
+import { summarizeToolInput } from './index'
+import { extractResultSummary } from '../ipc/tool-result-summarizer'
+import log from 'electron-log/main'
+
+const openCodeLog = log.scope('OpenCode')
+
+/** GAP-11: Transient error patterns — mirrors TRANSIENT_ERROR_PATTERNS from executor */
+const TRANSIENT_PATTERNS = [
+  /rate.?limit/i,
+  /overloaded/i,
+  /server_is_overloaded/i,
+  /too many requests/i,
+  /503/,
+  /429/,
+  /ECONNRESET/,
+  /ETIMEDOUT/,
+  /ECONNREFUSED/,
+  /network/i,
+  /timeout/i
+]
+
+/** Token usage tracker passed into normalizeEvent */
+export interface ExecutorTokenUsage {
+  input: number
+  output: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+}
+
+/** State references from the OpenCodeExecutor that handlers may need */
+export interface NormalizerState {
+  childSessions: Map<string, Set<string>>
+  sessionMap: Map<string, string>
+  serverReadyResolve?: () => void
+  /** 6C-2: Last known finish reason from session.updated events */
+  lastFinishReason?: string
+  /** GAP-12: Last emitted context usage percentage — avoids flooding UI with micro-updates */
+  lastContextPercentage?: number
+}
+
+type EventProperties = Record<string, unknown>
+
+type EventHandler = (
+  properties: EventProperties,
+  sessionId: string,
+  tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+) => StreamChunk[]
+
+// ── Per-event-type handler functions ──
+
+function handleMessagePartUpdated(properties: EventProperties): StreamChunk[] {
+  const chunks: StreamChunk[] = []
+  const part = properties.part as Record<string, unknown> | undefined
+
+  if (part?.type === 'text') {
+    const text = part.content as string | undefined
+    if (text) chunks.push({ type: 'text', content: text })
+  }
+
+  if (part?.type === 'tool-invocation') {
+    const toolName = part.toolName as string | undefined
+    const toolId = part.toolCallId as string | undefined
+    const state = part.state as string | undefined
+
+    if (state === 'call' && toolName) {
+      chunks.push({ type: 'tool_use', toolName, toolId })
+    }
+
+    if (state === 'partial' && toolName) {
+      const partialArgs = part.args as Record<string, unknown> | undefined
+      if (partialArgs) {
+        const inputPreview = summarizeToolInput(toolName, partialArgs)
+        if (inputPreview) {
+          chunks.push({
+            type: 'tool_progress',
+            toolName,
+            toolId,
+            toolInput: inputPreview,
+            content: `${toolName}: ${inputPreview}`
+          })
+        }
+      }
+    }
+
+    if (state === 'result') {
+      const result = part.result as string | undefined
+      const resultStr = typeof result === 'string' ? result : JSON.stringify(result)
+      chunks.push({
+        type: 'tool_result',
+        toolName: toolName ?? 'unknown',
+        toolId,
+        content: resultStr
+      })
+
+      // Generate a human-readable tool_use_summary
+      const toolNameStr = toolName ?? 'unknown'
+      const resultSummaryObj = extractResultSummary(toolNameStr, resultStr)
+      let inputSummary: string | undefined
+      const toolInput = part.args as Record<string, unknown> | undefined
+      if (toolInput) inputSummary = summarizeToolInput(toolNameStr, toolInput)
+
+      if (resultSummaryObj?.result || inputSummary) {
+        chunks.push({
+          type: 'tool_use_summary',
+          toolName: toolNameStr,
+          toolId,
+          content: [
+            inputSummary ? `Input: ${inputSummary}` : '',
+            resultSummaryObj?.result ? `Result: ${resultSummaryObj.result}` : ''
+          ]
+            .filter(Boolean)
+            .join(' — ')
+        })
+      }
+    }
+  }
+
+  if (part?.type === 'thinking') {
+    const thinking = part.content as string | undefined
+    if (thinking) chunks.push({ type: 'thinking', content: thinking })
+  }
+
+  // 6C-1: Handle 'reasoning' / 'reasoning-delta' part type (same UI as thinking)
+  if (part?.type === 'reasoning' || part?.type === 'reasoning-delta') {
+    const reasoning = part.content as string | undefined
+    if (reasoning) chunks.push({ type: 'thinking', content: reasoning })
+  }
+
+  // GAP-9: Surface structured output from agent response
+  if (part?.type === 'structured_output' || part?.type === 'structured-output') {
+    const data = part.content ?? part.data ?? part.result
+    if (data) {
+      chunks.push({
+        type: 'structured_output',
+        structuredOutput: {
+          data,
+          schemaName: part.schemaName as string | undefined
+        },
+        content: typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+      })
+    }
+  }
+
+  return chunks
+}
+
+function handleSessionUpdated(
+  properties: EventProperties,
+  _sessionId: string,
+  tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  const chunks: StreamChunk[] = []
+  const usage = properties.usage as Record<string, number> | undefined
+  if (usage) {
+    tokenUsage.input = usage.inputTokens ?? tokenUsage.input
+    tokenUsage.output = usage.outputTokens ?? tokenUsage.output
+    tokenUsage.cacheReadInputTokens = usage.cacheReadInputTokens ?? tokenUsage.cacheReadInputTokens
+    tokenUsage.cacheCreationInputTokens =
+      usage.cacheCreationInputTokens ?? tokenUsage.cacheCreationInputTokens
+  }
+
+  // GAP-12: Emit per-turn context usage updates (gated by 2% minimum delta)
+  if (usage?.inputTokens && usage?.contextWindowSize) {
+    const percentage = Math.round((usage.inputTokens / usage.contextWindowSize) * 100)
+    const lastPct = state.lastContextPercentage ?? 0
+    if (Math.abs(percentage - lastPct) >= 2) {
+      state.lastContextPercentage = percentage
+      chunks.push({
+        type: 'context_usage_update',
+        contextUsageUpdate: {
+          inputTokens: usage.inputTokens,
+          contextWindowSize: usage.contextWindowSize,
+          percentage
+        }
+      })
+    }
+  }
+
+  // 6C-2: Track finishReason for terminal status mapping
+  const finishReason = properties.finishReason as string | undefined
+  if (finishReason) {
+    state.lastFinishReason = finishReason
+    openCodeLog.info(`[opencode] Session finishReason: ${finishReason}`)
+
+    // Emit context_exhausted signal when context window is full
+    if (finishReason === 'length') {
+      chunks.push({
+        type: 'compact_boundary',
+        content: 'Context window exhausted — compaction needed'
+      })
+    }
+  }
+
+  return chunks
+}
+
+function handleSessionError(properties: EventProperties): StreamChunk[] {
+  const error = properties.error as string | undefined
+  if (!error) return []
+
+  // GAP-11: Classify transient vs permanent errors. Transient errors emit
+  // api_retry instead of error, giving the UI a more accurate status indicator.
+  const isTransient = TRANSIENT_PATTERNS.some((p) => p.test(error))
+  if (isTransient) {
+    openCodeLog.info(`[opencode] Transient error detected — UI will show retry status: ${error}`)
+    return [
+      {
+        type: 'api_retry',
+        content: `Transient error: ${error}`,
+        retryInfo: {
+          attempt: 1,
+          maxRetries: 3,
+          retryDelayMs: 2000,
+          errorStatus: null
+        }
+      }
+    ]
+  }
+
+  return [{ type: 'error', error }]
+}
+
+function handleSessionCompacted(properties: EventProperties): StreamChunk[] {
+  const chunks: StreamChunk[] = [{ type: 'compact_boundary', content: 'OpenCode compaction' }]
+
+  // 6C-4: Emit context usage reset so the UI badge refreshes post-compaction
+  const usage = properties.usage as Record<string, number> | undefined
+  if (usage?.inputTokens && usage?.contextWindowSize) {
+    chunks.push({
+      type: 'context_usage_update',
+      contextUsageUpdate: {
+        inputTokens: usage.inputTokens,
+        contextWindowSize: usage.contextWindowSize,
+        percentage: Math.round((usage.inputTokens / usage.contextWindowSize) * 100)
+      }
+    })
+  } else {
+    // Estimate: compaction typically reduces to ~30% usage
+    chunks.push({
+      type: 'context_usage_update',
+      contextUsageUpdate: { inputTokens: 0, contextWindowSize: 0, percentage: 30 }
+    })
+  }
+
+  return chunks
+}
+
+function handleSessionIdle(
+  _properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  const chunks: StreamChunk[] = [{ type: 'status', content: 'idle' }]
+
+  // 6C-2: Include finishReason in the idle status for the executor
+  if (state.lastFinishReason) {
+    const reasonMap: Record<string, string> = {
+      stop: 'completed',
+      length: 'context_exhausted',
+      'tool-calls': 'tool_pending',
+      error: 'failed'
+    }
+    const terminalReason = reasonMap[state.lastFinishReason] ?? state.lastFinishReason
+    chunks.push({ type: 'status', content: `finishReason:${terminalReason}` })
+    state.lastFinishReason = undefined
+  }
+
+  return chunks
+}
+
+function handleFileEdited(properties: EventProperties): StreamChunk[] {
+  const filePath = properties.path as string | undefined
+  return [
+    {
+      type: 'hook_lifecycle',
+      hookInfo: {
+        hookId: 'file-edited',
+        hookName: 'OpenCode file.edited',
+        hookEvent: 'file.edited',
+        phase: 'response',
+        output: filePath ?? 'unknown file',
+        outcome: 'success'
+      }
+    }
+  ]
+}
+
+function handleSessionDiff(properties: EventProperties): StreamChunk[] {
+  const diff = properties.diff as string | undefined
+  if (!diff) return []
+  return [{ type: 'text', content: `\n\n**Session Revert Diff:**\n\`\`\`diff\n${diff}\n\`\`\`\n` }]
+}
+
+function handleSessionStatus(properties: EventProperties): StreamChunk[] {
+  const status = properties.status as string | undefined
+  if (!status) return []
+  const statusMap: Record<string, string> = {
+    thinking: 'thinking',
+    tool_use: 'reviewing',
+    idle: 'idle',
+    error: 'failed',
+    compacting: 'thinking',
+    generating: 'writing'
+  }
+  return [{ type: 'status', content: statusMap[status] ?? status }]
+}
+
+function handleSessionCreated(
+  properties: EventProperties,
+  sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  const childId = properties.id as string | undefined
+  const parentId = properties.parentID as string | undefined
+  if (!childId) return []
+
+  const trackParent = parentId ?? sessionId
+  if (!state.childSessions.has(trackParent)) {
+    state.childSessions.set(trackParent, new Set())
+  }
+  state.childSessions.get(trackParent)!.add(childId)
+  openCodeLog.info(
+    `[opencode] Child session ${childId} created (parent: ${trackParent}, ` +
+      `total children: ${state.childSessions.get(trackParent)!.size})`
+  )
+  return [{ type: 'subagent_start', content: `Subagent session started: ${childId}` }]
+}
+
+function handleMessageRemoved(properties: EventProperties): StreamChunk[] {
+  const removedId = properties.messageID as string | undefined
+  return removedId ? [{ type: 'session_state', content: `message_removed:${removedId}` }] : []
+}
+
+function handleMessageUpdated(properties: EventProperties): StreamChunk[] {
+  const msgPart = properties.part as Record<string, unknown> | undefined
+  if (msgPart?.type === 'text') {
+    const text = msgPart.content as string | undefined
+    if (text) return [{ type: 'text', content: text }]
+  }
+  return []
+}
+
+function handlePermissionAsked(properties: EventProperties): StreamChunk[] {
+  const tool = properties.tool as string | undefined
+  const permissionId = properties.permissionId as string | undefined
+  const args = properties.args as Record<string, unknown> | undefined
+  if (!tool || !permissionId) return []
+
+  openCodeLog.info(`[opencode] Permission requested for tool: ${tool} (id: ${permissionId})`)
+  return [
+    {
+      type: 'permission_request',
+      toolName: tool,
+      permissionRequest: { permissionId, tool, args, message: `Agent wants to use ${tool}` }
+    }
+  ]
+}
+
+function handlePermissionReplied(properties: EventProperties): StreamChunk[] {
+  const tool = properties.tool as string | undefined
+  const allowed = properties.allowed as boolean | undefined
+  if (tool) openCodeLog.info(`[opencode] Permission ${allowed ? 'granted' : 'denied'} for: ${tool}`)
+  return []
+}
+
+function handleInstallationUpdated(): StreamChunk[] {
+  openCodeLog.info('[opencode] Installation updated — dependency change detected')
+  return []
+}
+
+function handleLspDiagnostics(properties: EventProperties): StreamChunk[] {
+  const diagnostics = properties.diagnostics as Array<Record<string, unknown>> | undefined
+  if (!diagnostics || diagnostics.length === 0) return []
+
+  openCodeLog.info(`[opencode] LSP diagnostics: ${diagnostics.length} issues`)
+
+  // GAP-14: Surface LSP diagnostics to the UI as a structured chunk
+  const severityMap: Record<string, 'error' | 'warning' | 'info' | 'hint'> = {
+    error: 'error',
+    warning: 'warning',
+    information: 'info',
+    hint: 'hint',
+    '1': 'error',
+    '2': 'warning',
+    '3': 'info',
+    '4': 'hint'
+  }
+
+  const parsed = diagnostics.slice(0, 20).map((d) => ({
+    file: (d.file ?? d.path ?? d.uri ?? 'unknown') as string,
+    line: (d.line ?? (d.range as Record<string, unknown>)?.start ?? 0) as number,
+    severity: severityMap[String(d.severity ?? 'warning')] ?? 'warning',
+    message: (d.message ?? String(d)) as string,
+    source: d.source as string | undefined
+  }))
+
+  // Build a human-readable summary for content
+  const errorCount = parsed.filter((d) => d.severity === 'error').length
+  const warnCount = parsed.filter((d) => d.severity === 'warning').length
+  const summary =
+    [errorCount > 0 ? `${errorCount} error(s)` : '', warnCount > 0 ? `${warnCount} warning(s)` : '']
+      .filter(Boolean)
+      .join(', ') || `${parsed.length} diagnostic(s)`
+
+  return [
+    {
+      type: 'lsp_diagnostics',
+      lspDiagnostics: parsed,
+      content: `LSP: ${summary}`
+    }
+  ]
+}
+
+function handleTodoUpdated(properties: EventProperties): StreamChunk[] {
+  const todoAction = properties.action as string | undefined
+  const todoText = properties.text as string | undefined
+  const todoIndex = properties.index as number | undefined
+  openCodeLog.info(`[opencode] Todo ${todoAction ?? 'updated'}: ${todoText ?? '(no text)'}`)
+  if (!todoText) return []
+
+  // GAP-15: Bridge todo updates to the UI as a dedicated chunk type
+  const actionMap: Record<string, 'add' | 'complete' | 'remove' | 'update'> = {
+    add: 'add',
+    create: 'add',
+    complete: 'complete',
+    done: 'complete',
+    remove: 'remove',
+    delete: 'remove',
+    update: 'update',
+    edit: 'update'
+  }
+  const normalizedAction = actionMap[todoAction ?? 'update'] ?? 'update'
+
+  return [
+    {
+      type: 'todo_update',
+      todoUpdate: {
+        action: normalizedAction,
+        text: todoText,
+        index: todoIndex
+      },
+      content: `Todo ${normalizedAction}: ${todoText}`
+    }
+  ]
+}
+
+function handleCommandExecuted(properties: EventProperties): StreamChunk[] {
+  const command = properties.command as string | undefined
+  if (command) openCodeLog.info(`[opencode] Command executed: ${command}`)
+  return []
+}
+
+function handleMessagePartRemoved(properties: EventProperties): StreamChunk[] {
+  const removedMsgId = properties.messageID as string | undefined
+  const removedPartId = properties.partID as string | undefined
+  if (!removedMsgId || !removedPartId) return []
+  return [{ type: 'session_state', content: `part_removed:${removedMsgId}:${removedPartId}` }]
+}
+
+function handleSessionDeleted(
+  properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  const deletedId = properties.id as string | undefined
+  if (!deletedId) return []
+
+  openCodeLog.info(`[opencode] Session ${deletedId} deleted — cleaning up references`)
+  for (const [convId, sessId] of state.sessionMap.entries()) {
+    if (sessId === deletedId) {
+      state.sessionMap.delete(convId)
+      break
+    }
+  }
+  state.childSessions.delete(deletedId)
+  for (const children of state.childSessions.values()) {
+    children.delete(deletedId)
+  }
+  return [{ type: 'session_state', content: `session_deleted:${deletedId}` }]
+}
+
+function handleFileWatcherUpdated(properties: EventProperties): StreamChunk[] {
+  const watchedPath = properties.path as string | undefined
+  const watchedEvent = properties.event as string | undefined
+  if (!watchedPath) return []
+  openCodeLog.info(`[opencode] File watcher: ${watchedEvent ?? 'changed'} ${watchedPath}`)
+  return [
+    {
+      type: 'hook_lifecycle',
+      hookInfo: {
+        hookId: 'file-watcher',
+        hookName: 'OpenCode file.watcher.updated',
+        hookEvent: 'file.watcher.updated',
+        phase: 'response',
+        output: `${watchedEvent ?? 'changed'}: ${watchedPath}`,
+        outcome: 'success'
+      }
+    }
+  ]
+}
+
+function handleLspUpdated(properties: EventProperties): StreamChunk[] {
+  const lspStatus = properties.status as string | undefined
+  const lspLanguage = properties.language as string | undefined
+  openCodeLog.info(`[opencode] LSP ${lspLanguage ?? 'unknown'}: ${lspStatus ?? 'updated'}`)
+  if (lspStatus === 'error' || lspStatus === 'disconnected') {
+    return [{ type: 'status', content: `lsp_${lspStatus}:${lspLanguage ?? 'unknown'}` }]
+  }
+  return []
+}
+
+function handleServerConnected(
+  _properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  openCodeLog.info('[opencode] Server fully initialized — all subsystems ready')
+  if (state.serverReadyResolve) {
+    state.serverReadyResolve()
+    state.serverReadyResolve = undefined
+  }
+  return []
+}
+
+// ── Dispatch table ──
+
+const EVENT_HANDLERS: Record<string, EventHandler> = {
+  'message.part.updated': handleMessagePartUpdated as EventHandler,
+  'session.updated': handleSessionUpdated,
+  'session.error': handleSessionError as EventHandler,
+  'session.compacted': handleSessionCompacted as EventHandler, // 6C-4: now emits context_usage_update
+  'session.idle': handleSessionIdle,
+  'file.edited': handleFileEdited as EventHandler,
+  'session.diff': handleSessionDiff as EventHandler,
+  'session.status': handleSessionStatus as EventHandler,
+  'session.created': handleSessionCreated,
+  'message.removed': handleMessageRemoved as EventHandler,
+  'message.updated': handleMessageUpdated as EventHandler,
+  'permission.asked': handlePermissionAsked as EventHandler,
+  'permission.replied': handlePermissionReplied as EventHandler,
+  'installation.updated': handleInstallationUpdated as EventHandler,
+  'lsp.client.diagnostics': handleLspDiagnostics as EventHandler,
+  'todo.updated': handleTodoUpdated as EventHandler,
+  'command.executed': handleCommandExecuted as EventHandler,
+  'message.part.removed': handleMessagePartRemoved as EventHandler,
+  'session.deleted': handleSessionDeleted,
+  'file.watcher.updated': handleFileWatcherUpdated as EventHandler,
+  'lsp.updated': handleLspUpdated as EventHandler,
+  'server.connected': handleServerConnected
+}
+
+/**
+ * Normalize an OpenCode SSE event into StreamChunks.
+ * Drop-in replacement for the old switch statement in OpenCodeExecutor.normalizeEvent().
+ */
+export function normalizeOpenCodeEvent(
+  event: unknown,
+  sessionId: string,
+  tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  const evt = event as Record<string, unknown>
+  const type = evt.type as string | undefined
+  const properties = evt.properties as EventProperties | undefined
+
+  if (!type || !properties) return []
+
+  // Filter events for this session — but allow child session events through
+  const eventSessionId = properties.sessionID as string | undefined
+  if (eventSessionId && eventSessionId !== sessionId) {
+    // GAP-13: Check if this event belongs to a known child/subagent session
+    const isChildSession =
+      state.childSessions.has(sessionId) && state.childSessions.get(sessionId)!.has(eventSessionId)
+
+    if (isChildSession) {
+      // Process child session events but tag them as subagent progress
+      if (type === 'session.idle' || type === 'session.deleted') {
+        return [
+          { type: 'subagent_complete', content: `Subagent session completed: ${eventSessionId}` }
+        ]
+      }
+
+      // For text and tool events from child sessions, emit as subagent_progress
+      const handler = EVENT_HANDLERS[type]
+      if (handler) {
+        const childChunks = handler(properties, sessionId, tokenUsage, state)
+        // Wrap text chunks as subagent_progress
+        return childChunks.map((chunk) => {
+          if (chunk.type === 'text' || chunk.type === 'tool_use' || chunk.type === 'tool_result') {
+            return {
+              ...chunk,
+              type: 'subagent_progress' as const,
+              content: chunk.content
+                ? `[subagent:${eventSessionId.slice(0, 8)}] ${chunk.content}`
+                : chunk.content
+            }
+          }
+          return chunk
+        })
+      }
+    }
+
+    return []
+  }
+
+  const handler = EVENT_HANDLERS[type]
+  if (handler) return handler(properties, sessionId, tokenUsage, state)
+
+  // 6C-5: Log unknown event types for forward-compatibility awareness
+  openCodeLog.info(`[opencode] Unhandled event type: ${type}`)
+  return []
+}

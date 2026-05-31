@@ -66,13 +66,21 @@ class DescriptionCacheService {
 
   /**
    * Store a description in the cache.
+   * @param source — 'ai' for Claude-generated, 'heuristic' for pattern-based
    */
-  set(key: string, description: string, model: string, filePath: string, symbolName: string): void {
+  set(
+    key: string,
+    description: string,
+    model: string,
+    filePath: string,
+    symbolName: string,
+    source: 'ai' | 'heuristic' = 'ai'
+  ): void {
     const db = getDatabase()
     db.prepare(
-      `INSERT OR REPLACE INTO chunk_descriptions (key, workspace_id, description, model, file_path, symbol_name)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(key, this.activeWorkspaceId, description, model, filePath, symbolName)
+      `INSERT OR REPLACE INTO chunk_descriptions (key, workspace_id, description, model, file_path, symbol_name, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(key, this.activeWorkspaceId, description, model, filePath, symbolName, source)
   }
 
   /**
@@ -231,7 +239,7 @@ class DescriptionCacheService {
       for (const [batchIdx, desc] of batchResults) {
         const item = uncached[batchIdx]
         const key = this.makeKey(item.chunk.filePath, item.chunk.symbolName, item.chunk.body)
-        this.set(key, desc, model, item.chunk.filePath, item.chunk.symbolName)
+        this.set(key, desc, model, item.chunk.filePath, item.chunk.symbolName, 'ai')
         descriptions.set(item.originalIndex, desc)
         generated++
       }
@@ -251,6 +259,50 @@ class DescriptionCacheService {
       count: number
     }
     return row.count
+  }
+
+  /**
+   * Count descriptions by source type for a workspace.
+   */
+  getCountBySource(workspaceId: string): { ai: number; heuristic: number; total: number } {
+    const db = getDatabase()
+    const rows = db
+      .prepare(
+        `SELECT source, COUNT(*) as count FROM chunk_descriptions
+         WHERE workspace_id = ? GROUP BY source`
+      )
+      .all(workspaceId) as Array<{ source: string; count: number }>
+
+    let ai = 0
+    let heuristic = 0
+    for (const row of rows) {
+      if (row.source === 'ai') ai = row.count
+      else if (row.source === 'heuristic') heuristic = row.count
+    }
+    return { ai, heuristic, total: ai + heuristic }
+  }
+
+  /**
+   * Get all heuristic-only description keys for a workspace.
+   * Used by the background AI enrichment phase to selectively upgrade.
+   */
+  getHeuristicKeys(
+    workspaceId: string,
+    limit: number = 100
+  ): Array<{ key: string; filePath: string; symbolName: string }> {
+    const db = getDatabase()
+    return db
+      .prepare(
+        `SELECT key, file_path as filePath, symbol_name as symbolName
+         FROM chunk_descriptions
+         WHERE workspace_id = ? AND source = 'heuristic'
+         LIMIT ?`
+      )
+      .all(workspaceId, limit) as Array<{
+      key: string
+      filePath: string
+      symbolName: string
+    }>
   }
 
   /**

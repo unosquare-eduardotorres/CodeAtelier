@@ -61,16 +61,16 @@ stateDiagram-v2
 
 ## States
 
-| State | Description | Typical services active |
-|---|---|---|
-| `idle` | Ready for user input | — |
-| `generalist-streaming` | Generalist is processing and streaming its response | `generalist-stream.service` |
-| `handoff-detected` | Generalist identified specialist work is needed | `intent-detector`, `decomposition.service` |
-| `decomposing` | Breaking the handoff into executable specialist tasks | `decomposition.service` |
-| `specialist-executing` | Specialist agents running in parallel | `specialist-pool.service`, `task-pipeline.service` |
-| `pipeline-complete` | All specialists done, finalising the response | `task-pipeline.service` (complete phase) |
-| `error` | Error occurred, awaiting recovery | `generalist-recovery-nudge`, `generalist-circuit-breaker` |
-| `stopped` | User-initiated stop, awaiting cleanup | `conversation-lifecycle` |
+| State                  | Description                                           | Typical services active                                   |
+| ---------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
+| `idle`                 | Ready for user input                                  | —                                                         |
+| `generalist-streaming` | Generalist is processing and streaming its response   | `generalist-stream.service`                               |
+| `handoff-detected`     | Generalist identified specialist work is needed       | `intent-detector`, `decomposition.service`                |
+| `decomposing`          | Breaking the handoff into executable specialist tasks | `decomposition.service`                                   |
+| `specialist-executing` | Specialist agents running in parallel                 | `specialist-pool.service`, `task-pipeline.service`        |
+| `pipeline-complete`    | All specialists done, finalising the response         | `task-pipeline.service` (complete phase)                  |
+| `error`                | Error occurred, awaiting recovery                     | `generalist-recovery-nudge`, `generalist-circuit-breaker` |
+| `stopped`              | User-initiated stop, awaiting cleanup                 | `conversation-lifecycle`                                  |
 
 ---
 
@@ -78,23 +78,23 @@ stateDiagram-v2
 
 The full transition table, machine-readable from `VALID_TRANSITIONS`:
 
-| From | Event | To | Trigger |
-|---|---|---|---|
-| `idle` | `sendMessage` | `generalist-streaming` | User submits a new message |
-| `generalist-streaming` | `generalistComplete` | `idle` | Generalist replied without needing specialists |
-| `generalist-streaming` | `handoffDetected` | `handoff-detected` | Generalist produced a handoff brief |
-| `generalist-streaming` | `streamError` | `error` | SDK stream, network, or tool-use failure |
-| `generalist-streaming` | `userStop` | `stopped` | User pressed Stop during streaming |
-| `handoff-detected` | `decompositionReady` | `decomposing` | Decomposition service accepted the brief |
-| `handoff-detected` | `decompositionError` | `error` | Decomposer failed to produce a task plan |
-| `decomposing` | `executionStarted` | `specialist-executing` | First specialist dispatched to the pool |
-| `decomposing` | `decompositionError` | `error` | Decomposer failed mid-process |
-| `specialist-executing` | `allComplete` | `pipeline-complete` | Every dispatched specialist finished |
-| `specialist-executing` | `executionError` | `error` | A specialist failed unrecoverably |
-| `specialist-executing` | `userStop` | `stopped` | User pressed Stop during execution |
-| `pipeline-complete` | `messageFinalised` | `idle` | Final assistant message persisted to DB |
-| `error` | `errorHandled` | `idle` | Error surfaced to UI and recovery nudge sent |
-| `stopped` | `cleanupComplete` | `idle` | Lifecycle disposers ran |
+| From                   | Event                | To                     | Trigger                                        |
+| ---------------------- | -------------------- | ---------------------- | ---------------------------------------------- |
+| `idle`                 | `sendMessage`        | `generalist-streaming` | User submits a new message                     |
+| `generalist-streaming` | `generalistComplete` | `idle`                 | Generalist replied without needing specialists |
+| `generalist-streaming` | `handoffDetected`    | `handoff-detected`     | Generalist produced a handoff brief            |
+| `generalist-streaming` | `streamError`        | `error`                | SDK stream, network, or tool-use failure       |
+| `generalist-streaming` | `userStop`           | `stopped`              | User pressed Stop during streaming             |
+| `handoff-detected`     | `decompositionReady` | `decomposing`          | Decomposition service accepted the brief       |
+| `handoff-detected`     | `decompositionError` | `error`                | Decomposer failed to produce a task plan       |
+| `decomposing`          | `executionStarted`   | `specialist-executing` | First specialist dispatched to the pool        |
+| `decomposing`          | `decompositionError` | `error`                | Decomposer failed mid-process                  |
+| `specialist-executing` | `allComplete`        | `pipeline-complete`    | Every dispatched specialist finished           |
+| `specialist-executing` | `executionError`     | `error`                | A specialist failed unrecoverably              |
+| `specialist-executing` | `userStop`           | `stopped`              | User pressed Stop during execution             |
+| `pipeline-complete`    | `messageFinalised`   | `idle`                 | Final assistant message persisted to DB        |
+| `error`                | `errorHandled`       | `idle`                 | Error surfaced to UI and recovery nudge sent   |
+| `stopped`              | `cleanupComplete`    | `idle`                 | Lifecycle disposers ran                        |
 
 ---
 
@@ -132,12 +132,12 @@ cleanup. Prefer explicit transitions whenever the flow supports them.
 
 The state machine tracks the active `conversationId` alongside the state.
 
-| Event | Effect on `conversationId` |
-|---|---|
-| `sendMessage` | Set to the provided ID (becomes the "active" conversation) |
-| Any transition to `idle` | Cleared to `null` |
-| `forceReset()` | Cleared to `null` |
-| Any other transition | Preserved unchanged |
+| Event                    | Effect on `conversationId`                                 |
+| ------------------------ | ---------------------------------------------------------- |
+| `sendMessage`            | Set to the provided ID (becomes the "active" conversation) |
+| Any transition to `idle` | Cleared to `null`                                          |
+| `forceReset()`           | Cleared to `null`                                          |
+| Any other transition     | Preserved unchanged                                        |
 
 Consumers check `activeConversationId` to route streaming chunks to the correct
 chat. An invalid transition never changes the stored ID.

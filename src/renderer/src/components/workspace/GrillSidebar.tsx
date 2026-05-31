@@ -8,7 +8,8 @@
 import { Flame, ChevronRight, ListChecks, BarChart3, Lightbulb } from 'lucide-react'
 import { GRILL_TRACKS } from '../../../../shared/constants'
 import type { GrillTrackId, GrillTrackScore } from '../../../../shared/types'
-import { AVATAR_IMAGES } from '@renderer/assets/avatars'
+import { getAvatarImage } from '@renderer/assets/avatars'
+import { useAppTheme } from '@renderer/store'
 import ScoreGauge from './ScoreGauge'
 
 interface GrillSidebarProps {
@@ -32,6 +33,7 @@ export default function GrillSidebar({
   totalQuestions,
   suggestedNextTrack
 }: GrillSidebarProps): React.JSX.Element {
+  const theme = useAppTheme()
   const track = selectedTrack ? GRILL_TRACKS[selectedTrack] : null
 
   return (
@@ -40,7 +42,7 @@ export default function GrillSidebar({
         {/* Grill Analyst portrait */}
         <div className="flex justify-center">
           <img
-            src={AVATAR_IMAGES.grillme}
+            src={getAvatarImage('grillme', theme)}
             alt="Grill Analyst"
             className="w-full rounded-lg object-cover aspect-square"
           />

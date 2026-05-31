@@ -26,17 +26,14 @@ export const IPC_CHANNELS = {
   CHAT_MESSAGE_COMPLETE: 'chat:messageComplete',
   CHAT_DELETE_CONVERSATION: 'chat:deleteConversation',
   CHAT_UPDATE_MODE: 'chat:updateMode',
+  CHAT_UPDATE_EFFORT: 'chat:updateEffort',
   CHAT_UPDATE_PERSONA: 'chat:updatePersona',
   CHAT_RENAME: 'chat:renameConversation',
   CHAT_STOP: 'chat:stop',
   CHAT_COMPACT: 'chat:compact',
   /** Swap DaVinci out for the workspace's ready Project Specialist — triggered by user accepting the swap proposal */
   CHAT_SWAP_TO_SPECIALIST: 'chat:swapToSpecialist',
-  CHAT_GRILL_COMPLETE: 'chat:grillComplete',
-  CHAT_GRILL_QUESTION: 'chat:grillQuestion',
-  CHAT_GRILL_EVALUATION: 'chat:grillEvaluation',
   CHAT_ASK_QUESTION: 'chat:askQuestion',
-  CHAT_PLAN: 'chat:plan',
   CHAT_COMPLETE: 'chat:complete',
   CHAT_CLOSE: 'chat:close',
   CHAT_GET_FILE_CHANGES: 'chat:getFileChanges',
@@ -45,6 +42,8 @@ export const IPC_CHANNELS = {
   CHAT_SESSION_RECOVERY: 'chat:sessionRecovery',
   /** State machine transitions — renderer mirrors backend conversation state */
   CHAT_STATE_CHANGE: 'chat:stateChange',
+  /** Query current streaming state — used by renderer on conversation switch to restore streaming indicator */
+  CHAT_GET_STREAMING_STATE: 'chat:getStreamingState',
 
   // Agents
   AGENT_GET_STATUSES: 'agent:getStatuses',
@@ -56,6 +55,16 @@ export const IPC_CHANNELS = {
   // Agent lifecycle
   AGENT_START: 'agent:start',
   AGENT_READY: 'agent:ready',
+
+  // Multi-workspace session management
+  /** Get statuses for all workspace sessions (chat, grill, audit, MPA) */
+  WORKSPACE_ALL_STATUSES: 'workspace:all-statuses',
+  /** Main → Renderer: permission/blocking event from a background workspace */
+  PERMISSION_REQUEST: 'permission:request',
+  /** Renderer → Main: user responded to a permission request */
+  PERMISSION_RESPONSE: 'permission:response',
+  /** Main → Renderer: important completion or failure from a background workspace */
+  COMPLETION_NOTIFICATION: 'workspace:completion',
 
   // Dialog
   DIALOG_SELECT_DIRECTORY: 'dialog:selectDirectory',
@@ -240,6 +249,7 @@ export const IPC_CHANNELS = {
   // Checkpoints
   CHECKPOINT_LIST: 'checkpoint:list',
   CHECKPOINT_RESTORE: 'checkpoint:restore',
+  CHECKPOINT_REWIND: 'checkpoint:rewind',
   CHECKPOINT_APPROVAL_REQUEST: 'checkpoint:approvalRequest',
   CHECKPOINT_APPROVAL_RESPONSE: 'checkpoint:approvalResponse',
 
@@ -254,6 +264,9 @@ export const IPC_CHANNELS = {
   COST_CHECK_BUDGET: 'cost:checkBudget',
   COST_BUDGET_WARNING: 'cost:budgetWarning',
   COST_BUDGET_EXCEEDED: 'cost:budgetExceeded',
+
+  // Conversation insights
+  CONVERSATION_INSIGHTS: 'conversation:insights',
 
   // Events (audit log)
   EVENTS_GET_RECENT: 'events:getRecent',
@@ -322,6 +335,9 @@ export const IPC_CHANNELS = {
   SDK_HOOK_LIFECYCLE: 'sdk:hookLifecycle',
   SDK_SESSION_STATE: 'sdk:sessionState',
   SDK_AUTH_STATUS: 'sdk:authStatus',
+  SDK_TOOL_USE_SUMMARY: 'sdk:toolUseSummary',
+  /** F4: LSP diagnostics from OpenCode's compiler/linter integration */
+  SDK_LSP_DIAGNOSTICS: 'sdk:lspDiagnostics',
 
   // Elicitation — MCP server user input requests
   ELICITATION_REQUEST: 'elicitation:request',
@@ -403,13 +419,47 @@ export const IPC_CHANNELS = {
   GRILL_GET_SESSION: 'grill:getSession',
   GRILL_SAVE_ANSWERS: 'grill:saveAnswers',
   GRILL_STATUS_CHANGED: 'grill:statusChanged',
+  GRILL_GENERATE_PLAN: 'grill:generatePlan',
 
   // Project Creation
   PROJECT_CREATE: 'project:create',
 
   // External MCP Integrations
   WORKSPACE_CHECK_EXTERNAL_MCP: 'workspace:check-external-mcp',
-  CHAT_UPDATE_MCP_OVERRIDES: 'chat:update-mcp-overrides'
+  CHAT_UPDATE_MCP_OVERRIDES: 'chat:update-mcp-overrides',
+  CHAT_UPDATE_TONE: 'chat:updateTone',
+
+  // ask_user response — renderer → main → IPC bridge → control-actions MCP server
+  CHAT_ASK_USER_RESPOND: 'chat:askUserRespond',
+
+  // Multi-Phased Agent (MPA) Pipeline
+  MPA_START: 'mpa:start',
+  MPA_CANCEL: 'mpa:cancel',
+  MPA_GET_STATUS: 'mpa:getStatus',
+  MPA_GET_RUN: 'mpa:getRun',
+  MPA_GET_HISTORY: 'mpa:getHistory',
+  MPA_CLASSIFY_GOAL: 'mpa:classifyGoal',
+  MPA_PHASE_START: 'mpa:phaseStart',
+  MPA_PHASE_PROGRESS: 'mpa:phaseProgress',
+  MPA_PHASE_COMPLETE: 'mpa:phaseComplete',
+  MPA_FEEDBACK_LOOP: 'mpa:feedbackLoop',
+  MPA_APPROVAL_NEEDED: 'mpa:approvalNeeded',
+  MPA_APPROVAL_RESPOND: 'mpa:approvalRespond',
+  MPA_PIPELINE_COMPLETE: 'mpa:complete',
+  MPA_RESUME: 'mpa:resume',
+
+  // Council (LLM Council — multi-advisor review)
+  COUNCIL_START: 'council:start',
+  COUNCIL_CANCEL: 'council:cancel',
+  COUNCIL_GET_SESSION: 'council:getSession',
+  COUNCIL_MEMBER_STREAM: 'council:memberStream',
+  COUNCIL_MEMBER_COMPLETE: 'council:memberComplete',
+  COUNCIL_PEER_REVIEW_COMPLETE: 'council:peerReviewComplete',
+  COUNCIL_VERDICT: 'council:verdict',
+  COUNCIL_PHASE_CHANGED: 'council:phaseChanged',
+  COUNCIL_COMPLETE: 'council:complete',
+  COUNCIL_RESUME: 'council:resume',
+  COUNCIL_GET_HISTORY: 'council:getHistory'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
@@ -426,6 +476,43 @@ export const DA_VINCI_AGENT_ID = 'da-vinci' as const
 /** Default cost preference for new workspaces */
 export const DEFAULT_COST_PREFERENCE = 'balanced' as const
 
+/** Communication tone options for AI responses */
+export const COMMUNICATION_TONES = [
+  {
+    id: 'default' as const,
+    label: 'Default',
+    description: 'Direct & concise',
+    icon: 'MessageSquare'
+  },
+  {
+    id: 'calm' as const,
+    label: 'Calm & Warm',
+    description: 'Supportive & patient',
+    icon: 'Heart'
+  },
+  {
+    id: 'optimistic' as const,
+    label: 'Optimistic',
+    description: 'Positive & upbeat',
+    icon: 'Sun'
+  },
+  {
+    id: 'brutal' as const,
+    label: 'Brutally Honest',
+    description: 'No sugar coating',
+    icon: 'Flame'
+  },
+  {
+    id: 'caveman' as const,
+    label: 'CaveMan',
+    description: 'Terse. Save tokens.',
+    icon: 'Bone'
+  }
+] as const
+
+/** Valid communication tone IDs for validation */
+export const VALID_COMMUNICATION_TONES = COMMUNICATION_TONES.map((t) => t.id)
+
 /** Available Claude models for configuration UI */
 export const AVAILABLE_MODELS = [
   {
@@ -441,8 +528,8 @@ export const AVAILABLE_MODELS = [
     description: 'Balanced performance'
   },
   {
-    id: 'claude-opus-4-7',
-    label: 'Opus 4.7',
+    id: 'claude-opus-4-8',
+    label: 'Opus 4.8',
     tier: 'opus' as const,
     description: 'Most capable'
   }
@@ -450,19 +537,71 @@ export const AVAILABLE_MODELS = [
 
 /** Default model for each configurable action */
 export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string> = {
-  'da-vinci': 'claude-opus-4-7',
-  'da-vinci:plan': 'claude-opus-4-7',
+  'da-vinci': 'claude-opus-4-8',
+  'da-vinci:plan': 'claude-opus-4-8',
   'da-vinci:build': 'claude-sonnet-4-6',
-  'project-specialist': 'claude-opus-4-7',
-  'project-specialist:plan': 'claude-opus-4-7',
+  'project-specialist': 'claude-opus-4-8',
+  'project-specialist:plan': 'claude-opus-4-8',
   'project-specialist:build': 'claude-sonnet-4-6',
   'specialist:simple': 'claude-haiku-4-5-20251001',
   'specialist:moderate': 'claude-sonnet-4-6',
-  'specialist:complex': 'claude-opus-4-7',
+  'specialist:complex': 'claude-opus-4-8',
   memoryFeed: 'claude-haiku-4-5-20251001',
   activation: 'claude-haiku-4-5-20251001',
-  haiku: 'claude-haiku-4-5-20251001'
+  haiku: 'claude-haiku-4-5-20251001',
+  audit: 'claude-opus-4-8',
+  grill: 'claude-opus-4-8',
+  'council-member': 'claude-opus-4-8',
+  'council-chairman': 'claude-opus-4-8',
+  'grill:plan': 'claude-opus-4-8'
 } as const
+
+// ── Prompt Verbosity ─────────────────────────────────────────────────
+
+/**
+ * Resolve prompt verbosity based on model capability.
+ * Opus 4.8+ follows compressed instructions reliably — use lean prompts.
+ * Sonnet/Haiku/older models need full explicit guardrailing.
+ */
+export function resolvePromptVerbosity(model: string): import('./types').PromptVerbosity {
+  // Opus 4.8+ can follow compressed instructions reliably
+  if (model === 'claude-opus-4-8') return 'lean'
+  // Future-proof: any Opus newer than 4.8 also gets lean
+  if (model.startsWith('claude-opus-') && model > 'claude-opus-4-8') return 'lean'
+  return 'full'
+}
+
+// ── Context Window Sizing ────────────────────────────────────────────
+
+/**
+ * Models that support 1M context windows.
+ * Opus 4.8+ includes 1M at standard pricing. Sonnet models via context-1m beta.
+ */
+export const CONTEXT_1M_SUPPORTED_MODELS = [
+  'claude-opus-4-8',
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5-20250514',
+  'claude-sonnet-4-20250514'
+] as const
+
+/** Default context window when 1M is NOT active (Haiku, older Opus ≤4.7) */
+export const CLAUDE_DEFAULT_CONTEXT_WINDOW = 200_000
+
+/** Extended context window when 1M IS active (Opus 4.8+, Sonnet models) */
+export const CLAUDE_1M_CONTEXT_WINDOW = 1_000_000
+
+/**
+ * Check whether a model supports 1M context.
+ * Matches exact IDs from CONTEXT_1M_SUPPORTED_MODELS, any `claude-sonnet-*` prefix,
+ * or Opus 4.8+ (native 1M at standard pricing).
+ */
+export function supportsContext1M(model: string): boolean {
+  return (
+    (CONTEXT_1M_SUPPORTED_MODELS as readonly string[]).includes(model) ||
+    model.startsWith('claude-sonnet') ||
+    model === 'claude-opus-4-8'
+  )
+}
 
 /** Human-readable metadata for each model action — used in the Models config UI */
 export const MODEL_ACTIONS_META: Record<
@@ -545,6 +684,30 @@ export const MODEL_ACTIONS_META: Record<
     description: 'Fast, lightweight tasks like code descriptions',
     icon: '⚡',
     section: 'background'
+  },
+  audit: {
+    label: 'Audit',
+    description: 'Workspace health auditing sessions',
+    icon: '🔍',
+    section: 'background'
+  },
+  grill: {
+    label: 'Grill',
+    description: 'Idea grilling and evaluation sessions',
+    icon: '🔥',
+    section: 'background'
+  },
+  'council-member': {
+    label: 'Council Member',
+    description: 'Council advisor for multi-perspective plan review',
+    icon: '🧑‍⚖️',
+    section: 'background'
+  },
+  'council-chairman': {
+    label: 'Council Chairman',
+    description: 'Council synthesis and final verdict',
+    icon: '🏛️',
+    section: 'background'
   }
 } as const
 
@@ -557,7 +720,7 @@ export const MODEL_ACTIONS_META: Record<
 export const THINKING_BUDGETS = {
   haiku: '5000',
   sonnet: '10000',
-  opus: '' // empty = adaptive-only (Opus 4.7 removed budget_tokens — 400 error if passed)
+  opus: '' // empty = adaptive-only (Opus 4.7+ removed budget_tokens — 400 error if passed)
 } as const
 
 /**
@@ -567,7 +730,7 @@ export const THINKING_BUDGETS = {
 export const COMPLEXITY_TO_EFFORT = {
   simple: 'low',
   moderate: 'medium',
-  complex: 'xhigh' // Opus 4.7 recommends xhigh effort for complex coding tasks (SDK 0.2.120+)
+  complex: 'high' // Opus 4.8 at 'high' ≥ 4.7 at 'xhigh'; CLI 2.1+ supports all 5 levels natively
 } as const satisfies Record<string, 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
 
 /**
@@ -582,12 +745,6 @@ export const SPECIALIST_BUDGET_CAPS = {
   complex: 2.0
 } as const satisfies Record<string, number>
 
-/**
- * @deprecated Budget caps removed for Claude Max (subscription = flat rate).
- * Use workspace settings `budgetCapUsd` for opt-in caps.
- * Kept for backward compatibility — will be removed in next major.
- */
-export const CHAT_AGENT_BUDGET_CAP = 1.5
 
 /**
  * Mode-aware budget cap multipliers for users who opt into custom caps.
@@ -609,14 +766,15 @@ export const BUDGET_CAP_MODE_MULTIPLIERS = {
  * without knowing about the legacy labels. Project Specialists use the
  * `'project-specialist:*'` keys that were added for the Phase 2 refactor.
  */
-export function getModelActionForRole(role: AgentRole, mode: 'plan' | 'build'): ModelAction {
+export function getModelActionForRole(role: AgentRole, mode: 'plan' | 'build' | 'danger'): ModelAction {
   if (role === 'da-vinci') {
-    return mode === 'build' ? 'da-vinci:build' : 'da-vinci:plan'
+    // Danger mode uses the same model tier as build
+    return mode === 'build' || mode === 'danger' ? 'da-vinci:build' : 'da-vinci:plan'
   }
   if (role === 'audit') {
     return 'da-vinci:plan' // Audits always use plan-tier model
   }
-  return mode === 'build' ? 'project-specialist:build' : 'project-specialist:plan'
+  return mode === 'build' || mode === 'danger' ? 'project-specialist:build' : 'project-specialist:plan'
 }
 
 /** Maximum skill file size in bytes (500 KB) */
@@ -834,8 +992,79 @@ export const AUDIT_TRACKS: Record<AuditTrackId, AuditTrack> = {
   }
 } as const
 
-/** Maximum USD budget per auditor turn (lower than chat) */
-export const AUDIT_BUDGET_CAP = 0.75 as const
+// ── Council Advisors (LLM Council) ────────────────────────────────────────────
+
+import type { CouncilAdvisorRole } from './types'
+
+export interface CouncilAdvisorDefinition {
+  id: CouncilAdvisorRole
+  name: string
+  emoji: string
+  thinkingStyle: string
+  toolAccess: 'full' | 'none'
+  toolGuidance: string
+}
+
+export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefinition> = {
+  contrarian: {
+    id: 'contrarian',
+    name: 'The Contrarian',
+    emoji: '😈',
+    thinkingStyle:
+      'Actively looks for what\'s wrong, what\'s missing, what will fail. Assumes the plan has a fatal flaw and tries to find it.',
+    toolAccess: 'full',
+    toolGuidance:
+      'Use `find_references` on every file in scope to find hidden callers the plan doesn\'t account for. Use `coupling_analysis` to check if changes introduce tight coupling. Use `todo_scanner` to find existing technical debt in affected areas.'
+  },
+  'first-principles': {
+    id: 'first-principles',
+    name: 'The First Principles Thinker',
+    emoji: '🔬',
+    thinkingStyle:
+      'Ignores the surface-level plan and asks "what are we actually trying to solve?" Strips assumptions. Rebuilds the problem from ground up. Sometimes the most valuable output is "you\'re solving the wrong problem."',
+    toolAccess: 'full',
+    toolGuidance:
+      'Use `semantic_search` to find if the codebase already has a simpler solution to the underlying problem. Use `codebase_concepts` to understand existing patterns. Use `file_dependencies` to check if the plan\'s module decomposition aligns with existing architecture.'
+  },
+  expansionist: {
+    id: 'expansionist',
+    name: 'The Expansionist',
+    emoji: '🚀',
+    thinkingStyle:
+      'Looks for upside everyone else is missing. What could be bigger? What adjacent opportunity is hiding? Doesn\'t care about risk (that\'s the Contrarian\'s job).',
+    toolAccess: 'full',
+    toolGuidance:
+      'Use `similar_code` to find related patterns that could benefit from the same changes. Use `file_outline` on adjacent files to spot opportunities the plan misses. Use `codebase_concepts` to find related features that could be enhanced while making these changes.'
+  },
+  outsider: {
+    id: 'outsider',
+    name: 'The Outsider',
+    emoji: '👀',
+    thinkingStyle:
+      'Has zero context about the codebase, project, or history. Responds purely to what\'s in front of them. Catches the curse of knowledge: things obvious to the team but confusing to everyone else.',
+    toolAccess: 'none',
+    toolGuidance:
+      'You have NO access to the codebase. You evaluate the plan purely as written. If something is unclear without context, flag it. If the plan uses jargon without explanation, flag it. If a new team member couldn\'t follow this plan, that\'s a problem.'
+  },
+  executor: {
+    id: 'executor',
+    name: 'The Executor',
+    emoji: '⚡',
+    thinkingStyle:
+      'Only cares about one thing: can this actually be done, and what\'s the fastest path? If the plan sounds brilliant but has no clear first step, says so.',
+    toolAccess: 'full',
+    toolGuidance:
+      'Use `file_outline` on target files to gauge actual complexity vs what the plan claims. Use `symbol_hotspots` to find frequently-changed symbols that are risky to modify. Use `git_log` and `git_blame` on affected files to understand change velocity and ownership. Use `test_coverage_map` to verify test claims.'
+  }
+} as const
+
+export const COUNCIL_ADVISOR_ROLES: CouncilAdvisorRole[] = [
+  'contrarian',
+  'first-principles',
+  'expansionist',
+  'outsider',
+  'executor'
+]
 
 // ── MCP Tool Name Registry ──────────────────────────────────────────────────
 // Single source of truth for all MCP tool names used across the codebase.
@@ -1036,8 +1265,6 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   }
 ] as const
 
-/** IDs of internal MCP servers that are always on and hidden from the toggle UI */
-export const ALWAYS_ON_MCP_SERVERS = ['control-actions'] as const
 
 // ── Local LLM Provider ──
 
@@ -1046,8 +1273,14 @@ export const OLLAMA_DEFAULT_HOST = '127.0.0.1' as const
 export const OLLAMA_DEFAULT_PORT = 11434 as const
 
 /** Default oMLX connection (Apple Silicon native) */
-export const OMLX_DEFAULT_HOST = '127.0.0.1' as const
 export const OMLX_DEFAULT_PORT = 8000 as const
+
+/**
+ * Skill filenames that are ALWAYS injected into every prompt — DaVinci,
+ * Project Specialist, and local LLM paths. These are foundational behavioral
+ * guidelines, not domain-specific knowledge.
+ */
+export const BASELINE_SKILL_FILENAMES = ['coding-discipline'] as const
 
 /** Recommended local models — curated by memory tier (Mac-first, MLX-optimized where available) */
 export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[] = [
@@ -1061,7 +1294,10 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     minMemoryGB: 4,
     memoryTier: '8gb',
     toolCalling: 'basic',
-    description: 'Fastest option — limited quality'
+    description: 'Fastest option — limited quality',
+    toolCallingNotes: 'Tool calls work but format compliance varies; use retry-with-repair',
+    supportsParallelTools: false,
+    supportsThinking: false
   },
   {
     ollamaId: 'qwen2.5-coder:7b',
@@ -1072,7 +1308,10 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     minMemoryGB: 6,
     memoryTier: '8gb',
     toolCalling: 'good',
-    description: 'Best balance for 8GB Macs'
+    description: 'Best balance for 8GB Macs',
+    toolCallingNotes: 'Reliable tool calls; occasional JSON format issues',
+    supportsParallelTools: false,
+    supportsThinking: false
   },
   // 16GB tier
   {
@@ -1084,7 +1323,10 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     minMemoryGB: 12,
     memoryTier: '16gb',
     toolCalling: 'good',
-    description: 'Strong coding — fits 16GB well'
+    description: 'Strong coding — fits 16GB well',
+    toolCallingNotes: 'Reliable tool calls; good format compliance',
+    supportsParallelTools: false,
+    supportsThinking: false
   },
   // 32GB tier (MLX)
   {
@@ -1100,7 +1342,10 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     toolCalling: 'native',
     mlxOptimized: true,
     description: 'Top pick — MLX + NVFP4, coding-tuned',
-    recommended: true
+    recommended: true,
+    toolCallingNotes: 'Native tool calling with excellent format compliance',
+    supportsParallelTools: true,
+    supportsThinking: true
   },
   {
     ollamaId: 'qwen3-coder:30b',
@@ -1112,7 +1357,51 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     minMemoryGB: 24,
     memoryTier: '32gb',
     toolCalling: 'native',
-    description: 'Purpose-built for coding agents, 256K context'
+    description: 'Purpose-built for coding agents, 256K context',
+    toolCallingNotes: 'Best local coding model; native tool calls with parallel support',
+    supportsParallelTools: true,
+    supportsThinking: true
+  },
+  {
+    ollamaId: 'deepseek-coder-v3:latest',
+    label: 'DeepSeek Coder V3',
+    parameterSize: '236B MoE',
+    activeParams: '37B',
+    contextWindow: 131072,
+    minMemoryGB: 32,
+    memoryTier: '32gb',
+    toolCalling: 'good',
+    description: 'Strong reasoning; slightly weaker tool format',
+    toolCallingNotes: 'Good tool calling but JSON format compliance varies; use repair loop',
+    supportsParallelTools: false,
+    supportsThinking: true
+  },
+  {
+    ollamaId: 'llama4-scout:17b',
+    label: 'Llama 4 Scout 17B',
+    parameterSize: '17B',
+    contextWindow: 131072,
+    minMemoryGB: 16,
+    memoryTier: '16gb',
+    toolCalling: 'basic',
+    description: 'Tool calls work but format compliance varies',
+    toolCallingNotes: 'Basic tool calling; format issues common — retry-with-repair recommended',
+    supportsParallelTools: false,
+    supportsThinking: false
+  },
+  {
+    ollamaId: 'gemma3:27b',
+    omlxId: 'mlx-community/gemma-3-27b-it-4bit',
+    label: 'Gemma 3 27B',
+    parameterSize: '27B',
+    contextWindow: 131072,
+    minMemoryGB: 20,
+    memoryTier: '32gb',
+    toolCalling: 'none',
+    description: 'No tool calling; analysis and chat only',
+    toolCallingNotes: 'No tool calling support — use in analysis-only mode with manual RAG',
+    supportsParallelTools: false,
+    supportsThinking: false
   },
   // 48GB+ tier
   {
@@ -1126,7 +1415,10 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     minMemoryGB: 52,
     memoryTier: '48gb+',
     toolCalling: 'excellent',
-    description: 'Best local coding quality — needs 64GB+'
+    description: 'Best local coding quality — needs 64GB+',
+    toolCallingNotes: 'Excellent tool calling with native parallel support',
+    supportsParallelTools: true,
+    supportsThinking: true
   },
   {
     ollamaId: 'gemma4:e4b-mlx-bf16',
@@ -1140,7 +1432,10 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     memoryTier: '48gb+',
     toolCalling: 'native',
     mlxOptimized: true,
-    description: 'Google alternative — MLX native'
+    description: 'Google alternative — MLX native',
+    toolCallingNotes: 'Native tool calling support; reliable format',
+    supportsParallelTools: true,
+    supportsThinking: false
   }
 ] as const
 
@@ -1153,15 +1448,24 @@ export function resolveModelId(
 }
 
 /**
- * @deprecated Use `TIER_LIMITS` from `src/main/services/context-management.ts` instead.
- * Superseded by the context window tier system (ContextWindowTier / resolveContextTier / TIER_LIMITS).
- * Kept temporarily for backward compatibility — will be removed in the next breaking change.
+ * Check if a model supports tool calling (quality > 'none').
+ * Used by the smart backend selector to decide between the
+ * EnhancedLocalAgentLoop (with MCP tools) and analysis-only mode.
  */
-export const LOCAL_LLM_COMPACT_THRESHOLDS: Record<string, { suggest: number; auto: number }> = {
-  '32k': { suggest: 16_000, auto: 24_000 },
-  '128k': { suggest: 60_000, auto: 80_000 },
-  '256k': { suggest: 120_000, auto: 160_000 }
-} as const
+export function modelSupportsToolCalling(model: import('./types').RecommendedLocalModel): boolean {
+  return model.toolCalling !== 'none'
+}
+
+/**
+ * Find a recommended model by its Ollama or oMLX ID.
+ * Returns undefined for unknown models (conservative fallback).
+ */
+export function findRecommendedModel(
+  modelId: string
+): import('./types').RecommendedLocalModel | undefined {
+  return RECOMMENDED_LOCAL_MODELS.find((m) => m.ollamaId === modelId || m.omlxId === modelId)
+}
+
 
 /** Full name → display name map — for renderer ToolActivityBlock */
 export const MCP_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
@@ -1208,6 +1512,10 @@ export interface ExternalMcpDefinition {
   toolNames: string[]
   /** Read-only tools allowed in plan mode */
   planModeToolNames: string[]
+  /** Known absolute install paths (checked when command isn't on PATH) */
+  commandPaths?: string[]
+  /** Env vars always injected when this MCP is mounted (perf tuning, not user-supplied) */
+  performanceEnv?: Record<string, string>
   /** Category for UI grouping */
   category: 'testing' | 'deployment' | 'monitoring' | 'other'
 
@@ -1235,7 +1543,14 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     icon: 'Smartphone',
     command: 'maestro',
     args: ['mcp'],
+    commandPaths: ['~/.maestro/bin/maestro'],
     envKeys: ['JAVA_HOME', 'MAESTRO_CLOUD_API_KEY'],
+    performanceEnv: {
+      // Disable idle settle detection — Expo/RN apps have constant JS bridge activity
+      // that causes Maestro to wait 10-15s per step thinking the UI hasn't settled.
+      // Flows should use explicit assertVisible sync points instead.
+      MAESTRO_WAIT_TIMEOUT: '0'
+    },
     tokenImpact: 'high',
     toolCount: 8,
     prerequisite: 'Maestro CLI installed and on PATH',

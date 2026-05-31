@@ -12,8 +12,6 @@ export {
   CheckboxIcon
 } from './GrillQuestionCard'
 export type { QuestionState } from './GrillQuestionCard'
-export { default as GrillEvaluationCard } from './GrillEvaluationCard'
-export { default as GrillResultCard } from './GrillResultCard'
 export { default as ChatSidebar } from './ChatSidebar'
 export { default as MessageBubble } from './MessageBubble'
 export type { MessageBubbleActions } from './MessageBubble'

@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { userProfileRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString } from './validate-args'
 
 export function registerUserProfileIpc(): void {
   ipcMain.handle(IPC_CHANNELS.USER_PROFILE_GET, (event) => {
@@ -11,11 +12,12 @@ export function registerUserProfileIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.USER_PROFILE_UPSERT,
-    (event, args: { displayName: string; avatarKey: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.displayName?.trim()) throw new Error('displayName is required')
-      if (!args?.avatarKey?.trim()) throw new Error('avatarKey is required')
-      return userProfileRepository.upsertProfile(args.displayName.trim(), args.avatarKey.trim())
+      const args = requireObject(rawArgs, IPC_CHANNELS.USER_PROFILE_UPSERT)
+      const displayName = requireString(args, 'displayName', IPC_CHANNELS.USER_PROFILE_UPSERT)
+      const avatarKey = requireString(args, 'avatarKey', IPC_CHANNELS.USER_PROFILE_UPSERT)
+      return userProfileRepository.upsertProfile(displayName.trim(), avatarKey.trim())
     }
   )
 }

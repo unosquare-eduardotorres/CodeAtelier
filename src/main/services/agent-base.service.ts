@@ -2,16 +2,9 @@ import { type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type { LogFunctions } from 'electron-log'
 import type { AgentStatus } from '../../shared/types'
-import { MCP_TOOLS } from '../../shared/constants'
 import { buildEnvWithPath } from './env-utils'
 import { agentSessionRepository } from '../db/repositories'
-
-/**
- * Hard ceiling on the number of tool invocations a single agent interaction
- * may issue before the circuit breaker aborts the stream. Prevents runaway
- * loops (~50 tool calls typically indicates a stuck agent).
- */
-const MAX_TOOL_CALLS_PER_INTERACTION = 50
+import { summarizeToolInput } from './tool-input-summarizer'
 
 /** Detect if Write content is a structured plan the LLM should have emitted inline */
 function isPlanContent(content: string): boolean {
@@ -31,6 +24,7 @@ function isPlanContent(content: string): boolean {
 export interface StreamChunk {
   type:
     | 'text'
+    | 'thinking'
     | 'tool_use'
     | 'tool_result'
     | 'tool_progress'
@@ -50,6 +44,11 @@ export interface StreamChunk {
     | 'auth_status'
     | 'tool_use_summary'
     | 'session_recovery'
+    | 'context_usage_update'
+    | 'permission_request'
+    | 'structured_output'
+    | 'lsp_diagnostics'
+    | 'todo_update'
   content?: string
   toolName?: string
   toolInput?: string
@@ -75,6 +74,14 @@ export interface StreamChunk {
   persistedFiles?: Array<{ filename: string; fileId: string }>
   /** Session recovery phase */
   recoveryPhase?: 'started' | 'building_context' | 'resuming' | 'completed' | 'failed'
+  /** Live context usage update — emitted each turn for real-time badge updates */
+  contextUsageUpdate?: {
+    inputTokens: number
+    contextWindowSize: number
+    percentage: number
+    /** Prompt cache hit rate (0–100) — ratio of cache-read tokens to total input. */
+    cacheHitRate?: number
+  }
   /** Hook lifecycle info */
   hookInfo?: {
     hookId: string
@@ -84,127 +91,36 @@ export interface StreamChunk {
     output?: string
     outcome?: 'success' | 'error' | 'cancelled'
   }
-}
-
-/** Strip workspace prefix from an absolute path to produce a relative display path. */
-function toRelativePath(absolutePath: string, workspacePath?: string): string {
-  if (!workspacePath || !absolutePath.startsWith(workspacePath)) return absolutePath
-  const relative = absolutePath.slice(workspacePath.length)
-  return relative.startsWith('/') ? relative.slice(1) : relative
-}
-
-/**
- * Extracts a human-readable summary from raw tool input for display in the UI.
- */
-export function summarizeToolInput(
-  toolName: string,
-  input: Record<string, unknown>,
-  workspacePath?: string
-): string {
-  switch (toolName) {
-    case 'Bash':
-      return (input.description as string) || (input.command as string) || ''
-    case 'Read':
-      return toRelativePath((input.file_path as string) || '', workspacePath)
-    case 'Write':
-    case 'Edit':
-      return toRelativePath((input.file_path as string) || '', workspacePath)
-    case 'Grep':
-      return (
-        `/${input.pattern as string}/` +
-        (input.path ? ` in ${toRelativePath(input.path as string, workspacePath)}` : '')
-      )
-    case 'Glob':
-      return (input.pattern as string) || ''
-    case 'WebSearch':
-      return (input.query as string) || ''
-    case 'WebFetch':
-      return (input.url as string) || ''
-    case 'TodoRead':
-    case 'TodoWrite':
-    case 'TaskCreate':
-    case 'TaskGet':
-    case 'TaskUpdate':
-    case 'TaskList':
-      return 'Task management'
-    case 'TaskOutput':
-      return `Reading output of task ${(input.id as string)?.slice(0, 7) ?? ''}…`
-
-    // ── MCP tools: Code Graph (Phase 1) ──
-    case MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name:
-      return `graph_map${input.focusFiles ? ` (focus: ${(input.focusFiles as string[]).length} files)` : ''}`
-    case MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name:
-      return `search: ${(input.query as string) || ''}`
-    case MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name:
-      return `dead code${input.path ? ` in ${input.path}` : ''}`
-
-    // ── MCP tools: Code Graph (Phase 2 — Navigation) ──
-    case MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name:
-      return `outline: ${toRelativePath((input.filePath as string) || '', workspacePath)}`
-    case MCP_TOOLS.CODE_GRAPH.FIND_CALLERS.name:
-      return `callers of: ${(input.symbolName as string) || ''}`
-    case MCP_TOOLS.CODE_GRAPH.FIND_CALLEES.name:
-      return `callees of: ${(input.symbolName as string) || ''}`
-    case MCP_TOOLS.CODE_GRAPH.FIND_REFERENCES.name:
-      return `refs: ${(input.symbolName as string) || ''}`
-    case MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENCIES.name:
-      return `deps: ${toRelativePath((input.filePath as string) || '', workspacePath)}`
-    case MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENTS.name:
-      return `dependents: ${toRelativePath((input.filePath as string) || '', workspacePath)}`
-
-    // ── MCP tools: Code Graph (Phase 3 — Analysis) ──
-    case MCP_TOOLS.CODE_GRAPH.SYMBOL_HOTSPOTS.name:
-      return `hotspots${input.path ? ` in ${input.path}` : ''}`
-    case MCP_TOOLS.CODE_GRAPH.COUPLING_ANALYSIS.name:
-      return `coupling${input.path ? ` in ${input.path}` : ''}`
-    case MCP_TOOLS.CODE_GRAPH.CIRCULAR_DEPENDENCIES.name:
-      return `cycles${input.path ? ` in ${input.path}` : ''}`
-    case MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name:
-      return `boundaries (depth: ${input.depth ?? 2})`
-
-    // ── MCP tools: Code Analysis ──
-    case MCP_TOOLS.CODE_ANALYSIS.TODO_SCANNER.name:
-      return 'scan TODOs'
-    case MCP_TOOLS.CODE_ANALYSIS.DEPENDENCY_HEALTH.name:
-      return 'dependency health'
-    case MCP_TOOLS.CODE_ANALYSIS.TEST_COVERAGE_MAP.name:
-      return 'test coverage map'
-
-    // ── MCP tools: Semantic Search ──
-    case MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name:
-      return `semantic: ${(input.query as string) || ''}`
-
-    // ── MCP tools: Git Context ──
-    case MCP_TOOLS.GIT_CONTEXT.GIT_LOG.name:
-      return `git log${input.path ? ` ${toRelativePath(input.path as string, workspacePath)}` : ''}`
-    case MCP_TOOLS.GIT_CONTEXT.GIT_DIFF.name:
-      return `git diff${input.path ? ` ${toRelativePath(input.path as string, workspacePath)}` : ''}`
-    case MCP_TOOLS.GIT_CONTEXT.GIT_BLAME.name:
-      return `git blame ${toRelativePath((input.path as string) || '', workspacePath)}`
-
-    // ── MCP tools: Checkpoint Context ──
-    case MCP_TOOLS.CHECKPOINT_CONTEXT.LIST_CHECKPOINTS.name:
-      return 'list checkpoints'
-    case MCP_TOOLS.CHECKPOINT_CONTEXT.GET_CHECKPOINT.name:
-      return `checkpoint ${(input.checkpointId as string)?.slice(0, 7) ?? ''}…`
-
-    // ── MCP tools: GitHub Context ──
-    case MCP_TOOLS.GITHUB_CONTEXT.GET_PR_STATUS.name:
-      return `PR #${(input.prNumber as string) || ''}`
-    case MCP_TOOLS.GITHUB_CONTEXT.LIST_PR_COMMENTS.name:
-      return `PR #${(input.prNumber as string) || ''} comments`
-    case MCP_TOOLS.GITHUB_CONTEXT.LIST_ISSUES.name:
-      return 'list issues'
-
-    default:
-      // Generic MCP tool fallback — extract server + tool name for any unhandled MCP tools
-      if (toolName.startsWith('mcp__')) {
-        const parts = toolName.split('__')
-        return parts.length >= 3 ? `${parts[1]}/${parts[2]}` : toolName
-      }
-      return ''
+  /** Permission request info (plan mode) */
+  permissionRequest?: {
+    permissionId: string
+    tool: string
+    args?: Record<string, unknown>
+    message: string
+  }
+  /** GAP-9: Structured output from agent response (JSON schema result) */
+  structuredOutput?: {
+    data: unknown
+    schemaName?: string
+  }
+  /** GAP-14: LSP diagnostics from compiler/linter */
+  lspDiagnostics?: Array<{
+    file: string
+    line: number
+    severity: 'error' | 'warning' | 'info' | 'hint'
+    message: string
+    source?: string
+  }>
+  /** GAP-15: Todo list update from todowrite tool */
+  todoUpdate?: {
+    action: 'add' | 'complete' | 'remove' | 'update'
+    text: string
+    index?: number
   }
 }
+
+// Re-export for backward compatibility — consumers import from here or the barrel
+export { summarizeToolInput }
 
 /**
  * Shared base class for agent services (Generalist and specialist workers).
@@ -368,267 +284,34 @@ export abstract class AgentBaseService extends EventEmitter {
     const type = event.type as string
 
     switch (type) {
-      case 'assistant': {
-        this.currentStatus = 'writing'
-        this.emit('statusUpdate', this.getStatus())
-
-        const message = event.message as Record<string, unknown> | undefined
-        if (message) {
-          const content = message.content as Array<Record<string, unknown>> | undefined
-          if (content) {
-            for (const block of content) {
-              if (block.type === 'text') {
-                // Only emit if content wasn't already streamed via content_block_delta/start
-                if (!this.hasEmittedContent) {
-                  this.emit('chunk', {
-                    type: 'text',
-                    content: block.text as string
-                  } as StreamChunk)
-                }
-                this.hasEmittedContent = true
-              } else if (block.type === 'tool_use') {
-                const toolName = block.name as string
-                const toolId = block.id as string
-                const toolInput = block.input as Record<string, unknown> | undefined
-                if (toolId) {
-                  this.toolIdToName.set(toolId, toolName)
-                }
-                // Skip if already processed via content_block_start/stop streaming
-                if (toolId && this.processedToolIds.has(toolId)) {
-                  break
-                }
-                this.currentStatus = 'reviewing'
-                this.emit('statusUpdate', this.getStatus())
-                this.emit('chunk', {
-                  type: 'tool_use',
-                  toolName,
-                  toolId,
-                  toolInput: toolInput
-                    ? summarizeToolInput(toolName, toolInput, this.cwd)
-                    : undefined
-                } as StreamChunk)
-
-                // Plan file safety net (full-message path): When Claude CLI writes a plan to
-                // .claude/plans/ via its built-in plan mode, extract the content from the tool
-                // input and emit it as a ```plan block so the UI renders a PlanCard.
-                // The streaming path (content_block_start/stop) handles this via
-                // processedToolIds — planBlockInjected prevents duplication across both paths.
-                if (
-                  !this.planBlockInjected &&
-                  toolName === 'Write' &&
-                  toolInput &&
-                  typeof toolInput.content === 'string' &&
-                  typeof toolInput.file_path === 'string' &&
-                  ((toolInput.file_path as string).includes('.claude/plans/') ||
-                    isPlanContent(toolInput.content as string))
-                ) {
-                  this.planBlockInjected = true
-                  this.emit('chunk', {
-                    type: 'text',
-                    content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`
-                  } as StreamChunk)
-                  this.log.info(
-                    `Injected plan content from Write to ${toolInput.file_path} (full-message path)`
-                  )
-                }
-              }
-            }
-          }
-        }
-
-        const contentBlock = event.content_block as Record<string, unknown> | undefined
-        const delta = event.delta as Record<string, unknown> | undefined
-        if (contentBlock?.type === 'text_delta' || delta?.type === 'text_delta') {
-          const text = contentBlock?.text ?? delta?.text
-          if (text) {
-            this.emit('chunk', { type: 'text', content: text } as StreamChunk)
-          }
-        }
-        break
-      }
-
-      case 'user': {
-        const userMessage = event.message as Record<string, unknown> | undefined
-        if (userMessage) {
-          const userContent = userMessage.content as Array<Record<string, unknown>> | undefined
-          if (userContent) {
-            for (const block of userContent) {
-              if (block.type === 'tool_result') {
-                const toolUseId = block.tool_use_id as string
-                // Skip if already handled by content_block_stop streaming
-                if (toolUseId && this.processedToolIds.has(toolUseId)) {
-                  this.processedToolIds.delete(toolUseId)
-                  this.toolIdToName.delete(toolUseId)
-                  break
-                }
-                const toolName = this.toolIdToName.get(toolUseId) ?? 'Unknown'
-                if (toolUseId) {
-                  this.toolIdToName.delete(toolUseId)
-                }
-                this.emit('chunk', {
-                  type: 'tool_result',
-                  toolName,
-                  toolId: toolUseId
-                } as StreamChunk)
-              }
-            }
-          }
-        }
-        break
-      }
-
-      case 'content_block_delta': {
-        const delta = event.delta as Record<string, unknown> | undefined
-        if (delta?.type === 'text_delta' && delta.text) {
-          this.emit('chunk', {
-            type: 'text',
-            content: delta.text as string
-          } as StreamChunk)
-          this.hasEmittedContent = true
-        } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
-          // Accumulate tool input for display
-          this.currentToolInput += delta.partial_json as string
-        }
-        break
-      }
-
-      case 'content_block_start': {
-        const contentBlock = event.content_block as Record<string, unknown> | undefined
-        if (contentBlock?.type === 'tool_use') {
-          this.toolCallCount++
-
-          // Circuit breaker: too many tool calls suggests an infinite loop
-          if (this.toolCallCount > MAX_TOOL_CALLS_PER_INTERACTION) {
-            this.log.error(
-              `Circuit breaker: ${this.toolCallCount} tool calls exceeded limit of ${MAX_TOOL_CALLS_PER_INTERACTION}`
-            )
-            this.currentStatus = 'failed'
-            this.emit('statusUpdate', this.getStatus())
-            this.emit('chunk', {
-              type: 'error',
-              error: `The agent made ${this.toolCallCount} tool calls, which suggests it got stuck in a loop. The response has been stopped. Try rephrasing your request.`
-            } as StreamChunk)
-            this.emit('complete')
-
-            // Actually stop processing — the `return` alone just skips this event,
-            // but handleOutput will fire again on the next stdout data chunk.
-            this.circuitBroken = true
-            return
-          }
-
-          this.currentStatus = 'reviewing'
-          this.currentToolName = contentBlock.name as string
-          this.currentToolId = contentBlock.id as string
-          this.currentToolInput = ''
-          const toolId = contentBlock.id as string
-          if (toolId) {
-            this.processedToolIds.add(toolId)
-          }
-          const toolInput = contentBlock.input as Record<string, unknown> | undefined
-
-          // Pre-fill with serialized input when the full input is available at start time.
-          // In this case, no input_json_delta events will follow, so currentToolInput
-          // would otherwise remain empty when content_block_stop fires.
-          if (toolInput && Object.keys(toolInput).length > 0) {
-            this.currentToolInput = JSON.stringify(toolInput)
-          }
-
-          this.emit('statusUpdate', this.getStatus())
-          this.emit('chunk', {
-            type: 'tool_use',
-            toolName: contentBlock.name as string,
-            toolId: contentBlock.id as string,
-            toolInput: toolInput
-              ? summarizeToolInput(this.currentToolName, toolInput, this.cwd)
-              : undefined
-          } as StreamChunk)
-        } else if (contentBlock?.type === 'text' && contentBlock.text) {
-          this.emit('chunk', {
-            type: 'text',
-            content: contentBlock.text as string
-          } as StreamChunk)
-          this.hasEmittedContent = true
-        }
-        break
-      }
-
-      case 'content_block_stop': {
-        // If we were tracking a tool call, emit tool_result to mark it complete
-        if (this.currentToolName) {
-          // Plan file safety net (streaming path): When the LLM writes plan content
-          // via a Write tool call, intercept it and emit as a ````plan block so
-          // the UI renders a PlanCard instead of showing a file write.
-          if (this.currentToolName === 'Write' && this.currentToolInput) {
-            try {
-              const toolInput = JSON.parse(this.currentToolInput)
-              if (
-                !this.planBlockInjected &&
-                typeof toolInput.content === 'string' &&
-                typeof toolInput.file_path === 'string' &&
-                ((toolInput.file_path as string).includes('.claude/plans/') ||
-                  isPlanContent(toolInput.content as string))
-              ) {
-                this.planBlockInjected = true
-                this.emit('chunk', {
-                  type: 'text',
-                  content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`
-                } as StreamChunk)
-                this.log.info(
-                  `Injected plan content from Write to ${toolInput.file_path} (streaming path)`
-                )
-              }
-            } catch {
-              // currentToolInput may be incomplete JSON — skip plan injection
-            }
-          }
-
-          this.emit('chunk', {
-            type: 'tool_result',
-            toolName: this.currentToolName,
-            toolId: this.currentToolId ?? undefined,
-            content: this.currentToolInput || undefined
-          } as StreamChunk)
-          this.currentToolName = null
-          this.currentToolId = null
-          this.currentToolInput = ''
-        }
-        break
-      }
-
+      case 'assistant':
+        return this.handleAssistantEvent(event)
+      case 'user':
+        return this.handleUserEvent(event)
+      case 'content_block_delta':
+        return this.handleContentBlockDelta(event)
+      case 'content_block_start':
+        return this.handleContentBlockStart(event)
+      case 'content_block_stop':
+        return this.handleContentBlockStop()
       case 'message_start': {
         const usage = (event.message as Record<string, unknown>)?.usage as
           | Record<string, number>
           | undefined
-        if (usage?.input_tokens) {
-          this.tokenUsage += usage.input_tokens
-        }
+        if (usage?.input_tokens) this.tokenUsage += usage.input_tokens
         break
       }
-
       case 'message_delta': {
         const usage = event.usage as Record<string, number> | undefined
-        if (usage?.output_tokens) {
-          this.tokenUsage += usage.output_tokens
-        }
+        if (usage?.output_tokens) this.tokenUsage += usage.output_tokens
         break
       }
-
-      case 'message_stop': {
-        // No-op: message_stop fires between turns in multi-turn tool use.
-        // The 'result' event handles final status update + completion.
-        break
-      }
-
-      case 'result': {
-        this.onResultEvent(event)
-        break
-      }
-
-      case 'system': {
-        this.onSystemEvent(event)
-        break
-      }
-
+      case 'message_stop':
+        break // No-op: handled by 'result'
+      case 'result':
+        return this.onResultEvent(event)
+      case 'system':
+        return this.onSystemEvent(event)
       case 'error': {
         this.currentStatus = 'failed'
         this.emit('statusUpdate', this.getStatus())
@@ -636,19 +319,207 @@ export abstract class AgentBaseService extends EventEmitter {
           type: 'error',
           error: (event.error as Record<string, string>)?.message ?? 'Unknown error'
         } as StreamChunk)
-        // Emit complete so the UI isn't stuck — if the CLI recovers and sends
-        // a result event later, handleOutput will start a new interaction cycle
         this.emit('complete')
         break
       }
-
-      default: {
+      default:
         this.log.debug(
           `Unhandled stream event type: "${type}"`,
           JSON.stringify(event).substring(0, 200)
         )
+    }
+  }
+
+  // ── Extracted event handlers (reduce processStreamEvent complexity) ──
+
+  /** Handle 'assistant' events — text blocks and tool_use blocks from full messages */
+  private handleAssistantEvent(event: Record<string, unknown>): void {
+    this.currentStatus = 'writing'
+    this.emit('statusUpdate', this.getStatus())
+
+    const message = event.message as Record<string, unknown> | undefined
+    if (message) {
+      const content = message.content as Array<Record<string, unknown>> | undefined
+      if (content) {
+        for (const block of content) {
+          if (block.type === 'text') {
+            if (!this.hasEmittedContent) {
+              this.emit('chunk', { type: 'text', content: block.text as string } as StreamChunk)
+            }
+            this.hasEmittedContent = true
+          } else if (block.type === 'tool_use') {
+            this.handleAssistantToolUseBlock(block)
+          }
+        }
+      }
+    }
+
+    // Inline text_delta from assistant message
+    const contentBlock = event.content_block as Record<string, unknown> | undefined
+    const delta = event.delta as Record<string, unknown> | undefined
+    if (contentBlock?.type === 'text_delta' || delta?.type === 'text_delta') {
+      const text = contentBlock?.text ?? delta?.text
+      if (text) this.emit('chunk', { type: 'text', content: text } as StreamChunk)
+    }
+  }
+
+  /** Handle a single tool_use block from an assistant full message */
+  private handleAssistantToolUseBlock(block: Record<string, unknown>): void {
+    const toolName = block.name as string
+    const toolId = block.id as string
+    const toolInput = block.input as Record<string, unknown> | undefined
+    if (toolId) this.toolIdToName.set(toolId, toolName)
+
+    // Skip if already processed via content_block_start/stop streaming
+    if (toolId && this.processedToolIds.has(toolId)) return
+
+    this.currentStatus = 'reviewing'
+    this.emit('statusUpdate', this.getStatus())
+    this.emit('chunk', {
+      type: 'tool_use',
+      toolName,
+      toolId,
+      toolInput: toolInput ? summarizeToolInput(toolName, toolInput, this.cwd) : undefined
+    } as StreamChunk)
+
+    this.tryInjectPlanBlock(toolName, toolInput, 'full-message path')
+  }
+
+  /** Handle 'user' events — tool_result blocks */
+  private handleUserEvent(event: Record<string, unknown>): void {
+    const userMessage = event.message as Record<string, unknown> | undefined
+    if (!userMessage) return
+    const userContent = userMessage.content as Array<Record<string, unknown>> | undefined
+    if (!userContent) return
+
+    for (const block of userContent) {
+      if (block.type !== 'tool_result') continue
+      const toolUseId = block.tool_use_id as string
+      // Skip if already handled by content_block_stop streaming
+      if (toolUseId && this.processedToolIds.has(toolUseId)) {
+        this.processedToolIds.delete(toolUseId)
+        this.toolIdToName.delete(toolUseId)
         break
       }
+      const toolName = this.toolIdToName.get(toolUseId) ?? 'Unknown'
+      if (toolUseId) this.toolIdToName.delete(toolUseId)
+      this.emit('chunk', { type: 'tool_result', toolName, toolId: toolUseId } as StreamChunk)
+    }
+  }
+
+  /** Handle 'content_block_delta' — streaming text or tool input accumulation */
+  private handleContentBlockDelta(event: Record<string, unknown>): void {
+    const delta = event.delta as Record<string, unknown> | undefined
+    if (delta?.type === 'text_delta' && delta.text) {
+      this.emit('chunk', { type: 'text', content: delta.text as string } as StreamChunk)
+      this.hasEmittedContent = true
+    } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
+      this.currentToolInput += delta.partial_json as string
+    }
+  }
+
+  /** Handle 'content_block_start' — tool call circuit breaker + tool_use emission */
+  private handleContentBlockStart(event: Record<string, unknown>): void {
+    const contentBlock = event.content_block as Record<string, unknown> | undefined
+    if (contentBlock?.type === 'tool_use') {
+      this.toolCallCount++
+
+      // Circuit breaker: too many tool calls suggests an infinite loop
+      if (this.toolCallCount > MAX_TOOL_CALLS_PER_INTERACTION) {
+        this.log.error(
+          `Circuit breaker: ${this.toolCallCount} tool calls exceeded limit of ${MAX_TOOL_CALLS_PER_INTERACTION}`
+        )
+        this.currentStatus = 'failed'
+        this.emit('statusUpdate', this.getStatus())
+        this.emit('chunk', {
+          type: 'error',
+          error: `The agent made ${this.toolCallCount} tool calls, which suggests it got stuck in a loop. The response has been stopped. Try rephrasing your request.`
+        } as StreamChunk)
+        this.emit('complete')
+        this.circuitBroken = true
+        return
+      }
+
+      this.currentStatus = 'reviewing'
+      this.currentToolName = contentBlock.name as string
+      this.currentToolId = contentBlock.id as string
+      this.currentToolInput = ''
+      const toolId = contentBlock.id as string
+      if (toolId) this.processedToolIds.add(toolId)
+      const toolInput = contentBlock.input as Record<string, unknown> | undefined
+
+      // Pre-fill with serialized input when available at start time
+      if (toolInput && Object.keys(toolInput).length > 0) {
+        this.currentToolInput = JSON.stringify(toolInput)
+      }
+
+      this.emit('statusUpdate', this.getStatus())
+      this.emit('chunk', {
+        type: 'tool_use',
+        toolName: this.currentToolName,
+        toolId: this.currentToolId,
+        toolInput: toolInput
+          ? summarizeToolInput(this.currentToolName, toolInput, this.cwd)
+          : undefined
+      } as StreamChunk)
+    } else if (contentBlock?.type === 'text' && contentBlock.text) {
+      this.emit('chunk', { type: 'text', content: contentBlock.text as string } as StreamChunk)
+      this.hasEmittedContent = true
+    }
+  }
+
+  /** Handle 'content_block_stop' — emit tool_result + plan injection */
+  private handleContentBlockStop(): void {
+    if (!this.currentToolName) return
+
+    // Plan file safety net (streaming path)
+    if (this.currentToolName === 'Write' && this.currentToolInput) {
+      try {
+        const toolInput = JSON.parse(this.currentToolInput)
+        this.tryInjectPlanBlock(this.currentToolName, toolInput, 'streaming path')
+      } catch {
+        // currentToolInput may be incomplete JSON — skip plan injection
+      }
+    }
+
+    this.emit('chunk', {
+      type: 'tool_result',
+      toolName: this.currentToolName,
+      toolId: this.currentToolId ?? undefined,
+      content: this.currentToolInput || undefined
+    } as StreamChunk)
+    this.currentToolName = null
+    this.currentToolId = null
+    this.currentToolInput = ''
+  }
+
+  /**
+   * Inject plan content as a ````plan block when a Write tool targets .claude/plans/
+   * or the content matches a plan JSON structure. Guards against double-injection.
+   */
+  private tryInjectPlanBlock(
+    toolName: string,
+    toolInput: Record<string, unknown> | undefined,
+    path: string
+  ): void {
+    if (
+      this.planBlockInjected ||
+      toolName !== 'Write' ||
+      !toolInput ||
+      typeof toolInput.content !== 'string' ||
+      typeof toolInput.file_path !== 'string'
+    ) return
+
+    if (
+      (toolInput.file_path as string).includes('.claude/plans/') ||
+      isPlanContent(toolInput.content as string)
+    ) {
+      this.planBlockInjected = true
+      this.emit('chunk', {
+        type: 'text',
+        content: `\n\n\`\`\`\`plan\n${toolInput.content as string}\n\`\`\`\`\n`
+      } as StreamChunk)
+      this.log.info(`Injected plan content from Write to ${toolInput.file_path} (${path})`)
     }
   }
 

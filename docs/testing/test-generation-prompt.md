@@ -1,12 +1,13 @@
 # Comprehensive Test Suite Generation Prompt
 
-> **How to use this prompt**: Feed it to your agentic coding app. Run it repeatedly — each run should expand coverage rather than regenerate from scratch. On subsequent runs, the agent should detect existing tests (via the coverage report and test files) and only add *missing* coverage. Adjust the `<RUN_FOCUS>` variable at the top to bias each execution toward a specific layer or module.
+> **How to use this prompt**: Feed it to your agentic coding app. Run it repeatedly — each run should expand coverage rather than regenerate from scratch. On subsequent runs, the agent should detect existing tests (via the coverage report and test files) and only add _missing_ coverage. Adjust the `<RUN_FOCUS>` variable at the top to bias each execution toward a specific layer or module.
 
 ---
 
 ## ROLE AND OBJECTIVE
 
 You are a **Senior Test Engineer and Quality Architect** with deep expertise in:
+
 - Test strategy design (test pyramid, trophy, honeycomb)
 - LLM application testing patterns (deterministic mocks, snapshot testing, record/replay)
 - The Anthropic Claude SDK (messages API, streaming, tool use, system prompts, stop reasons)
@@ -48,7 +49,7 @@ Before writing any test, produce a **Test Discovery Report** by exploring the re
 4. **Output a prioritized test plan** as a markdown table:
 
 | Priority | Layer | Target (file/function/flow) | Risk if untested | Estimated tests |
-|---|---|---|---|---|
+| -------- | ----- | --------------------------- | ---------------- | --------------- |
 
 Only after this report do you proceed to writing tests. If `focus` is not `discovery`, skim the existing discovery artifact (store it at `./tests/_meta/discovery.md`) and update it rather than redoing from scratch.
 
@@ -63,6 +64,7 @@ Generate tests across **all four layers**. Each layer has strict rules:
 Target: pure functions, prompt builders, parsers, validators, routing logic, tool argument serializers, role selectors, token counters, retry/backoff logic.
 
 Rules:
+
 - **Zero network calls**. Zero filesystem. Zero real Claude SDK calls.
 - One behavior per test. AAA structure (Arrange, Act, Assert) with clear names: `it('routes_dotnet_keyword_requests_to_dotnet_architect')`.
 - Cover: happy path, boundary conditions, invalid inputs, empty inputs, oversized inputs, malformed JSON from tools, injection attempts in user input, unicode, very long conversations.
@@ -74,6 +76,7 @@ Rules:
 Target: agent-to-tool flows, orchestrator-to-specialist delegation, Claude SDK call wrappers with mocked responses, session/memory roundtrips, MCP adapter layers.
 
 Rules:
+
 - Mock the Claude SDK at the **HTTP boundary** (preferred) using a recorder/replayer (nock, MSW, pytest-recording/VCR, WireMock) OR at the SDK boundary with a typed fake.
 - Test multi-turn conversations: verify the message history sent on turn N contains turns 1..N-1.
 - Test tool-use loops: model requests tool → app dispatches → result fed back → model finishes. Assert stop_reason transitions.
@@ -85,6 +88,7 @@ Rules:
 Target: user prompt → orchestrator → specialist selection → tool calls → final response → persisted state.
 
 Rules:
+
 - Use a **recorded cassette** of real Claude responses (record once with a test API key, replay deterministically after). Cassettes live in `./tests/cassettes/`.
 - Provide a `RECORD_MODE` env var: `none` (default, replay only), `new_episodes` (record missing), `all` (re-record everything).
 - Sandbox filesystem and shell: run in a temp dir, block network except to the mock/cassette server.
@@ -126,6 +130,7 @@ Use this for unit + integration tests. Fail loudly if the app makes an unexpecte
 Record real responses once, replay by hashing `(model, system, messages, tools)` → fixture file. Use for E2E. When the hash misses, fail with a clear message telling the developer to re-record.
 
 Cassette structure:
+
 ```
 tests/cassettes/
   e2e_dotnet_refactor_flow/
@@ -142,6 +147,7 @@ Only runs when `CLAUDE_LIVE_TESTS=1` AND an API key is present. Used in a nightl
 ### What to assert about SDK interactions
 
 For every SDK-involving test, assert:
+
 1. **Message shape**: role alternation is valid, no two consecutive same-role messages, tool_result blocks follow tool_use blocks.
 2. **System prompt**: contains the expected role identity, constraints, and tools list for the active specialist.
 3. **Model parameter**: correct model is selected per role (e.g., Opus for architects, Sonnet for workers — whatever your policy is).
@@ -156,28 +162,28 @@ For every SDK-involving test, assert:
 
 For **each specialist agent** (`.NET Architect`, `React Architect`, etc.), generate this full matrix. Do not skip any row.
 
-| # | Test Case | Layer |
-|---|---|---|
-| 1 | Activates when user query matches its domain keywords | Unit |
-| 2 | Does NOT activate for out-of-domain queries | Unit |
-| 3 | System prompt includes correct role + allowed tools | Integration |
-| 4 | Only its own tools are advertised to Claude | Integration |
-| 5 | Happy path: single-turn response with no tool use | Integration |
-| 6 | Tool-use loop: one tool call, one result, final answer | Integration |
-| 7 | Multi-tool loop: ≥ 3 sequential tool calls | Integration |
-| 8 | Parallel tool calls in one turn (if supported) | Integration |
-| 9 | Tool returns error → agent recovers or surfaces error | Integration |
-| 10 | Claude returns `max_tokens` → continuation or graceful cap | Integration |
-| 11 | Claude returns refusal → propagated to user, not silently swallowed | Integration |
-| 12 | Handoff to another specialist when scope exceeds role | Integration |
-| 13 | Context window near-limit → summarization/truncation kicks in | Integration |
-| 14 | Session resumed from persistence reproduces same behavior | Integration |
-| 15 | Full user journey for this specialist (cassette) | E2E |
-| 16 | Concurrent requests to same agent don't cross-contaminate state | Integration |
-| 17 | Cancellation mid-flight releases resources | Integration |
-| 18 | Retry on 429 with backoff, respects Retry-After | Integration |
-| 19 | Audit log captures every tool call with inputs/outputs | Integration |
-| 20 | Prompt-injection attempt in tool output is neutralized | Integration |
+| #   | Test Case                                                           | Layer       |
+| --- | ------------------------------------------------------------------- | ----------- |
+| 1   | Activates when user query matches its domain keywords               | Unit        |
+| 2   | Does NOT activate for out-of-domain queries                         | Unit        |
+| 3   | System prompt includes correct role + allowed tools                 | Integration |
+| 4   | Only its own tools are advertised to Claude                         | Integration |
+| 5   | Happy path: single-turn response with no tool use                   | Integration |
+| 6   | Tool-use loop: one tool call, one result, final answer              | Integration |
+| 7   | Multi-tool loop: ≥ 3 sequential tool calls                          | Integration |
+| 8   | Parallel tool calls in one turn (if supported)                      | Integration |
+| 9   | Tool returns error → agent recovers or surfaces error               | Integration |
+| 10  | Claude returns `max_tokens` → continuation or graceful cap          | Integration |
+| 11  | Claude returns refusal → propagated to user, not silently swallowed | Integration |
+| 12  | Handoff to another specialist when scope exceeds role               | Integration |
+| 13  | Context window near-limit → summarization/truncation kicks in       | Integration |
+| 14  | Session resumed from persistence reproduces same behavior           | Integration |
+| 15  | Full user journey for this specialist (cassette)                    | E2E         |
+| 16  | Concurrent requests to same agent don't cross-contaminate state     | Integration |
+| 17  | Cancellation mid-flight releases resources                          | Integration |
+| 18  | Retry on 429 with backoff, respects Retry-After                     | Integration |
+| 19  | Audit log captures every tool call with inputs/outputs              | Integration |
+| 20  | Prompt-injection attempt in tool output is neutralized              | Integration |
 
 ---
 
@@ -271,6 +277,7 @@ This prompt is designed to be run **many times**. On each run:
 5. If all high-risk areas are covered, shift to mutation testing: introduce small code mutations mentally and ensure tests catch them; add tests where they don't.
 
 Recommended run sequence:
+
 1. `focus: discovery`
 2. `focus: mocks` (build the Claude mock harness first)
 3. `focus: unit` (2–3 runs until core logic is green)
@@ -284,6 +291,7 @@ Recommended run sequence:
 ## CONSTRAINTS AND ANTI-PATTERNS
 
 Do **not**:
+
 - Write tests that assert on Claude's natural-language output verbatim (brittle). Assert on structure, tool calls, and state changes instead.
 - Mock what you don't own without a contract test verifying the real thing matches.
 - Write one giant E2E and call it done.
@@ -292,8 +300,9 @@ Do **not**:
 - Generate more than ~100 tests in one run without checking they all pass.
 
 Do:
+
 - Prefer fakes over mocks where possible (a real in-memory implementation beats a mock).
-- Make failures diagnostic: assertion messages should explain *why*, not just *what*.
+- Make failures diagnostic: assertion messages should explain _why_, not just _what_.
 - Keep setup minimal and explicit per test.
 - Treat the Claude SDK mock as production code — it has its own tests.
 

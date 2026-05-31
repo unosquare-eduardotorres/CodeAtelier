@@ -25,14 +25,22 @@ import type {
 import type { ControlActionCallbacks } from '../control-actions.tool'
 import { GRILL_TRACKS } from '../../../shared/constants'
 import { workspaceRepository } from '../../db/repositories'
-import { codeGraphMcpService } from '../code-graph.tool'
-import { semanticSearchMcpService } from '../semantic-search.tool'
-import { gitContextMcpService } from '../git-context.tool'
-import { codeAnalysisMcpService } from '../code-analysis.tool'
 import { intentDetector } from '../intent-detector'
 import { appendMcpToolGuidance, type PromptFeatureFlags } from '../prompt-assembly-helpers'
+import { modelConfigService } from '../model-config.service'
 import { chatAgentLogger } from '../../logger'
-import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
+import { buildReadOnlyToolConfig } from './evaluation-mcp-config'
+import {
+  buildReEvalBlock,
+  buildGrillEvaluationSchema,
+  buildGrillEvaluationSchemaLean,
+  GRILL_QUESTION_QUALITY_RULES,
+  GRILL_QUESTION_QUALITY_RULES_LEAN,
+  GRILL_SCORING_RULES,
+  GRILL_SCORING_RULES_LEAN,
+  isGrillLean
+} from './grill-prompt-blocks'
+import { sanitizePromptInput } from '../sanitize-prompt-input'
 
 export class GrillRoleAdapter implements AgentRoleAdapter {
   readonly role = 'grill' as const
@@ -52,8 +60,8 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
   private systemPrompt: string | null = null
 
   // Feature flags read on session start
-  private repomapEnabled = false
-  private semanticSearchEnabled = false
+  private repomapEnabled = true
+  private semanticSearchEnabled = true
 
   constructor(params: {
     workspaceId: string
@@ -74,15 +82,12 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
     this.agentId = `grill-${params.trackId}-${params.workspaceId}`
   }
 
-  async onSessionStart(_ctx: AdapterSessionLifecycleCtx): Promise<void> {
+  async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
     // Read workspace settings for MCP flags
     try {
-      const workspace = workspaceRepository.findById(this.workspaceId)
-      if (workspace) {
-        const settings = JSON.parse(workspace.settingsJson || '{}')
-        this.repomapEnabled = !!settings.repomapEnabled
-        this.semanticSearchEnabled = !!settings.semanticSearchEnabled
-      }
+      const settings = workspaceRepository.getSettings(this.workspaceId)
+      this.repomapEnabled = settings.repomapEnabled !== false
+      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
     } catch {
       /* non-fatal */
     }
@@ -95,15 +100,22 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
 
     const track = GRILL_TRACKS[this.trackId]
 
-    this.systemPrompt = this.buildSystemPrompt(track)
+    // Resolve model for lean prompt optimization (Opus 4.8+ gets compressed guidance)
+    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
+    const resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, 'grill')
+
+    this.systemPrompt = this.buildSystemPrompt(track, resolvedModel)
 
     // Append MCP tool guidance (same as DaVinci) so the agent knows how to use custom tools
     const featureFlags: PromptFeatureFlags = {
       repomapEnabled: this.repomapEnabled,
       semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: false // grill doesn't mount GitHub tools
+      githubConfigured: false, // grill doesn't mount GitHub tools
+      includeGitContext: this.llmProvider !== 'local-llm',
+      includeCheckpoint: false // grill doesn't mount checkpoint tools
     }
-    this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags)
+
+    this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags, resolvedModel)
 
     this.log.info(`[grill-adapter] ${this.trackId} grill started for workspace=${this.workspaceId}`)
   }
@@ -137,160 +149,12 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
   }
 
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
-    // Local LLM path — mount code-graph, semantic-search (if enabled), code-analysis.
-    // Skip git-context to save tokens (Bash + git CLI equivalent).
-    if (this.llmProvider === 'local-llm') {
-      const servers: Record<string, McpServerConfig> = {}
-
-      // Code graph (conditional on workspace flag)
-      if (this.repomapEnabled && ctx.workspaceId) {
-        Object.assign(
-          servers,
-          codeGraphMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
-        )
-      }
-      // Semantic search (conditional on workspace flag)
-      if (this.semanticSearchEnabled && ctx.workspaceId) {
-        Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(ctx.workspaceId))
-      }
-      // Code analysis: always on
-      Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(ctx.workspacePath))
-
-      return {
-        ...(Object.keys(servers).length > 0 ? { mcpServers: servers } : {}),
-        allowedTools: [
-          'Read',
-          'Glob',
-          'Grep',
-          'WebSearch',
-          'WebFetch',
-          // Code graph (if mounted)
-          ...(this.repomapEnabled && ctx.workspaceId
-            ? [
-                'mcp__code-graph__graph_map',
-                'mcp__code-graph__search_identifiers',
-                'mcp__code-graph__find_dead_code',
-                'mcp__code-graph__file_outline',
-                'mcp__code-graph__find_callers',
-                'mcp__code-graph__find_callees',
-                'mcp__code-graph__find_references',
-                'mcp__code-graph__file_dependencies',
-                'mcp__code-graph__file_dependents',
-                'mcp__code-graph__symbol_hotspots',
-                'mcp__code-graph__coupling_analysis',
-                'mcp__code-graph__circular_dependencies',
-                'mcp__code-graph__module_boundary_health'
-              ]
-            : []),
-          // Semantic search (if mounted)
-          ...(this.semanticSearchEnabled && ctx.workspaceId
-            ? [
-                'mcp__semantic-search__semantic_search',
-                'mcp__semantic-search__similar_code',
-                'mcp__semantic-search__codebase_concepts'
-              ]
-            : []),
-          // Code analysis (always)
-          'mcp__code-analysis__todo_scanner',
-          'mcp__code-analysis__dependency_health',
-          'mcp__code-analysis__test_coverage_map'
-        ],
-        disallowedTools: [
-          'Write',
-          'Edit',
-          'Bash',
-          'Agent',
-          'ToolSearch',
-          'ExitPlanMode',
-          'AskUserQuestion',
-          'TodoWrite', // deprecated — kept for backward compat
-          'TaskCreate', // new Task tools (SDK 0.2.136+)
-          'TaskUpdate'
-        ]
-      }
-    }
-
-    const servers: Record<string, McpServerConfig> = {}
-
-    // Code graph (conditional on workspace flag)
-    if (this.repomapEnabled && ctx.workspaceId) {
-      Object.assign(
-        servers,
-        codeGraphMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
-      )
-    }
-
-    // Semantic search (conditional on workspace flag)
-    if (this.semanticSearchEnabled && ctx.workspaceId) {
-      Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(ctx.workspaceId))
-    }
-
-    // Git context: always on
-    Object.assign(servers, gitContextMcpService.getMcpServersConfig(ctx.workspacePath))
-
-    // Code analysis: always on
-    Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(ctx.workspacePath))
-
-    // Read-only — NO control-actions MCP, NO checkpoint-context, NO github-context
-
-    return {
-      ...(Object.keys(servers).length > 0 ? { mcpServers: servers } : {}),
-      // Explicit allow-list: read-only tools only
-      allowedTools: [
-        'Read',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch',
-        // Code graph MCP tools (if mounted)
-        ...(this.repomapEnabled && ctx.workspaceId
-          ? [
-              'mcp__code-graph__graph_map',
-              'mcp__code-graph__search_identifiers',
-              'mcp__code-graph__find_dead_code',
-              'mcp__code-graph__file_outline',
-              'mcp__code-graph__find_callers',
-              'mcp__code-graph__find_callees',
-              'mcp__code-graph__find_references',
-              'mcp__code-graph__file_dependencies',
-              'mcp__code-graph__file_dependents',
-              'mcp__code-graph__symbol_hotspots',
-              'mcp__code-graph__coupling_analysis',
-              'mcp__code-graph__circular_dependencies',
-              'mcp__code-graph__module_boundary_health'
-            ]
-          : []),
-        // Semantic search (if mounted)
-        ...(this.semanticSearchEnabled && ctx.workspaceId
-          ? [
-              'mcp__semantic-search__semantic_search',
-              'mcp__semantic-search__similar_code',
-              'mcp__semantic-search__codebase_concepts'
-            ]
-          : []),
-        // Git context (always)
-        'mcp__git-context__git_log',
-        'mcp__git-context__git_diff',
-        'mcp__git-context__git_blame',
-        // Code analysis (always)
-        'mcp__code-analysis__todo_scanner',
-        'mcp__code-analysis__dependency_health',
-        'mcp__code-analysis__test_coverage_map'
-      ],
-      // Explicitly block all write + agent tools
-      disallowedTools: [
-        'Write',
-        'Edit',
-        'Bash',
-        'Agent',
-        'ToolSearch',
-        'ExitPlanMode',
-        'AskUserQuestion',
-        'TodoWrite', // deprecated — kept for backward compat
-        'TaskCreate', // new Task tools (SDK 0.2.136+)
-        'TaskUpdate'
-      ]
-    }
+    return buildReadOnlyToolConfig({
+      repomapEnabled: this.repomapEnabled,
+      semanticSearchEnabled: this.semanticSearchEnabled,
+      hasWorkspace: !!ctx.workspaceId,
+      includeGitContext: this.llmProvider !== 'local-llm'
+    })
   }
 
   buildControlCallbacks(_params: {
@@ -338,21 +202,47 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
 
   onSessionStop(): void {
     this.systemPrompt = null
-    this.repomapEnabled = false
-    this.semanticSearchEnabled = false
+    this.repomapEnabled = true
+    this.semanticSearchEnabled = true
   }
 
   // ── Private: prompt construction ───────────────────────────────────
 
-  private buildSystemPrompt(track: (typeof GRILL_TRACKS)[GrillTrackId]): string {
-    const reEvalBlock =
-      this.previousScore != null
-        ? `\n## Re-evaluation Context
-- Previous score: ${this.previousScore}/100
-- ANCHOR your new score to the previous one. Only change when decisions materially fill or reveal gaps.
-- Do NOT re-ask questions the user already answered — focus on REMAINING gaps.
-- In your analysis, explicitly credit which previous decisions address which criteria.\n`
-        : ''
+  private buildSystemPrompt(track: (typeof GRILL_TRACKS)[GrillTrackId], model?: string): string {
+    const lean = isGrillLean(model)
+    const reEvalBlock = buildReEvalBlock(this.previousScore)
+
+    const evaluationSchema = lean
+      ? buildGrillEvaluationSchemaLean(this.trackId)
+      : buildGrillEvaluationSchema(this.trackId)
+
+    const questionRules = lean
+      ? GRILL_QUESTION_QUALITY_RULES_LEAN
+      : GRILL_QUESTION_QUALITY_RULES
+
+    const scoringRules = lean
+      ? GRILL_SCORING_RULES_LEAN
+      : GRILL_SCORING_RULES
+
+    // Lean: compressed instructions — Opus narrates naturally and uses tools-first from schema
+    const instructions = lean
+      ? `## Instructions
+0. Narrate your process — explain what you're checking and why before each tool call.
+1. Use Code Graph + Code Analysis tools FIRST (≥1 each) before Read/Grep.
+2. No broad codebase scans or documentation reads.
+3. Analyze the requirement against each criterion.
+4. Provide markdown analysis of gaps.
+5. ${evaluationSchema}`
+      : `## Instructions
+0. **Narrate your process.** Before each tool call, write a brief sentence explaining what you're about to look at and why (e.g., "Let me check the authentication module to assess error handling…"). This helps the user follow along in real time.
+
+1. Use structured tools (Code Graph, Code Analysis) FIRST — see tool guidance sections below. Call at least one Code Graph tool AND one Code Analysis tool before falling back to Read or Grep.
+2. Do NOT perform a broad codebase scan or read documentation files (README, Roadmap, etc.).
+3. Analyze the requirement against each scoring criterion above.
+4. Provide your analysis as markdown text — explain what is well-defined and what is missing.
+5. After your analysis, emit EXACTLY ONE structured evaluation block in this format:
+
+${evaluationSchema}`
 
     return `You are a Grill Analyst — a requirement completeness evaluator.${reEvalBlock}
 
@@ -363,59 +253,14 @@ Evaluate the completeness of a software requirement for the **${track.name}** tr
 ${track.scoringFocus.map((f) => `- ${f}`).join('\n')}
 
 ## Requirement
-**${this.ideaTitle}**
+**${sanitizePromptInput(this.ideaTitle)}**
 
-${this.ideaDescription || 'No description provided.'}
+${sanitizePromptInput(this.ideaDescription || 'No description provided.')}
 
-## Instructions
-0. **Narrate your process.** Before each tool call, write a brief sentence explaining what you're about to look at and why (e.g., "Let me check the authentication module to assess error handling…"). This helps the user follow along in real time.
+${instructions}
 
-## Tool Priority Order (MANDATORY)
-1. FIRST: Use Code Graph tools (mcp__code-graph__search_identifiers, mcp__code-graph__file_outline, mcp__code-graph__find_callers, mcp__code-graph__find_references, mcp__code-graph__coupling_analysis, mcp__code-graph__module_boundary_health) to understand structure and relationships
-2. THEN: Use Code Analysis tools (mcp__code-analysis__dependency_health, mcp__code-analysis__test_coverage_map, mcp__code-analysis__todo_scanner) for quantitative metrics
-3. THEN: Use Git Context tools (mcp__git-context__git_log, mcp__git-context__git_diff, mcp__git-context__git_blame) for history and change patterns
-4. LAST RESORT: Use Read/Glob/Grep only for specific details the structured tools cannot provide
+${questionRules}
 
-You MUST call at least one Code Graph tool AND one Code Analysis tool before falling back to Read or Grep to ground your gap analysis. The tool guidance sections below describe each tool's capabilities — follow their rules. Do NOT perform a broad codebase scan or read documentation files (README, Roadmap, etc.).
-2. Analyze the requirement against each scoring criterion above.
-3. Provide your analysis as markdown text — explain what is well-defined and what is missing.
-4. After your analysis, emit EXACTLY ONE structured evaluation block in this format:
-
-\`\`\`grill-evaluation
-{
-  "trackId": "${this.trackId}",
-  "score": <number 1-100>,
-  "scoreLabel": "<label: Raw | Warming Up | Medium Rare | Well Done | Perfectly Grilled>",
-  "feedback": "<2-3 sentence summary of gaps>",
-  "questions": [
-    {
-      "id": "q1",
-      "question": "<2-3 sentence question explaining the gap and WHY it matters for implementation>",
-      "header": "<short 3-5 word label>",
-      "options": [
-        { "label": "<concise choice>", "description": "<1-2 sentences: trade-offs, constraints, implications>", "recommended": true, "recommendedReason": "<1 sentence: why this is safest/best given trade-offs>" },
-        { "label": "<alternative>", "description": "<trade-offs>" },
-        { "label": "<another alternative>", "description": "<trade-offs>" }
-      ]
-    }
-  ],
-  "suggestedNextTrack": { "trackId": "<next-track-id>", "reason": "<why>" }
-}
-\`\`\`
-
-## Question Quality Rules
-- Each question MUST target a specific implementation decision, not just "what approach?"
-- The "question" field must explain the GAP and its IMPACT (2-3 sentences, not just a label)
-- Each option's "description" field is REQUIRED — explain trade-offs, constraints, or implications
-- At least 2 of the 5 questions must probe EDGE CASES or FAILURE MODES
-- Do NOT ask vague questions like "How should this work?" — ask "What happens when X fails/overflows/conflicts?"
-- The recommended option's "recommendedReason" must reference concrete trade-offs (risk, complexity, reversibility) — not just "this is better"
-
-## Rules
-- Score 1-20: Raw — fundamental gaps. Score 21-40: Warming Up. Score 41-60: Medium Rare. Score 61-80: Well Done. Score 81-100: Perfectly Grilled.
-- Include exactly 5 questions targeting the weakest areas.
-- Each question must have 3-4 options with at most 1 recommended. The recommended option MUST include a "recommendedReason" field — a single sentence explaining WHY (e.g. "Lower risk with the same outcome — refactoring can happen in phase 2").
-- suggestedNextTrack is optional — only include if another track would benefit.
-- Do NOT emit any other code blocks with the grill-evaluation language tag.`
+${scoringRules}`
   }
 }

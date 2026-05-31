@@ -27,11 +27,24 @@ export interface ModePermissions {
 }
 
 export function buildModePermissions(mode: ConversationMode): ModePermissions {
-  const isBuildMode = mode === 'build'
-  return {
-    baseAllowed: isBuildMode ? undefined : ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
-    disallowed: isBuildMode
-      ? ['Agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion']
-      : ['Write', 'Edit', 'ExitPlanMode', 'AskUserQuestion', 'ToolSearch']
+  switch (mode) {
+    case 'build':
+      return {
+        baseAllowed: undefined, // all SDK built-ins allowed
+        disallowed: ['Agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion']
+      }
+    case 'danger':
+      return {
+        baseAllowed: undefined, // all SDK built-ins allowed
+        disallowed: ['Agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion']
+      }
+    case 'plan':
+    default:
+      return {
+        // Bash added — CLI 'plan' permission mode gates what's safe
+        // (read-only commands allowed, write commands still prompt)
+        baseAllowed: ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch'],
+        disallowed: ['Write', 'Edit', 'ExitPlanMode', 'AskUserQuestion', 'ToolSearch']
+      }
   }
 }

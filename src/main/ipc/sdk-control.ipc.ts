@@ -6,43 +6,21 @@ import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 
 /**
- * SDK Control IPC handlers — bridges renderer requests to the active
- * Query reference held by the generalist's SDKExecutor, or to top-level SDK
- * functions that operate on persisted sessions.
+ * SDK Control IPC handlers — bridges renderer requests to session management.
+ *
+ * Previously used @anthropic-ai/claude-agent-sdk functions. Now uses CLI
+ * equivalents where available, or returns graceful errors for unimplemented ops.
  *
  * ─── Active handlers (wired to renderer) ───────────────────────────────────
  *
  *   ELICITATION_RESPONSE       — generalist MCP elicitation flow
- *   SDK_ELICITATION_RESPONSE   — elicitation.service enriched flow (SDK 0.2.96+)
- *   SDK_STOP_TASK              — stop an individual SubAgent (AgentStatusCard)
- *   SDK_SUPPORTED_MODELS       — list available models (ModelConfigTab)
- *   SDK_LIST_SUBAGENTS         — enumerate SubAgents in a session (SDK 0.2.96+)
- *   SDK_GET_SUBAGENT_MESSAGES  — fetch a SubAgent transcript (SDK 0.2.96+)
- *   SDK_FORK_SESSION           — branch a conversation at a message boundary
- *
- * ─── Reserved handlers (deliberately not wired yet) ────────────────────────
- *
- * The SDK Query interface exposes additional control methods we have
- * intentionally NOT surfaced. If you find yourself about to add one of these
- * handlers, check first whether the feature is better implemented elsewhere:
- *
- *   - getContextUsage()        → use chatAgentService.getContextUsage() directly
- *   - interrupt() / close()    → use conversationLifecycle.abort() (AbortController)
- *   - accountInfo()            → no subscription UI yet — defer until needed
- *   - setModel()               → model is pinned at execute() time via modelConfigService
- *   - setPermissionMode()      → chat-lifecycle.ipc.ts switchMode already covers this
- *   - applyFlagSettings()      → no mid-session settings UI; settings rebuild the query
- *   - setMcpServers()          → MCP servers are configured at query creation time
- *   - toggleMcpServer()        → same — restart the query to change MCP set
- *   - mcpServerStatus()        → no health dashboard yet
- *   - reconnectMcpServer()     → same — no MCP health UI
- *   - rewindFiles()            → no undo UI yet
- *   - seedReadState()          → handled inside the SDKExecutor on context snip
- *   - supportedAgents()        → SubAgent set is static per session config
- *
- * Adding a handler here is cheap; adding a feature that depends on an unstable
- * Query reference is expensive. Prefer routing through a service that owns the
- * lifecycle (chatAgentService, conversationLifecycle, modelConfigService).
+ *   SDK_ELICITATION_RESPONSE   — elicitation.service enriched flow
+ *   CHAT_ASK_USER_RESPOND      — ask_user response routing
+ *   SDK_STOP_TASK              — stop a SubAgent (not available without SDK)
+ *   SDK_SUPPORTED_MODELS       — list available models (returns static list)
+ *   SDK_LIST_SUBAGENTS         — enumerate SubAgents (not available without SDK)
+ *   SDK_GET_SUBAGENT_MESSAGES  — fetch a SubAgent transcript (not available)
+ *   SDK_FORK_SESSION           — branch a conversation
  */
 export function registerSdkControlIpc(): void {
   // ── Elicitation ────────────────────────────────────────────────────────
@@ -61,7 +39,11 @@ export function registerSdkControlIpc(): void {
       obj.content === undefined
         ? undefined
         : (() => {
-            if (obj.content === null || typeof obj.content !== 'object' || Array.isArray(obj.content)) {
+            if (
+              obj.content === null ||
+              typeof obj.content !== 'object' ||
+              Array.isArray(obj.content)
+            ) {
               throw new Error(`${channel}: field 'content' must be an object when provided`)
             }
             return obj.content as Record<string, unknown>
@@ -69,9 +51,7 @@ export function registerSdkControlIpc(): void {
     chatAgentService.emit('elicitationResponse', { action, content })
   })
 
-  // Enriched elicitation response (SDK 0.2.96+) — routed through
-  // ElicitationService so the pending Promise resolves for the specific
-  // requestId that originated the prompt.
+  // Enriched elicitation response — routed through ElicitationService
   ipcMain.handle(IPC_CHANNELS.SDK_ELICITATION_RESPONSE, async (event, args: unknown) => {
     validateSender(event)
     const channel = IPC_CHANNELS.SDK_ELICITATION_RESPONSE
@@ -85,7 +65,11 @@ export function registerSdkControlIpc(): void {
       obj.content === undefined
         ? undefined
         : (() => {
-            if (obj.content === null || typeof obj.content !== 'object' || Array.isArray(obj.content)) {
+            if (
+              obj.content === null ||
+              typeof obj.content !== 'object' ||
+              Array.isArray(obj.content)
+            ) {
               throw new Error(`${channel}: field 'content' must be an object when provided`)
             }
             return obj.content as Record<string, unknown>
@@ -94,75 +78,87 @@ export function registerSdkControlIpc(): void {
     elicitationService.resolveElicitation(requestId, { action, content })
   })
 
-  // ── Active Query controls (require an in-flight query) ───────────────────
+  // ── Active Query controls ───────────────────────────────────────────────
 
-  // Stop an individual SubAgent mid-execution (AgentStatusCard "stop" button).
+  // Stop task — not available without SDK Query reference
   ipcMain.handle(IPC_CHANNELS.SDK_STOP_TASK, async (event, args: unknown) => {
     validateSender(event)
     const channel = IPC_CHANNELS.SDK_STOP_TASK
     const obj = requireObject(args, channel)
-    const taskId = requireString(obj, 'taskId', channel)
-    const query = chatAgentService.getActiveQuery()
-    if (!query) throw new Error(`${channel}: no active query`)
-    return query.stopTask(taskId)
+    const _taskId = requireString(obj, 'taskId', channel)
+    // SDK Query object no longer available — CLI abort handles full session stop
+    log.warn(`[${channel}] Individual task stop not available without SDK Query`)
+    return { success: false, error: 'Task stop requires SDK (removed)' }
   })
 
-  // Supported-models list for ModelConfigTab — reads from the live Query
-  // rather than a static config so account-dependent models appear correctly.
+  // Supported-models list — return via CLI or static config
   ipcMain.handle(IPC_CHANNELS.SDK_SUPPORTED_MODELS, async (event) => {
     validateSender(event)
-    const query = chatAgentService.getActiveQuery()
-    if (!query) throw new Error(`${IPC_CHANNELS.SDK_SUPPORTED_MODELS}: no active query`)
-    return query.supportedModels()
+    // Return static model list — the CLI doesn't expose supportedModels()
+    return [
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-20250514',
+      'claude-opus-4-0',
+      'claude-haiku-3-5'
+    ]
   })
 
-  // ── SubAgent inspection (SDK 0.2.96+) — operate on persisted sessions ────
+  // ── SubAgent inspection — not available without SDK ────────────────────
 
   ipcMain.handle(IPC_CHANNELS.SDK_LIST_SUBAGENTS, async (event, args: unknown) => {
     validateSender(event)
     const channel = IPC_CHANNELS.SDK_LIST_SUBAGENTS
     const obj = requireObject(args, channel)
-    const sessionId = requireString(obj, 'sessionId', channel)
-    const { listSubagents } = await import('@anthropic-ai/claude-agent-sdk')
-    return listSubagents(sessionId)
+    const _sessionId = requireString(obj, 'sessionId', channel)
+    log.info(`[${channel}] SubAgent listing not available — SDK removed`)
+    return []
   })
 
   ipcMain.handle(IPC_CHANNELS.SDK_GET_SUBAGENT_MESSAGES, async (event, args: unknown) => {
     validateSender(event)
     const channel = IPC_CHANNELS.SDK_GET_SUBAGENT_MESSAGES
     const obj = requireObject(args, channel)
-    const sessionId = requireString(obj, 'sessionId', channel)
-    const subagentId = requireString(obj, 'subagentId', channel)
-    const { getSubagentMessages } = await import('@anthropic-ai/claude-agent-sdk')
-    return getSubagentMessages(sessionId, subagentId)
+    const _sessionId = requireString(obj, 'sessionId', channel)
+    const _subagentId = requireString(obj, 'subagentId', channel)
+    log.info(`[${channel}] SubAgent messages not available — SDK removed`)
+    return []
   })
 
-  // ── SDK Diagnostics (@alpha — 0.2.138+) ──────────────────────────────────
+  // ── SDK Diagnostics ──────────────────────────────────────────────────────
 
-  // resolveSettings() — inspect effective merged SDK settings without spawning
-  // a CLI process. Useful for diagnostics and settings validation.
   ipcMain.handle(IPC_CHANNELS.SDK_RESOLVE_SETTINGS, async (event) => {
     validateSender(event)
-    try {
-      const { resolveSettings } = await import('@anthropic-ai/claude-agent-sdk')
-      const settings = await resolveSettings()
-      return { success: true, settings }
-    } catch (error) {
-      log.error('resolveSettings failed:', error)
-      return { success: false, error: (error as Error).message }
-    }
+    return { success: false, error: 'resolveSettings not available — SDK removed' }
+  })
+
+  // ── ask_user response ──────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_ASK_USER_RESPOND, async (event, args: unknown) => {
+    validateSender(event)
+    const channel = IPC_CHANNELS.CHAT_ASK_USER_RESPOND
+    const obj = requireObject(args, channel)
+    const requestId = requireString(obj, 'requestId', channel)
+    const response = requireString(obj, 'response', channel)
+    chatAgentService.respondToAskUser(requestId, response)
   })
 
   // ── Session branching ────────────────────────────────────────────────────
 
-  // Fork a conversation at a message boundary — "Branch Conversation" feature.
   ipcMain.handle(IPC_CHANNELS.SDK_FORK_SESSION, async (event, args: unknown) => {
     validateSender(event)
     const channel = IPC_CHANNELS.SDK_FORK_SESSION
     const obj = requireObject(args, channel)
     const sessionId = requireString(obj, 'sessionId', channel)
-    const upToMessageId = optionalString(obj, 'upToMessageId', channel)
-    const { forkSession } = await import('@anthropic-ai/claude-agent-sdk')
-    return forkSession(sessionId, upToMessageId ? { upToMessageId } : undefined)
+    const _upToMessageId = optionalString(obj, 'upToMessageId', channel)
+    // CLI supports --fork-session with --resume
+    try {
+      const { execFileSync } = await import('node:child_process')
+      const cliArgs = ['--resume', sessionId, '--fork-session', '-p', '--print', 'forked', '--output-format', 'json']
+      const result = execFileSync('claude', cliArgs, { encoding: 'utf-8', timeout: 10_000 })
+      return JSON.parse(result.trim())
+    } catch (err) {
+      log.warn(`[${channel}] Fork failed for ${sessionId}:`, err)
+      return { success: false, error: 'Session fork failed' }
+    }
   })
 }

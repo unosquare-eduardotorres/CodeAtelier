@@ -2,9 +2,12 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import { extname } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { chatStreamService } from '../services/chat-stream.service'
+import { conversationStateMachine } from '../services/conversation-state-machine'
+import { conversationLifecycle } from '../services/conversation-lifecycle'
 
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString } from './validate-args'
 
 const log = chatIpcLogger
 
@@ -18,23 +21,15 @@ const MAX_IMAGE_ATTACHMENTS = 5
 export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(
     IPC_CHANNELS.CHAT_SEND,
-    async (event, args: { conversationId: string; text: string; attachments?: string[] }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
 
       // ── Input validation (IPC boundary concern) ──
-      if (!args || typeof args !== 'object') {
-        throw new Error('Invalid arguments')
-      }
-
-      const { conversationId, text, attachments } = args
-
-      if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
-        throw new Error('Invalid conversation ID')
-      }
-
-      if (typeof text !== 'string' || text.trim().length === 0) {
-        throw new Error('Message text cannot be empty')
-      }
+      const ch = IPC_CHANNELS.CHAT_SEND
+      const args = requireObject(rawArgs, ch)
+      const conversationId = requireString(args, 'conversationId', ch)
+      const text = requireString(args, 'text', ch)
+      const attachments = args.attachments as string[] | undefined
 
       if (text.length > MAX_MESSAGE_LENGTH) {
         throw new Error(`Message too long: ${text.length} chars (max ${MAX_MESSAGE_LENGTH})`)
@@ -100,5 +95,16 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
     validateSender(event)
     await chatStreamService.stop()
     // Specialist pool removed in migration 66 — nothing else to stop.
+  })
+
+  // ── Query streaming state (for conversation switch restore) ──
+  ipcMain.handle(IPC_CHANNELS.CHAT_GET_STREAMING_STATE, (event) => {
+    validateSender(event)
+    return {
+      isStreaming: conversationStateMachine.isStreaming(),
+      conversationId: conversationStateMachine.activeConversationId,
+      state: conversationStateMachine.currentState,
+      requestId: conversationLifecycle.requestId
+    }
   })
 }

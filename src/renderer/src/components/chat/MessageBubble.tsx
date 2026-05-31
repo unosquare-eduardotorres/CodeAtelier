@@ -1,9 +1,9 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
-import { Paperclip, Flame, Lightbulb, FileText } from 'lucide-react'
+import { Flame, Lightbulb, FileText } from 'lucide-react'
 import {
   remarkEmojiSpan,
   remarkHighlightQuestions,
@@ -15,36 +15,24 @@ import { CodeBlock } from './CodeBlock'
 import type {
   Message,
   ToolActivity,
-  GrillAnswerPayload,
   ConversationMode,
   StructuredPlan
 } from '../../../../shared/types'
 import ToolActivityBlock from './ToolActivityBlock'
 import MessageCardRenderer from './MessageCardRenderer'
+import AttachmentList from './AttachmentList'
 import { useMessageContent } from './useMessageContent'
-import {
-  useSpecialistStore,
-  useChatStore,
-  useWorkspaceStore,
-  useChatBubbleSize
-} from '@renderer/store'
+import { useMessageIdentity } from './useMessageIdentity'
+import { useChatBubbleSize, useWorkspaceStore } from '@renderer/store'
+import { useCouncilStore } from '@renderer/store/council.store'
 import type { ChatBubbleSize } from '../../../../shared/types'
-import { Avatar, ImageLightbox, Skeleton } from '@renderer/components/common'
-import { CORE_AGENT_DEFAULTS, USER_AVATAR_KEY } from '@renderer/utils/agentIdentity'
-import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
-import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
+import { Avatar } from '@renderer/components/common'
 
 /** Chat actions needed by MessageBubble — passed as props to avoid N×useShallow subscriptions */
 export interface MessageBubbleActions {
   updateMode: (mode: ConversationMode) => Promise<void>
   sendMessage: (text: string, attachments?: string[]) => Promise<void>
   appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => void
-  clearGrillSession: () => void
-  createItemsFromGrill: (
-    tasks: { title: string; context: string; description: string }[]
-  ) => Promise<void>
-  submitGrillAnswers: (answers: GrillAnswerPayload[]) => void
-  skipAllGrillQuestions: () => void
   saveAsIdea?: (title: string, description: string) => void
   /** Direct plan-to-build: skip generalist round-trip when structured plan is available */
   buildFromPlan?: (plan: StructuredPlan, planContent: string) => Promise<void>
@@ -55,8 +43,6 @@ interface MessageBubbleProps {
   isStreaming?: boolean
   searchHighlight?: string
   toolActivities?: ToolActivity[]
-  /** When true, skip rendering inline GrillQuestionCard (store-driven card in MessageList takes precedence) */
-  suppressInlineGrillCard?: boolean
   /** Chat actions passed from parent to avoid per-bubble store subscriptions */
   actions?: MessageBubbleActions
 }
@@ -69,23 +55,18 @@ function formatTime(dateStr: string): string {
 /**
  * Shorten absolute file paths for display:
  * - /Users/x/.claude/plans/foo.md → /plans/foo.md
- * - /Users/x/.claude/agents/bar.yaml → /agents/bar.yaml
  * - /Users/x/Projects/AgentStudio/src/main/index.ts → /…/src/main/index.ts
  * - Keeps the full path in the title tooltip for reference
  */
 function shortenFilePath(filePath: string): string {
-  // Strip home directory prefix for .claude paths
   const claudeMatch = filePath.match(/^(?:\/Users\/[^/]+|\/home\/[^/]+|~)\/.claude\/(.+)$/)
   if (claudeMatch) {
     return `/${claudeMatch[1]}`
   }
-
-  // For other long paths, show last 3 segments
   const segments = filePath.split('/')
   if (segments.length > 4) {
     return '/…/' + segments.slice(-3).join('/')
   }
-
   return filePath
 }
 
@@ -93,9 +74,7 @@ function shortenFilePath(filePath: string): string {
 function FilePathLink({ filePath }: { filePath: string }): React.JSX.Element {
   const repoPath = useWorkspaceStore((s) => s.activeWorkspace?.repoPath)
   const shortenedPath = shortenFilePath(filePath)
-
   const isAbsolute = /^[/~]/.test(filePath) || /^[A-Z]:\\/.test(filePath)
-
   const resolvedPath =
     isAbsolute || !repoPath ? filePath : `${repoPath.replace(/\/$/, '')}/${filePath}`
 
@@ -125,7 +104,13 @@ const BUBBLE_SIZE_CLASSES: Record<
 }
 
 // Module-level constants — stable references, never recreated on render
-const REMARK_PLUGINS_BASE = [remarkGfm, remarkBreaks, remarkEmojiSpan, remarkStyledArrows, remarkStripStrayBackticks]
+const REMARK_PLUGINS_BASE = [
+  remarkGfm,
+  remarkBreaks,
+  remarkEmojiSpan,
+  remarkStyledArrows,
+  remarkStripStrayBackticks
+]
 const REMARK_PLUGINS = [...REMARK_PLUGINS_BASE, remarkHighlightQuestions, remarkHighlightNextSteps]
 const REHYPE_PLUGINS = [rehypeRaw]
 
@@ -161,7 +146,6 @@ const markdownComponents = {
       /^[/~][\w.\-/@ ]+\.\w{1,10}$/.test(text) ||
       /^[A-Z]:\\/.test(text) ||
       /^[\w@][\w.\-/@ ]*\/[\w.\-/@ ]*\.\w{1,10}$/.test(text) ||
-      // Bare filenames — e.g., "index.html", "colors_and_type.css"
       /^[\w][\w.\-]*\.\w{2,10}$/.test(text)
     if (isFilePath) {
       return <FilePathLink filePath={text} />
@@ -190,163 +174,20 @@ const markdownComponents = {
   )
 }
 
-/**
- * Resolves the display identity (name, subtitle, avatar, color) for a message.
- *
- * Visual identity is driven primarily by the message's own role + agentId.
- * However, when the workspace has a **ready** Project Specialist, messages
- * tagged 'da-vinci' are overridden to show the specialist's identity — the
- * specialist IS the only active agent and any stale 'da-vinci' role tags
- * (from lifecycle dispose races or error paths) should not surface as
- * "Generalist." Persona is a backend prompt-overlay concept and does NOT
- * affect visual identity here.
- */
-function useMessageIdentity(message: Message): {
-  displayName: string
-  subtitle: string | null
-  avatarKey: string
-  accentColor: string
-} {
-  const specialists = useSpecialistStore((s) => s.specialists)
-  const activeConversation = useChatStore((s) => s.activeConversation)
-  const workspaces = useWorkspaceStore((s) => s.workspaces)
-
-  // Resolve the workspace's project specialist (if any) for identity override
-  const workspaceId = activeConversation?.workspaceId
-  const projectSpecialist = useProjectSpecialistStore((s) =>
-    workspaceId ? s.byWorkspace[workspaceId] : null
-  )
-
-  return useMemo(() => {
-    const mannequinKey = workspaceId
-      ? getWorkspaceMannequin(workspaceId, workspaces)
-      : 'mannequin-main'
-
-    if (message.role === 'user') {
-      const userSpec = specialists.find((s) => s.agentId === 'user')
-      return {
-        displayName: userSpec?.alias ?? userSpec?.displayName ?? 'You',
-        subtitle: null,
-        avatarKey: USER_AVATAR_KEY,
-        accentColor: 'var(--color-primary, #6366F1)'
-      }
-    }
-
-    // ── Specialist override ──
-    // When the workspace has a ready specialist, ALL non-user messages
-    // tagged 'da-vinci' should show the specialist identity — the specialist
-    // IS the only active agent. Any 'da-vinci' role tags are stale artefacts.
-    if (message.role === 'da-vinci' && projectSpecialist?.buildStatus === 'ready') {
-      return {
-        displayName: projectSpecialist.displayName,
-        subtitle: null,
-        avatarKey: mannequinKey,
-        accentColor: projectSpecialist.color ?? '#F59E0B'
-      }
-    }
-
-    if (message.role === 'da-vinci') {
-      // DaVinci is always DaVinci — only reached when NO specialist is active.
-      const coreSpec = specialists.find((s) => s.agentId === 'da-vinci')
-      const defaults = CORE_AGENT_DEFAULTS['da-vinci']
-      return {
-        displayName: coreSpec?.alias ?? coreSpec?.displayName ?? defaults.displayName,
-        subtitle: coreSpec?.alias ? (coreSpec.displayName ?? defaults.displayName) : null,
-        avatarKey: defaults.avatarKey,
-        accentColor: coreSpec?.color ?? defaults.color
-      }
-    }
-
-    // role === 'specialist' — resolve by agentId
-    if (message.agentId) {
-      const specialist = specialists.find((s) => s.agentId === message.agentId)
-      if (specialist) {
-        return {
-          displayName: specialist.alias ?? specialist.displayName,
-          subtitle: specialist.alias ? specialist.displayName : null,
-          avatarKey: mannequinKey,
-          accentColor: specialist.color ?? '#F59E0B'
-        }
-      }
-    }
-
-    // Unknown specialist — still show the workspace mannequin
-    return {
-      displayName: message.agentId ?? message.role,
-      subtitle: null,
-      avatarKey: mannequinKey,
-      accentColor: '#6366F1'
-    }
-  }, [message.role, message.agentId, specialists, workspaces, workspaceId, projectSpecialist])
-}
-
-/** Renders a single image attachment inside a message bubble using data URIs */
-function BubbleImage({ filePath }: { filePath: string }): React.JSX.Element {
-  const [dataUri, setDataUri] = useState<string | null>(null)
-  const [lightboxOpen, setLightboxOpen] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    window.api
-      .readImageBase64({ filePath })
-      .then((uri) => {
-        if (!cancelled) setDataUri(uri)
-      })
-      .catch(console.error)
-    return () => {
-      cancelled = true
-    }
-  }, [filePath])
-
-  return (
-    <>
-      {dataUri ? (
-        <img
-          src={dataUri}
-          alt={filePath.split('/').pop() || 'attachment'}
-          className="max-w-[240px] max-h-[180px] rounded-lg border border-border-subtle object-contain cursor-pointer hover:border-primary/50 transition-colors"
-          onClick={() => setLightboxOpen(true)}
-        />
-      ) : (
-        <Skeleton className="w-[240px] h-[180px] rounded-lg" />
-      )}
-      {lightboxOpen && dataUri && (
-        <ImageLightbox src={dataUri} onClose={() => setLightboxOpen(false)} />
-      )}
-    </>
-  )
-}
-
 function MessageBubbleInner({
   message,
   isStreaming,
   toolActivities,
-  suppressInlineGrillCard,
   actions
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const bubbleSize = useChatBubbleSize()
   const sizeClasses = BUBBLE_SIZE_CLASSES[bubbleSize]
-  // Use actions from props (passed by MessageList) to avoid N×useShallow subscriptions
-  const {
-    updateMode,
-    sendMessage,
-    appendLocalMessage,
-    clearGrillSession,
-    createItemsFromGrill,
-    submitGrillAnswers,
-    skipAllGrillQuestions,
-    buildFromPlan
-  } = actions!
+  const { updateMode, sendMessage, appendLocalMessage, buildFromPlan } = actions!
   const identity = useMessageIdentity(message)
 
   // Extracted hook: parses message content to detect structured blocks
-  const content = useMessageContent(
-    message.contentMd,
-    message.attachmentsJson,
-    isUser,
-    suppressInlineGrillCard
-  )
+  const content = useMessageContent(message.contentMd, message.attachmentsJson, isUser)
   const {
     imageAttachments,
     fileAttachments,
@@ -355,30 +196,17 @@ function MessageBubbleInner({
     displayContent,
     planContent,
     structuredPlan,
-    grillQuestions,
-    grillQuestionMatch,
-    grillSummary,
-    grillEvalData,
-    grillProposedTasks,
     buildSummaryData
   } = content
 
   /** True when the message contains a structured block that MessageCardRenderer handles */
-  const hasStructuredContent =
-    grillQuestions.length > 0 ||
-    (grillQuestionMatch != null && suppressInlineGrillCard) ||
-    grillSummary != null ||
-    grillEvalData != null ||
-    buildSummaryData != null ||
-    planContent != null
+  const hasStructuredContent = buildSummaryData != null || planContent != null
 
   const handleBuildNow = (): void => {
-    // Direct path: skip generalist round-trip when structured plan is available
     if (structuredPlan && planContent && buildFromPlan) {
       buildFromPlan(structuredPlan, planContent)
       return
     }
-    // Fallback: raw markdown plan — go through generalist
     updateMode('build')
     sendMessage(
       'Implement the plan we just discussed. If the plan has multiple phases (3+ sections or 8+ steps), start with only the first phase and let me know you will continue with the remaining phases afterward. If the plan is small enough, implement it all at once.'
@@ -396,27 +224,22 @@ function MessageBubbleInner({
     actions.saveAsIdea(title, description)
   }
 
-  const handleGrillKeepIterating = (): void => {
-    clearGrillSession()
-    sendMessage("Let's keep iterating. What other aspects should we discuss or refine?")
-  }
+  const handleCouncilReview = (): void => {
+    const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
+    if (!workspaceId || !planContent) return
 
-  const handleGrillCreatePlan = (): void => {
-    clearGrillSession()
-    sendMessage(
-      "Based on our grilling session and all the decisions we've resolved, create a formal implementation plan. Structure it with clear sections, tasks, and dependencies."
-    )
-  }
+    const councilStore = useCouncilStore.getState()
+    councilStore.startCouncil()
 
-  const handleGrillCreateItems = (): void => {
-    if (grillProposedTasks.length > 0) {
-      const tasks = grillProposedTasks.map((t) => ({
-        title: t.title,
-        context: grillSummary || 'Context from grill session',
-        description: t.description
-      }))
-      createItemsFromGrill(tasks)
-    }
+    // Start the council via IPC
+    window.api.councilStart({
+      workspaceId,
+      inputType: 'plan',
+      planContent,
+      structuredPlan: structuredPlan ?? undefined,
+      originalUserRequest: message.contentMd ?? '',
+      conversationId: undefined
+    })
   }
 
   /** Shared AI bubble styles */
@@ -450,7 +273,7 @@ function MessageBubbleInner({
           )}
         </div>
 
-        {/* Structured card rendering (grill, plan, build summary, handoff) — extracted to reduce complexity */}
+        {/* Structured card rendering (plan, build summary) */}
         {hasStructuredContent ? (
           <MessageCardRenderer
             content={content}
@@ -458,15 +281,10 @@ function MessageBubbleInner({
             remarkPlugins={REMARK_PLUGINS}
             rehypePlugins={REHYPE_PLUGINS}
             markdownComponents={markdownComponents}
-            suppressInlineGrillCard={suppressInlineGrillCard}
             onBuildNow={handleBuildNow}
             onRefine={handleRefine}
             onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
-            onGrillKeepIterating={handleGrillKeepIterating}
-            onGrillCreatePlan={handleGrillCreatePlan}
-            onGrillCreateItems={handleGrillCreateItems}
-            submitGrillAnswers={submitGrillAnswers}
-            skipAllGrillQuestions={skipAllGrillQuestions}
+            onCouncilReview={planContent ? handleCouncilReview : undefined}
           />
         ) : /* Skip empty bubble wrapper for AI messages with no visible content (tools-only segments) */
         isUser ||
@@ -475,7 +293,6 @@ function MessageBubbleInner({
           fileAttachments.length > 0 ||
           isGrillActivation ||
           ideaToRefineMatch ? (
-          /* Default: plain message bubble (no structured block detected) */
           <div
             className={`rounded shadow-sm ${
               isUser
@@ -502,29 +319,11 @@ function MessageBubbleInner({
               </div>
             )}
 
-            {/* Image attachments */}
-            {imageAttachments.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {imageAttachments.map((path, idx) => (
-                  <BubbleImage key={idx} filePath={path} />
-                ))}
-              </div>
-            )}
-
-            {/* File attachments */}
-            {fileAttachments.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {fileAttachments.map((path, idx) => (
-                  <span
-                    key={idx}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-overlay text-xs text-text-secondary"
-                  >
-                    <Paperclip size={10} />
-                    {path.split('/').pop() || path}
-                  </span>
-                ))}
-              </div>
-            )}
+            {/* Attachments (images + files) */}
+            <AttachmentList
+              imageAttachments={imageAttachments}
+              fileAttachments={fileAttachments}
+            />
 
             {(isUser ? displayContent : message.contentMd) ? (
               <div className={`prose max-w-none overflow-hidden ${sizeClasses.text}`}>

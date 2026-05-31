@@ -39,7 +39,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
       window.api
         .memoryGetFeedTimestamps({ workspaceId })
         .then(setFeedTimestamps)
-        .catch(() => {})
+        .catch((err) => console.warn('[MemorySettings] Non-fatal: feed timestamps load failed:', err))
     },
     [setFeedTimestamps]
   )
@@ -175,7 +175,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
             </p>
             <FeedTimestamp timestamp={feedTimestamps['document']} />
           </button>
-
         </div>
       </div>
 
@@ -267,7 +266,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
                     </span>
                   </div>
                 </div>
-
               </div>
               <p className="text-xs text-text-muted mt-4 italic">
                 Memories are created from conversations (via ```memory blocks) and document feeds.

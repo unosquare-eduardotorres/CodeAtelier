@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 
 interface EmbeddingRow {
   chunk_id: string
@@ -33,12 +33,17 @@ export interface EmbeddingEntry {
  * Repository for the `chunk_embeddings` table.
  * Persists vector embeddings as BLOBs for fast reload on app restart.
  */
-export class ChunkEmbeddingRepository {
+export class ChunkEmbeddingRepository extends BaseRepository<EmbeddingRow, EmbeddingEntry> {
+  protected readonly tableName = 'chunk_embeddings'
+  protected mapRow(row: EmbeddingRow): EmbeddingEntry {
+    return { chunkId: row.chunk_id, embedding: deserializeEmbedding(row.embedding), model: row.model }
+  }
+
   /**
    * Bulk upsert embeddings for a workspace.
    */
   upsertEmbeddings(workspaceId: string, entries: EmbeddingEntry[]): void {
-    const db = getDatabase()
+    const db = this.db()
     const stmt = db.prepare(`
       INSERT OR REPLACE INTO chunk_embeddings (chunk_id, workspace_id, embedding, model)
       VALUES (?, ?, ?, ?)
@@ -60,7 +65,7 @@ export class ChunkEmbeddingRepository {
   loadAllForWorkspace(
     workspaceId: string
   ): Array<{ chunkId: string; embedding: number[]; model: string }> {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT chunk_id, embedding, model FROM chunk_embeddings WHERE workspace_id = ?')
       .all(workspaceId) as EmbeddingRow[]
@@ -76,7 +81,7 @@ export class ChunkEmbeddingRepository {
    * Delete all embeddings for a workspace.
    */
   deleteByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const result = db
       .prepare('DELETE FROM chunk_embeddings WHERE workspace_id = ?')
       .run(workspaceId)
@@ -87,7 +92,7 @@ export class ChunkEmbeddingRepository {
    * Quick check whether persisted embeddings exist for a workspace.
    */
   hasEmbeddings(workspaceId: string): boolean {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare('SELECT 1 FROM chunk_embeddings WHERE workspace_id = ? LIMIT 1')
       .get(workspaceId)
@@ -98,7 +103,7 @@ export class ChunkEmbeddingRepository {
    * Count total embeddings for a workspace.
    */
   countByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare('SELECT COUNT(*) as count FROM chunk_embeddings WHERE workspace_id = ?')
       .get(workspaceId) as { count: number }

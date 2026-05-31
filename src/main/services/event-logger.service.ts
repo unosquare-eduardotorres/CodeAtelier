@@ -1,7 +1,7 @@
 import log from 'electron-log/main'
 import { eventRepository } from '../db/repositories/event.repository'
 import type { EventCategory } from '../db/repositories/event.repository'
-import type { QualityGateResult } from './abandonment-detector.service'
+import type { QualityGateResult } from './quality-gate-runner.service'
 
 const eventLog = log.scope('EventLogger')
 

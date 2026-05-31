@@ -5,8 +5,9 @@
  * and survive navigation / app restarts.
  */
 
-import { getDatabase } from '../index'
-import type { GrillTrackId } from '../../../shared/types'
+import { BaseRepository } from '../base-repository'
+import { safeParseJSON } from '../json-utils'
+import type { GrillTrackId, GrillStructuredPlan } from '../../../shared/types'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -69,11 +70,11 @@ function mapRow(row: GrillSessionRow): GrillSession {
     scoreLabel: row.score_label,
     feedback: row.feedback,
     iterationCount: row.iteration_count,
-    messages: JSON.parse(row.messages) as unknown[],
-    trackScores: JSON.parse(row.track_scores) as unknown[],
-    history: JSON.parse(row.history) as unknown[],
-    questionStates: row.question_states ? (JSON.parse(row.question_states) as Record<string, unknown>) : null,
-    currentIteration: row.current_iteration ? (JSON.parse(row.current_iteration) as unknown) : null,
+    messages: safeParseJSON<unknown[]>(row.messages, []),
+    trackScores: safeParseJSON<unknown[]>(row.track_scores, []),
+    history: safeParseJSON<unknown[]>(row.history, []),
+    questionStates: safeParseJSON<Record<string, unknown> | null>(row.question_states, null),
+    currentIteration: safeParseJSON<unknown | null>(row.current_iteration, null),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -81,34 +82,23 @@ function mapRow(row: GrillSessionRow): GrillSession {
 
 // ── Repository ──────────────────────────────────────────────────────────────
 
-export class GrillSessionRepository {
+export class GrillSessionRepository extends BaseRepository<GrillSessionRow, GrillSession> {
+  protected readonly tableName = 'grill_sessions'
+  protected mapRow(row: GrillSessionRow): GrillSession { return mapRow(row) }
+
   /** Find the latest grill session for an idea */
   findByIdeaId(ideaId: string): GrillSession | null {
-    const db = getDatabase()
-    const row = db
-      .prepare(
-        `SELECT * FROM grill_sessions WHERE idea_id = ? ORDER BY updated_at DESC LIMIT 1`
-      )
+    const row = this.db()
+      .prepare(`SELECT * FROM grill_sessions WHERE idea_id = ? ORDER BY updated_at DESC LIMIT 1`)
       .get(ideaId) as GrillSessionRow | undefined
     return row ? mapRow(row) : null
   }
 
-  /** Find all sessions for a workspace */
-  findByWorkspaceId(workspaceId: string): GrillSession[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `SELECT * FROM grill_sessions WHERE workspace_id = ? ORDER BY updated_at DESC`
-      )
-      .all(workspaceId) as GrillSessionRow[]
-    return rows.map(mapRow)
-  }
 
   /** Create a new session */
   create(ideaId: string, workspaceId: string, trackId?: GrillTrackId): GrillSession {
-    const db = getDatabase()
     const id = crypto.randomUUID().replace(/-/g, '').toLowerCase()
-    db.prepare(
+    this.db().prepare(
       `INSERT INTO grill_sessions (id, idea_id, workspace_id, track_id) VALUES (?, ?, ?, ?)`
     ).run(id, ideaId, workspaceId, trackId ?? null)
 
@@ -116,56 +106,37 @@ export class GrillSessionRepository {
   }
 
   /** Find by primary key */
-  findById(id: string): GrillSession | null {
-    const db = getDatabase()
-    const row = db
-      .prepare(`SELECT * FROM grill_sessions WHERE id = ?`)
-      .get(id) as GrillSessionRow | undefined
-    return row ? mapRow(row) : null
+  override findById(id: string): GrillSession | undefined {
+    return this.findOneBy('id', id)
   }
 
   /** Update session status */
   updateStatus(id: string, status: GrillSessionStatus): void {
-    const db = getDatabase()
-    db.prepare(
+    this.db().prepare(
       `UPDATE grill_sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`
     ).run(status, id)
   }
 
-  /** Append a message to the messages JSON array */
-  appendMessage(id: string, message: unknown): void {
-    const db = getDatabase()
-    const messageJson = JSON.stringify(message)
-    db.prepare(
-      `UPDATE grill_sessions
-       SET messages = json_insert(messages, '$[#]', json(?)),
-           updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(messageJson, id)
-  }
 
   /** Bulk-append messages (more efficient than one-by-one) */
   appendMessages(id: string, messages: unknown[]): void {
     if (messages.length === 0) return
-    const db = getDatabase()
-    const stmt = db.prepare(
+    const stmt = this.db().prepare(
       `UPDATE grill_sessions
        SET messages = json_insert(messages, '$[#]', json(?)),
            updated_at = datetime('now')
        WHERE id = ?`
     )
-    const insertAll = db.transaction(() => {
+    this.runTransaction(() => {
       for (const msg of messages) {
         stmt.run(JSON.stringify(msg), id)
       }
     })
-    insertAll()
   }
 
   /** Update score, label, and feedback after evaluation */
   updateScore(id: string, score: number, scoreLabel: string, feedback: string): void {
-    const db = getDatabase()
-    db.prepare(
+    this.db().prepare(
       `UPDATE grill_sessions
        SET current_score = ?, score_label = ?, feedback = ?,
            updated_at = datetime('now')
@@ -179,8 +150,7 @@ export class GrillSessionRepository {
     questionStates: Record<string, unknown> | null,
     currentIteration: unknown | null
   ): void {
-    const db = getDatabase()
-    db.prepare(
+    this.db().prepare(
       `UPDATE grill_sessions
        SET question_states = ?, current_iteration = ?,
            updated_at = datetime('now')
@@ -192,59 +162,40 @@ export class GrillSessionRepository {
     )
   }
 
-  /** Update track scores */
-  updateTrackScores(id: string, trackScores: unknown[]): void {
-    const db = getDatabase()
-    db.prepare(
-      `UPDATE grill_sessions
-       SET track_scores = ?,
-           updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(JSON.stringify(trackScores), id)
-  }
-
-  /** Update history entries */
-  updateHistory(id: string, history: unknown[]): void {
-    const db = getDatabase()
-    db.prepare(
-      `UPDATE grill_sessions
-       SET history = ?,
-           updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(JSON.stringify(history), id)
-  }
-
-  /** Update iteration count */
-  updateIterationCount(id: string, count: number): void {
-    const db = getDatabase()
-    db.prepare(
-      `UPDATE grill_sessions
-       SET iteration_count = ?,
-           updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(count, id)
-  }
 
   /** Update track ID */
   updateTrackId(id: string, trackId: GrillTrackId | null): void {
-    const db = getDatabase()
-    db.prepare(
+    this.db().prepare(
       `UPDATE grill_sessions SET track_id = ?, updated_at = datetime('now') WHERE id = ?`
     ).run(trackId, id)
   }
 
   /** Link a temporary grill session to a newly created workspace */
   linkToWorkspace(sessionId: string, workspaceId: string): void {
-    const db = getDatabase()
-    db.prepare(
+    this.db().prepare(
       `UPDATE grill_sessions SET workspace_id = ?, updated_at = datetime('now') WHERE id = ?`
     ).run(workspaceId, sessionId)
   }
 
+  /** Save a structured plan to the session */
+  savePlan(sessionId: string, plan: GrillStructuredPlan): void {
+    this.db().prepare(
+      `UPDATE grill_sessions SET plan_json = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(JSON.stringify(plan), sessionId)
+  }
+
+  /** Retrieve the structured plan from a session */
+  getPlan(sessionId: string): GrillStructuredPlan | null {
+    const row = this.db()
+      .prepare(`SELECT plan_json FROM grill_sessions WHERE id = ?`)
+      .get(sessionId) as { plan_json: string | null } | undefined
+    if (!row || !row.plan_json) return null
+    return safeParseJSON<GrillStructuredPlan | null>(row.plan_json, null)
+  }
+
   /** Get active sessions for a workspace (evaluating or awaiting_answers) */
   getActiveForWorkspace(workspaceId: string): GrillSession[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare(
         `SELECT * FROM grill_sessions
          WHERE workspace_id = ? AND status IN ('evaluating', 'awaiting_answers')

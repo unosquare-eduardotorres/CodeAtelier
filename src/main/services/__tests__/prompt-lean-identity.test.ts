@@ -1,0 +1,69 @@
+/**
+ * Lean Identity Prompt — verifies the compressed DaVinci identity prompt
+ * for Opus 4.8+ models preserves key structure while being significantly shorter.
+ *
+ * Pure logic: no filesystem, no network, no real Electron dependencies.
+ */
+import assert from 'node:assert/strict'
+import { test, describe } from './test-harness'
+import {
+  buildDaVinciIdentityPrompt,
+  buildDaVinciIdentityPromptLean
+} from '../default-prompts'
+
+describe('Lean Identity Prompt', () => {
+  test('lean prompt is shorter than full prompt', () => {
+    const full = buildDaVinciIdentityPrompt('default')
+    const lean = buildDaVinciIdentityPromptLean('default')
+    assert.ok(lean.length < full.length, `Lean (${lean.length}) should be shorter than full (${full.length})`)
+    // At least 30% shorter
+    assert.ok(
+      lean.length < full.length * 0.7,
+      `Lean (${lean.length}) should be <70% of full (${full.length})`
+    )
+  })
+
+  test('lean prompt includes all structural sections', () => {
+    const lean = buildDaVinciIdentityPromptLean('default')
+    assert.ok(lean.includes('## Style'), 'Missing ## Style section')
+    assert.ok(lean.includes('## Tool Usage'), 'Missing ## Tool Usage section')
+    assert.ok(lean.includes('## Code Exploration'), 'Missing ## Code Exploration section')
+    assert.ok(lean.includes('## Structured Actions'), 'Missing ## Structured Actions section')
+    assert.ok(lean.includes('## Specialist-Swap'), 'Missing ## Specialist-Swap section')
+    assert.ok(lean.includes('emit_plan'), 'Missing emit_plan reference')
+    assert.ok(lean.includes('ask_user'), 'Missing ask_user reference')
+    assert.ok(lean.includes('emit_memory'), 'Missing emit_memory reference')
+  })
+
+  test('lean prompt preserves all 5 tones', () => {
+    const tones = ['default', 'calm', 'optimistic', 'brutal', 'caveman'] as const
+    for (const tone of tones) {
+      const lean = buildDaVinciIdentityPromptLean(tone)
+      assert.ok(lean.includes('## Style'), `Missing ## Style for tone=${tone}`)
+      // Each tone should produce a different style directive
+      assert.ok(lean.length > 200, `Lean prompt too short for tone=${tone}`)
+    }
+  })
+
+  test('lean prompt omits verbose labels present in full prompt', () => {
+    const lean = buildDaVinciIdentityPromptLean('default')
+    // Lean should NOT have the verbose MANDATORY/CRITICAL labels
+    assert.ok(!lean.includes('(MANDATORY)'), 'Lean prompt should not contain (MANDATORY)')
+    assert.ok(!lean.includes('(CRITICAL)'), 'Lean prompt should not contain (CRITICAL)')
+    assert.ok(!lean.includes('(IMPORTANT)'), 'Lean prompt should not contain (IMPORTANT)')
+  })
+
+  test('full prompt retains verbose labels', () => {
+    const full = buildDaVinciIdentityPrompt('default')
+    assert.ok(full.includes('(MANDATORY)'), 'Full prompt should contain (MANDATORY)')
+    assert.ok(full.includes('(CRITICAL)'), 'Full prompt should contain (CRITICAL)')
+  })
+
+  test('lean identity includes Code Exploration rules from repomap merge', () => {
+    const lean = buildDaVinciIdentityPromptLean('default')
+    assert.ok(lean.includes('file_outline'), 'Missing file_outline guidance (merged from repomap)')
+    assert.ok(lean.includes('coupling_analysis'), 'Missing coupling_analysis guidance (merged from repomap)')
+    assert.ok(lean.includes('find_callers'), 'Missing find_callers guidance')
+    assert.ok(lean.includes('file_dependents'), 'Missing file_dependents guidance')
+  })
+})

@@ -18,8 +18,13 @@ import {
 } from '@renderer/store'
 import type { ConversationPhase } from '../../shared/types'
 import { rendererLog } from '@renderer/utils/logger'
+import { useTodoStore } from '@renderer/store/todo.store'
+import { useTheme } from '@renderer/hooks/useTheme'
 
 function App(): React.JSX.Element {
+  // Apply active theme (data-theme attribute on <html>)
+  useTheme()
+
   // Global error capture → bug tracker
   useBugCapture()
 
@@ -30,6 +35,7 @@ function App(): React.JSX.Element {
   // Chat actions (already uses useShallow internally)
   const {
     appendStreamChunk,
+    handleKeepalive,
     updateStreamingIdentity,
     finalizeStream,
     finalizeTurnBubble,
@@ -37,8 +43,6 @@ function App(): React.JSX.Element {
     updateToolActivity,
     setCompactSuggestion,
     setBudgetCapBanner,
-    endGrillSession,
-    setGrillQuestions,
     setPendingQuestions,
     setConversationState,
     loadContextUsage
@@ -78,6 +82,12 @@ function App(): React.JSX.Element {
 
     // Set up IPC event listeners for streaming
     const unsubChunk = window.api.onMessageChunk((data) => {
+      // Keepalive — backend is alive during long MCP tool execution, reset safety timer
+      if (data.keepalive) {
+        handleKeepalive()
+        return
+      }
+
       // Ignore chunks for non-active conversation
       const activeConvId = useChatStore.getState().activeConversation?.id
       if (activeConvId && data.conversationId !== activeConvId) {
@@ -148,6 +158,13 @@ function App(): React.JSX.Element {
           if (data.conversationId) {
             void loadContextUsage(data.conversationId)
           }
+        } else if (
+          data.compactNeeded.level === 'auto-compact-pending' ||
+          data.compactNeeded.level === 'warning'
+        ) {
+          // Auto-compact pending: SDK will handle on next turn — don't alarm.
+          // Warning: early heads-up — just update badge, no modal needed.
+          setCompactSuggestion(null)
         } else {
           setCompactSuggestion(data.compactNeeded)
         }
@@ -159,14 +176,77 @@ function App(): React.JSX.Element {
           canContinue: data.budgetCapReached.canContinue
         })
       }
+      if (data.todoUpdate) {
+        const { addTodo, completeTodo, removeTodo, updateTodo } = useTodoStore.getState()
+        const convId = data.conversationId
+        switch (data.todoUpdate.action) {
+          case 'add':
+            addTodo(convId, data.todoUpdate.text, data.todoUpdate.index)
+            break
+          case 'complete':
+            completeTodo(convId, data.todoUpdate.text, data.todoUpdate.index)
+            break
+          case 'remove':
+            removeTodo(convId, data.todoUpdate.text, data.todoUpdate.index)
+            break
+          case 'update':
+            updateTodo(convId, data.todoUpdate.text, data.todoUpdate.index)
+            break
+        }
+      }
+      if (data.contextUsageUpdate) {
+        // Live context badge update during streaming — push token counts
+        // so the badge refreshes every turn instead of only on completion.
+        const convId = data.conversationId
+        if (convId) {
+          const { inputTokens, contextWindowSize, percentage, cacheHitRate } = data.contextUsageUpdate
+          const effectiveQualityWindow = Math.min(Math.round(contextWindowSize * 0.5), 500_000)
+          const qualityPct = Math.round((inputTokens / effectiveQualityWindow) * 100)
+          const level =
+            qualityPct > 80
+              ? 'critical'
+              : qualityPct > 60
+                ? 'red'
+                : qualityPct > 40
+                  ? 'yellow'
+                  : 'green'
+          useChatStore.setState((state) => ({
+            contextUsages: {
+              ...state.contextUsages,
+              [convId]: {
+                ...state.contextUsages[convId],
+                conversationId: convId,
+                inputTokens,
+                contextWindowSize,
+                percentage,
+                cacheHitRate,
+                level: level as 'green' | 'yellow' | 'red' | 'critical'
+              }
+            }
+          }))
+        }
+      }
     })
 
     const unsubComplete = window.api.onMessageComplete((data) => {
-      // Ignore completions for non-active conversation
       const activeConvId = useChatStore.getState().activeConversation?.id
+
+      // Always clean up per-conversation streaming tracking — even for non-active conversations.
+      // Without this, streamingConversationIds leaks entries for background completions.
+      if (!data.taskId) {
+        // Only remove on final complete (not per-task intermediate completes)
+        useChatStore.setState((state) => {
+          if (!state.streamingConversationIds.has(data.conversationId)) return state
+          const newSet = new Set(state.streamingConversationIds)
+          newSet.delete(data.conversationId)
+          return { streamingConversationIds: newSet }
+        })
+      }
+
+      // Only finalize UI (message merge, isStreaming toggle) for active conversation
       if (activeConvId && data.conversationId !== activeConvId) {
         rendererLog.info(
-          `[finalizeStream] Ignoring complete for non-active conversation ${data.conversationId}`
+          `[finalizeStream] Tracked completion for background conversation ${data.conversationId}`
         )
         return
       }
@@ -176,20 +256,12 @@ function App(): React.JSX.Element {
       finalizeStream(data.messageId, data.taskId, data.requestId)
     })
 
-    const unsubGrillComplete = window.api.onGrillComplete((data) => {
-      endGrillSession(data.summary, data.proposedTasks)
-    })
-
-    const unsubGrillQuestion = window.api.onGrillQuestion((data) => {
-      setGrillQuestions(data.questions)
-    })
-
     const unsubAskQuestion = window.api.onAskQuestion((data) => {
-      setPendingQuestions(data.questions, data.action)
+      setPendingQuestions(data.questions, data.action, data.requestId)
     })
 
-    const unsubReady = window.api.onAgentReady(() => {
-      setAgentReady()
+    const unsubReady = window.api.onAgentReady((_data) => {
+      setAgentReady() // Still works for active workspace, backward compat
     })
 
     const unsubAgent = window.api.onAgentStatusUpdate((data) => {
@@ -238,12 +310,22 @@ function App(): React.JSX.Element {
 
     // Conversation state machine mirror — keep renderer in sync with backend state
     const unsubStateChange = window.api.onStateChange((data) => {
-      // Guard: ignore state changes from a non-active conversation to prevent
-      // cross-conversation state bleed (same pattern as onMessageChunk/onMessageComplete)
       const activeConvId = useChatStore.getState().activeConversation?.id
+
+      // Always process idle transitions for per-conversation streaming bookkeeping
+      if (data.to === 'idle' && data.conversationId) {
+        useChatStore.setState((state) => {
+          if (!state.streamingConversationIds.has(data.conversationId!)) return state
+          const newSet = new Set(state.streamingConversationIds)
+          newSet.delete(data.conversationId!)
+          return { streamingConversationIds: newSet }
+        })
+      }
+
+      // Guard: only update conversationState for active conversation
       if (activeConvId && data.conversationId && data.conversationId !== activeConvId) {
         rendererLog.info(
-          `[StateMachine:renderer] IGNORED ${data.from} → ${data.to} (conv=${data.conversationId}, active=${activeConvId})`
+          `[StateMachine:renderer] background transition ${data.from} → ${data.to} (conv=${data.conversationId}, active=${activeConvId})`
         )
         return
       }
@@ -259,8 +341,6 @@ function App(): React.JSX.Element {
     return () => {
       unsubChunk()
       unsubComplete()
-      unsubGrillComplete()
-      unsubGrillQuestion()
       unsubAskQuestion()
       unsubReady()
       unsubAgent()
@@ -276,6 +356,7 @@ function App(): React.JSX.Element {
     loadProfile,
     loadWorkspaces,
     appendStreamChunk,
+    handleKeepalive,
     updateStreamingIdentity,
     finalizeStream,
     addToolActivity,
@@ -284,8 +365,6 @@ function App(): React.JSX.Element {
     setAgentReady,
     setCompactSuggestion,
     setBudgetCapBanner,
-    endGrillSession,
-    setGrillQuestions,
     setPendingQuestions,
     setAvailable,
     setNotAvailable,

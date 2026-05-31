@@ -3,7 +3,7 @@ import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight } from 'luci
 import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import { ChatItem, NewConversationModal } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
-import type { ConversationMode } from '../../../../shared/types'
+import type { CommunicationTone, ConversationMode } from '../../../../shared/types'
 
 interface ChatSidebarProps {
   isCollapsed?: boolean
@@ -55,12 +55,21 @@ export default function ChatSidebar({
     title: string
     description?: string
     mode: ConversationMode
+    communicationTone?: CommunicationTone | null
     personaSpecialistId?: string
     attachments?: string[]
     useIsolatedBranch?: boolean
   }): Promise<void> => {
     if (!activeWorkspace) return
-    await createConversation(activeWorkspace.id, data.mode, data.title, data.personaSpecialistId)
+    await createConversation(
+      activeWorkspace.id,
+      data.mode,
+      data.title,
+      data.personaSpecialistId,
+      undefined,
+      undefined,
+      data.communicationTone
+    )
     setShowNewChatModal(false)
     if (data.useIsolatedBranch) {
       // TODO: integrate worktree IPC — creates a git worktree for this conversation

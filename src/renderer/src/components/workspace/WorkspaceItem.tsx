@@ -1,5 +1,7 @@
 import { Settings, Trash2 } from 'lucide-react'
-import type { Workspace } from '../../../../shared/types'
+import type { Workspace, PendingPermission } from '../../../../shared/types'
+import { useBackgroundSessionStore } from '@renderer/store'
+import WorkspaceStatusIndicator from './WorkspaceStatusIndicator'
 
 interface WorkspaceItemProps {
   workspace: Workspace
@@ -47,17 +49,21 @@ export default function WorkspaceItem({
         }
       }}
     >
-      <div
-        className={`flex items-center justify-center w-9 h-9 rounded-lg text-sm font-semibold ${
-          isActive ? 'bg-primary text-primary-text' : 'bg-surface-raised text-text-muted'
-        }`}
-      >
-        {workspace.name.charAt(0).toUpperCase()}
+      <div className="relative">
+        <div
+          className={`flex items-center justify-center w-9 h-9 rounded-lg text-sm font-semibold ${
+            isActive ? 'bg-primary text-primary-text' : 'bg-surface-raised text-text-muted'
+          }`}
+        >
+          {workspace.name.charAt(0).toUpperCase()}
+        </div>
+        <PermissionBadge workspaceId={workspace.id} />
       </div>
 
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium text-text-primary truncate">{workspace.name}</div>
         <div className="text-xs text-text-muted truncate">{workspace.repoPath}</div>
+        <WorkspaceStatusIndicator workspaceId={workspace.id} />
       </div>
 
       <div className="flex items-center gap-1">
@@ -93,5 +99,24 @@ export default function WorkspaceItem({
         </button>
       </div>
     </div>
+  )
+}
+
+/** Badge showing count of pending permission requests for a workspace. */
+function PermissionBadge({ workspaceId }: { workspaceId: string }): React.JSX.Element | null {
+  const count = useBackgroundSessionStore((s) =>
+    s.pendingPermissions.filter(
+      (p) =>
+        p.workspaceId === workspaceId &&
+        p.badgeFallback
+    ).length
+  )
+
+  if (count === 0) return null
+
+  return (
+    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+      {count}
+    </span>
   )
 }

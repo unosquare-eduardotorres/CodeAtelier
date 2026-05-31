@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
-import type { AppPreferences, ChatBubbleSize } from '../../../shared/types'
+import type { AppPreferences, AppTheme, ChatBubbleSize } from '../../../shared/types'
 
 type AppPreferenceKey = keyof AppPreferences
 
@@ -10,6 +10,7 @@ const defaultPreferences: AppPreferences = {
   specialistWarningPlan: true,
   specialistWarningAlways: false,
   chatBubbleSize: 'xl',
+  appTheme: 'code-atelier',
   updateSource: 'drive',
   updateDrivePath: '',
   updateGithubOwner: '',
@@ -21,6 +22,7 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   specialistWarningPlan: 'specialist_warning_plan',
   specialistWarningAlways: 'specialist_warning_always',
   chatBubbleSize: 'chat_bubble_size',
+  appTheme: 'app_theme',
   updateSource: 'update_source',
   updateDrivePath: 'update_drive_path',
   updateGithubOwner: 'update_github_owner',
@@ -127,6 +129,9 @@ export const useAppPreferenceStore = create<AppPreferenceState>((set) => ({
 
 export const useChatBubbleSize = (): ChatBubbleSize =>
   useAppPreferenceStore((state) => state.preferences.chatBubbleSize)
+
+export const useAppTheme = (): AppTheme =>
+  useAppPreferenceStore((state) => state.preferences.appTheme)
 
 export const useAppPreferenceActions = (): Pick<
   AppPreferenceState,

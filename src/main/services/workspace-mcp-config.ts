@@ -1,16 +1,26 @@
-import type { McpServerConfig, McpStdioServerConfig } from '@anthropic-ai/claude-agent-sdk'
+import { existsSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { homedir } from 'node:os'
+import { app } from 'electron'
 import { MCP_TOOLS, EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
 import type { ConversationMode } from '../../shared/types'
 import type { ControlActionCallbacks } from './control-actions.tool'
-import { createControlActionsMcpServer } from './control-actions.tool'
-import { codeGraphMcpService } from './code-graph.tool'
-import { semanticSearchMcpService } from './semantic-search.tool'
-import { gitContextMcpService } from './git-context.tool'
-import { checkpointContextMcpService } from './checkpoint-context.tool'
-import { gitHubContextMcpService } from './github-context.tool'
-import { codeAnalysisMcpService } from './code-analysis.tool'
 import { buildModePermissions } from './mode-permissions'
 import type { ContextWindowTier } from './context-management'
+import { TIER_LIMITS } from './context-management'
+import { chatAgentLogger } from '../logger'
+
+/**
+ * MCP server config for stdio-based external servers.
+ * Replaces the SDK's McpServerConfig type with a local definition.
+ */
+export interface McpServerConfig {
+  type?: 'stdio'
+  command: string
+  args: string[]
+  env?: Record<string, string>
+  alwaysLoad?: boolean
+}
 
 /**
  * Essential code-graph tools for small-tier models (6 tools instead of 13).
@@ -22,7 +32,7 @@ const ESSENTIAL_CODE_GRAPH_TOOLS = [
   MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name,
   MCP_TOOLS.CODE_GRAPH.FIND_CALLERS.name,
   MCP_TOOLS.CODE_GRAPH.FIND_REFERENCES.name,
-  MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name,
+  MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name
 ] as const
 
 /**
@@ -36,11 +46,15 @@ export interface McpFeatureFlags {
   /** External MCPs active for this specific message (e.g. { maestro: true }) */
   externalMcpActive?: Record<string, boolean>
   /** Per-chat local MCP overrides. Absent key = enabled (backward-compat). false = disabled. */
-  localMcpActive?: Record<string, boolean>
+  localMcpActive: Record<string, boolean>
 }
 
 /**
- * Result of building MCP configuration for the SDK executor.
+ * Result of building MCP configuration for the executor.
+ *
+ * The `mcpServers` dict now contains only external MCP stdio configs (Maestro, etc.).
+ * Local MCP servers (code-graph, semantic-search, control-actions, etc.) are
+ * configured externally via McpConfigWriter for CLI and via OpenCode's own config.
  */
 export interface McpConfigResult {
   mcpServers?: Record<string, McpServerConfig>
@@ -61,15 +75,193 @@ function isLocalMcpEnabled(
 }
 
 /**
- * Builds the SDK execute options (MCP servers + tool lists) for the current
- * workspace, independent of role. DaVinci and Project Specialists both go
- * through this helper — the only thing that differs between them is the
- * identity text in their system prompt, not their toolbox.
+ * Resolve a stdio command to an absolute path.
+ * Checks known install paths first (handles packaged macOS apps where
+ * GUI PATH is minimal). Falls back to the bare command name for PATH lookup.
+ */
+function resolveStdioCommand(command: string, knownPaths?: readonly string[]): string {
+  if (knownPaths) {
+    for (const p of knownPaths) {
+      const resolved = p.replace(/^~/, homedir())
+      const found = existsSync(resolved)
+      chatAgentLogger.info(
+        `[mcp:resolve-command] Checking ${resolved} → ${found ? 'EXISTS' : 'NOT FOUND'}`
+      )
+      if (found) return resolved
+    }
+  }
+  chatAgentLogger.info(`[mcp:resolve-command] Falling back to bare command: ${command}`)
+  return command
+}
+
+/**
+ * Known Homebrew Java installation paths (macOS arm64 + x86_64).
+ * Checked in order — first existing directory wins.
+ */
+const KNOWN_JAVA_PATHS = [
+  '/opt/homebrew/opt/openjdk@21', // Homebrew arm64 — Java 21
+  '/opt/homebrew/opt/openjdk@17', // Homebrew arm64 — Java 17
+  '/opt/homebrew/opt/openjdk', // Homebrew arm64 — latest
+  '/usr/local/opt/openjdk@21', // Homebrew x86_64 — Java 21
+  '/usr/local/opt/openjdk@17', // Homebrew x86_64 — Java 17
+  '/usr/local/opt/openjdk' // Homebrew x86_64 — latest
+] as const
+
+/**
+ * Resolve JAVA_HOME for packaged macOS apps where the shell profile
+ * isn't loaded and Homebrew isn't on PATH.
  *
- * - Allow / disallow lists come from {@link buildModePermissions} plus the
- *   MCP tool names gated by the workspace feature flags.
- * - MCP servers are mounted identically for both roles, again gated on
- *   feature flags + presence of a workspace / conversation id.
+ * Strategy:
+ * 1. Return `process.env.JAVA_HOME` if already set
+ * 2. Probe known Homebrew install paths (fastest — no subprocess)
+ * 3. Try `/usr/libexec/java_home -v 17+` as a last resort
+ */
+function resolveJavaHome(): string | undefined {
+  // Already set — use it
+  if (process.env.JAVA_HOME) return process.env.JAVA_HOME
+
+  // Probe known Homebrew paths
+  for (const p of KNOWN_JAVA_PATHS) {
+    if (existsSync(p)) {
+      chatAgentLogger.info(`[mcp:java-resolve] Found Java at ${p}`)
+      return p
+    }
+  }
+
+  // Fallback: ask macOS for any Java 17+
+  try {
+    const result = execFileSync('/usr/libexec/java_home', ['-v', '17+'], {
+      encoding: 'utf-8',
+      timeout: 3000
+    }).trim()
+    if (result && existsSync(result)) {
+      chatAgentLogger.info(`[mcp:java-resolve] Found Java via java_home: ${result}`)
+      return result
+    }
+  } catch (e) {
+    chatAgentLogger.debug('[mcp:java-resolve] java_home lookup failed (non-fatal):', e)
+  }
+
+  chatAgentLogger.warn('[mcp:java-resolve] No Java 17+ found — Maestro may fail to start')
+  return undefined
+}
+
+/**
+ * Build the environment for an external MCP stdio process.
+ *
+ * In packaged macOS apps, the GUI process inherits only a minimal PATH
+ * (/usr/bin:/bin:/usr/sbin:/sbin). This helper:
+ * 1. Forwards any explicitly-set env vars from process.env
+ * 2. Auto-resolves JAVA_HOME from Homebrew / macOS java_home
+ * 3. Injects Homebrew bin directories and JAVA_HOME/bin into PATH
+ *    so child processes can find `java`, `npx`, `node`, etc.
+ */
+function buildStdioEnv(envKeys: readonly string[] | undefined): Record<string, string> | undefined {
+  if (!envKeys?.length && !app.isPackaged) return undefined
+
+  const env: Record<string, string> = {}
+
+  // Forward explicitly-set env vars
+  if (envKeys) {
+    for (const k of envKeys) {
+      if (process.env[k]) env[k] = process.env[k]!
+    }
+  }
+
+  // Auto-resolve JAVA_HOME if requested but not set
+  if (envKeys?.includes('JAVA_HOME') && !env.JAVA_HOME) {
+    const javaHome = resolveJavaHome()
+    if (javaHome) env.JAVA_HOME = javaHome
+  }
+
+  // In packaged apps, enrich PATH with common tool directories
+  if (app.isPackaged) {
+    const extraPaths: string[] = []
+
+    // Add JAVA_HOME/bin if resolved
+    if (env.JAVA_HOME) {
+      extraPaths.push(`${env.JAVA_HOME}/bin`)
+    }
+
+    // Add common Homebrew paths
+    extraPaths.push(
+      '/opt/homebrew/bin', // Homebrew arm64
+      '/usr/local/bin', // Homebrew x86_64 + system tools
+      `${homedir()}/.maestro/bin` // Maestro CLI
+    )
+
+    const basePath = process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'
+    env.PATH = [...extraPaths, basePath].join(':')
+
+    chatAgentLogger.info(`[mcp:stdio-env] Enriched PATH for packaged app: ${env.PATH}`)
+  }
+
+  return Object.keys(env).length > 0 ? env : undefined
+}
+
+/**
+ * Mount external MCP stdio servers based on per-message activation flags.
+ * Shared between local LLM and Claude code paths.
+ *
+ * Key behaviors:
+ * - `alwaysLoad: true` forces tools into the prompt (not deferred behind ToolSearch,
+ *   which is globally blocked in this app).
+ * - `env` is built by {@link buildStdioEnv} which auto-resolves JAVA_HOME and enriches
+ *   PATH for packaged macOS apps where the GUI shell is minimal.
+ */
+function mountExternalMcps(
+  servers: Record<string, McpServerConfig>,
+  allowedTools: string[] | undefined,
+  mode: ConversationMode,
+  externalMcpActive: Record<string, boolean>
+): void {
+  chatAgentLogger.info(
+    `[mcp:mount-external] Active flags: ${JSON.stringify(externalMcpActive)} mode=${mode}`
+  )
+  for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+    if (externalMcpActive[integration.id]) {
+      const env = buildStdioEnv(integration.envKeys)
+
+      // Merge performance env vars (always injected, not user-supplied)
+      const mergedEnv = {
+        ...(env ?? {}),
+        ...(integration.performanceEnv ?? {})
+      }
+      const finalEnv = Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined
+
+      const stdioConfig: McpServerConfig = {
+        type: 'stdio',
+        command: resolveStdioCommand(integration.command, integration.commandPaths),
+        args: [...integration.args],
+        alwaysLoad: true,
+        ...(finalEnv ? { env: finalEnv } : {})
+      }
+      servers[integration.id] = stdioConfig
+
+      // Plan mode: only read-only tools. Build mode: all tools.
+      if (allowedTools !== undefined) {
+        const modeTools = mode === 'plan' ? integration.planModeToolNames : integration.toolNames
+        allowedTools.push(...modeTools)
+      }
+
+      chatAgentLogger.info(
+        `[mcp:mount-external] ✓ Mounted ${integration.id}: command=${stdioConfig.command} args=${integration.args.join(' ')} tools=${(mode === 'plan' ? integration.planModeToolNames : integration.toolNames).length}`
+      )
+    } else {
+      chatAgentLogger.info(`[mcp:mount-external] ✗ Skipped ${integration.id} (not active)`)
+    }
+  }
+}
+
+/**
+ * Builds MCP tool allow/disallow lists and mounts external MCP servers.
+ *
+ * Local MCP servers (code-graph, semantic-search, control-actions, etc.) are
+ * configured externally by McpConfigWriter (for CLI) or OpenCode's own config.
+ * This function only handles:
+ *   1. Feature-flag-gated tool allow/disallow lists
+ *   2. External MCP stdio server mounting (Maestro, etc.)
+ *   3. Context-window-tier gating for local LLMs
  */
 export function buildWorkspaceMcpConfig(opts: {
   mode: ConversationMode
@@ -82,32 +274,25 @@ export function buildWorkspaceMcpConfig(opts: {
   isLocalProvider?: boolean
   /** Context window tier — gates MCP tools for small-window models */
   contextTier?: ContextWindowTier
-}): McpConfigResult {
+}): McpConfigResult & {
+  /** SDK built-in tools to disallow in local plan mode (saves tool schema tokens) */
+  planBuiltinDisallowed?: string[]
+} {
   const { baseAllowed, disallowed } = buildModePermissions(opts.mode)
 
   // ── Local LLM path ──
-  // Mount MCP tools gated by context window tier:
+  // Tool gating by context window tier:
   //   small (≤64K): 6 essential code-graph + 3 control-actions — saves ~50% schema overhead
   //   medium (≤128K): full code-graph + semantic-search + control-actions
   //   large (>128K): everything (same as Claude)
-  // SDK built-ins (Read, Write, Edit, Bash, Glob, Grep) are unaffected.
   if (opts.isLocalProvider) {
     const tier: ContextWindowTier = opts.contextTier ?? 'large' // backward-compat default
     const { repomapEnabled, semanticSearchEnabled } = opts.featureFlags
     const localActive = opts.featureFlags.localMcpActive
-    const controlActionsConfig = createControlActionsMcpServer(opts.controlCallbacks)
     const servers: Record<string, McpServerConfig> = {}
 
     const codeGraphEnabled =
       repomapEnabled && !!opts.workspaceId && isLocalMcpEnabled('code-graph', localActive)
-
-    // Code graph: always mounted when enabled (tier only affects allowed tool subset)
-    if (codeGraphEnabled) {
-      Object.assign(
-        servers,
-        codeGraphMcpService.getMcpServersConfig(opts.workspaceId!, opts.workspacePath)
-      )
-    }
 
     // Semantic search: skip for 'small' tier (saves ~3 tool schemas ≈ 1-2K tokens)
     const semanticSearchEnabled_ =
@@ -115,19 +300,9 @@ export function buildWorkspaceMcpConfig(opts: {
       semanticSearchEnabled &&
       !!opts.workspaceId &&
       isLocalMcpEnabled('semantic-search', localActive)
-    if (semanticSearchEnabled_) {
-      Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(opts.workspaceId!))
-    }
 
     // Code analysis: skip for 'small' tier (saves ~3 tool schemas)
-    const codeAnalysisEnabled =
-      tier !== 'small' && isLocalMcpEnabled('code-analysis', localActive)
-    if (codeAnalysisEnabled) {
-      Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(opts.workspacePath))
-    }
-
-    // Control actions — ALWAYS ON (never gated)
-    Object.assign(servers, controlActionsConfig)
+    const codeAnalysisEnabled = tier !== 'small' && isLocalMcpEnabled('code-analysis', localActive)
 
     // Build allowed tools list — tier-gated subset for code-graph
     const localAllowed =
@@ -137,45 +312,78 @@ export function buildWorkspaceMcpConfig(opts: {
             ...baseAllowed,
             // Code graph: small tier → 6 essential tools; medium/large → full 13
             ...(codeGraphEnabled
-              ? (tier === 'small'
-                  ? [...ESSENTIAL_CODE_GRAPH_TOOLS]
-                  : MCP_TOOLS.CODE_GRAPH._ALL_NAMES)
+              ? tier === 'small'
+                ? [...ESSENTIAL_CODE_GRAPH_TOOLS]
+                : MCP_TOOLS.CODE_GRAPH._ALL_NAMES
               : []),
             // Semantic search (tier-gated above)
-            ...(semanticSearchEnabled_
-              ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES
-              : []),
+            ...(semanticSearchEnabled_ ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES : []),
             // Code analysis (tier-gated above)
-            ...(codeAnalysisEnabled
-              ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
-              : []),
+            ...(codeAnalysisEnabled ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES : []),
             // Control actions — always on
             MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
             MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
             MCP_TOOLS.CONTROL_ACTIONS.EMIT_MEMORY.name
           ]
 
+    // ── External MCP Servers (stdio) — also available for local LLMs ──
+    const externalActive = opts.featureFlags.externalMcpActive ?? {}
+    mountExternalMcps(servers, localAllowed, opts.mode, externalActive)
+
+    chatAgentLogger.info(
+      `[mcp:config-result] servers=[${Object.keys(servers).join(',')}] allowedToolCount=${localAllowed?.length ?? 'all'} disallowedCount=${disallowed.length} provider=local tier=${tier}`
+    )
+
     // For small tier: explicitly disallow the tools we didn't allow — defense-in-depth
-    const smallTierDisallowed = tier === 'small'
-      ? [
-          // Redundant code-graph tools not in ESSENTIAL_CODE_GRAPH_TOOLS
-          ...(codeGraphEnabled
-            ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES.filter(
-                (t) => !(ESSENTIAL_CODE_GRAPH_TOOLS as readonly string[]).includes(t)
-              )
-            : []),
-          // All semantic-search tools (server not mounted)
-          ...MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES,
-          // All code-analysis tools (server not mounted)
-          ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES,
-        ]
-      : []
+    const smallTierDisallowed =
+      tier === 'small'
+        ? [
+            // Redundant code-graph tools not in ESSENTIAL_CODE_GRAPH_TOOLS
+            ...(codeGraphEnabled
+              ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES.filter(
+                  (t) => !(ESSENTIAL_CODE_GRAPH_TOOLS as readonly string[]).includes(t)
+                )
+              : []),
+            // All semantic-search tools (server not mounted)
+            ...MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES,
+            // All code-analysis tools (server not mounted)
+            ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
+          ]
+        : []
+
+    // Plan-mode built-in tool gating — restrict write tools in plan mode
+    // to reduce tool schema overhead (each tool schema costs ~400-500 tokens).
+    const tierLimits = TIER_LIMITS[tier]
+    let planBuiltinDisallowed: string[] | undefined
+    if (opts.mode === 'plan' && tierLimits.planBuiltinAllowlist) {
+      const allBuiltins = [
+        'Read',
+        'Write',
+        'Edit',
+        'MultiEdit',
+        'Bash',
+        'Glob',
+        'Grep',
+        'TodoRead',
+        'TodoWrite',
+        'NotebookRead',
+        'NotebookEdit'
+      ]
+      planBuiltinDisallowed = allBuiltins.filter(
+        (t) => !tierLimits.planBuiltinAllowlist!.includes(t)
+      )
+      chatAgentLogger.info(
+        `[mcp:plan-builtin-gating] tier=${tier} allowed=[${tierLimits.planBuiltinAllowlist.join(',')}] ` +
+          `disallowed=[${planBuiltinDisallowed.join(',')}] — saves ~${planBuiltinDisallowed.length * 450} tokens`
+      )
+    }
 
     const mcpServers = Object.keys(servers).length > 0 ? servers : undefined
     return {
       ...(mcpServers ? { mcpServers } : {}),
       allowedTools: localAllowed,
-      disallowedTools: [...disallowed, ...smallTierDisallowed]
+      disallowedTools: [...disallowed, ...smallTierDisallowed, ...(planBuiltinDisallowed ?? [])],
+      planBuiltinDisallowed
     }
   }
 
@@ -241,67 +449,15 @@ export function buildWorkspaceMcpConfig(opts: {
           MCP_TOOLS.CONTROL_ACTIONS.EMIT_MEMORY.name
         ]
 
-  // ── MCP Servers ──
-  const controlActionsConfig = createControlActionsMcpServer(opts.controlCallbacks)
-  const servers: Record<string, McpServerConfig> = {}
-
-  // Code graph (workspace flag AND per-chat toggle)
-  if (repomapEnabled && opts.workspaceId && isLocalMcpEnabled('code-graph', localActive)) {
-    Object.assign(
-      servers,
-      codeGraphMcpService.getMcpServersConfig(opts.workspaceId, opts.workspacePath)
-    )
-  }
-  // Semantic search (workspace flag AND per-chat toggle)
-  if (
-    semanticSearchEnabled &&
-    opts.workspaceId &&
-    isLocalMcpEnabled('semantic-search', localActive)
-  ) {
-    Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(opts.workspaceId))
-  }
-  // Git context (per-chat gated)
-  if (isLocalMcpEnabled('git-context', localActive)) {
-    Object.assign(servers, gitContextMcpService.getMcpServersConfig(opts.workspacePath))
-  }
-  // Checkpoint context (conversation-scoped AND per-chat gated)
-  if (opts.conversationId && isLocalMcpEnabled('checkpoint-context', localActive)) {
-    Object.assign(servers, checkpointContextMcpService.getMcpServersConfig(opts.conversationId))
-  }
-  // GitHub context (workspace flag AND per-chat toggle)
-  if (githubConfigured && opts.workspaceId && isLocalMcpEnabled('github-context', localActive)) {
-    Object.assign(
-      servers,
-      gitHubContextMcpService.getMcpServersConfig(opts.workspaceId, opts.workspacePath)
-    )
-  }
-  // Code analysis (per-chat gated)
-  if (isLocalMcpEnabled('code-analysis', localActive)) {
-    Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(opts.workspacePath))
-  }
-  // Control actions — ALWAYS ON, mode-aware structured output tools
-  Object.assign(servers, controlActionsConfig)
-
   // ── External MCP Servers (stdio) ──
   // Conditionally mounted based on per-message flags from the conversation MCP overrides.
+  const servers: Record<string, McpServerConfig> = {}
   const externalActive = opts.featureFlags.externalMcpActive ?? {}
-  for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
-    if (externalActive[integration.id]) {
-      const stdioConfig: McpStdioServerConfig = {
-        type: 'stdio',
-        command: integration.command,
-        args: [...integration.args]
-      }
-      servers[integration.id] = stdioConfig
+  mountExternalMcps(servers, allowedTools, opts.mode, externalActive)
 
-      // Plan mode: only read-only tools. Build mode: all tools.
-      if (allowedTools !== undefined) {
-        const modeTools =
-          opts.mode === 'plan' ? integration.planModeToolNames : integration.toolNames
-        allowedTools.push(...modeTools)
-      }
-    }
-  }
+  chatAgentLogger.info(
+    `[mcp:config-result] servers=[${Object.keys(servers).join(',')}] allowedToolCount=${allowedTools?.length ?? 'all'} disallowedCount=${disallowed.length} provider=claude`
+  )
 
   const mcpServers = Object.keys(servers).length > 0 ? servers : undefined
 

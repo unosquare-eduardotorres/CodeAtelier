@@ -23,7 +23,7 @@ const ESSENTIAL_CODE_GRAPH_TOOLS = [
   MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name,
   MCP_TOOLS.CODE_GRAPH.FIND_CALLERS.name,
   MCP_TOOLS.CODE_GRAPH.FIND_REFERENCES.name,
-  MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name,
+  MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name
 ]
 
 describe('Essential Code Graph Tools for small tier', () => {
@@ -50,10 +50,7 @@ describe('Essential Code Graph Tools for small tier', () => {
 
   test('all essential tools are valid MCP tool names', () => {
     for (const tool of ESSENTIAL_CODE_GRAPH_TOOLS) {
-      assert.ok(
-        ALL_MCP_TOOL_NAMES.includes(tool),
-        `${tool} is not in ALL_MCP_TOOL_NAMES`
-      )
+      assert.ok(ALL_MCP_TOOL_NAMES.includes(tool), `${tool} is not in ALL_MCP_TOOL_NAMES`)
     }
   })
 

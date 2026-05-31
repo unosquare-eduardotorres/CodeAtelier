@@ -44,7 +44,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
         window.api
           .embeddingCheckStatus()
           .then(setEmbeddingStatus)
-          .catch(() => {})
+          .catch((err) => console.warn('[CodeIntelligence] Non-fatal: embedding status check failed:', err))
       }
     })
 
@@ -52,7 +52,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
     window.api
       .codeGraphGetStatus({ workspaceId: activeWorkspace.id })
       .then(setCodeGraphState)
-      .catch(() => {})
+      .catch((err) => console.warn('[CodeIntelligence] Non-fatal: code graph status load failed:', err))
 
     // Auto-load persisted semantic search index
     // eslint-disable-next-line react-hooks/set-state-in-effect -- optimistic loading state before async fetch
@@ -66,7 +66,8 @@ export default function CodeIntelligencePage(): React.JSX.Element {
           loading: false
         })
       })
-      .catch(() => {
+      .catch((err) => {
+        console.warn('[CodeIntelligencePage] Non-fatal: persisted index load failed:', err)
         setPersistedIndexStatus({ loaded: false, loading: false })
       })
 
@@ -74,7 +75,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
     window.api
       .embeddingCheckStatus()
       .then(setEmbeddingStatus)
-      .catch(() => {})
+      .catch((err) => console.warn('[CodeIntelligence] Non-fatal: embedding status check failed:', err))
   }, [activeWorkspace])
 
   // ── Subscribe to code graph progress events ──
@@ -207,7 +208,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
             window.api
               .embeddingCheckStatus()
               .then(setEmbeddingStatus)
-              .catch(() => {})
+              .catch((err) => console.warn('[CodeIntelligence] Non-fatal: embedding status refresh failed:', err))
           }}
         />
       )}

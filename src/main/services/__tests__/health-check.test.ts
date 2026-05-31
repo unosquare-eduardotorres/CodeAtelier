@@ -4,13 +4,13 @@ import { test, describe, summary } from './test-harness'
 describe('SubscriptionService - SDK Health', () => {
   test('health check result shape has all fields', () => {
     const result = {
-      sdkVersion: '2.1.116',
-      modelsAvailable: ['claude-opus-4-7', 'claude-sonnet-4-6'],
-      opus47Available: true,
+      sdkVersion: '2.1.158',
+      modelsAvailable: ['claude-opus-4-8', 'claude-sonnet-4-6'],
+      opus48Available: true,
       error: null
     }
     assert.ok(result.sdkVersion)
-    assert.ok(result.opus47Available)
+    assert.ok(result.opus48Available)
     assert.equal(result.error, null)
   })
 
@@ -18,10 +18,10 @@ describe('SubscriptionService - SDK Health', () => {
     const result = {
       sdkVersion: null,
       modelsAvailable: [],
-      opus47Available: false,
+      opus48Available: false,
       error: 'Command failed: claude not found'
     }
-    assert.ok(!result.opus47Available)
+    assert.ok(!result.opus48Available)
     assert.ok(result.error)
   })
 
@@ -33,14 +33,14 @@ describe('SubscriptionService - SDK Health', () => {
       claudeMax: { active: true, plan: 'Max', error: null },
       codexCli: { installed: false, version: null, error: 'not found' },
       sdkHealth: {
-        sdkVersion: '2.1.116',
-        modelsAvailable: ['claude-opus-4-7'],
-        opus47Available: true,
+        sdkVersion: '2.1.158',
+        modelsAvailable: ['claude-opus-4-8'],
+        opus48Available: true,
         error: null
       }
     }
     assert.ok('sdkHealth' in fullResult)
-    assert.ok(fullResult.sdkHealth.opus47Available)
+    assert.ok(fullResult.sdkHealth.opus48Available)
   })
 })
 
