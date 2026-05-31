@@ -313,7 +313,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           const userQuestion = trimmed.replace(/^\/council\s*/i, '').trim()
           const inputContent = userQuestion || 'Review the current plan or last discussion.'
 
-          useCouncilStore.getState().startCouncil(workspaceId, inputContent, inputContent)
+          useCouncilStore.getState().startCouncil()
 
           try {
             await window.api.councilStart({

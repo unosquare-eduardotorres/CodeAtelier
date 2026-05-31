@@ -105,7 +105,7 @@ class ModelConfigService {
         (settings?.localPort as number) ??
         (settings?.ollamaPort as number) ?? // backward compat
         defaultPort,
-      strategy: (settings?.localLlmStrategy as LocalLLMStrategy) ?? 'sdk-passthrough',
+      strategy: (settings?.localLlmStrategy as LocalLLMStrategy) ?? 'default',
       localApiKey: (settings?.localApiKey as string) || undefined
     }
   }
@@ -143,7 +143,7 @@ class ModelConfigService {
   getExecutorBackend(workspacePath: string | undefined): ExecutorBackend {
     if (!workspacePath) return 'cli'
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
-    if (settings?.llmProvider === 'local-llm') return 'local-direct'
+    if (settings?.llmProvider === 'local-llm') return 'opencode'
     return (settings?.executorBackend as ExecutorBackend) ?? 'cli'
   }
 

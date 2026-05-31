@@ -44,6 +44,14 @@ import {
 const councilLog = log.scope('council')
 const execFileAsync = promisify(execFile)
 
+/** Collect non-null fulfilled values from Promise.allSettled results. */
+function collectSettled<T>(results: PromiseSettledResult<T | null>[]): T[] {
+  return results
+    .filter((r): r is PromiseFulfilledResult<T | null> => r.status === 'fulfilled')
+    .map((r) => r.value)
+    .filter((r): r is T => r !== null)
+}
+
 // ── Internal session state ────────────────────────────────────────────
 
 interface AdvisorInstance {
@@ -51,8 +59,6 @@ interface AdvisorInstance {
   session: AgentSessionService | null
   status: CouncilMemberStatus
   review: CouncilReview | null
-  peerReview: CouncilPeerReview | null
-  streamContent: string
 }
 
 interface CouncilSessionEntry {
@@ -132,9 +138,7 @@ export class CouncilService extends EventEmitter {
         role,
         session: null,
         status: 'pending',
-        review: null,
-        peerReview: null,
-        streamContent: ''
+        review: null
       })
     }
 
@@ -269,9 +273,6 @@ export class CouncilService extends EventEmitter {
 
         // Wire streaming events — tagged with advisor role
         session.on('chunk', (chunk: StreamChunk) => {
-          if (chunk.type === 'text' && chunk.content) {
-            advisor.streamContent += chunk.content
-          }
           this.emit('member-stream', {
             workspaceId: entry.workspaceId,
             advisorRole: role,
@@ -320,12 +321,7 @@ export class CouncilService extends EventEmitter {
     })
 
     const results = await Promise.allSettled(advisorPromises)
-    return results
-      .filter(
-        (r): r is PromiseFulfilledResult<CouncilReview | null> => r.status === 'fulfilled'
-      )
-      .map((r) => r.value)
-      .filter((r): r is CouncilReview => r !== null)
+    return collectSettled(results)
   }
 
   // ── Private: Step 3 — peer review (5 parallel, no tools) ──────────
@@ -357,10 +353,7 @@ Blind Spots: ${r.blindSpots.join('; ')}`
       )
       .join('\n\n---\n\n')
 
-    const peerPromises = COUNCIL_ADVISOR_ROLES.map(async (role) => {
-      try {
-
-        const systemPrompt = `You are a peer reviewer in an LLM Council. You are reading ${reviews.length} anonymized advisor responses (labeled A through ${String.fromCharCode(64 + reviews.length)}).
+    const systemPrompt = `You are a peer reviewer in an LLM Council. You are reading ${reviews.length} anonymized advisor responses (labeled A through ${String.fromCharCode(64 + reviews.length)}).
 
 Answer these three questions as JSON:
 1. Which response is the strongest and why? (pick one letter)
@@ -378,6 +371,8 @@ Respond ONLY with a JSON block:
 }
 \`\`\``
 
+    const peerPromises = COUNCIL_ADVISOR_ROLES.map(async (role) => {
+      try {
         const { stdout } = await execFileAsync('claude', [
           '-p', `Review these advisor responses:\n\n${anonymizedText}`,
           '--model', 'claude-haiku-4-5-20251001',
@@ -403,12 +398,7 @@ Respond ONLY with a JSON block:
     })
 
     const results = await Promise.allSettled(peerPromises)
-    const peerReviews = results
-      .filter(
-        (r): r is PromiseFulfilledResult<CouncilPeerReview | null> => r.status === 'fulfilled'
-      )
-      .map((r) => r.value)
-      .filter((r): r is CouncilPeerReview => r !== null)
+    const peerReviews = collectSettled(results)
 
     this.emit('peer-review-complete', {
       workspaceId: entry.workspaceId,

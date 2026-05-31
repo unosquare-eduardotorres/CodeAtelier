@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect } from 'react'
 import type { Conversation, ConversationMode, Workspace } from '../../../../../shared/types'
-import { useChatStore } from '../../../../stores/chatStore'
+import { useChatStore } from '@renderer/store'
 
 interface AppKeyboardShortcutsDeps {
   activeWorkspace: Workspace | null

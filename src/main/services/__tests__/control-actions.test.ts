@@ -7,8 +7,7 @@ import { test, describe } from './test-harness'
 import {
   planSchema,
   askUserSchema,
-  emitMemorySchema,
-  createControlActionsMcpServer
+  emitMemorySchema
 } from '../control-actions.tool'
 import type { ControlActionCallbacks } from '../control-actions.tool'
 
@@ -157,21 +156,6 @@ describe('emitMemorySchema', () => {
   test('rejects missing fields', () => {
     assert.throws(() => emitMemorySchema.parse({ type: 'user' }))
     assert.throws(() => emitMemorySchema.parse({ title: 'x', content: 'y' }))
-  })
-})
-
-// -- Tool registration tests --
-
-describe('Control actions MCP server', () => {
-  const noopCallbacks: ControlActionCallbacks = {
-    onPlan: () => {},
-    onAskUser: () => {},
-    onMemory: () => {}
-  }
-
-  test('creates control-actions MCP server with all tools', () => {
-    const config = createControlActionsMcpServer(noopCallbacks)
-    assert.ok(config['control-actions'], 'control-actions server should exist')
   })
 })
 

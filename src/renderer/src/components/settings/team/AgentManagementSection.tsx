@@ -18,7 +18,7 @@ import { ConfirmDialog } from '@renderer/components/common'
 import { useSpecialistStore } from '@renderer/store'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
 import type { DiscoveredAgent } from '../../../../../shared/types'
-import { AgentDetailPanel } from './AgentDetailPanel'
+import AgentDetailPanel from './AgentDetailPanel'
 
 // ── Types ──
 

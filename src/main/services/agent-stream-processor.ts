@@ -36,7 +36,7 @@ export class AgentStreamProcessor {
   // ── processMetaChunk ──────────────────────────────────────────────────
 
   async processMetaChunk(
-    meta: SDKExecuteResult,
+    meta: ExecutorResult,
     ctx: {
       conversationId: string
       turnCount: number

@@ -1041,18 +1041,14 @@ export type LLMProvider = 'claude' | 'local-llm'
 export type LocalLLMBackend = 'ollama' | 'omlx'
 
 /** Local LLM execution strategy */
-export type LocalLLMStrategy = 'sdk-passthrough' | 'native'
+export type LocalLLMStrategy = 'default' | 'native'
 
 /**
  * Executor backend — which runtime drives AI interactions.
- * - 'sdk' — Agent SDK (query() wrapper around CLI -p) — DEPRECATED, consumes API credits
  * - 'cli' — Interactive Claude CLI (stream-json mode) — subscription billing
- * - 'local-direct' — Direct HTTP to Ollama/oMLX (no SDK or CLI dependency)
- * - 'opencode' — OpenCode multi-provider runtime (@opencode-ai/sdk) — 75+ providers
+ * - 'opencode' — OpenCode multi-provider runtime (@opencode-ai/sdk)
  *
  * Stored in workspace settings_json.executorBackend. Default: 'cli'.
- * Introduced for the Agent SDK → CLI migration (June 2026).
- * Phase 4B: Added 'opencode' for multi-provider support.
  */
 export type ExecutorBackend = 'cli' | 'opencode'
 

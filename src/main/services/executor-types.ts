@@ -75,15 +75,5 @@ export interface ExecutorBaseOptions {
 // ── Types previously from @anthropic-ai/claude-agent-sdk ──
 // Defined locally to remove the SDK dependency.
 
-/** MCP server stdio config — replaces McpServerConfig from SDK. */
-export interface McpServerConfig {
-  command: string
-  args: string[]
-  env?: Record<string, string>
-}
-
-/** Alias for stdio-based MCP server config. */
-export type McpStdioServerConfig = McpServerConfig
-
 /** Prompt input — replaces SDKUserMessage for non-SDK paths. */
 export type AgentPromptInput = string | Array<{ type: string; [key: string]: unknown }>

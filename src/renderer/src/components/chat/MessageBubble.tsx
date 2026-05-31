@@ -229,7 +229,7 @@ function MessageBubbleInner({
     if (!workspaceId || !planContent) return
 
     const councilStore = useCouncilStore.getState()
-    councilStore.startCouncil(workspaceId, planContent, message.contentMd ?? '')
+    councilStore.startCouncil()
 
     // Start the council via IPC
     window.api.councilStart({

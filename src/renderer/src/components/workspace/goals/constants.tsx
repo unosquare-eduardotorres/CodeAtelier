@@ -1,3 +1,4 @@
+import React from 'react'
 import { CheckCircle, XCircle, Clock, Ban } from 'lucide-react'
 import type { MpaPhaseType, MpaGoalType, MpaRunStatus } from '../../../../../shared/mpa-types'
 

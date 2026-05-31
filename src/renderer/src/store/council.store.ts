@@ -49,15 +49,9 @@ interface CouncilState {
   peerReviews: CouncilPeerReview[]
   /** Final chairman verdict */
   verdict: CouncilVerdict | null
-  /** Input context — the plan/requirement being evaluated */
-  inputContent: string
-  /** Original user request */
-  originalUserRequest: string
-  /** Workspace ID for the active council */
-  workspaceId: string | null
 
   // Actions
-  startCouncil: (workspaceId: string, inputContent: string, originalUserRequest: string) => void
+  startCouncil: () => void
   handlePhaseChanged: (phase: CouncilPhase) => void
   handleMemberStream: (data: {
     advisorRole: string
@@ -119,21 +113,15 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
   advisors: createInitialAdvisors(),
   peerReviews: [],
   verdict: null,
-  inputContent: '',
-  originalUserRequest: '',
-  workspaceId: null,
 
-  startCouncil: (workspaceId, inputContent, originalUserRequest) => {
+  startCouncil: () => {
     resetAccumulators()
     set({
       isActive: true,
       phase: 'framing',
       advisors: createInitialAdvisors(),
       peerReviews: [],
-      verdict: null,
-      inputContent,
-      originalUserRequest,
-      workspaceId
+      verdict: null
     })
   },
 
@@ -206,10 +194,7 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
       phase: 'framing',
       advisors: createInitialAdvisors(),
       peerReviews: [],
-      verdict: null,
-      inputContent: '',
-      originalUserRequest: '',
-      workspaceId: null
+      verdict: null
     })
   }
 }))

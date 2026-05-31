@@ -1,13 +1,12 @@
 /**
  * AgentSessionService — generic long-lived AI session runtime.
  *
- * Supports three executor backends:
- *   - 'sdk'  — Agent SDK (query() wrapper) — DEPRECATED (consumes API credits)
- *   - 'cli'  — Interactive Claude CLI (stream-json mode) — subscription billing
- *   - 'local-direct' — Direct HTTP to Ollama/oMLX (no SDK or CLI)
+ * Supports two executor backends:
+ *   - 'cli'  — Claude Max (stream-json mode) — subscription billing
+ *   - 'opencode' — OpenCode multi-provider runtime (local LLMs)
  *
  * The executor backend is selected via workspace settings (executorBackend).
- * Default: 'cli' (post Agent SDK → CLI migration).
+ * Default: 'cli'.
  *
  * Phase 1 of the Project Specialist refactor (see
  * docs/architecture/project-specialist-refactor.md). Extracted from
