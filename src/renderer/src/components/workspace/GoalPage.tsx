@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type JSX } from 'react'
 import { Target, StopCircle } from 'lucide-react'
 import { useMpaStore } from '@renderer/store/mpa.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
@@ -118,6 +118,11 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
     setSelectedRunId(null)
   }, [])
 
+  const handleResume = useCallback(async (runId: string) => {
+    if (!workspaceId) return
+    await window.api.mpaResume({ runId, workspaceId })
+  }, [workspaceId])
+
   // Get current phase stream text
   const currentPhaseEntries = Object.entries(phaseStreamText)
   const latestPhaseEntry =
@@ -209,6 +214,7 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
             phases={runPhases}
             artifacts={artifacts}
             onBack={handleBackFromDetail}
+            onResume={handleResume}
           />
         )}
 

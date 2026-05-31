@@ -105,7 +105,7 @@ export interface AgentSessionHost {
   controlToolState: ControlToolState
   maxTurnsContinuations: number
   lastStreamOpts: ExecuteStreamOptions | null
-  pendingResumeAt: string | undefined
+  pendingResumeAt: Map<string, string>
   sdkAbortController: AbortController | null
 
   // ── Methods ──

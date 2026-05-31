@@ -11,7 +11,6 @@ import {
   Network,
   Search,
   Clock,
-  Github,
   BarChart3,
   MessageSquare,
   Heart,
@@ -20,6 +19,7 @@ import {
   Bone
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { GithubIcon } from '../common/icons/GithubIcon'
 import { useProfileStore, useWorkspaceStore, useAuditStore } from '@renderer/store'
 import { AttachmentDropzone } from '@renderer/components/chat'
 import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
@@ -431,7 +431,7 @@ const ICON_MAP: Record<string, React.FC<{ size?: number; className?: string }>> 
   Search,
   GitBranch,
   Clock,
-  Github,
+  Github: GithubIcon,
   BarChart3,
   Smartphone,
   Puzzle

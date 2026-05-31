@@ -313,15 +313,17 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           const userQuestion = trimmed.replace(/^\/council\s*/i, '').trim()
           const inputContent = userQuestion || 'Review the current plan or last discussion.'
 
-          useCouncilStore.getState().startCouncil()
+          const councilState = useCouncilStore.getState()
+          councilState.startCouncil()
 
           try {
-            await window.api.councilStart({
+            const { sessionId } = await window.api.councilStart({
               workspaceId,
               inputType: userQuestion ? 'question' : 'plan',
               planContent: inputContent,
               originalUserRequest: inputContent
             })
+            councilState.setSessionIdentity(sessionId, workspaceId)
             opts.appendLocalMessage('**🏛️ LLM Council convened.** 5 advisors are now reviewing your input…')
           } catch (err) {
             opts.appendLocalMessage(

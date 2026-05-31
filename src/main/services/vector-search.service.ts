@@ -515,30 +515,12 @@ class VectorSearchService extends EventEmitter {
     memoryCheckpoint('PREPROCESS_START', { totalTags: tags.length })
 
     const projectName = workspacePath.split('/').pop() ?? 'unknown'
-    const useAiDescriptions = preprocessOpts.generateDescriptions
-    state.descriptionSource = useAiDescriptions ? 'ai' : 'heuristic'
+    state.descriptionSource = preprocessOpts.generateDescriptions ? 'ai' : 'heuristic'
 
-    const getBatchDescriptions = useAiDescriptions
-      ? async (
-          chunks: Array<{ chunk: RawChunk; embedText: string }>
-        ): Promise<{ descriptions: Map<number, string>; cached: number; generated: number }> => {
-          return descriptionCache.getOrGenerateBatch(chunks, preprocessOpts.descriptionModel, workspacePath)
-        }
-      : undefined
-
-    const getDescription = useAiDescriptions
-      ? async (chunk: RawChunk, _embedText: string): Promise<string | undefined> => {
-          const desc = await descriptionCache.getOrGenerate(chunk, _embedText, preprocessOpts.descriptionModel, workspacePath)
-          if (desc) {
-            const key = descriptionCache.makeKey(chunk.filePath, chunk.symbolName, chunk.body)
-            const cached = descriptionCache.get(key)
-            if (cached === desc) { state.descriptionsCached++ } else { state.descriptionsGenerated++ }
-          }
-          return desc
-        }
-      : async (chunk: RawChunk, _embedText: string): Promise<string | undefined> => {
-          return generateHeuristicDescription(chunk)
-        }
+    // Shared description strategy (also used by reindexFiles)
+    const { getDescription, getBatchDescriptions } = this.setupDescriptionStrategy(
+      preprocessOpts, workspacePath, state
+    )
 
     memoryCheckpoint('PREPROCESS_PIPELINE_ENTER', { generateDescriptions: !!preprocessOpts.generateDescriptions })
 
@@ -595,123 +577,32 @@ class VectorSearchService extends EventEmitter {
     }
     memoryCheckpoint('GC_AFTER')
 
-    // Embedding model init — prefer utility process worker, fallback to main thread
-    let useWorker = false
-    if (!embeddingWorkerManager.isReady) {
-      memoryCheckpoint('EMBEDDING_WORKER_INIT_START')
-      log.info('[VectorSearch] Initializing embedding worker (utility process)...')
-      try {
-        await embeddingWorkerManager.initialize()
-        useWorker = true
-        memoryCheckpoint('EMBEDDING_WORKER_INIT_DONE')
-      } catch (workerError) {
-        log.warn('[VectorSearch] Utility process failed, falling back to main-thread embedding:', workerError)
-        memoryCheckpoint('EMBEDDING_WORKER_FALLBACK', { error: (workerError as Error).message })
-        if (!embeddingProvider.isReady) {
-          await embeddingProvider.initialize()
-        }
-      }
-    } else {
-      useWorker = true
-      memoryCheckpoint('EMBEDDING_WORKER_ALREADY_READY')
-    }
+    // Embedding model init — delegated to sub-method (worker or WASM fallback)
+    const embedFn = await this.initializeEmbeddingModel()
 
-    const embedFn = useWorker
-      ? (texts: string[]) => embeddingWorkerManager.embed(texts)
-      : (texts: string[]) => embeddingProvider.embed(texts)
-
-    // Resume support: skip already-embedded chunks
-    const checkpointOffset = this.getCheckpointOffset(workspaceId)
-    let startOffset = 0
-
-    if (checkpointOffset > 0 && checkpointOffset < processedChunks.length) {
-      log.info(`[VectorSearch] Resuming from checkpoint offset ${checkpointOffset}/${processedChunks.length}`)
-      memoryCheckpoint('RESUME_FROM_CHECKPOINT', { offset: checkpointOffset, total: processedChunks.length })
-
-      const existingEmbeddings = chunkEmbeddingRepository.loadAllForWorkspace(workspaceId)
-      const embeddingMap = new Map<string, number[]>()
-      for (const entry of existingEmbeddings) { embeddingMap.set(entry.chunkId, entry.embedding) }
-
-      for (let i = 0; i < checkpointOffset && i < processedChunks.length; i++) {
-        const chunk = processedChunks[i]
-        const embedding = embeddingMap.get(chunk.id)
-        if (embedding) { collection.upsert([chunk.id], [embedding], [chunk]) }
-      }
-
-      startOffset = checkpointOffset
-      state.processedChunks = checkpointOffset
+    // Sub-method 2: Resume from checkpoint if available
+    const startOffset = this.resumeFromCheckpoint(workspaceId, processedChunks, collection)
+    if (startOffset > 0) {
+      state.processedChunks = startOffset
       this.emitProgress(workspaceId)
     }
 
     const fileMtimes = this.buildFileMtimeMap(workspacePath, fileContents)
-    const totalBatches = Math.ceil((processedChunks.length - startOffset) / EMBEDDING_BATCH_SIZE)
     this.embeddingStartTimes.set(workspaceId, Date.now())
 
-    memoryCheckpoint('EMBED_LOOP_START', { chunks: processedChunks.length, batchSize: EMBEDDING_BATCH_SIZE, totalBatches, startOffset })
+    const totalBatches = Math.ceil((processedChunks.length - startOffset) / EMBEDDING_BATCH_SIZE)
+    memoryCheckpoint('EMBED_LOOP_START', {
+      chunks: processedChunks.length,
+      batchSize: EMBEDDING_BATCH_SIZE,
+      totalBatches,
+      startOffset
+    })
 
-    let batchesSinceCheckpoint = 0
-
-    for (let i = startOffset; i < processedChunks.length; i += EMBEDDING_BATCH_SIZE) {
-      if (preprocessOpts.cancelled) break
-
-      while (preprocessOpts.paused && !preprocessOpts.cancelled) {
-        state.status = 'paused'
-        this.emitProgress(workspaceId)
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
-      if (preprocessOpts.cancelled) break
-
-      state.status = 'indexing-chunks'
-      const batchNum = Math.floor((i - startOffset) / EMBEDDING_BATCH_SIZE) + 1
-      const batch = processedChunks.slice(i, i + EMBEDDING_BATCH_SIZE)
-      const texts = batch.map((c) => c.embedText)
-
-      const isLogBatch = batchNum === 1 || batchNum % 10 === 0 || batchNum === totalBatches
-      if (isLogBatch) {
-        memoryCheckpoint(`EMBED_BATCH_${batchNum}/${totalBatches}`, { offset: i, batchTextsChars: texts.reduce((s, t) => s + t.length, 0) })
-      }
-
-      try {
-        const embeddings = await embedFn(texts)
-        const ids = batch.map((c) => c.id)
-        collection.upsert(ids, embeddings, batch)
-
-        state.processedChunks = Math.min(i + EMBEDDING_BATCH_SIZE, processedChunks.length)
-        state.currentFile = batch[batch.length - 1].metadata.filePath
-        this.emitProgress(workspaceId)
-
-        batchesSinceCheckpoint++
-        if (batchesSinceCheckpoint >= CHECKPOINT_INTERVAL_BATCHES) {
-          const embeddedUpTo = Math.min(i + EMBEDDING_BATCH_SIZE, processedChunks.length)
-          try {
-            this.checkpointToDb(workspaceId, processedChunks, embeddedUpTo, fileMtimes, EMBEDDING_MODEL_NAME)
-            memoryCheckpoint('CHECKPOINT_SAVED', { embeddedUpTo, total: processedChunks.length })
-          } catch (checkpointError) {
-            log.warn('[VectorSearch] Checkpoint save failed:', checkpointError)
-          }
-          batchesSinceCheckpoint = 0
-        }
-      } catch (error) {
-        log.error(`[VectorSearch] Embedding batch failed at offset ${i}:`, error)
-        memoryCheckpoint('EMBED_BATCH_ERROR', { offset: i, error: (error as Error).message })
-
-        try {
-          const embeddedUpTo = Math.max(i, startOffset)
-          if (embeddedUpTo > startOffset) {
-            this.checkpointToDb(workspaceId, processedChunks, embeddedUpTo, fileMtimes, EMBEDDING_MODEL_NAME)
-            log.info(`[VectorSearch] Error checkpoint saved at offset ${embeddedUpTo}`)
-          }
-        } catch { /* Ignore checkpoint errors during error handling */ }
-
-        state.status = 'error'
-        state.error = (error as Error).message
-        this.emitProgress(workspaceId)
-        this.updateIndexingStateDb(workspaceId, 'error', (error as Error).message)
-        return 'error'
-      }
-    }
-
-    return preprocessOpts.cancelled ? 'cancelled' : 'completed'
+    // Sub-method 3: Core batch embedding loop with checkpointing
+    return this.embedBatchLoop(
+      workspaceId, processedChunks, startOffset, collection,
+      state, preprocessOpts, fileMtimes, embedFn
+    )
   }
 
   /**
@@ -792,37 +683,10 @@ class VectorSearchService extends EventEmitter {
     descriptionCache.setWorkspaceId(workspaceId)
     const projectName = workspacePath.split('/').pop() ?? 'unknown'
 
-    // Batch description generator callback (faster for incremental too)
-    const useAiDescriptions = preprocessOpts.generateDescriptions
-    const getBatchDescriptions = useAiDescriptions
-      ? async (
-          batchChunks: Array<{ chunk: RawChunk; embedText: string }>
-        ): Promise<{
-          descriptions: Map<number, string>
-          cached: number
-          generated: number
-        }> => {
-          return descriptionCache.getOrGenerateBatch(
-            batchChunks,
-            preprocessOpts.descriptionModel,
-            workspacePath
-          )
-        }
-      : undefined
-
-    // Single-call fallback — heuristic if AI not enabled
-    const getDescription = useAiDescriptions
-      ? async (chunk: RawChunk, embedText: string): Promise<string | undefined> => {
-          return descriptionCache.getOrGenerate(
-            chunk,
-            embedText,
-            preprocessOpts.descriptionModel,
-            workspacePath
-          )
-        }
-      : async (chunk: RawChunk, _embedText: string): Promise<string | undefined> => {
-          return generateHeuristicDescription(chunk)
-        }
+    // Shared description strategy (also used by preprocessChunks)
+    const { getDescription, getBatchDescriptions } = this.setupDescriptionStrategy(
+      preprocessOpts, workspacePath
+    )
 
     // Preprocess only the changed chunks
     const processedChunks = await runPreprocessingPipeline(
@@ -952,57 +816,11 @@ class VectorSearchService extends EventEmitter {
     const entries = collection.getEntries()
     if (entries.length === 0) return []
 
-    // Simple k-medoid-like clustering: pick N initial centers spread by diversity
-    const centers: number[] = [0] // start with first entry
-    while (centers.length < Math.min(maxClusters, entries.length)) {
-      // Find entry most distant from all current centers
-      let bestIdx = -1
-      let bestMinDist = -1
-      for (let i = 0; i < entries.length; i++) {
-        if (centers.includes(i)) continue
-        let minDist = Infinity
-        for (const ci of centers) {
-          const sim = cosineSimilarity(entries[i].embedding, entries[ci].embedding)
-          const dist = 1 - sim
-          if (dist < minDist) minDist = dist
-        }
-        if (minDist > bestMinDist) {
-          bestMinDist = minDist
-          bestIdx = i
-        }
-      }
-      if (bestIdx === -1) break
-      centers.push(bestIdx)
-    }
+    // Phase 1: Select diverse cluster centers via maximin initialization
+    const centers = this.selectClusterCenters(entries, maxClusters)
 
-    // Assign each entry to nearest center
-    const clusters = centers.map((ci, idx) => ({
-      clusterId: idx,
-      centerIdx: ci,
-      representative: {
-        filePath: entries[ci].chunk.metadata.filePath,
-        symbolName: entries[ci].chunk.metadata.symbolName
-      },
-      members: [] as { filePath: string; symbolName: string; similarity: number }[]
-    }))
-
-    for (let i = 0; i < entries.length; i++) {
-      if (centers.includes(i)) continue
-      let bestCluster = 0
-      let bestSim = -1
-      for (let c = 0; c < centers.length; c++) {
-        const sim = cosineSimilarity(entries[i].embedding, entries[centers[c]].embedding)
-        if (sim > bestSim) {
-          bestSim = sim
-          bestCluster = c
-        }
-      }
-      clusters[bestCluster].members.push({
-        filePath: entries[i].chunk.metadata.filePath,
-        symbolName: entries[i].chunk.metadata.symbolName,
-        similarity: Math.round(bestSim * 1000) / 1000
-      })
-    }
+    // Phase 2: Assign entries to nearest center
+    const clusters = this.assignClustersToMembers(entries, centers)
 
     // Sort clusters by size descending, limit member list
     return clusters
@@ -1084,6 +902,316 @@ class VectorSearchService extends EventEmitter {
   }
 
   // ── Private Helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Build the description strategy callbacks (getDescription + getBatchDescriptions)
+   * shared by preprocessChunks() and reindexFiles(). Returns the callback pair
+   * based on whether AI or heuristic descriptions are configured.
+   */
+  private setupDescriptionStrategy(
+    preprocessOpts: PreprocessingOptions,
+    workspacePath: string,
+    state?: IndexingState
+  ): {
+    getDescription: (chunk: RawChunk, embedText: string) => Promise<string | undefined>
+    getBatchDescriptions?: (
+      chunks: Array<{ chunk: RawChunk; embedText: string }>
+    ) => Promise<{ descriptions: Map<number, string>; cached: number; generated: number }>
+  } {
+    const useAiDescriptions = preprocessOpts.generateDescriptions
+
+    const getBatchDescriptions = useAiDescriptions
+      ? async (
+          chunks: Array<{ chunk: RawChunk; embedText: string }>
+        ): Promise<{ descriptions: Map<number, string>; cached: number; generated: number }> => {
+          return descriptionCache.getOrGenerateBatch(
+            chunks,
+            preprocessOpts.descriptionModel,
+            workspacePath
+          )
+        }
+      : undefined
+
+    const getDescription = useAiDescriptions
+      ? async (chunk: RawChunk, embedText: string): Promise<string | undefined> => {
+          const desc = await descriptionCache.getOrGenerate(
+            chunk,
+            embedText,
+            preprocessOpts.descriptionModel,
+            workspacePath
+          )
+          // Track cache stats for indexing state when available
+          if (desc && state) {
+            const key = descriptionCache.makeKey(chunk.filePath, chunk.symbolName, chunk.body)
+            const cached = descriptionCache.get(key)
+            if (cached === desc) {
+              state.descriptionsCached++
+            } else {
+              state.descriptionsGenerated++
+            }
+          }
+          return desc
+        }
+      : async (chunk: RawChunk, _embedText: string): Promise<string | undefined> => {
+          return generateHeuristicDescription(chunk)
+        }
+
+    return { getDescription, getBatchDescriptions }
+  }
+
+  /**
+   * Select k diverse cluster centers using maximin initialization.
+   * Picks entries that maximize minimum distance from all existing centers.
+   */
+  private selectClusterCenters(
+    entries: { embedding: number[] }[],
+    k: number
+  ): number[] {
+    const centers: number[] = [0] // start with first entry
+    while (centers.length < Math.min(k, entries.length)) {
+      let bestIdx = -1
+      let bestMinDist = -1
+      for (let i = 0; i < entries.length; i++) {
+        if (centers.includes(i)) continue
+        let minDist = Infinity
+        for (const ci of centers) {
+          const sim = cosineSimilarity(entries[i].embedding, entries[ci].embedding)
+          const dist = 1 - sim
+          if (dist < minDist) minDist = dist
+        }
+        if (minDist > bestMinDist) {
+          bestMinDist = minDist
+          bestIdx = i
+        }
+      }
+      if (bestIdx === -1) break
+      centers.push(bestIdx)
+    }
+    return centers
+  }
+
+  /**
+   * Assign each entry to the nearest cluster center by cosine similarity.
+   * Returns cluster objects with representative and member lists.
+   */
+  private assignClustersToMembers(
+    entries: { embedding: number[]; chunk: { metadata: { filePath: string; symbolName: string } } }[],
+    centers: number[]
+  ): {
+    clusterId: number
+    representative: { filePath: string; symbolName: string }
+    members: { filePath: string; symbolName: string; similarity: number }[]
+  }[] {
+    const clusters = centers.map((ci, idx) => ({
+      clusterId: idx,
+      representative: {
+        filePath: entries[ci].chunk.metadata.filePath,
+        symbolName: entries[ci].chunk.metadata.symbolName
+      },
+      members: [] as { filePath: string; symbolName: string; similarity: number }[]
+    }))
+
+    for (let i = 0; i < entries.length; i++) {
+      if (centers.includes(i)) continue
+      let bestCluster = 0
+      let bestSim = -1
+      for (let c = 0; c < centers.length; c++) {
+        const sim = cosineSimilarity(entries[i].embedding, entries[centers[c]].embedding)
+        if (sim > bestSim) {
+          bestSim = sim
+          bestCluster = c
+        }
+      }
+      clusters[bestCluster].members.push({
+        filePath: entries[i].chunk.metadata.filePath,
+        symbolName: entries[i].chunk.metadata.symbolName,
+        similarity: Math.round(bestSim * 1000) / 1000
+      })
+    }
+
+    return clusters
+  }
+
+  /**
+   * Initialize the embedding model — prefer utility process worker,
+   * fallback to main-thread WASM backend.
+   * Returns the embed function to use for batch embedding.
+   */
+  private async initializeEmbeddingModel(): Promise<(texts: string[]) => Promise<number[][]>> {
+    let useWorker = false
+    if (!embeddingWorkerManager.isReady) {
+      memoryCheckpoint('EMBEDDING_WORKER_INIT_START')
+      log.info('[VectorSearch] Initializing embedding worker (utility process)...')
+      try {
+        await embeddingWorkerManager.initialize()
+        useWorker = true
+        memoryCheckpoint('EMBEDDING_WORKER_INIT_DONE')
+      } catch (workerError) {
+        log.warn(
+          '[VectorSearch] Utility process failed, falling back to main-thread embedding:',
+          workerError
+        )
+        memoryCheckpoint('EMBEDDING_WORKER_FALLBACK', {
+          error: (workerError as Error).message
+        })
+        if (!embeddingProvider.isReady) {
+          await embeddingProvider.initialize()
+        }
+      }
+    } else {
+      useWorker = true
+      memoryCheckpoint('EMBEDDING_WORKER_ALREADY_READY')
+    }
+
+    return useWorker
+      ? (texts: string[]) => embeddingWorkerManager.embed(texts)
+      : (texts: string[]) => embeddingProvider.embed(texts)
+  }
+
+  /**
+   * Resume from a checkpoint: load previously-embedded chunks from DB
+   * into the in-memory collection, returning the offset to continue from.
+   */
+  private resumeFromCheckpoint(
+    workspaceId: string,
+    processedChunks: ProcessedChunk[],
+    collection: InMemoryCollection
+  ): number {
+    const checkpointOffset = this.getCheckpointOffset(workspaceId)
+    if (checkpointOffset <= 0 || checkpointOffset >= processedChunks.length) {
+      return 0
+    }
+
+    log.info(
+      `[VectorSearch] Resuming from checkpoint offset ${checkpointOffset}/${processedChunks.length}`
+    )
+    memoryCheckpoint('RESUME_FROM_CHECKPOINT', {
+      offset: checkpointOffset,
+      total: processedChunks.length
+    })
+
+    const existingEmbeddings = chunkEmbeddingRepository.loadAllForWorkspace(workspaceId)
+    const embeddingMap = new Map<string, number[]>()
+    for (const entry of existingEmbeddings) {
+      embeddingMap.set(entry.chunkId, entry.embedding)
+    }
+
+    for (let i = 0; i < checkpointOffset && i < processedChunks.length; i++) {
+      const chunk = processedChunks[i]
+      const embedding = embeddingMap.get(chunk.id)
+      if (embedding) {
+        collection.upsert([chunk.id], [embedding], [chunk])
+      }
+    }
+
+    return checkpointOffset
+  }
+
+  /**
+   * Core batch embedding loop with pause/cancel polling and periodic
+   * checkpointing. Returns 'completed', 'cancelled', or 'error'.
+   */
+  private async embedBatchLoop(
+    workspaceId: string,
+    processedChunks: ProcessedChunk[],
+    startOffset: number,
+    collection: InMemoryCollection,
+    state: IndexingState,
+    preprocessOpts: PreprocessingOptions,
+    fileMtimes: Map<string, number>,
+    embedFn: (texts: string[]) => Promise<number[][]>
+  ): Promise<'completed' | 'cancelled' | 'error'> {
+    const totalBatches = Math.ceil(
+      (processedChunks.length - startOffset) / EMBEDDING_BATCH_SIZE
+    )
+    let batchesSinceCheckpoint = 0
+
+    for (let i = startOffset; i < processedChunks.length; i += EMBEDDING_BATCH_SIZE) {
+      if (preprocessOpts.cancelled) break
+
+      while (preprocessOpts.paused && !preprocessOpts.cancelled) {
+        state.status = 'paused'
+        this.emitProgress(workspaceId)
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      if (preprocessOpts.cancelled) break
+
+      state.status = 'indexing-chunks'
+      const batchNum = Math.floor((i - startOffset) / EMBEDDING_BATCH_SIZE) + 1
+      const batch = processedChunks.slice(i, i + EMBEDDING_BATCH_SIZE)
+      const texts = batch.map((c) => c.embedText)
+
+      const isLogBatch =
+        batchNum === 1 || batchNum % 10 === 0 || batchNum === totalBatches
+      if (isLogBatch) {
+        memoryCheckpoint(`EMBED_BATCH_${batchNum}/${totalBatches}`, {
+          offset: i,
+          batchTextsChars: texts.reduce((s, t) => s + t.length, 0)
+        })
+      }
+
+      try {
+        const embeddings = await embedFn(texts)
+        const ids = batch.map((c) => c.id)
+        collection.upsert(ids, embeddings, batch)
+
+        state.processedChunks = Math.min(i + EMBEDDING_BATCH_SIZE, processedChunks.length)
+        state.currentFile = batch[batch.length - 1].metadata.filePath
+        this.emitProgress(workspaceId)
+
+        batchesSinceCheckpoint++
+        if (batchesSinceCheckpoint >= CHECKPOINT_INTERVAL_BATCHES) {
+          const embeddedUpTo = Math.min(i + EMBEDDING_BATCH_SIZE, processedChunks.length)
+          try {
+            this.checkpointToDb(
+              workspaceId,
+              processedChunks,
+              embeddedUpTo,
+              fileMtimes,
+              EMBEDDING_MODEL_NAME
+            )
+            memoryCheckpoint('CHECKPOINT_SAVED', {
+              embeddedUpTo,
+              total: processedChunks.length
+            })
+          } catch (checkpointError) {
+            log.warn('[VectorSearch] Checkpoint save failed:', checkpointError)
+          }
+          batchesSinceCheckpoint = 0
+        }
+      } catch (error) {
+        log.error(`[VectorSearch] Embedding batch failed at offset ${i}:`, error)
+        memoryCheckpoint('EMBED_BATCH_ERROR', {
+          offset: i,
+          error: (error as Error).message
+        })
+
+        try {
+          const embeddedUpTo = Math.max(i, startOffset)
+          if (embeddedUpTo > startOffset) {
+            this.checkpointToDb(
+              workspaceId,
+              processedChunks,
+              embeddedUpTo,
+              fileMtimes,
+              EMBEDDING_MODEL_NAME
+            )
+            log.info(`[VectorSearch] Error checkpoint saved at offset ${embeddedUpTo}`)
+          }
+        } catch {
+          /* Ignore checkpoint errors during error handling */
+        }
+
+        state.status = 'error'
+        state.error = (error as Error).message
+        this.emitProgress(workspaceId)
+        this.updateIndexingStateDb(workspaceId, 'error', (error as Error).message)
+        return 'error'
+      }
+    }
+
+    return preprocessOpts.cancelled ? 'cancelled' : 'completed'
+  }
 
   private emitProgress(workspaceId: string): void {
     const state = this.indexingStates.get(workspaceId)

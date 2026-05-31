@@ -713,12 +713,23 @@ export class AgentSessionService extends AgentBaseService {
         this.log.warn('[compaction] OpenCode — no session found for this conversation')
         return
       }
-      this.log.info(
-        `[compaction] OpenCode backend — requesting compact for session ${openCodeSessionId}`
-      )
       this.compactCount++
       this.compactSuggested = false
-      // OpenCode handles compaction internally when receiving the compact command
+      // N9: Actually send the compact command to OpenCode
+      try {
+        const result = await openCodeExecutor.compactSession(openCodeSessionId)
+        if (result.success) {
+          this.log.info(
+            `[compaction] OpenCode compact #${this.compactCount} sent for session ${openCodeSessionId}`
+          )
+        } else {
+          this.log.warn(
+            `[compaction] OpenCode compact failed: ${result.error ?? 'unknown error'}`
+          )
+        }
+      } catch (err) {
+        this.log.warn('[compaction] OpenCode compact threw:', err)
+      }
       // The session.compacted event will be forwarded via normalizeEvent()
       return
     }
@@ -816,11 +827,8 @@ export class AgentSessionService extends AgentBaseService {
     }
 
     this.currentStatus = 'thinking'
-    this.hasEmittedContent = false
-    this.planBlockInjected = false
     this._lastTimedOut = false
     this.messageStartedAt = Date.now()
-    this.processedToolIds.clear()
     this.currentConversationId = conversationId
     this.updateDbSessionConversation(conversationId)
     this.accumulatedText = ''
@@ -1363,20 +1371,27 @@ export class AgentSessionService extends AgentBaseService {
    * The bridge provides a Unix domain socket that externalized MCP servers
    * (control-actions) connect to for plan/askUser/memory event delivery.
    */
-  private async ensureIpcBridge(conversationId: string): Promise<void> {
+  private async ensureIpcBridge(_conversationId: string): Promise<void> {
     if (this.ipcBridge?.isListening()) return
+
+    // N10: Clean up stale listeners if the bridge is being restarted
+    if (this.ipcBridge) {
+      this.ipcBridge.removeAllListeners()
+    }
 
     const bridge = new IpcBridge()
     await bridge.start()
     this.ipcBridge = bridge
 
-    // Wire bridge events to session events (same handling as wrapControlCallbacks)
+    // Wire bridge events to session events (same handling as wrapControlCallbacks).
+    // Listeners read from this.currentConversationId (live) rather than a captured
+    // conversationId closure to avoid stale references across conversation switches.
     bridge.on('plan', (payload: unknown) => {
       this.controlToolState.plan = true
       const planEvent = parsePlanPayload(payload, this.accumulatedText)
       this.controlToolState.planIntent = { type: 'plan', plan: planEvent }
       this.emit('plan', planEvent)
-      this.log.info(`[ipc-bridge] Plan event received for ${conversationId}`)
+      this.log.info(`[ipc-bridge] Plan event received for ${this.currentConversationId}`)
     })
 
     bridge.on('askUser', (payload: unknown, requestId?: string) => {
@@ -1391,13 +1406,13 @@ export class AgentSessionService extends AgentBaseService {
       // Include requestId so the renderer can send a response back
       this.emit('askQuestion', { ...askPayload, requestId })
       this.log.info(
-        `[ipc-bridge] askUser event received for ${conversationId} requestId=${requestId}`
+        `[ipc-bridge] askUser event received for ${this.currentConversationId} requestId=${requestId}`
       )
     })
 
     bridge.on('memory', (_payload: unknown) => {
       this.controlToolState.memory = true
-      this.log.info(`[ipc-bridge] Memory event received for ${conversationId}`)
+      this.log.info(`[ipc-bridge] Memory event received for ${this.currentConversationId}`)
     })
 
     this.log.info(`[ensureIpcBridge] Bridge started on ${bridge.getSocketPath()}`)

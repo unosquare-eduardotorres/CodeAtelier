@@ -56,7 +56,8 @@ import type {
   UpdateConfig,
   SemanticSearchResult,
   GrillDecision,
-  GrillTrackScore
+  GrillTrackScore,
+  GrillStructuredPlan
 } from '../shared/types'
 
 const api = {
@@ -1481,6 +1482,40 @@ const api = {
     }
   },
 
+  // N3: LSP diagnostics from OpenCode's compiler/linter integration
+  onLspDiagnostics: (
+    callback: (data: {
+      conversationId: string
+      diagnostics: Array<{
+        file: string
+        line: number
+        severity: 'error' | 'warning' | 'info' | 'hint'
+        message: string
+        source?: string
+      }>
+      requestId?: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        conversationId: string
+        diagnostics: Array<{
+          file: string
+          line: number
+          severity: 'error' | 'warning' | 'info' | 'hint'
+          message: string
+          source?: string
+        }>
+        requestId?: string
+      }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.SDK_LSP_DIAGNOSTICS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SDK_LSP_DIAGNOSTICS, handler)
+    }
+  },
+
   onStateChange: (
     callback: (data: {
       conversationId: string | null
@@ -1747,7 +1782,7 @@ const api = {
   grillCondenseRequirement: (args: { text: string }): Promise<{ condensed: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT, args),
 
-  grillGeneratePlan: (args: { sessionId: string; workspaceId: string }): Promise<unknown> =>
+  grillGeneratePlan: (args: { sessionId: string; workspaceId: string }): Promise<GrillStructuredPlan> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_GENERATE_PLAN, args),
 
   grillGetStatus: (args: {
@@ -1941,7 +1976,8 @@ const api = {
     filesInScope?: string[]
     conversationId?: string
     llmProvider?: LLMProvider
-  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_START, args),
+    grillSessionId?: string
+  }): Promise<{ sessionId: string }> => ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_START, args),
 
   councilCancel: (args?: { workspaceId?: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_CANCEL, args),

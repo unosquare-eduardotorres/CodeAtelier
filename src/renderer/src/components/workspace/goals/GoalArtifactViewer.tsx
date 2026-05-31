@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { FileCode, CheckCircle, AlertTriangle, XCircle } from 'lucide-react'
 import type { MpaVerifyReport } from '../../../../../shared/mpa-types'
 

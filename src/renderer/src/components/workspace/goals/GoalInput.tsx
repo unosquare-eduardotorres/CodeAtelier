@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type JSX } from 'react'
 import { Target, Zap, AlertCircle } from 'lucide-react'
 import { useMpaStore } from '@renderer/store/mpa.store'
 import { GOAL_TYPE_LABELS, PHASE_CONFIG } from './constants'

@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { ArrowLeft, Play, Target } from 'lucide-react'
 import { useState } from 'react'
 import GoalArtifactViewer from './GoalArtifactViewer'
@@ -87,7 +88,9 @@ export default function GoalRunDetail({
             onClick={async () => {
               setIsResuming(true)
               try {
-                onResume(run.id)
+                await onResume(run.id)
+              } catch {
+                // onResume failed — button resets automatically
               } finally {
                 setTimeout(() => setIsResuming(false), 2000)
               }

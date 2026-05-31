@@ -9,7 +9,7 @@
  * 5. Visual ordering: Da Vinci → Task Plan → Specialist output → Report card
  *
  * Uses CDP approach (same as ux-audit-screenshots.e2e.ts) because
- * Playwright's _electron.launch() is incompatible with Electron 40+.
+ * Playwright's _electron.launch() is incompatible with Electron 41+.
  *
  * Prerequisites:
  *   1. Build the app first: npx electron-vite build

@@ -62,7 +62,8 @@ import type {
   CommunicationTone,
   UpdateConfig,
   GrillDecision,
-  GrillTrackScore
+  GrillTrackScore,
+  GrillStructuredPlan
 } from '../shared/types'
 
 interface Api {
@@ -786,6 +787,19 @@ interface Api {
   onHookLifecycle: (
     callback: (data: { hookName?: string; hookState?: string; requestId?: string }) => void
   ) => () => void
+  onLspDiagnostics: (
+    callback: (data: {
+      conversationId: string
+      diagnostics: Array<{
+        file: string
+        line: number
+        severity: 'error' | 'warning' | 'info' | 'hint'
+        message: string
+        source?: string
+      }>
+      requestId?: string
+    }) => void
+  ) => () => void
   onStateChange: (
     callback: (data: {
       conversationId: string | null
@@ -925,7 +939,7 @@ interface Api {
   ) => () => void
   onGrillStreamComplete: (cb: () => void) => () => void
   grillCondenseRequirement: (args: { text: string }) => Promise<{ condensed: string }>
-  grillGeneratePlan: (args: { sessionId: string; workspaceId: string }) => Promise<unknown>
+  grillGeneratePlan: (args: { sessionId: string; workspaceId: string }) => Promise<GrillStructuredPlan>
   grillGetStatus: (args: { workspaceId: string }) => Promise<{
     status: string
     ideaId: string
@@ -995,7 +1009,8 @@ interface Api {
     filesInScope?: string[]
     conversationId?: string
     llmProvider?: string
-  }) => Promise<void>
+    grillSessionId?: string
+  }) => Promise<{ sessionId: string }>
   councilCancel: (args?: { workspaceId?: string }) => Promise<void>
   councilGetSession: (args: { workspaceId: string }) => Promise<unknown>
   onCouncilPhaseChanged: (cb: (data: { workspaceId: string; phase: string }) => void) => () => void

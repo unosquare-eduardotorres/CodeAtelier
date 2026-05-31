@@ -1,7 +1,7 @@
 /**
  * Bootstrap script for launching Electron with remote debugging enabled.
  *
- * Electron 40+ rejects --remote-debugging-port as a CLI flag.
+ * Electron 41+ rejects --remote-debugging-port as a CLI flag.
  * This script is loaded via -r (preload) and sets the flag using the
  * Electron API before the main app script runs.
  *

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type JSX } from 'react'
 import { Terminal } from 'lucide-react'
 import { PHASE_CONFIG } from './constants'
 import type { MpaPhaseType } from '../../../../../shared/mpa-types'

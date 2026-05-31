@@ -461,17 +461,10 @@ function handleSubagentComplete(ctx: ChunkRouterContext, chunk: StreamChunk): vo
   )
 }
 
-// ── Tool use summary + Permission request handlers ──
+// ── Permission request handler ──
 
-function handleToolUseSummary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
-  if (!chunk.content) return
-  safeSend(ctx, IPC_CHANNELS.SDK_TOOL_USE_SUMMARY, {
-    ...basePayload(ctx),
-    toolName: chunk.toolName,
-    toolId: chunk.toolId,
-    summary: chunk.content
-  })
-}
+// N4: handleToolUseSummary removed — tool summaries already flow through tool_result
+// in the tool activity accordion. The dedicated SDK_TOOL_USE_SUMMARY IPC channel was vestigial.
 
 function handlePermissionRequest(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   if (!chunk.permissionRequest) return
@@ -518,7 +511,7 @@ const CHUNK_HANDLERS: Record<string, ChunkHandler> = {
   subagent_progress: handleSubagentProgress,
   subagent_complete: handleSubagentComplete,
   structured_output: handleStructuredOutput,
-  tool_use_summary: handleToolUseSummary,
+  // N4: tool_use_summary handler removed — summaries flow via tool_result
   permission_request: handlePermissionRequest,
   lsp_diagnostics: handleLspDiagnostics
 }

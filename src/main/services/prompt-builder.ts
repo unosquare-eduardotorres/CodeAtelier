@@ -311,7 +311,7 @@ export class PromptBuilder {
     // Strategy 5: Minimal-budget generalist (turn 5+) already has CLAUDE.md in history —
     // send a micro-summary instead of re-extracting sections (~600 tokens saved per turn)
     if (budgetTier === 'minimal') {
-      return 'Tech: Electron 40, React 19, TS 5.9, Tailwind 4, SQLite, Zustand 5. See CLAUDE.md in prior context for conventions/structure.'
+      return 'Tech: Electron 41, React 19, TS 5.9, Tailwind 4, SQLite, Zustand 5. See CLAUDE.md in prior context for conventions/structure.'
     }
 
     try {

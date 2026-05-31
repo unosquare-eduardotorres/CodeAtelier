@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type JSX } from 'react'
 import { CheckCircle, MessageSquare, X } from 'lucide-react'
 import type { MpaPlanArtifact } from '../../../../../shared/mpa-types'
 

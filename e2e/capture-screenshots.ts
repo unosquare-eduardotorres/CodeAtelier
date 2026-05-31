@@ -4,7 +4,7 @@
  * Launches Electron, connects via Chrome DevTools Protocol WebSocket,
  * and captures screenshots using Page.captureScreenshot.
  *
- * This bypasses Playwright's connectOverCDP which is incompatible with Electron 40.
+ * This bypasses Playwright's connectOverCDP which is incompatible with Electron 41.
  *
  * Usage:
  *   npx tsx e2e/capture-screenshots.ts

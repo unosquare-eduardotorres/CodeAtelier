@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { useMpaStore } from '@renderer/store/mpa.store'
 import { RUN_STATUS_CONFIG } from './constants'
 import type { MpaRun } from '../../../../../shared/mpa-types'

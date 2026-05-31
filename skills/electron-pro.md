@@ -747,7 +747,7 @@ npx @electron/fuses write --app /path/to/YourApp.app \
 
 ## Clipboard and sensitive data
 
-As of Electron 40, direct `clipboard` access from the renderer is deprecated. Always route through preload:
+As of Electron 41, direct `clipboard` access from the renderer is deprecated. Always route through preload:
 
 ```typescript
 // preload/index.ts

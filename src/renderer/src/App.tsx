@@ -19,6 +19,8 @@ import {
 import type { ConversationPhase } from '../../shared/types'
 import { rendererLog } from '@renderer/utils/logger'
 import { useTodoStore } from '@renderer/store/todo.store'
+import { useDiagnosticsStore } from '@renderer/store/diagnostics.store'
+import { useHookLifecycleStore } from '@renderer/store/hook-lifecycle.store'
 import { useTheme } from '@renderer/hooks/useTheme'
 
 function App(): React.JSX.Element {
@@ -308,6 +310,18 @@ function App(): React.JSX.Element {
       onMemoryFeedProgress(progress)
     })
 
+    // N3: LSP diagnostics from OpenCode's compiler/linter
+    const unsubLspDiagnostics = window.api.onLspDiagnostics((data) => {
+      if (data.conversationId && data.diagnostics) {
+        useDiagnosticsStore.getState().setDiagnostics(data.conversationId, data.diagnostics)
+      }
+    })
+
+    // N5: Hook lifecycle events — track active hook execution
+    const unsubHookLifecycle = window.api.onHookLifecycle((data) => {
+      useHookLifecycleStore.getState().onHookEvent(data)
+    })
+
     // Conversation state machine mirror — keep renderer in sync with backend state
     const unsubStateChange = window.api.onStateChange((data) => {
       const activeConvId = useChatStore.getState().activeConversation?.id
@@ -350,6 +364,8 @@ function App(): React.JSX.Element {
       unsubUpdateProgress()
       unsubUpdateError()
       unsubMemoryFeed()
+      unsubLspDiagnostics()
+      unsubHookLifecycle()
       unsubStateChange()
     }
   }, [

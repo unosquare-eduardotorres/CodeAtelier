@@ -80,6 +80,10 @@ export class ChatStreamService {
    */
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null
 
+  // N14: Track hook lifecycle listener for cleanup
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private hookLifecycleHandler?: ((...args: any[]) => void) | undefined
+
   constructor(mainWindow: BrowserWindow, callbacks: PipelineCallbacks) {
     this.mainWindow = mainWindow
     this.callbacks = callbacks
@@ -230,7 +234,8 @@ export class ChatStreamService {
     // F7: Wire hook lifecycle events to the stream pipeline.
     // The HookEngine emits 'hookLifecycle' events when hooks start/complete/fail.
     // Forward these as StreamChunks so the renderer can show hook execution status.
-    hookEngine.on('hookLifecycle', (event: {
+    // N14: Store handler reference for cleanup in dispose().
+    this.hookLifecycleHandler = (event: {
       hookId: string
       hookName: string
       hookEvent: string
@@ -263,7 +268,8 @@ export class ChatStreamService {
         'da-vinci-responding',
         this.activeRequestId ?? undefined
       )
-    })
+    }
+    hookEngine.on('hookLifecycle', this.hookLifecycleHandler)
   }
 
   // ── Stream Listener Factory ──
@@ -737,6 +743,14 @@ export class ChatStreamService {
     log.info(`Compact requested (nuance=${extractNuance})`)
     await chatAgentService.compact(extractNuance)
   }
+
+  // N14: Clean up persistent listeners when the service is replaced
+  dispose(): void {
+    if (this.hookLifecycleHandler) {
+      hookEngine.off('hookLifecycle', this.hookLifecycleHandler)
+      this.hookLifecycleHandler = undefined
+    }
+  }
 }
 
 // ── Singleton with lazy initialization ──
@@ -747,6 +761,8 @@ export function initChatStream(
   mainWindow: BrowserWindow,
   callbacks: PipelineCallbacks
 ): ChatStreamService {
+  // N14: Dispose previous instance to remove stale listeners
+  _instance?.dispose()
   _instance = new ChatStreamService(mainWindow, callbacks)
   return _instance
 }

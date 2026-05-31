@@ -239,7 +239,9 @@ function MessageBubbleInner({
       structuredPlan: structuredPlan ?? undefined,
       originalUserRequest: message.contentMd ?? '',
       conversationId: undefined
-    })
+    }).then(({ sessionId }) => {
+      councilStore.setSessionIdentity(sessionId, workspaceId)
+    }).catch(console.error)
   }
 
   /** Shared AI bubble styles */

@@ -36,6 +36,8 @@ export class AgentExecutorFactory {
   private readonly s: AgentSessionHost
   /** Cached MCP config path — reused on continueSession turns to avoid rebuild. */
   private cachedMcpConfigPath: string | undefined
+  /** F18: 1M context beta header — extracted from magic string for maintainability. */
+  private static readonly CONTEXT_1M_BETA = 'context-1m-2025-08-07'
 
   constructor(session: unknown) {
     this.s = session as AgentSessionHost
@@ -290,8 +292,12 @@ export class AgentExecutorFactory {
       abortController,
       agentId: this.s.adapter.agentId,
       effort: this.resolveEffort(resolvedModel),
-      betas: supports1M ? ['context-1m-2025-08-07'] : undefined,
-      fallbackModel: resolvedModel !== 'claude-sonnet-4-6' ? 'claude-sonnet-4-6' : undefined,
+      betas: supports1M ? [AgentExecutorFactory.CONTEXT_1M_BETA] : undefined,
+      // F19: Tier-aware fallback — only fall back to a model of equal or higher capability.
+      // Haiku → no fallback (it's the cheapest; falling back to Sonnet increases cost).
+      // Opus → Sonnet fallback (appropriate cost reduction).
+      // Sonnet → no fallback (it IS the fallback target).
+      fallbackModel: resolvedModel.includes('opus') ? 'claude-sonnet-4-6' : undefined,
       additionalDirectories,
       contextWindowSize: supports1M
         ? effectiveContextWindow

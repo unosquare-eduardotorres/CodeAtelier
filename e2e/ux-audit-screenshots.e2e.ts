@@ -5,7 +5,7 @@
  * for UX/UI audit analysis.
  *
  * Uses a manual Electron + CDP approach since Playwright's built-in
- * _electron.launch() is incompatible with Electron 40+.
+ * _electron.launch() is incompatible with Electron 41+.
  *
  * Prerequisites:
  *   1. Build the app first: npx electron-vite build
@@ -79,7 +79,7 @@ test.describe('UX Audit Screenshots', () => {
   test('capture all pages and views for UX audit', async () => {
     // ── Launch Electron with CDP ─────────────────────────────────
     // Spawn Electron using the bootstrap script that sets --remote-debugging-port
-    // via app.commandLine.appendSwitch (required for Electron 40+).
+    // via app.commandLine.appendSwitch (required for Electron 41+).
     // CRITICAL: Must unset ELECTRON_RUN_AS_NODE to enable full Electron mode.
     const env = { ...process.env }
     delete env.ELECTRON_RUN_AS_NODE

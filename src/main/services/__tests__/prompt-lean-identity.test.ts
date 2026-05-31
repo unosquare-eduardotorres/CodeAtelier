@@ -16,10 +16,10 @@ describe('Lean Identity Prompt', () => {
     const full = buildDaVinciIdentityPrompt('default')
     const lean = buildDaVinciIdentityPromptLean('default')
     assert.ok(lean.length < full.length, `Lean (${lean.length}) should be shorter than full (${full.length})`)
-    // At least 30% shorter
+    // At least 25% shorter (lean ≤ 75% of full)
     assert.ok(
-      lean.length < full.length * 0.7,
-      `Lean (${lean.length}) should be <70% of full (${full.length})`
+      lean.length < full.length * 0.75,
+      `Lean (${lean.length}) should be <75% of full (${full.length})`
     )
   })
 

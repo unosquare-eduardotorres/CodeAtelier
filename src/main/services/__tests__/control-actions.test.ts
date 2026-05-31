@@ -29,8 +29,8 @@ describe('planSchema', () => {
       decisions: [{ what: 'Use middleware', why: 'Centralized' }],
       sections: [
         {
-          title: 'Phase 1',
-          steps: [{ description: 'Create module', file: 'src/auth.ts' }]
+          heading: 'Phase 1',
+          content: 'Create auth module in `src/auth.ts`'
         }
       ],
       files: ['src/auth.ts'],
@@ -74,7 +74,7 @@ describe('planSchema', () => {
       planSchema.parse({
         title: 'Bad',
         summary: 'Bad',
-        risks: [{ risk: 'x', severity: 'critical' }]
+        risks: [{ risk: 'x', severity: 'extreme' }]
       })
     )
   })

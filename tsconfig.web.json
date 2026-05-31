@@ -11,11 +11,12 @@
     "composite": true,
     "noImplicitAny": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
     "paths": {
       "@renderer/*": [
-        "src/renderer/src/*"
+        "./src/renderer/src/*"
       ]
-    }
+    },
+    "types": ["node"],
+    "noUncheckedSideEffectImports": false
   }
 }

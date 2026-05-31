@@ -171,10 +171,12 @@ class GrillPlanGeneratorService {
 
   /** Call Claude CLI in one-shot mode */
   private async callClaude(prompt: string, model: string): Promise<string> {
-    const { execFileSync } = await import('node:child_process')
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execFileAsync = promisify(execFile)
 
     try {
-      const result = execFileSync('claude', [
+      const { stdout } = await execFileAsync('claude', [
         '-p', prompt,
         '--model', model,
         '--system-prompt', PLAN_GENERATION_SYSTEM_PROMPT,
@@ -187,7 +189,7 @@ class GrillPlanGeneratorService {
         maxBuffer: 1024 * 1024 * 10 // 10MB buffer for large plans
       })
 
-      return result
+      return stdout
     } catch (err) {
       planLog.error('[plan-gen] Claude CLI call failed:', err)
       throw new Error(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`)

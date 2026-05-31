@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { CheckCircle, Circle, Loader2, User, XCircle } from 'lucide-react'
 import type { MpaPhaseType, MpaPhaseStatus } from '../../../../../shared/mpa-types'
 import { PHASE_CONFIG } from './constants'

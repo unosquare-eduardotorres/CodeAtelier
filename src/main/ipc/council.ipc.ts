@@ -45,8 +45,9 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
         filesInScope?: string[]
         conversationId?: string
         llmProvider?: LLMProvider
+        grillSessionId?: string
       }
-    ): Promise<void> => {
+    ): Promise<{ sessionId: string }> => {
       validateSender(event)
 
       councilLog.info('[council:start] Handler invoked', {
@@ -63,7 +64,8 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
         workspaceContext,
         filesInScope,
         conversationId,
-        llmProvider: explicitProvider
+        llmProvider: explicitProvider,
+        grillSessionId
       } = args
 
       if (councilService.isRunningForWorkspace(workspaceId)) {
@@ -79,8 +81,18 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
       const settings = workspaceRepository.getSettings(workspace.id)
       const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
 
-      // Start persistence tracking
-      const sessionId = `council-${Date.now()}`
+      // Create DB session upfront so the renderer gets the real DB UUID
+      const dbSession = councilSessionRepository.createSession({
+        workspaceId,
+        inputType,
+        inputContent: planContent,
+        grillSessionId,
+        structuredPlanJson: structuredPlan ? JSON.stringify(structuredPlan) : undefined,
+        conversationId
+      })
+      const sessionId = dbSession.id
+
+      // Start persistence tracking with the DB session ID
       councilPersistenceController.startTracking(sessionId, workspaceId, workspace.repoPath)
 
       // Wire event forwarding
@@ -98,11 +110,15 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
           workspaceContext: workspaceContext ?? '',
           filesInScope: filesInScope ?? [],
           conversationId,
-          llmProvider
+          grillSessionId,
+          llmProvider,
+          dbSessionId: sessionId
         })
         .catch((err) => {
           councilLog.error('[council:start] evaluate failed:', err)
         })
+
+      return { sessionId }
     }
   )
 

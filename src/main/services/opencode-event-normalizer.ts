@@ -44,6 +44,10 @@ export interface NormalizerState {
   lastFinishReason?: string
   /** GAP-12: Last emitted context usage percentage — avoids flooding UI with micro-updates */
   lastContextPercentage?: number
+  /** F16: Track last part type for turn boundary detection */
+  lastPartType?: 'text' | 'thinking' | 'tool'
+  /** F16: Whether we've seen text content before (for thinking→text boundary) */
+  hasPriorText?: boolean
 }
 
 type EventProperties = Record<string, unknown>
@@ -57,25 +61,41 @@ type EventHandler = (
 
 // ── Per-event-type handler functions ──
 
-function handleMessagePartUpdated(properties: EventProperties): StreamChunk[] {
+function handleMessagePartUpdated(
+  properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
   const chunks: StreamChunk[] = []
   const part = properties.part as Record<string, unknown> | undefined
 
   if (part?.type === 'text') {
     const text = part.content as string | undefined
-    if (text) chunks.push({ type: 'text', content: text })
+    // F16: Emit turn_boundary when transitioning from thinking→text
+    // so the renderer shows visual separation between thinking and response.
+    if (text && state.lastPartType === 'thinking' && state.hasPriorText) {
+      chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
+    }
+    if (text) {
+      chunks.push({ type: 'text', content: text })
+      state.lastPartType = 'text'
+      state.hasPriorText = true
+    }
   }
 
   if (part?.type === 'tool-invocation') {
     const toolName = part.toolName as string | undefined
     const toolId = part.toolCallId as string | undefined
-    const state = part.state as string | undefined
+    // N1: Renamed from `state` to avoid shadowing the NormalizerState parameter
+    const invocationState = part.state as string | undefined
 
-    if (state === 'call' && toolName) {
+    if (invocationState === 'call' && toolName) {
+      state.lastPartType = 'tool'
       chunks.push({ type: 'tool_use', toolName, toolId })
     }
 
-    if (state === 'partial' && toolName) {
+    if (invocationState === 'partial' && toolName) {
       const partialArgs = part.args as Record<string, unknown> | undefined
       if (partialArgs) {
         const inputPreview = summarizeToolInput(toolName, partialArgs)
@@ -91,7 +111,7 @@ function handleMessagePartUpdated(properties: EventProperties): StreamChunk[] {
       }
     }
 
-    if (state === 'result') {
+    if (invocationState === 'result') {
       const result = part.result as string | undefined
       const resultStr = typeof result === 'string' ? result : JSON.stringify(result)
       chunks.push({
@@ -126,13 +146,19 @@ function handleMessagePartUpdated(properties: EventProperties): StreamChunk[] {
 
   if (part?.type === 'thinking') {
     const thinking = part.content as string | undefined
-    if (thinking) chunks.push({ type: 'thinking', content: thinking })
+    if (thinking) {
+      chunks.push({ type: 'thinking', content: thinking })
+      state.lastPartType = 'thinking'
+    }
   }
 
   // 6C-1: Handle 'reasoning' / 'reasoning-delta' part type (same UI as thinking)
   if (part?.type === 'reasoning' || part?.type === 'reasoning-delta') {
     const reasoning = part.content as string | undefined
-    if (reasoning) chunks.push({ type: 'thinking', content: reasoning })
+    if (reasoning) {
+      chunks.push({ type: 'thinking', content: reasoning })
+      state.lastPartType = 'thinking' // N1: Parity with thinking handler for turn boundary detection
+    }
   }
 
   // GAP-9: Surface structured output from agent response
@@ -213,7 +239,7 @@ function handleSessionError(properties: EventProperties): StreamChunk[] {
   const isTransient = TRANSIENT_PATTERNS.some((p) => p.test(error))
   if (isTransient) {
     openCodeLog.info(`[opencode] Transient error detected — UI will show retry status: ${error}`)
-    return [
+    const chunks: StreamChunk[] = [
       {
         type: 'api_retry',
         content: `Transient error: ${error}`,
@@ -225,6 +251,16 @@ function handleSessionError(properties: EventProperties): StreamChunk[] {
         }
       }
     ]
+    // F17: Additionally emit rate_limit for rate-limit-specific errors so the
+    // UI rate limit indicator works for OpenCode sessions (parity with CLI).
+    const isRateLimit = /rate.?limit|429|too many requests/i.test(error)
+    if (isRateLimit) {
+      chunks.push({
+        type: 'rate_limit',
+        rateLimit: { status: 'rejected', utilization: 100, rateLimitType: 'api' }
+      })
+    }
+    return chunks
   }
 
   return [{ type: 'error', error }]
@@ -245,10 +281,17 @@ function handleSessionCompacted(properties: EventProperties): StreamChunk[] {
       }
     })
   } else {
-    // Estimate: compaction typically reduces to ~30% usage
+    // N12: Estimate compaction reduces to ~30% usage. Use a sane default
+    // context window to avoid 0/0 = NaN in the renderer's qualityPct calculation.
+    const estimatedWindow = 200_000
+    const estimatedTokens = Math.round(estimatedWindow * 0.3)
     chunks.push({
       type: 'context_usage_update',
-      contextUsageUpdate: { inputTokens: 0, contextWindowSize: 0, percentage: 30 }
+      contextUsageUpdate: {
+        inputTokens: estimatedTokens,
+        contextWindowSize: estimatedWindow,
+        percentage: 30
+      }
     })
   }
 
@@ -539,7 +582,7 @@ function handleServerConnected(
 // ── Dispatch table ──
 
 const EVENT_HANDLERS: Record<string, EventHandler> = {
-  'message.part.updated': handleMessagePartUpdated as EventHandler,
+  'message.part.updated': handleMessagePartUpdated,
   'session.updated': handleSessionUpdated,
   'session.error': handleSessionError as EventHandler,
   'session.compacted': handleSessionCompacted as EventHandler, // 6C-4: now emits context_usage_update

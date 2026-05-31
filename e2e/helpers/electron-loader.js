@@ -1,7 +1,7 @@
 /**
- * Custom Electron loader that patches --remote-debugging-port for Electron 40+.
+ * Custom Electron loader that patches --remote-debugging-port for Electron 41+.
  *
- * Electron 40 rejects --remote-debugging-port as a CLI arg. It must be set via
+ * Electron 41 rejects --remote-debugging-port as a CLI arg. It must be set via
  * app.commandLine.appendSwitch() before the app is ready.
  *
  * This loader intercepts the arg from process.argv, strips it, and re-applies it

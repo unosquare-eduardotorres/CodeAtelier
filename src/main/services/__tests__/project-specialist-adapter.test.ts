@@ -56,16 +56,30 @@ describe('ProjectSpecialistRoleAdapter', () => {
     assert.equal(adapter.agentId, 'workspace-specialist-ws-abc')
 
     // Verify ChatAgentService surfaces this same value via getActiveAgentId().
+    // Patch internal state: register a session entry with our adapter so
+    // getActiveAdapter() resolves it via the sessions map.
     const { chatAgentService } =
       (await import('../chat-agent.service')) as typeof import('../chat-agent.service')
-    const svc = chatAgentService as unknown as { adapter: unknown }
-    const original = svc.adapter
-    svc.adapter = adapter
+    const svc = chatAgentService as unknown as {
+      sessions: Map<string, { adapter: unknown; session: unknown; forwarderCleanups: unknown[]; workspacePath: string }>
+      _activeWorkspaceId: string | null
+    }
+    const originalActiveId = svc._activeWorkspaceId
+    const hadEntry = svc.sessions.has('ws-abc')
+
+    svc._activeWorkspaceId = 'ws-abc'
+    svc.sessions.set('ws-abc', {
+      adapter,
+      session: {} as unknown,
+      forwarderCleanups: [],
+      workspacePath: '/tmp/ws-abc'
+    })
     try {
       assert.equal(chatAgentService.getActiveAgentId(), 'workspace-specialist-ws-abc')
       assert.equal(chatAgentService.getActiveMessageRole(), 'specialist')
     } finally {
-      svc.adapter = original
+      svc._activeWorkspaceId = originalActiveId
+      if (!hadEntry) svc.sessions.delete('ws-abc')
     }
   })
 

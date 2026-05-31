@@ -8,6 +8,7 @@ import GrillSidebar from './GrillSidebar'
 import { useGrillSession, GrillPageHeader, GrillPageFooter } from './grill'
 import { useMpaStore } from '@renderer/store/mpa.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
+import { useCouncilStore } from '@renderer/store/council.store'
 import type { GrillDecision } from '../../../../shared/mpa-types'
 
 interface GrillPageProps {
@@ -58,7 +59,11 @@ export default function GrillPage({
         sessionId: conversationId,
         workspaceId: activeWorkspace.id
       })
-      setStructuredPlan(plan)
+      if (plan && typeof plan === 'object' && 'items' in plan && Array.isArray(plan.items)) {
+        setStructuredPlan(plan)
+      } else {
+        throw new Error('Invalid plan structure returned from API')
+      }
       session.setPhase('completed')
     } catch (err) {
       console.error('Plan generation failed:', err)
@@ -291,8 +296,10 @@ export default function GrillPage({
         }}
         onCouncilSweep={structuredPlan ? async () => {
           if (!activeWorkspace) return
+          const councilStore = useCouncilStore.getState()
+          councilStore.startCouncil()
           // Send the structured plan to the council
-          await window.api.councilStart({
+          const { sessionId } = await window.api.councilStart({
             workspaceId: activeWorkspace.id,
             inputType: 'plan',
             planContent: structuredPlan.requirementDocument,
@@ -300,6 +307,7 @@ export default function GrillPage({
             originalUserRequest: ideaTitle,
             grillSessionId: conversationId
           })
+          councilStore.setSessionIdentity(sessionId, activeWorkspace.id)
           onNavigateToCouncil?.()
         } : undefined}
       />

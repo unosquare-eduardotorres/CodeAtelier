@@ -76,13 +76,17 @@ export default function CouncilView({
     advisors,
     peerReviews,
     verdict,
+    currentSessionId,
+    currentWorkspaceId,
     handlePhaseChanged,
     handleMemberStream,
     handleMemberComplete,
     handlePeerReviewComplete,
     handleVerdict,
     handleComplete,
-    reset
+    reset,
+    startCouncil,
+    setSessionIdentity
   } = useCouncilStore()
 
   // Cleanup accumulators on unmount if council is no longer active
@@ -299,9 +303,13 @@ export default function CouncilView({
           </div>
           <button
             onClick={() => {
-              // Resume will be handled by the parent passing in onResume
-              // For now, users can restart via the store
-              window.api.councilResume?.({ workspaceId: '' }).catch(console.error)
+              if (currentSessionId && currentWorkspaceId) {
+                const sid = currentSessionId
+                const wid = currentWorkspaceId
+                startCouncil()          // reset UI to clean state
+                setSessionIdentity(sid, wid) // re-set identity (startCouncil clears it)
+                window.api.councilResume({ sessionId: sid, workspaceId: wid }).catch(console.error)
+              }
             }}
             className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-sm font-medium transition-colors press-scale"
           >

@@ -91,11 +91,18 @@ export class AgentStreamProcessor {
       meta.tokenUsage.cacheReadInputTokens +
       meta.tokenUsage.cacheCreationInputTokens
 
+    // N11/F10: For context pressure and badge display, use only tokens that
+    // actually consume window capacity. cacheCreation tokens are being *written*
+    // to cache, not consuming the context window — including them inflates both
+    // the badge percentage and pressure warnings.
+    const consumedContextTokens =
+      meta.tokenUsage.input + meta.tokenUsage.cacheReadInputTokens
+
     // Update lastContextTokens for all backends (badge, compact modal, etc.)
     this.s.lastContextTokens = totalContextTokens
 
     // Push live context update to the renderer
-    if (totalContextTokens > 0) {
+    if (consumedContextTokens > 0) {
       const effectiveWindow = this.s.effectiveContextWindow ?? CLAUDE_DEFAULT_CONTEXT_WINDOW
       // F11: Reuse token tracker's cache efficiency calculation (single source of truth)
       // instead of duplicating the cacheRead / (input + cacheRead) formula here.
@@ -105,22 +112,15 @@ export class AgentStreamProcessor {
         type: 'context_usage_update',
         content: '',
         contextUsageUpdate: {
-          inputTokens: totalContextTokens,
+          inputTokens: consumedContextTokens,
           contextWindowSize: effectiveWindow,
-          percentage: Math.round((totalContextTokens / effectiveWindow) * 100),
+          percentage: Math.round((consumedContextTokens / effectiveWindow) * 100),
           cacheHitRate
         }
       } as StreamChunk)
     }
 
     this.checkCompaction(totalContextTokens)
-
-    // F10: For context pressure calculations, use only tokens that consume
-    // window capacity. cacheCreation tokens are being *written* to cache,
-    // not consuming the context window — including them inflates pressure
-    // and triggers false 85% warnings.
-    const consumedContextTokens =
-      meta.tokenUsage.input + meta.tokenUsage.cacheReadInputTokens
 
     // Evaluate context pressure for local LLMs AND Claude 200K models.
     const isLocal = this.s.llmProvider === 'local-llm'
@@ -347,6 +347,12 @@ export class AgentStreamProcessor {
         breakdown,
         isLocalProvider: isLocal
       })
+    } else if (inputTokens < warningThreshold) {
+      // F15: Reset compactSuggested when context drops below the warning zone
+      // (e.g. after user manually compacts). Without this reset, the flag
+      // persists and the debounce counter gates future suggestions incorrectly.
+      this.s.compactSuggested = false
+      this.s.turnsSinceCompactSuggestion = 0
     }
   }
 

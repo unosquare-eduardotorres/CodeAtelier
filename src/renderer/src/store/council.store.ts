@@ -49,9 +49,14 @@ interface CouncilState {
   peerReviews: CouncilPeerReview[]
   /** Final chairman verdict */
   verdict: CouncilVerdict | null
+  /** DB session ID — needed for resume */
+  currentSessionId: string | null
+  /** Workspace ID for the active council session */
+  currentWorkspaceId: string | null
 
   // Actions
   startCouncil: () => void
+  setSessionIdentity: (sessionId: string, workspaceId: string) => void
   handlePhaseChanged: (phase: CouncilPhase) => void
   handleMemberStream: (data: {
     advisorRole: string
@@ -113,6 +118,8 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
   advisors: createInitialAdvisors(),
   peerReviews: [],
   verdict: null,
+  currentSessionId: null,
+  currentWorkspaceId: null,
 
   startCouncil: () => {
     resetAccumulators()
@@ -121,8 +128,14 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
       phase: 'framing',
       advisors: createInitialAdvisors(),
       peerReviews: [],
-      verdict: null
+      verdict: null,
+      currentSessionId: null,
+      currentWorkspaceId: null
     })
+  },
+
+  setSessionIdentity: (sessionId, workspaceId) => {
+    set({ currentSessionId: sessionId, currentWorkspaceId: workspaceId })
   },
 
   handlePhaseChanged: (phase) => {
@@ -194,7 +207,9 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
       phase: 'framing',
       advisors: createInitialAdvisors(),
       peerReviews: [],
-      verdict: null
+      verdict: null,
+      currentSessionId: null,
+      currentWorkspaceId: null
     })
   }
 }))
