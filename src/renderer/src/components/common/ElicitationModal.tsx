@@ -14,8 +14,8 @@ export default function ElicitationModal(): React.JSX.Element | null {
   const [request, setRequest] = useState<ElicitationRequest | null>(null)
 
   useEffect(() => {
-    const cleanup = window.api.onSdkElicitationRequest(
-      (data) => setRequest(data as ElicitationRequest)
+    const cleanup = window.api.onSdkElicitationRequest((data) =>
+      setRequest(data as ElicitationRequest)
     )
     return cleanup
   }, [])

@@ -22,10 +22,18 @@ export {
   useAppPreferenceActions,
   useSpecialistWarningPreferences,
   useAppPreferenceStatus,
-  useChatBubbleSize
+  useChatBubbleSize,
+  useAppTheme
 } from './app-preference.store'
 export { useCodeChangesStore } from './code-changes.store'
 export type { FileChangeDetail } from './code-changes.store'
 export { useToastStore } from './toast.store'
 export { useBugStore } from './bug.store'
 export { useAuditStore } from './audit.store'
+export { useIndexingStore } from './indexing.store'
+export { useTodoStore } from './todo.store'
+export { useProjectSpecialistStore } from './project-specialist.store'
+export type { ProjectSpecialist } from './project-specialist.store'
+export { useGrillStreamStore } from './grill-stream.store'
+export { useMpaStore } from './mpa.store'
+export { useBackgroundSessionStore } from './background-session.store'

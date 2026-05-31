@@ -64,7 +64,8 @@ describe('IntentDetector', () => {
 
   test('detects_grill_summary_from_accumulated_text', () => {
     const { detector } = createIntentDetector()
-    const text = 'Some preamble\n```grill-summary\n{"summary": "All good", "proposedTasks": [{"title": "T1", "description": "D1"}]}\n```\nAfter'
+    const text =
+      'Some preamble\n```grill-summary\n{"summary": "All good", "proposedTasks": [{"title": "T1", "description": "D1"}]}\n```\nAfter'
 
     const result = detector.detectAll(text, emptyControlState(), 'plan')
     assert.equal(result.length, 1)
@@ -77,7 +78,8 @@ describe('IntentDetector', () => {
 
   test('detects_grill_questions_from_accumulated_text', () => {
     const { detector } = createIntentDetector()
-    const text = '```grill-question\n{"questions": [{"id": "q1", "question": "What stack?", "options": [{"label": "React"}]}]}\n```'
+    const text =
+      '```grill-question\n{"questions": [{"id": "q1", "question": "What stack?", "options": [{"label": "React"}]}]}\n```'
 
     const result = detector.detectAll(text, emptyControlState(), 'plan')
     assert.equal(result.length, 1)
@@ -89,7 +91,8 @@ describe('IntentDetector', () => {
 
   test('detects_grill_evaluation_from_accumulated_text', () => {
     const { detector } = createIntentDetector()
-    const text = '```grill-evaluation\n{"score": 8, "scoreLabel": "Great", "feedback": "Nice work", "questions": [{"id": "q1", "question": "Next?", "options": []}]}\n```'
+    const text =
+      '```grill-evaluation\n{"score": 8, "scoreLabel": "Great", "feedback": "Nice work", "questions": [{"id": "q1", "question": "Next?", "options": []}]}\n```'
 
     const result = detector.detectAll(text, emptyControlState(), 'plan')
     assert.equal(result.length, 1)
@@ -119,7 +122,8 @@ describe('IntentDetector', () => {
       plan: true,
       planIntent
     }
-    const text = '```grill-question\n{"questions": [{"id": "q1", "question": "Confirm?", "options": []}]}\n```'
+    const text =
+      '```grill-question\n{"questions": [{"id": "q1", "question": "Confirm?", "options": []}]}\n```'
 
     const result = detector.detectAll(text, controlState, 'plan')
     assert.equal(result.length, 2, 'should have plan + grillQuestion')
@@ -130,8 +134,10 @@ describe('IntentDetector', () => {
 
   test('detects_multiple_grill_evaluation_blocks', () => {
     const { detector } = createIntentDetector()
-    const block1 = '```grill-evaluation\n{"score": 5, "scoreLabel": "OK", "feedback": "Decent", "questions": [{"id": "q1", "question": "A?", "options": []}]}\n```'
-    const block2 = '```grill-evaluation\n{"score": 9, "scoreLabel": "Excellent", "feedback": "Perfect", "questions": [{"id": "q2", "question": "B?", "options": []}]}\n```'
+    const block1 =
+      '```grill-evaluation\n{"score": 5, "scoreLabel": "OK", "feedback": "Decent", "questions": [{"id": "q1", "question": "A?", "options": []}]}\n```'
+    const block2 =
+      '```grill-evaluation\n{"score": 9, "scoreLabel": "Excellent", "feedback": "Perfect", "questions": [{"id": "q2", "question": "B?", "options": []}]}\n```'
     const text = `First block:\n${block1}\nSecond block:\n${block2}`
 
     const result = detector.detectAll(text, emptyControlState(), 'plan')

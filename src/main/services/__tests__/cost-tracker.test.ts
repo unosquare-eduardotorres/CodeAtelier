@@ -7,7 +7,8 @@
 import assert from 'node:assert/strict'
 import { test, describe } from './test-harness'
 
-const { estimateCostCents, estimateCostFromTotal, MODEL_PRICING } = require('../cost-tracker.service') as typeof import('../cost-tracker.service')
+const { estimateCostCents, estimateCostFromTotal, MODEL_PRICING } =
+  require('../cost-tracker.service') as typeof import('../cost-tracker.service')
 
 describe('CostTracker — estimateCostCents', () => {
   test('estimateCostCents_known_model_sonnet', () => {
@@ -18,9 +19,9 @@ describe('CostTracker — estimateCostCents', () => {
   })
 
   test('estimateCostCents_known_model_opus', () => {
-    // opus-4-7 pricing: inputPer1M=5.0, outputPer1M=25.0
+    // opus-4-8 pricing: inputPer1M=5.0, outputPer1M=25.0
     // 1M input = 5.0 * 100 = 500 cents, 1M output = 25.0 * 100 = 2500 cents
-    const result = estimateCostCents(1_000_000, 1_000_000, 'claude-opus-4-7')
+    const result = estimateCostCents(1_000_000, 1_000_000, 'claude-opus-4-8')
     assert.equal(result, 3000)
   })
 
@@ -79,6 +80,7 @@ describe('CostTracker — MODEL_PRICING', () => {
     const expectedModels = [
       'claude-haiku-4-5-20251001',
       'claude-sonnet-4-6',
+      'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-sonnet-4-20250514',
       'claude-opus-4-20250514',
@@ -89,8 +91,16 @@ describe('CostTracker — MODEL_PRICING', () => {
 
     for (const model of expectedModels) {
       assert.ok(MODEL_PRICING[model], `Missing pricing for model: ${model}`)
-      assert.equal(typeof MODEL_PRICING[model].inputPer1M, 'number', `${model} inputPer1M should be a number`)
-      assert.equal(typeof MODEL_PRICING[model].outputPer1M, 'number', `${model} outputPer1M should be a number`)
+      assert.equal(
+        typeof MODEL_PRICING[model].inputPer1M,
+        'number',
+        `${model} inputPer1M should be a number`
+      )
+      assert.equal(
+        typeof MODEL_PRICING[model].outputPer1M,
+        'number',
+        `${model} outputPer1M should be a number`
+      )
       assert.ok(MODEL_PRICING[model].inputPer1M > 0, `${model} inputPer1M should be positive`)
       assert.ok(MODEL_PRICING[model].outputPer1M > 0, `${model} outputPer1M should be positive`)
     }

@@ -1,10 +1,18 @@
 import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import type { BudgetTier, ConversationMode, Skill } from '../../shared/types'
+import type { BudgetTier, CommunicationTone, ConversationMode, PromptVerbosity, Skill } from '../../shared/types'
+import type { ContextWindowTier } from './context-management'
 import { promptBuilderLogger } from '../logger'
 import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.repository'
 import { skillRepository } from '../db/repositories/skill.repository'
-import { DEFAULT_PROMPTS } from './default-prompts'
+import {
+  DEFAULT_PROMPTS,
+  TONE_STYLE_DIRECTIVES,
+  buildDaVinciIdentityPrompt,
+  buildDaVinciIdentityPromptLean,
+  UNIFIED_MODE_SECTION
+} from './default-prompts'
+import { resolvePromptVerbosity } from '../../shared/constants'
 
 // ── Prompt Builder Types ──
 
@@ -29,6 +37,10 @@ interface PromptBuildOptions {
   personaSkills?: Skill[]
   /** Per-conversation skill overrides for the persona specialist */
   personaSkillOverrides?: string[]
+  /** Communication tone for AI responses (affects ## Style section) */
+  communicationTone?: CommunicationTone
+  /** Resolved model ID — used for prompt verbosity gating (Opus 4.8+ gets lean prompts) */
+  model?: string
 }
 
 export interface GeneralistConditionalSections {
@@ -79,14 +91,18 @@ export class PromptBuilder {
    */
   getGeneralistConditionalSections(
     message: string,
-    hasImages: boolean
+    hasImages: boolean,
+    verbosity: PromptVerbosity = 'full'
   ): GeneralistConditionalSections {
     const normalized = message.toLowerCase()
 
-    const includeAskQuestionPrompt =
-      /\b(which|choose|choice|option|pick|select|either|vs|versus|should i|what do you prefer)\b/i.test(
-        normalized
-      )
+    // Lean: tighter regex — require explicit option-signal phrasing.
+    // Full: broader triggers for models that need more guidance.
+    const includeAskQuestionPrompt = verbosity === 'lean'
+      ? /\b(choose between|give me options|what are my options|which (one|option) should)\b/i.test(normalized)
+      : /\b(which|choose|choice|option|pick|select|either|vs|versus|should i|what do you prefer)\b/i.test(
+          normalized
+        )
 
     const includeMemoryProtocolPrompt =
       /\b(remember|preference|prefer|i like|i dislike|always|never|for future|from now on|note this|keep in mind)\b/i.test(
@@ -187,7 +203,7 @@ export class PromptBuilder {
    * Layer 1: Base role prompt (from DB, user-editable).
    */
   private appendRoleAndIdentityLayers(layers: string[], options: PromptBuildOptions): void {
-    layers.push(this.getRolePrompt(options.role, options.mode))
+    layers.push(this.getRolePrompt(options.role, options.mode, options.communicationTone, options.model))
   }
 
   /**
@@ -223,11 +239,35 @@ export class PromptBuilder {
 
   // ── Private layer builders ──
 
-  private getRolePrompt(role: PromptRole, mode: ConversationMode): string {
+  private getRolePrompt(
+    role: PromptRole,
+    mode: ConversationMode,
+    tone?: CommunicationTone,
+    model?: string
+  ): string {
     // Read from DB (user-editable). Falls back to defaults if DB is empty.
     const dbPrompt = coreAgentPromptRepository.findByRoleAndMode(role, mode)
-    if (dbPrompt) return dbPrompt.promptText
-    // Fallback to defaults (safety net for fresh installs before migration runs)
+    if (dbPrompt) {
+      // Append tone overlay when user has a non-default tone selected.
+      // The overlay takes precedence over the ## Style section in the DB prompt.
+      if (tone && tone !== 'default') {
+        const directive = TONE_STYLE_DIRECTIVES[tone]
+        return dbPrompt.promptText + `\n\n## Communication Tone Override\n${directive}`
+      }
+      return dbPrompt.promptText
+    }
+    // Fallback to defaults — build identity prompt with tone baked in
+    if (role === 'da-vinci') {
+      const verbosity = resolvePromptVerbosity(model ?? '')
+      const identity = verbosity === 'lean'
+        ? buildDaVinciIdentityPromptLean(tone)
+        : buildDaVinciIdentityPrompt(tone)
+      // Lean mode: skip UNIFIED_MODE_SECTION since per-message <mode-context>
+      // block already provides detailed mode instructions every turn.
+      // Saves ~80 tokens from the system prompt.
+      if (verbosity === 'lean') return identity
+      return UNIFIED_MODE_SECTION + '\n' + identity
+    }
     return DEFAULT_PROMPTS[role]?.[mode] ?? ''
   }
 
@@ -612,12 +652,25 @@ export class PromptBuilder {
    * Build a condensed system prompt for local LLM providers.
    * Strips skills, reduces memory, keeps essential instructions.
    * Target: ~4K tokens for 32K models, ~8K for 128K+ models.
+   *
+   * When `contextTier` is provided and mode is 'plan', a focused plan-mode
+   * directive is prepended (S5) that constrains the model to a strict
+   * tool-budget and ordered workflow to prevent aimless exploration.
    */
-  buildLocalPrompt(options: PromptBuildOptions): string {
+  buildLocalPrompt(options: PromptBuildOptions & { contextTier?: ContextWindowTier }): string {
     const layers: string[] = []
 
+    // Layer 0 (S5): Plan-focused directive for local LLMs — must come FIRST
+    // so it anchors the model before any other content.
+    if (options.mode === 'plan' && options.contextTier) {
+      layers.push(this.buildLocalPlanDirective(options.contextTier))
+    }
+
     // Layer 1: Condensed role identity (no skills, no persona)
-    const rolePrompt = this.getRolePrompt(options.role, options.mode)
+    // Note: model is intentionally NOT threaded here — local LLMs are never Claude
+    // models (they're Ollama IDs like qwen2.5-coder:32b), so resolvePromptVerbosity()
+    // would always return 'full'. Local prompt compression uses contextTier instead.
+    const rolePrompt = this.getRolePrompt(options.role, options.mode, options.communicationTone)
     const condensed = this.extractEssentialSections(rolePrompt)
     if (condensed) layers.push(condensed)
 
@@ -635,6 +688,44 @@ export class PromptBuilder {
     }
 
     return layers.join('\n\n---\n\n')
+  }
+
+  /**
+   * S5: Plan-focused directive prompt for local LLMs.
+   *
+   * Constrains the model to a strict workflow with a hard tool budget to
+   * prevent the aimless exploration that burns all turns on small contexts.
+   * The directive is placed at the TOP of the system prompt so it anchors
+   * the model's behavior before any role/project context.
+   */
+  buildLocalPlanDirective(tier: ContextWindowTier): string {
+    const toolBudgets: Record<ContextWindowTier, number> = {
+      small: 5,
+      medium: 8,
+      large: 15
+    }
+    const budget = toolBudgets[tier]
+
+    return `## Plan Mode — Strict Workflow
+
+You are in PLAN mode. Your job: produce a WRITTEN PLAN, not execute changes.
+
+### Steps (follow IN ORDER):
+1. PARSE the request — identify what the user wants (0 tools)
+2. LOCATE files — use Glob/Grep/FindSymbol (2-3 calls max)
+3. READ key sections — use Read with offset+limit (2-3 calls max)
+4. WRITE THE PLAN — numbered list of specific file changes
+
+### Rules:
+- Maximum ${budget} tool calls total. Then WRITE.
+- After reading 2-3 files, you have enough context. STOP exploring.
+- A partial plan is ALWAYS better than no plan.
+- NEVER explore "just in case."
+
+### Output Format:
+1. **\`path/to/file.tsx\`** — Description of change
+2. **\`path/to/other.ts\`** — Description of change
+`
   }
 
   /**

@@ -100,7 +100,10 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
                     </span>
                   </span>
                   {task.error && (
-                    <p className="text-red-400/80 text-[10px] mt-0.5 max-w-[400px]" title={task.error}>
+                    <p
+                      className="text-red-400/80 text-[10px] mt-0.5 max-w-[400px]"
+                      title={task.error}
+                    >
                       {task.error}
                     </p>
                   )}

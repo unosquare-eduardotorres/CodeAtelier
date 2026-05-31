@@ -8,6 +8,7 @@ All test generation runs are logged here with dates, focus areas, and outcomes.
 
 **Focus**: discovery + mocks
 **New files**: 4
+
 - `src/main/services/__tests__/helpers/claude-mock.ts` — ScriptedClaudeClient mock
 - `src/main/services/__tests__/helpers/agent-factory.ts` — Service factories with injected deps
 - `tests/_meta/discovery.md` — Architecture map and coverage gap analysis
@@ -24,6 +25,7 @@ All test generation runs are logged here with dates, focus areas, and outcomes.
 
 **Focus**: unit
 **New files**: 3
+
 - `src/main/services/__tests__/conversation-state-machine.test.ts` — 12 tests
 - `src/main/services/__tests__/intent-detector.test.ts` — 10 tests
 - `src/main/services/__tests__/intent-router.test.ts` — 8 tests
@@ -39,6 +41,7 @@ All test generation runs are logged here with dates, focus areas, and outcomes.
 
 **Focus**: unit
 **New files**: 3
+
 - `src/main/services/__tests__/generalist-circuit-breaker.test.ts` — 10 tests
 - `src/main/services/__tests__/tool-approval.test.ts` — 10 tests
 - `src/main/services/__tests__/generalist-prompt-assembler.test.ts` — 10 tests
@@ -55,6 +58,7 @@ All test generation runs are logged here with dates, focus areas, and outcomes.
 
 **Focus**: unit
 **New files**: 4
+
 - `src/main/services/__tests__/cost-tracker.test.ts` — 10 tests
 - `src/main/services/__tests__/generalist-token-tracker.test.ts` — 8 tests
 - `src/main/services/__tests__/complexity-scorer.test.ts` — 10 tests
@@ -72,6 +76,7 @@ All test generation runs are logged here with dates, focus areas, and outcomes.
 
 **Focus**: unit
 **New files**: 4
+
 - `src/main/services/__tests__/abandonment-detector.test.ts` — 12 tests
 - `src/main/services/__tests__/scheduling-strategy.test.ts` — 10 tests
 - `src/main/services/__tests__/semaphore.test.ts` — 6 tests
@@ -79,6 +84,6 @@ All test generation runs are logged here with dates, focus areas, and outcomes.
 
 **New tests**: 30
 **Coverage impact**: abandonment-detector (3 functions), scheduling strategies (4 strategies + composite),
-  Semaphore (async concurrency), investigation-detect now all covered
+Semaphore (async concurrency), investigation-detect now all covered
 **All tests passing**: verified via `npx tsx src/main/services/__tests__/run-tests.ts` (420 ✓, 0 failed)
 **Next**: P2 expansion — message-bus, rate-limiter, quality-gate-runner, model-config expansion

@@ -112,10 +112,7 @@ export class ScriptedClaudeClient extends EventEmitter {
    *
    * Returns a MockMessage summarizing the full response.
    */
-  async execute(
-    prompt: string,
-    options?: Record<string, unknown>
-  ): Promise<MockMessage> {
+  async execute(prompt: string, options?: Record<string, unknown>): Promise<MockMessage> {
     this._executeCalls.push({ prompt, options })
 
     const contentBlocks: MockContentBlock[] = []

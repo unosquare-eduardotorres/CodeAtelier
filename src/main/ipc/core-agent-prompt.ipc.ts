@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { coreAgentPromptRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString } from './validate-args'
 
 export function registerCoreAgentPromptIpc(): void {
   ipcMain.handle(IPC_CHANNELS.CORE_AGENT_PROMPT_LIST, (event) => {
@@ -11,69 +12,53 @@ export function registerCoreAgentPromptIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.CORE_AGENT_PROMPT_GET,
-    (
-      event,
-      args: {
-        agentRole: 'da-vinci'
-        mode: 'plan' | 'build'
-      }
-    ) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.agentRole) throw new Error('agentRole is required')
-      if (!args?.mode) throw new Error('mode is required')
-      if (args.agentRole !== 'da-vinci') {
-        throw new Error('agentRole must be "da-vinci"')
+      const args = requireObject(rawArgs, IPC_CHANNELS.CORE_AGENT_PROMPT_GET)
+      const agentRole = requireString(args, 'agentRole', IPC_CHANNELS.CORE_AGENT_PROMPT_GET)
+      const mode = requireString(args, 'mode', IPC_CHANNELS.CORE_AGENT_PROMPT_GET)
+      if (agentRole !== 'da-vinci') {
+        throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_GET}: agentRole must be "da-vinci"`)
       }
-      if (!['plan', 'build'].includes(args.mode)) {
-        throw new Error('mode must be "plan" or "build"')
+      if (!['plan', 'build', 'danger'].includes(mode)) {
+        throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_GET}: mode must be "plan", "build", or "danger"`)
       }
-      return coreAgentPromptRepository.findByRoleAndMode(args.agentRole, args.mode)
+      return coreAgentPromptRepository.findByRoleAndMode(agentRole, mode)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT,
-    (
-      event,
-      args: {
-        agentRole: 'da-vinci'
-        mode: 'plan' | 'build'
-        promptText: string
-      }
-    ) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.agentRole) throw new Error('agentRole is required')
-      if (!args?.mode) throw new Error('mode is required')
-      if (!args?.promptText?.trim()) throw new Error('promptText cannot be empty')
-      if (args.agentRole !== 'da-vinci') {
-        throw new Error('agentRole must be "da-vinci"')
+      const args = requireObject(rawArgs, IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT)
+      const agentRole = requireString(args, 'agentRole', IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT)
+      const mode = requireString(args, 'mode', IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT)
+      const promptText = requireString(args, 'promptText', IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT)
+      if (agentRole !== 'da-vinci') {
+        throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT}: agentRole must be "da-vinci"`)
       }
-      if (!['plan', 'build'].includes(args.mode)) {
-        throw new Error('mode must be "plan" or "build"')
+      if (!['plan', 'build', 'danger'].includes(mode)) {
+        throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT}: mode must be "plan", "build", or "danger"`)
       }
-      return coreAgentPromptRepository.upsert(args.agentRole, args.mode, args.promptText)
+      return coreAgentPromptRepository.upsert(agentRole, mode, promptText)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.CORE_AGENT_PROMPT_RESET,
-    (
-      event,
-      args: {
-        agentRole: 'da-vinci'
-        mode: 'plan' | 'build'
-      }
-    ) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.agentRole) throw new Error('agentRole is required')
-      if (!args?.mode) throw new Error('mode is required')
-      if (args.agentRole !== 'da-vinci') {
-        throw new Error('agentRole must be "da-vinci"')
+      const args = requireObject(rawArgs, IPC_CHANNELS.CORE_AGENT_PROMPT_RESET)
+      const agentRole = requireString(args, 'agentRole', IPC_CHANNELS.CORE_AGENT_PROMPT_RESET)
+      const mode = requireString(args, 'mode', IPC_CHANNELS.CORE_AGENT_PROMPT_RESET)
+      if (agentRole !== 'da-vinci') {
+        throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_RESET}: agentRole must be "da-vinci"`)
       }
-      if (!['plan', 'build'].includes(args.mode)) {
-        throw new Error('mode must be "plan" or "build"')
+      if (!['plan', 'build', 'danger'].includes(mode)) {
+        throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_RESET}: mode must be "plan", "build", or "danger"`)
       }
-      return coreAgentPromptRepository.resetToDefault(args.agentRole, args.mode)
+      return coreAgentPromptRepository.resetToDefault(agentRole, mode)
     }
   )
 }

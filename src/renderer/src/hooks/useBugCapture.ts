@@ -13,8 +13,7 @@ export function useBugCapture(): void {
       sourceColumn?: number
     } {
       if (!stack) return {}
-      const match = stack.match(/at .+\((.+):(\d+):(\d+)\)/)
-        || stack.match(/at (.+):(\d+):(\d+)/)
+      const match = stack.match(/at .+\((.+):(\d+):(\d+)\)/) || stack.match(/at (.+):(\d+):(\d+)/)
       if (match) {
         return {
           sourceFile: match[1],

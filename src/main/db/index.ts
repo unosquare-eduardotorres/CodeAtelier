@@ -6,6 +6,7 @@ import { dbLogger } from '../logger'
 import { DEFAULT_PROMPTS } from '../services/default-prompts'
 import { runProjectSpecialistMigration } from './migrations/project-specialist-migration'
 import { runDropSpecialistMcpColumnsMigration } from './migrations/drop-specialist-mcp-columns-migration'
+import { runAddDangerModeMigration } from './migrations/add-danger-mode-migration'
 
 let db: Database.Database | null = null
 
@@ -14,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 86
+const CURRENT_SCHEMA_VERSION = 94
 
 interface Migration {
   version: number
@@ -1524,9 +1525,7 @@ const migrations: Migration[] = [
           db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
           dbLogger.info(`✓ Dropped column ${table}.${column}`)
         } catch (err) {
-          dbLogger.warn(
-            `Skipping DROP COLUMN ${table}.${column}: ${(err as Error).message}`
-          )
+          dbLogger.warn(`Skipping DROP COLUMN ${table}.${column}: ${(err as Error).message}`)
         }
       }
 
@@ -1558,9 +1557,7 @@ const migrations: Migration[] = [
       // values, THEN rewrite rows. Otherwise the UPDATE would trip the old CHECK
       // that doesn't yet include 'da-vinci'.
       const messageRoleCheck = db
-        .prepare(
-          `SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'`
-        )
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'`)
         .get() as { sql: string } | undefined
       if (messageRoleCheck && !messageRoleCheck.sql.includes("'da-vinci'")) {
         // Transitional CHECK includes all legacy values so existing rows copy in.
@@ -1588,18 +1585,14 @@ const migrations: Migration[] = [
       db.exec(`UPDATE messages SET role = 'specialist' WHERE role = 'coordinator'`)
 
       // ── 2. specialists.agent_id ──
-      db.exec(
-        `UPDATE specialists SET agent_id = 'da-vinci' WHERE agent_id = 'generalist'`
-      )
+      db.exec(`UPDATE specialists SET agent_id = 'da-vinci' WHERE agent_id = 'generalist'`)
       dbLogger.info('[migration-69] ✓ specialists.agent_id renamed')
 
       // ── 3. core_agent_aliases.agent_role ──
       // Same pattern: rebuild with permissive CHECK accepting both values, delete
       // dead 'coordinator' rows, then rewrite 'generalist' → 'da-vinci'.
       const aliasCheck = db
-        .prepare(
-          `SELECT sql FROM sqlite_master WHERE type='table' AND name='core_agent_aliases'`
-        )
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='core_agent_aliases'`)
         .get() as { sql: string } | undefined
       if (aliasCheck && !aliasCheck.sql.includes("'da-vinci'")) {
         db.exec(`
@@ -1625,9 +1618,7 @@ const migrations: Migration[] = [
       // ── 4. core_agent_prompts.agent_role ──
       // Same permissive-rebuild-first pattern.
       const promptCheck = db
-        .prepare(
-          `SELECT sql FROM sqlite_master WHERE type='table' AND name='core_agent_prompts'`
-        )
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='core_agent_prompts'`)
         .get() as { sql: string } | undefined
       if (promptCheck && !promptCheck.sql.includes("'da-vinci'")) {
         // Preserve existing columns (some older schemas may or may not have default_prompt_text).
@@ -1663,13 +1654,12 @@ const migrations: Migration[] = [
       )
 
       // ── 5. ModelAction keys in workspace settings JSON ──
-      const workspaces = db
-        .prepare(`SELECT id, settings_json FROM workspaces`)
-        .all() as Array<{ id: string; settings_json: string }>
+      const workspaces = db.prepare(`SELECT id, settings_json FROM workspaces`).all() as Array<{
+        id: string
+        settings_json: string
+      }>
 
-      const updateSettings = db.prepare(
-        `UPDATE workspaces SET settings_json = ? WHERE id = ?`
-      )
+      const updateSettings = db.prepare(`UPDATE workspaces SET settings_json = ? WHERE id = ?`)
       for (const ws of workspaces) {
         try {
           const parsed = JSON.parse(ws.settings_json || '{}') as {
@@ -1897,16 +1887,12 @@ const migrations: Migration[] = [
 
       // Stage 2: per-specialist cached skill recommendations
       try {
-        db.exec(
-          `ALTER TABLE specialists ADD COLUMN skill_recommendations_json TEXT DEFAULT NULL`
-        )
+        db.exec(`ALTER TABLE specialists ADD COLUMN skill_recommendations_json TEXT DEFAULT NULL`)
       } catch {
         /* column may exist */
       }
       try {
-        db.exec(
-          `ALTER TABLE specialists ADD COLUMN skill_recommendations_hash TEXT DEFAULT NULL`
-        )
+        db.exec(`ALTER TABLE specialists ADD COLUMN skill_recommendations_hash TEXT DEFAULT NULL`)
       } catch {
         /* column may exist */
       }
@@ -2031,7 +2017,9 @@ const migrations: Migration[] = [
         )
       `)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_grill_sessions_idea ON grill_sessions(idea_id)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_grill_sessions_workspace ON grill_sessions(workspace_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_grill_sessions_workspace ON grill_sessions(workspace_id)`
+      )
       dbLogger.info('[migration-80] ✓ Created grill_sessions table')
     }
   },
@@ -2041,7 +2029,9 @@ const migrations: Migration[] = [
     up: (db) => {
       db.exec(`ALTER TABLE audit_results ADD COLUMN coverage_stats TEXT DEFAULT NULL`)
       db.exec(`ALTER TABLE audit_results ADD COLUMN coverage_sufficient INTEGER DEFAULT NULL`)
-      dbLogger.info('[migration-81] ✓ Added coverage_stats and coverage_sufficient columns to audit_results')
+      dbLogger.info(
+        '[migration-81] ✓ Added coverage_stats and coverage_sufficient columns to audit_results'
+      )
     }
   },
   {
@@ -2066,9 +2056,7 @@ const migrations: Migration[] = [
       // re-index with the new model on next use.
       db.exec('DELETE FROM chunk_embeddings')
       db.exec("UPDATE indexing_state SET status = 'idle', embedding_model = NULL")
-      dbLogger.info(
-        '[migration-83] ✓ Cleared embeddings for model migration (qwen3→nomic-embed)'
-      )
+      dbLogger.info('[migration-83] ✓ Cleared embeddings for model migration (qwen3→nomic-embed)')
     }
   },
   {
@@ -2098,9 +2086,7 @@ const migrations: Migration[] = [
     version: 85,
     name: 'add-conversation-mcp-overrides',
     up: (db) => {
-      db.exec(
-        `ALTER TABLE conversations ADD COLUMN mcp_overrides_json TEXT DEFAULT '{}'`
-      )
+      db.exec(`ALTER TABLE conversations ADD COLUMN mcp_overrides_json TEXT DEFAULT '{}'`)
       dbLogger.info('[migration-85] ✓ Added mcp_overrides_json column to conversations')
     }
   },
@@ -2113,6 +2099,168 @@ const migrations: Migration[] = [
       dbLogger.info(
         '[migration-86] ✓ Dropped conversation_file_changes table (replaced by pure git status)'
       )
+    }
+  },
+  {
+    version: 87,
+    name: 'create-local-plan-state',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS local_plan_state (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          original_request TEXT NOT NULL,
+          discovered_context TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(discovered_context)),
+          plan_text TEXT DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'in_progress'
+            CHECK(status IN ('in_progress', 'completed', 'abandoned')),
+          continuation_count INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_plan_state_conv ON local_plan_state(conversation_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_plan_state_ws ON local_plan_state(workspace_id, status)`
+      )
+      dbLogger.info('[migration-87] ✓ Created local_plan_state table for local LLM plan continuity')
+    }
+  },
+  {
+    version: 88,
+    name: 'add-conversation-communication-tone',
+    up: (db) => {
+      db.exec(`ALTER TABLE conversations ADD COLUMN communication_tone TEXT DEFAULT NULL`)
+      dbLogger.info(
+        '[migration-88] ✓ Added communication_tone column to conversations (per-chat tone override)'
+      )
+    }
+  },
+  {
+    version: 89,
+    name: 'add-indexing-state-checkpoint-columns',
+    up: (db) => {
+      // Track embedding checkpoint offset for resume-after-crash.
+      // preprocessed_chunks_json stores the serialized processedChunks array
+      // so the embedding phase can resume from the checkpoint offset without
+      // re-running the full preprocessing phase.
+      db.exec(`ALTER TABLE indexing_state ADD COLUMN checkpoint_offset INTEGER NOT NULL DEFAULT 0`)
+      db.exec(
+        `ALTER TABLE indexing_state ADD COLUMN description_source TEXT NOT NULL DEFAULT 'none'`
+      )
+      dbLogger.info(
+        '[migration-89] ✓ Added checkpoint_offset and description_source to indexing_state for resumable indexing'
+      )
+    }
+  },
+  {
+    version: 90,
+    name: 'add-chunk-descriptions-source',
+    up: (db) => {
+      // Track whether a description was generated by AI or heuristic engine.
+      // Allows the background AI enrichment phase to selectively upgrade
+      // heuristic descriptions without touching AI-generated ones.
+      db.exec(`ALTER TABLE chunk_descriptions ADD COLUMN source TEXT NOT NULL DEFAULT 'ai'`)
+      dbLogger.info('[migration-90] ✓ Added source column to chunk_descriptions (ai/heuristic)')
+    }
+  },
+  {
+    version: 91,
+    name: 'add-conversation-effort',
+    up: (db) => {
+      db.exec(`ALTER TABLE conversations ADD COLUMN effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))`)
+      dbLogger.info('[migration-91] ✓ Added effort column to conversations')
+    }
+  },
+  {
+    version: 92,
+    name: 'add-danger-mode',
+    up: (db) => {
+      runAddDangerModeMigration(db)
+    }
+  },
+  {
+    version: 93,
+    name: 'create-mpa-tables',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mpa_runs (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          grill_session_id TEXT,
+          title TEXT NOT NULL,
+          goal TEXT NOT NULL,
+          goal_type TEXT NOT NULL DEFAULT 'feature'
+            CHECK (goal_type IN ('feature', 'refactor', 'bugfix', 'tests')),
+          status TEXT NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'paused', 'completed', 'failed', 'cancelled')),
+          current_phase TEXT,
+          config_json TEXT DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          completed_at TEXT,
+          total_tokens INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS mpa_phases (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          run_id TEXT NOT NULL REFERENCES mpa_runs(id) ON DELETE CASCADE,
+          phase_type TEXT NOT NULL CHECK (phase_type IN ('plan', 'execute', 'verify')),
+          iteration INTEGER NOT NULL DEFAULT 1,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+          agent_role TEXT NOT NULL,
+          goal_condition TEXT,
+          input_artifact_id TEXT,
+          output_artifact_id TEXT,
+          started_at TEXT,
+          completed_at TEXT,
+          tokens_used INTEGER DEFAULT 0,
+          stream_content TEXT DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS mpa_artifacts (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          run_id TEXT NOT NULL REFERENCES mpa_runs(id) ON DELETE CASCADE,
+          phase_id TEXT REFERENCES mpa_phases(id) ON DELETE SET NULL,
+          artifact_type TEXT NOT NULL
+            CHECK (artifact_type IN ('plan', 'verify_report', 'goal_spec')),
+          content_json TEXT NOT NULL,
+          content_md TEXT,
+          version INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mpa_phases_run ON mpa_phases(run_id);
+        CREATE INDEX IF NOT EXISTS idx_mpa_artifacts_run ON mpa_artifacts(run_id);
+        CREATE INDEX IF NOT EXISTS idx_mpa_runs_workspace ON mpa_runs(workspace_id);
+      `)
+      dbLogger.info('[migration-93] ✓ Created mpa_runs, mpa_phases, mpa_artifacts tables')
+    }
+  },
+  {
+    version: 94,
+    name: 'Add council_sessions table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS council_sessions (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          input_type TEXT NOT NULL CHECK (input_type IN ('plan', 'requirement', 'question')),
+          input_content TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'completed', 'cancelled', 'failed')),
+          verdict_json TEXT,
+          transcript_md TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          completed_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_council_sessions_workspace ON council_sessions(workspace_id);
+      `)
+      dbLogger.info('[migration-94] ✓ Created council_sessions table')
     }
   }
 ]
@@ -2482,6 +2630,22 @@ CREATE TABLE IF NOT EXISTS bug_council_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_bug_council_conversation ON bug_council_sessions(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_bug_council_task ON bug_council_sessions(task_id);
+
+CREATE TABLE IF NOT EXISTS council_sessions (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  input_type TEXT NOT NULL CHECK (input_type IN ('plan', 'requirement', 'question')),
+  input_content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running', 'completed', 'cancelled', 'failed')),
+  verdict_json TEXT,
+  transcript_md TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_council_sessions_workspace ON council_sessions(workspace_id);
 
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);

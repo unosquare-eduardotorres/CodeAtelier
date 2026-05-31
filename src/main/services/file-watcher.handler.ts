@@ -73,8 +73,7 @@ async function reindexSemanticSearch(
   if (chunks.length === 0) return
 
   // Read workspace settings for description model
-  const workspace = workspaceRepository.findById(workspaceId)
-  const settings = JSON.parse(workspace?.settingsJson || '{}')
+  const settings = workspaceRepository.getSettings(workspaceId)
 
   // Re-index only the changed chunks (upsert semantics)
   await vectorSearchService.reindexFiles(workspaceId, workspacePath, chunks, fileContents, {

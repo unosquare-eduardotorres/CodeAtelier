@@ -1,11 +1,12 @@
 /**
  * Regression guard for the SpecialistBuilder meta-prompt.
  *
- * After the v2 rewrite, the meta-prompt sent to `claude -p` must be a
- * "distill, don't enrich" persona builder — first-person, under 400 words,
- * with explicit DETECTED STACK, REFERENCE-only CLAUDE.md, and a HARD RULES
- * block. This test pins those requirements so the prompt can't silently
- * drift back to the old "Enriches the project-specific sections" wording.
+ * After the v3 rewrite, the meta-prompt sent to `claude -p` must be a
+ * "judgment layer" persona builder — first-person, under 400 words,
+ * with explicit DETECTED STACK, REFERENCE-only CLAUDE.md, anti-redundancy
+ * instructions (CRITICAL LAYERING CONTEXT), and a HARD RULES block.
+ * This test pins those requirements so the prompt can't silently drift
+ * back to fact-repeating or CLAUDE.md-duplicating patterns.
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
@@ -39,6 +40,21 @@ describe('SpecialistBuilder meta-prompt', () => {
     assert.ok(
       sample.includes('REFERENCE'),
       'meta-prompt must label the CLAUDE.md excerpt as REFERENCE'
+    )
+  })
+
+  test('contains_anti_redundancy_instruction', () => {
+    assert.ok(
+      sample.includes('CRITICAL LAYERING CONTEXT'),
+      'meta-prompt must explain the runtime layering to the LLM'
+    )
+    assert.ok(
+      sample.includes('MUST NOT repeat'),
+      'meta-prompt must explicitly forbid repeating CLAUDE.md facts'
+    )
+    assert.ok(
+      sample.includes('JUDGMENT layer'),
+      'meta-prompt must frame the job as writing the judgment layer'
     )
   })
 
@@ -77,13 +93,13 @@ describe('SpecialistBuilder meta-prompt', () => {
     // The meta-prompt asks for EXACTLY these sections, in order. Pin them so the
     // shape can't drift without an explicit test update.
     const idxIdentity = sample.indexOf('## Your identity')
-    const idxStance = sample.indexOf('## Your tech-stack stance')
-    const idxDomain = sample.indexOf('## Domain context')
+    const idxHeuristics = sample.indexOf('## Decision heuristics')
+    const idxInstincts = sample.indexOf('## Architecture instincts')
     const idxOutput = sample.indexOf('## Output style')
     assert.ok(idxIdentity >= 0, 'must mention ## Your identity')
-    assert.ok(idxStance > idxIdentity, '## Your tech-stack stance must come after identity')
-    assert.ok(idxDomain > idxStance, '## Domain context must come after stance')
-    assert.ok(idxOutput > idxDomain, '## Output style must come after domain')
+    assert.ok(idxHeuristics > idxIdentity, '## Decision heuristics must come after identity')
+    assert.ok(idxInstincts > idxHeuristics, '## Architecture instincts must come after heuristics')
+    assert.ok(idxOutput > idxInstincts, '## Output style must come after instincts')
   })
 })
 

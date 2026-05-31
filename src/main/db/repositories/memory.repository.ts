@@ -1,4 +1,5 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
+import { safeParseJSON } from '../json-utils'
 import type { Memory, MemoryType } from '../../../shared/types'
 
 interface MemoryRow {
@@ -23,7 +24,7 @@ function mapRow(row: MemoryRow): Memory {
     type: row.type,
     title: row.title,
     content: row.content,
-    tags: JSON.parse(row.tags || '[]'),
+    tags: safeParseJSON<string[]>(row.tags, []),
     sourceConversationId: row.source_conversation_id,
     sourceAgentId: row.source_agent_id,
     importance: row.importance,
@@ -33,10 +34,12 @@ function mapRow(row: MemoryRow): Memory {
   }
 }
 
-export class MemoryRepository {
+export class MemoryRepository extends BaseRepository<MemoryRow, Memory> {
+  protected readonly tableName = 'memories'
+  protected mapRow(row: MemoryRow): Memory { return mapRow(row) }
+
   findByWorkspace(workspaceId: string): Memory[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare(
         `SELECT * FROM memories
          WHERE workspace_id = ? OR workspace_id IS NULL
@@ -47,8 +50,7 @@ export class MemoryRepository {
   }
 
   findByType(workspaceId: string, type: MemoryType): Memory[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare(
         `SELECT * FROM memories
          WHERE (workspace_id = ? OR workspace_id IS NULL) AND type = ?
@@ -58,16 +60,13 @@ export class MemoryRepository {
     return rows.map(mapRow)
   }
 
-  findById(id: string): Memory | null {
-    const db = getDatabase()
-    const row = db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as MemoryRow | undefined
-    return row ? mapRow(row) : null
+  override findById(id: string): Memory | undefined {
+    return this.findOneBy('id', id)
   }
 
   search(workspaceId: string, query: string): Memory[] {
-    const db = getDatabase()
     const likeQuery = `%${query}%`
-    const rows = db
+    const rows = this.db()
       .prepare(
         `SELECT * FROM memories
          WHERE (workspace_id = ? OR workspace_id IS NULL)
@@ -89,8 +88,7 @@ export class MemoryRepository {
     sourceAgentId?: string
     importance?: number
   }): Memory {
-    const db = getDatabase()
-    const row = db
+    const row = this.db()
       .prepare(
         `INSERT INTO memories (workspace_id, type, title, content, tags, source_conversation_id, source_agent_id, importance)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -118,13 +116,12 @@ export class MemoryRepository {
       importance?: number
     }
   ): Memory {
-    const db = getDatabase()
-    const existing = db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as
+    const existing = this.db().prepare('SELECT * FROM memories WHERE id = ?').get(id) as
       | MemoryRow
       | undefined
     if (!existing) throw new Error(`Memory not found: ${id}`)
 
-    const row = db
+    const row = this.db()
       .prepare(
         `UPDATE memories SET
            title = ?,
@@ -146,8 +143,7 @@ export class MemoryRepository {
   }
 
   delete(id: string): void {
-    const db = getDatabase()
-    db.prepare('DELETE FROM memories WHERE id = ?').run(id)
+    this.deleteById(id)
   }
 
   /**
@@ -155,9 +151,8 @@ export class MemoryRepository {
    */
   touchMemories(ids: string[]): void {
     if (ids.length === 0) return
-    const db = getDatabase()
     const placeholders = ids.map(() => '?').join(',')
-    db.prepare(
+    this.db().prepare(
       `UPDATE memories SET last_accessed_at = datetime('now') WHERE id IN (${placeholders})`
     ).run(...ids)
   }
@@ -167,8 +162,7 @@ export class MemoryRepository {
    * Returns memories within a character budget.
    */
   getForPrompt(workspaceId: string, maxChars: number): Memory[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare(
         `SELECT * FROM memories
          WHERE (workspace_id = ? OR workspace_id IS NULL)
@@ -192,8 +186,7 @@ export class MemoryRepository {
    * Count memories per workspace (for stats/dashboard).
    */
   countByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
-    const result = db
+    const result = this.db()
       .prepare(
         'SELECT COUNT(*) as cnt FROM memories WHERE workspace_id = ? OR workspace_id IS NULL'
       )
@@ -233,10 +226,9 @@ export class MemoryRepository {
    * Used during dedup-on-create.
    */
   findSimilar(workspaceId: string, title: string, excludeId?: string): Memory[] {
-    const db = getDatabase()
     const likeTitle = `%${title}%`
     const rows = excludeId
-      ? (db
+      ? (this.db()
           .prepare(
             `SELECT * FROM memories
              WHERE (workspace_id = ? OR workspace_id IS NULL)
@@ -245,7 +237,7 @@ export class MemoryRepository {
              LIMIT 5`
           )
           .all(workspaceId, likeTitle, excludeId) as MemoryRow[])
-      : (db
+      : (this.db()
           .prepare(
             `SELECT * FROM memories
              WHERE (workspace_id = ? OR workspace_id IS NULL)

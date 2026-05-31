@@ -15,6 +15,7 @@ import type {
   CostPreference,
   AgentIntent,
   MemoryType,
+  ModelAction,
   Specialist
 } from '../../../shared/types'
 import { EXTERNAL_MCP_INTEGRATIONS, LOCAL_MCP_INTEGRATIONS } from '../../../shared/constants'
@@ -52,8 +53,8 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
   private readonly promptAssembler = new DaVinciPromptAssembler()
 
   /** Feature flags refreshed from workspace settings each send(). */
-  private repomapEnabled = false
-  private semanticSearchEnabled = false
+  private repomapEnabled = true
+  private semanticSearchEnabled = true
   private githubConfigured = false
 
   /**
@@ -88,7 +89,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
     try {
       const workspaces = workspaceRepository.findAll()
       const workspace = workspaces.find((w) => w.repoPath === ctx.workspacePath)
-      const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
+      const settings = workspace ? workspaceRepository.getSettings(workspace.id) : {}
 
       if (settings.memoryEnabled !== false && workspace) {
         // Cache-audit optimization: session-start budget reduced from 10K→5K (balanced)
@@ -98,8 +99,8 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
         if (memoryCtx) this.promptAssembler.setMemoryContext(memoryCtx)
       }
 
-      this.repomapEnabled = !!settings.repomapEnabled
-      this.semanticSearchEnabled = !!settings.semanticSearchEnabled
+      this.repomapEnabled = settings.repomapEnabled !== false
+      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
       this.githubConfigured = ctx.workspaceId ? githubService.isConfigured(ctx.workspaceId) : false
     } catch {
       /* non-fatal — keep defaults */
@@ -126,11 +127,9 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
   refreshFeatureFlags(ctx: AdapterSessionLifecycleCtx): void {
     if (!ctx.workspaceId) return
     try {
-      const workspace = workspaceRepository.findById(ctx.workspaceId)
-      if (!workspace) return
-      const settings = JSON.parse(workspace.settingsJson || '{}')
-      this.repomapEnabled = !!settings.repomapEnabled
-      this.semanticSearchEnabled = !!settings.semanticSearchEnabled
+      const settings = workspaceRepository.getSettings(ctx.workspaceId)
+      this.repomapEnabled = settings.repomapEnabled !== false
+      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
       this.githubConfigured = githubService.isConfigured(ctx.workspaceId)
     } catch {
       /* non-fatal */
@@ -175,6 +174,11 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
 
     const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
 
+    // Resolve the model for prompt verbosity gating (Opus 4.8+ → lean prompts)
+    const isBuildMode = ctx.mode === 'build' || ctx.mode === 'danger'
+    const modelAction = `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
+    const resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, modelAction)
+
     const systemPrompt = this.promptAssembler.buildSystemPromptForTurn({
       message: ctx.message,
       hasImages: ctx.hasImages,
@@ -187,7 +191,8 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       costPreference: ctx.costPreference,
       personaSpecialistId: this.currentPersonaSpecialistId,
       personaData: this.currentPersonaData,
-      isLocalProvider: isLocal
+      isLocalProvider: isLocal,
+      model: resolvedModel
     })
 
     const effectiveMessage = this.promptAssembler.buildEffectiveMessage({
@@ -196,7 +201,8 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       hasImages: ctx.hasImages,
       turnCount: ctx.turnCount,
       sessionId: ctx.sessionId,
-      mode: ctx.mode
+      mode: ctx.mode,
+      model: resolvedModel
     })
 
     return { systemPrompt, effectiveMessage }
@@ -302,8 +308,8 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
 
   onSessionStop(): void {
     this.promptAssembler.resetSession()
-    this.repomapEnabled = false
-    this.semanticSearchEnabled = false
+    this.repomapEnabled = true
+    this.semanticSearchEnabled = true
     this.githubConfigured = false
     this.lockedMcpFlags = null
     this.currentPersonaSpecialistId = null
@@ -376,13 +382,25 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
   ): Record<string, boolean> {
     const result: Record<string, boolean> = {}
     try {
-      const ws = workspaceId ? workspaceRepository.findById(workspaceId) : null
-      const wsSettings = ws ? JSON.parse(ws.settingsJson || '{}') : {}
+      const wsSettings = workspaceId ? workspaceRepository.getSettings(workspaceId) : {}
       const conv = conversationId ? conversationRepository.findById(conversationId) : null
       const chatOverrides = conv?.mcpOverrides ?? {}
+
+      this.log.info(
+        `[adapter:resolve-external-mcp] workspaceId=${workspaceId} conversationId=${conversationId} ` +
+          `wsFound=${!!workspaceId} wsSettingsKeys=${Object.keys(wsSettings)
+            .filter((k) => k.includes('Available'))
+            .join(',')} ` +
+          `convFound=${!!conv} chatOverrides=${JSON.stringify(chatOverrides)}`
+      )
+
       for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
-        result[integration.id] =
-          !!wsSettings[`${integration.id}Available`] && !!chatOverrides[integration.id]
+        const wsAvailable = !!wsSettings[`${integration.id}Available`]
+        const chatActive = !!chatOverrides[integration.id]
+        result[integration.id] = wsAvailable && chatActive
+        this.log.info(
+          `[adapter:resolve-external-mcp] ${integration.id}: wsAvailable=${wsAvailable} chatActive=${chatActive} → mounted=${result[integration.id]}`
+        )
       }
     } catch (err) {
       this.log.error('[adapter:external-mcp] Failed to resolve MCP state:', err)

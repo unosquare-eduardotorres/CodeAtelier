@@ -103,9 +103,13 @@ class EmbeddingProviderService extends EventEmitter {
       if (existsSync(wasmBinPath)) {
         const wasmBuffer = readFileSync(wasmBinPath)
         ;(env.backends.onnx.wasm as Record<string, unknown>).wasmBinary = wasmBuffer
-        log.info(`[EmbeddingProvider] Pre-loaded WASM binary (${(wasmBuffer.byteLength / 1024 / 1024).toFixed(1)}MB)`)
+        log.info(
+          `[EmbeddingProvider] Pre-loaded WASM binary (${(wasmBuffer.byteLength / 1024 / 1024).toFixed(1)}MB)`
+        )
       } else {
-        log.warn(`[EmbeddingProvider] WASM binary not found at ${wasmBinPath} — falling back to runtime resolution`)
+        log.warn(
+          `[EmbeddingProvider] WASM binary not found at ${wasmBinPath} — falling back to runtime resolution`
+        )
       }
 
       // Clear CDN-based wasmPaths that transformers.js auto-sets during module load

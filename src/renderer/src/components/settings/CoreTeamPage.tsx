@@ -25,10 +25,7 @@ export default function CoreTeamPage(): React.JSX.Element {
   const [aliases, setAliases] = useState<CoreAgentAlias[]>([])
 
   useEffect(() => {
-    window.api
-      .listCoreAgentAliases()
-      .then(setAliases)
-      .catch(console.error)
+    window.api.listCoreAgentAliases().then(setAliases).catch(console.error)
   }, [])
 
   // Build card data from core agent aliases + defaults

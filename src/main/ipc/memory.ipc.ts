@@ -91,7 +91,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
       const workspace = workspaceRepository.findById(args.workspaceId)
       if (!workspace) throw new Error(`Workspace not found: ${args.workspaceId}`)
 
-      const settings = JSON.parse(workspace.settingsJson || '{}')
+      const settings = workspaceRepository.getSettings(args.workspaceId)
       settings.memoryEnabled = args.memoryEnabled
       workspaceRepository.updateSettings(args.workspaceId, settings)
     }

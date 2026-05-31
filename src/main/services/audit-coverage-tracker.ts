@@ -77,17 +77,51 @@ export class AuditCoverageTracker {
       this.readToolCount++
     }
 
-    // Extract file_path / path from tool input JSON
+    if (!chunk.toolInput) return
+
+    // Strategy 1: Try JSON parse (SDK format — backward compat)
     try {
-      const input = JSON.parse(chunk.toolInput ?? '{}') as Record<string, unknown>
+      const input = JSON.parse(chunk.toolInput) as Record<string, unknown>
       if (typeof input.file_path === 'string' && input.file_path) {
         this.inspectedFiles.add(this.normalizePath(input.file_path))
+        return
       }
       if (typeof input.path === 'string' && input.path) {
         this.inspectedFiles.add(this.normalizePath(input.path))
+        return
       }
     } catch {
-      /* ignore malformed JSON */
+      /* Not JSON — fall through to display string extraction */
+    }
+
+    // Strategy 2: Display string (CLI format)
+    // summarizeToolInput() produces strings like:
+    //   Read  → "src/main/index.ts"
+    //   Grep  → "/pattern/ in src/main"
+    //   Glob  → "**/*.ts"
+    //   file_outline  → "outline: src/main/index.ts"
+    //   find_callers  → "callers of: myFunction"
+    //   deps  → "deps: src/main/index.ts"
+    const input = chunk.toolInput.trim()
+
+    // Read/Write/Edit tools: toolInput IS the file path (relative, no spaces)
+    if ((toolName === 'Read' || toolName === 'Write' || toolName === 'Edit') && input && !input.includes(' ')) {
+      this.inspectedFiles.add(this.normalizePath(input))
+      return
+    }
+
+    // Code-graph tools with "prefix: path" pattern
+    const prefixMatch = input.match(/^(?:outline|deps|dependents):\s*(.+)$/)
+    if (prefixMatch?.[1]) {
+      this.inspectedFiles.add(this.normalizePath(prefixMatch[1]))
+      return
+    }
+
+    // Grep: extract path from "/pattern/ in path"
+    const grepMatch = input.match(/in\s+(\S+)\s*$/)
+    if (toolName === 'Grep' && grepMatch?.[1]) {
+      this.inspectedFiles.add(this.normalizePath(grepMatch[1]))
+      return
     }
   }
 

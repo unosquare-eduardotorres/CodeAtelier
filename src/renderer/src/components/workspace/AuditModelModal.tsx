@@ -26,9 +26,7 @@ export default function AuditModelModal({
   const estimatePerAuditor = mode === 'light' ? 30 : 150 // seconds
   const totalSeconds = estimatePerAuditor * selectedTrackCount
   const estimateText =
-    totalSeconds < 60
-      ? `~${totalSeconds} seconds`
-      : `~${(totalSeconds / 60).toFixed(1)} minutes`
+    totalSeconds < 60 ? `~${totalSeconds} seconds` : `~${(totalSeconds / 60).toFixed(1)} minutes`
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -84,9 +82,7 @@ export default function AuditModelModal({
               >
                 <Monitor
                   size={24}
-                  className={
-                    provider === 'local-llm' ? 'text-primary-text' : 'text-text-muted'
-                  }
+                  className={provider === 'local-llm' ? 'text-primary-text' : 'text-text-muted'}
                 />
                 <span
                   className={`text-sm font-medium ${provider === 'local-llm' ? 'text-primary-text' : 'text-text-secondary'}`}
@@ -101,9 +97,10 @@ export default function AuditModelModal({
           <div className="rounded-xl bg-surface-overlay p-4 space-y-2">
             <p className="text-sm text-text-primary">
               Running{' '}
-              <span className="font-semibold">{selectedTrackCount} auditor{selectedTrackCount !== 1 ? 's' : ''}</span>{' '}
-              in{' '}
-              <span className="font-semibold capitalize">{mode}</span> mode
+              <span className="font-semibold">
+                {selectedTrackCount} auditor{selectedTrackCount !== 1 ? 's' : ''}
+              </span>{' '}
+              in <span className="font-semibold capitalize">{mode}</span> mode
             </p>
             <p className="text-xs text-text-muted">Estimated time: {estimateText}</p>
           </div>

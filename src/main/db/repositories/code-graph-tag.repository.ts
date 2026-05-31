@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 
 interface CodeGraphTagRow {
   id: number
@@ -25,13 +25,16 @@ export interface RepomapTag {
  * Stores raw Tree-sitter tags (definitions + references) for incremental re-indexing
  * and for `search_identifiers` queries against the persisted code graph.
  */
-export class CodeGraphTagRepository {
+export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, RepomapTag> {
+  protected readonly tableName = 'code_graph_tags'
+  protected mapRow(row: CodeGraphTagRow): RepomapTag { return mapRowToTag(row) }
+
   /**
    * Bulk upsert tags for a workspace. Deletes stale files first,
    * then inserts/replaces tags grouped by file.
    */
   upsertTags(workspaceId: string, tags: RepomapTag[], fileMtimes: Map<string, number>): void {
-    const db = getDatabase()
+    const db = this.db()
 
     const transaction = db.transaction(() => {
       // Group tags by file for batch delete + insert
@@ -64,7 +67,7 @@ export class CodeGraphTagRepository {
    * Get all definition tags for a workspace (used for edge graph building).
    */
   findDefsByWorkspace(workspaceId: string): RepomapTag[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare(
         `SELECT rel_fname, fname, line, name, kind FROM code_graph_tags
@@ -78,7 +81,7 @@ export class CodeGraphTagRepository {
    * Get all tags for a specific file (used when loading cached tags for unchanged files).
    */
   findByFile(workspaceId: string, relFname: string): RepomapTag[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare(
         'SELECT rel_fname, fname, line, name, kind FROM code_graph_tags WHERE workspace_id = ? AND rel_fname = ?'
@@ -99,7 +102,7 @@ export class CodeGraphTagRepository {
       includeReferences?: boolean
     }
   ): RepomapTag[] {
-    const db = getDatabase()
+    const db = this.db()
     const maxResults = opts?.maxResults ?? 50
     const includeDefs = opts?.includeDefinitions ?? true
     const includeRefs = opts?.includeReferences ?? true
@@ -128,7 +131,7 @@ export class CodeGraphTagRepository {
    * Get file mtimes for incremental indexing comparison.
    */
   getFileMtimes(workspaceId: string): Map<string, number> {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT DISTINCT rel_fname, file_mtime FROM code_graph_tags WHERE workspace_id = ?')
       .all(workspaceId) as { rel_fname: string; file_mtime: number }[]
@@ -144,7 +147,7 @@ export class CodeGraphTagRepository {
    * Delete all tags for a specific file.
    */
   deleteByFile(workspaceId: string, relFname: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const result = db
       .prepare('DELETE FROM code_graph_tags WHERE workspace_id = ? AND rel_fname = ?')
       .run(workspaceId, relFname)
@@ -155,7 +158,7 @@ export class CodeGraphTagRepository {
    * Delete all tags for a workspace.
    */
   deleteByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const result = db.prepare('DELETE FROM code_graph_tags WHERE workspace_id = ?').run(workspaceId)
     return result.changes
   }
@@ -165,7 +168,7 @@ export class CodeGraphTagRepository {
    * after incremental file re-parsing.
    */
   findAllByWorkspace(workspaceId: string): RepomapTag[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare(
         'SELECT rel_fname, fname, line, name, kind FROM code_graph_tags WHERE workspace_id = ?'
@@ -183,7 +186,7 @@ export class CodeGraphTagRepository {
     workspaceId: string,
     options?: { path?: string; maxResults?: number }
   ): RepomapTag[] {
-    const db = getDatabase()
+    const db = this.db()
     const limit = options?.maxResults ?? 100
     const pathFilter = options?.path ? `AND d.rel_fname LIKE ? || '%'` : ''
     const params: (string | number)[] = [workspaceId, workspaceId]
@@ -219,7 +222,7 @@ export class CodeGraphTagRepository {
     workspaceId: string,
     opts?: { maxResults?: number; path?: string }
   ): { name: string; refCount: number }[] {
-    const db = getDatabase()
+    const db = this.db()
     const maxResults = opts?.maxResults ?? 30
     const pathFilter = opts?.path ? `AND rel_fname LIKE ? || '%'` : ''
     const params: (string | number)[] = [workspaceId]
@@ -244,7 +247,7 @@ export class CodeGraphTagRepository {
    * Count total tags for a workspace.
    */
   countByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare('SELECT COUNT(*) as count FROM code_graph_tags WHERE workspace_id = ?')
       .get(workspaceId) as { count: number }

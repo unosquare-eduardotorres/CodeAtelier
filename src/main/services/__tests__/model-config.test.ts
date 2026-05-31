@@ -5,20 +5,20 @@ import { DEFAULT_MODEL_CONFIG } from '../../../shared/constants'
 
 describe('ModelConfigService', () => {
   describe('Mode-aware Da Vinci model', () => {
-    test('da-vinci:plan defaults to opus-4-7', () => {
-      assert.equal(DEFAULT_MODEL_CONFIG['da-vinci:plan'], 'claude-opus-4-7')
+    test('da-vinci:plan defaults to opus-4-8', () => {
+      assert.equal(DEFAULT_MODEL_CONFIG['da-vinci:plan'], 'claude-opus-4-8')
     })
 
     test('da-vinci:build defaults to sonnet-4-6', () => {
       assert.equal(DEFAULT_MODEL_CONFIG['da-vinci:build'], 'claude-sonnet-4-6')
     })
 
-    test('da-vinci (base) defaults to opus-4-7', () => {
-      assert.equal(DEFAULT_MODEL_CONFIG['da-vinci'], 'claude-opus-4-7')
+    test('da-vinci (base) defaults to opus-4-8', () => {
+      assert.equal(DEFAULT_MODEL_CONFIG['da-vinci'], 'claude-opus-4-8')
     })
 
-    test('specialist:complex defaults to opus-4-7', () => {
-      assert.equal(DEFAULT_MODEL_CONFIG['specialist:complex'], 'claude-opus-4-7')
+    test('specialist:complex defaults to opus-4-8', () => {
+      assert.equal(DEFAULT_MODEL_CONFIG['specialist:complex'], 'claude-opus-4-8')
     })
   })
 

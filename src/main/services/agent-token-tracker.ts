@@ -1,4 +1,4 @@
-import type { SDKExecuteResult } from './sdk-executor'
+import type { ExecutorResult } from './executor-types'
 import { turnUsageRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { chatAgentLogger } from '../logger'
@@ -54,7 +54,7 @@ export class AgentTokenTracker {
    * Returns the total tokens consumed (input + output) for the caller to accumulate.
    */
   recordTurn(
-    meta: SDKExecuteResult,
+    meta: ExecutorResult,
     opts: {
       turnCount: number
       conversationId: string

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Search, X, Bot, ClipboardList, Hammer } from 'lucide-react'
+import { Search, X, Bot, ClipboardList, Hammer, Skull } from 'lucide-react'
 import {
   useChatStore,
   useChatActions,
@@ -23,6 +23,8 @@ import PersonaSelector from './PersonaSelector'
 import ChatTabButton from './ChatTabButton'
 import CodeChangesPanel from './CodeChangesPanel'
 import McpPill from './McpPill'
+import EffortPill from './EffortPill'
+import TodoTaskBar from './TodoTaskBar'
 import {
   StackDriftBanner,
   BuildProgressInline,
@@ -50,7 +52,9 @@ export default function ChatPanel({
   onNavigateToSettings
 }: ChatPanelProps): React.JSX.Element {
   const { activeWorkspace, agentStatus } = useWorkspaceStore()
-  const { createConversation, sendMessage, loadContextUsage, updateMode } = useChatActions()
+  const { createConversation, sendMessage, loadContextUsage, updateMode, setEffort } =
+    useChatActions()
+  const effortLevels = useChatStore((s) => s.effortLevels)
   const activeConversation = useChatStore((s) => s.activeConversation)
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -257,6 +261,7 @@ export default function ChatPanel({
     title: string
     description?: string
     mode: ConversationMode
+    communicationTone?: import('../../../../shared/types').CommunicationTone | null
     attachments?: string[]
     useIsolatedBranch?: boolean
     llmProvider?: string
@@ -272,7 +277,8 @@ export default function ChatPanel({
       data.title,
       undefined, // personaSpecialistId
       (data.llmProvider as import('../../../../shared/types').LLMProvider) ?? undefined,
-      data.mcpOverrides
+      data.mcpOverrides,
+      data.communicationTone
     )
     onNewChatDismiss?.()
     if (data.useIsolatedBranch) {
@@ -455,24 +461,44 @@ export default function ChatPanel({
               <div className="flex items-center justify-center gap-2 py-2 pointer-events-none">
                 {/* Mode pill */}
                 <button
-                  onClick={() => updateMode(activeConversation.mode === 'plan' ? 'build' : 'plan')}
+                  onClick={() => {
+                    const cycle: Record<ConversationMode, ConversationMode> = {
+                      plan: 'build',
+                      build: 'danger',
+                      danger: 'plan'
+                    }
+                    updateMode(cycle[activeConversation.mode])
+                  }}
                   className={`pointer-events-auto inline-flex items-center gap-2 px-5 py-1.5 rounded-full text-sm font-semibold border-2 shadow-lg backdrop-blur-sm transition-all cursor-pointer hover:scale-105 ${
                     activeConversation.mode === 'plan'
                       ? 'bg-mode-plan-muted/80 text-mode-plan-text border-mode-plan-border'
-                      : 'bg-mode-build-muted/80 text-mode-build-text border-mode-build-border'
+                      : activeConversation.mode === 'build'
+                        ? 'bg-mode-build-muted/80 text-mode-build-text border-mode-build-border'
+                        : 'bg-mode-danger-muted/80 text-mode-danger-text border-mode-danger-border'
                   }`}
-                  title="Click to switch mode"
+                  title="Click to cycle mode"
                 >
                   {activeConversation.mode === 'plan' ? (
                     <>
                       <ClipboardList size={16} /> Plan Mode
                     </>
-                  ) : (
+                  ) : activeConversation.mode === 'build' ? (
                     <>
                       <Hammer size={16} /> Build Mode
                     </>
+                  ) : (
+                    <>
+                      <Skull size={16} /> Danger Mode
+                    </>
                   )}
                 </button>
+
+                {/* Effort pill */}
+                <EffortPill
+                  effort={effortLevels[activeConversation.id] ?? 'medium'}
+                  onChange={(effort) => setEffort(activeConversation.id, effort)}
+                  disabled={isStreaming}
+                />
 
                 {/* External MCP pills — one per workspace-available integration */}
                 {availableMcpIntegrations.map((integration) => (
@@ -485,6 +511,11 @@ export default function ChatPanel({
                   />
                 ))}
               </div>
+            )}
+
+            {/* Todo task tracker — collapsible breadcrumb above input */}
+            {activeConversation && (
+              <TodoTaskBar conversationId={activeConversation.id} />
             )}
 
             {/* Input - pinned to bottom */}

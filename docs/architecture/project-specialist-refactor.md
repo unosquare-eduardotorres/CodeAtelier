@@ -18,16 +18,16 @@ Goal: decide which portions of `generalist.service.ts` (1597 LOC) belong in the 
 
 Consumers of `generalistService.*` (confirmed via grep):
 
-| Consumer | Methods called |
-|---|---|
-| `src/main/ipc/chat-lifecycle.ipc.ts` | `start`, `send`, `stop`, `switchMode`, `switchPersona`, `getMode`, `getCurrentConversationId`, `compact` |
-| `src/main/ipc/agent.ipc.ts` | `getStatus`, `isRunning`, `getStreamedContent`, `getCacheEfficiency`, event emitters (`chunk`, `statusUpdate`, `complete`, `intent`, `handoff`, `plan`, `askQuestion`, `promptSuggestion`, `compactNeeded`, `elicitation`) |
-| `src/main/ipc/agent-lifecycle.ipc.ts` | `start`, `stop` |
-| `src/main/ipc/sdk-control.ipc.ts` | `getActiveQuery`, `resumeAt`, `getSessionId`, `clearSession` |
-| `src/main/ipc/checkpoint.ipc.ts` | `getActiveQuery` |
-| `src/main/services/task-pipeline.service.ts` | `injectContext`, `getCurrentConversationId` |
-| `src/main/services/generalist-stream.service.ts` | `this.generalistService.*` cross-references — will be merged in |
-| `src/main/services/__tests__/ipc-pipeline-contracts.test.ts` | 23 references, mostly for mocking |
+| Consumer                                                     | Methods called                                                                                                                                                                                                             |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main/ipc/chat-lifecycle.ipc.ts`                         | `start`, `send`, `stop`, `switchMode`, `switchPersona`, `getMode`, `getCurrentConversationId`, `compact`                                                                                                                   |
+| `src/main/ipc/agent.ipc.ts`                                  | `getStatus`, `isRunning`, `getStreamedContent`, `getCacheEfficiency`, event emitters (`chunk`, `statusUpdate`, `complete`, `intent`, `handoff`, `plan`, `askQuestion`, `promptSuggestion`, `compactNeeded`, `elicitation`) |
+| `src/main/ipc/agent-lifecycle.ipc.ts`                        | `start`, `stop`                                                                                                                                                                                                            |
+| `src/main/ipc/sdk-control.ipc.ts`                            | `getActiveQuery`, `resumeAt`, `getSessionId`, `clearSession`                                                                                                                                                               |
+| `src/main/ipc/checkpoint.ipc.ts`                             | `getActiveQuery`                                                                                                                                                                                                           |
+| `src/main/services/task-pipeline.service.ts`                 | `injectContext`, `getCurrentConversationId`                                                                                                                                                                                |
+| `src/main/services/generalist-stream.service.ts`             | `this.generalistService.*` cross-references — will be merged in                                                                                                                                                            |
+| `src/main/services/__tests__/ipc-pipeline-contracts.test.ts` | 23 references, mostly for mocking                                                                                                                                                                                          |
 
 **Invariant**: after Phase 1, all 9 IPC/service consumers compile and run unchanged. `generalistService` remains an EventEmitter with identical method signatures and events. Internally it becomes a thin wrapper around `AgentSessionService`.
 
@@ -54,7 +54,7 @@ Consumers of `generalistService.*` (confirmed via grep):
 - `buildControlCallbacks()` — `onPlan`, `onHandoff`, `onAskUser`, `onMemory` intent wiring.
 - `emitDetectedIntents()` — pipes `ControlToolState` through `intentDetector`.
 - `decompose()` — handoff brief → task plan (Generalist-only; Project Specialist never delegates).
-- Feature flag refresh (`refreshFeatureFlags()`) — role-neutral *shape* but the flags Generalist consumes (`investigationModeEnabled`, `repomapEnabled`, `semanticSearchEnabled`, `githubConfigured`) are generalist/workspace features. Project Specialist will override with its own flag set.
+- Feature flag refresh (`refreshFeatureFlags()`) — role-neutral _shape_ but the flags Generalist consumes (`investigationModeEnabled`, `repomapEnabled`, `semanticSearchEnabled`, `githubConfigured`) are generalist/workspace features. Project Specialist will override with its own flag set.
 - `investigationModeEnabled` — Generalist-only gate.
 - Persona loading (`currentPersonaData`) — currently generalist-only; likely shareable later, kept in adapter for Phase 1.
 
@@ -88,22 +88,36 @@ export interface AdapterMcpContext {
 
 export interface AgentRoleAdapter {
   readonly role: AgentRole
-  readonly agentId: string  // e.g. GENERALIST_AGENT_ID or workspace-specialist-<id>
+  readonly agentId: string // e.g. GENERALIST_AGENT_ID or workspace-specialist-<id>
 
   /** Called once on session.start() — load role-specific state (prompt, feature flags). */
-  onSessionStart(ctx: { workspacePath: string; workspaceId: string | null; conversationId: string | null }): Promise<void>
+  onSessionStart(ctx: {
+    workspacePath: string
+    workspaceId: string | null
+    conversationId: string | null
+  }): Promise<void>
 
   /** Assemble system prompt + effective message for the upcoming turn. */
   buildPrompts(ctx: AdapterPromptContext): { systemPrompt: string; effectiveMessage: string }
 
   /** Compose MCP servers, allowed/disallowed tool lists. */
-  buildMcpConfig(ctx: AdapterMcpContext): { mcpServers?: Record<string, unknown>; allowedTools?: string[]; disallowedTools?: string[] }
+  buildMcpConfig(ctx: AdapterMcpContext): {
+    mcpServers?: Record<string, unknown>
+    allowedTools?: string[]
+    disallowedTools?: string[]
+  }
 
   /** Wire control-tool callbacks (plan/handoff/askUser/memory) — may return empty for adapters without control tools. */
   buildControlCallbacks(emit: (event: string, payload: unknown) => void): ControlActionCallbacks
 
   /** Detect + emit intents from accumulated text + control-tool state (post-stream). */
-  emitDetectedIntents(ctx: { accumulatedText: string; controlToolState: ControlToolState; mode: ConversationMode; conversationId: string; emit: (event: string, payload: unknown) => void }): void
+  emitDetectedIntents(ctx: {
+    accumulatedText: string
+    controlToolState: ControlToolState
+    mode: ConversationMode
+    conversationId: string
+    emit: (event: string, payload: unknown) => void
+  }): void
 
   /** Whether this adapter supports handoff (Generalist only). */
   supportsHandoff(): boolean
@@ -124,7 +138,18 @@ export class GeneralistService extends EventEmitter {
     super()
     this.session = new AgentSessionService(new GeneralistRoleAdapter())
     // forward events 1:1
-    for (const evt of ['chunk', 'statusUpdate', 'complete', 'intent', 'handoff', 'plan', 'askQuestion', 'promptSuggestion', 'compactNeeded', 'elicitation']) {
+    for (const evt of [
+      'chunk',
+      'statusUpdate',
+      'complete',
+      'intent',
+      'handoff',
+      'plan',
+      'askQuestion',
+      'promptSuggestion',
+      'compactNeeded',
+      'elicitation'
+    ]) {
       this.session.on(evt, (payload) => this.emit(evt, payload))
     }
   }
@@ -212,6 +237,7 @@ Left in place alongside the new slide-over so Phase 2 ships green:
 - `src/renderer/src/components/settings/SpecialistEditPage.tsx`
 
 Cut-over status:
+
 - `ChatPanel` ships the new `Specialist` header button + `SpecialistSlideOver`
   in parallel with the old UI.
 - `SpecialistsListPage` (new) is ready for Settings to route to; old

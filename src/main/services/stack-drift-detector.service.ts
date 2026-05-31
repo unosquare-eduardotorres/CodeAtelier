@@ -70,9 +70,7 @@ export class StackDriftDetectorService {
     const removed = prevTechs.filter((t) => !fresh.detectedTechs.includes(t))
 
     const drifted =
-      specialist.stack_fingerprint !== newFingerprint ||
-      added.length > 0 ||
-      removed.length > 0
+      specialist.stack_fingerprint !== newFingerprint || added.length > 0 || removed.length > 0
 
     if (drifted) {
       driftLog.info(

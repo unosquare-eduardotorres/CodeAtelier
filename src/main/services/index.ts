@@ -1,4 +1,5 @@
-export { AgentBaseService, summarizeToolInput } from './agent-base.service'
+export { AgentBaseService } from './agent-base.service'
+export { summarizeToolInput } from './tool-input-summarizer'
 export type { StreamChunk } from './agent-base.service'
 export { ChatAgentService, chatAgentService } from './chat-agent.service'
 export { FileService, fileService } from './file.service'
@@ -6,7 +7,6 @@ export { SkillService, skillService } from './skill.service'
 
 // Prompt assembly — centralized in PromptBuilder
 export { PromptBuilder, promptBuilder } from './prompt-builder'
-
 
 export { WorkspaceDeployService, workspaceDeployService } from './workspace-deploy.service'
 export { memoryService } from './memory.service'
@@ -22,19 +22,13 @@ export {
   estimateCostFromTotal
 } from './cost-tracker.service'
 export { checkpointService } from './checkpoint.service'
-export { detectAbandonment, detectQualityGates } from './abandonment-detector.service'
 
-// Auth & SDK abstractions
+// Auth abstractions
 export { authProvider } from './auth-provider'
 export type { AuthProvider } from './auth-provider'
-export { sdkExecutor, SDKExecutor } from './sdk-executor'
 
 // Chat streaming lifecycle — owns stream/stop/compact + event forwarding
-export {
-  chatStreamService,
-  initChatStream,
-  ChatStreamService
-} from './chat-stream.service'
+export { chatStreamService, initChatStream, ChatStreamService } from './chat-stream.service'
 export type { PipelineCallbacks } from './chat-stream.service'
 
 // Intent detection + routing — replaces scattered detect*() methods and EventEmitter forwarders
@@ -47,3 +41,10 @@ export type { TurnBreakdownEntry, CacheEfficiencyReport } from './agent-token-tr
 export { AgentCircuitBreaker } from './agent-circuit-breaker'
 export { buildWorkspaceMcpConfig } from './workspace-mcp-config'
 export type { McpFeatureFlags, McpConfigResult } from './workspace-mcp-config'
+
+// Multi-workspace session event routing
+export {
+  SessionEventRouter,
+  initSessionEventRouter,
+  getSessionEventRouter
+} from './session-event-router'

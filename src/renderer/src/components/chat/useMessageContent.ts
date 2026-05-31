@@ -46,8 +46,7 @@ export interface MessageContentData {
 export function useMessageContent(
   contentMd: string,
   attachmentsJson: string | undefined,
-  isUser: boolean,
-  suppressInlineGrillCard?: boolean
+  isUser: boolean
 ): MessageContentData {
   return useMemo(() => {
     // Parse attachments
@@ -63,9 +62,7 @@ export function useMessageContent(
 
     // Grill activation detection
     const grillActivation = isUser && contentMd.startsWith('[GRILL MODE ACTIVATED]')
-    const ideaMatch = grillActivation
-      ? contentMd.match(/## Idea to Refine\n\*\*(.+?)\*\*/)
-      : null
+    const ideaMatch = grillActivation ? contentMd.match(/## Idea to Refine\n\*\*(.+?)\*\*/) : null
 
     // Clean display content for grill messages
     let dispContent = contentMd
@@ -115,7 +112,7 @@ export function useMessageContent(
     // Detect grill-question blocks
     const gqMatch = !isUser ? contentMd.match(/```grill-question\n([\s\S]*?)```/) : null
     let gQuestions: GrillQuestion[] = []
-    if (gqMatch && !suppressInlineGrillCard) {
+    if (gqMatch) {
       try {
         const parsed = JSON.parse(gqMatch[1].trim())
         if (parsed.questions && Array.isArray(parsed.questions)) {
@@ -152,9 +149,7 @@ export function useMessageContent(
       }
     }
     const bGrillEval = geMatch ? contentMd.substring(0, geMatch.index!) : null
-    const aGrillEval = geMatch
-      ? contentMd.substring(geMatch.index! + geMatch[0].length)
-      : null
+    const aGrillEval = geMatch ? contentMd.substring(geMatch.index! + geMatch[0].length) : null
 
     // Detect build-summary blocks
     const bsMatch = !isUser ? contentMd.match(/```build-summary\n([\s\S]*?)```/) : null
@@ -167,9 +162,7 @@ export function useMessageContent(
       }
     }
     const bBuildSummary = bsMatch ? contentMd.substring(0, bsMatch.index!) : null
-    const aBuildSummary = bsMatch
-      ? contentMd.substring(bsMatch.index! + bsMatch[0].length)
-      : null
+    const aBuildSummary = bsMatch ? contentMd.substring(bsMatch.index! + bsMatch[0].length) : null
 
     return {
       imageAttachments: imageAtts,
@@ -196,5 +189,5 @@ export function useMessageContent(
       beforeBuildSummary: bBuildSummary,
       afterBuildSummary: aBuildSummary
     }
-  }, [contentMd, attachmentsJson, isUser, suppressInlineGrillCard])
+  }, [contentMd, attachmentsJson, isUser])
 }

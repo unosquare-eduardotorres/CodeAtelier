@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 
 /** Allowed event categories — matches CHECK constraint in events table */
 export type EventCategory =
@@ -59,7 +59,10 @@ function toModel(row: EventRow): EventRecord {
   }
 }
 
-export class EventRepository {
+export class EventRepository extends BaseRepository<EventRow, EventRecord> {
+  protected readonly tableName = 'events'
+  protected mapRow(row: EventRow): EventRecord { return toModel(row) }
+
   /** Insert a new event record */
   create(opts: {
     eventType: string
@@ -73,8 +76,7 @@ export class EventRepository {
     model?: string
     sequenceNumber?: number
   }): EventRecord {
-    const db = getDatabase()
-    const row = db
+    const row = this.db()
       .prepare(
         `INSERT INTO events (event_type, category, message, session_id, conversation_id, workspace_id, data_json, agent_id, model, sequence_number)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -97,44 +99,33 @@ export class EventRepository {
 
   /** Get events for a conversation, ordered by most recent first */
   findByConversation(conversationId: string, limit: number = 100): EventRecord[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `SELECT * FROM events WHERE conversation_id = ?
-         ORDER BY created_at DESC LIMIT ?`
-      )
-      .all(conversationId, limit) as EventRow[]
-    return rows.map(toModel)
+    return this.findManyBy('conversation_id', conversationId, {
+      orderBy: 'created_at DESC',
+      limit
+    })
   }
 
   /** Get recent events across all categories */
   getRecent(limit: number = 200): EventRecord[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare('SELECT * FROM events ORDER BY created_at DESC LIMIT ?')
       .all(limit) as EventRow[]
-    return rows.map(toModel)
+    return rows.map(this.mapRow)
   }
 
   /** Get recent events for a specific workspace */
   getRecentByWorkspace(workspaceId: string, limit: number = 200): EventRecord[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `SELECT * FROM events WHERE workspace_id = ?
-         ORDER BY created_at DESC LIMIT ?`
-      )
-      .all(workspaceId, limit) as EventRow[]
-    return rows.map(toModel)
+    return this.findManyBy('workspace_id', workspaceId, {
+      orderBy: 'created_at DESC',
+      limit
+    })
   }
 
   /** Prune old events to prevent unbounded DB growth */
   pruneOlderThan(days: number): number {
-    const db = getDatabase()
-    const result = db
+    return this.db()
       .prepare(`DELETE FROM events WHERE created_at < datetime('now', '-' || ? || ' days')`)
-      .run(days)
-    return result.changes
+      .run(days).changes
   }
 }
 

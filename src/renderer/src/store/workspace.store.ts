@@ -2,6 +2,13 @@ import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
 import type { Workspace, RepoInfo } from '../../../shared/types'
 
+/** Lightweight snapshot cached per workspace for fast re-hydration on switch. */
+interface WorkspaceSnapshot {
+  lastConversationId: string | null
+  scrollPosition: number
+  agentStatus: 'stopped' | 'starting' | 'running' | 'error'
+}
+
 interface WorkspaceState {
   workspaces: Workspace[]
   activeWorkspace: Workspace | null
@@ -9,6 +16,9 @@ interface WorkspaceState {
   agentStatus: 'stopped' | 'starting' | 'running' | 'error'
   repoInfo: RepoInfo | null
   githubStatus: { configured: boolean; login?: string; tokenType?: string } | null
+
+  /** Cached snapshots for fast workspace re-hydration. */
+  snapshots: Record<string, WorkspaceSnapshot>
 
   loadWorkspaces: () => Promise<void>
   createWorkspace: (name: string, repoPath: string) => Promise<void>
@@ -32,6 +42,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   agentStatus: previousWorkspaceState?.agentStatus ?? 'stopped',
   repoInfo: previousWorkspaceState?.repoInfo ?? null,
   githubStatus: previousWorkspaceState?.githubStatus ?? null,
+  snapshots: (previousWorkspaceState as WorkspaceState | undefined)?.snapshots ?? {},
 
   loadWorkspaces: async () => {
     set({ isLoading: true })
@@ -56,8 +67,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   openWorkspace: async (id: string) => {
+    const { activeWorkspace: previousWorkspace, agentStatus: prevStatus } = get()
+
+    // Save snapshot of current workspace before switching
+    if (previousWorkspace) {
+      set((state) => ({
+        snapshots: {
+          ...state.snapshots,
+          [previousWorkspace.id]: {
+            lastConversationId: null, // Chat store handles its own state
+            scrollPosition: 0,
+            agentStatus: prevStatus
+          }
+        }
+      }))
+    }
+
     const workspace = await window.api.openWorkspace({ id })
     set({ activeWorkspace: workspace })
+
     // Refresh workspace list to update lastOpenedAt (without auto-open to prevent recursion)
     try {
       const workspaces = await window.api.listWorkspaces()
@@ -65,29 +93,63 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch {
       /* silently ignore refresh failure */
     }
-    // Fire-and-forget: start agent runtime (don't block on readiness)
-    set({ agentStatus: 'starting' })
-    window.api.startAgent(workspace.repoPath).catch((error) => {
+
+    // Restore snapshot if available — shows cached status instantly
+    const snapshot = get().snapshots[id]
+    if (snapshot) {
+      set({ agentStatus: snapshot.agentStatus })
+    }
+
+    // Fire-and-forget: start agent runtime (don't block on readiness).
+    // Multi-workspace: startAgent calls startForWorkspace on the backend
+    // which creates a NEW session or re-activates an existing one — does NOT
+    // kill sessions for other workspaces.
+    if (!snapshot || snapshot.agentStatus !== 'running') {
+      set({ agentStatus: 'starting' })
+    }
+    window.api.startAgent({ workspacePath: workspace.repoPath, workspaceId: workspace.id }).catch((error) => {
       rendererLog.error('Failed to start agent runtime:', error)
       set({ agentStatus: 'error' })
     })
+
     // Load repo info + GitHub status in parallel (fire-and-forget)
     get().loadRepoInfo(id)
     get().loadGitHubStatus(id)
   },
 
   deleteWorkspace: async (id: string) => {
+    // Backend handles session cleanup via workspace.ipc.ts → stopForWorkspace
     await window.api.deleteWorkspace({ id })
-    const { activeWorkspace } = get()
+    const { activeWorkspace, snapshots } = get()
+
+    // Remove snapshot for deleted workspace
+    const { [id]: _, ...remainingSnapshots } = snapshots
+
     set((state) => ({
       workspaces: state.workspaces.filter((w) => w.id !== id),
-      activeWorkspace: activeWorkspace?.id === id ? null : activeWorkspace
+      activeWorkspace: activeWorkspace?.id === id ? null : activeWorkspace,
+      snapshots: remainingSnapshots
     }))
   },
 
   clearActiveWorkspace: () => {
-    // Only clear UI state — backend processes are still running, so preserve
-    // agentStatus to avoid the "Initializing AI Agent..." overlay on re-open
+    const { activeWorkspace, agentStatus } = get()
+
+    // Save snapshot before clearing — so we can restore quickly on re-open.
+    // Backend sessions are still running, so preserve agentStatus.
+    if (activeWorkspace) {
+      set((state) => ({
+        snapshots: {
+          ...state.snapshots,
+          [activeWorkspace.id]: {
+            lastConversationId: null,
+            scrollPosition: 0,
+            agentStatus
+          }
+        }
+      }))
+    }
+
     set({ activeWorkspace: null, repoInfo: null, githubStatus: null })
   },
 

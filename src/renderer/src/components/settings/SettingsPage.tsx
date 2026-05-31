@@ -27,6 +27,7 @@ import { Avatar } from '@renderer/components/common'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 import type { Specialist, ChatBubbleSize, UpdateSourceProvider } from '../../../../shared/types'
 import AISubscriptionsSection from './AISubscriptionsSection'
+import ThemeSection from './ThemeSection'
 
 function UpdateButton(): React.JSX.Element {
   const { status, availableVersion, checkForUpdates, installUpdate } = useUpdateStore()
@@ -370,12 +371,9 @@ function UpdateSettingsSection(): React.JSX.Element {
     })
   }, [])
 
-  const handleSourceChange = useCallback(
-    (source: UpdateSourceProvider) => {
-      useUpdateStore.getState().setSource(source)
-    },
-    []
-  )
+  const handleSourceChange = useCallback((source: UpdateSourceProvider) => {
+    useUpdateStore.getState().setSource(source)
+  }, [])
 
   const handleBrowseDrivePath = useCallback(async () => {
     const selected = await window.api.selectDirectory()
@@ -472,8 +470,12 @@ function UpdateSettingsSection(): React.JSX.Element {
           </div>
           <p className="flex items-start gap-1.5 text-[11px] text-text-muted">
             <Info size={11} className="mt-0.5 shrink-0" />
-            Folder must contain <code className="px-1 py-0.5 bg-surface-base rounded text-[10px]">latest-mac.yml</code> +{' '}
-            <code className="px-1 py-0.5 bg-surface-base rounded text-[10px]">.zip</code> for macOS auto-update.
+            Folder must contain{' '}
+            <code className="px-1 py-0.5 bg-surface-base rounded text-[10px]">
+              latest-mac.yml
+            </code>{' '}
+            + <code className="px-1 py-0.5 bg-surface-base rounded text-[10px]">.zip</code> for
+            macOS auto-update.
           </p>
         </div>
       )}
@@ -546,6 +548,9 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
 
             {/* AI Subscriptions section */}
             <AISubscriptionsSection />
+
+            {/* Theme selection */}
+            <ThemeSection />
 
             {/* Chat bubble size */}
             <ChatBubbleSizeSection />

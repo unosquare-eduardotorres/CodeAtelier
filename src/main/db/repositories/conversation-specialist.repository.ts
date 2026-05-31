@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 import type { ConversationSpecialist } from '../../../shared/types'
 
 interface ConversationSpecialistRow {
@@ -21,10 +21,13 @@ function mapRow(row: ConversationSpecialistRow): ConversationSpecialist {
   }
 }
 
-export class ConversationSpecialistRepository {
+export class ConversationSpecialistRepository extends BaseRepository<ConversationSpecialistRow, ConversationSpecialist> {
+  protected readonly tableName = 'conversation_specialists'
+  protected mapRow(row: ConversationSpecialistRow): ConversationSpecialist { return mapRow(row) }
+
   /** Get all overrides for a conversation */
   findByConversation(conversationId: string): ConversationSpecialist[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare(
         `
@@ -43,7 +46,7 @@ export class ConversationSpecialistRepository {
     conversationId: string,
     specialistId: string
   ): ConversationSpecialist | null {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare(
         `SELECT * FROM conversation_specialists WHERE conversation_id = ? AND specialist_id = ?`
@@ -60,7 +63,7 @@ export class ConversationSpecialistRepository {
       isActive?: boolean
     }
   ): void {
-    const db = getDatabase()
+    const db = this.db()
     const existing = this.findByConversationAndSpecialist(conversationId, specialistId)
 
     if (existing) {
@@ -85,17 +88,13 @@ export class ConversationSpecialistRepository {
         INSERT INTO conversation_specialists (conversation_id, specialist_id, is_active)
         VALUES (?, ?, ?)
       `
-      ).run(
-        conversationId,
-        specialistId,
-        data.isActive !== undefined ? (data.isActive ? 1 : 0) : 1
-      )
+      ).run(conversationId, specialistId, data.isActive !== undefined ? (data.isActive ? 1 : 0) : 1)
     }
   }
 
   /** Remove override (revert to workspace default) */
   remove(conversationId: string, specialistId: string): void {
-    const db = getDatabase()
+    const db = this.db()
     db.prepare(
       'DELETE FROM conversation_specialists WHERE conversation_id = ? AND specialist_id = ?'
     ).run(conversationId, specialistId)
@@ -103,13 +102,13 @@ export class ConversationSpecialistRepository {
 
   /** Remove all overrides for a conversation */
   removeAll(conversationId: string): void {
-    const db = getDatabase()
+    const db = this.db()
     db.prepare('DELETE FROM conversation_specialists WHERE conversation_id = ?').run(conversationId)
   }
 
   /** Initialize conversation with workspace defaults (called on conversation creation) */
   initFromWorkspaceDefaults(conversationId: string): void {
-    const db = getDatabase()
+    const db = this.db()
     db.prepare(
       `
       INSERT OR IGNORE INTO conversation_specialists (conversation_id, specialist_id, is_active)
@@ -123,7 +122,7 @@ export class ConversationSpecialistRepository {
     conversationId: string,
     specialistIds: string[]
   ): ConversationSpecialist[] {
-    const db = getDatabase()
+    const db = this.db()
     const uniqueIds = [...new Set(specialistIds)]
 
     db.transaction(() => {

@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 import type { Idea } from '../../../shared/types'
 
 interface IdeaRow {
@@ -31,41 +31,31 @@ function mapRow(row: IdeaRow): Idea {
   }
 }
 
-export class IdeaRepository {
+export class IdeaRepository extends BaseRepository<IdeaRow, Idea> {
+  protected readonly tableName = 'ideas'
+  protected mapRow(row: IdeaRow): Idea { return mapRow(row) }
+
   create(workspaceId: string, title: string, description: string): Idea {
-    const db = getDatabase()
-    const stmt = db.prepare(`
+    const stmt = this.db().prepare(`
       INSERT INTO ideas (workspace_id, title, description)
       VALUES (?, ?, ?)
       RETURNING *
     `)
     const row = stmt.get(workspaceId, title, description) as IdeaRow
-    return mapRow(row)
+    return this.mapRow(row)
   }
 
   findByWorkspace(workspaceId: string): Idea[] {
-    const db = getDatabase()
-    const stmt = db.prepare('SELECT * FROM ideas WHERE workspace_id = ? ORDER BY created_at DESC')
-    const rows = stmt.all(workspaceId) as IdeaRow[]
-    return rows.map(mapRow)
+    return this.findManyBy('workspace_id', workspaceId, { orderBy: 'created_at DESC' })
   }
 
-  findById(id: string): Idea | undefined {
-    const db = getDatabase()
-    const stmt = db.prepare('SELECT * FROM ideas WHERE id = ?')
-    const row = stmt.get(id) as IdeaRow | undefined
-    return row ? mapRow(row) : undefined
-  }
+  // findById inherited from BaseRepository
 
   findByGrillConversation(conversationId: string): Idea | undefined {
-    const db = getDatabase()
-    const stmt = db.prepare('SELECT * FROM ideas WHERE grill_conversation_id = ?')
-    const row = stmt.get(conversationId) as IdeaRow | undefined
-    return row ? mapRow(row) : undefined
+    return this.findOneBy('grill_conversation_id', conversationId)
   }
 
   update(id: string, data: { title?: string; description?: string }): Idea | undefined {
-    const db = getDatabase()
     const sets: string[] = []
     const values: string[] = []
 
@@ -83,73 +73,45 @@ export class IdeaRepository {
     sets.push("updated_at = datetime('now')")
     values.push(id)
 
-    const stmt = db.prepare(`
+    const stmt = this.db().prepare(`
       UPDATE ideas SET ${sets.join(', ')}
       WHERE id = ?
       RETURNING *
     `)
     const row = stmt.get(...values) as IdeaRow | undefined
-    return row ? mapRow(row) : undefined
+    return row ? this.mapRow(row) : undefined
+  }
+
+  /** Helper for single-field updates that return the updated row */
+  private updateField(id: string, column: string, value: unknown): Idea | undefined {
+    const row = this.db()
+      .prepare(`UPDATE ideas SET ${column} = ?, updated_at = datetime('now') WHERE id = ? RETURNING *`)
+      .get(value, id) as IdeaRow | undefined
+    return row ? this.mapRow(row) : undefined
   }
 
   updateStatus(id: string, status: 'draft' | 'grilling' | 'completed'): Idea | undefined {
-    const db = getDatabase()
-    const stmt = db.prepare(`
-      UPDATE ideas SET status = ?, updated_at = datetime('now')
-      WHERE id = ?
-      RETURNING *
-    `)
-    const row = stmt.get(status, id) as IdeaRow | undefined
-    return row ? mapRow(row) : undefined
+    return this.updateField(id, 'status', status)
   }
 
   setGrillConversation(id: string, conversationId: string): Idea | undefined {
-    const db = getDatabase()
-    const stmt = db.prepare(`
-      UPDATE ideas SET grill_conversation_id = ?, updated_at = datetime('now')
-      WHERE id = ?
-      RETURNING *
-    `)
-    const row = stmt.get(conversationId, id) as IdeaRow | undefined
-    return row ? mapRow(row) : undefined
+    return this.updateField(id, 'grill_conversation_id', conversationId)
   }
 
   setGrillSummary(id: string, summary: string): Idea | undefined {
-    const db = getDatabase()
-    const stmt = db.prepare(`
-      UPDATE ideas SET grill_summary = ?, updated_at = datetime('now')
-      WHERE id = ?
-      RETURNING *
-    `)
-    const row = stmt.get(summary, id) as IdeaRow | undefined
-    return row ? mapRow(row) : undefined
+    return this.updateField(id, 'grill_summary', summary)
   }
 
   setConvertedConversation(id: string, conversationId: string): Idea | undefined {
-    const db = getDatabase()
-    const stmt = db.prepare(`
-      UPDATE ideas SET converted_conversation_id = ?, updated_at = datetime('now')
-      WHERE id = ?
-      RETURNING *
-    `)
-    const row = stmt.get(conversationId, id) as IdeaRow | undefined
-    return row ? mapRow(row) : undefined
+    return this.updateField(id, 'converted_conversation_id', conversationId)
   }
 
   saveGrillDecisions(id: string, decisions: string): Idea | undefined {
-    const db = getDatabase()
-    const stmt = db.prepare(`
-      UPDATE ideas SET grill_decisions = ?, updated_at = datetime('now')
-      WHERE id = ?
-      RETURNING *
-    `)
-    const row = stmt.get(decisions, id) as IdeaRow | undefined
-    return row ? mapRow(row) : undefined
+    return this.updateField(id, 'grill_decisions', decisions)
   }
 
   delete(id: string): void {
-    const db = getDatabase()
-    db.prepare('DELETE FROM ideas WHERE id = ?').run(id)
+    this.deleteById(id)
   }
 }
 

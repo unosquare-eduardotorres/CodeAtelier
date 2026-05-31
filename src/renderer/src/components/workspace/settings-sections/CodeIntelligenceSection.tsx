@@ -79,9 +79,7 @@ export default function CodeIntelligenceSection({
           )}
 
           {/* Progress panel (auto-shows when indexing is active) */}
-          {!!settings.repomapEnabled && (
-            <CodeGraphProgressPanel workspaceId={workspaceId} />
-          )}
+          {!!settings.repomapEnabled && <CodeGraphProgressPanel workspaceId={workspaceId} />}
 
           {/* Re-index button (shown when enabled) */}
           {!!settings.repomapEnabled && (
@@ -157,9 +155,9 @@ export default function CodeIntelligenceSection({
               {showAiDescInfo && (
                 <div className="text-xs text-text-secondary bg-surface-base rounded-md p-3 ml-0.5 space-y-2 border border-border-subtle">
                   <p>
-                    <strong className="text-text-body">What it does:</strong> During indexing,
-                    each code chunk (function, class, method) is sent to Claude Haiku which
-                    generates a one-line natural language description — e.g.{' '}
+                    <strong className="text-text-body">What it does:</strong> During indexing, each
+                    code chunk (function, class, method) is sent to Claude Haiku which generates a
+                    one-line natural language description — e.g.{' '}
                     <span className="italic text-text-muted">
                       &quot;Validates JWT tokens and extracts user claims from the authorization
                       header&quot;
@@ -180,8 +178,8 @@ export default function CodeIntelligenceSection({
                     function body alone. Expect noticeably better semantic search recall.
                   </p>
                   <p>
-                    <strong className="text-text-body">Tradeoff:</strong> Indexing takes longer
-                    and uses Claude Haiku tokens from your subscription (one short call per code
+                    <strong className="text-text-body">Tradeoff:</strong> Indexing takes longer and
+                    uses Claude Haiku tokens from your subscription (one short call per code
                     symbol). Descriptions are cached — re-indexing only regenerates changed files.
                   </p>
                 </div>
@@ -199,8 +197,8 @@ export default function CodeIntelligenceSection({
                 <div className="flex items-center gap-2 text-xs text-success">
                   <Database size={12} />
                   <span>
-                    Index loaded from cache (
-                    {persistedIndexStatus.symbolCount?.toLocaleString()} symbols)
+                    Index loaded from cache ({persistedIndexStatus.symbolCount?.toLocaleString()}{' '}
+                    symbols)
                   </span>
                 </div>
               ) : (

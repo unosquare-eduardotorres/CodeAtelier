@@ -14,7 +14,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { AgentSessionService } from '../agent-session.service'
-import type { SDKExecuteOptions } from '../sdk-executor'
+import type { ExecutorBaseOptions } from '../executor-types'
 import type {
   AgentRoleAdapter,
   AdapterIntentContext,
@@ -194,10 +194,10 @@ describe('AgentSessionService', () => {
     assert.deepEqual(seen, events)
   })
 
-  test('SDKExecuteOptions_autoCompact_uses_correct_types', () => {
+  test('ExecutorBaseOptions_autoCompact_uses_correct_types', () => {
     // Verify the interface contract: autoCompactEnabled is boolean, contextWindowSize is number.
     // This catches the original bug where autoCompactWindow was passed as boolean (SDK expects number).
-    const opts: Partial<SDKExecuteOptions> = {
+    const opts: Partial<ExecutorBaseOptions> = {
       autoCompactEnabled: true,
       contextWindowSize: 1_000_000
     }
@@ -205,15 +205,19 @@ describe('AgentSessionService', () => {
     assert.equal(typeof opts.contextWindowSize, 'number')
 
     // Verify that the old broken property name no longer exists on the interface.
-    // TypeScript compile-time ensures this — if 'autoCompactWindow' were on SDKExecuteOptions,
+    // TypeScript compile-time ensures this — if 'autoCompactWindow' were on ExecutorBaseOptions,
     // the type assertion below would succeed. Since we removed it, this is a runtime assertion
     // that the object shape is correct.
-    assert.equal('autoCompactWindow' in opts, false, 'autoCompactWindow should not exist on SDKExecuteOptions')
+    assert.equal(
+      'autoCompactWindow' in opts,
+      false,
+      'autoCompactWindow should not exist on ExecutorBaseOptions'
+    )
   })
 
-  test('SDKExecuteOptions_contextManagement_is_optional', () => {
+  test('ExecutorBaseOptions_contextManagement_is_optional', () => {
     // Verify contextManagement is accepted as a valid option
-    const opts: Partial<SDKExecuteOptions> = {
+    const opts: Partial<ExecutorBaseOptions> = {
       contextManagement: {
         clearToolResults: true,
         clearToolResultsTrigger: 300_000,
@@ -230,9 +234,9 @@ describe('AgentSessionService', () => {
     assert.equal(opts.contextManagement!.clearToolResultsTrigger, 300_000)
   })
 
-  test('SDKExecuteOptions_contextManagement_accepts_tier_metadata', () => {
+  test('ExecutorBaseOptions_contextManagement_accepts_tier_metadata', () => {
     // Verify _tier and _tierLimits are accepted in the interface
-    const opts: Partial<SDKExecuteOptions> = {
+    const opts: Partial<ExecutorBaseOptions> = {
       contextManagement: {
         clearToolResults: true,
         clearToolResultsTrigger: 9_830,
@@ -245,17 +249,17 @@ describe('AgentSessionService', () => {
         serverCompactionTrigger: 0,
         _tier: 'small',
         _tierLimits: {
-          maxTurnsPlan: 8,
-          maxTurnsBuild: 12,
+          maxTurnsPlan: 12,
+          maxTurnsBuild: 15,
           readLineLimit: 100,
           toolResultBudgetChars: 30_000,
           compactSuggestThreshold: 16_000,
-          compactAutoThreshold: 24_000,
+          compactAutoThreshold: 24_000
         }
       }
     }
     assert.equal(opts.contextManagement!._tier, 'small')
-    assert.equal(opts.contextManagement!._tierLimits!.maxTurnsBuild, 12)
+    assert.equal(opts.contextManagement!._tierLimits!.maxTurnsBuild, 15)
     assert.equal(opts.contextManagement!._tierLimits!.readLineLimit, 100)
   })
 

@@ -20,6 +20,9 @@ import { chatAgentService, skillService } from './services'
 import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
+import { grillAgentService } from './services/grill-agent.service'
+import { auditAgentService } from './services/audit-agent.service'
+import { mpaOrchestrationService } from './services/mpa-orchestration.service'
 
 import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
@@ -224,7 +227,8 @@ function createWindow(): void {
 
   // Clean up stale "running" sessions left over from a previous app crash/quit
   try {
-    const { agentSessionRepository } = require('./db/repositories') as typeof import('./db/repositories')
+    const { agentSessionRepository } =
+      require('./db/repositories') as typeof import('./db/repositories')
     const staleCount = agentSessionRepository.terminateStale()
     if (staleCount > 0) {
       log.info(`[Startup] Terminated ${staleCount} stale agent session(s) from previous run`)
@@ -408,11 +412,32 @@ app.on('before-quit', async (event) => {
     log.debug('Skill service shutdown error (expected during quit):', e)
   }
 
-  // Cleanup generalist (long-lived interactive claude process)
+  // Cleanup ALL running workspace sessions (multi-session concurrent support)
   try {
-    await chatAgentService.stop()
+    await chatAgentService.stopAll()
   } catch (e) {
-    log.debug('Generalist shutdown error (expected during quit):', e)
+    log.debug('Chat session shutdown error (expected during quit):', e)
+  }
+
+  // Cleanup grill evaluations
+  try {
+    await grillAgentService.shutdown()
+  } catch (e) {
+    log.debug('Grill shutdown error (expected during quit):', e)
+  }
+
+  // Cleanup audit operations
+  try {
+    await auditAgentService.shutdown()
+  } catch (e) {
+    log.debug('Audit shutdown error (expected during quit):', e)
+  }
+
+  // Cleanup MPA pipelines
+  try {
+    await mpaOrchestrationService.shutdown()
+  } catch (e) {
+    log.debug('MPA shutdown error (expected during quit):', e)
   }
 
   // Cleanup memory feed (cancel in-progress claude -p summarizer)

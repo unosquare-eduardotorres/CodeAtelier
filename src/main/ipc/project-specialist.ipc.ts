@@ -23,6 +23,7 @@ import { specialistRepository } from '../db/repositories'
 import { specialistBuilderService } from '../services/specialist-builder.service'
 import { stackDriftDetectorService } from '../services/stack-drift-detector.service'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString, optionalBoolean } from './validate-args'
 import log from 'electron-log'
 
 const psLog = log.scope('project-specialist-ipc')
@@ -141,10 +142,12 @@ function loadSkillsForSpecialist(specialistId: string): Array<{
 export function registerProjectSpecialistIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_GET,
-    async (event, args: { workspaceId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.workspaceId) throw new Error('Invalid workspaceId')
-      const row = loadRow(args.workspaceId)
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_GET
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const row = loadRow(workspaceId)
       if (!row) return null
       const serialized = serializeRow(row)
       serialized.skills = loadSkillsForSpecialist(row.id)
@@ -154,14 +157,16 @@ export function registerProjectSpecialistIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_BUILD,
-    async (event, args: { workspaceId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.workspaceId) throw new Error('Invalid workspaceId')
-      const row = loadRow(args.workspaceId)
-      if (!row) throw new Error(`No Project Specialist for workspace ${args.workspaceId}`)
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_BUILD
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const row = loadRow(workspaceId)
+      if (!row) throw new Error(`No Project Specialist for workspace ${workspaceId}`)
       emitProgress(row.id, 'started', 'Building specialist for this project…')
       try {
-        const result = await specialistBuilderService.buildProjectSpecialist(args.workspaceId)
+        const result = await specialistBuilderService.buildProjectSpecialist(workspaceId)
         emitProgress(row.id, 'ready', `Ready — ${result.detectedTechs.length} techs detected`)
         return result
       } catch (err) {
@@ -173,16 +178,18 @@ export function registerProjectSpecialistIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_REBUILD_PROMPT,
-    async (event, args: { specialistId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.specialistId) throw new Error('Invalid specialistId')
-      emitProgress(args.specialistId, 'started', 'Rebuilding prompt…')
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_REBUILD_PROMPT
+      const args = requireObject(rawArgs, ch)
+      const specialistId = requireString(args, 'specialistId', ch)
+      emitProgress(specialistId, 'started', 'Rebuilding prompt…')
       try {
-        const result = await specialistBuilderService.rebuildPrompt(args.specialistId)
-        emitProgress(args.specialistId, 'ready', 'Prompt rebuilt')
+        const result = await specialistBuilderService.rebuildPrompt(specialistId)
+        emitProgress(specialistId, 'ready', 'Prompt rebuilt')
         return result
       } catch (err) {
-        emitProgress(args.specialistId, 'failed', (err as Error).message)
+        emitProgress(specialistId, 'failed', (err as Error).message)
         throw err
       }
     }
@@ -190,76 +197,94 @@ export function registerProjectSpecialistIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_REBUILD_SKILLS,
-    async (event, args: { specialistId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.specialistId) throw new Error('Invalid specialistId')
-      return specialistBuilderService.rebuildSkills(args.specialistId)
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_REBUILD_SKILLS
+      const args = requireObject(rawArgs, ch)
+      const specialistId = requireString(args, 'specialistId', ch)
+      return specialistBuilderService.rebuildSkills(specialistId)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_UPDATE_PROMPT,
-    async (event, args: { specialistId: string; prompt: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.specialistId) throw new Error('Invalid specialistId')
-      if (typeof args.prompt !== 'string') throw new Error('Invalid prompt')
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_UPDATE_PROMPT
+      const args = requireObject(rawArgs, ch)
+      const specialistId = requireString(args, 'specialistId', ch)
+      const prompt = requireString(args, 'prompt', ch)
       const db = getDatabase()
       db.prepare(
         `UPDATE specialists SET prompt = ?, updated_at = datetime('now') WHERE id = ?`
-      ).run(args.prompt, args.specialistId)
-      psLog.info(`Prompt updated for specialist ${args.specialistId} (${args.prompt.length} chars)`)
+      ).run(prompt, specialistId)
+      psLog.info(`Prompt updated for specialist ${specialistId} (${prompt.length} chars)`)
       return { ok: true }
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_TOGGLE_SKILL,
-    async (event, args: { specialistId: string; skillId: string; enabled: boolean }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.specialistId || !args?.skillId) throw new Error('Invalid args')
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_TOGGLE_SKILL
+      const args = requireObject(rawArgs, ch)
+      const specialistId = requireString(args, 'specialistId', ch)
+      const skillId = requireString(args, 'skillId', ch)
+      const enabled = optionalBoolean(args, 'enabled', ch) ?? false
       const db = getDatabase()
       db.prepare(
         `UPDATE specialist_skills SET is_enabled = ?
            WHERE specialist_id = ? AND skill_id = ?`
-      ).run(args.enabled ? 1 : 0, args.specialistId, args.skillId)
+      ).run(enabled ? 1 : 0, specialistId, skillId)
       return { ok: true }
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_ATTACH_SKILL,
-    async (event, args: { specialistId: string; skillId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.specialistId || !args?.skillId) throw new Error('Invalid args')
-      specialistRepository.assignSkill(args.specialistId, args.skillId)
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_ATTACH_SKILL
+      const args = requireObject(rawArgs, ch)
+      const specialistId = requireString(args, 'specialistId', ch)
+      const skillId = requireString(args, 'skillId', ch)
+      specialistRepository.assignSkill(specialistId, skillId)
       return { ok: true }
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_DETACH_SKILL,
-    async (event, args: { specialistId: string; skillId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.specialistId || !args?.skillId) throw new Error('Invalid args')
-      specialistRepository.removeSkill(args.specialistId, args.skillId)
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_DETACH_SKILL
+      const args = requireObject(rawArgs, ch)
+      const specialistId = requireString(args, 'specialistId', ch)
+      const skillId = requireString(args, 'skillId', ch)
+      specialistRepository.removeSkill(specialistId, skillId)
       return { ok: true }
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_GET_DRIFT,
-    async (event, args: { workspaceId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.workspaceId) throw new Error('Invalid workspaceId')
-      return stackDriftDetectorService.detectForWorkspace(args.workspaceId)
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_GET_DRIFT
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      return stackDriftDetectorService.detectForWorkspace(workspaceId)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_REFRESH_RECOMMENDATIONS,
-    async (event, args: { specialistId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.specialistId) throw new Error('Invalid specialistId')
+      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_REFRESH_RECOMMENDATIONS
+      const args = requireObject(rawArgs, ch)
+      const specialistId = requireString(args, 'specialistId', ch)
 
       const db = getDatabase()
       const row = db
@@ -269,11 +294,11 @@ export function registerProjectSpecialistIpc(): void {
              JOIN workspaces w ON w.id = s.workspace_id
             WHERE s.id = ?`
         )
-        .get(args.specialistId) as
+        .get(specialistId) as
         | { id: string; workspace_id: string; detected_techs: string; repo_path: string }
         | undefined
 
-      if (!row) throw new Error(`Specialist not found: ${args.specialistId}`)
+      if (!row) throw new Error(`Specialist not found: ${specialistId}`)
 
       let detectedTechs: string[] = []
       try {
@@ -288,7 +313,7 @@ export function registerProjectSpecialistIpc(): void {
         detectedTechs
       )
 
-      psLog.info(`Skill recommendations force-refreshed for specialist ${args.specialistId}`)
+      psLog.info(`Skill recommendations force-refreshed for specialist ${specialistId}`)
       return { ok: true }
     }
   )

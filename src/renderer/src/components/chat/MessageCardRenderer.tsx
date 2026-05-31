@@ -2,10 +2,6 @@ import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { PluggableList } from 'unified'
 import type { Components } from 'react-markdown'
-import type { GrillAnswerPayload } from '../../../../shared/types'
-import GrillQuestionCard from './GrillQuestionCard'
-import GrillResultCard from './GrillResultCard'
-import GrillEvaluationCard from './GrillEvaluationCard'
 import BuildSummaryCard from './BuildSummaryCard'
 import TaskPlanCard from './TaskPlanCard'
 import type { MessageContentData } from './useMessageContent'
@@ -47,17 +43,11 @@ export interface MessageCardRendererProps {
   remarkPlugins: PluggableList
   rehypePlugins: PluggableList
   markdownComponents: Components
-  suppressInlineGrillCard?: boolean
   // Plan action handlers
   onBuildNow: () => void
   onRefine: () => void
   onSaveAsIdea?: () => void
-  // Grill action handlers
-  onGrillKeepIterating: () => void
-  onGrillCreatePlan: () => void
-  onGrillCreateItems: () => void
-  submitGrillAnswers: (answers: GrillAnswerPayload[]) => void
-  skipAllGrillQuestions: () => void
+  onCouncilReview?: () => void
 }
 
 /**
@@ -72,136 +62,19 @@ export default function MessageCardRenderer({
   remarkPlugins,
   rehypePlugins,
   markdownComponents,
-  suppressInlineGrillCard,
   onBuildNow,
   onRefine,
   onSaveAsIdea,
-  onGrillKeepIterating,
-  onGrillCreatePlan,
-  onGrillCreateItems,
-  submitGrillAnswers,
-  skipAllGrillQuestions
+  onCouncilReview
 }: MessageCardRendererProps): React.JSX.Element | null {
   const {
     planContent,
-    grillSummary,
-    grillProposedTasks,
-    beforeGrill,
-    afterGrill,
-    grillQuestionMatch,
-    grillQuestions,
-    beforeGrillQuestion,
-    afterGrillQuestion,
-    grillEvalData,
-    beforeGrillEval,
-    afterGrillEval,
     buildSummaryData,
     beforeBuildSummary,
     afterBuildSummary,
     beforePlan,
     afterPlan
   } = content
-
-  // ── Grill question block ──
-  if (grillQuestions.length > 0) {
-    return (
-      <div className="space-y-3 max-w-full">
-        <MarkdownSection
-          text={beforeGrillQuestion ?? ''}
-          className={aiBubbleClass}
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          components={markdownComponents}
-        />
-        <GrillQuestionCard
-          questions={grillQuestions}
-          onSubmit={submitGrillAnswers}
-          onSkipAll={skipAllGrillQuestions}
-        />
-        <MarkdownSection
-          text={afterGrillQuestion ?? ''}
-          className={aiBubbleClass}
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          components={markdownComponents}
-        />
-      </div>
-    )
-  }
-
-  // ── Grill question suppressed (store-driven card active) ──
-  if (grillQuestionMatch && suppressInlineGrillCard) {
-    return (
-      <div className={aiBubbleClass}>
-        <div className="prose max-w-none">
-          <ReactMarkdown
-            remarkPlugins={remarkPlugins}
-            rehypePlugins={rehypePlugins}
-            components={markdownComponents}
-          >
-            {[beforeGrillQuestion?.trim(), afterGrillQuestion?.trim()].filter(Boolean).join('\n\n')}
-          </ReactMarkdown>
-        </div>
-      </div>
-    )
-  }
-
-  // ── Grill summary block ──
-  if (grillSummary) {
-    return (
-      <div className="space-y-3 max-w-full">
-        <MarkdownSection
-          text={beforeGrill ?? ''}
-          className={aiBubbleClass}
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          components={markdownComponents}
-        />
-        <GrillResultCard
-          summary={grillSummary}
-          proposedTasks={grillProposedTasks}
-          onKeepIterating={onGrillKeepIterating}
-          onCreatePlan={onGrillCreatePlan}
-          onCreateItems={onGrillCreateItems}
-        />
-        <MarkdownSection
-          text={afterGrill ?? ''}
-          className={aiBubbleClass}
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          components={markdownComponents}
-        />
-      </div>
-    )
-  }
-
-  // ── Grill evaluation block ──
-  if (grillEvalData) {
-    return (
-      <div className="space-y-3 max-w-full">
-        <MarkdownSection
-          text={beforeGrillEval ?? ''}
-          className={aiBubbleClass}
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          components={markdownComponents}
-        />
-        <GrillEvaluationCard
-          score={grillEvalData.score}
-          scoreLabel={grillEvalData.scoreLabel}
-          feedback={grillEvalData.feedback}
-          questions={grillEvalData.questions}
-        />
-        <MarkdownSection
-          text={afterGrillEval ?? ''}
-          className={aiBubbleClass}
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          components={markdownComponents}
-        />
-      </div>
-    )
-  }
 
   // ── Build summary block ──
   if (buildSummaryData) {
@@ -251,6 +124,7 @@ export default function MessageCardRenderer({
           onBuildNow={onBuildNow}
           onSaveAsIdea={onSaveAsIdea}
           onRefine={onRefine}
+          onCouncilReview={onCouncilReview}
         />
         <MarkdownSection
           text={afterPlan ?? ''}

@@ -49,7 +49,7 @@ Append ONE of these blocks after the master prompt to change the palette.
 
 ### Variant A — "Midnight Silver & Sapphire"
 
-*Cool, modern, high-tech elegance*
+_Cool, modern, high-tech elegance_
 
 ```
 COLOR OVERRIDE: The filigree frame and </> brackets are polished sterling
@@ -64,7 +64,7 @@ lunar.
 
 ### Variant B — "Gunmetal & Amethyst"
 
-*Dark, moody, mysterious — the hacker's atelier*
+_Dark, moody, mysterious — the hacker's atelier_
 
 ```
 COLOR OVERRIDE: The filigree frame is dark gunmetal / brushed dark chrome
@@ -80,7 +80,7 @@ Overall atmosphere: nocturnal, enigmatic.
 
 ### Variant C — "Rose Gold & Garnet"
 
-*Warm but refined, luxury editorial feel*
+_Warm but refined, luxury editorial feel_
 
 ```
 COLOR OVERRIDE: The filigree frame and </> brackets are rose gold with
@@ -94,7 +94,7 @@ the seal is soft rose-gold. Overall atmosphere: warm, editorial, intimate.
 
 ### Variant D — "Antique Brass & Emerald"
 
-*Aged, weathered, alchemist's workshop*
+_Aged, weathered, alchemist's workshop_
 
 ```
 COLOR OVERRIDE: The filigree frame is antique brass with a subtle green
@@ -109,7 +109,7 @@ Overall atmosphere: ancient, alchemical, a tool found in da Vinci's desk.
 
 ### Variant E — "Platinum & Opal"
 
-*Ethereal, iridescent, Apple-esque premium*
+_Ethereal, iridescent, Apple-esque premium_
 
 ```
 COLOR OVERRIDE: The filigree frame and </> brackets are bright platinum /
@@ -124,7 +124,7 @@ ethereal, futuristic, precious.
 
 ### Variant F — "Aged Gold & Teal Aquamarine" ⭐ Brand-Native
 
-*Closest to the Code Atelier palette — evolved, not replaced*
+_Closest to the Code Atelier palette — evolved, not replaced_
 
 ```
 COLOR OVERRIDE: Keep the gold filigree but make it slightly darker and
@@ -141,7 +141,7 @@ palette made into a physical artifact.
 
 ### Variant G — "Blackened Steel & Diamond"
 
-*Ultra-minimal, monochromatic, brutalist luxury*
+_Ultra-minimal, monochromatic, brutalist luxury_
 
 ```
 COLOR OVERRIDE: The filigree frame is blackened steel / dark iron with
@@ -158,13 +158,16 @@ Overall atmosphere: monochrome brutalist luxury, maximum restraint.
 ## Production Notes
 
 ### Resolution
+
 - Always generate at **1024×1024 minimum** (2048×2048 preferred for downscaling headroom)
 - Source image must be **perfectly square**
 - Verify no watermarks, "Edit" buttons, or UI chrome leaked into the output
 
 ### Small-Size Readability
+
 The `</>` brackets MUST have strong luminance contrast against the seal center.
 Test by shrinking the result to 64×64 — if you can't read `</>`, regenerate with:
+
 ```
 Make the </> brackets even brighter and larger — they should be the
 brightest element inside the seal, with clear metallic highlights that
@@ -172,15 +175,17 @@ catch light even at small sizes.
 ```
 
 ### Size-Specific Variants (Advanced)
+
 For production macOS icons, consider generating 2–3 detail tiers:
 
-| Tier | Sizes | Detail Level |
-|------|-------|-------------|
-| **Micro** | 16–32px | Simplified: seal circle + jewel dot + bold bright `</>`, no filigree |
-| **Medium** | 64–128px | Seal + filigree ring + jewel + clear `</>` |
-| **Full** | 256–1024px | All detail: filigree, leather texture, gem refraction, grain |
+| Tier       | Sizes      | Detail Level                                                         |
+| ---------- | ---------- | -------------------------------------------------------------------- |
+| **Micro**  | 16–32px    | Simplified: seal circle + jewel dot + bold bright `</>`, no filigree |
+| **Medium** | 64–128px   | Seal + filigree ring + jewel + clear `</>`                           |
+| **Full**   | 256–1024px | All detail: filigree, leather texture, gem refraction, grain         |
 
 ### Micro-Icon Prompt (16–32px optimization)
+
 ```
 A macOS app icon, 1024x1024, extremely simplified for scaling to tiny sizes.
 A dark circular seal shape on near-black background. A single bright gold

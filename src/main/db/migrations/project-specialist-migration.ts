@@ -79,15 +79,11 @@ function exportSpecialistsBackup(db: Database.Database): string | null {
       )
       .all() as Array<Omit<SpecialistBackup, 'skill_ids'>>
 
-    const skillsStmt = db.prepare(
-      'SELECT skill_id FROM specialist_skills WHERE specialist_id = ?'
-    )
+    const skillsStmt = db.prepare('SELECT skill_id FROM specialist_skills WHERE specialist_id = ?')
 
     const withSkills: SpecialistBackup[] = specialists.map((s) => ({
       ...s,
-      skill_ids: (skillsStmt.all(s.id) as Array<{ skill_id: string }>).map(
-        (row) => row.skill_id
-      )
+      skill_ids: (skillsStmt.all(s.id) as Array<{ skill_id: string }>).map((row) => row.skill_id)
     }))
 
     const isoSafe = new Date().toISOString().replace(/[:.]/g, '-')
@@ -108,9 +104,7 @@ function exportSpecialistsBackup(db: Database.Database): string | null {
 }
 
 function hasColumn(db: Database.Database, table: string, column: string): boolean {
-  const rows = db
-    .prepare(`PRAGMA table_info(${table})`)
-    .all() as Array<{ name: string }>
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
   return rows.some((r) => r.name === column)
 }
 
@@ -159,22 +153,19 @@ export function runProjectSpecialistMigration(db: Database.Database): void {
 
   // Step 3 — Add is_enabled to specialist_skills.
   if (!hasColumn(db, 'specialist_skills', 'is_enabled')) {
-    db.exec(
-      `ALTER TABLE specialist_skills ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 0`
-    )
+    db.exec(`ALTER TABLE specialist_skills ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 0`)
   }
 
   // Step 4 — Create one pending Project Specialist per existing workspace.
   // Skip workspaces that already have one bound.
-  const workspaces = db
-    .prepare(`SELECT id, name FROM workspaces`)
-    .all() as Array<{ id: string; name: string }>
+  const workspaces = db.prepare(`SELECT id, name FROM workspaces`).all() as Array<{
+    id: string
+    name: string
+  }>
 
   const existingByWorkspace = new Map<string, string>()
   for (const row of db
-    .prepare(
-      `SELECT id, workspace_id FROM specialists WHERE workspace_id IS NOT NULL`
-    )
+    .prepare(`SELECT id, workspace_id FROM specialists WHERE workspace_id IS NOT NULL`)
     .all() as Array<{ id: string; workspace_id: string }>) {
     existingByWorkspace.set(row.workspace_id, row.id)
   }

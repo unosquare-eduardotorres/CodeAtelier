@@ -12,7 +12,6 @@ import './code-graph-db.test'
 import './mcp-tool-wiring.test'
 import './path-traversal.test'
 import './control-actions.test'
-import './code-graph-first-hook.test'
 import './conversation-state-machine.test'
 import './intent-detector.test'
 import './intent-router.test'
@@ -24,9 +23,8 @@ import './cost-tracker.test'
 import './agent-token-tracker.test'
 import './elicitation.test'
 // Run 5 — P1 expansion
-import './abandonment-detector.test'
 import './model-config.test'
-import './opus-47-thinking.test'
+import './opus-48-thinking.test'
 import './session-recovery.test'
 import './health-check.test'
 // Run 6 — lifecycle
@@ -54,6 +52,20 @@ import '../../ipc/__tests__/chat-swap-handler.test'
 import './sentence-buffer.test'
 // Run 10 — onnxruntime-web WASM backend validation
 import './onnxruntime-web.test'
+
+// ─── Run 11: Prompt optimization (Opus 4.8) ───
+import './prompt-verbosity.test'
+import './prompt-lean-identity.test'
+import './prompt-lean-mode.test'
+
+// ─── Run 12: MPA (Multi-Phased Agent Pipeline) ───
+import './mpa-goal-conditions.test'
+import './mpa-preflight.test'
+import './mpa-orchestration.test'
+import './multi-session.test'
+
+// ─── Run 13: Council (LLM Council) ───
+import './council.service.test'
 
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls

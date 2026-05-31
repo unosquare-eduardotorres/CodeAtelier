@@ -136,7 +136,13 @@ export default function HealthTrackSidebar({
               <div className="flex-shrink-0 mt-0.5">
                 <Icon
                   size={18}
-                  className={isActive ? 'text-primary-text' : isSelected ? 'text-text-primary' : 'text-text-muted'}
+                  className={
+                    isActive
+                      ? 'text-primary-text'
+                      : isSelected
+                        ? 'text-text-primary'
+                        : 'text-text-muted'
+                  }
                 />
               </div>
 
@@ -155,9 +161,7 @@ export default function HealthTrackSidebar({
               {/* Score + status indicator (right-aligned) */}
               <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
                 {status === 'completed' && score !== null && (
-                  <span className={`text-[11px] font-bold ${getScoreColor(score)}`}>
-                    {score}
-                  </span>
+                  <span className={`text-[11px] font-bold ${getScoreColor(score)}`}>{score}</span>
                 )}
                 {status && <StatusIndicator status={status} />}
               </div>

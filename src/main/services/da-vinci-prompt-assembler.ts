@@ -1,13 +1,30 @@
-import type { ConversationMode, CostPreference, Specialist } from '../../shared/types'
+import type {
+  CommunicationTone,
+  ConversationMode,
+  CostPreference,
+  Specialist
+} from '../../shared/types'
 import { chatAgentLogger } from '../logger'
 import { PromptBuilder, promptBuilder } from './prompt-builder'
 import { memoryService } from './memory.service'
-import { specialistRepository } from '../db/repositories'
+import {
+  specialistRepository,
+  workspaceRepository,
+  conversationRepository
+} from '../db/repositories'
 import {
   appendMcpToolGuidance,
   buildConditionalPrefix,
   type PromptFeatureFlags
 } from './prompt-assembly-helpers'
+import { resolveContextTier } from './context-management'
+import { modelConfigService } from './model-config.service'
+import { RECOMMENDED_LOCAL_MODELS } from '../../shared/constants'
+import {
+  MODE_CONTEXT_SECTIONS,
+  MODE_CONTEXT_SECTIONS_LEAN
+} from './default-prompts'
+import { resolvePromptVerbosity } from '../../shared/constants'
 
 export type { PromptFeatureFlags }
 
@@ -28,6 +45,8 @@ export interface BuildSystemPromptOptions {
   personaData?: Specialist | null
   /** When true, use condensed prompt assembly for local LLM providers */
   isLocalProvider?: boolean
+  /** Resolved model ID — used for prompt verbosity gating (Opus 4.8+ gets lean prompts) */
+  model?: string
 }
 
 /** Options for building the effective user message */
@@ -38,6 +57,8 @@ export interface BuildEffectiveMessageOptions {
   turnCount: number
   sessionId: string | undefined
   mode: ConversationMode
+  /** Resolved model ID — used for mode block verbosity selection */
+  model?: string
 }
 
 /**
@@ -63,6 +84,12 @@ export class DaVinciPromptAssembler {
   private systemPromptSnapshot: string | null = null
   private systemPromptSnapshotMode: ConversationMode | null = null
   private systemPromptSnapshotConversationId: string | null = null
+  private systemPromptSnapshotTone: CommunicationTone | null = null
+  private systemPromptSnapshotModel: string | null = null
+
+  /** Cached communication tone to avoid DB queries on every turn */
+  private cachedTone: CommunicationTone | null = null
+  private cachedToneConversationId: string | null = null
 
   /** Tracks per-conversation turn count for adaptive prompt budgets. */
   private turnCountMap: Map<string, number> = new Map()
@@ -133,13 +160,61 @@ export class DaVinciPromptAssembler {
    * 3) optional conditional sections appended after base prompt resolution
    */
   buildSystemPromptForTurn(opts: BuildSystemPromptOptions): string {
-    // Local LLM: condensed prompt — skip memory/skills/caching strategies
+    // ── Resolve effective communication tone (cached to skip DB queries on turns 2+) ──
+    // Resolution chain: conversation override → workspace default → 'default'
+    // Tone rarely changes mid-session — reuse cached value when conversation hasn't changed.
+    let communicationTone: CommunicationTone
+    if (
+      this.cachedTone &&
+      this.cachedToneConversationId === opts.conversationId &&
+      opts.turnCount > 1
+    ) {
+      communicationTone = this.cachedTone
+    } else {
+      communicationTone = 'default'
+      try {
+        if (opts.conversationId) {
+          const conv = conversationRepository.findById(opts.conversationId)
+          if (conv?.communicationTone) {
+            communicationTone = conv.communicationTone
+          }
+        }
+        if (communicationTone === 'default' && opts.workspaceId) {
+          const settings = workspaceRepository.getSettings(opts.workspaceId)
+          const wsTone = settings.communicationTone as CommunicationTone | undefined
+          if (wsTone && wsTone !== 'default') communicationTone = wsTone
+        }
+      } catch (e) {
+        chatAgentLogger.debug('[prompt] Communication tone resolution failed (non-fatal):', e)
+      }
+      this.cachedTone = communicationTone
+      this.cachedToneConversationId = opts.conversationId
+    }
+
+    // Local LLM: condensed prompt — skip memory/skills/caching strategies.
+    // S5: Inject plan-focused directive with context tier for local plan mode.
     if (opts.isLocalProvider) {
+      // Resolve context tier from known models for plan directive budgeting
+      let contextTier: import('./context-management').ContextWindowTier | undefined
+      if (opts.mode === 'plan' && opts.workspacePath) {
+        try {
+          const localConfig = modelConfigService.getLocalLLMConfig(opts.workspacePath)
+          const match = RECOMMENDED_LOCAL_MODELS.find(
+            (m) => m.ollamaId === localConfig.localModel || m.omlxId === localConfig.localModel
+          )
+          contextTier = resolveContextTier(match?.contextWindow ?? 32_768)
+        } catch (e) {
+          chatAgentLogger.debug('[prompt] Context tier resolution failed, using small fallback:', e)
+          contextTier = 'small'
+        }
+      }
       return promptBuilder.buildLocalPrompt({
         role: 'da-vinci',
         mode: opts.mode,
         workspacePath: opts.workspacePath,
-        budgetTier: 'minimal'
+        budgetTier: 'minimal',
+        contextTier,
+        communicationTone
       })
     }
 
@@ -162,10 +237,13 @@ export class DaVinciPromptAssembler {
 
     // Strategy ζ: System prompt snapshot — reuse cached prompt when mode + conversation
     // haven't changed. Eliminates DB queries + disk I/O on every turn.
+    // Also bust the cache when communication tone changes mid-session.
     const canReuseSnapshot =
       this.systemPromptSnapshot &&
       this.systemPromptSnapshotMode === opts.mode &&
       this.systemPromptSnapshotConversationId === opts.conversationId &&
+      this.systemPromptSnapshotTone === communicationTone &&
+      this.systemPromptSnapshotModel === (opts.model ?? null) &&
       opts.turnCount > 1 // Always rebuild on turn 1 to pick up latest settings
 
     const budgetTier = promptBuilder.getGeneralistBudgetTierForTurn(opts.turnCount)
@@ -173,7 +251,7 @@ export class DaVinciPromptAssembler {
     if (canReuseSnapshot) {
       promptWithMcpGuidance = this.systemPromptSnapshot!
       this.log.info(
-        `[PIPELINE:prompt-snapshot] Reusing cached system prompt (turn ${opts.turnCount}, mode=${opts.mode})`
+        `[PIPELINE:prompt-snapshot] Reusing cached system prompt (turn ${opts.turnCount}, mode=${opts.mode}, tone=${communicationTone})`
       )
     } else {
       const basePrompt = promptBuilder.build({
@@ -189,16 +267,20 @@ export class DaVinciPromptAssembler {
         personaSkills: opts.personaData
           ? specialistRepository.getSkills(opts.personaData.id)
           : undefined,
-        personaSkillOverrides: undefined
+        personaSkillOverrides: undefined,
+        communicationTone,
+        model: opts.model
       })
 
       // Strategy δ: MCP tool guidance sections on turn 1 only.
-      promptWithMcpGuidance = appendMcpToolGuidance(basePrompt, opts.turnCount, opts.featureFlags)
+      promptWithMcpGuidance = appendMcpToolGuidance(basePrompt, opts.turnCount, opts.featureFlags, opts.model)
 
       // Cache the snapshot for reuse on subsequent turns
       this.systemPromptSnapshot = promptWithMcpGuidance
       this.systemPromptSnapshotMode = opts.mode
       this.systemPromptSnapshotConversationId = opts.conversationId
+      this.systemPromptSnapshotTone = communicationTone
+      this.systemPromptSnapshotModel = opts.model ?? null
     }
 
     // Diagnostic: hash the system prompt to verify cache prefix stability across turns.
@@ -241,6 +323,14 @@ export class DaVinciPromptAssembler {
   buildEffectiveMessage(opts: BuildEffectiveMessageOptions): string {
     let effectiveMessage = opts.message
 
+    // Inject <mode-context> block at the top of every user message.
+    // This ensures the model always has current mode instructions even after
+    // mid-session mode switches (zero-restart mode switching).
+    const verbosity = resolvePromptVerbosity(opts.model ?? '')
+    const modeSections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
+    const modeBlock = modeSections[opts.mode] ?? modeSections.plan
+    effectiveMessage = `<mode-context>\n${modeBlock.trim()}\n</mode-context>\n\n${effectiveMessage}`
+
     // Strategy A: Prepend any pending context injection.
     const pendingContext = this.pendingContextInjection.get(opts.conversationId)
     if (pendingContext) {
@@ -263,12 +353,7 @@ export class DaVinciPromptAssembler {
     // knows its permissions changed without clearing the session.
     if (this.pendingModeSwitch) {
       const { from, to } = this.pendingModeSwitch
-      const modeLabel = to === 'build' ? 'Build (read + execute)' : 'Plan (read-only)'
-      const permissions =
-        to === 'build'
-          ? 'You now have full permissions to execute commands, run apps, install dependencies, and perform all operational tasks. You can also hand off code changes to specialists.'
-          : 'You are now in read-only mode. You can read files, search the codebase, and provide guidance, but you cannot run commands or write files.'
-      effectiveMessage = `[Mode switched from ${from} to ${to}. Mode: ${modeLabel}. ${permissions} The conversation history above is still valid — continue from where we left off.]\n\n${opts.message}`
+      effectiveMessage = `[Mode switched from ${from} to ${to}. Follow the <mode-context> instructions above.]\n\n${effectiveMessage}`
       this.log.info(`Mode switch context injected: ${from} → ${to}`)
       this.pendingModeSwitch = null
     }
@@ -302,7 +387,8 @@ export class DaVinciPromptAssembler {
       message: opts.message,
       hasImages: opts.hasImages,
       mode: opts.mode,
-      turnCount: opts.turnCount
+      turnCount: opts.turnCount,
+      model: opts.model
     })
     if (conditionalPrefix) {
       effectiveMessage = `${conditionalPrefix}\n\n---\n\n${effectiveMessage}`
@@ -374,6 +460,11 @@ export class DaVinciPromptAssembler {
     this.systemPromptSnapshot = null
     this.systemPromptSnapshotMode = null
     this.systemPromptSnapshotConversationId = null
+    this.systemPromptSnapshotTone = null
+    this.systemPromptSnapshotModel = null
+    // Also invalidate tone cache so next turn re-reads from DB
+    this.cachedTone = null
+    this.cachedToneConversationId = null
   }
 
   /** Set pending mode switch — next buildEffectiveMessage() will prefix the user message */
@@ -406,6 +497,10 @@ export class DaVinciPromptAssembler {
     this.systemPromptSnapshot = null
     this.systemPromptSnapshotMode = null
     this.systemPromptSnapshotConversationId = null
+    this.systemPromptSnapshotTone = null
+    this.systemPromptSnapshotModel = null
+    this.cachedTone = null
+    this.cachedToneConversationId = null
     this.turnCountMap.clear()
     this.pendingModeSwitch = null
     this.pendingPersonaSwitch = null
@@ -422,21 +517,28 @@ export class DaVinciPromptAssembler {
   // ── Private Helpers ──
 
   /**
-   * Scale memory budget by turn count.
-   * Turn 1: full budget (memory is fresh context). Turn 3+: reduced (already in history). Turn 6+: zero.
+   * Scale memory budget by turn count with progressive decay.
+   * Turn 1: full budget (memory is fresh context). Decays gradually to avoid
+   * a steep drop-off where user preferences stated on turn 2 are lost by turn 4.
    *
-   * Cache-audit optimization: balanced turn-1 budget reduced from 5000→3000 chars
-   * (~600 fewer tokens on the first turn). Economy budget reduced from 3000→2000.
-   * This shrinks the dynamic user-message payload while still providing ample context.
+   * Strategy 9: Memory budget floor — retain 300-500 chars for critical user
+   * preferences even in long conversations. Previously dropped to 0, causing the
+   * model to forget user preferences and corrections in extended sessions.
    */
   private getMemoryBudgetForTurn(turnCount: number, costPreference: CostPreference): number {
-    // Strategy 9: Memory budget floor — retain 300-500 chars for critical user preferences
-    // even in long conversations (turn 4+). Previously dropped to 0, causing the model
-    // to forget user preferences and corrections in extended sessions.
     if (costPreference === 'economy') {
-      return turnCount <= 1 ? 2000 : turnCount <= 3 ? 800 : 300
+      if (turnCount <= 1) return 2000
+      if (turnCount <= 2) return 1200
+      if (turnCount <= 3) return 800
+      if (turnCount <= 4) return 500
+      return 300
     }
-    return turnCount <= 1 ? 3000 : turnCount <= 3 ? 1500 : 500
+    if (turnCount <= 1) return 3000
+    if (turnCount <= 2) return 2000
+    if (turnCount <= 3) return 1500
+    if (turnCount <= 4) return 1000
+    if (turnCount <= 5) return 700
+    return 500
   }
 
   /**

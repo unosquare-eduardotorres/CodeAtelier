@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 
 interface AgentSessionRow {
   id: string
@@ -77,7 +77,10 @@ function toModel(row: AgentSessionRow): AgentSession {
   }
 }
 
-export class AgentSessionRepository {
+export class AgentSessionRepository extends BaseRepository<AgentSessionRow, AgentSession> {
+  protected readonly tableName = 'agent_sessions'
+  protected mapRow(row: AgentSessionRow): AgentSession { return toModel(row) }
+
   /** Create a new session record when an agent starts */
   create(
     agentType: string,
@@ -91,8 +94,7 @@ export class AgentSessionRepository {
       complexityTier?: string
     } = {}
   ): AgentSession {
-    const db = getDatabase()
-    const row = db
+    const row = this.db()
       .prepare(
         `INSERT INTO agent_sessions (agent_type, task_id, pid, conversation_id, workspace_id, complexity_score, model_used, complexity_tier)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -113,12 +115,13 @@ export class AgentSessionRepository {
 
   /** Update session on completion — set status, endedAt, tokenUsage */
   complete(id: string, status: 'completed' | 'failed' | 'terminated', tokenUsage: number): void {
-    const db = getDatabase()
-    db.prepare(
-      `UPDATE agent_sessions
-       SET status = ?, ended_at = datetime('now'), token_usage = ?
-       WHERE id = ?`
-    ).run(status, tokenUsage, id)
+    this.db()
+      .prepare(
+        `UPDATE agent_sessions
+         SET status = ?, ended_at = datetime('now'), token_usage = ?
+         WHERE id = ?`
+      )
+      .run(status, tokenUsage, id)
   }
 
   /** Update session on completion with granular token breakdown */
@@ -133,28 +136,30 @@ export class AgentSessionRepository {
       cacheCreation: number
     }
   ): void {
-    const db = getDatabase()
-    db.prepare(
-      `UPDATE agent_sessions
-       SET status = ?, ended_at = datetime('now'),
-           token_usage = ?, input_tokens = ?, output_tokens = ?,
-           cache_read_tokens = ?, cache_creation_tokens = ?
-       WHERE id = ?`
-    ).run(
-      status,
-      tokens.total,
-      tokens.input,
-      tokens.output,
-      tokens.cacheRead,
-      tokens.cacheCreation,
-      id
-    )
+    this.db()
+      .prepare(
+        `UPDATE agent_sessions
+         SET status = ?, ended_at = datetime('now'),
+             token_usage = ?, input_tokens = ?, output_tokens = ?,
+             cache_read_tokens = ?, cache_creation_tokens = ?
+         WHERE id = ?`
+      )
+      .run(
+        status,
+        tokens.total,
+        tokens.input,
+        tokens.output,
+        tokens.cacheRead,
+        tokens.cacheCreation,
+        id
+      )
   }
 
   /** Link a session to a conversation after the conversation ID becomes known */
   updateConversationId(id: string, conversationId: string): void {
-    const db = getDatabase()
-    db.prepare(`UPDATE agent_sessions SET conversation_id = ? WHERE id = ?`).run(conversationId, id)
+    this.db()
+      .prepare(`UPDATE agent_sessions SET conversation_id = ? WHERE id = ?`)
+      .run(conversationId, id)
   }
 
   /** Update token usage on a running session (periodic flush without completing) */
@@ -163,100 +168,51 @@ export class AgentSessionRepository {
     tokenUsage: number,
     breakdown?: { input: number; output: number; cacheRead: number; cacheCreation: number }
   ): void {
-    const db = getDatabase()
     if (breakdown) {
-      db.prepare(
-        `UPDATE agent_sessions
-         SET token_usage = ?, input_tokens = ?, output_tokens = ?,
-             cache_read_tokens = ?, cache_creation_tokens = ?
-         WHERE id = ?`
-      ).run(
-        tokenUsage,
-        breakdown.input,
-        breakdown.output,
-        breakdown.cacheRead,
-        breakdown.cacheCreation,
-        id
-      )
+      this.db()
+        .prepare(
+          `UPDATE agent_sessions
+           SET token_usage = ?, input_tokens = ?, output_tokens = ?,
+               cache_read_tokens = ?, cache_creation_tokens = ?
+           WHERE id = ?`
+        )
+        .run(
+          tokenUsage,
+          breakdown.input,
+          breakdown.output,
+          breakdown.cacheRead,
+          breakdown.cacheCreation,
+          id
+        )
     } else {
-      db.prepare(`UPDATE agent_sessions SET token_usage = ? WHERE id = ?`).run(tokenUsage, id)
+      this.db()
+        .prepare(`UPDATE agent_sessions SET token_usage = ? WHERE id = ?`)
+        .run(tokenUsage, id)
     }
   }
 
   /** Get all sessions for a workspace */
   findByWorkspace(workspaceId: string): AgentSession[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare('SELECT * FROM agent_sessions WHERE workspace_id = ? ORDER BY started_at DESC')
-      .all(workspaceId) as AgentSessionRow[]
-    return rows.map(toModel)
+    return this.findManyBy('workspace_id', workspaceId, { orderBy: 'started_at DESC' })
   }
 
   /** Get token summary for a workspace (aggregated) */
   getTokenSummary(workspaceId: string): TokenSummary {
-    const db = getDatabase()
-
-    const totals = db
-      .prepare(
-        `SELECT COALESCE(SUM(token_usage), 0) as total_tokens,
-                COUNT(*) as session_count,
-                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
-                COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens
-         FROM agent_sessions WHERE workspace_id = ?`
-      )
-      .get(workspaceId) as {
-      total_tokens: number
-      session_count: number
-      total_input_tokens: number
-      total_output_tokens: number
-      total_cache_read_tokens: number
-      total_cache_creation_tokens: number
-    }
-
-    // Pull context_tokens and turn count from the per-turn table
-    // (workspace-level: join through agent_sessions to scope by workspace)
-    const turnTotals = db
-      .prepare(
-        `SELECT COALESCE(SUM(tu.context_tokens), 0) as total_context_tokens,
-                COUNT(*) as total_turns
-         FROM turn_usage tu
-         INNER JOIN agent_sessions s ON tu.session_id = s.id
-         WHERE s.workspace_id = ?`
-      )
-      .get(workspaceId) as { total_context_tokens: number; total_turns: number }
-
-    const byAgent = db
-      .prepare(
-        `SELECT agent_type, COALESCE(SUM(token_usage), 0) as total_tokens, COUNT(*) as session_count
-         FROM agent_sessions WHERE workspace_id = ?
-         GROUP BY agent_type ORDER BY total_tokens DESC`
-      )
-      .all(workspaceId) as { agent_type: string; total_tokens: number; session_count: number }[]
-
-    return {
-      totalTokens: totals.total_tokens,
-      sessionCount: totals.session_count,
-      totalInputTokens: totals.total_input_tokens,
-      totalOutputTokens: totals.total_output_tokens,
-      totalCacheReadTokens: totals.total_cache_read_tokens,
-      totalCacheCreationTokens: totals.total_cache_creation_tokens,
-      totalContextTokens: turnTotals.total_context_tokens,
-      totalTurns: turnTotals.total_turns,
-      byAgent: byAgent.map((r) => ({
-        agentType: r.agent_type,
-        totalTokens: r.total_tokens,
-        sessionCount: r.session_count
-      }))
-    }
+    return this.buildTokenSummary('workspace_id', workspaceId, /* useJoin */ true)
   }
 
   /** Get token summary for a specific conversation */
   getConversationTokenSummary(conversationId: string): TokenSummary {
-    const db = getDatabase()
+    return this.buildTokenSummary('conversation_id', conversationId, /* useJoin */ false)
+  }
 
-    const totals = db
+  /** Shared token summary builder to eliminate duplication between workspace/conversation queries */
+  private buildTokenSummary(
+    filterColumn: 'workspace_id' | 'conversation_id',
+    filterValue: string,
+    useJoinForTurns: boolean
+  ): TokenSummary {
+    const totals = this.db()
       .prepare(
         `SELECT COALESCE(SUM(token_usage), 0) as total_tokens,
                 COUNT(*) as session_count,
@@ -264,9 +220,9 @@ export class AgentSessionRepository {
                 COALESCE(SUM(output_tokens), 0) as total_output_tokens,
                 COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
                 COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens
-         FROM agent_sessions WHERE conversation_id = ?`
+         FROM agent_sessions WHERE ${filterColumn} = ?`
       )
-      .get(conversationId) as {
+      .get(filterValue) as {
       total_tokens: number
       session_count: number
       total_input_tokens: number
@@ -276,21 +232,27 @@ export class AgentSessionRepository {
     }
 
     // Pull context_tokens and turn count from the per-turn table
-    const turnTotals = db
-      .prepare(
-        `SELECT COALESCE(SUM(context_tokens), 0) as total_context_tokens,
+    const turnQuery = useJoinForTurns
+      ? `SELECT COALESCE(SUM(tu.context_tokens), 0) as total_context_tokens,
                 COUNT(*) as total_turns
-         FROM turn_usage WHERE conversation_id = ?`
-      )
-      .get(conversationId) as { total_context_tokens: number; total_turns: number }
+         FROM turn_usage tu
+         INNER JOIN agent_sessions s ON tu.session_id = s.id
+         WHERE s.${filterColumn} = ?`
+      : `SELECT COALESCE(SUM(context_tokens), 0) as total_context_tokens,
+                COUNT(*) as total_turns
+         FROM turn_usage WHERE ${filterColumn} = ?`
 
-    const byAgent = db
+    const turnTotals = this.db()
+      .prepare(turnQuery)
+      .get(filterValue) as { total_context_tokens: number; total_turns: number }
+
+    const byAgent = this.db()
       .prepare(
         `SELECT agent_type, COALESCE(SUM(token_usage), 0) as total_tokens, COUNT(*) as session_count
-         FROM agent_sessions WHERE conversation_id = ?
+         FROM agent_sessions WHERE ${filterColumn} = ?
          GROUP BY agent_type ORDER BY total_tokens DESC`
       )
-      .all(conversationId) as { agent_type: string; total_tokens: number; session_count: number }[]
+      .all(filterValue) as { agent_type: string; total_tokens: number; session_count: number }[]
 
     return {
       totalTokens: totals.total_tokens,
@@ -311,8 +273,7 @@ export class AgentSessionRepository {
 
   /** Mark any running sessions as terminated — called on app startup to clean up orphans */
   terminateStale(): number {
-    const db = getDatabase()
-    const result = db
+    const result = this.db()
       .prepare(
         `UPDATE agent_sessions SET status = 'terminated', ended_at = datetime('now')
          WHERE status = 'running'`
@@ -323,8 +284,7 @@ export class AgentSessionRepository {
 
   /** Get recent sessions (last N, for display) */
   getRecent(workspaceId: string, limit: number = 50): AgentSession[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare(
         'SELECT * FROM agent_sessions WHERE workspace_id = ? ORDER BY started_at DESC LIMIT ?'
       )

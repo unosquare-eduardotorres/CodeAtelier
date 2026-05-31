@@ -15,7 +15,14 @@ function mockMeta(
   output: number,
   cacheRead = 0,
   cacheCreation = 0
-): { tokenUsage: { input: number; output: number; cacheReadInputTokens: number; cacheCreationInputTokens: number } } {
+): {
+  tokenUsage: {
+    input: number
+    output: number
+    cacheReadInputTokens: number
+    cacheCreationInputTokens: number
+  }
+} {
   return {
     tokenUsage: {
       input,
@@ -79,7 +86,10 @@ describe('AgentTokenTracker — getCacheEfficiency (computed)', () => {
     const report = tracker.getCacheEfficiency()
     // hitRate = (cacheRead / totalWithCache) * 100 = (500 / 1700) * 100 ≈ 29.41
     const expectedRate = (500 / 1700) * 100
-    assert.ok(Math.abs(report.hitRate - expectedRate) < 0.01, `hitRate should be ~${expectedRate.toFixed(2)}, got ${report.hitRate}`)
+    assert.ok(
+      Math.abs(report.hitRate - expectedRate) < 0.01,
+      `hitRate should be ~${expectedRate.toFixed(2)}, got ${report.hitRate}`
+    )
   })
 
   test('getCacheEfficiency_includes_turn_breakdown', () => {
@@ -144,6 +154,10 @@ describe('AgentTokenTracker — reset & resetSession', () => {
     assert.equal(report.turns, 1)
     // cacheHitRate in breakdown should be 0 when all cache tokens are 0
     // totalForRate = 1000 + 0 + 0 = 1000, cacheRead = 0 → hitRate = 0
-    assert.equal(report.turnBreakdown[0].cacheHitRate, 0, 'cacheHitRate should be 0 with no cache tokens')
+    assert.equal(
+      report.turnBreakdown[0].cacheHitRate,
+      0,
+      'cacheHitRate should be 0 with no cache tokens'
+    )
   })
 })

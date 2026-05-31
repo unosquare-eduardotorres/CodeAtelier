@@ -59,6 +59,7 @@ import type {
   AuditStreamChunkEvent,
   AuditIntermediateEvent,
   LLMProvider,
+  CommunicationTone,
   UpdateConfig,
   GrillDecision,
   GrillTrackScore
@@ -106,6 +107,7 @@ interface Api {
     personaSpecialistId?: string
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
+    communicationTone?: CommunicationTone | null
   }) => Promise<Conversation>
   updatePersona: (args: {
     conversationId: string
@@ -115,6 +117,10 @@ interface Api {
     conversationId: string
     overrides: Record<string, boolean>
   }) => Promise<Conversation>
+  updateConversationTone: (args: {
+    conversationId: string
+    communicationTone: CommunicationTone | null
+  }) => Promise<Conversation>
   checkExternalMcp: (args: { command: string }) => Promise<{ available: boolean; path?: string }>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
   deleteConversation: (args: { conversationId: string }) => Promise<void>
@@ -122,8 +128,18 @@ interface Api {
     conversationId: string
     mode: ConversationMode
   }) => Promise<Conversation>
+  updateEffort: (args: {
+    conversationId: string
+    effort: 'low' | 'medium' | 'high'
+  }) => Promise<{ effort: string }>
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
   stopGeneration: () => Promise<void>
+  getStreamingState: () => Promise<{
+    isStreaming: boolean
+    conversationId: string | null
+    state: string
+    requestId: string | null
+  }>
   compactConversation: (args?: { extractNuance?: boolean }) => Promise<void>
   /** Accept DaVinci's specialist-swap proposal — rebuilds the session as the Project Specialist. */
   swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }) => Promise<void>
@@ -164,7 +180,7 @@ interface Api {
   }>
 
   // Agent lifecycle
-  startAgent: (workspacePath: string) => Promise<void>
+  startAgent: (args: string | { workspacePath: string; workspaceId: string }) => Promise<void>
 
   // Specialists
   listSpecialists: () => Promise<Specialist[]>
@@ -338,6 +354,7 @@ interface Api {
       taskId?: string
       specialist?: string
       requestId?: string
+      keepalive?: boolean
       toolActivity?: {
         id: string
         toolName: string
@@ -363,6 +380,11 @@ interface Api {
         contextWindowSize: number
         percentage: number
       }
+      todoUpdate?: {
+        action: 'add' | 'complete' | 'remove' | 'update'
+        text: string
+        index?: number
+      }
     }) => void
   ) => () => void
   onMessageComplete: (
@@ -373,34 +395,15 @@ interface Api {
       requestId?: string
     }) => void
   ) => () => void
-  onGrillComplete: (
-    callback: (data: {
-      conversationId: string
-      summary: string
-      proposedTasks: GrillProposedTask[]
-    }) => void
-  ) => () => void
-  onGrillQuestion: (
-    callback: (data: { conversationId: string; questions: GrillQuestion[] }) => void
-  ) => () => void
   onAskQuestion: (
     callback: (data: {
       conversationId: string
       questions: GrillQuestion[]
       action?: string
+      requestId?: string
     }) => void
   ) => () => void
-  onGrillEvaluation: (
-    callback: (data: {
-      conversationId: string
-      trackId?: GrillTrackId
-      score: number
-      scoreLabel: string
-      feedback: string
-      questions: GrillQuestion[]
-      suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
-    }) => void
-  ) => () => void
+  respondToAskUser: (data: { requestId: string; response: string }) => Promise<void>
   onTaskRetry: (
     callback: (data: {
       taskId: string
@@ -411,7 +414,7 @@ interface Api {
       reason: string
     }) => void
   ) => () => void
-  onAgentReady: (callback: () => void) => () => void
+  onAgentReady: (callback: (data?: { workspaceId?: string }) => void) => () => void
   onAgentTaskChunk: (
     callback: (data: { agentId: string; taskId: string; text: string }) => void
   ) => () => void
@@ -520,16 +523,16 @@ interface Api {
   listCoreAgentPrompts: () => Promise<CoreAgentPrompt[]>
   getCoreAgentPrompt: (args: {
     agentRole: 'da-vinci'
-    mode: 'plan' | 'build'
+    mode: 'plan' | 'build' | 'danger'
   }) => Promise<CoreAgentPrompt | undefined>
   upsertCoreAgentPrompt: (args: {
     agentRole: 'da-vinci'
-    mode: 'plan' | 'build'
+    mode: 'plan' | 'build' | 'danger'
     promptText: string
   }) => Promise<CoreAgentPrompt>
   resetCoreAgentPrompt: (args: {
     agentRole: 'da-vinci'
-    mode: 'plan' | 'build'
+    mode: 'plan' | 'build' | 'danger'
   }) => Promise<CoreAgentPrompt>
 
   // Renderer logging bridge
@@ -559,6 +562,10 @@ interface Api {
   restoreCheckpoint: (args: {
     checkpointId: string
   }) => Promise<{ success: boolean; message: string }>
+  rewindToCheckpoint: (args: {
+    checkpointId: string
+    conversationId: string
+  }) => Promise<{ success: boolean; message: string; messagesRemoved: number }>
 
   // Cost tracking
   getCostSummary: (args: { workspaceId: string }) => Promise<{
@@ -593,6 +600,16 @@ interface Api {
   onBudgetExceeded: (
     callback: (data: { workspaceId: string; currentCostCents: number; budgetCents: number }) => void
   ) => () => void
+
+  // Conversation Insights
+  getConversationInsights: (args: {
+    conversationId: string
+  }) => Promise<{
+    messageCount: { user: number; assistant: number }
+    tokenSummary: { inputTokens: number; outputTokens: number }
+    costCents: number
+    durationMs: number
+  }>
 
   // Events (audit log)
   getRecentEvents: (args?: { workspaceId?: string; limit?: number }) => Promise<
@@ -703,11 +720,7 @@ interface Api {
   omlxStart: () => Promise<boolean>
   omlxAdminUrl: (args?: { baseUrl?: string }) => Promise<string>
   omlxLoadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }) => Promise<void>
-  omlxUnloadModel: (args: {
-    modelId: string
-    baseUrl?: string
-    apiKey?: string
-  }) => Promise<void>
+  omlxUnloadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }) => Promise<void>
 
   // Platform
   getPlatformInfo: () => Promise<import('../shared/types').PlatformInfo>
@@ -875,10 +888,7 @@ interface Api {
   }) => Promise<void>
   auditResume: (args: { workspaceId: string }) => Promise<AuditRun | null>
   auditExportMarkdown: (args: { workspaceId: string }) => Promise<void>
-  auditGetHistory: (args: {
-    workspaceId: string
-    limit?: number
-  }) => Promise<AuditRun[]>
+  auditGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<AuditRun[]>
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
   onAuditResult: (cb: (data: AuditResult) => void) => () => void
   onAuditComplete: (cb: (data: AuditRun) => void) => () => void
@@ -926,8 +936,57 @@ interface Api {
     questionStates: Record<string, unknown>
   }) => Promise<void>
   onGrillStatusChanged: (
-    cb: (data: { status: string; ideaId: string; trackId: string | null; score: number | null }) => void
+    cb: (data: {
+      status: string
+      ideaId: string
+      trackId: string | null
+      score: number | null
+    }) => void
   ) => () => void
+
+  // MPA (Multi-Phased Agent Pipeline)
+  mpaStart: (args: {
+    workspaceId: string
+    goal: string
+    title: string
+    goalType: string
+    phases: string[]
+    grillSessionId?: string
+    grillDecisions?: Array<{ header: string; selectedOption: string; reason: string }>
+  }) => Promise<{ started: boolean }>
+  mpaCancel: (args?: { workspaceId?: string }) => Promise<{ cancelled: boolean }>
+  mpaGetStatus: (args: { workspaceId: string }) => Promise<{
+    status: string
+    runId: string | null
+    currentPhase: string | null
+    phaseIndex: number
+    totalPhases: number
+    iteration: number
+    awaitingApproval: boolean
+  }>
+  mpaGetRun: (args: { runId: string }) => Promise<unknown>
+  mpaGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
+  mpaClassifyGoal: (args: { goal: string }) => Promise<{
+    goalType: string
+    phases: string[]
+    isValid: boolean
+    rejectionReason?: string
+    suggestedGoal?: string
+  }>
+  mpaApprovalRespond: (args: { runId: string; approved: boolean; feedback?: string }) => Promise<{ responded: boolean }>
+  onMpaPhaseStart: (cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; iteration: number; agentRole: string }) => void) => () => void
+  onMpaPhaseProgress: (cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; streamChunk: string }) => void) => () => void
+  onMpaPhaseComplete: (cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; status: string; tokensUsed: number }) => void) => () => void
+  onMpaFeedbackLoop: (cb: (data: { workspaceId: string; runId: string; fromPhase: string; toPhase: string; iteration: number; reason: string }) => void) => () => void
+  onMpaApprovalNeeded: (cb: (data: { workspaceId: string; runId: string; phaseId: string; artifactId: string; artifact: unknown }) => void) => () => void
+  onMpaPipelineComplete: (cb: (data: { workspaceId: string; runId: string; status: string; totalTokens: number }) => void) => () => void
+
+  // Multi-Workspace Session Management
+  getAllWorkspaceStatuses: () => Promise<Record<string, unknown>>
+  onWorkspaceStatusUpdate: (cb: (data: { workspaceId: string; status: string; agentId: string; agentType: string; elapsedMs: number; tokenUsage: number }) => void) => () => void
+  onPermissionRequest: (cb: (data: { id: string; workspaceId: string; workspaceName: string; type: string; summary: string; isSimple: boolean; payload: unknown; receivedAt: number }) => void) => () => void
+  respondToPermission: (args: { permissionId: string; workspaceId: string; type: string; response: unknown }) => Promise<void>
+  onCompletionNotification: (cb: (data: { workspaceId: string; workspaceName: string; service: string; status: string; summary: string }) => void) => () => void
 }
 
 declare global {

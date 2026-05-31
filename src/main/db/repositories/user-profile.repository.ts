@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 import type { UserProfile } from '../../../shared/types'
 
 interface UserProfileRow {
@@ -19,9 +19,12 @@ function mapRow(row: UserProfileRow): UserProfile {
   }
 }
 
-export class UserProfileRepository {
+export class UserProfileRepository extends BaseRepository<UserProfileRow, UserProfile> {
+  protected readonly tableName = 'user_profile'
+  protected mapRow(row: UserProfileRow): UserProfile { return mapRow(row) }
+
   getProfile(): UserProfile | null {
-    const db = getDatabase()
+    const db = this.db()
     const row = db.prepare("SELECT * FROM user_profile WHERE id = 'default'").get() as
       | UserProfileRow
       | undefined
@@ -29,7 +32,7 @@ export class UserProfileRepository {
   }
 
   upsertProfile(displayName: string, avatarKey: string): UserProfile {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare(
         `

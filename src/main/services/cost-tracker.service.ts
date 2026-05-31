@@ -8,15 +8,16 @@ const costLogger = log.scope('CostTracker')
 
 /**
  * Model pricing table — $/1M tokens for input and output.
- * Based on Claude pricing as of March 2026.
+ * Based on Claude pricing as of May 2026.
  * Updated model IDs should be added here as new models are released.
  */
 export const MODEL_PRICING: Record<string, { inputPer1M: number; outputPer1M: number }> = {
   // Current models
   'claude-haiku-4-5-20251001': { inputPer1M: 1.0, outputPer1M: 5.0 },
   'claude-sonnet-4-6': { inputPer1M: 3.0, outputPer1M: 15.0 },
-  'claude-opus-4-7': { inputPer1M: 5.0, outputPer1M: 25.0 },
+  'claude-opus-4-8': { inputPer1M: 5.0, outputPer1M: 25.0 },
   // Legacy (kept for historical cost calculation on older sessions)
+  'claude-opus-4-7': { inputPer1M: 5.0, outputPer1M: 25.0 },
   'claude-sonnet-4-20250514': { inputPer1M: 3.0, outputPer1M: 15.0 },
   'claude-opus-4-20250514': { inputPer1M: 15.0, outputPer1M: 75.0 },
   'claude-opus-4-6': { inputPer1M: 5.0, outputPer1M: 25.0 },
@@ -196,8 +197,7 @@ class CostTrackerService extends EventEmitter {
    * Checks budget status for a workspace and emits warnings if thresholds are exceeded.
    */
   checkBudget(workspaceId: string): BudgetStatus {
-    const workspace = workspaceRepository.findAll().find((w) => w.id === workspaceId)
-    const settings = workspace ? JSON.parse(workspace.settingsJson || '{}') : {}
+    const settings = workspaceRepository.getSettings(workspaceId)
 
     const dailyBudgetCents = (settings.dailyBudgetUsd ?? 0) * 100
     const sessionBudgetCents = (settings.sessionBudgetUsd ?? 0) * 100

@@ -11,7 +11,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test, describe } from './test-harness'
-import { DA_VINCI_AGENT_ID, DEFAULT_MODEL_CONFIG, getModelActionForRole } from '../../../shared/constants'
+import {
+  DA_VINCI_AGENT_ID,
+  DEFAULT_MODEL_CONFIG,
+  getModelActionForRole
+} from '../../../shared/constants'
 
 const schemaPath = join(process.cwd(), 'src/main/db/schema.sql')
 const schemaSql = readFileSync(schemaPath, 'utf8')
@@ -28,11 +32,7 @@ describe('Layer 2 rename (migration 69)', () => {
   })
 
   test('DEFAULT_MODEL_CONFIG does NOT have legacy "generalist" keys', () => {
-    assert.equal(
-      'generalist' in DEFAULT_MODEL_CONFIG,
-      false,
-      'legacy generalist key still present'
-    )
+    assert.equal('generalist' in DEFAULT_MODEL_CONFIG, false, 'legacy generalist key still present')
   })
 
   test('getModelActionForRole maps da-vinci → da-vinci:*', () => {
@@ -42,10 +42,7 @@ describe('Layer 2 rename (migration 69)', () => {
 
   test('getModelActionForRole maps project-specialist → project-specialist:*', () => {
     assert.equal(getModelActionForRole('project-specialist', 'plan'), 'project-specialist:plan')
-    assert.equal(
-      getModelActionForRole('project-specialist', 'build'),
-      'project-specialist:build'
-    )
+    assert.equal(getModelActionForRole('project-specialist', 'build'), 'project-specialist:build')
   })
 
   test('schema.sql messages.role CHECK accepts da-vinci (and legacy generalist for migration chain)', () => {
@@ -80,9 +77,7 @@ describe('Layer 2 rename (migration 69)', () => {
 
   test('schema.sql conversation_specialists does not have dropped columns', () => {
     // Extract the conversation_specialists table block and assert columns are absent.
-    const match = schemaSql.match(
-      /CREATE TABLE IF NOT EXISTS conversation_specialists[\s\S]*?\);/
-    )
+    const match = schemaSql.match(/CREATE TABLE IF NOT EXISTS conversation_specialists[\s\S]*?\);/)
     assert.ok(match, 'conversation_specialists table not found in schema.sql')
     const block = match![0]
     assert.equal(block.includes('skill_overrides'), false)
@@ -100,10 +95,6 @@ describe('Migration 70 — tighten CHECK constraints', () => {
     assert.ok(versionMatch, 'CURRENT_SCHEMA_VERSION declaration missing')
     assert.ok(Number(versionMatch![1]) >= 70, 'CURRENT_SCHEMA_VERSION must be ≥ 70')
     assert.match(src, /version:\s*70/, 'migration 70 entry missing from registry')
-    assert.match(
-      src,
-      /tighten-check-constraints-post-rename/,
-      'migration 70 name mismatch'
-    )
+    assert.match(src, /tighten-check-constraints-post-rename/, 'migration 70 name mismatch')
   })
 })

@@ -8,6 +8,7 @@ import {
   workspaceRepository
 } from '../db/repositories'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString, optionalString } from './validate-args'
 
 /**
  * Sync a completed idea into the auto memory system.
@@ -67,26 +68,23 @@ function removeIdeaMemory(idea: Idea): void {
 
 export function registerIdeaIpc(): void {
   // idea:list — returns all ideas for a workspace
-  ipcMain.handle(IPC_CHANNELS.IDEA_LIST, (event, args: { workspaceId: string }) => {
+  ipcMain.handle(IPC_CHANNELS.IDEA_LIST, (event, rawArgs: unknown) => {
     validateSender(event)
-    if (!args?.workspaceId) throw new Error('workspaceId is required')
-    return ideaRepository.findByWorkspace(args.workspaceId)
+    const args = requireObject(rawArgs, IPC_CHANNELS.IDEA_LIST)
+    const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.IDEA_LIST)
+    return ideaRepository.findByWorkspace(workspaceId)
   })
 
   // idea:create — create a new idea
   ipcMain.handle(
     IPC_CHANNELS.IDEA_CREATE,
-    (event, args: { workspaceId: string; title: string; description: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.workspaceId) throw new Error('workspaceId is required')
-      if (!args.title || typeof args.title !== 'string' || args.title.trim().length === 0) {
-        throw new Error('title is required')
-      }
-      const idea = ideaRepository.create(
-        args.workspaceId,
-        args.title.trim(),
-        args.description?.trim() ?? ''
-      )
+      const args = requireObject(rawArgs, IPC_CHANNELS.IDEA_CREATE)
+      const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.IDEA_CREATE)
+      const title = requireString(args, 'title', IPC_CHANNELS.IDEA_CREATE)
+      const description = optionalString(args, 'description', IPC_CHANNELS.IDEA_CREATE) ?? ''
+      const idea = ideaRepository.create(workspaceId, title.trim(), description.trim())
       return idea
     }
   )
@@ -94,35 +92,37 @@ export function registerIdeaIpc(): void {
   // idea:update — update title/description
   ipcMain.handle(
     IPC_CHANNELS.IDEA_UPDATE,
-    (event, args: { id: string; title?: string; description?: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.id) throw new Error('id is required')
-      const updated = ideaRepository.update(args.id, {
-        title: args.title,
-        description: args.description
-      })
+      const args = requireObject(rawArgs, IPC_CHANNELS.IDEA_UPDATE)
+      const id = requireString(args, 'id', IPC_CHANNELS.IDEA_UPDATE)
+      const title = optionalString(args, 'title', IPC_CHANNELS.IDEA_UPDATE)
+      const description = optionalString(args, 'description', IPC_CHANNELS.IDEA_UPDATE)
+      const updated = ideaRepository.update(id, { title, description })
       return updated
     }
   )
 
   // idea:delete — delete an idea
-  ipcMain.handle(IPC_CHANNELS.IDEA_DELETE, (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.IDEA_DELETE, (event, rawArgs: unknown) => {
     validateSender(event)
-    if (!args?.id) throw new Error('id is required')
-    const idea = ideaRepository.findById(args.id)
-    ideaRepository.delete(args.id)
+    const args = requireObject(rawArgs, IPC_CHANNELS.IDEA_DELETE)
+    const id = requireString(args, 'id', IPC_CHANNELS.IDEA_DELETE)
+    const idea = ideaRepository.findById(id)
+    ideaRepository.delete(id)
     if (idea) removeIdeaMemory(idea)
   })
 
   // idea:startGrill — create/resume a grill conversation for this idea
   ipcMain.handle(
     IPC_CHANNELS.IDEA_START_GRILL,
-    (event, args: { ideaId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.ideaId) throw new Error('ideaId is required')
-      if (!args?.workspaceId) throw new Error('workspaceId is required')
+      const startGrillArgs = requireObject(rawArgs, IPC_CHANNELS.IDEA_START_GRILL)
+      const ideaId = requireString(startGrillArgs, 'ideaId', IPC_CHANNELS.IDEA_START_GRILL)
+      const workspaceId = requireString(startGrillArgs, 'workspaceId', IPC_CHANNELS.IDEA_START_GRILL)
 
-      const idea = ideaRepository.findById(args.ideaId)
+      const idea = ideaRepository.findById(ideaId)
       if (!idea) throw new Error('Idea not found')
 
       // If already has a grill conversation, return it (resume)
@@ -132,13 +132,12 @@ export function registerIdeaIpc(): void {
       }
 
       // Read workspace LLM provider for conversation creation
-      const wsRow = workspaceRepository.findById(args.workspaceId)
-      const wsSettings = JSON.parse(wsRow?.settingsJson ?? '{}')
+      const wsSettings = workspaceRepository.getSettings(workspaceId)
       const llmProvider: LLMProvider = wsSettings.llmProvider ?? 'claude'
 
       // Create a new conversation for the grill session
       const conv = conversationRepository.create(
-        args.workspaceId,
+        workspaceId,
         `💡 Grill: ${idea.title}`,
         'plan',
         undefined,
@@ -146,8 +145,8 @@ export function registerIdeaIpc(): void {
       )
 
       // Link it to the idea and update status
-      ideaRepository.setGrillConversation(args.ideaId, conv.id)
-      const updated = ideaRepository.updateStatus(args.ideaId, 'grilling')
+      ideaRepository.setGrillConversation(ideaId, conv.id)
+      const updated = ideaRepository.updateStatus(ideaId, 'grilling')
 
       return { idea: updated, conversation: conv }
     }
@@ -156,22 +155,22 @@ export function registerIdeaIpc(): void {
   // idea:convertDirect — create a work item conversation from idea
   ipcMain.handle(
     IPC_CHANNELS.IDEA_CONVERT_DIRECT,
-    (event, args: { ideaId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.ideaId) throw new Error('ideaId is required')
-      if (!args?.workspaceId) throw new Error('workspaceId is required')
+      const convertArgs = requireObject(rawArgs, IPC_CHANNELS.IDEA_CONVERT_DIRECT)
+      const ideaId = requireString(convertArgs, 'ideaId', IPC_CHANNELS.IDEA_CONVERT_DIRECT)
+      const workspaceId = requireString(convertArgs, 'workspaceId', IPC_CHANNELS.IDEA_CONVERT_DIRECT)
 
-      const idea = ideaRepository.findById(args.ideaId)
+      const idea = ideaRepository.findById(ideaId)
       if (!idea) throw new Error('Idea not found')
 
       // Read workspace LLM provider for conversation creation
-      const wsRowDirect = workspaceRepository.findById(args.workspaceId)
-      const wsSettingsDirect = JSON.parse(wsRowDirect?.settingsJson ?? '{}')
+      const wsSettingsDirect = workspaceRepository.getSettings(workspaceId)
       const llmProviderDirect: LLMProvider = wsSettingsDirect.llmProvider ?? 'claude'
 
       // Create conversation with idea title
       const conv = conversationRepository.create(
-        args.workspaceId,
+        workspaceId,
         idea.title,
         'plan',
         undefined,
@@ -179,8 +178,8 @@ export function registerIdeaIpc(): void {
       )
 
       // Mark idea as completed
-      ideaRepository.setConvertedConversation(args.ideaId, conv.id)
-      const updated = ideaRepository.updateStatus(args.ideaId, 'completed')
+      ideaRepository.setConvertedConversation(ideaId, conv.id)
+      const updated = ideaRepository.updateStatus(ideaId, 'completed')
 
       if (updated) syncIdeaToMemory(updated)
       return { idea: updated, conversation: conv }
@@ -190,26 +189,29 @@ export function registerIdeaIpc(): void {
   // idea:saveGrillDecisions — save grill iteration state (score, description, history) as JSON
   ipcMain.handle(
     IPC_CHANNELS.IDEA_SAVE_GRILL_DECISIONS,
-    (event, args: { ideaId: string; decisions: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.ideaId) throw new Error('ideaId is required')
-      if (!args?.decisions) throw new Error('decisions is required')
-      return ideaRepository.saveGrillDecisions(args.ideaId, args.decisions)
+      const grillArgs = requireObject(rawArgs, IPC_CHANNELS.IDEA_SAVE_GRILL_DECISIONS)
+      const ideaId = requireString(grillArgs, 'ideaId', IPC_CHANNELS.IDEA_SAVE_GRILL_DECISIONS)
+      const decisions = requireString(grillArgs, 'decisions', IPC_CHANNELS.IDEA_SAVE_GRILL_DECISIONS)
+      return ideaRepository.saveGrillDecisions(ideaId, decisions)
     }
   )
 
   // idea:completeFromGrill — find the idea linked to a grill conversation and mark completed
   ipcMain.handle(
     IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL,
-    (event, args: { conversationId: string; summary?: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.conversationId) throw new Error('conversationId is required')
+      const completeArgs = requireObject(rawArgs, IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL)
+      const conversationId = requireString(completeArgs, 'conversationId', IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL)
+      const summary = optionalString(completeArgs, 'summary', IPC_CHANNELS.IDEA_COMPLETE_FROM_GRILL)
 
-      const idea = ideaRepository.findByGrillConversation(args.conversationId)
+      const idea = ideaRepository.findByGrillConversation(conversationId)
       if (!idea) return null
 
-      if (args.summary) {
-        ideaRepository.setGrillSummary(idea.id, args.summary)
+      if (summary) {
+        ideaRepository.setGrillSummary(idea.id, summary)
       }
       const updated = ideaRepository.updateStatus(idea.id, 'completed')
       if (updated) {

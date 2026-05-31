@@ -1,4 +1,5 @@
-import { AVATAR_IMAGES, type AvatarKey } from '@renderer/assets/avatars'
+import { useAppTheme } from '@renderer/store'
+import { getAvatarImage, type AvatarKey } from '@renderer/assets/avatars'
 import { rendererLog } from '@renderer/utils/logger'
 
 interface AvatarProps {
@@ -19,7 +20,8 @@ const SIZE_MAP = {
 } as const
 
 /**
- * Renders a bundled portrait image by key. No SVG, no initials fallback.
+ * Renders a bundled portrait image by key, themed to the active theme.
+ * Falls back to Code Atelier if the key or theme is unknown.
  * If the key is unknown (should never happen via our resolution chain),
  * renders a neutral placeholder circle and logs a warning.
  */
@@ -29,8 +31,9 @@ export default function Avatar({
   className = '',
   accentColor
 }: AvatarProps): React.JSX.Element {
+  const theme = useAppTheme()
   const px = SIZE_MAP[size]
-  const src = AVATAR_IMAGES[avatarKey as AvatarKey]
+  const src = getAvatarImage(avatarKey as AvatarKey, theme)
 
   const baseStyle: React.CSSProperties = {
     width: px,

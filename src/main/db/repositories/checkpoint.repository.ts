@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 
 interface CheckpointRecord {
   id: string
@@ -38,27 +38,18 @@ function toModel(row: CheckpointRow): CheckpointRecord {
   }
 }
 
-export class CheckpointRepository {
+export class CheckpointRepository extends BaseRepository<CheckpointRow, CheckpointRecord> {
+  protected readonly tableName = 'checkpoints'
+  protected mapRow(row: CheckpointRow): CheckpointRecord { return toModel(row) }
+
   /** Get all checkpoints for a conversation, ordered by most recent first */
   findByConversation(conversationId: string): CheckpointRecord[] {
-    const db = getDatabase()
-    const rows = db
-      .prepare(
-        `SELECT * FROM checkpoints WHERE conversation_id = ?
-         ORDER BY created_at DESC`
-      )
-      .all(conversationId) as CheckpointRow[]
-    return rows.map(toModel)
+    return this.findManyBy('conversation_id', conversationId, {
+      orderBy: 'created_at DESC'
+    })
   }
 
-  /** Get a specific checkpoint by ID */
-  findById(id: string): CheckpointRecord | null {
-    const db = getDatabase()
-    const row = db.prepare('SELECT * FROM checkpoints WHERE id = ?').get(id) as
-      | CheckpointRow
-      | undefined
-    return row ? toModel(row) : null
-  }
+  // findById is inherited from BaseRepository
 }
 
 export const checkpointRepository = new CheckpointRepository()

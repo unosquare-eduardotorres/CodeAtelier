@@ -51,14 +51,10 @@ test.describe('Project Specialist Lifecycle', () => {
   let page: Page | null = null
 
   test.beforeAll(async () => {
-    electronProcess = spawn(
-      ELECTRON_BIN,
-      [MAIN_ENTRY, `--remote-debugging-port=${CDP_PORT}`],
-      {
-        env: { ...process.env, NODE_ENV: 'test' },
-        stdio: ['ignore', 'ignore', 'ignore']
-      }
-    )
+    electronProcess = spawn(ELECTRON_BIN, [MAIN_ENTRY, `--remote-debugging-port=${CDP_PORT}`], {
+      env: { ...process.env, NODE_ENV: 'test' },
+      stdio: ['ignore', 'ignore', 'ignore']
+    })
     await waitForCDP(CDP_PORT)
 
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`)

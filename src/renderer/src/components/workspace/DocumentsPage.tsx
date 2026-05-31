@@ -63,7 +63,10 @@ function DocumentViewer({ content }: { content: string }): React.JSX.Element {
 
   return (
     <div className="prose prose-invert prose-sm max-w-none px-6 py-4">
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]} components={markdownComponents}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}
+        components={markdownComponents}
+      >
         {content}
       </ReactMarkdown>
     </div>

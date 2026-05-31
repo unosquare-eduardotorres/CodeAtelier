@@ -30,9 +30,10 @@ export interface SentMessage {
 /**
  * Creates a mock BrowserWindow that captures all IPC sends.
  */
-export function createMockBrowserWindow(opts?: {
-  destroyed?: boolean
-}): { window: MockBrowserWindow; sentMessages: SentMessage[] } {
+export function createMockBrowserWindow(opts?: { destroyed?: boolean }): {
+  window: MockBrowserWindow
+  sentMessages: SentMessage[]
+} {
   const sentMessages: SentMessage[] = []
   const window: MockBrowserWindow = {
     webContents: {
@@ -77,8 +78,7 @@ export interface MockEventLoggerService {
 export function createMockEventLoggerService(): MockEventLoggerService {
   const loggedEvents: Array<{ method: string; args: unknown[] }> = []
   return {
-    logPlanDetected: (...args: unknown[]) =>
-      loggedEvents.push({ method: 'logPlanDetected', args }),
+    logPlanDetected: (...args: unknown[]) => loggedEvents.push({ method: 'logPlanDetected', args }),
     logAgentToolCall: (...args: unknown[]) =>
       loggedEvents.push({ method: 'logAgentToolCall', args }),
     loggedEvents
@@ -117,9 +117,7 @@ export function createConversationStateMachine() {
 
 export function createIntentDetector() {
   const { IntentDetector } = require('../../intent-detector') as {
-    IntentDetector: new () => InstanceType<
-      typeof import('../../intent-detector').IntentDetector
-    >
+    IntentDetector: new () => InstanceType<typeof import('../../intent-detector').IntentDetector>
   }
 
   return { detector: new IntentDetector() }
@@ -131,9 +129,9 @@ export function createIntentRouter() {
   const { window, sentMessages } = createMockBrowserWindow()
 
   const { IntentRouter } = require('../../intent-router') as {
-    IntentRouter: new (win: unknown) => InstanceType<
-      typeof import('../../intent-router').IntentRouter
-    >
+    IntentRouter: new (
+      win: unknown
+    ) => InstanceType<typeof import('../../intent-router').IntentRouter>
   }
 
   const router = new IntentRouter(window)

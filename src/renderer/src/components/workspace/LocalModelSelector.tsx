@@ -372,9 +372,7 @@ export default function LocalModelSelector({
             className={`transition-transform duration-200 ${recommendationsOpen ? 'rotate-90' : ''}`}
           />
           <span>Recommended Models</span>
-          <span className="text-xs text-text-muted font-normal ml-1">
-            — browse by RAM tier
-          </span>
+          <span className="text-xs text-text-muted font-normal ml-1">— browse by RAM tier</span>
         </summary>
         <div className="mt-3 space-y-4">
           {tiers.map((tier) => (

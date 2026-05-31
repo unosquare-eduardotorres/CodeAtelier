@@ -10,17 +10,28 @@
 import type { ConversationMode } from '../../shared/types'
 import {
   ASK_QUESTION_PROMPT,
+  ASK_QUESTION_PROMPT_LEAN,
   CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
+  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN,
   CODE_ANALYSIS_GUIDANCE_PROMPT,
+  CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN,
   DIRECT_ANSWER_BOOST_PROMPT,
+  DIRECT_ANSWER_BOOST_PROMPT_LEAN,
   GIT_CONTEXT_GUIDANCE_PROMPT,
+  GIT_CONTEXT_GUIDANCE_PROMPT_LEAN,
   GITHUB_CONTEXT_GUIDANCE_PROMPT,
+  GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN,
   IMAGE_ATTACHMENTS_PROMPT,
+  IMAGE_ATTACHMENTS_PROMPT_LEAN,
   MAESTRO_GUIDANCE_PROMPT,
+  MAESTRO_GUIDANCE_PROMPT_LEAN,
   MEMORY_PROTOCOL_PROMPT,
+  MEMORY_PROTOCOL_PROMPT_LEAN,
   REPOMAP_GUIDANCE_PROMPT,
-  SEMANTIC_SEARCH_GUIDANCE_PROMPT
+  SEMANTIC_SEARCH_GUIDANCE_PROMPT,
+  SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN
 } from './default-prompts'
+import { resolvePromptVerbosity } from '../../shared/constants'
 import { promptBuilder } from './prompt-builder'
 import { chatAgentLogger } from '../logger'
 
@@ -44,39 +55,44 @@ export interface PromptFeatureFlags {
 export function appendMcpToolGuidance(
   basePrompt: string,
   turnCount: number,
-  featureFlags: PromptFeatureFlags
+  featureFlags: PromptFeatureFlags,
+  model?: string
 ): string {
   if (turnCount > 1) return basePrompt
 
+  const verbosity = resolvePromptVerbosity(model ?? '')
   const appendSections: string[] = []
 
-  if (featureFlags.repomapEnabled && !basePrompt.includes('## Code Graph Tools')) {
-    appendSections.push(REPOMAP_GUIDANCE_PROMPT)
+  // Lean: Code Graph rules already merged into identity prompt's ## Code Exploration — skip REPOMAP_GUIDANCE
+  if (verbosity !== 'lean') {
+    if (featureFlags.repomapEnabled && !basePrompt.includes('## Code Graph')) {
+      appendSections.push(REPOMAP_GUIDANCE_PROMPT)
+    }
   }
 
   if (featureFlags.semanticSearchEnabled && !basePrompt.includes('## Semantic Search')) {
-    appendSections.push(SEMANTIC_SEARCH_GUIDANCE_PROMPT)
+    appendSections.push(verbosity === 'lean' ? SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN : SEMANTIC_SEARCH_GUIDANCE_PROMPT)
   }
 
-  if (!basePrompt.includes('## Git Context Tools')) {
-    appendSections.push(GIT_CONTEXT_GUIDANCE_PROMPT)
+  if (!basePrompt.includes('## Git Context')) {
+    appendSections.push(verbosity === 'lean' ? GIT_CONTEXT_GUIDANCE_PROMPT_LEAN : GIT_CONTEXT_GUIDANCE_PROMPT)
   }
 
   if (!basePrompt.includes('## Checkpoint Tools')) {
-    appendSections.push(CHECKPOINT_CONTEXT_GUIDANCE_PROMPT)
+    appendSections.push(verbosity === 'lean' ? CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN : CHECKPOINT_CONTEXT_GUIDANCE_PROMPT)
   }
 
   if (featureFlags.githubConfigured && !basePrompt.includes('## GitHub Tools')) {
-    appendSections.push(GITHUB_CONTEXT_GUIDANCE_PROMPT)
+    appendSections.push(verbosity === 'lean' ? GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN : GITHUB_CONTEXT_GUIDANCE_PROMPT)
   }
 
   if (!basePrompt.includes('## Code Analysis')) {
-    appendSections.push(CODE_ANALYSIS_GUIDANCE_PROMPT)
+    appendSections.push(verbosity === 'lean' ? CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN : CODE_ANALYSIS_GUIDANCE_PROMPT)
   }
 
   // External MCP guidance — only when toggled ON for this chat
   if (featureFlags.externalMcpActive?.['maestro'] && !basePrompt.includes('## Maestro')) {
-    appendSections.push(MAESTRO_GUIDANCE_PROMPT)
+    appendSections.push(verbosity === 'lean' ? MAESTRO_GUIDANCE_PROMPT_LEAN : MAESTRO_GUIDANCE_PROMPT)
   }
 
   if (appendSections.length === 0) return basePrompt
@@ -93,31 +109,36 @@ export function buildConditionalPrefix(opts: {
   hasImages: boolean
   mode: ConversationMode
   turnCount: number
+  model?: string
 }): string {
   const { message, hasImages, mode, turnCount } = opts
-  const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages)
+  const verbosity = resolvePromptVerbosity(opts.model ?? '')
+  const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages, verbosity)
   const sections: string[] = []
 
   // Skip ask_user prompt on turns 2+ — already in history from turn 1.
+  // Lean: Opus 4.8+ sees tool schemas natively — use compressed reminder.
   if (conditionalSections.includeAskQuestionPrompt && turnCount <= 1) {
-    sections.push(ASK_QUESTION_PROMPT)
+    sections.push(verbosity === 'lean' ? ASK_QUESTION_PROMPT_LEAN : ASK_QUESTION_PROMPT)
   }
 
   // Skip memory-protocol prompt on turns 2+ — already in history from turn 1.
+  // Lean mode: Opus 4.8 uses emit_memory naturally but needs the type taxonomy.
   if (conditionalSections.includeMemoryProtocolPrompt && turnCount <= 1) {
-    sections.push(MEMORY_PROTOCOL_PROMPT)
+    sections.push(verbosity === 'lean' ? MEMORY_PROTOCOL_PROMPT_LEAN : MEMORY_PROTOCOL_PROMPT)
   }
 
+  // Lean: Opus 4.8+ doesn't search the filesystem for images — use compressed reminder.
   if (conditionalSections.includeImageAttachmentsPrompt) {
-    sections.push(IMAGE_ATTACHMENTS_PROMPT)
+    sections.push(verbosity === 'lean' ? IMAGE_ATTACHMENTS_PROMPT_LEAN : IMAGE_ATTACHMENTS_PROMPT)
   }
 
   // Strategy N: Direct Answer Boost — only inject on turn 3+ when there's
   // conversation history to reference (irrelevant on early turns).
   if (conditionalSections.includeDirectAnswerBoost) {
     if (turnCount >= 3) {
-      // Full boost with conversation-history awareness (only makes sense with history)
-      sections.push(DIRECT_ANSWER_BOOST_PROMPT)
+      // Lean: use compressed direct-answer boost
+      sections.push(verbosity === 'lean' ? DIRECT_ANSWER_BOOST_PROMPT_LEAN : DIRECT_ANSWER_BOOST_PROMPT)
     } else if (mode === 'plan') {
       // Lightweight signal for plan-mode questions on early turns.
       // DIRECT_ANSWER_BOOST_PROMPT references "conversation history" which doesn't
@@ -138,15 +159,15 @@ export function buildConditionalPrefix(opts: {
   // Simple questions in plan mode should get direct answers, not plan reminders.
   // isPlanGenerationRequest acts as an override: explicit plan intent always wins.
   const isSimpleQuestion = conditionalSections.includeDirectAnswerBoost
-  const planReminderInjected =
-    isPlanGenerationRequest || (mode === 'plan' && !isSimpleQuestion)
+  const planReminderInjected = isPlanGenerationRequest || (mode === 'plan' && !isSimpleQuestion)
 
   if (planReminderInjected) {
-    sections.push(
-      turnCount <= 1
+    // Lean + turn 1: Opus knows emit_plan from tool schema — short reminder suffices.
+    const planReminder =
+      turnCount <= 1 && verbosity !== 'lean'
         ? `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards.]`
         : `[Use emit_plan for plans.]`
-    )
+    sections.push(planReminder)
   }
 
   log.info(

@@ -4,7 +4,7 @@
  * Layout: Hero Banner → Detected Stack → Skill Market (cards grid) → System Prompt (rendered MD + edit modal)
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -25,7 +25,7 @@ import { useProjectSpecialistStore } from '@renderer/store/project-specialist.st
 import { Avatar } from '@renderer/components/common'
 import { TechBadge, SkillCard, PromptPreviewModal } from '@renderer/components/specialist'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
-import type { Skill } from '../../../../shared/types'
+import { useSpecialistSkillData } from './specialist/useSpecialistSkillData'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -227,42 +227,11 @@ export default function SpecialistPage(): React.JSX.Element {
 
   // ── Derived data ─────────────────────────────────────────────────────────
 
-  const specialistSkills = specialist?.skills
-  const skillRecommendations = specialist?.skillRecommendations
-
-  const attachedSkillIds = useMemo(
-    () => new Set(specialistSkills?.map((s) => s.id) ?? []),
-    [specialistSkills]
-  )
-
-  const recommendationMap = useMemo(() => {
-    const map = new Map<string, { relevance: number; rationale: string }>()
-    if (skillRecommendations) {
-      for (const rec of skillRecommendations) {
-        map.set(rec.skillId, { relevance: rec.relevance, rationale: rec.rationale })
-      }
-    }
-    return map
-  }, [skillRecommendations])
-
-  const { recommendedSkills, otherSkills } = useMemo(() => {
-    const recommended: Array<Skill & { relevance: number; rationale: string }> = []
-    const other: Skill[] = []
-
-    for (const skill of skills) {
-      const rec = recommendationMap.get(skill.id)
-      if (rec) {
-        recommended.push({ ...skill, ...rec })
-      } else {
-        other.push(skill)
-      }
-    }
-
-    recommended.sort((a, b) => b.relevance - a.relevance)
-    other.sort((a, b) => a.name.localeCompare(b.name))
-
-    return { recommendedSkills: recommended, otherSkills: other }
-  }, [skills, recommendationMap])
+  const { attachedSkillIds, recommendedSkills, otherSkills } = useSpecialistSkillData({
+    skills,
+    specialistSkills: specialist?.skills,
+    skillRecommendations: specialist?.skillRecommendations
+  })
 
   const mannequinKey = getWorkspaceMannequin(activeWorkspace?.id ?? '', workspaces)
 
@@ -294,8 +263,8 @@ export default function SpecialistPage(): React.JSX.Element {
           className="absolute inset-0"
           style={{
             background: `radial-gradient(ellipse at 30% 50%,
-              rgba(184,151,106,0.08) 0%,
-              rgba(30,46,51,0.4) 40%,
+              var(--color-specialist-glow) 0%,
+              var(--color-specialist-mid) 40%,
               transparent 70%)`
           }}
         />
@@ -324,9 +293,7 @@ export default function SpecialistPage(): React.JSX.Element {
                 </span>
               )}
             </div>
-            <p className="text-xs text-text-secondary">
-              Tailored specialist for this workspace
-            </p>
+            <p className="text-xs text-text-secondary">Tailored specialist for this workspace</p>
           </div>
 
           {/* Rebuild button — top right area */}
@@ -424,9 +391,7 @@ export default function SpecialistPage(): React.JSX.Element {
                   key={skill.id}
                   skill={skill}
                   isAttached={attachedSkillIds.has(skill.id)}
-                  isEnabled={
-                    specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false
-                  }
+                  isEnabled={specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false}
                   recommendation={{
                     relevance: skill.relevance,
                     rationale: skill.rationale
@@ -450,9 +415,7 @@ export default function SpecialistPage(): React.JSX.Element {
                   key={skill.id}
                   skill={skill}
                   isAttached={attachedSkillIds.has(skill.id)}
-                  isEnabled={
-                    specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false
-                  }
+                  isEnabled={specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false}
                   onToggle={(enabled) => handleToggleSkill(skill.id, enabled)}
                   onAttach={() => handleAttachSkill(skill.id)}
                   onDetach={() => handleDetachSkill(skill.id)}
@@ -509,7 +472,10 @@ export default function SpecialistPage(): React.JSX.Element {
               prose-ul:text-text-body prose-li:text-text-body
               prose-a:text-accent"
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]} rehypePlugins={[rehypeRaw]}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}
+              rehypePlugins={[rehypeRaw]}
+            >
               {specialist.prompt || '*No prompt generated yet. Click Rebuild to generate.*'}
             </ReactMarkdown>
           </div>
@@ -548,7 +514,9 @@ function StatusBadge({
       className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${className}`}
     >
       {status === 'building' && <Loader2 size={10} className="mr-1 animate-spin" />}
-      {status === 'ready' && <span className="mr-1 w-1.5 h-1.5 rounded-full bg-success inline-block" />}
+      {status === 'ready' && (
+        <span className="mr-1 w-1.5 h-1.5 rounded-full bg-success inline-block" />
+      )}
       {label}
     </span>
   )

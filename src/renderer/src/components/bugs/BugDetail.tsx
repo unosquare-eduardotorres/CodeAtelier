@@ -105,7 +105,14 @@ export default function BugDetail({
 
       {/* Context info */}
       <div className="grid grid-cols-2 gap-3">
-        <InfoItem label="Source" value={bug.sourceFile ? `${bug.sourceFile}:${bug.sourceLine ?? ''}:${bug.sourceColumn ?? ''}` : '—'} />
+        <InfoItem
+          label="Source"
+          value={
+            bug.sourceFile
+              ? `${bug.sourceFile}:${bug.sourceLine ?? ''}:${bug.sourceColumn ?? ''}`
+              : '—'
+          }
+        />
         <InfoItem label="Component" value={bug.componentName ?? '—'} />
         <InfoItem label="Active View" value={bug.activeView ?? '—'} />
         <InfoItem label="Workspace" value={bug.workspaceId ?? '—'} />

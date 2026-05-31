@@ -1,3 +1,10 @@
+---
+name: planner
+description: >
+  Full-lifecycle requirements analysis and planning. Transforms vague ideas into
+  structured, actionable specifications with clear acceptance criteria and execution plans.
+---
+
 # Planner Skill — Requirements Analysis & Planning
 
 ## Purpose

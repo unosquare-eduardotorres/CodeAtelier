@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 
 interface TurnUsageRow {
   id: string
@@ -45,7 +45,10 @@ function toModel(row: TurnUsageRow): TurnUsage {
   }
 }
 
-export class TurnUsageRepository {
+export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage> {
+  protected readonly tableName = 'turn_usage'
+  protected mapRow(row: TurnUsageRow): TurnUsage { return toModel(row) }
+
   /** Record token usage for a single turn */
   record(opts: {
     sessionId: string
@@ -57,7 +60,7 @@ export class TurnUsageRepository {
     cacheCreationTokens: number
     model?: string
   }): TurnUsage {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare(
         `INSERT INTO turn_usage (session_id, conversation_id, turn_number, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, model)
@@ -79,7 +82,7 @@ export class TurnUsageRepository {
 
   /** Get all turn usage records for a conversation, ordered by turn */
   findByConversation(conversationId: string): TurnUsage[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare(
         `SELECT * FROM turn_usage WHERE conversation_id = ?
@@ -91,7 +94,7 @@ export class TurnUsageRepository {
 
   /** Get the most recent turn's usage for a conversation (for growth rate analysis) */
   getLastTurn(conversationId: string): TurnUsage | null {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare(
         `SELECT * FROM turn_usage WHERE conversation_id = ?
@@ -110,7 +113,7 @@ export class TurnUsageRepository {
     conversationId: string,
     tokens: { inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
   ): void {
-    const db = getDatabase()
+    const db = this.db()
     db.prepare(
       `UPDATE turn_usage
        SET input_tokens = ?, cache_read_tokens = ?, cache_creation_tokens = ?
@@ -128,7 +131,7 @@ export class TurnUsageRepository {
    * This preserves cache data for analysis while still recording the full context size.
    */
   updateLastTurnContextTokens(conversationId: string, contextTokens: number): void {
-    const db = getDatabase()
+    const db = this.db()
     db.prepare(
       `UPDATE turn_usage
        SET context_tokens = ?
@@ -142,7 +145,7 @@ export class TurnUsageRepository {
 
   /** Prune old turn usage records to prevent unbounded growth */
   pruneOlderThan(days: number): number {
-    const db = getDatabase()
+    const db = this.db()
     const result = db
       .prepare(`DELETE FROM turn_usage WHERE created_at < datetime('now', '-' || ? || ' days')`)
       .run(days)

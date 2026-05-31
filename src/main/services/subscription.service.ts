@@ -31,7 +31,7 @@ class SubscriptionService {
     let sdkHealth: SubscriptionCheckResult['sdkHealth'] = {
       sdkVersion: null,
       modelsAvailable: [],
-      opus47Available: false,
+      opus48Available: false,
       error: 'CLI not installed'
     }
 
@@ -153,7 +153,7 @@ class SubscriptionService {
     }
   }
 
-  /** Verify SDK can execute and Opus 4.7 is available */
+  /** Verify SDK can execute and Opus 4.8 is available */
   async checkSdkHealth(): Promise<NonNullable<SubscriptionCheckResult['sdkHealth']>> {
     try {
       const env = buildEnvWithPath()
@@ -163,24 +163,24 @@ class SubscriptionService {
       })
       const sdkVersion = versionOut.trim()
 
-      // Check if opus 4.7 is reachable (via a minimal one-shot query)
+      // Check if opus 4.8 is reachable (via a minimal one-shot query)
       const { stdout: modelsOut } = await execFileAsync(
         'claude',
-        ['-p', 'reply with OK', '--model', 'claude-opus-4-7', '--output-format', 'text'],
+        ['-p', 'reply with OK', '--model', 'claude-opus-4-8', '--output-format', 'text'],
         { env, timeout: 30_000 }
       )
-      const opus47Available = modelsOut.toLowerCase().includes('ok')
+      const opus48Available = modelsOut.toLowerCase().includes('ok')
 
       return {
         sdkVersion,
-        modelsAvailable: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
-        opus47Available,
+        modelsAvailable: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+        opus48Available,
         error: null
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       logger.warn(`SDK health check failed: ${message}`)
-      return { sdkVersion: null, modelsAvailable: [], opus47Available: false, error: message }
+      return { sdkVersion: null, modelsAvailable: [], opus48Available: false, error: message }
     }
   }
 

@@ -1,0 +1,161 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Porcelain — Ceramic elegance: cool whites/pearl, slate blue & charcoal ink
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="porcelain"] {
+  /* ── Surface layers (light → dark) ── */
+  --color-surface-base: #f8f9fb;
+  --color-surface-raised: #f0f1f4;
+  --color-surface-overlay: #e8e9ed;
+  --color-surface-float: #dddee3;
+
+  /* ── Border layers (slate-based) ── */
+  --color-border-subtle: rgba(100, 116, 139, 0.12);
+  --color-border-default: rgba(100, 116, 139, 0.22);
+  --color-border-strong: rgba(100, 116, 139, 0.40);
+
+  /* ── Text hierarchy (dark on light) ── */
+  --color-text-primary: #1e293b;
+  --color-text-body: #334155;
+  --color-text-secondary: #64748b;
+  --color-text-muted: #94a3b8;
+
+  /* ── Code text ── */
+  --color-code-text: #1e293b;
+  --color-code-inline: #0369a1;
+  --color-text-emphasis: #0f172a;
+
+  /* ── Primary accent (Charcoal Slate) ── */
+  --color-primary: #475569;
+  --color-primary-hover: #334155;
+  --color-primary-muted: rgba(71, 85, 105, 0.10);
+  --color-primary-text: #1e293b;
+
+  /* ── Accent (Ocean Blue) ── */
+  --color-accent: #0284c7;
+  --color-accent-muted: rgba(2, 132, 199, 0.10);
+
+  /* ── Teal / Forest ── */
+  --color-teal: #0d9488;
+  --color-teal-light: #14b8a6;
+  --color-teal-muted: rgba(13, 148, 136, 0.10);
+  --color-teal-text: #0f766e;
+  --color-forest: #15803d;
+  --color-forest-light: #22c55e;
+
+  /* ── Semantic status ── */
+  --color-success: #16a34a;
+  --color-success-muted: rgba(22, 163, 74, 0.10);
+  --color-warning: #d97706;
+  --color-warning-muted: rgba(217, 119, 6, 0.10);
+  --color-danger: #dc2626;
+  --color-danger-muted: rgba(220, 38, 38, 0.10);
+  --color-info: #2563eb;
+  --color-info-muted: rgba(37, 99, 235, 0.10);
+
+  /* ── Mode tokens (Plan / Build / Danger) ── */
+  --color-mode-plan: #e0f2fe;
+  --color-mode-plan-muted: rgba(14, 165, 233, 0.08);
+  --color-mode-plan-text: #0369a1;
+  --color-mode-plan-border: rgba(14, 165, 233, 0.20);
+
+  --color-mode-build: #fef3c7;
+  --color-mode-build-muted: rgba(245, 158, 11, 0.08);
+  --color-mode-build-text: #92400e;
+  --color-mode-build-border: rgba(245, 158, 11, 0.20);
+
+  --color-mode-danger: #fee2e2;
+  --color-mode-danger-muted: rgba(220, 38, 38, 0.08);
+  --color-mode-danger-text: #dc2626;
+  --color-mode-danger-border: rgba(220, 38, 38, 0.20);
+
+  /* ── Plan Card ── */
+  --color-plan-card: #0284c7;
+  --color-plan-card-muted: rgba(2, 132, 199, 0.08);
+  --color-plan-card-border: rgba(2, 132, 199, 0.20);
+  --color-plan-card-text: #0369a1;
+  --color-plan-card-section-bg: rgba(2, 132, 199, 0.04);
+  --color-plan-card-accent: #0d9488;
+  --color-plan-card-phase-bg: rgba(13, 148, 136, 0.06);
+  --color-plan-card-phase-border: rgba(13, 148, 136, 0.15);
+
+  /* ── Panel colors ── */
+  --color-panel-olive: #f5f5f4;
+  --color-panel-terracotta: #fef2f2;
+  --color-panel-teal: #f0fdfa;
+  --color-panel-navy: #eff6ff;
+
+  /* ── Agent-specific colors (darker for light bg) ── */
+  --color-agent-react: #0284c7;
+  --color-agent-dotnet: #7c3aed;
+  --color-agent-agentic: #b45309;
+  --color-agent-postgres: #2563eb;
+  --color-agent-ux: #be185d;
+  --color-agent-git: #475569;
+  --color-agent-requirements: #16a34a;
+  --color-agent-codeplanner: #4d7c0f;
+  --color-agent-execution: #c2410c;
+  --color-agent-cicd: #dc2626;
+  --color-agent-cloud: #0d9488;
+
+  /* ── Special-purpose tokens ── */
+  --color-user-bubble: rgba(71, 85, 105, 0.06);
+  --color-grill: #ea580c;
+  --color-grill-muted: rgba(234, 88, 12, 0.10);
+  --color-gold-glow: rgba(71, 85, 105, 0.08);
+  --color-gold-muted: #94a3b8;
+
+  /* ── Component tokens ── */
+  --color-button-primary-bg: var(--color-primary);
+  --color-button-primary-hover: var(--color-primary-hover);
+  --color-button-danger-bg: var(--color-danger);
+
+  --color-card-bg: rgba(71, 85, 105, 0.02);
+  --color-card-border: var(--color-border-subtle);
+
+  --color-input-bg: #ffffff;
+  --color-input-border: var(--color-border-default);
+  --color-input-focus: var(--color-primary);
+
+  --color-modal-bg: var(--color-surface-float);
+  --color-modal-border: var(--color-border-default);
+
+  --color-sidebar-bg: var(--color-surface-raised);
+  --color-sidebar-active: var(--color-primary-muted);
+
+  /* ── Zebra stripe for tables ── */
+  --color-table-zebra: rgba(71, 85, 105, 0.03);
+
+  /* ── Scrollbar ── */
+  --color-scrollbar-thumb: rgba(100, 116, 139, 0.25);
+  --color-scrollbar-thumb-hover: rgba(100, 116, 139, 0.40);
+
+  /* ── Selection ── */
+  --color-selection-bg: rgba(71, 85, 105, 0.20);
+  --color-selection-text: var(--color-text-primary);
+
+  /* ── Hover lift shadow ── */
+  --color-hover-shadow: rgba(71, 85, 105, 0.12);
+
+  /* ── Specialist radial gradient ── */
+  --color-specialist-glow: rgba(71, 85, 105, 0.06);
+  --color-specialist-mid: rgba(221, 222, 227, 0.4);
+
+  /* ── Porcelain-specific: disable grain overlay ── */
+  --grain-opacity: 0;
+
+  /* ── Porcelain-specific: chat-icon pulse for light bg ── */
+  --color-chat-icon-pulse: rgba(2, 132, 199, 0.35);
+}
+
+/* ── Porcelain scrollbar overrides ── */
+[data-theme="porcelain"] ::-webkit-scrollbar-track {
+  background: var(--color-surface-raised);
+}
+
+[data-theme="porcelain"] ::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.25);
+}
+
+[data-theme="porcelain"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.40);
+}

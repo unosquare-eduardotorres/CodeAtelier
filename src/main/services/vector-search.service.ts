@@ -2,7 +2,9 @@ import { EventEmitter } from 'node:events'
 import log from 'electron-log/main'
 import { memoryCheckpoint } from './indexing-diagnostics'
 import { embeddingProvider } from './embedding-provider.service'
+import { embeddingWorkerManager } from './embedding-worker-manager'
 import { descriptionCache } from './description-cache.service'
+import { generateHeuristicDescription } from './heuristic-description.service'
 import {
   runPreprocessingPipeline,
   DEFAULT_PREPROCESSING_OPTIONS,
@@ -30,6 +32,13 @@ const EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2' as const
  * retry in embed() will halve the batch on OOM errors as a safety net.
  */
 const EMBEDDING_BATCH_SIZE = 32
+
+/**
+ * Checkpoint interval: persist embeddings + chunks to SQLite every N batches.
+ * At batch size 32, 50 batches = 1,600 chunks ≈ every ~5 minutes of embedding.
+ * Crash recovery restarts from the last checkpoint instead of from zero.
+ */
+const CHECKPOINT_INTERVAL_BATCHES = 50
 
 /**
  * In-memory vector store entry.
@@ -138,6 +147,19 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 /**
+ * Format milliseconds into a human-readable ETA string.
+ * Examples: "~2 min", "~45 min", "~1.5 hrs"
+ */
+function formatEta(ms: number): string {
+  const seconds = Math.ceil(ms / 1000)
+  if (seconds < 60) return '< 1 min'
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `~${minutes} min`
+  const hours = (minutes / 60).toFixed(1)
+  return `~${hours} hrs`
+}
+
+/**
  * Service for semantic vector search over indexed codebases.
  * Manages per-workspace vector collections, indexing pipeline, and search.
  *
@@ -151,6 +173,8 @@ class VectorSearchService extends EventEmitter {
   private collections = new Map<string, InMemoryCollection>()
   private indexingStates = new Map<string, IndexingState>()
   private preprocessingOptions = new Map<string, PreprocessingOptions>()
+  /** Tracks when the embedding phase started (per-workspace) for ETA calculation */
+  private embeddingStartTimes = new Map<string, number>()
 
   private makeDefaultState(): IndexingState {
     return {
@@ -165,7 +189,8 @@ class VectorSearchService extends EventEmitter {
       descriptionsGenerated: 0,
       descriptionsCached: 0,
       descriptionsTotal: 0,
-      descriptionsProcessed: 0
+      descriptionsProcessed: 0,
+      descriptionSource: 'none'
     }
   }
 
@@ -294,8 +319,8 @@ class VectorSearchService extends EventEmitter {
         `
         INSERT OR REPLACE INTO indexing_state
           (workspace_id, status, total_files, processed_files, total_chunks, processed_chunks,
-           embedding_model, last_completed_at, updated_at)
-        VALUES (?, 'complete', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+           embedding_model, checkpoint_offset, last_completed_at, updated_at)
+        VALUES (?, 'complete', ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       `
       ).run(
         workspaceId,
@@ -303,7 +328,8 @@ class VectorSearchService extends EventEmitter {
         0,
         processedChunks.length,
         processedChunks.length,
-        embeddingModel
+        embeddingModel,
+        processedChunks.length // checkpoint_offset = total on complete
       )
     })
 
@@ -315,11 +341,87 @@ class VectorSearchService extends EventEmitter {
     )
   }
 
+  /**
+   * Checkpoint: persist partial progress to SQLite during embedding.
+   * Saves all chunks + embeddings that have been processed so far, and
+   * records the checkpoint offset in indexing_state for resume-after-crash.
+   */
+  private checkpointToDb(
+    workspaceId: string,
+    processedChunks: ProcessedChunk[],
+    embeddedUpTo: number,
+    fileMtimes: Map<string, number>,
+    embeddingModel: string
+  ): void {
+    const start = Date.now()
+    const collection = this.collections.get(workspaceId)
+    if (!collection) return
+
+    const entries = collection.getEntries()
+    if (entries.length === 0) return
+
+    const db = getDatabase()
+    const transaction = db.transaction(() => {
+      // Persist all chunks (needed for resume to map IDs to embeddings)
+      codeChunkRepository.upsertChunks(workspaceId, processedChunks, fileMtimes)
+
+      // Persist embeddings accumulated so far
+      const embeddingEntries: EmbeddingEntry[] = entries.map((entry) => ({
+        chunkId: entry.id,
+        embedding: entry.embedding,
+        model: embeddingModel
+      }))
+      chunkEmbeddingRepository.upsertEmbeddings(workspaceId, embeddingEntries)
+
+      // Update checkpoint offset in indexing_state
+      db.prepare(
+        `
+        INSERT OR REPLACE INTO indexing_state
+          (workspace_id, status, total_chunks, processed_chunks,
+           embedding_model, checkpoint_offset, updated_at)
+        VALUES (?, 'indexing', ?, ?, ?, ?, datetime('now'))
+      `
+      ).run(workspaceId, processedChunks.length, embeddedUpTo, embeddingModel, embeddedUpTo)
+    })
+
+    transaction()
+
+    const elapsed = Date.now() - start
+    log.info(
+      `[VectorSearch] Checkpoint at ${embeddedUpTo}/${processedChunks.length} chunks in ${elapsed}ms`
+    )
+  }
+
+  /**
+   * Get the checkpoint offset from indexing_state for resume support.
+   * Returns 0 if no checkpoint exists or status is not 'indexing'.
+   */
+  getCheckpointOffset(workspaceId: string): number {
+    try {
+      const db = getDatabase()
+      const row = db
+        .prepare(`SELECT checkpoint_offset, status FROM indexing_state WHERE workspace_id = ?`)
+        .get(workspaceId) as { checkpoint_offset: number; status: string } | undefined
+
+      if (row && row.status === 'indexing' && row.checkpoint_offset > 0) {
+        return row.checkpoint_offset
+      }
+    } catch (e) {
+      log.warn('[VectorSearch] Failed to get checkpoint offset:', e)
+    }
+    return 0
+  }
+
   // ── Indexing Pipeline ────────────────────────────────────────────────────
 
   /**
    * Index a project: scan files, preprocess chunks, embed, and store vectors.
    * After completion, persists everything to SQLite for fast reload on restart.
+   *
+   * Orchestrator that delegates to three phases:
+   *   1. preprocessChunks() — description strategy, preprocessing pipeline
+   *   2. embedChunksWithCheckpoints() — embedding init, checkpoint resume, batch loop
+   *   3. persistIndex() — final SQLite persistence
    */
   async indexProject(
     workspaceId: string,
@@ -340,7 +442,6 @@ class VectorSearchService extends EventEmitter {
       descriptions: !!options?.generateDescriptions
     })
 
-    // Set workspace ID on description cache for proper scoping
     descriptionCache.setWorkspaceId(workspaceId)
 
     const preprocessOpts: PreprocessingOptions = {
@@ -350,100 +451,19 @@ class VectorSearchService extends EventEmitter {
     this.preprocessingOptions.set(workspaceId, preprocessOpts)
 
     this.emitProgress(workspaceId)
-
-    // Update indexing_state in DB
     this.updateIndexingStateDb(workspaceId, 'scanning')
 
     try {
-      // Get or create collection for this workspace
       let collection = this.collections.get(workspaceId)
       if (!collection) {
         collection = new InMemoryCollection()
         this.collections.set(workspaceId, collection)
       }
 
-      // ── Preprocessing phase ──
-      state.status = 'preprocessing'
-      state.preprocessTotal = tags.length
-      this.emitProgress(workspaceId)
-      this.updateIndexingStateDb(workspaceId, 'preprocessing')
-
-      memoryCheckpoint('PREPROCESS_START', { totalTags: tags.length })
-
-      const projectName = workspacePath.split('/').pop() ?? 'unknown'
-
-      // Batch description generator callback (new: 10-20x faster)
-      const getBatchDescriptions = preprocessOpts.generateDescriptions
-        ? async (
-            chunks: Array<{ chunk: RawChunk; embedText: string }>
-          ): Promise<{
-            descriptions: Map<number, string>
-            cached: number
-            generated: number
-          }> => {
-            return descriptionCache.getOrGenerateBatch(
-              chunks,
-              preprocessOpts.descriptionModel,
-              workspacePath
-            )
-          }
-        : undefined
-
-      // Single-call fallback (kept for backward compatibility)
-      const getDescription = preprocessOpts.generateDescriptions
-        ? async (chunk: RawChunk, embedText: string): Promise<string | undefined> => {
-            const desc = await descriptionCache.getOrGenerate(
-              chunk,
-              embedText,
-              preprocessOpts.descriptionModel,
-              workspacePath
-            )
-            if (desc) {
-              const key = descriptionCache.makeKey(chunk.filePath, chunk.symbolName, chunk.body)
-              const cached = descriptionCache.get(key)
-              if (cached === desc) {
-                state.descriptionsCached++
-              } else {
-                state.descriptionsGenerated++
-              }
-            }
-            return desc
-          }
-        : undefined
-
-      memoryCheckpoint('PREPROCESS_PIPELINE_ENTER', {
-        generateDescriptions: !!preprocessOpts.generateDescriptions
-      })
-
-      const processedChunks = await runPreprocessingPipeline(
-        tags,
-        fileContents,
-        projectName,
-        preprocessOpts,
-        (update) => {
-          state.processedFiles = update.processedFiles
-          state.totalFiles = update.totalFiles
-          state.processedChunks = update.processedChunks
-          state.preprocessComplete = update.processedChunks
-          state.preprocessSkipped = update.skippedFiles
-          state.currentFile = update.currentFile
-          this.emitProgress(workspaceId)
-        },
-        getDescription,
-        getBatchDescriptions,
-        (descUpdate) => {
-          state.descriptionsTotal = descUpdate.descriptionsTotal
-          state.descriptionsProcessed = descUpdate.descriptionsProcessed
-          state.descriptionsCached = descUpdate.descriptionsCached
-          state.descriptionsGenerated = descUpdate.descriptionsGenerated
-          this.emitProgress(workspaceId)
-        }
+      // Phase 1: Preprocess chunks
+      const processedChunks = await this.preprocessChunks(
+        workspaceId, workspacePath, tags, fileContents, preprocessOpts, state
       )
-
-      memoryCheckpoint('PREPROCESS_PIPELINE_EXIT', {
-        processedChunks: processedChunks.length,
-        cancelled: !!preprocessOpts.cancelled
-      })
 
       if (preprocessOpts.cancelled) {
         state.status = 'idle'
@@ -452,126 +472,19 @@ class VectorSearchService extends EventEmitter {
         return
       }
 
-      // ── Embedding phase ──
-      state.status = 'indexing-chunks'
-      state.totalChunks = processedChunks.length
-      state.processedChunks = 0
-      this.emitProgress(workspaceId)
-      this.updateIndexingStateDb(workspaceId, 'indexing')
+      // Phase 2: Embed chunks with checkpoint support
+      const result = await this.embedChunksWithCheckpoints(
+        workspaceId, workspacePath, processedChunks, fileContents, preprocessOpts, state, collection
+      )
 
-      // Nudge GC between preprocessing and embedding phases to reclaim
-      // memory from AI description generation before heavy WASM work.
-      // Description generation spawns concurrent Claude CLI processes
-      // (DESCRIPTION_CONCURRENCY × DESCRIPTION_BATCH_SIZE) — by this point
-      // those processes have exited and their memory can be reclaimed.
-      memoryCheckpoint('GC_BEFORE')
-      if (global.gc) {
-        log.info('[VectorSearch] Running GC hint between preprocessing and embedding phases')
-        global.gc()
-      }
-      memoryCheckpoint('GC_AFTER')
-
-      // ── Embedding model init (deferred until after descriptions) ──
-      // The ONNX WASM model allocates ~60MB with all-MiniLM-L6-v2. Loading it
-      // *before* preprocessing meant it was resident alongside 3 concurrent
-      // Claude CLI processes for AI descriptions, risking V8 heap or WASM OOM
-      // crashes. By deferring the init to here — after descriptions are done
-      // and GC has run — the CLI process memory has been freed.
-      if (!embeddingProvider.isReady) {
-        memoryCheckpoint('EMBEDDING_MODEL_INIT_START')
-        log.info('[VectorSearch] Initializing embedding model after description phase...')
-        await embeddingProvider.initialize()
-        memoryCheckpoint('EMBEDDING_MODEL_INIT_DONE')
-      } else {
-        memoryCheckpoint('EMBEDDING_MODEL_ALREADY_READY')
-      }
-
-      // Batch embed chunks
-      const totalBatches = Math.ceil(processedChunks.length / EMBEDDING_BATCH_SIZE)
-      memoryCheckpoint('EMBED_LOOP_START', {
-        chunks: processedChunks.length,
-        batchSize: EMBEDDING_BATCH_SIZE,
-        totalBatches
-      })
-
-      for (let i = 0; i < processedChunks.length; i += EMBEDDING_BATCH_SIZE) {
-        if (preprocessOpts.cancelled) break
-
-        // Wait while paused
-        while (preprocessOpts.paused && !preprocessOpts.cancelled) {
-          state.status = 'paused'
-          this.emitProgress(workspaceId)
-          await new Promise((resolve) => setTimeout(resolve, 500))
-        }
-        if (preprocessOpts.cancelled) break
-
-        state.status = 'indexing-chunks'
-
-        const batchNum = Math.floor(i / EMBEDDING_BATCH_SIZE) + 1
-        const batch = processedChunks.slice(i, i + EMBEDDING_BATCH_SIZE)
-        const texts = batch.map((c) => c.embedText)
-
-        // Log first batch, every 10th batch, and last batch for crash diagnosis
-        const isLogBatch = batchNum === 1 || batchNum % 10 === 0 || batchNum === totalBatches
-        if (isLogBatch) {
-          memoryCheckpoint(`EMBED_BATCH_${batchNum}/${totalBatches}`, {
-            offset: i,
-            batchTextsChars: texts.reduce((s, t) => s + t.length, 0)
-          })
-        }
-
-        try {
-          const embeddings = await embeddingProvider.embed(texts)
-          const ids = batch.map((c) => c.id)
-          collection.upsert(ids, embeddings, batch)
-
-          state.processedChunks = Math.min(i + EMBEDDING_BATCH_SIZE, processedChunks.length)
-          state.currentFile = batch[batch.length - 1].metadata.filePath
-          this.emitProgress(workspaceId)
-        } catch (error) {
-          log.error(`[VectorSearch] Embedding batch failed at offset ${i}:`, error)
-          memoryCheckpoint('EMBED_BATCH_ERROR', { offset: i, error: (error as Error).message })
-          state.status = 'error'
-          state.error = (error as Error).message
-          this.emitProgress(workspaceId)
-          this.updateIndexingStateDb(workspaceId, 'error', (error as Error).message)
-          return
-        }
-      }
-
-      if (!preprocessOpts.cancelled) {
-        state.status = 'complete'
-        state.processedChunks = processedChunks.length
-        memoryCheckpoint('INDEX_COMPLETE', { vectors: collection.size })
-        log.info(`[VectorSearch] Indexing complete for ${workspaceId}: ${collection.size} vectors`)
-
-        // ── Persist to SQLite for fast reload on restart ──
-        try {
-          // Build file mtime map from fileContents keys
-          const fileMtimes = new Map<string, number>()
-          // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import for persistence
-          const { statSync } = require('node:fs') as typeof import('node:fs')
-          // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import for persistence
-          const { join } = require('node:path') as typeof import('node:path')
-          for (const relPath of fileContents.keys()) {
-            try {
-              const absPath = join(workspacePath, relPath)
-              const stat = statSync(absPath)
-              fileMtimes.set(relPath, stat.mtimeMs)
-            } catch {
-              fileMtimes.set(relPath, 0)
-            }
-          }
-
-          this.saveToDb(workspaceId, processedChunks, fileMtimes, EMBEDDING_MODEL_NAME)
-        } catch (persistError) {
-          // Non-fatal: index still works in-memory, just won't persist
-          log.warn('[VectorSearch] Failed to persist index to SQLite:', persistError)
-        }
-      } else {
+      // Phase 3: Persist (only on success)
+      if (result === 'completed') {
+        this.persistIndex(workspaceId, processedChunks, fileContents, workspacePath, state, collection)
+      } else if (result === 'cancelled') {
         state.status = 'idle'
         this.updateIndexingStateDb(workspaceId, 'idle')
       }
+
       this.emitProgress(workspaceId)
     } catch (error) {
       state.status = 'error'
@@ -581,6 +494,269 @@ class VectorSearchService extends EventEmitter {
       this.emitProgress(workspaceId)
       this.updateIndexingStateDb(workspaceId, 'error', (error as Error).message)
     }
+  }
+
+  /**
+   * Phase 1: Preprocess raw chunks — select description strategy, run preprocessing pipeline.
+   */
+  private async preprocessChunks(
+    workspaceId: string,
+    workspacePath: string,
+    tags: RawChunk[],
+    fileContents: Map<string, string>,
+    preprocessOpts: PreprocessingOptions,
+    state: IndexingState
+  ): Promise<ProcessedChunk[]> {
+    state.status = 'preprocessing'
+    state.preprocessTotal = tags.length
+    this.emitProgress(workspaceId)
+    this.updateIndexingStateDb(workspaceId, 'preprocessing')
+
+    memoryCheckpoint('PREPROCESS_START', { totalTags: tags.length })
+
+    const projectName = workspacePath.split('/').pop() ?? 'unknown'
+    const useAiDescriptions = preprocessOpts.generateDescriptions
+    state.descriptionSource = useAiDescriptions ? 'ai' : 'heuristic'
+
+    const getBatchDescriptions = useAiDescriptions
+      ? async (
+          chunks: Array<{ chunk: RawChunk; embedText: string }>
+        ): Promise<{ descriptions: Map<number, string>; cached: number; generated: number }> => {
+          return descriptionCache.getOrGenerateBatch(chunks, preprocessOpts.descriptionModel, workspacePath)
+        }
+      : undefined
+
+    const getDescription = useAiDescriptions
+      ? async (chunk: RawChunk, _embedText: string): Promise<string | undefined> => {
+          const desc = await descriptionCache.getOrGenerate(chunk, _embedText, preprocessOpts.descriptionModel, workspacePath)
+          if (desc) {
+            const key = descriptionCache.makeKey(chunk.filePath, chunk.symbolName, chunk.body)
+            const cached = descriptionCache.get(key)
+            if (cached === desc) { state.descriptionsCached++ } else { state.descriptionsGenerated++ }
+          }
+          return desc
+        }
+      : async (chunk: RawChunk, _embedText: string): Promise<string | undefined> => {
+          return generateHeuristicDescription(chunk)
+        }
+
+    memoryCheckpoint('PREPROCESS_PIPELINE_ENTER', { generateDescriptions: !!preprocessOpts.generateDescriptions })
+
+    const processedChunks = await runPreprocessingPipeline(
+      tags, fileContents, projectName, preprocessOpts,
+      (update) => {
+        state.processedFiles = update.processedFiles
+        state.totalFiles = update.totalFiles
+        state.processedChunks = update.processedChunks
+        state.preprocessComplete = update.processedChunks
+        state.preprocessSkipped = update.skippedFiles
+        state.currentFile = update.currentFile
+        this.emitProgress(workspaceId)
+      },
+      getDescription,
+      getBatchDescriptions,
+      (descUpdate) => {
+        state.descriptionsTotal = descUpdate.descriptionsTotal
+        state.descriptionsProcessed = descUpdate.descriptionsProcessed
+        state.descriptionsCached = descUpdate.descriptionsCached
+        state.descriptionsGenerated = descUpdate.descriptionsGenerated
+        this.emitProgress(workspaceId)
+      }
+    )
+
+    memoryCheckpoint('PREPROCESS_PIPELINE_EXIT', { processedChunks: processedChunks.length, cancelled: !!preprocessOpts.cancelled })
+    return processedChunks
+  }
+
+  /**
+   * Phase 2: Embed preprocessed chunks with checkpoint resume, pause/cancel, periodic checkpointing.
+   * Returns 'completed' | 'cancelled' | 'error'.
+   */
+  private async embedChunksWithCheckpoints(
+    workspaceId: string,
+    workspacePath: string,
+    processedChunks: ProcessedChunk[],
+    fileContents: Map<string, string>,
+    preprocessOpts: PreprocessingOptions,
+    state: IndexingState,
+    collection: InMemoryCollection
+  ): Promise<'completed' | 'cancelled' | 'error'> {
+    state.status = 'indexing-chunks'
+    state.totalChunks = processedChunks.length
+    state.processedChunks = 0
+    this.emitProgress(workspaceId)
+    this.updateIndexingStateDb(workspaceId, 'indexing')
+
+    // Nudge GC between preprocessing and embedding phases
+    memoryCheckpoint('GC_BEFORE')
+    if (global.gc) {
+      log.info('[VectorSearch] Running GC hint between preprocessing and embedding phases')
+      global.gc()
+    }
+    memoryCheckpoint('GC_AFTER')
+
+    // Embedding model init — prefer utility process worker, fallback to main thread
+    let useWorker = false
+    if (!embeddingWorkerManager.isReady) {
+      memoryCheckpoint('EMBEDDING_WORKER_INIT_START')
+      log.info('[VectorSearch] Initializing embedding worker (utility process)...')
+      try {
+        await embeddingWorkerManager.initialize()
+        useWorker = true
+        memoryCheckpoint('EMBEDDING_WORKER_INIT_DONE')
+      } catch (workerError) {
+        log.warn('[VectorSearch] Utility process failed, falling back to main-thread embedding:', workerError)
+        memoryCheckpoint('EMBEDDING_WORKER_FALLBACK', { error: (workerError as Error).message })
+        if (!embeddingProvider.isReady) {
+          await embeddingProvider.initialize()
+        }
+      }
+    } else {
+      useWorker = true
+      memoryCheckpoint('EMBEDDING_WORKER_ALREADY_READY')
+    }
+
+    const embedFn = useWorker
+      ? (texts: string[]) => embeddingWorkerManager.embed(texts)
+      : (texts: string[]) => embeddingProvider.embed(texts)
+
+    // Resume support: skip already-embedded chunks
+    const checkpointOffset = this.getCheckpointOffset(workspaceId)
+    let startOffset = 0
+
+    if (checkpointOffset > 0 && checkpointOffset < processedChunks.length) {
+      log.info(`[VectorSearch] Resuming from checkpoint offset ${checkpointOffset}/${processedChunks.length}`)
+      memoryCheckpoint('RESUME_FROM_CHECKPOINT', { offset: checkpointOffset, total: processedChunks.length })
+
+      const existingEmbeddings = chunkEmbeddingRepository.loadAllForWorkspace(workspaceId)
+      const embeddingMap = new Map<string, number[]>()
+      for (const entry of existingEmbeddings) { embeddingMap.set(entry.chunkId, entry.embedding) }
+
+      for (let i = 0; i < checkpointOffset && i < processedChunks.length; i++) {
+        const chunk = processedChunks[i]
+        const embedding = embeddingMap.get(chunk.id)
+        if (embedding) { collection.upsert([chunk.id], [embedding], [chunk]) }
+      }
+
+      startOffset = checkpointOffset
+      state.processedChunks = checkpointOffset
+      this.emitProgress(workspaceId)
+    }
+
+    const fileMtimes = this.buildFileMtimeMap(workspacePath, fileContents)
+    const totalBatches = Math.ceil((processedChunks.length - startOffset) / EMBEDDING_BATCH_SIZE)
+    this.embeddingStartTimes.set(workspaceId, Date.now())
+
+    memoryCheckpoint('EMBED_LOOP_START', { chunks: processedChunks.length, batchSize: EMBEDDING_BATCH_SIZE, totalBatches, startOffset })
+
+    let batchesSinceCheckpoint = 0
+
+    for (let i = startOffset; i < processedChunks.length; i += EMBEDDING_BATCH_SIZE) {
+      if (preprocessOpts.cancelled) break
+
+      while (preprocessOpts.paused && !preprocessOpts.cancelled) {
+        state.status = 'paused'
+        this.emitProgress(workspaceId)
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      if (preprocessOpts.cancelled) break
+
+      state.status = 'indexing-chunks'
+      const batchNum = Math.floor((i - startOffset) / EMBEDDING_BATCH_SIZE) + 1
+      const batch = processedChunks.slice(i, i + EMBEDDING_BATCH_SIZE)
+      const texts = batch.map((c) => c.embedText)
+
+      const isLogBatch = batchNum === 1 || batchNum % 10 === 0 || batchNum === totalBatches
+      if (isLogBatch) {
+        memoryCheckpoint(`EMBED_BATCH_${batchNum}/${totalBatches}`, { offset: i, batchTextsChars: texts.reduce((s, t) => s + t.length, 0) })
+      }
+
+      try {
+        const embeddings = await embedFn(texts)
+        const ids = batch.map((c) => c.id)
+        collection.upsert(ids, embeddings, batch)
+
+        state.processedChunks = Math.min(i + EMBEDDING_BATCH_SIZE, processedChunks.length)
+        state.currentFile = batch[batch.length - 1].metadata.filePath
+        this.emitProgress(workspaceId)
+
+        batchesSinceCheckpoint++
+        if (batchesSinceCheckpoint >= CHECKPOINT_INTERVAL_BATCHES) {
+          const embeddedUpTo = Math.min(i + EMBEDDING_BATCH_SIZE, processedChunks.length)
+          try {
+            this.checkpointToDb(workspaceId, processedChunks, embeddedUpTo, fileMtimes, EMBEDDING_MODEL_NAME)
+            memoryCheckpoint('CHECKPOINT_SAVED', { embeddedUpTo, total: processedChunks.length })
+          } catch (checkpointError) {
+            log.warn('[VectorSearch] Checkpoint save failed:', checkpointError)
+          }
+          batchesSinceCheckpoint = 0
+        }
+      } catch (error) {
+        log.error(`[VectorSearch] Embedding batch failed at offset ${i}:`, error)
+        memoryCheckpoint('EMBED_BATCH_ERROR', { offset: i, error: (error as Error).message })
+
+        try {
+          const embeddedUpTo = Math.max(i, startOffset)
+          if (embeddedUpTo > startOffset) {
+            this.checkpointToDb(workspaceId, processedChunks, embeddedUpTo, fileMtimes, EMBEDDING_MODEL_NAME)
+            log.info(`[VectorSearch] Error checkpoint saved at offset ${embeddedUpTo}`)
+          }
+        } catch { /* Ignore checkpoint errors during error handling */ }
+
+        state.status = 'error'
+        state.error = (error as Error).message
+        this.emitProgress(workspaceId)
+        this.updateIndexingStateDb(workspaceId, 'error', (error as Error).message)
+        return 'error'
+      }
+    }
+
+    return preprocessOpts.cancelled ? 'cancelled' : 'completed'
+  }
+
+  /**
+   * Phase 3: Persist completed index to SQLite and finalize state.
+   */
+  private persistIndex(
+    workspaceId: string,
+    processedChunks: ProcessedChunk[],
+    fileContents: Map<string, string>,
+    workspacePath: string,
+    state: IndexingState,
+    collection: InMemoryCollection
+  ): void {
+    state.status = 'complete'
+    state.processedChunks = processedChunks.length
+    memoryCheckpoint('INDEX_COMPLETE', { vectors: collection.size })
+    log.info(`[VectorSearch] Indexing complete for ${workspaceId}: ${collection.size} vectors`)
+
+    const fileMtimes = this.buildFileMtimeMap(workspacePath, fileContents)
+    try {
+      this.saveToDb(workspaceId, processedChunks, fileMtimes, EMBEDDING_MODEL_NAME)
+    } catch (persistError) {
+      log.warn('[VectorSearch] Failed to persist index to SQLite:', persistError)
+    }
+  }
+
+  /**
+   * Build a map of relative file path → mtime for persistence.
+   */
+  private buildFileMtimeMap(workspacePath: string, fileContents: Map<string, string>): Map<string, number> {
+    const fileMtimes = new Map<string, number>()
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import for persistence
+    const { statSync } = require('node:fs') as typeof import('node:fs')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import for persistence
+    const { join } = require('node:path') as typeof import('node:path')
+    for (const relPath of fileContents.keys()) {
+      try {
+        const absPath = join(workspacePath, relPath)
+        const stat = statSync(absPath)
+        fileMtimes.set(relPath, stat.mtimeMs)
+      } catch {
+        fileMtimes.set(relPath, 0)
+      }
+    }
+    return fileMtimes
   }
 
   // ── Incremental Re-indexing ──────────────────────────────────────────────
@@ -617,7 +793,8 @@ class VectorSearchService extends EventEmitter {
     const projectName = workspacePath.split('/').pop() ?? 'unknown'
 
     // Batch description generator callback (faster for incremental too)
-    const getBatchDescriptions = preprocessOpts.generateDescriptions
+    const useAiDescriptions = preprocessOpts.generateDescriptions
+    const getBatchDescriptions = useAiDescriptions
       ? async (
           batchChunks: Array<{ chunk: RawChunk; embedText: string }>
         ): Promise<{
@@ -633,8 +810,8 @@ class VectorSearchService extends EventEmitter {
         }
       : undefined
 
-    // Single-call fallback
-    const getDescription = preprocessOpts.generateDescriptions
+    // Single-call fallback — heuristic if AI not enabled
+    const getDescription = useAiDescriptions
       ? async (chunk: RawChunk, embedText: string): Promise<string | undefined> => {
           return descriptionCache.getOrGenerate(
             chunk,
@@ -643,7 +820,9 @@ class VectorSearchService extends EventEmitter {
             workspacePath
           )
         }
-      : undefined
+      : async (chunk: RawChunk, _embedText: string): Promise<string | undefined> => {
+          return generateHeuristicDescription(chunk)
+        }
 
     // Preprocess only the changed chunks
     const processedChunks = await runPreprocessingPipeline(
@@ -761,7 +940,11 @@ class VectorSearchService extends EventEmitter {
   getConceptClusters(
     workspaceId: string,
     opts?: { maxClusters?: number }
-  ): { clusterId: number; representative: { filePath: string; symbolName: string }; members: { filePath: string; symbolName: string; similarity: number }[] }[] {
+  ): {
+    clusterId: number
+    representative: { filePath: string; symbolName: string }
+    members: { filePath: string; symbolName: string; similarity: number }[]
+  }[] {
     const collection = this.collections.get(workspaceId)
     if (!collection || collection.size === 0) return []
 
@@ -888,6 +1071,7 @@ class VectorSearchService extends EventEmitter {
     }
     this.indexingStates.delete(workspaceId)
     this.preprocessingOptions.delete(workspaceId)
+    this.embeddingStartTimes.delete(workspaceId)
     log.info(`[VectorSearch] Disposed workspace ${workspaceId}`)
   }
 
@@ -904,6 +1088,21 @@ class VectorSearchService extends EventEmitter {
   private emitProgress(workspaceId: string): void {
     const state = this.indexingStates.get(workspaceId)
     if (state) {
+      // Compute ETA during embedding phase
+      if (
+        (state.status === 'indexing-chunks' || state.status === 'embedding') &&
+        state.totalChunks > 0 &&
+        state.processedChunks > 0
+      ) {
+        const startTime = this.embeddingStartTimes.get(workspaceId)
+        if (startTime) {
+          const elapsed = Date.now() - startTime
+          const rate = state.processedChunks / elapsed // chunks per ms
+          const remaining = state.totalChunks - state.processedChunks
+          const etaMs = remaining / rate
+          state.estimatedRemaining = formatEta(etaMs)
+        }
+      }
       this.emit('progress', state)
     }
   }

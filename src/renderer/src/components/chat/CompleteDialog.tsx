@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { GitBranch, FileText, Loader2, AlertTriangle } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
+import InsightsSummary, { type ConversationInsights } from './InsightsSummary'
 
 interface CompleteDialogProps {
   isOpen: boolean
@@ -29,6 +30,8 @@ export default function CompleteDialog({
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationError, setGenerationError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [insights, setInsights] = useState<ConversationInsights | null>(null)
+  const [insightsLoading, setInsightsLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -66,6 +69,18 @@ export default function CompleteDialog({
         .catch(() => {
           setFileChanges([])
           setPrDescription('')
+        })
+
+      // Fetch session insights
+      setInsightsLoading(true)
+      window.api
+        .getConversationInsights({ conversationId })
+        .then((result) => {
+          setInsights(result)
+          setInsightsLoading(false)
+        })
+        .catch(() => {
+          setInsightsLoading(false)
         })
 
       // Auto-generate PR description
@@ -223,6 +238,13 @@ export default function CompleteDialog({
           )}
           {generationError && <p className="text-xs text-warning mt-1">{generationError}</p>}
         </div>
+
+        {/* Session Insights */}
+        <InsightsSummary
+          insights={insights}
+          loading={insightsLoading}
+          filesChanged={fileChanges.length}
+        />
 
         {/* File changes list */}
         {fileChanges.length > 0 && (

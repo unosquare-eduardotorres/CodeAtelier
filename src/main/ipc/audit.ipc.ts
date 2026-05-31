@@ -66,7 +66,7 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
       const detectedTechs = techResult.detectedTechs
 
       // Resolve LLM provider: explicit selection → workspace setting → 'claude'
-      const settings = JSON.parse(workspace.settingsJson ?? '{}')
+      const settings = workspaceRepository.getSettings(workspaceId)
       const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
 
       // Create new run in DB (deletes previous for this workspace)
@@ -290,8 +290,7 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
       const { workspaceId, findings } = args
 
       // Read workspace LLM provider for conversation creation
-      const wsRow = workspaceRepository.findById(workspaceId)
-      const wsSettings = JSON.parse(wsRow?.settingsJson ?? '{}')
+      const wsSettings = workspaceRepository.getSettings(workspaceId)
       const llmProvider: LLMProvider = wsSettings.llmProvider ?? 'claude'
 
       // Create conversation in plan mode
@@ -404,21 +403,30 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
  * Wire one-time event listeners for the current audit run.
  * Forwards progress/result/complete to the renderer and persists to DB.
  */
+/** Per-workspace listener cleanup functions. */
+const auditListenerCleanups = new Map<string, Array<() => void>>()
+
 function wireAuditEvents(
   mainWindow: BrowserWindow,
   runId: string,
   workspaceId: string,
   workspacePath: string
 ): void {
-  // Remove any stale listeners from a previous run
-  auditAgentService.removeAllListeners('progress')
-  auditAgentService.removeAllListeners('result')
-  auditAgentService.removeAllListeners('complete')
-  auditAgentService.removeAllListeners('stream')
-  auditAgentService.removeAllListeners('intermediate_findings')
+  // Clean up stale listeners for THIS workspace only (not other workspaces)
+  const existingCleanups = auditListenerCleanups.get(workspaceId)
+  if (existingCleanups) {
+    for (const cleanup of existingCleanups) cleanup()
+  }
+  const cleanups: Array<() => void> = []
+  auditListenerCleanups.set(workspaceId, cleanups)
+
+  const on = <T>(event: string, handler: (data: T) => void): void => {
+    auditAgentService.on(event, handler)
+    cleanups.push(() => auditAgentService.off(event, handler))
+  }
 
   // ── progress ──
-  auditAgentService.on('progress', (data: AuditProgressPayload) => {
+  on<AuditProgressPayload>('progress', (data: AuditProgressPayload) => {
     // Update result row status when it transitions to 'running' or 'cancelled'
     if (data.status === 'running' || data.status === 'cancelled') {
       const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
@@ -437,7 +445,7 @@ function wireAuditEvents(
   })
 
   // ── result ──
-  auditAgentService.on('result', (data: AuditResultPayload) => {
+  on<AuditResultPayload>('result', (data: AuditResultPayload) => {
     // Persist to DB (including coverage data)
     const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
     if (resultRow) {
@@ -461,7 +469,7 @@ function wireAuditEvents(
   })
 
   // ── intermediate findings — live accumulation during multi-round ──
-  auditAgentService.on('intermediate_findings', (data: AuditIntermediateFindingsPayload) => {
+  on<AuditIntermediateFindingsPayload>('intermediate_findings', (data: AuditIntermediateFindingsPayload) => {
     // Persist partial findings to DB for crash resilience
     const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
     if (resultRow) {
@@ -486,7 +494,7 @@ function wireAuditEvents(
   })
 
   // ── complete ──
-  auditAgentService.on('complete', (data: AuditCompletePayload) => {
+  on<AuditCompletePayload>('complete', (data: AuditCompletePayload) => {
     // Determine final run status
     const results = auditRepository.findResultsByRunId(runId)
     const hasFailed = results.some((r) => r.status === 'failed')
@@ -514,7 +522,7 @@ function wireAuditEvents(
   })
 
   // ── stream — rich chunk forwarding for chat-like audit view ──
-  auditAgentService.on('stream', (data: { trackId: AuditTrackId; chunk: StreamChunk }) => {
+  on<{ trackId: AuditTrackId; chunk: StreamChunk }>('stream', (data: { trackId: AuditTrackId; chunk: StreamChunk }) => {
     const { trackId, chunk } = data
 
     if (chunk.type === 'text' && chunk.content) {
@@ -530,12 +538,8 @@ function wireAuditEvents(
 
       let inputSummary: string | undefined
       if (chunk.toolInput) {
-        try {
-          const parsed = JSON.parse(chunk.toolInput) as Record<string, unknown>
-          inputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
-        } catch {
-          inputSummary = chunk.toolInput.slice(0, 120)
-        }
+        // CLI streams already provide summarized input (from stream-normalizer)
+        inputSummary = chunk.toolInput.slice(0, 120)
       }
 
       mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {

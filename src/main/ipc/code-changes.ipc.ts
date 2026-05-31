@@ -4,12 +4,9 @@ import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { repoService } from '../services/repo.service'
 import { githubService } from '../services/github.service'
-import {
-  workspaceRepository,
-  conversationRepository,
-  messageRepository
-} from '../db/repositories'
+import { workspaceRepository, conversationRepository, messageRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString, optionalString } from './validate-args'
 
 const logger = log.scope('CodeChangesIpc')
 
@@ -36,11 +33,12 @@ export function registerCodeChangesIpc(): void {
   // Get detailed file status for uncommitted changes
   ipcMain.handle(
     IPC_CHANNELS.REPO_GET_FILE_DETAILS,
-    async (event, args: { conversationId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.conversationId) throw new Error('Missing conversationId')
+      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_FILE_DETAILS)
+      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_FILE_DETAILS)
 
-      const { repoPath } = resolveRepoPath(args.conversationId)
+      const { repoPath } = resolveRepoPath(conversationId)
       return repoService.getUncommittedFileDetails(repoPath)
     }
   )
@@ -48,49 +46,55 @@ export function registerCodeChangesIpc(): void {
   // Get old/new content for side-by-side diff
   ipcMain.handle(
     IPC_CHANNELS.REPO_GET_FILE_DIFF,
-    async (event, args: { conversationId: string; filePath: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.conversationId || !args?.filePath) {
-        throw new Error('Missing conversationId or filePath')
-      }
+      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_FILE_DIFF)
+      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_FILE_DIFF)
+      const filePath = requireString(args, 'filePath', IPC_CHANNELS.REPO_GET_FILE_DIFF)
 
-      const { repoPath } = resolveRepoPath(args.conversationId)
-      return repoService.getFileDiff(repoPath, args.filePath)
+      const { repoPath } = resolveRepoPath(conversationId)
+      return repoService.getFileDiff(repoPath, filePath)
     }
   )
 
   // Stage specific files and commit
   ipcMain.handle(
     IPC_CHANNELS.REPO_COMMIT_FILES,
-    async (event, args: { conversationId: string; filePaths: string[]; message: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.conversationId || !args?.filePaths?.length || !args?.message) {
-        throw new Error('Missing conversationId, filePaths, or message')
+      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_COMMIT_FILES)
+      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_COMMIT_FILES)
+      const message = requireString(args, 'message', IPC_CHANNELS.REPO_COMMIT_FILES)
+      const filePaths = args.filePaths as string[]
+      if (!Array.isArray(filePaths) || filePaths.length === 0) {
+        throw new Error(`${IPC_CHANNELS.REPO_COMMIT_FILES}: filePaths must be a non-empty array`)
       }
 
-      const { repoPath } = resolveRepoPath(args.conversationId)
-      const result = await repoService.commitFiles(repoPath, args.filePaths, args.message)
+      const { repoPath } = resolveRepoPath(conversationId)
+      const result = await repoService.commitFiles(repoPath, filePaths, message)
       return result
     }
   )
 
   // Push current branch to origin
-  ipcMain.handle(IPC_CHANNELS.REPO_PUSH, async (event, args: { conversationId: string }) => {
+  ipcMain.handle(IPC_CHANNELS.REPO_PUSH, async (event, rawArgs: unknown) => {
     validateSender(event)
-    if (!args?.conversationId) throw new Error('Missing conversationId')
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_PUSH)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_PUSH)
 
-    const { repoPath } = resolveRepoPath(args.conversationId)
+    const { repoPath } = resolveRepoPath(conversationId)
     return repoService.push(repoPath)
   })
 
   // Get push status (commits ahead, branch, hasRemote)
   ipcMain.handle(
     IPC_CHANNELS.REPO_GET_PUSH_STATUS,
-    async (event, args: { conversationId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.conversationId) throw new Error('Missing conversationId')
+      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_PUSH_STATUS)
+      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_PUSH_STATUS)
 
-      const { repoPath } = resolveRepoPath(args.conversationId)
+      const { repoPath } = resolveRepoPath(conversationId)
       return repoService.getPushStatus(repoPath)
     }
   )
@@ -98,13 +102,16 @@ export function registerCodeChangesIpc(): void {
   // Generate commit message from conversation context + changed files
   ipcMain.handle(
     IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE,
-    async (event, args: { conversationId: string; filePaths: string[] }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.conversationId || !args?.filePaths?.length) {
-        throw new Error('Missing conversationId or filePaths')
+      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE)
+      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE)
+      const filePaths = args.filePaths as string[]
+      if (!Array.isArray(filePaths) || filePaths.length === 0) {
+        throw new Error(`${IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE}: filePaths must be a non-empty array`)
       }
 
-      const messages = messageRepository.findByConversation(args.conversationId)
+      const messages = messageRepository.findByConversation(conversationId)
 
       const prompt = `You are generating a concise git commit message. Follow conventional commit style.
 
@@ -116,8 +123,8 @@ ${messages
   .map((m) => `[${m.role}]: ${m.contentMd.slice(0, 300)}`)
   .join('\n')}
 
-## Files to commit (${args.filePaths.length}):
-${args.filePaths.map((fp) => `- ${fp}`).join('\n')}
+## Files to commit (${filePaths.length}):
+${filePaths.map((fp) => `- ${fp}`).join('\n')}
 
 Respond with ONLY the commit message, no preamble or explanation.`
 
@@ -160,10 +167,10 @@ Respond with ONLY the commit message, no preamble or explanation.`
       } catch (e) {
         logger.warn('AI commit message generation failed, falling back to simple message:', e)
         // Fallback: generate a simple message from file paths
-        const fileNames = args.filePaths.map((fp) => fp.split('/').pop()).join(', ')
+        const fileNames = filePaths.map((fp) => fp.split('/').pop()).join(', ')
         return {
           message:
-            `update ${args.filePaths.length} file${args.filePaths.length > 1 ? 's' : ''}: ${fileNames}`.slice(
+            `update ${filePaths.length} file${filePaths.length > 1 ? 's' : ''}: ${fileNames}`.slice(
               0,
               72
             )
@@ -175,22 +182,16 @@ Respond with ONLY the commit message, no preamble or explanation.`
   // Create a pull request via GitHub API
   ipcMain.handle(
     IPC_CHANNELS.REPO_CREATE_PR,
-    async (
-      event,
-      args: {
-        conversationId: string
-        title: string
-        body: string
-        base: string
-        head: string
-      }
-    ) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args?.conversationId || !args?.title) {
-        throw new Error('Missing conversationId or title')
-      }
+      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_CREATE_PR)
+      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_CREATE_PR)
+      const title = requireString(args, 'title', IPC_CHANNELS.REPO_CREATE_PR)
+      const head = requireString(args, 'head', IPC_CHANNELS.REPO_CREATE_PR)
+      const base = requireString(args, 'base', IPC_CHANNELS.REPO_CREATE_PR)
+      const body = optionalString(args, 'body', IPC_CHANNELS.REPO_CREATE_PR) ?? ''
 
-      const { repoPath, workspaceId } = resolveRepoPath(args.conversationId)
+      const { repoPath, workspaceId } = resolveRepoPath(conversationId)
 
       if (!githubService.isConfigured(workspaceId)) {
         throw new Error(
@@ -201,18 +202,18 @@ Respond with ONLY the commit message, no preamble or explanation.`
       const result = await githubService.createPullRequest({
         workspaceId,
         repoPath,
-        head: args.head,
-        base: args.base,
-        title: args.title,
-        body: args.body
+        head,
+        base,
+        title,
+        body
       })
 
       // Store PR info on conversation
       conversationRepository.updatePrInfo(
-        args.conversationId,
+        conversationId,
         result.prUrl,
         result.prNumber,
-        args.head
+        head
       )
 
       return { url: result.prUrl, number: result.prNumber }

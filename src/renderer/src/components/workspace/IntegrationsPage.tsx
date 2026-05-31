@@ -368,6 +368,27 @@ function IntegrationCard({
         </div>
       )}
 
+      {/* Expo/RN performance tip — shown when Maestro is enabled */}
+      {available && integration.id === 'maestro' && (
+        <div className="flex items-start gap-2 bg-surface-base border border-border-subtle rounded-md p-2.5 text-xs text-text-secondary">
+          <Zap size={12} className="text-accent mt-0.5 flex-shrink-0" />
+          <div>
+            <strong className="text-text-primary">⚡ Speed tip for Expo / React Native:</strong> Use
+            a <strong>release or preview build</strong> (not Expo Go) for dramatically faster test
+            execution. Dev mode&apos;s hot-reload polling, error overlays, and LogBox create
+            constant UI churn that slows down Maestro&apos;s element detection. Run{' '}
+            <code className="text-[10px] bg-surface-overlay px-1 rounded">
+              npx expo run:ios --configuration Release
+            </code>{' '}
+            or{' '}
+            <code className="text-[10px] bg-surface-overlay px-1 rounded">
+              eas build --profile preview --platform ios
+            </code>{' '}
+            for best results.
+          </div>
+        </div>
+      )}
+
       {/* Enriched tools list (collapsible) */}
       <ToolsList integration={integration} />
 

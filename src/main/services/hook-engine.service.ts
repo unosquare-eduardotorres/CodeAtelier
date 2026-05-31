@@ -25,7 +25,7 @@ export interface HookDefinition {
   name: string
   command: string
   blocking: boolean
-  condition?: { mode?: 'plan' | 'build'; model?: string; agent?: string }
+  condition?: { mode?: 'plan' | 'build' | 'danger'; model?: string; agent?: string }
   timeout?: number // default 30000
 }
 

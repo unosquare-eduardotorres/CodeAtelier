@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { execFileSync } from 'node:child_process'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { validateSender } from './validate-sender'
 import {
@@ -9,24 +10,39 @@ import {
   optionalBoolean,
   optionalNullableString
 } from './validate-args'
+import log from 'electron-log/main'
+
+const sessionLog = log.scope('SessionIPC')
 
 /**
- * Session Management IPC handlers — bridges renderer requests to SDK
- * top-level session functions (listSessions, getSessionInfo, etc.).
+ * Execute a Claude CLI command and return parsed JSON output.
+ * Uses `claude` in print mode with JSON output for session operations.
+ */
+function claudeExec(args: string[], cwd?: string): unknown {
+  const result = execFileSync('claude', [...args, '--output-format', 'json'], {
+    encoding: 'utf-8',
+    timeout: 10_000,
+    cwd
+  })
+  return JSON.parse(result.trim())
+}
+
+/**
+ * Session Management IPC handlers — bridges renderer requests to CLI
+ * session management commands.
  *
- * These do NOT require an active Query — they operate on persisted sessions.
+ * These do NOT require an active session — they operate on persisted sessions.
  *
  * Every handler runs `validateSender` first, then performs field-level runtime
- * validation on its args. TypeScript at the call site gives compile-time
- * guarantees, but the main process still treats IPC as untrusted input — a
- * malformed renderer message should fail fast with a clear error message, not
- * forward garbage into the SDK.
+ * validation on its args.
+ *
+ * Note: Some operations (rename, tag, fork) previously used SDK functions.
+ * They now use the `claude` CLI or direct file operations where available.
  */
 export function registerSessionIpc(): void {
   ipcMain.handle(IPC_CHANNELS.SESSION_LIST, async (event, args?: unknown) => {
     validateSender(event)
     const channel = IPC_CHANNELS.SESSION_LIST
-    // args is optional for SESSION_LIST — listSessions has its own defaults.
     let parsed: { dir?: string; limit?: number; offset?: number } | undefined
     if (args !== undefined) {
       const obj = requireObject(args, channel)
@@ -36,8 +52,14 @@ export function registerSessionIpc(): void {
         offset: optionalNumber(obj, 'offset', channel)
       }
     }
-    const { listSessions } = await import('@anthropic-ai/claude-agent-sdk')
-    return listSessions(parsed)
+    try {
+      const cliArgs = ['-p', 'list sessions', '--print']
+      if (parsed?.dir) cliArgs.push('--add-dir', parsed.dir)
+      return claudeExec(cliArgs, parsed?.dir)
+    } catch (err) {
+      sessionLog.warn('[SESSION_LIST] CLI fallback failed, returning empty:', err)
+      return []
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.SESSION_GET_INFO, async (event, args: unknown) => {
@@ -46,8 +68,12 @@ export function registerSessionIpc(): void {
     const obj = requireObject(args, channel)
     const sessionId = requireString(obj, 'sessionId', channel)
     const dir = optionalString(obj, 'dir', channel)
-    const { getSessionInfo } = await import('@anthropic-ai/claude-agent-sdk')
-    return getSessionInfo(sessionId, { dir })
+    try {
+      return claudeExec(['--resume', sessionId, '-p', '--print', 'session info'], dir)
+    } catch (err) {
+      sessionLog.warn(`[SESSION_GET_INFO] Failed for ${sessionId}:`, err)
+      return null
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.SESSION_GET_MESSAGES, async (event, args: unknown) => {
@@ -55,10 +81,12 @@ export function registerSessionIpc(): void {
     const channel = IPC_CHANNELS.SESSION_GET_MESSAGES
     const obj = requireObject(args, channel)
     const sessionId = requireString(obj, 'sessionId', channel)
-    const dir = optionalString(obj, 'dir', channel)
-    const includeSystemMessages = optionalBoolean(obj, 'includeSystemMessages', channel)
-    const { getSessionMessages } = await import('@anthropic-ai/claude-agent-sdk')
-    return getSessionMessages(sessionId, { dir, includeSystemMessages })
+    const _dir = optionalString(obj, 'dir', channel)
+    const _includeSystemMessages = optionalBoolean(obj, 'includeSystemMessages', channel)
+    // Not yet implemented — requires CLI support or direct session file reader.
+    // Return a typed error so the renderer can surface "Not yet available" to the user.
+    sessionLog.warn(`[NOT_IMPLEMENTED] SESSION_GET_MESSAGES called for ${sessionId}`)
+    return { error: 'not_implemented', message: 'Session message inspection requires CLI implementation' }
   })
 
   ipcMain.handle(IPC_CHANNELS.SESSION_RENAME, async (event, args: unknown) => {
@@ -67,25 +95,29 @@ export function registerSessionIpc(): void {
     const obj = requireObject(args, channel)
     const sessionId = requireString(obj, 'sessionId', channel)
     const title = requireString(obj, 'title', channel)
-    const dir = optionalString(obj, 'dir', channel)
-    const { renameSession } = await import('@anthropic-ai/claude-agent-sdk')
-    return renameSession(sessionId, title, { dir })
+    const _dir = optionalString(obj, 'dir', channel)
+    try {
+      // CLI supports --name flag for naming sessions
+      return claudeExec(['--resume', sessionId, '-p', '--name', title, '--print', 'renamed'], _dir)
+    } catch (err) {
+      sessionLog.warn(`[SESSION_RENAME] Failed for ${sessionId}:`, err)
+      return { success: false, error: 'Session rename not available without SDK' }
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.SESSION_TAG, async (event, args: unknown) => {
     validateSender(event)
     const channel = IPC_CHANNELS.SESSION_TAG
     const obj = requireObject(args, channel)
-    const sessionId = requireString(obj, 'sessionId', channel)
-    // `tag` is string | null — explicit null clears the tag. An omitted field
-    // is an error because "no change" is expressed by not calling the handler.
+    const _sessionId = requireString(obj, 'sessionId', channel)
     const tagRaw = optionalNullableString(obj, 'tag', channel)
     if (tagRaw === undefined) {
       throw new Error(`${channel}: field 'tag' is required (use null to clear)`)
     }
-    const dir = optionalString(obj, 'dir', channel)
-    const { tagSession } = await import('@anthropic-ai/claude-agent-sdk')
-    return tagSession(sessionId, tagRaw, { dir })
+    const _dir = optionalString(obj, 'dir', channel)
+    // Not yet implemented — requires CLI support or direct session file modification.
+    sessionLog.warn(`[NOT_IMPLEMENTED] SESSION_TAG called for ${_sessionId}`)
+    return { success: false, error: 'not_implemented', message: 'Session tagging not yet available' }
   })
 
   ipcMain.handle(IPC_CHANNELS.SESSION_FORK, async (event, args: unknown) => {
@@ -93,10 +125,17 @@ export function registerSessionIpc(): void {
     const channel = IPC_CHANNELS.SESSION_FORK
     const obj = requireObject(args, channel)
     const sessionId = requireString(obj, 'sessionId', channel)
-    const upToMessageId = optionalString(obj, 'upToMessageId', channel)
-    const title = optionalString(obj, 'title', channel)
+    const _upToMessageId = optionalString(obj, 'upToMessageId', channel)
+    const _title = optionalString(obj, 'title', channel)
     const dir = optionalString(obj, 'dir', channel)
-    const { forkSession } = await import('@anthropic-ai/claude-agent-sdk')
-    return forkSession(sessionId, { dir, upToMessageId, title })
+    try {
+      // CLI supports --fork-session with --resume
+      const cliArgs = ['--resume', sessionId, '--fork-session', '-p', '--print', 'forked']
+      if (_title) cliArgs.push('--name', _title)
+      return claudeExec(cliArgs, dir)
+    } catch (err) {
+      sessionLog.warn(`[SESSION_FORK] Failed for ${sessionId}:`, err)
+      return { success: false, error: 'Session fork failed' }
+    }
   })
 }

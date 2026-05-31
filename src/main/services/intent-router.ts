@@ -37,10 +37,8 @@ export class IntentRouter {
           structured: !!intent.plan.structuredPlan,
           contentLength: intent.plan.rawContent.length
         })
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_PLAN, {
-          conversationId,
-          ...intent.plan
-        })
+        // Plan data reaches the renderer through the streaming pipeline (TaskPlanCard);
+        // no dedicated IPC channel is needed.
         break
 
       case 'askUser':
@@ -50,37 +48,16 @@ export class IntentRouter {
         this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
           conversationId,
           questions: intent.questions,
-          action: intent.action
+          action: intent.action,
+          requestId: intent.requestId
         })
         break
 
       case 'grillQuestion':
-        log.info(
-          `[IntentRouter:grillQuestion] conversationId=${conversationId} questions=${intent.questions.length}`
-        )
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_QUESTION, {
-          conversationId,
-          questions: intent.questions
-        })
-        break
-
       case 'grillComplete':
-        log.info(`[IntentRouter:grillComplete] conversationId=${conversationId}`)
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_COMPLETE, {
-          conversationId,
-          summary: intent.summary,
-          proposedTasks: intent.proposedTasks
-        })
-        break
-
       case 'grillEvaluation':
-        log.info(
-          `[IntentRouter:grillEvaluation] conversationId=${conversationId} score=${intent.evaluation.score}`
-        )
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_GRILL_EVALUATION, {
-          conversationId,
-          ...intent.evaluation
-        })
+        // Legacy chat-integrated grill flow — now handled by the dedicated grill system (grill.ipc.ts).
+        // Intent detection still runs for logging but no IPC forwarding is needed.
         break
 
       case 'error':
@@ -89,5 +66,4 @@ export class IntentRouter {
         break
     }
   }
-
 }

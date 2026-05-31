@@ -7,9 +7,9 @@ import { PROMPT_SLOTS, renderTemplate } from '../project-specialist-prompt-templ
 
 describe('project-specialist-prompt-template', () => {
   test('exports_all_expected_slots', () => {
-    // Trimmed in v2 from 6 → 3: claudeMdDigest, commonCommands, antiPatterns
-    // were removed because CLAUDE.md is injected at runtime by the adapter.
-    const expected = ['workspaceName', 'stackSummary', 'enabledSkills']
+    // Trimmed in v3 from 3 → 2: stackSummary removed because CLAUDE.md
+    // is injected at runtime — the skeleton no longer needs tech names.
+    const expected = ['workspaceName', 'enabledSkills']
     assert.equal(PROMPT_SLOTS.length, expected.length)
     for (const slot of expected) {
       assert.ok(PROMPT_SLOTS.includes(slot as never), `expected slot ${slot}`)
@@ -19,12 +19,9 @@ describe('project-specialist-prompt-template', () => {
   test('renderTemplate_substitutes_known_slots', () => {
     const out = renderTemplate({
       workspaceName: 'Acme',
-      stackSummary: 'react, typescript',
       enabledSkills: 'ui-ux-pro-max'
     })
-
     assert.ok(out.includes('Acme Specialist'))
-    assert.ok(out.includes('react, typescript'))
     assert.ok(out.includes('ui-ux-pro-max'))
   })
 
@@ -58,7 +55,6 @@ describe('project-specialist-prompt-template', () => {
     // them on every turn.
     const out = renderTemplate({
       workspaceName: 'Acme',
-      stackSummary: 'react, typescript',
       enabledSkills: 'general-dev'
     })
     assert.ok(
@@ -72,6 +68,19 @@ describe('project-specialist-prompt-template', () => {
     assert.ok(
       !/##\s+Anti-patterns/i.test(out),
       'skeleton must not declare an Anti-patterns section'
+    )
+    assert.ok(
+      !/##\s+Tech.stack stance/i.test(out),
+      'skeleton must not declare a Tech-stack stance section'
+    )
+  })
+
+  test('rendered_skeleton_contains_judgment_sections', () => {
+    const out = renderTemplate({ workspaceName: 'Acme' })
+    assert.ok(out.toLowerCase().includes('decision heuristics'), 'must have Decision heuristics')
+    assert.ok(
+      out.toLowerCase().includes('architecture instincts'),
+      'must have Architecture instincts'
     )
   })
 })

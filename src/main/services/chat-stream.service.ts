@@ -22,6 +22,7 @@ import {
   type CompactNeededMessage
 } from '../ipc/chat-protocol'
 import { chatIpcLogger } from '../logger'
+import { getSessionEventRouter } from './session-event-router'
 import { IntentRouter } from './intent-router'
 import { conversationStateMachine } from './conversation-state-machine'
 import { conversationLifecycle } from './conversation-lifecycle'
@@ -69,6 +70,14 @@ export class ChatStreamService {
   /** Per-stream identity — set at stream() start, cleared on cleanup. */
   private currentStreamingRole: 'da-vinci' | 'specialist' = 'da-vinci'
 
+  /**
+   * Keepalive timer — sends periodic IPC events to the renderer during streaming.
+   * MCP tools (e.g. Maestro run_flow_files) can block the SDK message loop for
+   * minutes. Without this, the renderer's 2-minute safety timer fires and
+   * disconnects the UI while the backend is still working.
+   */
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null
+
   constructor(mainWindow: BrowserWindow, callbacks: PipelineCallbacks) {
     this.mainWindow = mainWindow
     this.callbacks = callbacks
@@ -89,6 +98,17 @@ export class ChatStreamService {
    * The IntentRouter handles post-stream regex-fallback intents + grill events
    * (which have no MCP tool equivalent and are always regex-detected).
    */
+  /** Resolve a workspace name from its ID (for permission toast labels). */
+  private resolveWorkspaceName(workspaceId: string): string {
+    try {
+      const { workspaceRepository } = require('../db/repositories')
+      const workspace = workspaceRepository.findById(workspaceId)
+      return workspace?.name ?? workspaceId.slice(0, 8)
+    } catch {
+      return workspaceId.slice(0, 8)
+    }
+  }
+
   private registerEventForwarders(): void {
     // compactNeeded is not an intent — keep as direct forwarder
     chatAgentService.on('compactNeeded', (data: CompactNeededMessage['compactNeeded']) => {
@@ -105,13 +125,17 @@ export class ChatStreamService {
 
     // Legacy forwarders for MCP-triggered events (fire during streaming)
     // These handle the immediate path when control tools fire via MCP callbacks.
-    chatAgentService.on('askQuestion', (data: { questions: GrillQuestion[]; action?: string }) => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
-        conversationId: chatAgentService.getCurrentConversationId() || '',
-        questions: data.questions,
-        action: data.action
-      })
-    })
+    chatAgentService.on(
+      'askQuestion',
+      (data: { questions: GrillQuestion[]; action?: string; requestId?: string }) => {
+        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
+          conversationId: chatAgentService.getCurrentConversationId() || '',
+          questions: data.questions,
+          action: data.action,
+          requestId: data.requestId
+        })
+      }
+    )
 
     // Elicitation — MCP server user input requests forwarded to renderer
     chatAgentService.on('elicitation', (data: ElicitationEvent) => {
@@ -138,6 +162,56 @@ export class ChatStreamService {
     // in stream(), which both forwards to the renderer AND injects into streamedContent
     // for DB persistence. The CHAT_PLAN IPC is still sent by the IntentRouter below
     // for regex-fallback detected plans.
+
+    // Multi-workspace: forward permission events from background workspaces.
+    // When a non-active workspace emits elicitation/askQuestion, send a
+    // PERMISSION_REQUEST so the NotificationStack can show a toast.
+    chatAgentService.on(
+      'elicitation:ws',
+      (workspaceId: string, data: ElicitationEvent) => {
+        if (workspaceId !== chatAgentService.activeWorkspaceId) {
+          // Background workspace — route through permission system
+          try {
+            const router = getSessionEventRouter()
+            router.sendPermissionRequest({
+              id: `elicit-${data.requestId ?? Date.now()}`,
+              workspaceId,
+              workspaceName: this.resolveWorkspaceName(workspaceId),
+              type: 'elicitation',
+              summary: data.message || 'Permission request from MCP server',
+              isSimple: data.mode !== 'form',
+              payload: data,
+              receivedAt: Date.now()
+            })
+          } catch {
+            // SessionEventRouter not yet initialized — fall through to legacy path
+          }
+        }
+      }
+    )
+
+    chatAgentService.on(
+      'askQuestion:ws',
+      (workspaceId: string, data: { questions: GrillQuestion[]; action?: string; requestId?: string }) => {
+        if (workspaceId !== chatAgentService.activeWorkspaceId) {
+          try {
+            const router = getSessionEventRouter()
+            router.sendPermissionRequest({
+              id: `ask-${data.requestId ?? Date.now()}`,
+              workspaceId,
+              workspaceName: this.resolveWorkspaceName(workspaceId),
+              type: 'askQuestion',
+              summary: data.questions?.[0]?.text || 'Question from agent',
+              isSimple: false,
+              payload: data,
+              receivedAt: Date.now()
+            })
+          } catch {
+            // SessionEventRouter not yet initialized — fall through to legacy path
+          }
+        }
+      }
+    )
 
     // Typed intent handler — routes post-stream intents (regex fallback + grill events)
     // via IntentRouter. Skips plan/askUser if they were already sent by MCP forwarders above.
@@ -218,6 +292,12 @@ export class ChatStreamService {
       // it should retain the per-stream value until the next stream starts.
       // Resetting to 'da-vinci' corrupts any event forwarders that fire
       // between dispose and the next stream() call (e.g. compactNeeded).
+
+      // Stop keepalive timer
+      if (this.keepaliveTimer) {
+        clearInterval(this.keepaliveTimer)
+        this.keepaliveTimer = null
+      }
     })
     conversationLifecycle.onDispose(() => {
       chatAgentService.removeListener('chunk', onChunk)
@@ -252,6 +332,18 @@ export class ChatStreamService {
         taskId: specialistMeta?.taskId
       })
     )
+
+    // ── Keepalive ──
+    // MCP tools (e.g. Maestro run_flow_files) can block the SDK message loop for
+    // minutes. The renderer's 2-minute safety timer would fire and disconnect the UI.
+    // This keepalive sends a lightweight IPC event every 30s to keep the timer alive.
+    this.keepaliveTimer = setInterval(() => {
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+        conversationId,
+        requestId,
+        keepalive: true
+      })
+    }, 30_000)
 
     // ── Step 1: Process attachments ──
     let fullContent = text
@@ -297,7 +389,7 @@ export class ChatStreamService {
     // ── Step 4: Define listeners ──
     const onChunk = (chunk: StreamChunk): void => {
       try {
-        log.debug('Chunk received:', { type: chunk.type, len: chunk.content?.length ?? 0 })
+        log.info(`[STREAM:chunk] type=${chunk.type} len=${chunk.content?.length ?? 0} convId=${conversationId.slice(0, 8)}`)
         forwardChunkToRenderer(
           this.mainWindow,
           conversationId,
@@ -334,10 +426,12 @@ export class ChatStreamService {
             // "blank bubble" failure mode without lying to the user via a
             // misleading "_No response received_" placeholder.
             const accumulatedText = chatAgentService.getStreamedContent()
-            log.warn(
+            log.error(
               `[PIPELINE:silent-failure] Agent completed with no streamed content. ` +
                 `streamedLen=${streamedContent.value.length} ` +
                 `accumulatedLen=${accumulatedText?.length ?? 0} ` +
+                `executorBackend=${chatAgentService.getExecutorBackend()} ` +
+                `role=${streamingRole} specialist=${specialistMeta?.specialist ?? 'none'} ` +
                 `accumulatedPreview=${(accumulatedText ?? '').slice(0, 200).replace(/\n/g, ' ')}`
             )
           }
@@ -528,6 +622,12 @@ export class ChatStreamService {
 
   async stop(): Promise<void> {
     this.isStopped = true
+
+    // Stop keepalive timer immediately on user stop
+    if (this.keepaliveTimer) {
+      clearInterval(this.keepaliveTimer)
+      this.keepaliveTimer = null
+    }
 
     const conversationId = chatAgentService.getCurrentConversationId()
     const requestId =

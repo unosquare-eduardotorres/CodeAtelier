@@ -3,13 +3,15 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import { bugRepository } from '../db/repositories/bug.repository'
 import type { CreateBugInput, BugFilters } from '../db/repositories/bug.repository'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString } from './validate-args'
 
 export function registerBugIpc(_mainWindow: BrowserWindow): void {
-  ipcMain.handle(IPC_CHANNELS.BUG_REPORT, (event, input: CreateBugInput) => {
+  ipcMain.handle(IPC_CHANNELS.BUG_REPORT, (event, rawArgs: unknown) => {
     validateSender(event)
-    if (!input?.errorMessage) throw new Error('errorMessage is required')
-    if (!input?.process) throw new Error('process is required')
-    if (!input?.appVersion) throw new Error('appVersion is required')
+    const input = requireObject(rawArgs, IPC_CHANNELS.BUG_REPORT) as CreateBugInput
+    requireString(input as Record<string, unknown>, 'errorMessage', IPC_CHANNELS.BUG_REPORT)
+    requireString(input as Record<string, unknown>, 'process', IPC_CHANNELS.BUG_REPORT)
+    requireString(input as Record<string, unknown>, 'appVersion', IPC_CHANNELS.BUG_REPORT)
 
     const result = bugRepository.upsertBug(input)
 
@@ -29,34 +31,39 @@ export function registerBugIpc(_mainWindow: BrowserWindow): void {
     return bugRepository.getAll(filters)
   })
 
-  ipcMain.handle(IPC_CHANNELS.BUG_GET, (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BUG_GET, (event, rawArgs: unknown) => {
     validateSender(event)
-    if (!args?.id) throw new Error('id is required')
-    return bugRepository.getById(args.id)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BUG_GET)
+    const id = requireString(args, 'id', IPC_CHANNELS.BUG_GET)
+    return bugRepository.getById(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.BUG_RESOLVE, (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BUG_RESOLVE, (event, rawArgs: unknown) => {
     validateSender(event)
-    if (!args?.id) throw new Error('id is required')
-    bugRepository.markResolved(args.id)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BUG_RESOLVE)
+    const id = requireString(args, 'id', IPC_CHANNELS.BUG_RESOLVE)
+    bugRepository.markResolved(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.BUG_UNRESOLVE, (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BUG_UNRESOLVE, (event, rawArgs: unknown) => {
     validateSender(event)
-    if (!args?.id) throw new Error('id is required')
-    bugRepository.markUnresolved(args.id)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BUG_UNRESOLVE)
+    const id = requireString(args, 'id', IPC_CHANNELS.BUG_UNRESOLVE)
+    bugRepository.markUnresolved(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.BUG_DELETE, (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BUG_DELETE, (event, rawArgs: unknown) => {
     validateSender(event)
-    if (!args?.id) throw new Error('id is required')
-    bugRepository.deleteBug(args.id)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BUG_DELETE)
+    const id = requireString(args, 'id', IPC_CHANNELS.BUG_DELETE)
+    bugRepository.deleteBug(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.BUG_UPDATE_NOTE, (event, args: { id: string; note: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BUG_UPDATE_NOTE, (event, rawArgs: unknown) => {
     validateSender(event)
-    if (!args?.id) throw new Error('id is required')
-    bugRepository.updateNote(args.id, args.note ?? '')
+    const args = requireObject(rawArgs, IPC_CHANNELS.BUG_UPDATE_NOTE)
+    const id = requireString(args, 'id', IPC_CHANNELS.BUG_UPDATE_NOTE)
+    bugRepository.updateNote(id, (args.note as string) ?? '')
   })
 
   ipcMain.handle(IPC_CHANNELS.BUG_COUNT, (event) => {

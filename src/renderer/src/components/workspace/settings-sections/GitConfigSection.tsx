@@ -120,14 +120,20 @@ export default function GitConfigSection({
             </div>
             <div className="flex-1">
               <p className="text-sm text-text-body">Not a Git repository</p>
-              <p className="text-xs text-text-secondary">Initialize git to enable version control</p>
+              <p className="text-xs text-text-secondary">
+                Initialize git to enable version control
+              </p>
             </div>
             <button
               onClick={onInitRepo}
               disabled={isInitializingRepo}
               className="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5 shrink-0"
             >
-              {isInitializingRepo ? <Loader2 size={12} className="animate-spin" /> : 'Initialize Git'}
+              {isInitializingRepo ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                'Initialize Git'
+              )}
             </button>
           </div>
         )}

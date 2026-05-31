@@ -5,6 +5,7 @@ import {
   OMLX_DEFAULT_PORT
 } from '../../shared/constants'
 import type {
+  ExecutorBackend,
   LLMProvider,
   LocalLLMBackend,
   LocalLLMConfig,
@@ -13,6 +14,23 @@ import type {
   ModelOverrides
 } from '../../shared/types'
 import { workspaceRepository } from '../db/repositories'
+
+/**
+ * Multi-provider configuration — extends workspace settings for Phase 4C.
+ *
+ * Stored in workspace settings_json under openCode* keys.
+ * These settings are only used when executorBackend === 'opencode'.
+ */
+export interface OpenCodeProviderSettings {
+  /** Provider ID (e.g. 'anthropic', 'ollama', 'openai', 'google', 'custom') */
+  openCodeProvider: string
+  /** Model ID within the provider */
+  openCodeModel: string
+  /** Base URL for custom/local providers */
+  openCodeBaseUrl?: string
+  /** API key for the provider */
+  openCodeApiKey?: string
+}
 
 /**
  * Centralized model resolution service.
@@ -107,6 +125,54 @@ class ModelConfigService {
   /** Check if workspace uses local LLM */
   isLocalProvider(workspacePath: string | undefined): boolean {
     return this.getProvider(workspacePath) === 'local-llm'
+  }
+
+  /**
+   * S14: Get the local LLM backend for a workspace.
+   * Returns 'omlx' | 'ollama' | undefined (undefined if not a local provider).
+   */
+  getBackend(workspacePath: string | undefined): LocalLLMBackend | undefined {
+    if (!workspacePath || !this.isLocalProvider(workspacePath)) return undefined
+    return this.getLocalLLMConfig(workspacePath).backend
+  }
+
+  /**
+   * Get the executor backend for a workspace.
+   * Default: 'cli'. Overridden by workspace settings or provider type.
+   */
+  getExecutorBackend(workspacePath: string | undefined): ExecutorBackend {
+    if (!workspacePath) return 'cli'
+    const settings = workspaceRepository.getSettingsByPath(workspacePath)
+    if (settings?.llmProvider === 'local-llm') return 'local-direct'
+    return (settings?.executorBackend as ExecutorBackend) ?? 'cli'
+  }
+
+  /**
+   * Get OpenCode provider configuration for a workspace.
+   * Returns default Anthropic config if no OpenCode settings are configured.
+   *
+   * Phase 4C: Multi-provider support via OpenCode.
+   */
+  getOpenCodeConfig(workspacePath: string): OpenCodeProviderSettings {
+    const settings = workspaceRepository.getSettingsByPath(workspacePath)
+
+    // If workspace uses local LLM, auto-configure Ollama provider
+    if (settings?.llmProvider === 'local-llm') {
+      const localConfig = this.getLocalLLMConfig(workspacePath)
+      return {
+        openCodeProvider: localConfig.backend === 'omlx' ? 'omlx' : 'ollama',
+        openCodeModel: localConfig.localModel,
+        openCodeBaseUrl: this.getLocalBaseUrl(localConfig),
+        openCodeApiKey: localConfig.localApiKey
+      }
+    }
+
+    return {
+      openCodeProvider: (settings?.openCodeProvider as string) ?? 'anthropic',
+      openCodeModel: (settings?.openCodeModel as string) ?? 'claude-sonnet-4-6',
+      openCodeBaseUrl: settings?.openCodeBaseUrl as string | undefined,
+      openCodeApiKey: settings?.openCodeApiKey as string | undefined
+    }
   }
 
   /** Fallback: 'da-vinci:plan' → 'da-vinci' */

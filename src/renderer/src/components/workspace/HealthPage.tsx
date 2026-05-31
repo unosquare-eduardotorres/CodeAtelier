@@ -16,7 +16,10 @@ interface HealthPageProps {
 
 const ALL_TRACK_IDS = Object.keys(AUDIT_TRACKS) as AuditTrackId[]
 
-export default function HealthPage({ onNavigateToChat: _onNavigateToChat, onFixInNewChat }: HealthPageProps): React.JSX.Element {
+export default function HealthPage({
+  onNavigateToChat: _onNavigateToChat,
+  onFixInNewChat
+}: HealthPageProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const {
     currentRun,

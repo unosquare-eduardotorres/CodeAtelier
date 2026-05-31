@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 
 export type EdgeType = 'calls' | 'imports' | 'extends' | 'implements' | 'references'
 
@@ -42,13 +42,16 @@ function mapRow(row: EdgeRow): CodeGraphEdge {
  * Repository for the `code_graph_edges` table.
  * Caches symbol relationships computed by repomap / tree-sitter analysis.
  */
-export class CodeGraphEdgeRepository {
+export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEdge> {
+  protected readonly tableName = 'code_graph_edges'
+  protected mapRow(row: EdgeRow): CodeGraphEdge { return mapRow(row) }
+
   /**
    * Bulk upsert graph edges for a workspace.
    * Clears existing edges first, then inserts new ones.
    */
   upsertEdges(workspaceId: string, edges: CodeGraphEdge[]): void {
-    const db = getDatabase()
+    const db = this.db()
 
     const transaction = db.transaction(() => {
       // Clear existing edges for workspace
@@ -80,7 +83,7 @@ export class CodeGraphEdgeRepository {
    * Get all edges for a workspace.
    */
   findByWorkspace(workspaceId: string): CodeGraphEdge[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT * FROM code_graph_edges WHERE workspace_id = ?')
       .all(workspaceId) as EdgeRow[]
@@ -91,7 +94,7 @@ export class CodeGraphEdgeRepository {
    * Find all edges where the given symbol is the target (i.e., who calls/references it).
    */
   findCallersOf(workspaceId: string, targetSymbol: string): CodeGraphEdge[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT * FROM code_graph_edges WHERE workspace_id = ? AND target_symbol = ?')
       .all(workspaceId, targetSymbol) as EdgeRow[]
@@ -102,7 +105,7 @@ export class CodeGraphEdgeRepository {
    * Find all edges where the given symbol is the source (i.e., what does it call/reference).
    */
   findCalleesOf(workspaceId: string, sourceSymbol: string): CodeGraphEdge[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT * FROM code_graph_edges WHERE workspace_id = ? AND source_symbol = ?')
       .all(workspaceId, sourceSymbol) as EdgeRow[]
@@ -113,7 +116,7 @@ export class CodeGraphEdgeRepository {
    * Delete all edges for a workspace.
    */
   deleteByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const result = db
       .prepare('DELETE FROM code_graph_edges WHERE workspace_id = ?')
       .run(workspaceId)
@@ -128,7 +131,7 @@ export class CodeGraphEdgeRepository {
     workspaceId: string,
     sourceFile: string
   ): { targetFile: string; edgeType: EdgeType }[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare(
         `SELECT DISTINCT target_file, edge_type
@@ -151,7 +154,7 @@ export class CodeGraphEdgeRepository {
     workspaceId: string,
     targetFile: string
   ): { sourceFile: string; edgeType: EdgeType }[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare(
         `SELECT DISTINCT source_file, edge_type
@@ -170,7 +173,7 @@ export class CodeGraphEdgeRepository {
    * Count total edges for a workspace.
    */
   countByWorkspace(workspaceId: string): number {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare('SELECT COUNT(*) as count FROM code_graph_edges WHERE workspace_id = ?')
       .get(workspaceId) as { count: number }
@@ -184,7 +187,7 @@ export class CodeGraphEdgeRepository {
     workspaceId: string,
     opts?: { minCoupling?: number; path?: string; maxResults?: number }
   ): { sourceFile: string; targetFile: string; edgeCount: number }[] {
-    const db = getDatabase()
+    const db = this.db()
     const minCoupling = opts?.minCoupling ?? 2
     const maxResults = opts?.maxResults ?? 50
     const pathFilter = opts?.path

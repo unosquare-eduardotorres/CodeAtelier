@@ -25,15 +25,11 @@ import type {
 } from '../agent-session.types'
 import type { ControlActionCallbacks } from '../control-actions.tool'
 import { workspaceRepository } from '../../db/repositories'
-import { codeGraphMcpService } from '../code-graph.tool'
-import { semanticSearchMcpService } from '../semantic-search.tool'
-import { gitContextMcpService } from '../git-context.tool'
-import { codeAnalysisMcpService } from '../code-analysis.tool'
 import { renderAuditPrompt } from '../audit-prompt-templates'
 import { detectTechStack } from '../tech-stack-detector.service'
 import { chatAgentLogger } from '../../logger'
 import { appendMcpToolGuidance, type PromptFeatureFlags } from '../prompt-assembly-helpers'
-import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
+import { modelConfigService } from '../model-config.service'
 
 export class AuditRoleAdapter implements AgentRoleAdapter {
   readonly role = 'audit' as const
@@ -52,8 +48,8 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
   private systemPrompt: string | null = null
 
   // Feature flags read on session start
-  private repomapEnabled = false
-  private semanticSearchEnabled = false
+  private repomapEnabled = true
+  private semanticSearchEnabled = true
 
   constructor(params: {
     workspaceId: string
@@ -75,12 +71,9 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
   async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
     // Read workspace settings for MCP flags
     try {
-      const workspace = workspaceRepository.findById(this.workspaceId)
-      if (workspace) {
-        const settings = JSON.parse(workspace.settingsJson || '{}')
-        this.repomapEnabled = !!settings.repomapEnabled
-        this.semanticSearchEnabled = !!settings.semanticSearchEnabled
-      }
+      const settings = workspaceRepository.getSettings(this.workspaceId)
+      this.repomapEnabled = settings.repomapEnabled !== false
+      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
     } catch {
       /* non-fatal */
     }
@@ -104,12 +97,17 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
       }
     })()
 
+    // Resolve model for lean prompt optimization (Opus 4.8+ gets compressed guidance)
+    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
+    const resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, 'audit')
+
     this.systemPrompt = renderAuditPrompt({
       trackId: this.trackId,
       workspaceName,
       detectedTechs,
       skillContent: this.skillContent,
-      roundContext: this.roundContext
+      roundContext: this.roundContext,
+      model: resolvedModel
     })
 
     // Append MCP tool guidance (same as DaVinci/Grill) so the agent knows how to use custom tools
@@ -118,7 +116,8 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
       semanticSearchEnabled: this.semanticSearchEnabled,
       githubConfigured: false // auditors don't mount GitHub tools
     }
-    this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags)
+
+    this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags, resolvedModel)
 
     this.log.info(
       `[audit-adapter] ${this.trackId} audit started for workspace=${this.workspaceId} mode=${this.mode}`
@@ -149,24 +148,8 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
     // Local LLM path — mount code-graph, semantic-search (if enabled), code-analysis.
     // Skip git-context to save tokens (Bash + git CLI equivalent).
     if (this.llmProvider === 'local-llm') {
-      const servers: Record<string, McpServerConfig> = {}
-
-      // Code graph (conditional on workspace flag)
-      if (this.repomapEnabled && ctx.workspaceId) {
-        Object.assign(
-          servers,
-          codeGraphMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
-        )
-      }
-      // Semantic search (conditional on workspace flag)
-      if (this.semanticSearchEnabled && ctx.workspaceId) {
-        Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(ctx.workspaceId))
-      }
-      // Code analysis: always on for audits
-      Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(ctx.workspacePath))
-
+      // MCP servers configured externally via McpConfigWriter (CLI) or OpenCode config.
       return {
-        ...(Object.keys(servers).length > 0 ? { mcpServers: servers } : {}),
         allowedTools: [
           'Read',
           'Glob',
@@ -220,31 +203,10 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
       }
     }
 
-    const servers: Record<string, McpServerConfig> = {}
-
-    // Code graph (conditional on workspace flag)
-    if (this.repomapEnabled && ctx.workspaceId) {
-      Object.assign(
-        servers,
-        codeGraphMcpService.getMcpServersConfig(ctx.workspaceId, ctx.workspacePath)
-      )
-    }
-
-    // Semantic search (conditional on workspace flag)
-    if (this.semanticSearchEnabled && ctx.workspaceId) {
-      Object.assign(servers, semanticSearchMcpService.getMcpServersConfig(ctx.workspaceId))
-    }
-
-    // Git context: always on
-    Object.assign(servers, gitContextMcpService.getMcpServersConfig(ctx.workspacePath))
-
-    // Code analysis: always on for audits
-    Object.assign(servers, codeAnalysisMcpService.getMcpServersConfig(ctx.workspacePath))
-
+    // MCP servers configured externally via McpConfigWriter (CLI) or OpenCode config.
     // Read-only — NO control-actions MCP, NO checkpoint-context, NO github-context
 
     return {
-      ...(Object.keys(servers).length > 0 ? { mcpServers: servers } : {}),
       // Explicit allow-list: read-only tools only
       allowedTools: [
         'Read',
@@ -333,7 +295,7 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
 
   onSessionStop(): void {
     this.systemPrompt = null
-    this.repomapEnabled = false
-    this.semanticSearchEnabled = false
+    this.repomapEnabled = true
+    this.semanticSearchEnabled = true
   }
 }

@@ -1,4 +1,5 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
+import { safeParseJSON } from '../json-utils'
 import type {
   AuditRun,
   AuditResult,
@@ -49,8 +50,8 @@ function mapRunRow(row: AuditRunRow, results: AuditResult[] = []): AuditRun {
     mode: row.mode as AuditMode,
     status: row.status as AuditRunStatus,
     overallScore: row.overall_score,
-    selectedTracks: JSON.parse(row.selected_tracks) as AuditTrackId[],
-    detectedTechs: JSON.parse(row.detected_techs) as string[],
+    selectedTracks: safeParseJSON<AuditTrackId[]>(row.selected_tracks, []),
+    detectedTechs: safeParseJSON<string[]>(row.detected_techs, []),
     results,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -58,14 +59,7 @@ function mapRunRow(row: AuditRunRow, results: AuditResult[] = []): AuditRun {
 }
 
 function mapResultRow(row: AuditResultRow): AuditResult {
-  let coverageStats: AuditCoverageStats | undefined
-  try {
-    coverageStats = row.coverage_stats
-      ? (JSON.parse(row.coverage_stats) as AuditCoverageStats)
-      : undefined
-  } catch {
-    coverageStats = undefined
-  }
+  const coverageStats = safeParseJSON<AuditCoverageStats | undefined>(row.coverage_stats, undefined)
 
   return {
     id: row.id,
@@ -73,9 +67,9 @@ function mapResultRow(row: AuditResultRow): AuditResult {
     trackId: row.track_id as AuditTrackId,
     score: row.score,
     status: row.status as AuditorStatus,
-    findings: JSON.parse(row.findings) as AuditFinding[],
+    findings: safeParseJSON<AuditFinding[]>(row.findings, []),
     summary: row.summary ?? '',
-    skillsUsed: JSON.parse(row.skills_used || '[]') as string[],
+    skillsUsed: safeParseJSON<string[]>(row.skills_used, []),
     startedAt: row.started_at,
     completedAt: row.completed_at,
     coverageStats,
@@ -85,7 +79,10 @@ function mapResultRow(row: AuditResultRow): AuditResult {
 
 // ── Repository ──
 
-export class AuditRepository {
+export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
+  protected readonly tableName = 'audit_runs'
+  protected mapRow(row: AuditRunRow): AuditRun { return mapRunRow(row) }
+
   /**
    * Create a new run, keeping only the 10 most recent runs for the workspace.
    * Returns the new run with empty results array.
@@ -96,7 +93,7 @@ export class AuditRepository {
     selectedTracks: AuditTrackId[],
     detectedTechs: string[]
   ): AuditRun {
-    const db = getDatabase()
+    const db = this.db()
 
     // Keep only the 10 most recent runs (delete oldest beyond limit)
     // CASCADE delete on audit_runs removes child audit_results automatically
@@ -124,7 +121,7 @@ export class AuditRepository {
 
   /** Create pending result rows for each selected track. */
   createResults(auditRunId: string, trackIds: AuditTrackId[]): AuditResult[] {
-    const db = getDatabase()
+    const db = this.db()
     const stmt = db.prepare(
       `INSERT INTO audit_results (audit_run_id, track_id, status)
        VALUES (?, ?, 'pending')
@@ -157,7 +154,7 @@ export class AuditRepository {
       coverageSufficient?: boolean
     }
   ): AuditResult | null {
-    const db = getDatabase()
+    const db = this.db()
     const sets: string[] = []
     const values: unknown[] = []
 
@@ -213,7 +210,7 @@ export class AuditRepository {
     runId: string,
     update: { status?: AuditRunStatus; overallScore?: number | null }
   ): AuditRun | null {
-    const db = getDatabase()
+    const db = this.db()
     const sets: string[] = ["updated_at = datetime('now')"]
     const values: unknown[] = []
 
@@ -241,11 +238,9 @@ export class AuditRepository {
 
   /** Get the N most recent runs for a workspace, each joined with results. */
   getHistoryForWorkspace(workspaceId: string, limit: number = 10): AuditRun[] {
-    const db = getDatabase()
+    const db = this.db()
     const runRows = db
-      .prepare(
-        'SELECT * FROM audit_runs WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?'
-      )
+      .prepare('SELECT * FROM audit_runs WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?')
       .all(workspaceId, limit) as AuditRunRow[]
 
     return runRows.map((row) => {
@@ -258,7 +253,7 @@ export class AuditRepository {
 
   /** Get the latest run for a workspace, joined with its results. */
   getLatestForWorkspace(workspaceId: string): AuditRun | null {
-    const db = getDatabase()
+    const db = this.db()
     const runRow = db
       .prepare('SELECT * FROM audit_runs WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1')
       .get(workspaceId) as AuditRunRow | undefined
@@ -272,15 +267,10 @@ export class AuditRepository {
     return mapRunRow(runRow, resultRows.map(mapResultRow))
   }
 
-  /** Delete the run for a workspace (CASCADE deletes results). */
-  deleteForWorkspace(workspaceId: string): void {
-    const db = getDatabase()
-    db.prepare('DELETE FROM audit_runs WHERE workspace_id = ?').run(workspaceId)
-  }
 
   /** Find a result by its ID. */
   findResultById(resultId: string): AuditResult | null {
-    const db = getDatabase()
+    const db = this.db()
     const row = db.prepare('SELECT * FROM audit_results WHERE id = ?').get(resultId) as
       | AuditResultRow
       | undefined
@@ -289,7 +279,7 @@ export class AuditRepository {
 
   /** Find all results for a run. */
   findResultsByRunId(runId: string): AuditResult[] {
-    const db = getDatabase()
+    const db = this.db()
     const rows = db
       .prepare('SELECT * FROM audit_results WHERE audit_run_id = ? ORDER BY created_at')
       .all(runId) as AuditResultRow[]
@@ -298,7 +288,7 @@ export class AuditRepository {
 
   /** Find a result by run ID and track ID. */
   findResultByTrack(runId: string, trackId: AuditTrackId): AuditResult | null {
-    const db = getDatabase()
+    const db = this.db()
     const row = db
       .prepare('SELECT * FROM audit_results WHERE audit_run_id = ? AND track_id = ?')
       .get(runId, trackId) as AuditResultRow | undefined

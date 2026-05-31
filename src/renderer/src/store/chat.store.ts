@@ -10,6 +10,7 @@ import {
 import { useWorkspaceStore } from './workspace.store'
 import { useProjectSpecialistStore } from './project-specialist.store'
 import type {
+  CommunicationTone,
   CompleteResult,
   ContextUsage,
   ContextUsageBreakdown,
@@ -17,10 +18,10 @@ import type {
   ConversationMode,
   ConversationPhase,
   GrillAnswerPayload,
-  GrillProposedTask,
   GrillQuestion,
   LLMProvider,
   Message,
+  ThinkingEffort,
   ToolActivity
 } from '../../../shared/types'
 
@@ -86,6 +87,7 @@ class ChatStreamingInternals {
           rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
           this.storeSet?.({
             isStreaming: false,
+            streamingConversationIds: new Set<string>(),
             conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
           })
         }
@@ -99,14 +101,6 @@ class ChatStreamingInternals {
 /** Singleton internals — encapsulates timers and buffers outside reactive state */
 const internals = new ChatStreamingInternals()
 
-interface GrillSessionState {
-  active: boolean
-  summary: string | null
-  proposedTasks: GrillProposedTask[]
-  pendingQuestions: GrillQuestion[]
-  answers: Record<string, GrillAnswerPayload>
-}
-
 interface ChatState {
   conversations: Conversation[]
   activeConversation: Conversation | null
@@ -116,6 +110,8 @@ interface ChatState {
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
+  /** Conversations that are currently streaming (backend still processing) — enables per-conversation streaming indicators in sidebar */
+  streamingConversationIds: Set<string>
   activeRequestId: string | null
   /** Conversation phase — more precise than isStreaming boolean */
   streamingPhase: ConversationPhase | null
@@ -140,9 +136,6 @@ interface ChatState {
     isLocalProvider?: boolean
   } | null
 
-  // Grill session state
-  grillSession: GrillSessionState | null
-
   // General chat pending questions (ask_user tool)
   pendingQuestions: GrillQuestion[] | null
   /**
@@ -152,6 +145,8 @@ interface ChatState {
    * call (e.g. swapToSpecialist) instead of sending a plain-text answer.
    */
   pendingQuestionAction: string | null
+  /** Request ID from IPC bridge ask_user — presence indicates CLI/bridge backend */
+  pendingQuestionRequestId: string | null
 
   loadConversations: (workspaceId: string) => Promise<void>
   createConversation: (
@@ -160,7 +155,8 @@ interface ChatState {
     title?: string,
     personaSpecialistId?: string,
     llmProvider?: LLMProvider,
-    mcpOverrides?: Record<string, boolean>
+    mcpOverrides?: Record<string, boolean>,
+    communicationTone?: CommunicationTone | null
   ) => Promise<void>
   switchPersona: (personaSpecialistId: string | null) => Promise<void>
   selectConversation: (id: string) => Promise<void>
@@ -176,6 +172,8 @@ interface ChatState {
     specialist?: string,
     requestId?: string
   ) => void
+  /** Reset safety timer without processing content — used by keepalive signals from backend. */
+  handleKeepalive: () => void
   updateStreamingIdentity: (
     role: 'da-vinci' | 'specialist',
     taskId?: string,
@@ -204,19 +202,8 @@ interface ChatState {
     } | null
   ) => void
 
-  // Grill session actions
-  startGrillSession: () => void
-  endGrillSession: (summary: string, proposedTasks: GrillProposedTask[]) => void
-  clearGrillSession: () => void
-  setGrillQuestions: (questions: GrillQuestion[]) => void
-  submitGrillAnswers: (answers: GrillAnswerPayload[]) => void
-  skipAllGrillQuestions: () => void
-  createItemsFromGrill: (
-    tasks: Array<{ title: string; context: string; description: string }>
-  ) => Promise<void>
-
   // General chat question actions
-  setPendingQuestions: (questions: GrillQuestion[], action?: string) => void
+  setPendingQuestions: (questions: GrillQuestion[], action?: string, requestId?: string) => void
   submitQuestionAnswers: (answers: GrillAnswerPayload[]) => void
   skipAllQuestions: () => void
 
@@ -265,6 +252,10 @@ interface ChatState {
   contextUsages: Record<string, ContextUsage>
   loadContextUsage: (conversationId: string) => Promise<void>
 
+  // Thinking effort per conversation (defaults to 'medium')
+  effortLevels: Record<string, ThinkingEffort>
+  setEffort: (conversationId: string, effort: ThinkingEffort) => Promise<void>
+
   // Conversation reordering
   reorderConversations: (orderedIds: string[]) => Promise<void>
 
@@ -283,14 +274,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingSpecialist: previousChatState?.streamingSpecialist ?? null,
   streamingTaskId: previousChatState?.streamingTaskId ?? null,
   isStreaming: previousChatState?.isStreaming ?? false,
+  streamingConversationIds: previousChatState?.streamingConversationIds ?? new Set<string>(),
   activeRequestId: previousChatState?.activeRequestId ?? null,
   streamingPhase: previousChatState?.streamingPhase ?? null,
   toolActivities: previousChatState?.toolActivities ?? [],
   streamingSegments: previousChatState?.streamingSegments ?? [],
   compactSuggestion: previousChatState?.compactSuggestion ?? null,
-  grillSession: previousChatState?.grillSession ?? null,
   pendingQuestions: previousChatState?.pendingQuestions ?? null,
   pendingQuestionAction: previousChatState?.pendingQuestionAction ?? null,
+  pendingQuestionRequestId: previousChatState?.pendingQuestionRequestId ?? null,
   autoModeSwitchPill: null,
   sessionRecovery: null,
   budgetCapBanner: null,
@@ -302,6 +294,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   draftTexts: previousChatState?.draftTexts ?? {},
   contextUsages: previousChatState?.contextUsages ?? {},
+  effortLevels: previousChatState?.effortLevels ?? {},
 
   // Bind internals refs for safety timer + segment accumulator (runs once on store creation)
   ...(() => {
@@ -323,7 +316,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const conversations = await window.api.getConversations({ workspaceId })
-      set({ conversations })
+      // Hydrate effort levels from persisted conversation state
+      const hydratedEfforts: Record<string, ThinkingEffort> = {}
+      for (const conv of conversations) {
+        if (conv.effort) {
+          hydratedEfforts[conv.id] = conv.effort
+        }
+      }
+      set((state) => ({
+        conversations,
+        effortLevels: { ...state.effortLevels, ...hydratedEfforts }
+      }))
     } catch (error) {
       rendererLog.error('Failed to load conversations:', error)
     }
@@ -335,7 +338,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     title?: string,
     personaSpecialistId?: string,
     llmProvider?: LLMProvider,
-    mcpOverrides?: Record<string, boolean>
+    mcpOverrides?: Record<string, boolean>,
+    communicationTone?: CommunicationTone | null
   ) => {
     const conversation = await window.api.createConversation({
       workspaceId,
@@ -343,7 +347,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       title,
       personaSpecialistId,
       llmProvider,
-      mcpOverrides
+      mcpOverrides,
+      communicationTone
     })
     set((state) => ({
       conversations: [conversation, ...state.conversations],
@@ -433,11 +438,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!conversation) return
 
     const messages = await window.api.getMessages({ conversationId: id })
-    set({
+
+    // Query backend for streaming state BEFORE resetting — restores streaming indicator
+    // if this conversation is still being processed by the backend
+    let isConversationStillStreaming = false
+    let restoredRequestId: string | null = null
+    try {
+      const backendState = await window.api.getStreamingState()
+      isConversationStillStreaming = backendState.isStreaming && backendState.conversationId === id
+      if (isConversationStillStreaming) {
+        restoredRequestId = backendState.requestId
+      }
+    } catch {
+      // If backend query fails, default to non-streaming (safe fallback)
+    }
+
+    set((state) => ({
       activeConversation: conversation,
       messages,
       streamingContent: '',
-      isStreaming: false,
+      // RESTORE streaming if backend says this conversation is still active
+      isStreaming: isConversationStillStreaming,
       // Reset streaming identity — prevents stale specialist/DaVinci avatar leak
       streamingRole: 'da-vinci' as const,
       streamingSpecialist: null,
@@ -445,15 +466,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Clear ephemeral UI state from previous conversation
       toolActivities: [],
       streamingSegments: [],
-      grillSession: null,
       compactSuggestion: null,
       budgetCapBanner: null,
       pendingQuestions: null,
       pendingQuestionAction: null,
-      activeRequestId: null,
-      // Reset state machine mirror — prevents stale phase from previous conversation
-      conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
-    })
+      pendingQuestionRequestId: null,
+      activeRequestId: isConversationStillStreaming ? restoredRequestId : null,
+      // Hydrate effort from persisted conversation state
+      effortLevels: conversation.effort
+        ? { ...state.effortLevels, [conversation.id]: conversation.effort }
+        : state.effortLevels,
+      // Restore state machine mirror based on backend
+      conversationState: isConversationStillStreaming
+        ? {
+            phase: 'da-vinci-responding' as ConversationPhase,
+            from: null,
+            event: null,
+            conversationId: id
+          }
+        : { phase: 'idle' as const, from: null, event: null, conversationId: null }
+    }))
 
     // CLI mode sync is deferred — will happen automatically on next message send
     // No need to restart the CLI process just because the user switched conversations
@@ -535,15 +567,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         toolActivities: mergedTools.length > 0 ? mergedTools : undefined
       }
 
-      set((state) => ({
-        messages: [...state.messages, stoppedMessage],
-        streamingContent: '',
-        streamingSegments: [],
-        isStreaming: false,
-        toolActivities: [],
-        activeRequestId: null,
-        conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
-      }))
+      set((state) => {
+        const newStreamingIds = new Set(state.streamingConversationIds)
+        if (activeConversation) newStreamingIds.delete(activeConversation.id)
+        return {
+          messages: [...state.messages, stoppedMessage],
+          streamingContent: '',
+          streamingSegments: [],
+          isStreaming: false,
+          toolActivities: [],
+          activeRequestId: null,
+          conversationState: { phase: 'idle', from: null, event: null, conversationId: null },
+          streamingConversationIds: newStreamingIds
+        }
+      })
     } else if (activeConversation) {
       // No partial content — still show a local indicator
       const stoppedMessage: Message = {
@@ -554,15 +591,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         attachmentsJson: '[]',
         createdAt: new Date().toISOString()
       }
-      set((state) => ({
-        messages: [...state.messages, stoppedMessage],
-        streamingContent: '',
-        streamingSegments: [],
-        isStreaming: false,
-        toolActivities: [],
-        activeRequestId: null,
-        conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
-      }))
+      set((state) => {
+        const newStreamingIds = new Set(state.streamingConversationIds)
+        newStreamingIds.delete(activeConversation.id)
+        return {
+          messages: [...state.messages, stoppedMessage],
+          streamingContent: '',
+          streamingSegments: [],
+          isStreaming: false,
+          toolActivities: [],
+          activeRequestId: null,
+          conversationState: { phase: 'idle', from: null, event: null, conversationId: null },
+          streamingConversationIds: newStreamingIds
+        }
+      })
     } else {
       set({
         isStreaming: false,
@@ -605,7 +647,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       budgetCapBanner: null,
       // activeRequestId is set AFTER the backend returns — see below.
       // This prevents the mismatch where renderer and backend generate different IDs.
-      activeRequestId: null
+      activeRequestId: null,
+      // Track this conversation as streaming (for sidebar indicator when user switches away)
+      streamingConversationIds: new Set([...state.streamingConversationIds, activeConversation.id])
     }))
 
     // Reset segment accumulator for new message
@@ -640,12 +684,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           attachmentsJson: '[]',
           createdAt: new Date().toISOString()
         }
-        set((state) => ({
-          messages: [...state.messages, errorMessage],
-          isStreaming: false,
-          streamingSegments: [],
-          conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
-        }))
+        set((state) => {
+          const newStreamingIds = new Set(state.streamingConversationIds)
+          newStreamingIds.delete(conv.id)
+          return {
+            messages: [...state.messages, errorMessage],
+            isStreaming: false,
+            streamingSegments: [],
+            conversationState: { phase: 'idle', from: null, event: null, conversationId: null },
+            streamingConversationIds: newStreamingIds
+          }
+        })
       } else {
         set({
           isStreaming: false,
@@ -691,6 +740,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Push chunk through segment accumulator (auto-segments at sentence + tool boundaries)
     internals.getOrCreateAccumulator().appendText(chunk)
+  },
+
+  handleKeepalive: () => {
+    // Backend is alive — reset safety timer without processing any content.
+    // Used when MCP tools block the SDK message loop for extended periods.
+    internals.resetSafetyTimer()
   },
 
   updateStreamingIdentity: (role, taskId?, specialist?) => {
@@ -772,31 +827,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })
       }
 
-      set((state) => ({
-        messages: [...state.messages, ...newMessages],
-        streamingContent: '',
-        streamingSegments: [],
-        // Only stop streaming if this is the final complete (no taskId = final summary)
-        isStreaming: !!taskId,
-        activeRequestId: taskId ? state.activeRequestId : null,
-        streamingPhase: taskId ? state.streamingPhase : null,
-        toolActivities: taskId ? state.toolActivities : [],
-        streamingTaskId: null,
-        streamingSpecialist: taskId ? state.streamingSpecialist : null
-      }))
+      set((state) => {
+        // Remove from per-conversation streaming set on final complete
+        const newStreamingIds = taskId
+          ? state.streamingConversationIds
+          : (() => {
+              const s = new Set(state.streamingConversationIds)
+              if (activeConversation) s.delete(activeConversation.id)
+              return s
+            })()
+        return {
+          messages: [...state.messages, ...newMessages],
+          streamingContent: '',
+          streamingSegments: [],
+          // Only stop streaming if this is the final complete (no taskId = final summary)
+          isStreaming: !!taskId,
+          activeRequestId: taskId ? state.activeRequestId : null,
+          streamingPhase: taskId ? state.streamingPhase : null,
+          toolActivities: taskId ? state.toolActivities : [],
+          streamingTaskId: null,
+          streamingSpecialist: taskId ? state.streamingSpecialist : null,
+          streamingConversationIds: newStreamingIds
+        }
+      })
     } else if (taskId) {
       // Per-task complete with no accumulated content — just reset task tracking
       set({ streamingContent: '', streamingSegments: [], streamingTaskId: null })
     } else if (activeConversation) {
       // Clear streaming state synchronously to prevent the thinking indicator
       // from hanging while the DB reload completes.
-      set({
-        streamingContent: '',
-        streamingSegments: [],
-        isStreaming: false,
-        activeRequestId: null,
-        toolActivities: [],
-        streamingTaskId: null
+      set((state) => {
+        const newStreamingIds = new Set(state.streamingConversationIds)
+        newStreamingIds.delete(activeConversation.id)
+        return {
+          streamingContent: '',
+          streamingSegments: [],
+          isStreaming: false,
+          activeRequestId: null,
+          toolActivities: [],
+          streamingTaskId: null,
+          streamingConversationIds: newStreamingIds
+        }
       })
       // Then reload messages from DB asynchronously
       window.api
@@ -969,138 +1040,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  startGrillSession: () => {
-    set({
-      grillSession: {
-        active: true,
-        summary: null,
-        proposedTasks: [],
-        pendingQuestions: [],
-        answers: {}
-      }
-    })
-  },
-
-  endGrillSession: (summary: string, proposedTasks: GrillProposedTask[]) => {
-    set((state) => ({
-      grillSession: {
-        active: false,
-        summary,
-        proposedTasks,
-        pendingQuestions: [],
-        answers: state.grillSession?.answers ?? {}
-      }
-    }))
-  },
-
-  clearGrillSession: () => {
-    set({ grillSession: null })
-  },
-
-  setGrillQuestions: (questions: GrillQuestion[]) => {
-    set((state) => ({
-      grillSession: {
-        active: state.grillSession?.active ?? true,
-        summary: state.grillSession?.summary ?? null,
-        proposedTasks: state.grillSession?.proposedTasks ?? [],
-        pendingQuestions: questions,
-        answers: {}
-      }
-    }))
-  },
-
-  submitGrillAnswers: (answers: GrillAnswerPayload[]) => {
-    // Format answers into a readable message for the AI
-    const lines: string[] = ['Here are my answers:\n']
-    for (const answer of answers) {
-      const question = get().grillSession?.pendingQuestions.find((q) => q.id === answer.questionId)
-      const header = question?.header || question?.question || answer.questionId
-
-      if (answer.skipped) {
-        lines.push(`**${header}**: [SKIPPED]`)
-      } else {
-        const selections = answer.selectedOptions.map((opt) => {
-          const option = question?.options.find((o) => o.label === opt)
-          return option?.recommended ? `${opt} (recommended)` : opt
-        })
-        let line = `**${header}**: ${selections.join(', ')}`
-        if (answer.otherText) {
-          line += ` + "${answer.otherText}"`
-        }
-        lines.push(line)
-      }
-    }
-
-    const formattedMessage = lines.join('\n')
-
-    // Clear pending questions
-    set((state) => ({
-      grillSession: state.grillSession
-        ? {
-            ...state.grillSession,
-            pendingQuestions: [],
-            answers: {}
-          }
-        : null
-    }))
-
-    // Send the formatted message
-    get().sendMessage(formattedMessage)
-  },
-
-  skipAllGrillQuestions: () => {
-    // Clear pending questions and notify the AI
-    set((state) => ({
-      grillSession: state.grillSession
-        ? {
-            ...state.grillSession,
-            pendingQuestions: [],
-            answers: {}
-          }
-        : null
-    }))
-
-    get().sendMessage('All questions skipped — proceeding with defaults.')
-  },
-
-  createItemsFromGrill: async (
-    tasks: Array<{ title: string; context: string; description: string }>
-  ) => {
-    const { activeConversation } = get()
-    if (!activeConversation) return
-
-    const workspaceId = activeConversation.workspaceId
-    for (const task of tasks) {
-      try {
-        const conversation = (await window.api.createConversation({
-          workspaceId,
-          title: task.title,
-          mode: 'build'
-        })) as Conversation
-
-        // Inject context + task as the first message
-        const initialMessage = `## Context\n\n${task.context}\n\n## Task\n\n${task.description}`
-        await window.api.sendMessage({
-          conversationId: conversation.id,
-          text: initialMessage
-        })
-
-        // Add to conversations list
-        set((state) => ({
-          conversations: [conversation, ...state.conversations]
-        }))
-      } catch (error) {
-        rendererLog.error(`Failed to create item conversation for "${task.title}":`, error)
-      }
-    }
-
-    // Clear the grill session after creating items
-    set({ grillSession: null })
-  },
-
   // General chat question actions (ask_user tool)
-  setPendingQuestions: (questions, action) => {
-    set({ pendingQuestions: questions, pendingQuestionAction: action ?? null })
+  setPendingQuestions: (questions, action, requestId) => {
+    set({
+      pendingQuestions: questions,
+      pendingQuestionAction: action ?? null,
+      pendingQuestionRequestId: requestId ?? null
+    })
   },
 
   submitQuestionAnswers: (answers) => {
@@ -1120,7 +1066,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         !!acceptLabel &&
         firstAnswer.selectedOptions.includes(acceptLabel)
 
-      set({ pendingQuestions: null, pendingQuestionAction: null })
+      set({ pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null })
 
       if (accepted) {
         const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
@@ -1164,16 +1110,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
               // to the specialist. Re-sending ensures the specialist picks up
               // immediately instead of sitting idle waiting for new input.
               const { messages: currentMessages } = get()
-              const lastUserMessage = [...currentMessages]
-                .reverse()
-                .find((m) => m.role === 'user')
+              const lastUserMessage = [...currentMessages].reverse().find((m) => m.role === 'user')
               if (lastUserMessage?.contentMd?.trim()) {
                 // Parse attachments from the original message (if any)
                 let attachments: string[] | undefined
                 try {
-                  const parsed = JSON.parse(
-                    lastUserMessage.attachmentsJson || '[]'
-                  ) as string[]
+                  const parsed = JSON.parse(lastUserMessage.attachmentsJson || '[]') as string[]
                   if (parsed.length > 0) attachments = parsed
                 } catch {
                   /* no attachments */
@@ -1212,13 +1154,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
         lines.push(`**${header}**: ${selected}${other}`)
       }
     }
-    set({ pendingQuestions: null, pendingQuestionAction: null })
-    get().sendMessage(lines.join('\n'))
+
+    const requestId = get().pendingQuestionRequestId
+    set({ pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null })
+
+    // If requestId is present (CLI/IPC bridge backend), route through the bridge
+    // so the control-actions MCP server's askUserAndWaitForResponse promise resolves.
+    if (requestId) {
+      window.api.respondToAskUser({ requestId, response: lines.join('\n') })
+    } else {
+      // SDK backend fallback — send as new message
+      get().sendMessage(lines.join('\n'))
+    }
   },
 
   skipAllQuestions: () => {
-    set({ pendingQuestions: null, pendingQuestionAction: null })
-    get().sendMessage("I'll skip these questions for now — let's continue.")
+    const requestId = get().pendingQuestionRequestId
+    set({ pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null })
+    const skipText = "I'll skip these questions for now — let's continue."
+    if (requestId) {
+      window.api.respondToAskUser({ requestId, response: skipText })
+    } else {
+      get().sendMessage(skipText)
+    }
   },
 
   setCompactSuggestion: (data) => set({ compactSuggestion: data }),
@@ -1273,6 +1231,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   // ─��� Conversation reordering ──
+  // ── Thinking effort ──
+  setEffort: async (conversationId: string, effort: ThinkingEffort) => {
+    // Optimistic update
+    set((state) => ({
+      effortLevels: { ...state.effortLevels, [conversationId]: effort }
+    }))
+    try {
+      await window.api.updateEffort({ conversationId, effort })
+    } catch (error) {
+      rendererLog.error('Failed to update effort:', error)
+    }
+  },
+
   reorderConversations: async (orderedIds: string[]) => {
     // Optimistically reorder local state
     set((state) => {
@@ -1306,18 +1277,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSpecialist: null,
       streamingTaskId: null,
       isStreaming: false,
+      streamingConversationIds: new Set<string>(),
       activeRequestId: null,
       streamingPhase: null,
       toolActivities: [],
       compactSuggestion: null,
-      grillSession: null,
       pendingQuestions: null,
       pendingQuestionAction: null,
+      pendingQuestionRequestId: null,
       budgetCapBanner: null,
       sessionRecovery: null,
       autoModeSwitchPill: null,
       draftTexts: {},
       contextUsages: {},
+      effortLevels: {},
       conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
     })
   }
@@ -1342,16 +1315,10 @@ export const useChatActions = (): Pick<
   | 'updateMode'
   | 'renameConversation'
   | 'loadConversations'
-  | 'startGrillSession'
-  | 'clearGrillSession'
-  | 'submitGrillAnswers'
-  | 'skipAllGrillQuestions'
-  | 'createItemsFromGrill'
   | 'setCompactSuggestion'
   | 'setBudgetCapBanner'
-  | 'setGrillQuestions'
-  | 'endGrillSession'
   | 'appendStreamChunk'
+  | 'handleKeepalive'
   | 'updateStreamingIdentity'
   | 'finalizeStream'
   | 'finalizeTurnBubble'
@@ -1365,6 +1332,7 @@ export const useChatActions = (): Pick<
   | 'loadContextUsage'
   | 'reorderConversations'
   | 'setConversationState'
+  | 'setEffort'
 > =>
   useChatStore(
     useShallow((s) => ({
@@ -1381,16 +1349,10 @@ export const useChatActions = (): Pick<
       updateMode: s.updateMode,
       renameConversation: s.renameConversation,
       loadConversations: s.loadConversations,
-      startGrillSession: s.startGrillSession,
-      clearGrillSession: s.clearGrillSession,
-      submitGrillAnswers: s.submitGrillAnswers,
-      skipAllGrillQuestions: s.skipAllGrillQuestions,
-      createItemsFromGrill: s.createItemsFromGrill,
       setCompactSuggestion: s.setCompactSuggestion,
       setBudgetCapBanner: s.setBudgetCapBanner,
-      setGrillQuestions: s.setGrillQuestions,
-      endGrillSession: s.endGrillSession,
       appendStreamChunk: s.appendStreamChunk,
+      handleKeepalive: s.handleKeepalive,
       updateStreamingIdentity: s.updateStreamingIdentity,
       finalizeStream: s.finalizeStream,
       finalizeTurnBubble: s.finalizeTurnBubble,
@@ -1403,7 +1365,8 @@ export const useChatActions = (): Pick<
       clearDraftText: s.clearDraftText,
       loadContextUsage: s.loadContextUsage,
       reorderConversations: s.reorderConversations,
-      setConversationState: s.setConversationState
+      setConversationState: s.setConversationState,
+      setEffort: s.setEffort
     }))
   )
 

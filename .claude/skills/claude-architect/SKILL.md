@@ -1,4 +1,5 @@
 ---
+name: claude-architect
 description: >
   Agent Studio multi-agent orchestration: CLI subprocess management, stream-json
   parsing, Generalist/Coordinator/Specialist pool, IPC streaming, task decomposition,

@@ -1,0 +1,374 @@
+/**
+ * AgentStreamProcessor — handles stream chunk processing, token tracking,
+ * context pressure evaluation, and compaction threshold management.
+ *
+ * Extracted from AgentSessionService to reduce god-class complexity.
+ * Holds a back-reference to the session for state access.
+ *
+ * @internal Not for use outside the agent-session module.
+ */
+
+import type {
+  AgentSessionHost,
+  StreamLoopState,
+  StreamChunk,
+  ExecutorResult
+} from './agent-session-host'
+import type { ContextWindowTier } from './context-management'
+import type { ModelAction } from '../../shared/types'
+import {
+  CLAUDE_DEFAULT_CONTEXT_WINDOW,
+  CLAUDE_1M_CONTEXT_WINDOW,
+  MCP_TOOLS
+} from '../../shared/constants'
+import { resolveContextTier, TIER_LIMITS } from './context-management'
+import { modelConfigService } from './model-config.service'
+import { supportsContext1M } from '../../shared/constants'
+import { conversationRepository, turnUsageRepository } from '../db/repositories'
+
+export class AgentStreamProcessor {
+  private readonly s: AgentSessionHost
+
+  constructor(session: unknown) {
+    this.s = session as AgentSessionHost
+  }
+
+  // ── processMetaChunk ──────────────────────────────────────────────────
+
+  async processMetaChunk(
+    meta: SDKExecuteResult,
+    ctx: {
+      conversationId: string
+      turnCount: number
+      streamState: StreamLoopState
+    }
+  ): Promise<void> {
+    const { conversationId, turnCount, streamState } = ctx
+    streamState.messageStopReceived = true
+
+    if (meta.sessionId && conversationId) {
+      this.s.sessionMap.set(conversationId, meta.sessionId)
+      this.s.log.info('Session captured for conversation:', conversationId)
+      try {
+        conversationRepository.updateSessionId(conversationId, meta.sessionId)
+      } catch (err) {
+        this.s.log.error('Failed to persist session ID:', err)
+      }
+    }
+
+    if (meta.sessionTitle && conversationId) {
+      try {
+        const conv = conversationRepository.findById(conversationId)
+        if (conv && (conv.title === 'New Conversation' || conv.title === '')) {
+          conversationRepository.updateTitle(conversationId, meta.sessionTitle)
+          this.s.log.info(`[PIPELINE:auto-title] "${meta.sessionTitle}" for ${conversationId}`)
+        }
+      } catch (err) {
+        this.s.log.warn('Failed to auto-name conversation from session_title:', err)
+      }
+    }
+
+    if (meta.terminalReason) {
+      streamState.lastTerminalReason = meta.terminalReason
+      this.s.log.info(`[PIPELINE:terminal-reason] ${meta.terminalReason} for ${conversationId}`)
+    }
+
+    const { totalTokens } = this.s.tokenTracker.recordTurn(meta, {
+      turnCount,
+      conversationId,
+      dbSessionId: this.s.dbSessionId,
+      workspacePath: this.s.workspacePath!
+    })
+    this.s.tokenUsage += totalTokens
+    this.s.inputTokens += meta.tokenUsage.input
+    this.s.outputTokens += meta.tokenUsage.output
+    this.s.cacheReadTokens += meta.tokenUsage.cacheReadInputTokens
+    this.s.cacheCreationTokens += meta.tokenUsage.cacheCreationInputTokens
+
+    // Compute context token total from CLI token usage fields.
+    const totalContextTokens =
+      meta.tokenUsage.input +
+      meta.tokenUsage.cacheReadInputTokens +
+      meta.tokenUsage.cacheCreationInputTokens
+
+    // Update lastContextTokens for all backends (badge, compact modal, etc.)
+    this.s.lastContextTokens = totalContextTokens
+
+    // Push live context update to the renderer
+    if (totalContextTokens > 0) {
+      const effectiveWindow = this.s.effectiveContextWindow ?? CLAUDE_DEFAULT_CONTEXT_WINDOW
+      this.s.emit('chunk', {
+        type: 'context_usage_update',
+        content: '',
+        contextUsageUpdate: {
+          inputTokens: totalContextTokens,
+          contextWindowSize: effectiveWindow,
+          percentage: Math.round((totalContextTokens / effectiveWindow) * 100)
+        }
+      } as StreamChunk)
+    }
+
+    this.checkCompaction(totalContextTokens)
+
+    // Evaluate context pressure for local LLMs AND Claude 200K models.
+    const isLocal = this.s.llmProvider === 'local-llm'
+    const effectiveWindow = this.s.effectiveContextWindow
+    const is200KClaude = !isLocal && effectiveWindow != null && effectiveWindow <= 200_000
+    if (isLocal || is200KClaude) {
+      const ctxWindow = isLocal
+        ? (effectiveWindow ?? this.s.resolveLocalContextWindow())
+        : effectiveWindow!
+      const pressureRatio = totalContextTokens / ctxWindow
+      if (pressureRatio > 0.85) {
+        this.s.emit('chunk', {
+          type: 'text',
+          content: `\n\n> ⚠️ Context window is ${Math.round(pressureRatio * 100)}% full — consider compacting.\n\n`
+        } as StreamChunk)
+      }
+    }
+
+    // Store SDK context window total for DB
+    if (this.s.dbSessionId && conversationId && sdkContextData?.totalTokens) {
+      try {
+        turnUsageRepository.updateLastTurnContextTokens(conversationId, sdkContextData.totalTokens)
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }
+
+  // ── processContentChunk ───────────────────────────────────────────────
+
+  processContentChunk(
+    chunk: StreamChunk & { type?: string; content?: string; error?: string; toolName?: string },
+    ctx: {
+      conversationId: string
+      isBuildMode: boolean
+      streamState: StreamLoopState
+      contextTier?: ContextWindowTier
+    }
+  ): 'next' | 'break' | 'continue' | 'return' {
+    const { conversationId, isBuildMode, streamState } = ctx
+
+    if (chunk.type === 'error' && chunk.error?.includes('No conversation found with session ID')) {
+      this.s.log.warn(
+        `[PIPELINE:session-recovery] Stale session detected for conversationId=${conversationId} — initiating recovery`
+      )
+
+      this.s.emit('chunk', {
+        type: 'session_recovery',
+        recoveryPhase: 'started',
+        content: 'Session expired — recovering conversation context...'
+      } as StreamChunk)
+
+      this.s.clearSession(conversationId)
+      try {
+        conversationRepository.updateSessionId(conversationId, '')
+      } catch (err) {
+        this.s.log.error('[PIPELINE:session-recovery] Failed to clear DB session:', err)
+      }
+
+      this.s.emit('chunk', {
+        type: 'session_recovery',
+        recoveryPhase: 'building_context',
+        content: 'Rebuilding conversation context from history...'
+      } as StreamChunk)
+
+      streamState.sessionRecoveryNeeded = true
+      return 'break'
+    }
+
+    // Intercept SDK abort errors that weren't user-initiated
+    if (
+      chunk.type === 'error' &&
+      chunk.error?.includes('Claude Code process aborted by user') &&
+      this.s.currentStatus !== 'idle'
+    ) {
+      this.s.log.warn(
+        `[PIPELINE:unexpected-abort] Session was aborted without user action — ` +
+          `status=${this.s.currentStatus} conversationId=${conversationId}`
+      )
+      this.s.emit('chunk', {
+        type: 'error',
+        error:
+          'The agent session was interrupted unexpectedly. This can happen during app reloads. Please resend your message to continue.'
+      } as StreamChunk)
+      return 'break'
+    }
+
+    // Intercept budget cap exceeded
+    if (chunk.type === 'error' && chunk.error?.includes('budget cap exceeded')) {
+      this.s.log.warn(
+        `[PIPELINE:budget-cap-reached] conversationId=${conversationId} — offering continuation`
+      )
+      this.s.emit('budgetCapReached', {
+        conversationId,
+        message: chunk.error
+      })
+      return 'break'
+    }
+
+    if (chunk.type === 'text' && chunk.content) {
+      this.s.accumulatedText += chunk.content
+      streamState.hasTextAfterLastTool = true
+    }
+
+    if (chunk.type === 'tool_use') {
+      const isControlTool = chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)
+      if (isControlTool) {
+        this.s.log.debug(`[PIPELINE:control-tool-use] ${chunk.toolName}`)
+        return 'continue'
+      }
+
+      this.s.toolActivityAccumulator.record({
+        toolName: chunk.toolName ?? 'unknown',
+        input: (chunk as unknown as Record<string, unknown>).toolInput,
+        outputLength: chunk.content?.length ?? 0
+      })
+
+      streamState.hasTextAfterLastTool = false
+      const isLocalForCb = this.s.llmProvider === 'local-llm'
+      const cbResult = this.s.circuitBreaker.onToolUse({
+        isBuildMode,
+        accumulatedTextLength: this.s.accumulatedText.length,
+        conversationId,
+        isLocalProvider: isLocalForCb,
+        contextTier: ctx.contextTier
+      })
+
+      // Emit early warning nudge
+      if (cbResult.additionalContext) {
+        this.s.emit('chunk', {
+          type: 'text',
+          content: `\n\n> ⚠️ ${cbResult.additionalContext}\n\n`
+        } as StreamChunk)
+      }
+
+      if (cbResult.broken) {
+        // Local plan mode: treat as a continuable turn-limit rather than a hard error.
+        // Save plan state and let finalizeStream → handleResponseComplete auto-continue.
+        if (cbResult.isLocalPlanBreak) {
+          this.s.log.info(
+            `[PIPELINE:local-plan-break] Circuit breaker fired for local plan — ` +
+              `saving progress and allowing auto-continuation`
+          )
+          streamState.lastTerminalReason = 'max_turns'
+          // Save partial plan state so continuation has context
+          if (conversationId) {
+            this.s.saveCurrentPlanState(conversationId)
+          }
+          return 'break'
+        }
+
+        this.s.currentStatus = 'failed'
+        this.s.emit('statusUpdate', this.s.getStatus())
+        if (cbResult.errorChunk) {
+          this.s.emit('chunk', cbResult.errorChunk)
+        }
+        this.s.emit('complete')
+        return 'return'
+      }
+
+      this.s.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
+    }
+
+    if (chunk.type === 'prompt_suggestion' && chunk.content) {
+      this.s.emit('promptSuggestion', {
+        conversationId,
+        suggestion: chunk.content
+      })
+    }
+
+    if (chunk.type === 'text') this.s.currentStatus = 'writing'
+    if (chunk.type === 'tool_use') this.s.currentStatus = 'reviewing'
+    this.s.emit('statusUpdate', this.s.getStatus())
+    this.s.emit('chunk', chunk)
+    return 'next'
+  }
+
+  // ── Compaction ────────────────────────────────────────────────────────
+
+  checkCompaction(
+    inputTokens: number,
+    breakdown?: import('../../shared/types').ContextUsageBreakdown
+  ): void {
+    const autoThreshold = this.s.compactAutoThreshold
+    const suggestThreshold = this.s.compactSuggestThreshold
+    const warningThreshold = Math.floor(suggestThreshold * 0.8)
+    const isLocal = this.s.llmProvider === 'local-llm'
+
+    if (inputTokens >= autoThreshold) {
+      const autoCompactActive = breakdown?.isAutoCompactEnabled === true
+      const level = autoCompactActive ? 'auto-compact-pending' : 'critical'
+
+      this.s.log.warn(
+        `[PIPELINE:compact-critical] Context at ${inputTokens} tokens ` +
+          `(threshold=${autoThreshold}) — ${autoCompactActive ? 'SDK auto-compact will handle' : 'critical notification'}`
+      )
+      this.s.emit('compactNeeded', {
+        level,
+        inputTokens,
+        breakdown,
+        isLocalProvider: isLocal
+      })
+    } else if (inputTokens >= suggestThreshold) {
+      if (!this.s.compactSuggested || this.s.turnsSinceCompactSuggestion >= 3) {
+        this.s.compactSuggested = true
+        this.s.turnsSinceCompactSuggestion = 0
+        this.s.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
+        this.s.emit('compactNeeded', {
+          level: 'suggest',
+          inputTokens,
+          breakdown,
+          isLocalProvider: isLocal
+        })
+      } else {
+        this.s.turnsSinceCompactSuggestion++
+      }
+    } else if (inputTokens >= warningThreshold && !this.s.compactSuggested) {
+      this.s.log.info(
+        `[PIPELINE:compact-warning] Context approaching threshold (${inputTokens}/${suggestThreshold} tokens)`
+      )
+      this.s.emit('compactNeeded', {
+        level: 'warning',
+        inputTokens,
+        estimatedNextCost: Math.round(inputTokens * 0.05),
+        breakdown,
+        isLocalProvider: isLocal
+      })
+    }
+  }
+
+  applyCompactionThresholds(settings: Record<string, unknown>): void {
+    const isLocal = (settings.llmProvider as string) === 'local-llm'
+
+    if (isLocal) {
+      const ctx = this.s.resolveLocalContextWindow()
+      const tier = resolveContextTier(ctx)
+      const limits = TIER_LIMITS[tier]
+      this.s.compactSuggestThreshold = limits.compactSuggestThreshold
+      this.s.compactAutoThreshold = limits.compactAutoThreshold
+    } else {
+      const modelAction = `${this.s.adapter.role}:${this.s.currentMode}` as ModelAction
+      const model = modelConfigService.getModel(this.s.workspacePath!, modelAction)
+      const supports1M = supportsContext1M(model)
+      const effectiveWindow = supports1M ? CLAUDE_1M_CONTEXT_WINDOW : CLAUDE_DEFAULT_CONTEXT_WINDOW
+      const defaults = this.resolveCompactionThresholds(effectiveWindow)
+
+      this.s.compactSuggestThreshold =
+        (settings.compactSuggestThreshold as number) ?? defaults.suggest
+      this.s.compactAutoThreshold = (settings.compactAutoThreshold as number) ?? defaults.auto
+    }
+  }
+
+  resolveCompactionThresholds(effectiveContextWindow: number): {
+    suggest: number
+    auto: number
+  } {
+    const isSmallWindow = effectiveContextWindow <= 200_000
+    return {
+      suggest: Math.round(effectiveContextWindow * (isSmallWindow ? 0.6 : 0.7)),
+      auto: Math.round(effectiveContextWindow * (isSmallWindow ? 0.75 : 0.85))
+    }
+  }
+}

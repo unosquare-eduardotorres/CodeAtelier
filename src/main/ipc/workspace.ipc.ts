@@ -7,6 +7,7 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import { workspaceRepository } from '../db/repositories'
 import { repoService } from '../services/repo.service'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString, requirePlainObject, optionalString } from './validate-args'
 import { agentSyncService } from '../services/agent-sync.service'
 import { fileWatcherService } from '../services/file-watcher.service'
 import { chatAgentService } from '../services/chat-agent.service'
@@ -21,22 +22,15 @@ export function registerWorkspaceIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_CREATE,
-    async (event, args: { name: string; repoPath: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.WORKSPACE_CREATE
+      const args = requireObject(rawArgs, ch)
+      const name = requireString(args, 'name', ch)
+      const repoPath = requireString(args, 'repoPath', ch)
 
-      // Input validation
-      if (!args || typeof args !== 'object') {
-        throw new Error('Invalid arguments')
-      }
-
-      const { name, repoPath } = args
-
-      if (typeof name !== 'string' || name.trim().length === 0 || name.length > 255) {
-        throw new Error('Invalid workspace name: must be a non-empty string (max 255 chars)')
-      }
-
-      if (typeof repoPath !== 'string' || repoPath.trim().length === 0) {
-        throw new Error('Invalid repository path')
+      if (name.length > 255) {
+        throw new Error(`${ch}: workspace name too long (max 255 chars)`)
       }
 
       // Normalize path to prevent traversal attacks
@@ -112,16 +106,15 @@ export function registerWorkspaceIpc(): void {
     }
   )
 
-  ipcMain.handle(IPC_CHANNELS.WORKSPACE_OPEN, async (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_OPEN, async (event, rawArgs: unknown) => {
     validateSender(event)
+    const ch = IPC_CHANNELS.WORKSPACE_OPEN
+    const args = requireObject(rawArgs, ch)
+    const id = requireString(args, 'id', ch)
 
-    if (!args || typeof args.id !== 'string' || args.id.trim().length === 0) {
-      throw new Error('Invalid workspace ID')
-    }
-
-    const workspace = workspaceRepository.updateLastOpened(args.id)
+    const workspace = workspaceRepository.updateLastOpened(id)
     if (!workspace) {
-      throw new Error(`Workspace not found: ${args.id}`)
+      throw new Error(`Workspace not found: ${id}`)
     }
 
     // Auto-sync: import NEW agents/skills from workspace YAMLs into DB
@@ -148,7 +141,7 @@ export function registerWorkspaceIpc(): void {
 
     // Start file watcher if Code Graph or Semantic Search is enabled
     try {
-      const wsSettings = JSON.parse(workspace.settingsJson || '{}')
+      const wsSettings = workspaceRepository.getSettings(workspace.id)
       if (wsSettings.repomapEnabled || wsSettings.semanticSearchEnabled) {
         fileWatcherService.start(workspace.id, workspace.repoPath, {
           codeGraphEnabled: !!wsSettings.repomapEnabled,
@@ -162,56 +155,57 @@ export function registerWorkspaceIpc(): void {
     return workspace
   })
 
-  ipcMain.handle(IPC_CHANNELS.WORKSPACE_DELETE, async (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_DELETE, async (event, rawArgs: unknown) => {
     validateSender(event)
+    const ch = IPC_CHANNELS.WORKSPACE_DELETE
+    const args = requireObject(rawArgs, ch)
+    const id = requireString(args, 'id', ch)
 
-    if (!args || typeof args.id !== 'string' || args.id.trim().length === 0) {
-      throw new Error('Invalid workspace ID')
-    }
+    // Stop any running sessions for this workspace before deleting
+    const { chatAgentService } = await import('../services')
+    await chatAgentService.stopForWorkspace(id).catch(() => { /* non-fatal */ })
 
-    fileWatcherService.stop(args.id)
-    workspaceRepository.delete(args.id)
+    fileWatcherService.stop(id)
+    workspaceRepository.delete(id)
   })
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_GET_SETTINGS,
-    async (event, args: { workspaceId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
-        throw new Error('Invalid workspace ID')
-      }
-      return workspaceRepository.getSettings(args.workspaceId)
+      const ch = IPC_CHANNELS.WORKSPACE_GET_SETTINGS
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      return workspaceRepository.getSettings(workspaceId)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS,
-    async (event, args: { workspaceId: string; settings: Record<string, unknown> }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
-        throw new Error('Invalid workspace ID')
-      }
-      if (!args.settings || typeof args.settings !== 'object' || Array.isArray(args.settings)) {
-        throw new Error('Invalid settings object')
-      }
+      const ch = IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const settings = requirePlainObject(args, 'settings', ch)
       // Merge with existing settings to avoid overwriting fields set by other services
       // (e.g., githubTokenEncrypted set by github.service)
-      const existing = workspaceRepository.getSettings(args.workspaceId)
-      const merged = { ...existing, ...args.settings }
-      const result = workspaceRepository.updateSettings(args.workspaceId, merged)
+      const existing = workspaceRepository.getSettings(workspaceId)
+      const merged = { ...existing, ...settings }
+      const result = workspaceRepository.updateSettings(workspaceId, merged)
 
       // Update file watcher based on new settings
       try {
-        const ws = workspaceRepository.findById(args.workspaceId)
+        const ws = workspaceRepository.findById(workspaceId)
         if (ws) {
           const s = merged as Record<string, unknown>
           if (s.repomapEnabled || s.semanticSearchEnabled) {
-            fileWatcherService.start(args.workspaceId, ws.repoPath, {
+            fileWatcherService.start(workspaceId, ws.repoPath, {
               codeGraphEnabled: !!s.repomapEnabled,
               semanticSearchEnabled: !!s.semanticSearchEnabled
             })
           } else {
-            fileWatcherService.stop(args.workspaceId)
+            fileWatcherService.stop(workspaceId)
           }
         }
       } catch (e) {
@@ -226,7 +220,7 @@ export function registerWorkspaceIpc(): void {
         const newProvider = (merged.llmProvider as string) ?? 'claude'
 
         if (oldProvider !== newProvider && chatAgentService.isRunning()) {
-          const ws = workspaceRepository.findById(args.workspaceId)
+          const ws = workspaceRepository.findById(workspaceId)
           if (ws && chatAgentService.getWorkspacePath() === ws.repoPath) {
             dbLogger.info(
               `[workspace:settings] LLM provider changed: ${oldProvider} → ${newProvider} — restarting agent session`
@@ -244,27 +238,30 @@ export function registerWorkspaceIpc(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_UPDATE_AUTH,
-    async (event, args: { workspaceId: string; authMode: string; anthropicApiKey?: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args || typeof args.workspaceId !== 'string' || args.workspaceId.trim().length === 0) {
-        throw new Error('Invalid workspace ID')
-      }
-      if (args.authMode !== 'claude-max' && args.authMode !== 'api-key') {
-        throw new Error('Invalid auth mode — must be "claude-max" or "api-key"')
+      const ch = IPC_CHANNELS.WORKSPACE_UPDATE_AUTH
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const authMode = requireString(args, 'authMode', ch)
+      const anthropicApiKey = optionalString(args, 'anthropicApiKey', ch)
+
+      if (authMode !== 'claude-max' && authMode !== 'api-key') {
+        throw new Error(`${ch}: authMode must be 'claude-max' or 'api-key'`)
       }
 
       // Merge auth settings with existing workspace settings
-      const existing = workspaceRepository.getSettings(args.workspaceId)
+      const existing = workspaceRepository.getSettings(workspaceId)
       const merged = {
         ...existing,
-        authMode: args.authMode,
+        authMode,
         // Only store API key if auth mode is api-key, otherwise clear it
-        anthropicApiKey: args.authMode === 'api-key' ? args.anthropicApiKey : undefined
+        anthropicApiKey: authMode === 'api-key' ? anthropicApiKey : undefined
       }
-      workspaceRepository.updateSettings(args.workspaceId, merged)
+      workspaceRepository.updateSettings(workspaceId, merged)
 
       // Reload auth provider for the active workspace
-      const workspace = workspaceRepository.findAll().find((w) => w.id === args.workspaceId)
+      const workspace = workspaceRepository.findAll().find((w) => w.id === workspaceId)
       if (workspace) {
         const { authProvider } = await import('../services/auth-provider')
         authProvider.loadFromWorkspace(workspace.repoPath)
@@ -277,17 +274,17 @@ export function registerWorkspaceIpc(): void {
   // ── External MCP prerequisite check ──
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP,
-    async (event, args: { command: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      if (!args || typeof args.command !== 'string' || args.command.trim().length === 0) {
-        throw new Error('Invalid command')
-      }
+      const ch = IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP
+      const args = requireObject(rawArgs, ch)
+      const command = requireString(args, 'command', ch)
       // Sanitize: only allow simple command names (no slashes, spaces, or shell metacharacters)
-      if (!/^[a-zA-Z0-9_-]+$/.test(args.command)) {
-        throw new Error('Invalid command name')
+      if (!/^[a-zA-Z0-9_-]+$/.test(command)) {
+        throw new Error(`${ch}: invalid command name`)
       }
       try {
-        const result = execSync(`which ${args.command}`, { stdio: 'pipe', timeout: 3000 })
+        const result = execSync(`which ${command}`, { stdio: 'pipe', timeout: 3000 })
         return { available: true, path: result.toString().trim() }
       } catch {
         return { available: false }

@@ -11,7 +11,10 @@ import { createHash } from 'node:crypto'
 import { test, describe, summaryAsync } from './test-harness'
 
 function fingerprint(techs: string[]): string {
-  return createHash('sha256').update([...techs].sort().join('|')).digest('hex').slice(0, 16)
+  return createHash('sha256')
+    .update([...techs].sort().join('|'))
+    .digest('hex')
+    .slice(0, 16)
 }
 
 describe('stack-drift-detector (fingerprint logic)', () => {

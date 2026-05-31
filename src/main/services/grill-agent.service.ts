@@ -1,9 +1,11 @@
 /**
- * GrillAgentService — standalone evaluator for the Grill feature.
+ * GrillAgentService — multi-workspace standalone evaluator for the Grill feature.
  *
- * A sibling to AuditAgentService that owns its own AgentSessionService.
- * Single-shot: one evaluation per invocation, streams directly to the
- * renderer via events. No interaction with the chat pipeline.
+ * Maintains a Map<workspaceId, GrillSession> so evaluations can run concurrently
+ * across different workspaces. Single-shot per workspace: one evaluation per
+ * invocation, streams directly to the renderer via events.
+ *
+ * Events are tagged with workspaceId so the IPC layer can route them correctly.
  */
 
 import { EventEmitter } from 'node:events'
@@ -16,19 +18,35 @@ import { GreenfieldGrillRoleAdapter } from './role-adapters/greenfield-grill.ada
 
 const grillLog = log.scope('grill-agent')
 
+interface GrillSession {
+  session: AgentSessionService
+  running: boolean
+}
+
 // ── Service ────────────────────────────────────────────────────────────────
 
 export class GrillAgentService extends EventEmitter {
-  private session: AgentSessionService | null = null
-  private running = false
+  private sessions = new Map<string, GrillSession>()
+  /** Greenfield evaluations don't have a workspace — use a synthetic key. */
+  private greenfieldSession: GrillSession | null = null
 
+  /** Check if ANY evaluation is running (backward compat). */
   get isRunning(): boolean {
-    return this.running
+    if (this.greenfieldSession?.running) return true
+    for (const entry of this.sessions.values()) {
+      if (entry.running) return true
+    }
+    return false
+  }
+
+  /** Check if a specific workspace has a running evaluation. */
+  isRunningForWorkspace(workspaceId: string): boolean {
+    return this.sessions.get(workspaceId)?.running ?? false
   }
 
   /**
-   * Run a single grill evaluation.
-   * Emits: 'stream' (chunk), 'evaluation' (parsed result), 'complete'
+   * Run a single grill evaluation for a workspace.
+   * Emits: 'stream' (chunk), 'evaluation' (parsed result), 'complete' — all tagged with workspaceId.
    */
   async evaluate(params: {
     workspaceId: string
@@ -44,12 +62,10 @@ export class GrillAgentService extends EventEmitter {
       `[grill] evaluate called — track=${params.trackId} workspace=${params.workspaceId}`
     )
 
-    if (this.running) {
-      grillLog.warn('[grill] Already running — ignoring duplicate start')
+    if (this.sessions.get(params.workspaceId)?.running) {
+      grillLog.warn(`[grill] Already running for workspace ${params.workspaceId} — ignoring`)
       return
     }
-
-    this.running = true
 
     const adapter = new GrillRoleAdapter({
       workspaceId: params.workspaceId,
@@ -61,31 +77,33 @@ export class GrillAgentService extends EventEmitter {
       llmProvider: params.llmProvider
     })
 
-    this.session = new AgentSessionService(adapter)
+    const session = new AgentSessionService(adapter)
+    const entry: GrillSession = { session, running: true }
+    this.sessions.set(params.workspaceId, entry)
 
-    // Wire streaming events for live output
-    this.session.on('chunk', (chunk: StreamChunk) => {
-      this.emit('stream', { chunk })
+    // Wire streaming events for live output — tagged with workspaceId
+    session.on('chunk', (chunk: StreamChunk) => {
+      this.emit('stream', { workspaceId: params.workspaceId, chunk })
     })
 
     try {
       // Start session in plan mode (read-only)
-      await this.session.start(params.workspacePath, 'plan')
+      await session.start(params.workspacePath, 'plan')
 
       // Single-shot: send the evaluation trigger
       const syntheticConvId = `grill-${params.trackId}-${Date.now()}`
       const effectiveMessage = params.iterationHistory
         ? `Re-evaluate based on updated decisions:\n\n${params.iterationHistory}`
         : 'Begin your evaluation.'
-      await this.session.send(effectiveMessage, syntheticConvId, [])
+      await session.send(effectiveMessage, syntheticConvId, [])
 
       // Collect the full response and parse evaluation
-      const responseText = this.session.getStreamedContent()
+      const responseText = session.getStreamedContent()
       const evaluation = this.parseGrillEvaluation(responseText)
 
       if (evaluation) {
         grillLog.info(`[grill:${params.trackId}] completed — score=${evaluation.score}`)
-        this.emit('evaluation', evaluation)
+        this.emit('evaluation', { workspaceId: params.workspaceId, ...evaluation })
       } else {
         grillLog.warn(`[grill:${params.trackId}] completed but no grill-evaluation block found`)
       }
@@ -93,13 +111,13 @@ export class GrillAgentService extends EventEmitter {
       grillLog.error(`[grill:${params.trackId}] failed:`, err)
     } finally {
       try {
-        await this.session.stop()
-      } catch {
-        /* best-effort cleanup */
+        await session.stop()
+      } catch (e) {
+        grillLog.debug('[grill] session.stop() cleanup failed (non-fatal):', e)
       }
-      this.session = null
-      this.running = false
-      this.emit('complete')
+      entry.running = false
+      this.sessions.delete(params.workspaceId)
+      this.emit('complete', { workspaceId: params.workspaceId })
     }
   }
 
@@ -119,12 +137,10 @@ export class GrillAgentService extends EventEmitter {
       `[grill] evaluateGreenfield called — track=${params.trackId} project="${params.projectName}"`
     )
 
-    if (this.running) {
-      grillLog.warn('[grill] Already running — ignoring duplicate start')
+    if (this.greenfieldSession?.running) {
+      grillLog.warn('[grill] Greenfield already running — ignoring duplicate start')
       return
     }
-
-    this.running = true
 
     const adapter = new GreenfieldGrillRoleAdapter({
       trackId: params.trackId,
@@ -135,10 +151,11 @@ export class GrillAgentService extends EventEmitter {
       llmProvider: params.llmProvider
     })
 
-    this.session = new AgentSessionService(adapter)
+    const session = new AgentSessionService(adapter)
+    this.greenfieldSession = { session, running: true }
 
     // Wire streaming events for live output
-    this.session.on('chunk', (chunk: StreamChunk) => {
+    session.on('chunk', (chunk: StreamChunk) => {
       this.emit('stream', { chunk })
     })
 
@@ -147,15 +164,15 @@ export class GrillAgentService extends EventEmitter {
       const os = await import('node:os')
       const workDir = os.tmpdir()
 
-      await this.session.start(workDir, 'plan')
+      await session.start(workDir, 'plan')
 
       const syntheticConvId = `greenfield-grill-${params.trackId}-${Date.now()}`
       const effectiveMessage = params.iterationHistory
         ? `Re-evaluate based on updated decisions:\n\n${params.iterationHistory}`
         : 'Begin your evaluation.'
-      await this.session.send(effectiveMessage, syntheticConvId, [])
+      await session.send(effectiveMessage, syntheticConvId, [])
 
-      const responseText = this.session.getStreamedContent()
+      const responseText = session.getStreamedContent()
       const evaluation = this.parseGrillEvaluation(responseText)
 
       if (evaluation) {
@@ -170,27 +187,48 @@ export class GrillAgentService extends EventEmitter {
       grillLog.error(`[grill:greenfield:${params.trackId}] failed:`, err)
     } finally {
       try {
-        await this.session.stop()
-      } catch {
-        /* best-effort cleanup */
+        await this.greenfieldSession.session.stop()
+      } catch (e) {
+        grillLog.debug('[grill:greenfield] session.stop() cleanup failed (non-fatal):', e)
       }
-      this.session = null
-      this.running = false
+      this.greenfieldSession = null
       this.emit('complete')
     }
   }
 
-  /** Cancel the running evaluation. */
-  cancel(): void {
-    grillLog.info('[grill] Cancel requested')
-    if (this.session) {
-      try {
-        this.session.cancelCurrentQuery()
-      } catch {
-        /* non-fatal */
+  /** Cancel the running evaluation for a specific workspace. */
+  cancel(workspaceId?: string): void {
+    grillLog.info(`[grill] Cancel requested${workspaceId ? ` for workspace ${workspaceId}` : ''}`)
+
+    if (workspaceId) {
+      const entry = this.sessions.get(workspaceId)
+      if (entry?.session) {
+        try {
+          entry.session.cancelCurrentQuery()
+        } catch (e) {
+          grillLog.debug('[grill] cancelCurrentQuery() failed (non-fatal):', e)
+        }
+        entry.running = false
+      }
+    } else {
+      // Cancel all (backward compat)
+      for (const [, entry] of this.sessions) {
+        try {
+          entry.session.cancelCurrentQuery()
+        } catch (e) {
+          grillLog.debug('[grill] cancelCurrentQuery() failed (non-fatal):', e)
+        }
+        entry.running = false
+      }
+      if (this.greenfieldSession?.session) {
+        try {
+          this.greenfieldSession.session.cancelCurrentQuery()
+        } catch (e) {
+          grillLog.debug('[grill:greenfield] cancelCurrentQuery() failed (non-fatal):', e)
+        }
+        this.greenfieldSession.running = false
       }
     }
-    this.running = false
   }
 
   // ── Private: parse grill-evaluation from response ──────────────────
@@ -223,6 +261,13 @@ export class GrillAgentService extends EventEmitter {
       grillLog.error('[grill] Failed to parse grill-evaluation JSON:', err)
       return null
     }
+  }
+  /** Graceful shutdown — cancel all evaluations and clear sessions. Called on app quit. */
+  async shutdown(): Promise<void> {
+    grillLog.info(`[grill] Shutdown initiated — ${this.sessions.size} active sessions`)
+    this.cancel() // Cancels all sessions
+    this.sessions.clear()
+    this.greenfieldSession = null
   }
 }
 

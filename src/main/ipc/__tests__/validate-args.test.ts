@@ -181,17 +181,23 @@ describe('optionalNullableString', () => {
 
 describe('error messages include channel + field', () => {
   test('requireString', () => {
-    assert.throws(() => requireString({}, 'sessionId', 'session:getInfo'), (err) => {
-      const msg = (err as Error).message
-      return msg.includes('session:getInfo') && msg.includes('sessionId')
-    })
+    assert.throws(
+      () => requireString({}, 'sessionId', 'session:getInfo'),
+      (err) => {
+        const msg = (err as Error).message
+        return msg.includes('session:getInfo') && msg.includes('sessionId')
+      }
+    )
   })
 
   test('optionalNumber', () => {
-    assert.throws(() => optionalNumber({ limit: 'x' }, 'limit', 'session:list'), (err) => {
-      const msg = (err as Error).message
-      return msg.includes('session:list') && msg.includes('limit')
-    })
+    assert.throws(
+      () => optionalNumber({ limit: 'x' }, 'limit', 'session:list'),
+      (err) => {
+        const msg = (err as Error).message
+        return msg.includes('session:list') && msg.includes('limit')
+      }
+    )
   })
 })
 

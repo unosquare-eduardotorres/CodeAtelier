@@ -16,10 +16,7 @@
  * Narrow `unknown` to a non-null plain object, throwing otherwise.
  * Use this as the entry gate before calling field-level validators.
  */
-export function requireObject(
-  args: unknown,
-  channel: string
-): Record<string, unknown> {
+export function requireObject(args: unknown, channel: string): Record<string, unknown> {
   if (args === null || typeof args !== 'object' || Array.isArray(args)) {
     throw new Error(`${channel}: expected an object argument, got ${describe(args)}`)
   }
@@ -106,6 +103,42 @@ export function optionalNullableString(
     throw new Error(`${channel}: field '${field}' must be a string, null, or omitted`)
   }
   return value
+}
+
+/**
+ * Assert that `obj[field]` is a non-empty array of strings.
+ */
+export function requireStringArray(
+  obj: Record<string, unknown>,
+  field: string,
+  channel: string
+): string[] {
+  const value = obj[field]
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${channel}: field '${field}' must be a non-empty array`)
+  }
+  for (let i = 0; i < value.length; i++) {
+    if (typeof value[i] !== 'string') {
+      throw new Error(`${channel}: field '${field}[${i}]' must be a string`)
+    }
+  }
+  return value as string[]
+}
+
+/**
+ * Assert that `obj[field]` is a plain object (not array, not null).
+ * Returns the value narrowed to `Record<string, unknown>`.
+ */
+export function requirePlainObject(
+  obj: Record<string, unknown>,
+  field: string,
+  channel: string
+): Record<string, unknown> {
+  const value = obj[field]
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${channel}: field '${field}' must be a plain object`)
+  }
+  return value as Record<string, unknown>
 }
 
 function describe(value: unknown): string {

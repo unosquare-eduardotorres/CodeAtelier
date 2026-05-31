@@ -5,7 +5,8 @@ import {
   useChatStore,
   useChatActions,
   useSpecialistStore,
-  useWorkspaceStore
+  useWorkspaceStore,
+  useChatBubbleSize
 } from '@renderer/store'
 import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
@@ -33,22 +34,16 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const toolActivities = useChatStore((s) => s.toolActivities)
   const compactSuggestion = useChatStore((s) => s.compactSuggestion)
   const contextUsages = useChatStore((s) => s.contextUsages)
-  const pendingGrillQuestions = useChatStore((s) => s.grillSession?.pendingQuestions ?? null)
-  const hasPendingGrillQuestions = (pendingGrillQuestions?.length ?? 0) > 0
   const pendingQuestions = useChatStore((s) => s.pendingQuestions)
   const hasPendingQuestions = (pendingQuestions?.length ?? 0) > 0
 
   const {
     setCompactSuggestion,
     sendMessage,
-    submitGrillAnswers,
-    skipAllGrillQuestions,
     submitQuestionAnswers,
     skipAllQuestions,
     updateMode,
     appendLocalMessage,
-    clearGrillSession,
-    createItemsFromGrill,
     createConversation
   } = useChatActions()
 
@@ -86,10 +81,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       updateMode,
       sendMessage,
       appendLocalMessage,
-      clearGrillSession,
-      createItemsFromGrill,
-      submitGrillAnswers,
-      skipAllGrillQuestions,
       saveAsIdea: handleSaveAsIdea,
       buildFromPlan: handleBuildFromPlan
     }),
@@ -97,10 +88,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
       updateMode,
       sendMessage,
       appendLocalMessage,
-      clearGrillSession,
-      createItemsFromGrill,
-      submitGrillAnswers,
-      skipAllGrillQuestions,
       handleSaveAsIdea,
       handleBuildFromPlan
     ]
@@ -211,6 +198,22 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     title: string
     description: string
   } | null>(null)
+  const [promptSuggestion, setPromptSuggestion] = useState<string | null>(null)
+
+  // Listen for prompt suggestions from SDK
+  useEffect(() => {
+    const cleanup = window.api.onPromptSuggestion((data) => {
+      if (data.conversationId === activeConversationId) {
+        setPromptSuggestion(data.suggestion)
+      }
+    })
+    return cleanup
+  }, [activeConversationId])
+
+  // Clear suggestion when a new stream starts or conversation changes
+  useEffect(() => {
+    if (isStreaming) setPromptSuggestion(null)
+  }, [isStreaming])
 
   // Track streaming → complete transition to trigger fade-in on the newly arrived message.
   // Only animate on single-message completion — batch finalization (multiple segments
@@ -285,6 +288,15 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     estimateSize: () => 150,
     overscan: 5
   })
+
+  // Re-measure all virtual items when bubble size preference changes
+  const bubbleSize = useChatBubbleSize()
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      virtualizer.measure()
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [bubbleSize, virtualizer])
 
   // Auto-scroll to bottom when new messages arrive, streaming content updates, or investigation report appears
   useEffect(() => {
@@ -391,11 +403,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                     toolActivities={msg.toolActivities}
                     searchHighlight={searchQuery}
                     actions={bubbleActions}
-                    suppressInlineGrillCard={
-                      hasPendingGrillQuestions &&
-                      msg.role !== 'user' &&
-                      virtualRow.index === messages.length - 1
-                    }
                   />
                 </div>
               </div>
@@ -407,6 +414,27 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
         {/* Auto mode switch pill (e.g., build → plan on investigation prompts) */}
         <AutoModeSwitchPill />
+
+        {/* Prompt suggestion — anchored below the last assistant message */}
+        {promptSuggestion && !isStreaming && (
+          <div className="flex gap-3 flex-row px-0 pb-2">
+            {/* Spacer matching avatar width to align with message content */}
+            <div className="flex-shrink-0 w-10" />
+            <button
+              onClick={() => {
+                sendMessage(promptSuggestion)
+                setPromptSuggestion(null)
+              }}
+              className="text-xs text-primary-text bg-primary/10 px-3 py-1.5 rounded-full hover:bg-primary/20 transition-colors inline-flex items-center gap-1.5"
+              title={promptSuggestion}
+            >
+              💡{' '}
+              {promptSuggestion.length > 80
+                ? promptSuggestion.slice(0, 77) + '...'
+                : promptSuggestion}
+            </button>
+          </div>
+        )}
 
         {showIdeaPopover && ideaPopoverData && (
           <div className="relative px-4 mt-2">
@@ -476,19 +504,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             }
           }}
         />
-
-        {/* Store-driven Grill Question Card — authoritative rendering */}
-        {hasPendingGrillQuestions && pendingGrillQuestions && (
-          <div className="flex justify-start px-4">
-            <div className="max-w-[85%]">
-              <GrillQuestionCard
-                questions={pendingGrillQuestions}
-                onSubmit={submitGrillAnswers}
-                onSkipAll={skipAllGrillQuestions}
-              />
-            </div>
-          </div>
-        )}
 
         {/* General chat ask_user card — reuses GrillQuestionCard */}
         {hasPendingQuestions && pendingQuestions && (

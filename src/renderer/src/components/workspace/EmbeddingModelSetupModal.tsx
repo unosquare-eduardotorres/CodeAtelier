@@ -91,9 +91,7 @@ export default function EmbeddingModelSetupModal({
               <div className="flex items-center gap-3">
                 <Download size={16} className="text-primary" />
                 <div className="flex-1">
-                  <p className="text-sm text-text-body font-medium">
-                    Downloading embedding model
-                  </p>
+                  <p className="text-sm text-text-body font-medium">Downloading embedding model</p>
                   <p className="text-xs text-text-secondary mt-0.5">
                     nomic-embed-text-v1.5 (~270 MB, one-time download)
                   </p>

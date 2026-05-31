@@ -25,21 +25,65 @@ describe('appendMcpToolGuidance', () => {
       githubConfigured: false
     })
     // Git + checkpoint always mount.
-    assert.ok(allOff.includes('## Git Context Tools'))
-    assert.ok(allOff.includes('## Checkpoint Tools'))
+    assert.ok(allOff.includes('## Git Context'), 'Git context guidance should be appended')
+    assert.ok(allOff.includes('## Checkpoint Tools'), 'Checkpoint guidance should be appended')
     // Repomap / Semantic / GitHub require flags.
-    assert.ok(!allOff.includes('## Code Graph Tools'))
-    assert.ok(!allOff.includes('## Semantic Search'))
-    assert.ok(!allOff.includes('## GitHub Tools'))
+    assert.ok(!allOff.includes('## Code Graph'), 'Code Graph should not be appended when disabled')
+    assert.ok(!allOff.includes('## Semantic Search'), 'Semantic Search should not be appended when disabled')
+    assert.ok(!allOff.includes('## GitHub Tools'), 'GitHub should not be appended when disabled')
 
     const allOn = appendMcpToolGuidance('BASE', 1, {
       repomapEnabled: true,
       semanticSearchEnabled: true,
       githubConfigured: true
     })
-    assert.ok(allOn.includes('## Code Graph Tools'))
-    assert.ok(allOn.includes('## Semantic Search'))
-    assert.ok(allOn.includes('## GitHub Tools'))
+    assert.ok(allOn.includes('## Code Graph'), 'Code Graph should be appended when enabled')
+    assert.ok(allOn.includes('## Semantic Search'), 'Semantic Search should be appended when enabled')
+    assert.ok(allOn.includes('## GitHub Tools'), 'GitHub should be appended when enabled')
+  })
+
+  test('lean mode skips REPOMAP_GUIDANCE on turn 1', () => {
+    const out = appendMcpToolGuidance('BASE', 1, {
+      repomapEnabled: true,
+      semanticSearchEnabled: true,
+      githubConfigured: false
+    }, 'claude-opus-4-8')
+    // Lean: Code Graph rules are merged into identity prompt
+    assert.ok(!out.includes('## Code Graph'), 'Lean mode should skip REPOMAP_GUIDANCE')
+    // But semantic search should still be present
+    assert.ok(out.includes('## Semantic Search'), 'Semantic search should still be injected')
+  })
+
+  test('full mode includes REPOMAP_GUIDANCE on turn 1', () => {
+    const out = appendMcpToolGuidance('BASE', 1, {
+      repomapEnabled: true,
+      semanticSearchEnabled: false,
+      githubConfigured: false
+    }, 'claude-sonnet-4-6')
+    assert.ok(out.includes('## Code Graph'), 'Full mode should include REPOMAP_GUIDANCE')
+  })
+
+  test('lean mode uses compressed Maestro guidance', () => {
+    const out = appendMcpToolGuidance('BASE', 1, {
+      repomapEnabled: false,
+      semanticSearchEnabled: false,
+      githubConfigured: false,
+      externalMcpActive: { maestro: true }
+    }, 'claude-opus-4-8')
+    assert.ok(out.includes('## Maestro'), 'Should include Maestro guidance')
+    // Lean Maestro is shorter — no ### subsections
+    assert.ok(!out.includes('### Workflow'), 'Lean Maestro should not have ### Workflow subsection')
+    assert.ok(out.includes('list_devices'), 'Lean Maestro should mention list_devices')
+  })
+
+  test('full mode uses verbose Maestro guidance', () => {
+    const out = appendMcpToolGuidance('BASE', 1, {
+      repomapEnabled: false,
+      semanticSearchEnabled: false,
+      githubConfigured: false,
+      externalMcpActive: { maestro: true }
+    }, 'claude-sonnet-4-6')
+    assert.ok(out.includes('### Workflow'), 'Full mode should have ### Workflow subsection')
   })
 
   test('idempotent when block already present in base prompt', () => {
@@ -137,10 +181,7 @@ describe('buildConditionalPrefix', () => {
     )
     // Check for absence of the plan *reminder* specifically (the direct-answer
     // signal may reference "emit_plan" in a "Do NOT call" context).
-    assert.ok(
-      !out.includes('Reminder: Use the emit_plan tool'),
-      'Should NOT get plan reminder'
-    )
+    assert.ok(!out.includes('Reminder: Use the emit_plan tool'), 'Should NOT get plan reminder')
   })
 
   test('plan-mode does NOT inject direct-answer signal for long messages', () => {
@@ -152,7 +193,10 @@ describe('buildConditionalPrefix', () => {
       mode: 'plan',
       turnCount: 1
     })
-    assert.ok(out.includes('emit_plan'), 'Long messages should not be classified as simple questions')
+    assert.ok(
+      out.includes('emit_plan'),
+      'Long messages should not be classified as simple questions'
+    )
   })
 
   test('build-mode question behavior unchanged', () => {

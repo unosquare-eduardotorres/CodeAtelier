@@ -1,4 +1,4 @@
-import { getDatabase } from '../index'
+import { BaseRepository } from '../base-repository'
 import type { BudgetTier, Skill } from '../../../shared/types'
 
 interface SkillRow {
@@ -57,44 +57,34 @@ export interface UpdateSkillInput {
   description?: string
 }
 
-export class SkillRepository {
+export class SkillRepository extends BaseRepository<SkillRow, Skill> {
+  protected readonly tableName = 'skills'
+  protected mapRow(row: SkillRow): Skill { return mapRow(row) }
+
   findAll(): Skill[] {
-    const db = getDatabase()
-    const rows = db.prepare('SELECT * FROM skills ORDER BY name ASC').all() as SkillRow[]
+    const rows = this.db()
+      .prepare('SELECT * FROM skills ORDER BY name ASC')
+      .all() as SkillRow[]
     return rows.map(mapRow)
   }
 
-  findById(id: string): Skill | undefined {
-    const db = getDatabase()
-    const row = db.prepare('SELECT * FROM skills WHERE id = ?').get(id) as SkillRow | undefined
-    return row ? mapRow(row) : undefined
-  }
-
   findByFilename(filename: string): Skill | undefined {
-    const db = getDatabase()
-    const row = db.prepare('SELECT * FROM skills WHERE filename = ?').get(filename) as
-      | SkillRow
-      | undefined
-    return row ? mapRow(row) : undefined
+    return this.findOneBy('filename', filename)
   }
 
   findActive(): Skill[] {
-    const db = getDatabase()
-    const rows = db
+    const rows = this.db()
       .prepare('SELECT * FROM skills WHERE is_active = 1 ORDER BY name ASC')
       .all() as SkillRow[]
     return rows.map(mapRow)
   }
 
   create(data: CreateSkillInput): Skill {
-    const db = getDatabase()
-    const row = db
+    const row = this.db()
       .prepare(
-        `
-      INSERT INTO skills (name, description, filename, file_path, is_active, last_updated_date, tier1_json, tier2_instructions)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      RETURNING *
-    `
+        `INSERT INTO skills (name, description, filename, file_path, is_active, last_updated_date, tier1_json, tier2_instructions)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING *`
       )
       .get(
         data.name,
@@ -110,7 +100,6 @@ export class SkillRepository {
   }
 
   update(id: string, data: UpdateSkillInput): Skill {
-    const db = getDatabase()
     const sets: string[] = []
     const values: unknown[] = []
 
@@ -132,13 +121,11 @@ export class SkillRepository {
     sets.push("updated_at = datetime('now')")
     values.push(id)
 
-    const row = db
+    const row = this.db()
       .prepare(
-        `
-      UPDATE skills SET ${sets.join(', ')}
-      WHERE id = ?
-      RETURNING *
-    `
+        `UPDATE skills SET ${sets.join(', ')}
+         WHERE id = ?
+         RETURNING *`
       )
       .get(...values) as SkillRow | undefined
 
@@ -147,25 +134,22 @@ export class SkillRepository {
   }
 
   delete(id: string): void {
-    const db = getDatabase()
-    db.prepare('DELETE FROM skills WHERE id = ?').run(id)
+    this.db().prepare('DELETE FROM skills WHERE id = ?').run(id)
   }
 
   deleteAll(): void {
-    const db = getDatabase()
-    db.prepare('DELETE FROM specialist_skills').run()
-    db.prepare('DELETE FROM skills').run()
+    this.runTransaction(() => {
+      this.db().prepare('DELETE FROM specialist_skills').run()
+      this.db().prepare('DELETE FROM skills').run()
+    })
   }
 
   setActive(id: string, isActive: boolean): Skill {
-    const db = getDatabase()
-    const row = db
+    const row = this.db()
       .prepare(
-        `
-      UPDATE skills SET is_active = ?, updated_at = datetime('now')
-      WHERE id = ?
-      RETURNING *
-    `
+        `UPDATE skills SET is_active = ?, updated_at = datetime('now')
+         WHERE id = ?
+         RETURNING *`
       )
       .get(isActive ? 1 : 0, id) as SkillRow | undefined
 
@@ -178,40 +162,39 @@ export class SkillRepository {
     skillId: string,
     summaries: { full: string; standard: string; minimal: string; hash: string }
   ): void {
-    const db = getDatabase()
-    db.prepare(
-      `
-      UPDATE skills SET
-        summary_full = ?,
-        summary_standard = ?,
-        summary_minimal = ?,
-        summary_hash = ?,
-        updated_at = datetime('now')
-      WHERE id = ?
-    `
-    ).run(summaries.full, summaries.standard, summaries.minimal, summaries.hash, skillId)
+    this.db()
+      .prepare(
+        `UPDATE skills SET
+           summary_full = ?,
+           summary_standard = ?,
+           summary_minimal = ?,
+           summary_hash = ?,
+           updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(summaries.full, summaries.standard, summaries.minimal, summaries.hash, skillId)
   }
 
   /** Update tier1/tier2 progressive loading data for a skill */
   updateTiers(skillId: string, tier1Json: string, tier2Instructions: string): void {
-    const db = getDatabase()
-    db.prepare(
-      `
-      UPDATE skills SET
-        tier1_json = ?,
-        tier2_instructions = ?,
-        updated_at = datetime('now')
-      WHERE id = ?
-    `
-    ).run(tier1Json, tier2Instructions, skillId)
+    this.db()
+      .prepare(
+        `UPDATE skills SET
+           tier1_json = ?,
+           tier2_instructions = ?,
+           updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(tier1Json, tier2Instructions, skillId)
   }
 
   /** Store Haiku-generated enrichment metadata for a skill */
   updateEnrichment(skillId: string, enrichmentJson: string): void {
-    const db = getDatabase()
-    db.prepare(
-      `UPDATE skills SET enrichment_json = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(enrichmentJson, skillId)
+    this.db()
+      .prepare(
+        `UPDATE skills SET enrichment_json = ?, updated_at = datetime('now') WHERE id = ?`
+      )
+      .run(enrichmentJson, skillId)
   }
 
   /** Get pre-computed summary for a specific budget tier */
@@ -222,10 +205,9 @@ export class SkillRepository {
         : tier === 'standard'
           ? 'summary_standard'
           : 'summary_minimal'
-    const db = getDatabase()
-    const row = db.prepare(`SELECT ${col} as summary FROM skills WHERE id = ?`).get(skillId) as
-      | { summary: string | null }
-      | undefined
+    const row = this.db()
+      .prepare(`SELECT ${col} as summary FROM skills WHERE id = ?`)
+      .get(skillId) as { summary: string | null } | undefined
     return row?.summary ?? null
   }
 }

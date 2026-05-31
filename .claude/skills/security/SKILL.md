@@ -1,3 +1,10 @@
+---
+name: security
+description: >
+  Security analysis and hardening for desktop and web applications. Electron security,
+  authentication patterns, OWASP best practices, threat modeling, and supply-chain hygiene.
+---
+
 # Security Skill — Application Security Patterns
 
 ## Purpose
