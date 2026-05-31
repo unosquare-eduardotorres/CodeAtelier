@@ -31,7 +31,6 @@ import {
   PLAN_REMINDER_FULL,
   PLAN_REMINDER_LEAN,
   REPOMAP_GUIDANCE_PROMPT,
-  REPOMAP_GUIDANCE_PROMPT_LEAN,
   SEMANTIC_SEARCH_GUIDANCE_PROMPT,
   SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN
 } from './default-prompts'
@@ -71,9 +70,13 @@ export function appendMcpToolGuidance(
   const verbosity = resolvePromptVerbosity(model ?? '')
   const appendSections: string[] = []
 
-  // Lean: use compressed Code Graph guidance. Full: use verbose priority rules.
-  if (featureFlags.repomapEnabled && !basePrompt.includes('## Code Graph')) {
-    appendSections.push(verbosity === 'lean' ? REPOMAP_GUIDANCE_PROMPT_LEAN : REPOMAP_GUIDANCE_PROMPT)
+  // Lean: Code Graph rules are merged into the identity prompt's ## Code Exploration — skip here.
+  // REPOMAP_GUIDANCE_PROMPT_LEAN exists as a safety net for non-DaVinci adapters that may
+  // want it directly, but DaVinci lean already covers these rules.
+  if (verbosity !== 'lean') {
+    if (featureFlags.repomapEnabled && !basePrompt.includes('## Code Graph')) {
+      appendSections.push(REPOMAP_GUIDANCE_PROMPT)
+    }
   }
 
   if (featureFlags.semanticSearchEnabled && !basePrompt.includes('## Semantic Search')) {
