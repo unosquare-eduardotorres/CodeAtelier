@@ -92,7 +92,7 @@ export class CouncilMemberRoleAdapter implements AgentRoleAdapter {
         repomapEnabled: this.repomapEnabled,
         semanticSearchEnabled: this.semanticSearchEnabled,
         githubConfigured: false,
-        includeGitContext: false, // council members don't mount git-context tools
+        includeGitContext: this.llmProvider !== 'local-llm', // matches buildMcpConfig: Claude gets git tools
         includeCheckpoint: false  // council members don't mount checkpoint tools
       }
       this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags, this.resolvedModel)
