@@ -45,8 +45,9 @@ export function useBackgroundSessionListeners(): void {
           updateStatus(wsId, status as AgentStatus)
         }
       })
-      .catch(() => {
+      .catch((err) => {
         // Non-fatal — statuses will be populated by events
+        console.warn('[useBackgroundSessionListeners] Non-fatal: status fetch failed:', err)
       })
   }, [updateStatus])
 

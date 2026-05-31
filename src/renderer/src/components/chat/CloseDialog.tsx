@@ -29,7 +29,8 @@ export default function CloseDialog({
           setInsights(result)
           setInsightsLoading(false)
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[CloseDialog] Non-fatal: insights load failed:', err)
           setInsightsLoading(false)
         })
     }

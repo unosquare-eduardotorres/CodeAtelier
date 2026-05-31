@@ -204,8 +204,9 @@ export function useWorkspaceCardsData(
         .then((d) => {
           if (!cancelled) setData((prev) => ({ ...prev, [ws.id]: d }))
         })
-        .catch(() => {
-          // Swallow — keep card in skeleton state rather than crash the welcome screen.
+        .catch((err) => {
+          // Keep card in skeleton state rather than crash the welcome screen.
+          console.warn('[useWorkspaceCardsData] Non-fatal: card data load failed:', err)
         })
     })
     return () => {

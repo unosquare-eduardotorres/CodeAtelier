@@ -66,7 +66,8 @@ export default function CodeIntelligencePage(): React.JSX.Element {
           loading: false
         })
       })
-      .catch(() => {
+      .catch((err) => {
+        console.warn('[CodeIntelligencePage] Non-fatal: persisted index load failed:', err)
         setPersistedIndexStatus({ loaded: false, loading: false })
       })
 

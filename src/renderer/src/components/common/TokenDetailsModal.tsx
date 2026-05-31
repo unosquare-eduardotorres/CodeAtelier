@@ -42,7 +42,8 @@ export default function TokenDetailsModal({
       .then((data) => {
         if (!cancelled) setSummary(data)
       })
-      .catch(() => {
+      .catch((err) => {
+        console.warn('[TokenDetailsModal] Non-fatal: token summary load failed:', err)
         if (!cancelled) setSummary(null)
       })
       .finally(() => {
