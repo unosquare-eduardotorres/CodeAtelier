@@ -15,8 +15,10 @@ import { extractResultSummary, reportToolError } from './chat-shared'
 import { workspaceRepository } from '../db/repositories'
 import { grillAgentService } from '../services/grill-agent.service'
 import { grillPersistenceController } from '../services/grill-persistence.controller'
+import { grillPlanGeneratorService } from '../services/grill-plan-generator.service'
 import { validateSender } from './validate-sender'
 import log from 'electron-log'
+import type { GrillStructuredPlan } from '../../shared/types'
 
 const grillLog = log.scope('grill-ipc')
 
@@ -160,6 +162,34 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
     (event, args: { sessionId: string; questionStates: Record<string, unknown> }): void => {
       validateSender(event)
       grillPersistenceController.saveAnswers(args.sessionId, args.questionStates, mainWindow)
+    }
+  )
+
+  // ── grill:generatePlan — Generate structured plan from grill session ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.GRILL_GENERATE_PLAN,
+    async (event, args: { sessionId: string; workspaceId: string }): Promise<GrillStructuredPlan> => {
+      validateSender(event)
+
+      const { sessionId, workspaceId } = args
+      if (!sessionId || !workspaceId) {
+        throw new Error('sessionId and workspaceId are required')
+      }
+
+      grillLog.info(`[grill:generatePlan] Generating plan for session=${sessionId}`)
+
+      const workspace = workspaceRepository.findById(workspaceId)
+      const workspacePath = workspace?.repoPath
+
+      const plan = await grillPlanGeneratorService.generate({
+        sessionId,
+        workspaceId,
+        workspacePath
+      })
+
+      grillLog.info(`[grill:generatePlan] ✓ Plan generated: ${plan.items.length} items`)
+      return plan
     }
   )
 

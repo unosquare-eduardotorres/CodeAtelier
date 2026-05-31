@@ -186,7 +186,8 @@ export class AgentRecoveryManager {
         turnCount: this.s.turnCounts.get(conversationId) ?? 1,
         isBuildMode,
         mcpResult,
-        llmProvider
+        llmProvider,
+        recoveryDepth // Preserve depth so recovery can't restart on continuations
       })
       return // executeStream handles its own finalization
     }
@@ -404,7 +405,8 @@ export class AgentRecoveryManager {
         turnCount: this.s.turnCounts.get(conversationId) ?? 1,
         isBuildMode,
         mcpResult,
-        llmProvider
+        llmProvider,
+        recoveryDepth // Preserve depth so recovery can't restart on continuations
       })
       return
     }

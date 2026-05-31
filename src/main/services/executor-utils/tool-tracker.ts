@@ -23,6 +23,9 @@ export class ToolTracker {
   /** Track the last content block type for thinking→text transition detection */
   lastBlockType: 'thinking' | 'text' | 'tool_use' | null = null
 
+  /** Current structured output schema name (set during json_delta streaming) */
+  currentSchemaName: string | null = null
+
   /**
    * Register a tool use mapping (id → name).
    */

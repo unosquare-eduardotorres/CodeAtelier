@@ -20,6 +20,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { app } from 'electron'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -78,7 +79,7 @@ export interface CLIExecuteOptions {
   resume?: string
   /** AbortController for cancelling the CLI process */
   abortController?: AbortController
-  /** Heartbeat interval in ms (default: 15000) */
+  /** Heartbeat interval in ms (default: 5000) */
   heartbeatIntervalMs?: number
   /** Agent ID for logging attribution */
   agentId?: string
@@ -106,6 +107,8 @@ export interface CLIExecuteOptions {
   fallbackModel?: string
   /** Resume at a specific message point (undo support) */
   resumeSessionAt?: string
+  /** Max thinking tokens per turn — caps thinking token spend (Claude Code 2.1.139+) */
+  thinkingBudget?: number
 }
 
 export interface CLIExecuteResult {
@@ -129,6 +132,8 @@ export class CLIExecutor {
   private sessionId: string | undefined = undefined
   /** Temp file path for the current system prompt (cleaned up on process kill) */
   private systemPromptFile: string | null = null
+  /** Hash of last written system prompt — avoids rewriting identical content to disk. */
+  private lastSystemPromptHash: string | null = null
   /** Persisted NDJSON iterator — survives across turns so multi-turn stdin/stdout works */
   private ndjsonIterator: AsyncGenerator<Record<string, unknown>> | null = null
 
@@ -162,7 +167,7 @@ export class CLIExecutor {
     options: CLIExecuteOptions
   ): AsyncGenerator<StreamChunk & { _meta?: CLIExecuteResult }> {
     const telemetry = new TelemetryRecorder(options.model)
-    const heartbeat = new HeartbeatMonitor(options.heartbeatIntervalMs ?? 15000)
+    const heartbeat = new HeartbeatMonitor(options.heartbeatIntervalMs ?? 5000)
     const tokens = new TokenAccountant()
     const tools = new ToolTracker()
     const state: StreamState = { streamedTextLength: 0 }
@@ -315,6 +320,13 @@ export class CLIExecutor {
     // Telemetry: record success
     const tokenSummary = tokens.getSummary()
     telemetry.finalize(tokenSummary)
+
+    // Zero-token detection: CLI produced text but reported 0 tokens (possible crash mid-stream)
+    if (tokenSummary.input === 0 && tokenSummary.output === 0 && state.streamedTextLength > 0) {
+      executorLog.warn(
+        `[PIPELINE:zero-token-warning] CLI produced ${state.streamedTextLength} chars of text but reported 0 tokens — possible crash before result event`
+      )
+    }
 
     // Yield final metadata chunk (callers check for _meta)
     yield {
@@ -555,16 +567,32 @@ export class CLIExecutor {
       args.push('--goal', options.goal)
     }
 
+    // Thinking budget — caps thinking tokens per turn (Claude Code 2.1.139+)
+    if (options.thinkingBudget != null && options.thinkingBudget > 0) {
+      args.push('--thinking-budget', String(options.thinkingBudget))
+    }
+
     return args
   }
 
   /**
-   * Write a system prompt to a temp file.
+   * Write a system prompt to a temp file. Uses content hashing to avoid
+   * rewriting identical prompts (common on cache-hit turns via Strategy ζ).
    * Returns the absolute path to the file. The file is cleaned up when
    * the CLI process exits (via killProcess) or on the next call.
    */
   private writeSystemPromptFile(prompt: string): string {
-    // Clean up previous file if any
+    // Hash-based dedup: skip write if content hasn't changed and file still exists
+    const hash = createHash('md5').update(prompt).digest('hex').slice(0, 12)
+    if (
+      hash === this.lastSystemPromptHash &&
+      this.systemPromptFile &&
+      existsSync(this.systemPromptFile)
+    ) {
+      return this.systemPromptFile
+    }
+
+    // Clean up previous file if content changed
     this.cleanupSystemPromptFile()
 
     const dir = join(tmpdir(), 'code-atelier-prompts')
@@ -574,6 +602,7 @@ export class CLIExecutor {
     const filePath = join(dir, `system-prompt-${Date.now()}.md`)
     writeFileSync(filePath, prompt, 'utf-8')
     this.systemPromptFile = filePath
+    this.lastSystemPromptHash = hash
     return filePath
   }
 
@@ -588,6 +617,7 @@ export class CLIExecutor {
         // Non-fatal — file may already be gone
       }
       this.systemPromptFile = null
+      this.lastSystemPromptHash = null
     }
   }
 

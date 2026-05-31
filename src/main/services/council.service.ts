@@ -40,6 +40,7 @@ import {
   parsePeerReview,
   parseCouncilVerdict
 } from './council-parser'
+import { councilSessionRepository } from '../db/repositories/council-session.repository'
 
 const councilLog = log.scope('council')
 const execFileAsync = promisify(execFile)
@@ -72,6 +73,8 @@ interface CouncilSessionEntry {
   verdict: CouncilVerdict | null
   running: boolean
   llmProvider: LLMProvider
+  /** Database session ID for persistence (set after createSession) */
+  dbSessionId?: string
 }
 
 // ── Service ────────────────────────────────────────────────────────────
@@ -161,24 +164,45 @@ export class CouncilService extends EventEmitter {
 
     this.sessions.set(params.workspaceId, entry)
 
+    // Create DB session for persistence + resume
+    try {
+      const dbSession = councilSessionRepository.createSession({
+        workspaceId: params.workspaceId,
+        inputType: params.inputType,
+        inputContent: params.planContent,
+        grillSessionId: (params as { grillSessionId?: string }).grillSessionId,
+        structuredPlanJson: params.structuredPlan ? JSON.stringify(params.structuredPlan) : undefined,
+        conversationId: params.conversationId
+      })
+      entry.dbSessionId = dbSession.id
+    } catch (err) {
+      councilLog.warn('[council] Failed to create DB session (non-fatal):', err)
+    }
+
     try {
       // Step 1: Frame the question (context already provided by params)
       this.setPhase(entry, 'framing')
 
       // Step 2: Convene the council — 5 parallel advisor sessions
       this.setPhase(entry, 'deliberating')
+      if (entry.dbSessionId) councilSessionRepository.updatePhase(entry.dbSessionId, 'deliberating')
       const reviews = await this.runAdvisors(entry)
 
       if (!entry.running) return // Cancelled
 
       // Step 3: Peer review — 5 parallel anonymous reviews
       this.setPhase(entry, 'peer-review')
+      if (entry.dbSessionId) councilSessionRepository.updatePhase(entry.dbSessionId, 'peer-review')
       const peerReviews = await this.runPeerReviews(entry, reviews)
 
       if (!entry.running) return // Cancelled
 
+      // Persist peer reviews
+      if (entry.dbSessionId) councilSessionRepository.savePeerReviews(entry.dbSessionId, peerReviews)
+
       // Step 4: Chairman synthesis
       this.setPhase(entry, 'synthesizing')
+      if (entry.dbSessionId) councilSessionRepository.updatePhase(entry.dbSessionId, 'synthesizing')
       const verdict = await this.runChairman(entry, reviews, peerReviews)
 
       if (!entry.running) return // Cancelled
@@ -186,14 +210,17 @@ export class CouncilService extends EventEmitter {
       entry.verdict = verdict
 
       if (verdict) {
+        if (entry.dbSessionId) councilSessionRepository.saveVerdict(entry.dbSessionId, verdict)
         this.emit('verdict', { workspaceId: params.workspaceId, verdict })
       }
 
       // Step 5: Complete
       this.setPhase(entry, 'complete')
+      if (entry.dbSessionId) councilSessionRepository.updateStatus(entry.dbSessionId, 'completed')
     } catch (err) {
       councilLog.error('[council] evaluate failed:', err)
       this.setPhase(entry, 'failed')
+      if (entry.dbSessionId) councilSessionRepository.updateStatus(entry.dbSessionId, 'failed')
     } finally {
       entry.running = false
       // Defensive cleanup — stop any sessions still held by advisors
@@ -298,6 +325,11 @@ export class CouncilService extends EventEmitter {
           advisor.review = review
           advisor.status = 'completed'
           councilLog.info(`[council:${role}] completed — score=${review.score}`)
+          // Persist review incrementally
+          if (entry.dbSessionId) {
+            try { councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review) }
+            catch (e) { councilLog.warn(`[council:${role}] DB persist failed (non-fatal):`, e) }
+          }
         } else {
           advisor.status = 'completed'
           councilLog.warn(`[council:${role}] completed but no council-review block found`)
@@ -475,6 +507,282 @@ Respond ONLY with a JSON block:
       }
     }
     this.setPhase(entry, 'cancelled')
+  }
+
+  // ── Resume ──
+
+  /**
+   * Resume a failed or stale council session from where it left off.
+   * Loads persisted reviews from DB, determines resume point, and
+   * re-runs only the incomplete portions of the pipeline.
+   */
+  async resumeSession(params: {
+    sessionId: string
+    workspaceId: string
+    workspacePath: string
+    llmProvider?: LLMProvider
+  }): Promise<void> {
+    councilLog.info(`[council:resume] Resuming session=${params.sessionId}`)
+
+    const dbSession = councilSessionRepository.findById(params.sessionId)
+    if (!dbSession) throw new Error(`Council session not found: ${params.sessionId}`)
+    if (dbSession.status === 'completed') throw new Error('Session already complete')
+
+    if (this.sessions.get(params.workspaceId)?.running) {
+      throw new Error(`Council already running for workspace ${params.workspaceId}`)
+    }
+
+    // Reconstruct framed input from persisted data
+    const structuredPlan = dbSession.structuredPlanJson
+      ? JSON.parse(dbSession.structuredPlanJson) as StructuredPlan
+      : null
+
+    const framedInput: CouncilFramedInput = {
+      planContent: dbSession.inputContent,
+      structuredPlan,
+      originalUserRequest: dbSession.inputContent.slice(0, 200),
+      workspaceContext: '',
+      filesInScope: [],
+      inputType: dbSession.inputType
+    }
+
+    // Initialize advisor instances with existing reviews
+    const advisors = new Map<CouncilAdvisorRole, AdvisorInstance>()
+    const existingReviews = dbSession.advisorReviews
+    const completedRoles = new Set(dbSession.completedAdvisors)
+
+    for (const role of COUNCIL_ADVISOR_ROLES) {
+      const existingReview = existingReviews.find(r => r.advisorRole === role) ?? null
+      advisors.set(role, {
+        role,
+        session: null,
+        status: completedRoles.has(role) ? 'completed' : 'pending',
+        review: existingReview
+      })
+    }
+
+    const entry: CouncilSessionEntry = {
+      workspaceId: params.workspaceId,
+      workspacePath: params.workspacePath,
+      conversationId: dbSession.conversationId ?? undefined,
+      inputType: dbSession.inputType,
+      framedInput,
+      advisors,
+      phase: dbSession.phase,
+      verdict: dbSession.verdict,
+      running: true,
+      llmProvider: params.llmProvider ?? 'claude',
+      dbSessionId: params.sessionId
+    }
+
+    this.sessions.set(params.workspaceId, entry)
+
+    // Update status to running
+    councilSessionRepository.updateStatus(params.sessionId, 'running')
+
+    try {
+      // Determine resume point based on last phase
+      switch (dbSession.phase) {
+        case 'framing':
+        case 'deliberating': {
+          // Re-run only incomplete advisors, then continue
+          this.setPhase(entry, 'deliberating')
+          councilSessionRepository.updatePhase(params.sessionId, 'deliberating')
+          const reviews = await this.runAdvisorsWithExisting(entry, existingReviews)
+
+          if (!entry.running) return
+
+          this.setPhase(entry, 'peer-review')
+          councilSessionRepository.updatePhase(params.sessionId, 'peer-review')
+          const peerReviews = await this.runPeerReviews(entry, reviews)
+
+          if (!entry.running) return
+          councilSessionRepository.savePeerReviews(params.sessionId, peerReviews)
+
+          this.setPhase(entry, 'synthesizing')
+          councilSessionRepository.updatePhase(params.sessionId, 'synthesizing')
+          const verdict = await this.runChairman(entry, reviews, peerReviews)
+
+          if (!entry.running) return
+          entry.verdict = verdict
+          if (verdict) {
+            councilSessionRepository.saveVerdict(params.sessionId, verdict)
+            this.emit('verdict', { workspaceId: params.workspaceId, verdict })
+          }
+
+          this.setPhase(entry, 'complete')
+          councilSessionRepository.updateStatus(params.sessionId, 'completed')
+          break
+        }
+
+        case 'peer-review': {
+          // Skip deliberation — reviews exist. Re-run peer review + chairman
+          this.setPhase(entry, 'peer-review')
+          councilSessionRepository.updatePhase(params.sessionId, 'peer-review')
+          const peerReviews = await this.runPeerReviews(entry, existingReviews)
+
+          if (!entry.running) return
+          councilSessionRepository.savePeerReviews(params.sessionId, peerReviews)
+
+          this.setPhase(entry, 'synthesizing')
+          councilSessionRepository.updatePhase(params.sessionId, 'synthesizing')
+          const verdict = await this.runChairman(entry, existingReviews, peerReviews)
+
+          if (!entry.running) return
+          entry.verdict = verdict
+          if (verdict) {
+            councilSessionRepository.saveVerdict(params.sessionId, verdict)
+            this.emit('verdict', { workspaceId: params.workspaceId, verdict })
+          }
+
+          this.setPhase(entry, 'complete')
+          councilSessionRepository.updateStatus(params.sessionId, 'completed')
+          break
+        }
+
+        case 'synthesizing': {
+          // Skip deliberation + peer review — re-run chairman only
+          this.setPhase(entry, 'synthesizing')
+          councilSessionRepository.updatePhase(params.sessionId, 'synthesizing')
+          const peerReviews = dbSession.peerReviews
+          const verdict = await this.runChairman(entry, existingReviews, peerReviews)
+
+          if (!entry.running) return
+          entry.verdict = verdict
+          if (verdict) {
+            councilSessionRepository.saveVerdict(params.sessionId, verdict)
+            this.emit('verdict', { workspaceId: params.workspaceId, verdict })
+          }
+
+          this.setPhase(entry, 'complete')
+          councilSessionRepository.updateStatus(params.sessionId, 'completed')
+          break
+        }
+
+        case 'complete':
+          throw new Error('Session already complete')
+
+        default:
+          throw new Error(`Unknown phase: ${dbSession.phase}`)
+      }
+    } catch (err) {
+      councilLog.error('[council:resume] failed:', err)
+      this.setPhase(entry, 'failed')
+      councilSessionRepository.updateStatus(params.sessionId, 'failed')
+    } finally {
+      entry.running = false
+      for (const advisor of entry.advisors.values()) {
+        if (advisor.session) {
+          try { await advisor.session.stop() } catch { /* non-fatal */ }
+        }
+      }
+      this.sessions.delete(params.workspaceId)
+      this.emit('complete', { workspaceId: params.workspaceId })
+    }
+  }
+
+  /**
+   * Run advisors with partial resume — only executes advisors that haven't completed.
+   * Merges existing reviews with newly-completed ones.
+   */
+  private async runAdvisorsWithExisting(
+    entry: CouncilSessionEntry,
+    existingReviews: CouncilReview[]
+  ): Promise<CouncilReview[]> {
+    const reviewsMap = new Map<string, CouncilReview>()
+
+    // Seed with existing reviews
+    for (const review of existingReviews) {
+      reviewsMap.set(review.advisorRole, review)
+    }
+
+    // Only run advisors that don't have completed reviews
+    const pendingRoles = COUNCIL_ADVISOR_ROLES.filter(role => !reviewsMap.has(role))
+
+    if (pendingRoles.length === 0) {
+      councilLog.info('[council:resume] All advisors already completed')
+      return existingReviews
+    }
+
+    councilLog.info(`[council:resume] Running ${pendingRoles.length} pending advisor(s): ${pendingRoles.join(', ')}`)
+
+    const advisorPromises = pendingRoles.map(async (role) => {
+      const advisor = entry.advisors.get(role)!
+      advisor.status = 'running'
+
+      try {
+        const adapter = new CouncilMemberRoleAdapter({
+          workspaceId: entry.workspaceId,
+          advisorRole: role,
+          framedInput: entry.framedInput,
+          llmProvider: entry.llmProvider
+        })
+
+        const session = new AgentSessionService(adapter)
+        advisor.session = session
+
+        session.on('chunk', (chunk: StreamChunk) => {
+          this.emit('member-stream', {
+            workspaceId: entry.workspaceId,
+            advisorRole: role,
+            chunk
+          })
+        })
+
+        await session.start(entry.workspacePath, 'plan')
+        const syntheticConvId = `council-resume-${role}-${Date.now()}`
+        await session.send('Begin your review.', syntheticConvId, [])
+
+        const responseText = session.getStreamedContent()
+        const review = parseCouncilReview(responseText, role)
+
+        if (review) {
+          advisor.review = review
+          advisor.status = 'completed'
+          reviewsMap.set(role, review)
+          if (entry.dbSessionId) {
+            try { councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review) }
+            catch (e) { councilLog.warn(`[council:resume:${role}] DB persist failed:`, e) }
+          }
+        } else {
+          advisor.status = 'completed'
+        }
+
+        this.emit('member-complete', {
+          workspaceId: entry.workspaceId,
+          advisorRole: role,
+          review: advisor.review
+        })
+
+        return review
+      } catch (err) {
+        councilLog.error(`[council:resume:${role}] failed:`, err)
+        advisor.status = 'failed'
+        this.emit('member-complete', {
+          workspaceId: entry.workspaceId,
+          advisorRole: role,
+          review: null
+        })
+        return null
+      } finally {
+        try { await advisor.session?.stop() } catch { /* non-fatal */ }
+      }
+    })
+
+    await Promise.allSettled(advisorPromises)
+
+    return Array.from(reviewsMap.values())
+  }
+
+  /**
+   * Mark stale 'running' sessions as 'failed'.
+   * Called on app startup to detect sessions interrupted by crash/restart.
+   */
+  reconcileStaleRuns(): void {
+    const staleCount = councilSessionRepository.markStaleAsFailed()
+    if (staleCount > 0) {
+      councilLog.info(`[council:reconcile] Marked ${staleCount} stale council session(s) as failed`)
+    }
   }
 
   /** Graceful shutdown — cancel all councils and clear state. Called on app quit. */

@@ -39,6 +39,9 @@ export default function GoalRunHistory({
               <p className="text-sm text-text-primary truncate">{run.title}</p>
               <p className="text-[10px] text-text-muted">
                 {dateStr} · {run.goalType} · {run.totalTokens > 0 ? `${Math.round(run.totalTokens / 1000)}K tok` : '—'}
+                {(run.status === 'failed' || run.status === 'cancelled') && (
+                  <span className="ml-1 text-amber-400">· resumable</span>
+                )}
               </p>
             </div>
           </button>

@@ -283,78 +283,18 @@ export class OpenCodeExecutor {
         this.serverReadyPromise = undefined
       }
 
-      // Reuse existing session for multi-turn conversations, or create a new one
-      const conversationId = options.conversationId
-      if (conversationId) {
-        openCodeSessionId = this.sessionMap.get(conversationId)
-      }
-
+      // Get or create session for multi-turn reuse
+      openCodeSessionId = await this.getOrCreateSession(options)
       if (!openCodeSessionId) {
-        // Create a new session
-        const session = await this.client.session.create({
-          body: { title: `Code Atelier: ${new Date().toISOString()}` }
-        })
-        openCodeSessionId = session.data?.id
-
-        if (!openCodeSessionId) {
-          yield { type: 'error', error: 'Failed to create OpenCode session' }
-          return
-        }
-
-        // Track for multi-turn reuse
-        if (conversationId) {
-          this.sessionMap.set(conversationId, openCodeSessionId)
-        }
-
-        openCodeLog.info(
-          `[opencode] Session ${openCodeSessionId} created — provider=${provider.providerId}/${provider.modelId}`
-        )
-
-        // A-1: Prime the session with workspace context before the first real prompt.
-        // Uses noReply: true so the context is injected without triggering an AI response.
-        if (options.primingContext && options.primingContext.length > 0) {
-          await this.primeSession(openCodeSessionId, options.primingContext)
-        }
-      } else {
-        openCodeLog.info(
-          `[opencode] Reusing session ${openCodeSessionId} for conversation=${conversationId}`
-        )
+        yield { type: 'error', error: 'Failed to create OpenCode session' }
+        return
       }
 
       // Subscribe to events for streaming
       const events = await this.client.event.subscribe()
 
-      // Send the prompt (non-blocking — events come via the stream)
-      // D-1: System prompt is now injected via the plugin’s
-      // experimental.chat.system.transform hook into the real system prompt
-      // position — no longer prepended as a user message part. The hook reads
-      // from CODE_ATELIER_SYSTEM_PROMPT_FILE (written by the config writer).
-      // We only fall back to user-message injection if no plugin is loaded.
-      const parts: Array<Record<string, unknown>> = []
-      const hasPluginSystemPromptHook = !!process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
-      if (systemPrompt && !hasPluginSystemPromptHook) {
-        // Fallback: inject as user message when plugin hook is not available
-        parts.push({ type: 'text', text: `[System Instructions]\n${systemPrompt}` })
-      }
-      parts.push({ type: 'text', text: prompt })
-
-      const promptBody: Record<string, unknown> = {
-        parts,
-        model: {
-          providerID: provider.providerId,
-          modelID: provider.modelId
-        }
-      }
-
-      // Add structured output schema if provided
-      // ENH-10: Include retry config so OpenCode auto-retries on invalid JSON
-      if (outputSchema) {
-        promptBody.format = {
-          type: 'json_schema',
-          schema: outputSchema,
-          retries: 2
-        }
-      }
+      // Build the prompt body (parts + model config + output schema)
+      const promptBody = this.buildPromptBody(prompt, systemPrompt, provider, outputSchema)
 
       // ENH-13: Update session title with meaningful content from the user's prompt
       const titleText = prompt.slice(0, 80).replace(/\n/g, ' ').trim()
@@ -365,7 +305,7 @@ export class OpenCodeExecutor {
           body: { title: sessionTitle }
         })
         ?.catch(() => {
-          // Non-critical — session title is cosmetic
+          /* non-fatal: session title is cosmetic — does not affect execution */
         })
 
       // Fire and forget the prompt — events come via SSE
@@ -396,35 +336,23 @@ export class OpenCodeExecutor {
 
             // #3: Handle transient errors with retry
             if (chunk.type === 'error' && chunk.error && this.isTransientError(chunk.error)) {
-              if (transientRetryCount < MAX_TRANSIENT_RETRIES) {
-                transientRetryCount++
-                const delayMs = BASE_RETRY_DELAY_MS * Math.pow(2, transientRetryCount - 1)
-                openCodeLog.info(
-                  `[opencode] Transient error detected, retrying in ${delayMs}ms ` +
-                    `(attempt ${transientRetryCount}/${MAX_TRANSIENT_RETRIES}): ${chunk.error}`
-                )
+              const retry = this.computeTransientRetry(transientRetryCount, chunk.error)
+              if (retry) {
+                transientRetryCount = retry.attemptNumber
 
-                // Emit recovery progress to the UI
                 yield {
                   type: 'session_recovery',
                   recoveryPhase: 'started',
-                  content: `Transient error detected — retrying in ${Math.round(delayMs / 1000)}s (attempt ${transientRetryCount}/${MAX_TRANSIENT_RETRIES})`
+                  content: retry.startedMessage
                 } as StreamChunk
 
-                await new Promise((r) => setTimeout(r, delayMs))
-
-                // Re-send the prompt
-                this.client!.session.prompt({
-                  path: { id: openCodeSessionId! },
-                  body: promptBody
-                }).catch((err) => {
-                  openCodeLog.error('[opencode] Retry prompt error:', err)
-                })
+                await new Promise((r) => setTimeout(r, retry.delayMs))
+                this.resendPrompt(openCodeSessionId!, promptBody)
 
                 yield {
                   type: 'session_recovery',
                   recoveryPhase: 'resuming',
-                  content: `Retry ${transientRetryCount} in progress...`
+                  content: retry.resumingMessage
                 } as StreamChunk
 
                 continue
@@ -1072,6 +1000,119 @@ export class OpenCodeExecutor {
    */
   private isTransientError(errorMessage: string): boolean {
     return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(errorMessage))
+  }
+
+  /**
+   * Compute retry state for a transient error. Returns null when retries exhausted.
+   */
+  private computeTransientRetry(
+    currentRetryCount: number,
+    errorMessage: string
+  ): { attemptNumber: number; delayMs: number; startedMessage: string; resumingMessage: string } | null {
+    if (currentRetryCount >= MAX_TRANSIENT_RETRIES) return null
+
+    const attemptNumber = currentRetryCount + 1
+    const delayMs = BASE_RETRY_DELAY_MS * Math.pow(2, attemptNumber - 1)
+    openCodeLog.info(
+      `[opencode] Transient error detected, retrying in ${delayMs}ms ` +
+        `(attempt ${attemptNumber}/${MAX_TRANSIENT_RETRIES}): ${errorMessage}`
+    )
+
+    return {
+      attemptNumber,
+      delayMs,
+      startedMessage: `Transient error detected — retrying in ${Math.round(delayMs / 1000)}s (attempt ${attemptNumber}/${MAX_TRANSIENT_RETRIES})`,
+      resumingMessage: `Retry ${attemptNumber} in progress...`
+    }
+  }
+
+  /**
+   * Re-send a prompt to the OpenCode session (fire-and-forget for retries).
+   */
+  private resendPrompt(sessionId: string, promptBody: Record<string, unknown>): void {
+    this.client!.session.prompt({
+      path: { id: sessionId },
+      body: promptBody
+    }).catch((err) => {
+      openCodeLog.error('[opencode] Retry prompt error:', err)
+    })
+  }
+
+  /**
+   * Get or create an OpenCode session for the given options.
+   * Handles session reuse for multi-turn conversations and priming.
+   */
+  private async getOrCreateSession(options: OpenCodeExecuteOptions): Promise<string | undefined> {
+    const { conversationId, provider } = options
+    let sessionId: string | undefined
+
+    if (conversationId) {
+      sessionId = this.sessionMap.get(conversationId)
+    }
+
+    if (!sessionId) {
+      const session = await this.client!.session.create({
+        body: { title: `Code Atelier: ${new Date().toISOString()}` }
+      })
+      sessionId = session.data?.id
+      if (!sessionId) return undefined
+
+      if (conversationId) {
+        this.sessionMap.set(conversationId, sessionId)
+      }
+
+      openCodeLog.info(
+        `[opencode] Session ${sessionId} created — provider=${provider.providerId}/${provider.modelId}`
+      )
+
+      // A-1: Prime the session with workspace context before the first real prompt
+      if (options.primingContext && options.primingContext.length > 0) {
+        await this.primeSession(sessionId, options.primingContext)
+      }
+    } else {
+      openCodeLog.info(
+        `[opencode] Reusing session ${sessionId} for conversation=${conversationId}`
+      )
+    }
+
+    return sessionId
+  }
+
+  /**
+   * Build the prompt body with parts, model config, and optional output schema.
+   * D-1: System prompt injected via plugin hook when available; falls back to user-message.
+   */
+  private buildPromptBody(
+    prompt: string,
+    systemPrompt: string,
+    provider: OpenCodeProviderConfig,
+    outputSchema?: Record<string, unknown>
+  ): Record<string, unknown> {
+    const parts: Array<Record<string, unknown>> = []
+    const hasPluginSystemPromptHook = !!process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
+    if (systemPrompt && !hasPluginSystemPromptHook) {
+      parts.push({ type: 'text', text: `[System Instructions]\n${systemPrompt}` })
+    }
+    parts.push({ type: 'text', text: prompt })
+
+    const body: Record<string, unknown> = {
+      parts,
+      model: {
+        providerID: provider.providerId,
+        modelID: provider.modelId
+      }
+    }
+
+    // ENH-10: Include retry config so OpenCode auto-retries on invalid JSON
+    if (outputSchema) {
+      body.format = {
+        type: 'json_schema',
+        schema: outputSchema,
+        retries: 2
+      }
+    }
+
+    return body
   }
 
   /**

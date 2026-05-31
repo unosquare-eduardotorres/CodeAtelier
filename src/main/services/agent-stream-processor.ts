@@ -97,18 +97,30 @@ export class AgentStreamProcessor {
     // Push live context update to the renderer
     if (totalContextTokens > 0) {
       const effectiveWindow = this.s.effectiveContextWindow ?? CLAUDE_DEFAULT_CONTEXT_WINDOW
+      // F11: Reuse token tracker's cache efficiency calculation (single source of truth)
+      // instead of duplicating the cacheRead / (input + cacheRead) formula here.
+      const cacheReport = this.s.tokenTracker.getCacheEfficiency()
+      const cacheHitRate = Math.round(cacheReport.hitRate)
       this.s.emit('chunk', {
         type: 'context_usage_update',
         content: '',
         contextUsageUpdate: {
           inputTokens: totalContextTokens,
           contextWindowSize: effectiveWindow,
-          percentage: Math.round((totalContextTokens / effectiveWindow) * 100)
+          percentage: Math.round((totalContextTokens / effectiveWindow) * 100),
+          cacheHitRate
         }
       } as StreamChunk)
     }
 
     this.checkCompaction(totalContextTokens)
+
+    // F10: For context pressure calculations, use only tokens that consume
+    // window capacity. cacheCreation tokens are being *written* to cache,
+    // not consuming the context window — including them inflates pressure
+    // and triggers false 85% warnings.
+    const consumedContextTokens =
+      meta.tokenUsage.input + meta.tokenUsage.cacheReadInputTokens
 
     // Evaluate context pressure for local LLMs AND Claude 200K models.
     const isLocal = this.s.llmProvider === 'local-llm'
@@ -118,7 +130,7 @@ export class AgentStreamProcessor {
       const ctxWindow = isLocal
         ? (effectiveWindow ?? this.s.resolveLocalContextWindow())
         : effectiveWindow!
-      const pressureRatio = totalContextTokens / ctxWindow
+      const pressureRatio = consumedContextTokens / ctxWindow
       if (pressureRatio > 0.85) {
         this.s.emit('chunk', {
           type: 'text',
@@ -127,12 +139,14 @@ export class AgentStreamProcessor {
       }
     }
 
-    // Store SDK context window total for DB
-    if (this.s.dbSessionId && conversationId && sdkContextData?.totalTokens) {
+    // F3: Persist per-turn context tokens to DB for dashboard analytics.
+    // Previously referenced undefined `sdkContextData` — now uses the
+    // `totalContextTokens` already computed above from CLI token usage fields.
+    if (this.s.dbSessionId && conversationId && totalContextTokens > 0) {
       try {
-        turnUsageRepository.updateLastTurnContextTokens(conversationId, sdkContextData.totalTokens)
-      } catch {
-        /* non-fatal */
+        turnUsageRepository.updateLastTurnContextTokens(conversationId, totalContextTokens)
+      } catch (err) {
+        this.s.log.warn('Failed to persist context tokens:', err)
       }
     }
   }
@@ -272,12 +286,9 @@ export class AgentStreamProcessor {
       this.s.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
     }
 
-    if (chunk.type === 'prompt_suggestion' && chunk.content) {
-      this.s.emit('promptSuggestion', {
-        conversationId,
-        suggestion: chunk.content
-      })
-    }
+    // F12: Removed dead `promptSuggestion` event emission — no listener exists.
+    // The chunk is already forwarded to the renderer via emit('chunk', chunk) below,
+    // which the chunk-router routes through handlePromptSuggestion.
 
     if (chunk.type === 'text') this.s.currentStatus = 'writing'
     if (chunk.type === 'tool_use') this.s.currentStatus = 'reviewing'

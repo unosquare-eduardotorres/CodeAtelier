@@ -1,4 +1,5 @@
 import { execSync, spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import log from 'electron-log/main'
@@ -19,6 +20,13 @@ export type HookEvent =
   | 'checkpoint_rejected'
   | 'abandonment_detected'
   | 'task_loop_complete'
+  // MPA (Multi-Phased Agent) lifecycle events
+  | 'mpa_plan_complete'
+  | 'mpa_build_start'
+  | 'mpa_build_complete'
+  | 'mpa_verify_complete'
+  | 'mpa_goal_achieved'
+  | 'mpa_goal_failed'
 
 export interface HookDefinition {
   event: HookEvent
@@ -45,9 +53,13 @@ export interface HookResult {
  * Hooks are defined in `.agentstudio/hooks.json` at the workspace root.
  * Blocking hooks run synchronously and can gate operations; non-blocking hooks fire-and-forget.
  */
-class HookEngine {
+class HookEngine extends EventEmitter {
   private hooks: HookDefinition[] = []
   private workspacePath: string | null = null
+
+  constructor() {
+    super()
+  }
 
   async loadHooks(workspacePath: string): Promise<void> {
     this.workspacePath = workspacePath
@@ -68,11 +80,32 @@ class HookEngine {
     event: HookEvent,
     context: Record<string, string> = {}
   ): Promise<HookResult[]> {
-    const matching = this.hooks.filter((h) => h.event === event)
+    // F8: Filter by event AND evaluate condition fields (mode, model, agent).
+    // Previously only filtered by event, ignoring condition — hooks defined with
+    // condition: { mode: 'build' } would incorrectly execute during plan mode.
+    const matching = this.hooks.filter((h) => {
+      if (h.event !== event) return false
+      if (!h.condition) return true
+      if (h.condition.mode && context.mode !== h.condition.mode) return false
+      if (h.condition.model && context.model !== h.condition.model) return false
+      if (h.condition.agent && context.agent !== h.condition.agent) return false
+      return true
+    })
     if (matching.length === 0) return []
 
     const results: HookResult[] = []
     for (const hook of matching) {
+      const hookId = `${hook.name}-${Date.now()}`
+
+      // Emit lifecycle: started
+      this.emit('hookLifecycle', {
+        hookId,
+        hookName: hook.name,
+        hookEvent: event,
+        phase: 'started' as const,
+        output: undefined
+      })
+
       // Interpolate ${VAR} in command
       let cmd = hook.command
       for (const [key, val] of Object.entries(context)) {
@@ -89,13 +122,24 @@ class HookEngine {
             timeout: hook.timeout ?? 30000
           })
           hookLog.info(`Hook "${hook.name}" completed (${Date.now() - start}ms)`)
-          results.push({
+          const result: HookResult = {
             hook: hook.name,
             event,
             exitCode: 0,
             stdout,
             stderr: '',
             durationMs: Date.now() - start
+          }
+          results.push(result)
+
+          // Emit lifecycle: response
+          this.emit('hookLifecycle', {
+            hookId,
+            hookName: hook.name,
+            hookEvent: event,
+            phase: 'response' as const,
+            output: stdout.slice(0, 500),
+            outcome: 'success'
           })
         } catch (err: unknown) {
           const stderr = err instanceof Error ? err.message : String(err)
@@ -107,6 +151,16 @@ class HookEngine {
             stdout: '',
             stderr,
             durationMs: Date.now() - start
+          })
+
+          // Emit lifecycle: response (failure)
+          this.emit('hookLifecycle', {
+            hookId,
+            hookName: hook.name,
+            hookEvent: event,
+            phase: 'response' as const,
+            output: stderr.slice(0, 500),
+            outcome: 'failure'
           })
         }
       } else {
@@ -129,6 +183,16 @@ class HookEngine {
           stdout: '',
           stderr: '',
           durationMs: 0
+        })
+
+        // Emit lifecycle: response (fire-and-forget — no stdout)
+        this.emit('hookLifecycle', {
+          hookId,
+          hookName: hook.name,
+          hookEvent: event,
+          phase: 'response' as const,
+          output: undefined,
+          outcome: 'fired'
         })
       }
     }

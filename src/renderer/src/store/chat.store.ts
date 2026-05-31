@@ -2,13 +2,15 @@ import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
 import { detectPlanIntent } from '@renderer/utils/plan-intent-detector'
-import {
-  StreamSegmentAccumulator,
-  type StreamSegment,
-  type SegmentState
-} from '@renderer/utils/stream-segment-accumulator'
+import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import { useWorkspaceStore } from './workspace.store'
 import { useProjectSpecialistStore } from './project-specialist.store'
+import {
+  streamingInternals as internals,
+  appendStreamChunkAction,
+  finalizeStreamAction,
+  finalizeTurnBubbleAction
+} from './chat-streaming.actions'
 import type {
   CommunicationTone,
   CompleteResult,
@@ -25,81 +27,7 @@ import type {
   ToolActivity
 } from '../../../shared/types'
 
-/**
- * Encapsulates non-reactive internal state for the chat store.
- * These are operational concerns (timers, buffers) that shouldn't trigger
- * React re-renders or pollute module scope with mutable lets.
- */
-class ChatStreamingInternals {
-  private safetyTimer: ReturnType<typeof setTimeout> | null = null
-  private accumulator: StreamSegmentAccumulator | null = null
-  private storeGet: (() => ChatState) | null = null
-  private storeSet: ((partial: Partial<ChatState>) => void) | null = null
-
-  /** Bind the Zustand get/set refs — called once during store creation */
-  bind(get: () => ChatState, set: (partial: Partial<ChatState>) => void): void {
-    this.storeGet = get
-    this.storeSet = set
-  }
-
-  getOrCreateAccumulator(): StreamSegmentAccumulator {
-    if (!this.accumulator) {
-      this.accumulator = new StreamSegmentAccumulator((state: SegmentState) => {
-        // Sync accumulator state → Zustand store
-        this.storeSet?.({
-          streamingSegments: state.segments,
-          streamingContent: state.currentContent,
-          toolActivities: state.currentToolActivities
-        })
-      })
-    }
-    return this.accumulator
-  }
-
-  resetAccumulator(): void {
-    this.accumulator?.reset()
-    this.accumulator = null
-  }
-
-  /** Flush whatever's currently buffered without creating an accumulator if none exists. */
-  flushAccumulator(): void {
-    this.accumulator?.flush()
-  }
-
-  /** Stop the safety timer if one is running. */
-  clearSafetyTimer(): void {
-    if (this.safetyTimer) {
-      clearTimeout(this.safetyTimer)
-      this.safetyTimer = null
-    }
-  }
-
-  /**
-   * Resets the streaming safety timer — call on any sign of backend activity
-   * (text chunks, tool starts, tool completions). This prevents the timer from
-   * killing active-but-slow streams (e.g., agent running multiple Bash tools).
-   */
-  resetSafetyTimer(): void {
-    if (this.safetyTimer) clearTimeout(this.safetyTimer)
-    this.safetyTimer = setTimeout(
-      () => {
-        if (this.storeGet?.().isStreaming) {
-          rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
-          this.storeSet?.({
-            isStreaming: false,
-            streamingConversationIds: new Set<string>(),
-            conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
-          })
-        }
-        this.safetyTimer = null
-      },
-      2 * 60 * 1000
-    )
-  }
-}
-
-/** Singleton internals — encapsulates timers and buffers outside reactive state */
-const internals = new ChatStreamingInternals()
+// ChatStreamingInternals + internals singleton are in ./chat-streaming.actions.ts
 
 interface ChatState {
   conversations: Conversation[]
@@ -712,34 +640,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     specialist?: string,
     requestId?: string
   ) => {
-    const activeRequestId = get().activeRequestId
-    if (activeRequestId && requestId && requestId !== activeRequestId) return
-
-    // Reset safety timer — backend is still alive
-    internals.resetSafetyTimer()
-    if (!chunk) return // Skip empty chunks (tool-only messages)
-
-    const isNewTask = taskId != null && taskId !== get().streamingTaskId
-
-    // If task changed, flush old accumulator and reset
-    if (isNewTask) {
-      internals.flushAccumulator()
-      internals.resetAccumulator()
-    }
-
-    // Update streaming metadata (non-content state) immediately
-    set((state) => ({
-      isStreaming: true, // Ensure streaming bubble renders for specialist chunks
-      streamingPhase: role === 'specialist' ? 'specialist-executing' : 'da-vinci-responding',
-      streamingSegments: isNewTask ? [] : state.streamingSegments,
-      streamingContent: isNewTask ? '' : state.streamingContent,
-      streamingRole: role ?? state.streamingRole,
-      streamingSpecialist: specialist ?? state.streamingSpecialist,
-      streamingTaskId: taskId ?? state.streamingTaskId
-    }))
-
-    // Push chunk through segment accumulator (auto-segments at sentence + tool boundaries)
-    internals.getOrCreateAccumulator().appendText(chunk)
+    appendStreamChunkAction(get, set, chunk, role, taskId, specialist, requestId)
   },
 
   handleKeepalive: () => {
@@ -757,144 +658,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addToolActivity: (activity: ToolActivity) => {
-    // Reset safety timer — tool started, backend is active
     internals.resetSafetyTimer()
     internals.getOrCreateAccumulator().handleToolActivity(activity)
   },
 
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string; id?: string }) => {
-    // Reset safety timer — tool completed, backend is active
     internals.resetSafetyTimer()
-    internals
-      .getOrCreateAccumulator()
+    internals.getOrCreateAccumulator()
       .handleToolActivity(activity as Partial<ToolActivity> & { id: string; toolName: string })
   },
 
   finalizeStream: (messageId: string, taskId?: string, requestId?: string) => {
-    // Force-flush any remaining buffered content before finalizing
-    internals.flushAccumulator()
-
-    const activeRequestId = get().activeRequestId
-    if (activeRequestId && requestId && requestId !== activeRequestId) return
-
-    // Clear safety timer on normal stream completion (only on final complete, not per-task)
-    if (!taskId) {
-      internals.clearSafetyTimer()
-    }
-
-    const {
-      streamingSegments,
-      streamingContent,
-      streamingRole,
-      streamingSpecialist,
-      activeConversation,
-      toolActivities
-    } = get()
-
-    // (Removed) The specialist-pool guard that previously returned early here
-    // was vestigial — there is no specialist pool or parallel specialist execution
-    // in the current architecture. The guard blocked ALL specialist/persona
-    // completions, causing isStreaming to remain true indefinitely.
-
-    if ((streamingContent || streamingSegments.length > 0) && activeConversation) {
-      // Merge all segments + current content into a single message
-      const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
-        .map((c) => c.trim())
-        .filter(Boolean)
-        .join('\n\n')
-
-      const mergedTools = [
-        ...streamingSegments.flatMap((s) => s.toolActivities),
-        ...toolActivities
-      ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
-
-      const newMessages: Message[] = []
-      if (mergedContent || mergedTools.length > 0) {
-        newMessages.push({
-          id: messageId,
-          conversationId: activeConversation.id,
-          role: streamingRole,
-          ...(streamingRole === 'specialist' && streamingSpecialist
-            ? { agentId: streamingSpecialist }
-            : {}),
-          contentMd: mergedContent,
-          attachmentsJson: '[]',
-          createdAt:
-            streamingSegments.length > 0
-              ? new Date(streamingSegments[0].timestamp).toISOString()
-              : new Date().toISOString(),
-          toolActivities: mergedTools.length > 0 ? [...mergedTools] : undefined
-        })
-      }
-
-      set((state) => {
-        // Remove from per-conversation streaming set on final complete
-        const newStreamingIds = taskId
-          ? state.streamingConversationIds
-          : (() => {
-              const s = new Set(state.streamingConversationIds)
-              if (activeConversation) s.delete(activeConversation.id)
-              return s
-            })()
-        return {
-          messages: [...state.messages, ...newMessages],
-          streamingContent: '',
-          streamingSegments: [],
-          // Only stop streaming if this is the final complete (no taskId = final summary)
-          isStreaming: !!taskId,
-          activeRequestId: taskId ? state.activeRequestId : null,
-          streamingPhase: taskId ? state.streamingPhase : null,
-          toolActivities: taskId ? state.toolActivities : [],
-          streamingTaskId: null,
-          streamingSpecialist: taskId ? state.streamingSpecialist : null,
-          streamingConversationIds: newStreamingIds
-        }
-      })
-    } else if (taskId) {
-      // Per-task complete with no accumulated content — just reset task tracking
-      set({ streamingContent: '', streamingSegments: [], streamingTaskId: null })
-    } else if (activeConversation) {
-      // Clear streaming state synchronously to prevent the thinking indicator
-      // from hanging while the DB reload completes.
-      set((state) => {
-        const newStreamingIds = new Set(state.streamingConversationIds)
-        newStreamingIds.delete(activeConversation.id)
-        return {
-          streamingContent: '',
-          streamingSegments: [],
-          isStreaming: false,
-          activeRequestId: null,
-          toolActivities: [],
-          streamingTaskId: null,
-          streamingConversationIds: newStreamingIds
-        }
-      })
-      // Then reload messages from DB asynchronously
-      window.api
-        .getMessages({ conversationId: activeConversation.id })
-        .then((dbMessages) => {
-          if (dbMessages.length > 0) {
-            const currentMessages = get()?.messages ?? []
-            set({
-              messages: dbMessages.length > 0 ? dbMessages : currentMessages
-            })
-          }
-        })
-        .catch((error) => {
-          rendererLog.error('Failed to reload messages after stream finalize:', error)
-        })
-    } else {
-      set({
-        streamingContent: '',
-        streamingSegments: [],
-        isStreaming: false,
-        activeRequestId: null,
-        toolActivities: [],
-        streamingTaskId: null
-      })
-    }
-
-    internals.resetAccumulator()
+    finalizeStreamAction(get, set, messageId, taskId, requestId)
   },
 
   finalizeTurnBubble: (
@@ -902,68 +677,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     turnRole?: 'da-vinci' | 'specialist',
     turnSpecialist?: string
   ) => {
-    // Flush any remaining buffered content before finalizing the turn.
-    // Without this, text streamed just before a tool call stays in the
-    // accumulator (waiting for a sentence boundary / 250ms timeout)
-    // and is never captured into the turn message.
-    internals.flushAccumulator()
-
-    const {
-      streamingSegments,
-      streamingContent,
-      streamingRole,
-      streamingSpecialist,
-      activeConversation,
-      toolActivities
-    } = get()
-
-    // Nothing to finalize — agent went straight to tools without text
-    if (!streamingContent && streamingSegments.length === 0 && toolActivities.length === 0) return
-
-    // Use identity from the turn boundary chunk if provided (defensive against stale store state)
-    const role = turnRole ?? streamingRole
-    const specialist = turnSpecialist ?? streamingSpecialist
-
-    if (activeConversation) {
-      // Merge ALL segments + current content into a single message per turn
-      const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
-        .map((c) => c.trim())
-        .filter(Boolean)
-        .join('\n\n')
-
-      const mergedTools = [
-        ...streamingSegments.flatMap((s) => s.toolActivities),
-        ...toolActivities
-      ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
-
-      if (mergedContent || mergedTools.length > 0) {
-        const message: Message = {
-          id: turnId,
-          conversationId: activeConversation.id,
-          role,
-          ...(role === 'specialist' && specialist ? { agentId: specialist } : {}),
-          contentMd: mergedContent,
-          attachmentsJson: '[]',
-          createdAt:
-            streamingSegments.length > 0
-              ? new Date(streamingSegments[0].timestamp).toISOString()
-              : new Date().toISOString(),
-          toolActivities: mergedTools.length > 0 ? mergedTools : undefined
-        }
-
-        set((state) => ({
-          messages: [...state.messages, message],
-          streamingContent: '',
-          streamingSegments: [],
-          toolActivities: [],
-          isStreaming: true
-        }))
-      } else {
-        set({ streamingContent: '', streamingSegments: [], toolActivities: [], isStreaming: true })
-      }
-    }
-
-    internals.resetAccumulator()
+    finalizeTurnBubbleAction(get, set, turnId, turnRole, turnSpecialist)
   },
 
   clearAutoModeSwitchPill: () => set({ autoModeSwitchPill: null }),

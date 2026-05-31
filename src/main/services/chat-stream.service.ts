@@ -15,6 +15,7 @@ import type {
 import { memoryService } from './memory.service'
 import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
+import { flushTextBatcher } from '../ipc/chunk-router'
 import {
   createTextChunk,
   createCompleteMessage,
@@ -26,6 +27,7 @@ import { getSessionEventRouter } from './session-event-router'
 import { IntentRouter } from './intent-router'
 import { conversationStateMachine } from './conversation-state-machine'
 import { conversationLifecycle } from './conversation-lifecycle'
+import { hookEngine } from './hook-engine.service'
 
 const log = chatIpcLogger
 
@@ -224,6 +226,44 @@ export class ChatStreamService {
       // intents only arrive here when they're regex-fallback detected)
       this.intentRouter.route(conversationId, intent)
     })
+
+    // F7: Wire hook lifecycle events to the stream pipeline.
+    // The HookEngine emits 'hookLifecycle' events when hooks start/complete/fail.
+    // Forward these as StreamChunks so the renderer can show hook execution status.
+    hookEngine.on('hookLifecycle', (event: {
+      hookId: string
+      hookName: string
+      hookEvent: string
+      phase: 'started' | 'response'
+      output?: string
+      outcome?: string
+    }) => {
+      const conversationId = chatAgentService.getCurrentConversationId() || ''
+      if (!conversationId) return
+      const chunk: StreamChunk = {
+        type: 'hook_lifecycle',
+        content: '',
+        hookInfo: {
+          hookId: event.hookId,
+          hookName: event.hookName,
+          hookEvent: event.hookEvent,
+          phase: event.phase as 'started' | 'progress' | 'response',
+          output: event.output,
+          outcome: event.outcome as 'success' | 'error' | 'cancelled' | undefined
+        }
+      }
+      forwardChunkToRenderer(
+        this.mainWindow,
+        conversationId,
+        this.currentStreamingRole,
+        chunk,
+        { value: '' },  // hook chunks don't accumulate content
+        chatAgentService.getWorkspacePath() ?? undefined,
+        undefined,
+        'da-vinci-responding',
+        this.activeRequestId ?? undefined
+      )
+    })
   }
 
   // ── Stream Listener Factory ──
@@ -271,6 +311,9 @@ export class ChatStreamService {
     }
 
     const onComplete = (): void => {
+      // Flush any pending batched text deltas before finalizing
+      flushTextBatcher()
+
       if (this.isStopped) {
         cleanupListeners()
         ctx.resolveDone()

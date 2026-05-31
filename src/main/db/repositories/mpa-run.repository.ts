@@ -259,6 +259,27 @@ export class MpaRunRepository extends BaseRepository<MpaRunRow, MpaRun> {
       id
     )
   }
+
+  /** Mark all 'running' runs as 'failed' (for stale detection on app restart) */
+  markStaleAsFailed(): number {
+    return this.db().prepare(
+      `UPDATE mpa_runs SET status = 'failed', completed_at = datetime('now')
+       WHERE status = 'running'`
+    ).run().changes
+  }
+
+  /** Find the latest resumable run for a workspace (failed or cancelled) */
+  findResumable(workspaceId: string): MpaRun | null {
+    const row = this.db()
+      .prepare(
+        `SELECT * FROM mpa_runs
+         WHERE workspace_id = ? AND status IN ('failed', 'cancelled')
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(workspaceId) as MpaRunRow | undefined
+    return row ? mapRunRow(row) : null
+  }
 }
 
 export const mpaRunRepository = new MpaRunRepository()

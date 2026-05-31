@@ -7,7 +7,7 @@
 
 import { BaseRepository } from '../base-repository'
 import { safeParseJSON } from '../json-utils'
-import type { GrillTrackId } from '../../../shared/types'
+import type { GrillTrackId, GrillStructuredPlan } from '../../../shared/types'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -175,6 +175,22 @@ export class GrillSessionRepository extends BaseRepository<GrillSessionRow, Gril
     this.db().prepare(
       `UPDATE grill_sessions SET workspace_id = ?, updated_at = datetime('now') WHERE id = ?`
     ).run(workspaceId, sessionId)
+  }
+
+  /** Save a structured plan to the session */
+  savePlan(sessionId: string, plan: GrillStructuredPlan): void {
+    this.db().prepare(
+      `UPDATE grill_sessions SET plan_json = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(JSON.stringify(plan), sessionId)
+  }
+
+  /** Retrieve the structured plan from a session */
+  getPlan(sessionId: string): GrillStructuredPlan | null {
+    const row = this.db()
+      .prepare(`SELECT plan_json FROM grill_sessions WHERE id = ?`)
+      .get(sessionId) as { plan_json: string | null } | undefined
+    if (!row || !row.plan_json) return null
+    return safeParseJSON<GrillStructuredPlan | null>(row.plan_json, null)
   }
 
   /** Get active sessions for a workspace (evaluating or awaiting_answers) */

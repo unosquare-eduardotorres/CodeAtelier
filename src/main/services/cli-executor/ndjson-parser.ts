@@ -11,6 +11,7 @@
  */
 
 import { Readable } from 'node:stream'
+import log from 'electron-log'
 
 /**
  * Async generator that reads from a Node Readable stream and yields
@@ -41,10 +42,16 @@ export async function* parseNdjsonStream(
 
       try {
         yield JSON.parse(line) as Record<string, unknown>
-      } catch {
+      } catch (err) {
         log?.warn(
           `[ndjson-parser] Malformed JSON line (${line.length} chars): ${line.slice(0, 120)}`
         )
+        // Emit structured parse error so downstream can display it
+        yield {
+          type: 'parse_error',
+          raw: line.slice(0, 200),
+          error: (err as Error).message
+        }
       }
     }
   }
@@ -54,21 +61,46 @@ export async function* parseNdjsonStream(
   if (remaining) {
     try {
       yield JSON.parse(remaining) as Record<string, unknown>
-    } catch {
+    } catch (err) {
       log?.warn(`[ndjson-parser] Malformed final line: ${remaining.slice(0, 120)}`)
+      yield {
+        type: 'parse_error',
+        raw: remaining.slice(0, 200),
+        error: (err as Error).message
+      }
     }
   }
 }
 
+const ndjsonLog = log.scope('ndjson-parser')
+
 /**
  * Write a JSON message to a writable stream as an NDJSON line.
  * Used for writing user messages to the CLI's stdin.
+ *
+ * Returns true if the write was accepted by the kernel buffer.
+ * Returns false if the buffer is full (backpressure) or the stream errored.
+ * Callers should check the return value for critical messages.
  */
 export function writeNdjsonMessage(
   stream: NodeJS.WritableStream,
   message: Record<string, unknown>
-): void {
-  stream.write(JSON.stringify(message) + '\n')
+): boolean {
+  try {
+    const json = JSON.stringify(message) + '\n'
+    const accepted = stream.write(json)
+    if (!accepted) {
+      ndjsonLog.warn(
+        `[ndjson:backpressure] stdin buffer full — message queued (type=${message.type ?? 'unknown'}, len=${json.length})`
+      )
+    }
+    return accepted
+  } catch (err) {
+    ndjsonLog.error(
+      `[ndjson:write-error] Failed to write to stdin: ${(err as Error).message} (type=${message.type ?? 'unknown'})`
+    )
+    return false
+  }
 }
 
 /**

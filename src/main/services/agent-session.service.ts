@@ -189,7 +189,10 @@ export class AgentSessionService extends AgentBaseService {
   /** Effective context window for the current session (model-aware: 200K for Opus, 1M for Sonnet). */
   private effectiveContextWindow: number | undefined
 
-  private pendingResumeAt: string | undefined
+  // F5: Per-conversation resume target — prevents cross-conversation races.
+  // Previously instance-level, which meant switching conversations could
+  // consume the wrong conversation's resumeAt target.
+  private readonly pendingResumeAt = new Map<string, string>()
 
   /** Auto-continue on max_turns: how many times we've resumed so far this message. */
   private maxTurnsContinuations = 0
@@ -572,7 +575,7 @@ export class AgentSessionService extends AgentBaseService {
     // CLI backend: also kill the process to stop tool execution
     if (this.executorBackend === 'cli' && this.cliExecutor.isAlive()) {
       this.cliExecutor.killProcess().catch(() => {
-        /* non-fatal */
+        /* non-fatal: CLI process may already be dead — kill is best-effort */
       })
     }
     // #2: OpenCode backend — abort the active session via SDK client
@@ -654,8 +657,11 @@ export class AgentSessionService extends AgentBaseService {
       this.cliExecutor.setPermissionMode(
         cliMode as 'plan' | 'auto' | 'bypassPermissions'
       )
+      // F6: Invalidate cached MCP config so the next continueSession turn
+      // rebuilds it with the new mode's permission level.
+      this.executorFactory.invalidateMcpConfigCache()
       this.log.info(
-        `[PIPELINE:mode-switch] CLI backend — sent set_permission_mode(${cliMode})`
+        `[PIPELINE:mode-switch] CLI backend — sent set_permission_mode(${cliMode}) + invalidated MCP cache`
       )
     } else if (this.executorBackend === 'opencode') {
       // OpenCode: update the opencode.json permissions and regenerate config.
@@ -665,35 +671,7 @@ export class AgentSessionService extends AgentBaseService {
       )
       try {
         if (this.workspacePath) {
-          // Resolve provider from workspace settings (same logic as executeOpenCodeStream)
-          let providerConfig = {
-            providerId: 'anthropic',
-            modelId: 'claude-sonnet-4-6',
-            baseUrl: undefined as string | undefined,
-            apiKey: undefined as string | undefined
-          }
-          if (this.workspaceId) {
-            const ocSettings = workspaceRepository.getSettings(this.workspaceId)
-            if (ocSettings.openCodeProvider) {
-              providerConfig = {
-                providerId: ocSettings.openCodeProvider ?? 'anthropic',
-                modelId: ocSettings.openCodeModel ?? 'claude-sonnet-4-6',
-                baseUrl: ocSettings.openCodeBaseUrl,
-                apiKey: ocSettings.openCodeApiKey
-              }
-            }
-            // Auto-detect: if llmProvider is 'local-llm', configure Ollama
-            if (this.llmProvider === 'local-llm') {
-              const localConfig = modelConfigService.getLocalLLMConfig(this.workspacePath!)
-              providerConfig = {
-                providerId: 'ollama',
-                modelId: localConfig.localModel,
-                baseUrl: `http://${localConfig.localHost}:${localConfig.localPort}`,
-                apiKey: localConfig.localApiKey
-              }
-            }
-          }
-
+          const providerConfig = this.resolveOpenCodeProviderConfig()
           const featureFlags = this.resolveWorkspaceMcpFlags()
           openCodeConfigWriter.writeConfig({
             workspacePath: this.workspacePath,
@@ -793,10 +771,12 @@ export class AgentSessionService extends AgentBaseService {
         }
       }
     }
-    // CLI mode: resumeSessionAt flag handled in buildCLIExecuteOptions
-    this.pendingResumeAt = messageId
+    // F5: CLI mode — store per-conversation to prevent cross-conversation resume races
+    if (this.currentConversationId) {
+      this.pendingResumeAt.set(this.currentConversationId, messageId)
+    }
     this.log.info(
-      `[resumeAt] pending resume at message=${messageId} backend=${this.executorBackend}`
+      `[resumeAt] pending resume at message=${messageId} conversation=${this.currentConversationId} backend=${this.executorBackend}`
     )
   }
 
@@ -965,8 +945,9 @@ export class AgentSessionService extends AgentBaseService {
     const recoveryDepth = opts.recoveryDepth ?? 0
     const MAX_RECOVERY_DEPTH = 1
 
-    const resumeAt = this.pendingResumeAt
-    this.pendingResumeAt = undefined
+    // F5: Consume per-conversation resumeAt and clear to prevent stale reuse
+    const resumeAt = this.pendingResumeAt.get(conversationId)
+    this.pendingResumeAt.delete(conversationId)
     const abortController = new AbortController()
     this.sdkAbortController = abortController
 
@@ -1179,39 +1160,18 @@ export class AgentSessionService extends AgentBaseService {
   }): AsyncGenerator<StreamChunk> {
     const { prompt, isBuildMode, abortController } = params
 
-    // Resolve provider config from workspace settings
-    let providerConfig = {
-      providerId: 'anthropic',
-      modelId: 'claude-sonnet-4-6',
-      baseUrl: undefined as string | undefined,
-      apiKey: undefined as string | undefined
-    }
-
+    // Resolve provider config from workspace settings (shared helper)
+    let providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
     try {
-      if (this.workspaceId) {
-        const ocSettings2 = workspaceRepository.getSettings(this.workspaceId)
-        if (ocSettings2.openCodeProvider) {
-          providerConfig = {
-            providerId: ocSettings2.openCodeProvider ?? 'anthropic',
-            modelId: ocSettings2.openCodeModel ?? 'claude-sonnet-4-6',
-            baseUrl: ocSettings2.openCodeBaseUrl,
-            apiKey: ocSettings2.openCodeApiKey
-          }
-        }
-
-        // Auto-detect: if llmProvider is 'local-llm', configure Ollama
-        if (this.llmProvider === 'local-llm') {
-          const localConfig = modelConfigService.getLocalLLMConfig(this.workspacePath!)
-          providerConfig = {
-            providerId: 'ollama',
-            modelId: localConfig.localModel,
-            baseUrl: `http://${localConfig.localHost}:${localConfig.localPort}`,
-            apiKey: localConfig.localApiKey
-          }
-        }
-      }
+      providerConfig = this.resolveOpenCodeProviderConfig()
     } catch {
       /* non-fatal — use defaults */
+      providerConfig = {
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-4-6',
+        baseUrl: undefined,
+        apiKey: undefined
+      }
     }
 
     // Generate opencode.json config with MCP servers
@@ -1331,6 +1291,15 @@ export class AgentSessionService extends AgentBaseService {
         } as StreamChunk & { _meta: unknown }
       } else {
         yield chunk
+      }
+    }
+
+    // F9: Sync OpenCode session ID to sessionMap so recovery paths
+    // (agent-recovery-manager) can find the correct session on resume.
+    if (this.currentConversationId) {
+      const ocSessionId = openCodeExecutor.getSessionId(this.currentConversationId)
+      if (ocSessionId) {
+        this.sessionMap.set(this.currentConversationId, ocSessionId)
       }
     }
   }
@@ -1526,5 +1495,48 @@ export class AgentSessionService extends AgentBaseService {
     breakdown?: import('../../shared/types').ContextUsageBreakdown
   ): void {
     this.streamProcessor.checkCompaction(inputTokens, breakdown)
+  }
+
+  /**
+   * Resolve OpenCode provider configuration from workspace settings.
+   * Shared by switchMode() and executeOpenCodeStream() to eliminate duplication.
+   */
+  private resolveOpenCodeProviderConfig(): {
+    providerId: string
+    modelId: string
+    baseUrl: string | undefined
+    apiKey: string | undefined
+  } {
+    let config = {
+      providerId: 'anthropic',
+      modelId: 'claude-sonnet-4-6',
+      baseUrl: undefined as string | undefined,
+      apiKey: undefined as string | undefined
+    }
+
+    if (this.workspaceId) {
+      const settings = workspaceRepository.getSettings(this.workspaceId)
+      if (settings.openCodeProvider) {
+        config = {
+          providerId: settings.openCodeProvider ?? 'anthropic',
+          modelId: settings.openCodeModel ?? 'claude-sonnet-4-6',
+          baseUrl: settings.openCodeBaseUrl,
+          apiKey: settings.openCodeApiKey
+        }
+      }
+
+      // Auto-detect: if llmProvider is 'local-llm', configure Ollama
+      if (this.llmProvider === 'local-llm') {
+        const localConfig = modelConfigService.getLocalLLMConfig(this.workspacePath!)
+        config = {
+          providerId: 'ollama',
+          modelId: localConfig.localModel,
+          baseUrl: `http://${localConfig.localHost}:${localConfig.localPort}`,
+          apiKey: localConfig.localApiKey
+        }
+      }
+    }
+
+    return config
   }
 }

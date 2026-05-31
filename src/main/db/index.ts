@@ -15,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 94
+const CURRENT_SCHEMA_VERSION = 96
 
 interface Migration {
   version: number
@@ -2261,6 +2261,30 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_council_sessions_workspace ON council_sessions(workspace_id);
       `)
       dbLogger.info('[migration-94] ✓ Created council_sessions table')
+    }
+  },
+  {
+    version: 95,
+    name: 'add-plan-json-to-grill-sessions',
+    up: (db) => {
+      db.exec(`ALTER TABLE grill_sessions ADD COLUMN plan_json TEXT DEFAULT NULL`)
+      dbLogger.info('[migration-95] ✓ Added plan_json column to grill_sessions')
+    }
+  },
+  {
+    version: 96,
+    name: 'add-council-resume-columns',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE council_sessions ADD COLUMN grill_session_id TEXT DEFAULT NULL;
+        ALTER TABLE council_sessions ADD COLUMN structured_plan_json TEXT DEFAULT NULL;
+        ALTER TABLE council_sessions ADD COLUMN advisor_reviews_json TEXT DEFAULT '[]';
+        ALTER TABLE council_sessions ADD COLUMN peer_reviews_json TEXT DEFAULT '[]';
+        ALTER TABLE council_sessions ADD COLUMN phase TEXT DEFAULT 'framing'
+          CHECK (phase IN ('framing', 'deliberating', 'peer-review', 'synthesizing', 'complete', 'failed'));
+        ALTER TABLE council_sessions ADD COLUMN completed_advisors TEXT DEFAULT '[]';
+      `)
+      dbLogger.info('[migration-96] ✓ Added resume columns to council_sessions')
     }
   }
 ]

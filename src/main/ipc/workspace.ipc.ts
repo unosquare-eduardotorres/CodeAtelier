@@ -163,7 +163,7 @@ export function registerWorkspaceIpc(): void {
 
     // Stop any running sessions for this workspace before deleting
     const { chatAgentService } = await import('../services')
-    await chatAgentService.stopForWorkspace(id).catch(() => { /* non-fatal */ })
+    await chatAgentService.stopForWorkspace(id).catch(() => { /* non-fatal: workspace being deleted — session stop is best-effort */ })
 
     fileWatcherService.stop(id)
     workspaceRepository.delete(id)

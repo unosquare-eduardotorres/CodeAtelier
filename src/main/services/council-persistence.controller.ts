@@ -25,6 +25,7 @@ import type { StreamChunk } from './agent-base.service'
 import { summarizeToolInput } from './agent-base.service'
 import { extractResultSummary, reportToolError } from '../ipc/chat-shared'
 import { IPC_CHANNELS, MCP_TOOLS } from '../../shared/constants'
+import { councilSessionRepository } from '../db/repositories/council-session.repository'
 
 const ctrlLog = log.scope('council-persistence')
 
@@ -174,15 +175,25 @@ export class CouncilPersistenceController {
     })
   }
 
-  /** Handle session complete — save transcript */
+  /** Handle session complete — save transcript to filesystem + DB */
   async handleComplete(
     _data: { workspaceId: string },
     mainWindow: BrowserWindow
   ): Promise<void> {
     mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_COMPLETE, {})
 
-    // Save transcript to workspace
+    // Save transcript to workspace filesystem
     await this.saveTranscript()
+
+    // Also persist transcript to DB for resume/history
+    if (this.activeSessionId && this.transcriptParts.length > 0) {
+      try {
+        const transcriptMd = this.transcriptParts.join('\n')
+        councilSessionRepository.saveTranscript(this.activeSessionId, transcriptMd)
+      } catch (err) {
+        ctrlLog.warn('[council-persistence] DB transcript save failed (non-fatal):', err)
+      }
+    }
 
     ctrlLog.info(`[council-persistence] Session complete — session=${this.activeSessionId}`)
     this.clearTracking()

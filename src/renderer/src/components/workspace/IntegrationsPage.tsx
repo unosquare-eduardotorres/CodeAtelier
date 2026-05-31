@@ -36,7 +36,8 @@ export default function IntegrationsPage(): React.JSX.Element {
             [integration.id]: { checked: true, found: result.available, path: result.path }
           }))
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[IntegrationsPage] Non-fatal: CLI check failed:', err)
           setCliStatuses((prev) => ({
             ...prev,
             [integration.id]: { checked: true, found: false }

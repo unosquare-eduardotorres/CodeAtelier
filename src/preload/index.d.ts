@@ -379,6 +379,7 @@ interface Api {
         inputTokens: number
         contextWindowSize: number
         percentage: number
+        cacheHitRate?: number
       }
       todoUpdate?: {
         action: 'add' | 'complete' | 'remove' | 'update'
@@ -924,6 +925,7 @@ interface Api {
   ) => () => void
   onGrillStreamComplete: (cb: () => void) => () => void
   grillCondenseRequirement: (args: { text: string }) => Promise<{ condensed: string }>
+  grillGeneratePlan: (args: { sessionId: string; workspaceId: string }) => Promise<unknown>
   grillGetStatus: (args: { workspaceId: string }) => Promise<{
     status: string
     ideaId: string
@@ -974,6 +976,7 @@ interface Api {
     suggestedGoal?: string
   }>
   mpaApprovalRespond: (args: { runId: string; approved: boolean; feedback?: string }) => Promise<{ responded: boolean }>
+  mpaResume: (args: { runId: string; workspaceId: string }) => Promise<{ resumed: boolean }>
   onMpaPhaseStart: (cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; iteration: number; agentRole: string }) => void) => () => void
   onMpaPhaseProgress: (cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; streamChunk: string }) => void) => () => void
   onMpaPhaseComplete: (cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; status: string; tokensUsed: number }) => void) => () => void
@@ -1001,6 +1004,8 @@ interface Api {
   onCouncilPeerReviewComplete: (cb: (data: { peerReviews: unknown[] }) => void) => () => void
   onCouncilVerdict: (cb: (data: { verdict: unknown }) => void) => () => void
   onCouncilComplete: (cb: () => void) => () => void
+  councilResume: (args: { sessionId: string; workspaceId: string }) => Promise<{ resumed: boolean }>
+  councilGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
 
   // Multi-Workspace Session Management
   getAllWorkspaceStatuses: () => Promise<Record<string, unknown>>

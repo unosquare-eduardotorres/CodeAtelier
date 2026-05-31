@@ -5,27 +5,15 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import rehypeRaw from 'rehype-raw'
-import { remarkStripStrayBackticks } from '../chat/remark-plugins'
-import {
-  Bot,
-  RefreshCw,
-  Download,
-  Star,
-  XCircle,
-  Loader2,
-  Hammer,
-  Pencil,
-  CheckCircle
-} from 'lucide-react'
+import { Bot } from 'lucide-react'
 import { useWorkspaceStore, useSkillStore, useToastStore } from '@renderer/store'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
-import { Avatar } from '@renderer/components/common'
-import { TechBadge, SkillCard, PromptPreviewModal } from '@renderer/components/specialist'
+import { TechBadge } from '@renderer/components/specialist'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 import { useSpecialistSkillData } from './specialist/useSpecialistSkillData'
+import { SpecialistHeroBanner } from './specialist/SpecialistHeroBanner'
+import { SkillMarketSection } from './specialist/SkillMarketSection'
+import { SystemPromptSection } from './specialist/SystemPromptSection'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -256,84 +244,19 @@ export default function SpecialistPage(): React.JSX.Element {
 
   return (
     <div className="p-6 space-y-8 max-w-5xl mx-auto">
-      {/* ── Hero Banner ──────────────────────────────────────────────── */}
-      <div className="relative rounded-2xl overflow-hidden bg-surface-overlay border border-border-subtle">
-        {/* Radial gradient background — brand gold accent */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: `radial-gradient(ellipse at 30% 50%,
-              var(--color-specialist-glow) 0%,
-              var(--color-specialist-mid) 40%,
-              transparent 70%)`
-          }}
-        />
-
-        <div className="relative flex items-center gap-6 p-8">
-          {/* Large avatar — rounded rectangle */}
-          <div className="flex-shrink-0">
-            <Avatar
-              avatarKey={mannequinKey}
-              size="xxl"
-              className="!rounded-2xl"
-              accentColor={specialist.color ?? '#B8976A'}
-            />
-          </div>
-
-          {/* Info */}
-          <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold text-text-primary mb-1">
-              {specialist.displayName}
-            </h2>
-            <div className="flex items-center gap-2 mb-3">
-              <StatusBadge status={specialist.buildStatus} />
-              {specialist.lastBuiltAt && (
-                <span className="text-[11px] text-text-muted">
-                  Built {new Date(specialist.lastBuiltAt).toLocaleDateString()}
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-text-secondary">Tailored specialist for this workspace</p>
-          </div>
-
-          {/* Rebuild button — top right area */}
-          <div className="flex-shrink-0 self-start">
-            <RebuildButton
-              state={rebuildState}
-              onClick={handleRebuild}
-              progressMessage={buildProgress?.message}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Error banner */}
-      {rebuildState === 'failed' && rebuildError && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-danger-muted border border-danger/20">
-          <XCircle size={14} className="text-danger flex-shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-danger font-medium">Build failed</p>
-            <p className="text-[11px] text-text-secondary mt-0.5 break-words">{rebuildError}</p>
-          </div>
-          <button
-            onClick={handleRebuild}
-            className="text-[11px] font-medium text-primary hover:text-primary-text px-2 py-1 rounded hover:bg-primary-muted transition-colors flex-shrink-0"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
-      {/* Store-level error (from other operations) */}
-      {storeError && rebuildState !== 'failed' && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-danger-muted border border-danger/20">
-          <XCircle size={14} className="text-danger flex-shrink-0" />
-          <p className="text-xs text-danger flex-1">{storeError}</p>
-          <button onClick={clearError} className="text-xs text-text-muted hover:text-text-body">
-            Dismiss
-          </button>
-        </div>
-      )}
+      <SpecialistHeroBanner
+        displayName={specialist.displayName}
+        buildStatus={specialist.buildStatus}
+        lastBuiltAt={specialist.lastBuiltAt}
+        color={specialist.color}
+        mannequinKey={mannequinKey}
+        rebuildState={rebuildState}
+        rebuildError={rebuildError}
+        progressMessage={buildProgress?.message}
+        storeError={storeError}
+        onRebuild={handleRebuild}
+        onClearError={clearError}
+      />
 
       {/* ── Detected Stack ──────────────────────────────────────────── */}
       {specialist.detectedTechs.length > 0 && (
@@ -349,216 +272,32 @@ export default function SpecialistPage(): React.JSX.Element {
         </section>
       )}
 
-      {/* ── Skill Market ─────────────────────────────────────────────── */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-            Skill Market
-          </h4>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleRefreshRecommendations}
-              disabled={refreshingRecs}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-text-secondary hover:bg-surface-overlay transition-colors disabled:opacity-40"
-              title="Refresh AI-powered recommendations"
-            >
-              <RefreshCw size={12} className={refreshingRecs ? 'animate-spin' : ''} />
-              Refresh
-            </button>
-            <button
-              onClick={handleImportSkill}
-              disabled={importingSkill}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-primary text-white hover:bg-primary/90 disabled:opacity-40 transition-colors"
-            >
-              <Download size={12} />
-              {importingSkill ? 'Importing…' : 'Import'}
-            </button>
-          </div>
-        </div>
+      <SkillMarketSection
+        recommendedSkills={recommendedSkills}
+        otherSkills={otherSkills}
+        attachedSkillIds={attachedSkillIds}
+        specialistSkills={specialist.skills}
+        refreshingRecs={refreshingRecs}
+        importingSkill={importingSkill}
+        totalSkillCount={skills.length}
+        onRefreshRecommendations={handleRefreshRecommendations}
+        onImportSkill={handleImportSkill}
+        onToggleSkill={handleToggleSkill}
+        onAttachSkill={handleAttachSkill}
+        onDetachSkill={handleDetachSkill}
+      />
 
-        {/* Recommended skills */}
-        {recommendedSkills.length > 0 && (
-          <div className="mb-6">
-            <div className="flex items-center gap-1.5 mb-3">
-              <Star size={12} className="text-warning" />
-              <span className="text-xs font-medium text-text-primary">
-                Recommended for this project
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {recommendedSkills.map((skill) => (
-                <SkillCard
-                  key={skill.id}
-                  skill={skill}
-                  isAttached={attachedSkillIds.has(skill.id)}
-                  isEnabled={specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false}
-                  recommendation={{
-                    relevance: skill.relevance,
-                    rationale: skill.rationale
-                  }}
-                  onToggle={(enabled) => handleToggleSkill(skill.id, enabled)}
-                  onAttach={() => handleAttachSkill(skill.id)}
-                  onDetach={() => handleDetachSkill(skill.id)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Other skills */}
-        {otherSkills.length > 0 && (
-          <div>
-            <span className="text-xs font-medium text-text-muted mb-3 block">Other skills</span>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {otherSkills.map((skill) => (
-                <SkillCard
-                  key={skill.id}
-                  skill={skill}
-                  isAttached={attachedSkillIds.has(skill.id)}
-                  isEnabled={specialist.skills?.find((s) => s.id === skill.id)?.isEnabled ?? false}
-                  onToggle={(enabled) => handleToggleSkill(skill.id, enabled)}
-                  onAttach={() => handleAttachSkill(skill.id)}
-                  onDetach={() => handleDetachSkill(skill.id)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {skills.length === 0 && (
-          <p className="text-xs text-text-muted py-8 text-center">
-            No skills available. Import a .md skill file to get started.
-          </p>
-        )}
-      </section>
-
-      {/* ── System Prompt ────────────────────────────────────────────── */}
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-            System Prompt
-          </h4>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-text-muted">
-              {editedPrompt.length.toLocaleString()} chars
-            </span>
-            <button
-              onClick={() => setPromptModalOpen(true)}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-text-secondary hover:bg-surface-overlay transition-colors"
-              title="Edit raw prompt"
-            >
-              <Pencil size={12} />
-              Edit
-            </button>
-            <button
-              onClick={handleRebuildPrompt}
-              disabled={rebuildState === 'building'}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-text-secondary hover:bg-surface-overlay transition-colors disabled:opacity-40"
-              title="Rebuild prompt using LLM"
-            >
-              <RefreshCw size={12} className={rebuildState === 'building' ? 'animate-spin' : ''} />
-              Rebuild
-            </button>
-          </div>
-        </div>
-
-        {/* Rendered markdown preview */}
-        <div className="bg-surface-overlay border border-border-subtle rounded-xl p-6 max-h-[70vh] overflow-y-auto">
-          <div
-            className="prose prose-sm max-w-none [&]:max-w-none
-              prose-headings:text-text-primary prose-headings:font-semibold
-              prose-p:text-text-body prose-strong:text-text-primary
-              prose-code:text-code-text prose-code:bg-surface-base prose-code:px-1 prose-code:rounded
-              prose-ul:text-text-body prose-li:text-text-body
-              prose-a:text-accent"
-          >
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}
-              rehypePlugins={[rehypeRaw]}
-            >
-              {specialist.prompt || '*No prompt generated yet. Click Rebuild to generate.*'}
-            </ReactMarkdown>
-          </div>
-        </div>
-      </section>
-
-      {/* Edit Prompt Modal */}
-      <PromptPreviewModal
-        open={promptModalOpen}
-        prompt={editedPrompt}
-        onSave={handleSavePrompt}
-        onClose={() => setPromptModalOpen(false)}
-        isSaving={savingPrompt}
+      <SystemPromptSection
+        prompt={specialist.prompt}
+        editedPrompt={editedPrompt}
+        rebuildState={rebuildState}
+        promptModalOpen={promptModalOpen}
+        savingPrompt={savingPrompt}
+        onOpenModal={() => setPromptModalOpen(true)}
+        onCloseModal={() => setPromptModalOpen(false)}
+        onRebuildPrompt={handleRebuildPrompt}
+        onSavePrompt={handleSavePrompt}
       />
     </div>
-  )
-}
-
-// ── Sub-components ───────────────────────────────────────────────────────────
-
-function StatusBadge({
-  status
-}: {
-  status: 'pending' | 'building' | 'ready' | 'failed'
-}): React.JSX.Element {
-  const config = {
-    pending: { label: 'Pending', className: 'bg-surface-overlay text-text-muted' },
-    building: { label: 'Building…', className: 'bg-info-muted text-info' },
-    ready: { label: 'Ready', className: 'bg-success-muted text-success' },
-    failed: { label: 'Failed', className: 'bg-danger-muted text-danger' }
-  } as const
-
-  const { label, className } = config[status]
-  return (
-    <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${className}`}
-    >
-      {status === 'building' && <Loader2 size={10} className="mr-1 animate-spin" />}
-      {status === 'ready' && (
-        <span className="mr-1 w-1.5 h-1.5 rounded-full bg-success inline-block" />
-      )}
-      {label}
-    </span>
-  )
-}
-
-function RebuildButton({
-  state,
-  onClick,
-  progressMessage
-}: {
-  state: RebuildState
-  onClick: () => void
-  progressMessage?: string | null
-}): React.JSX.Element {
-  if (state === 'building') {
-    return (
-      <button
-        disabled
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-overlay text-text-secondary cursor-not-allowed"
-      >
-        <Loader2 size={14} className="animate-spin" />
-        <span className="max-w-[160px] truncate">{progressMessage ?? 'Rebuilding…'}</span>
-      </button>
-    )
-  }
-
-  if (state === 'success') {
-    return (
-      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-success-muted text-success animate-in fade-in">
-        <CheckCircle size={14} />
-        Ready
-      </div>
-    )
-  }
-
-  return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-white hover:bg-primary/90 transition-colors"
-    >
-      <Hammer size={14} />
-      Rebuild
-    </button>
   )
 }

@@ -44,7 +44,7 @@ const DEFAULT_QUESTION_STATE: QuestionState = {
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
-export type GrillPhase = 'selecting' | 'evaluating' | 'answering' | 'paused'
+export type GrillPhase = 'selecting' | 'evaluating' | 'answering' | 'paused' | 'completing' | 'completed'
 
 interface GrillChatViewProps {
   messages: GrillChatMessage[]

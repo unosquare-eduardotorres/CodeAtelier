@@ -26,6 +26,61 @@ export interface ChunkRouterContext {
   requestId?: string
 }
 
+// ── Text delta batching (~30fps) ────────────────────────────────────
+// Reduces IPC calls from ~15/sec to ~3-5/sec during fast streaming.
+// Text deltas are buffered and flushed every 33ms (1 frame at 30fps).
+// Uses a Map keyed by conversationId to prevent cross-conversation text mixing
+// when concurrent streams are active (e.g. multi-session or parallel agents).
+
+const TEXT_BATCH_INTERVAL_MS = 33
+
+class TextDeltaBatcher {
+  private buffers = new Map<string, string>()
+  private timers = new Map<string, ReturnType<typeof setTimeout>>()
+  private contexts = new Map<string, ChunkRouterContext>()
+
+  push(ctx: ChunkRouterContext, text: string): void {
+    const key = ctx.conversationId
+    this.contexts.set(key, ctx)
+    this.buffers.set(key, (this.buffers.get(key) ?? '') + text)
+    if (!this.timers.has(key)) {
+      this.timers.set(key, setTimeout(() => this.flushKey(key), TEXT_BATCH_INTERVAL_MS))
+    }
+  }
+
+  flush(): void {
+    for (const key of [...this.buffers.keys()]) {
+      this.flushKey(key)
+    }
+  }
+
+  private flushKey(key: string): void {
+    const timer = this.timers.get(key)
+    if (timer) {
+      clearTimeout(timer)
+      this.timers.delete(key)
+    }
+    const buffer = this.buffers.get(key)
+    const ctx = this.contexts.get(key)
+    if (buffer && ctx) {
+      safeSend(
+        ctx,
+        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+        createTextChunk({ ...basePayload(ctx), text: buffer, phase: ctx.phase })
+      )
+      this.buffers.delete(key)
+    }
+  }
+
+  /** Reset for a new stream (call on turn_boundary or stream end). */
+  reset(): void {
+    this.flush()
+    this.contexts.clear()
+  }
+}
+
+const textBatcher = new TextDeltaBatcher()
+
 /**
  * Send an IPC message to the renderer, guarding against destroyed windows.
  * During streaming the user may close the window — without this guard every
@@ -65,11 +120,10 @@ function handleText(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   chatIpcLogger.debug(
     `[chunk-router:text] ${chunk.content.length} chars → ${ctx.conversationId.slice(0, 8)}`
   )
+  // Accumulate immediately for backend consumers (prompt caching, etc.)
   ctx.contentAccumulator.value += chunk.content
-  safeSend(ctx,
-    IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-    createTextChunk({ ...basePayload(ctx), text: chunk.content, phase: ctx.phase })
-  )
+  // Batch IPC sends at ~30fps to reduce renderer pressure during fast streaming
+  textBatcher.push(ctx, chunk.content)
 }
 
 function handleThinking(ctx: ChunkRouterContext, chunk: StreamChunk): void {
@@ -83,6 +137,8 @@ function handleThinking(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 }
 
 function handleToolUse(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  // Flush pending text before tool activity
+  textBatcher.flush()
   // Control tools are internal — don't show as tool activity in the UI
   if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
 
@@ -157,6 +213,8 @@ function handleToolResult(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 }
 
 function handleTurnBoundary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  // Flush any pending text before emitting boundary
+  textBatcher.flush()
   safeSend(ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createTurnBoundary({
@@ -167,6 +225,8 @@ function handleTurnBoundary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 }
 
 function handleError(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  // Flush pending text before error
+  textBatcher.flush()
   const errorText = `\n\n**Error:** ${chunk.error}`
   ctx.contentAccumulator.value += errorText
   safeSend(ctx,
@@ -176,6 +236,8 @@ function handleError(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 }
 
 function handleStatus(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  // Flush pending text before status messages
+  textBatcher.flush()
   if (!chunk.content || chunk.content === 'heartbeat') return
   const statusText = `\n\n_${chunk.content}_\n\n`
   ctx.contentAccumulator.value += statusText
@@ -280,6 +342,15 @@ function handleTodoUpdate(ctx: ChunkRouterContext, chunk: StreamChunk): void {
     ...basePayload(ctx),
     chunk: '',
     todoUpdate: chunk.todoUpdate
+  })
+}
+
+// F4: LSP diagnostics handler — forwards compiler/linter errors from OpenCode to renderer
+function handleLspDiagnostics(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  if (!chunk.lspDiagnostics) return
+  safeSend(ctx, IPC_CHANNELS.SDK_LSP_DIAGNOSTICS, {
+    ...basePayload(ctx),
+    diagnostics: chunk.lspDiagnostics
   })
 }
 
@@ -390,7 +461,36 @@ function handleSubagentComplete(ctx: ChunkRouterContext, chunk: StreamChunk): vo
   )
 }
 
+// ── Tool use summary + Permission request handlers ──
+
+function handleToolUseSummary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  if (!chunk.content) return
+  safeSend(ctx, IPC_CHANNELS.SDK_TOOL_USE_SUMMARY, {
+    ...basePayload(ctx),
+    toolName: chunk.toolName,
+    toolId: chunk.toolId,
+    summary: chunk.content
+  })
+}
+
+function handlePermissionRequest(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  if (!chunk.permissionRequest) return
+  safeSend(ctx, IPC_CHANNELS.PERMISSION_REQUEST, {
+    ...basePayload(ctx),
+    ...chunk.permissionRequest
+  })
+}
+
 // ── Dispatch table ──
+
+function handleStructuredOutput(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  if (!chunk.content) return
+  // Accumulate as text for backend consumers
+  ctx.contentAccumulator.value += chunk.content
+  // Forward as text (batched) — the structured_output data rides along
+  // in the chunk for renderers that support progressive schema rendering.
+  textBatcher.push(ctx, chunk.content)
+}
 
 type ChunkHandler = (ctx: ChunkRouterContext, chunk: StreamChunk) => void
 
@@ -416,7 +516,11 @@ const CHUNK_HANDLERS: Record<string, ChunkHandler> = {
   todo_update: handleTodoUpdate,
   subagent_start: handleSubagentStart,
   subagent_progress: handleSubagentProgress,
-  subagent_complete: handleSubagentComplete
+  subagent_complete: handleSubagentComplete,
+  structured_output: handleStructuredOutput,
+  tool_use_summary: handleToolUseSummary,
+  permission_request: handlePermissionRequest,
+  lsp_diagnostics: handleLspDiagnostics
 }
 
 /**
@@ -425,5 +529,20 @@ const CHUNK_HANDLERS: Record<string, ChunkHandler> = {
  */
 export function routeChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   const handler = CHUNK_HANDLERS[chunk.type]
-  if (handler) handler(ctx, chunk)
+  if (handler) {
+    handler(ctx, chunk)
+  } else {
+    chatIpcLogger.warn(
+      `[chunk-router] Unhandled chunk type: ${chunk.type} ` +
+      `(contentLen=${chunk.content?.length ?? 0})`
+    )
+  }
+}
+
+/**
+ * Flush any pending batched text deltas immediately.
+ * Call at stream end to ensure no text is left in the buffer.
+ */
+export function flushTextBatcher(): void {
+  textBatcher.reset()
 }

@@ -48,6 +48,16 @@ export function* normalizeMessage(
   state: StreamState,
   cwd: string
 ): Generator<StreamChunk & { _meta?: ExecutorResult }> {
+  // ── parse_error — structured error from NDJSON parser on malformed JSON ──
+  if (msg.type === 'parse_error') {
+    executorLog.warn(`[normalizer] NDJSON parse error: ${msg.error} — raw: ${(msg.raw as string)?.slice(0, 100)}`)
+    yield {
+      type: 'error',
+      error: `Stream parse error: ${msg.error}`
+    }
+    return
+  }
+
   // ── system.init — capture session ID + log MCP server status ──
   if (msg.type === 'system' && msg.subtype === 'init') {
     state.sessionId = msg.session_id as string | undefined
@@ -126,12 +136,30 @@ export function* normalizeMessage(
         executorLog.debug(`[normalizer:text] ${text.length} chars (totalStreamed=${state.streamedTextLength})`)
         yield { type: 'text', content: text }
       }
+      // Progressive extended thinking streaming (Opus 4.8+)
+      if (delta?.type === 'thinking_delta' && delta.thinking) {
+        const thinking = delta.thinking as string
+        yield { type: 'thinking', content: thinking }
+      }
       if (delta?.type === 'json_delta' && delta.json) {
         tools.hasPriorContent = true
         tools.hasPriorText = true
         const text = delta.json as string
         state.streamedTextLength += text.length
-        yield { type: 'text', content: text }
+        // Emit as structured_output when a schema context is active,
+        // enabling progressive rendering in the UI (plan cards, audit findings, etc.)
+        if (tools.currentSchemaName) {
+          yield {
+            type: 'structured_output',
+            content: text,
+            structuredOutput: {
+              data: text,
+              schemaName: tools.currentSchemaName
+            }
+          }
+        } else {
+          yield { type: 'text', content: text }
+        }
       }
     }
 
@@ -148,9 +176,17 @@ export function* normalizeMessage(
       }
 
       // Track block type transitions
-      if (cb?.type === 'thinking') tools.lastBlockType = 'thinking'
-      else if (cb?.type === 'tool_use') tools.lastBlockType = 'tool_use'
-      else if (cb?.type === 'text') tools.lastBlockType = 'text'
+      if (cb?.type === 'thinking') {
+        tools.lastBlockType = 'thinking'
+        tools.currentSchemaName = null
+      } else if (cb?.type === 'tool_use') {
+        tools.lastBlockType = 'tool_use'
+        // Structured output blocks carry a schema name from the tool definition
+        tools.currentSchemaName = (cb.name as string) || null
+      } else if (cb?.type === 'text') {
+        tools.lastBlockType = 'text'
+        tools.currentSchemaName = null
+      }
 
       if (cb?.type === 'tool_use') {
         const toolId = cb.id as string | undefined
@@ -470,5 +506,26 @@ export function* normalizeMessage(
   // ── Generic usage accumulation (non-result messages) ──
   if (msg.usage && msg.type !== 'result') {
     tokens.accumulateGeneric(msg.usage as Record<string, number>)
+  }
+
+  // ── Default: warn on unrecognized message types ──
+  // Prevents silent data loss if CLI emits new event types in future versions.
+  if (
+    msg.type !== 'stream_event' &&
+    msg.type !== 'result' &&
+    msg.type !== 'user' &&
+    msg.type !== 'assistant' &&
+    msg.type !== 'system' &&
+    msg.type !== 'tool_progress' &&
+    msg.type !== 'rate_limit_event' &&
+    msg.type !== 'prompt_suggestion' &&
+    msg.type !== 'tool_use_summary' &&
+    msg.type !== 'auth_status' &&
+    msg.type !== 'parse_error'
+  ) {
+    executorLog.warn(
+      `[normalizer] Unknown message type: ${msg.type} ` +
+      `(subtype: ${(msg as Record<string, unknown>).subtype ?? 'none'}) — silently dropped`
+    )
   }
 }

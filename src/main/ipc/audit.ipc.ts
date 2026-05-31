@@ -34,7 +34,17 @@ import log from 'electron-log'
 
 const auditLog = log.scope('audit-ipc')
 
+// ── Public entry point ──────────────────────────────────────────────────────
+
 export function registerAuditIpc(mainWindow: BrowserWindow): void {
+  registerAuditLifecycleHandlers(mainWindow)
+  registerAuditQueryHandlers(mainWindow)
+  registerAuditExportHandlers(mainWindow)
+}
+
+// ── Lifecycle Handlers ──────────────────────────────────────────────────────
+
+function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
   // ── audit:start — start a new audit run ─────────────────────────────
 
   ipcMain.handle(
@@ -109,41 +119,6 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
     validateSender(event)
     auditAgentService.cancel()
   })
-
-  // ── audit:getLatest — load latest audit results ─────────────────────
-
-  ipcMain.handle(
-    IPC_CHANNELS.AUDIT_GET_LATEST,
-    (event, args: { workspaceId: string }): AuditRun | null => {
-      validateSender(event)
-      const run = auditRepository.getLatestForWorkspace(args.workspaceId)
-
-      // Reconcile stale "running" state after app restart.
-      // If the DB says the audit is running but the agent process isn't,
-      // the previous run was interrupted — mark incomplete tracks as cancelled.
-      if (run && run.status === 'running' && !auditAgentService.isRunning) {
-        auditLog.warn(
-          `[audit:getLatest] Stale running audit detected (runId=${run.id}) — reconciling`
-        )
-
-        for (const result of run.results) {
-          if (result.status === 'running' || result.status === 'pending') {
-            auditRepository.updateResult(result.id, { status: 'cancelled' })
-            result.status = 'cancelled' as typeof result.status
-          }
-        }
-
-        const hasCompleted = run.results.some((r) => r.status === 'completed')
-        const finalStatus = hasCompleted ? 'partial' : 'cancelled'
-        const updated = auditRepository.updateRun(run.id, {
-          status: finalStatus as 'completed' | 'partial' | 'cancelled'
-        })
-        return updated ?? run
-      }
-
-      return run
-    }
-  )
 
   // ── audit:rerunTrack — re-run a single auditor ──────────────────────
 
@@ -276,7 +251,62 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
       return run
     }
   )
+}
 
+// ── Query Handlers ──────────────────────────────────────────────────────────
+
+function registerAuditQueryHandlers(mainWindow: BrowserWindow): void {
+  void mainWindow // used by lifecycle/export groups — kept for signature consistency
+
+  // ── audit:getLatest — load latest audit results ─────────────────────
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_GET_LATEST,
+    (event, args: { workspaceId: string }): AuditRun | null => {
+      validateSender(event)
+      const run = auditRepository.getLatestForWorkspace(args.workspaceId)
+
+      // Reconcile stale "running" state after app restart.
+      // If the DB says the audit is running but the agent process isn't,
+      // the previous run was interrupted — mark incomplete tracks as cancelled.
+      if (run && run.status === 'running' && !auditAgentService.isRunning) {
+        auditLog.warn(
+          `[audit:getLatest] Stale running audit detected (runId=${run.id}) — reconciling`
+        )
+
+        for (const result of run.results) {
+          if (result.status === 'running' || result.status === 'pending') {
+            auditRepository.updateResult(result.id, { status: 'cancelled' })
+            result.status = 'cancelled' as typeof result.status
+          }
+        }
+
+        const hasCompleted = run.results.some((r) => r.status === 'completed')
+        const finalStatus = hasCompleted ? 'partial' : 'cancelled'
+        const updated = auditRepository.updateRun(run.id, {
+          status: finalStatus as 'completed' | 'partial' | 'cancelled'
+        })
+        return updated ?? run
+      }
+
+      return run
+    }
+  )
+
+  // ── audit:getHistory — get recent audit runs ──────────────────────
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_GET_HISTORY,
+    (event, args: { workspaceId: string; limit?: number }): AuditRun[] => {
+      validateSender(event)
+      return auditRepository.getHistoryForWorkspace(args.workspaceId, args.limit ?? 10)
+    }
+  )
+}
+
+// ── Export Handlers ─────────────────────────────────────────────────────────
+
+function registerAuditExportHandlers(mainWindow: BrowserWindow): void {
   // ── audit:convertFindings — create plan-mode conversation from findings
 
   ipcMain.handle(
@@ -385,19 +415,9 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
       auditLog.info(`[audit:export] Exported to ${filePath}`)
     }
   )
-
-  // ── audit:getHistory — get recent audit runs ──────────────────────
-
-  ipcMain.handle(
-    IPC_CHANNELS.AUDIT_GET_HISTORY,
-    (event, args: { workspaceId: string; limit?: number }): AuditRun[] => {
-      validateSender(event)
-      return auditRepository.getHistoryForWorkspace(args.workspaceId, args.limit ?? 10)
-    }
-  )
 }
 
-// ── Event forwarding ─────────────────────────────────────────────────────
+// ── Event Forwarding ────────────────────────────────────────────────────────
 
 /**
  * Wire one-time event listeners for the current audit run.
@@ -523,104 +543,127 @@ function wireAuditEvents(
 
   // ── stream — rich chunk forwarding for chat-like audit view ──
   on<{ trackId: AuditTrackId; chunk: StreamChunk }>('stream', (data: { trackId: AuditTrackId; chunk: StreamChunk }) => {
-    const { trackId, chunk } = data
+    processAuditStreamChunk(mainWindow, workspaceId, workspacePath, data.trackId, data.chunk)
+  })
+}
 
-    if (chunk.type === 'text' && chunk.content) {
-      mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
-        workspaceId,
-        trackId,
-        type: 'text',
-        content: chunk.content
-      })
-    } else if (chunk.type === 'tool_use') {
-      // Skip control tools
-      if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
+// ── Stream chunk processing ─────────────────────────────────────────────────
 
-      let inputSummary: string | undefined
-      if (chunk.toolInput) {
-        // CLI streams already provide summarized input (from stream-normalizer)
-        inputSummary = chunk.toolInput.slice(0, 120)
-      }
+/**
+ * Process a single stream chunk from the audit agent and forward it to the renderer.
+ * Handles text, tool_use, tool_result, and tool_progress chunk types.
+ */
+function processAuditStreamChunk(
+  mainWindow: BrowserWindow,
+  workspaceId: string,
+  workspacePath: string,
+  trackId: AuditTrackId,
+  chunk: StreamChunk
+): void {
+  if (chunk.type === 'text' && chunk.content) {
+    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
+      workspaceId,
+      trackId,
+      type: 'text',
+      content: chunk.content
+    })
+    return
+  }
 
-      mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
-        workspaceId,
-        trackId,
-        type: 'tool_activity',
-        toolActivity: {
-          id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          toolName: chunk.toolName ?? 'Unknown',
-          status: 'running' as const,
-          input: inputSummary,
-          startedAt: Date.now()
-        }
-      })
-    } else if (chunk.type === 'tool_result') {
-      // Skip control tools
-      if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
+  if (chunk.type === 'tool_use') {
+    // Skip control tools
+    if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
 
-      const isToolError =
-        typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
+    let inputSummary: string | undefined
+    if (chunk.toolInput) {
+      // CLI streams already provide summarized input (from stream-normalizer)
+      inputSummary = chunk.toolInput.slice(0, 120)
+    }
 
-      // Skip reporting prompt-format artifacts that the model sometimes emits as tool calls.
-      // audit-finding / audit-score are fenced-block language tags, not real tools.
-      const AUDIT_FORMAT_TAGS = new Set(['audit-finding', 'audit-score'])
-
-      // Auto-capture tool errors to the bug tracker (skip known format tags)
-      if (isToolError && chunk.content && !AUDIT_FORMAT_TAGS.has(chunk.toolName ?? '')) {
-        reportToolError(chunk.toolName ?? 'Unknown', chunk.content, {
-          agentType: 'audit',
-          workspaceId
-        })
-      }
-
-      const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
-      let resultSummary = resultSummaryObj?.result
-      const resultDetail = resultSummaryObj?.resultDetail
-
-      // Try to get input summary from result content for tool_result
-      let inputSummary: string | undefined
-      if (chunk.content) {
-        try {
-          const parsed = JSON.parse(chunk.content) as Record<string, unknown>
-          inputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
-        } catch {
-          // Non-JSON content — skip input summary
-        }
-      }
-
-      // For Read, compose file path into result so it's always visible
-      if (chunk.toolName === 'Read' && inputSummary && resultSummary) {
-        resultSummary = `${resultSummary} — ${inputSummary}`
-      }
-
-      const toolActivity: Record<string, unknown> = {
+    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
+      workspaceId,
+      trackId,
+      type: 'tool_activity',
+      toolActivity: {
         id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         toolName: chunk.toolName ?? 'Unknown',
-        status: isToolError ? 'error' : 'completed',
-        completedAt: Date.now()
+        status: 'running' as const,
+        input: inputSummary,
+        startedAt: Date.now()
       }
-      if (inputSummary) toolActivity.input = inputSummary
-      if (resultSummary) toolActivity.result = resultSummary
-      if (resultDetail) toolActivity.resultDetail = resultDetail
+    })
+    return
+  }
 
-      mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
-        workspaceId,
-        trackId,
-        type: 'tool_activity',
-        toolActivity
-      })
-    } else if (chunk.type === 'tool_progress') {
-      mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
-        workspaceId,
-        trackId,
-        type: 'tool_activity',
-        toolActivity: {
-          id: chunk.toolId ?? `tool-${Date.now()}`,
-          toolName: chunk.toolName ?? 'Unknown',
-          status: 'running' as const,
-          elapsedSeconds: chunk.elapsedSeconds
-        }
+  if (chunk.type === 'tool_result') {
+    // Skip control tools
+    if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
+
+    const isToolError =
+      typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
+
+    // Skip reporting prompt-format artifacts that the model sometimes emits as tool calls.
+    // audit-finding / audit-score are fenced-block language tags, not real tools.
+    const AUDIT_FORMAT_TAGS = new Set(['audit-finding', 'audit-score'])
+
+    // Auto-capture tool errors to the bug tracker (skip known format tags)
+    if (isToolError && chunk.content && !AUDIT_FORMAT_TAGS.has(chunk.toolName ?? '')) {
+      reportToolError(chunk.toolName ?? 'Unknown', chunk.content, {
+        agentType: 'audit',
+        workspaceId
       })
     }
-  })
+
+    const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
+    let resultSummary = resultSummaryObj?.result
+    const resultDetail = resultSummaryObj?.resultDetail
+
+    // Try to get input summary from result content for tool_result
+    let inputSummary: string | undefined
+    if (chunk.content) {
+      try {
+        const parsed = JSON.parse(chunk.content) as Record<string, unknown>
+        inputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
+      } catch {
+        // Non-JSON content — skip input summary
+      }
+    }
+
+    // For Read, compose file path into result so it's always visible
+    if (chunk.toolName === 'Read' && inputSummary && resultSummary) {
+      resultSummary = `${resultSummary} — ${inputSummary}`
+    }
+
+    const toolActivity: Record<string, unknown> = {
+      id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      toolName: chunk.toolName ?? 'Unknown',
+      status: isToolError ? 'error' : 'completed',
+      completedAt: Date.now()
+    }
+    if (inputSummary) toolActivity.input = inputSummary
+    if (resultSummary) toolActivity.result = resultSummary
+    if (resultDetail) toolActivity.resultDetail = resultDetail
+
+    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
+      workspaceId,
+      trackId,
+      type: 'tool_activity',
+      toolActivity
+    })
+    return
+  }
+
+  if (chunk.type === 'tool_progress') {
+    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
+      workspaceId,
+      trackId,
+      type: 'tool_activity',
+      toolActivity: {
+        id: chunk.toolId ?? `tool-${Date.now()}`,
+        toolName: chunk.toolName ?? 'Unknown',
+        status: 'running' as const,
+        elapsedSeconds: chunk.elapsedSeconds
+      }
+    })
+  }
 }

@@ -80,12 +80,13 @@ describe('AgentTokenTracker — getCacheEfficiency (computed)', () => {
     const { tracker } = createTokenTracker()
 
     // Turn 1: input=1000, cacheRead=500, cacheCreation=200
-    // totalWithCache = 1000 + 500 + 200 = 1700
+    // effectiveInput = input + cacheRead = 1000 + 500 = 1500
+    // (cacheCreation excluded — it's a write cost, not input processing)
     tracker.recordTurn(mockMeta(1000, 300, 500, 200) as any, defaultOpts(1))
 
     const report = tracker.getCacheEfficiency()
-    // hitRate = (cacheRead / totalWithCache) * 100 = (500 / 1700) * 100 ≈ 29.41
-    const expectedRate = (500 / 1700) * 100
+    // hitRate = (cacheRead / effectiveInput) * 100 = (500 / 1500) * 100 ≈ 33.33
+    const expectedRate = (500 / 1500) * 100
     assert.ok(
       Math.abs(report.hitRate - expectedRate) < 0.01,
       `hitRate should be ~${expectedRate.toFixed(2)}, got ${report.hitRate}`
@@ -153,7 +154,7 @@ describe('AgentTokenTracker — reset & resetSession', () => {
     const report = tracker.getCacheEfficiency()
     assert.equal(report.turns, 1)
     // cacheHitRate in breakdown should be 0 when all cache tokens are 0
-    // totalForRate = 1000 + 0 + 0 = 1000, cacheRead = 0 → hitRate = 0
+    // effectiveInput = 1000 + 0 = 1000, cacheRead = 0 → hitRate = 0
     assert.equal(
       report.turnBreakdown[0].cacheHitRate,
       0,

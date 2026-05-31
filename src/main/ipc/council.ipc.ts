@@ -22,6 +22,7 @@ import type { StreamChunk } from '../services/agent-base.service'
 import { workspaceRepository } from '../db/repositories'
 import { councilService } from '../services/council.service'
 import { councilPersistenceController } from '../services/council-persistence.controller'
+import { councilSessionRepository } from '../db/repositories/council-session.repository'
 import { validateSender } from './validate-sender'
 import log from 'electron-log'
 
@@ -122,6 +123,54 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
       return councilService.getSessionState(args.workspaceId)
     }
   )
+
+  // ── council:resume — resume a failed/stale session ───
+
+  ipcMain.handle(
+    IPC_CHANNELS.COUNCIL_RESUME,
+    async (event, args: { sessionId: string; workspaceId: string }) => {
+      validateSender(event)
+
+      const workspace = workspaceRepository.findById(args.workspaceId)
+      if (!workspace) throw new Error(`Workspace ${args.workspaceId} not found`)
+      if (!workspace.repoPath) throw new Error(`Workspace ${args.workspaceId} has no repo path`)
+
+      // Resolve LLM provider
+      const settings = workspaceRepository.getSettings(workspace.id)
+      const llmProvider = settings.llmProvider ?? 'claude'
+
+      // Wire event forwarding
+      wireCouncilEvents(mainWindow, workspace.repoPath)
+
+      // Start persistence tracking
+      councilPersistenceController.startTracking(args.sessionId, args.workspaceId, workspace.repoPath)
+
+      // Resume (non-blocking)
+      councilService.resumeSession({
+        sessionId: args.sessionId,
+        workspaceId: args.workspaceId,
+        workspacePath: workspace.repoPath,
+        llmProvider
+      }).catch((err) => {
+        councilLog.error('[council:resume] Resume failed:', err)
+      })
+
+      return { resumed: true }
+    }
+  )
+
+  // ── council:getHistory — past council sessions for a workspace ───
+
+  ipcMain.handle(
+    IPC_CHANNELS.COUNCIL_GET_HISTORY,
+    (event, args: { workspaceId: string; limit?: number }) => {
+      validateSender(event)
+      return councilSessionRepository.findByWorkspace(args.workspaceId, args.limit ?? 20)
+    }
+  )
+
+  // ── Stale session detection on registration ───
+  councilService.reconcileStaleRuns()
 }
 
 // ── Event forwarding ─────────────────────────────────────────────────────

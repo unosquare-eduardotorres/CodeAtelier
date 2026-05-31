@@ -79,6 +79,8 @@ export interface StreamChunk {
     inputTokens: number
     contextWindowSize: number
     percentage: number
+    /** Prompt cache hit rate (0–100) — ratio of cache-read tokens to total input. */
+    cacheHitRate?: number
   }
   /** Hook lifecycle info */
   hookInfo?: {

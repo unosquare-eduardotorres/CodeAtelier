@@ -90,6 +90,8 @@ export interface Conversation {
   communicationTone?: CommunicationTone | null
   /** Per-conversation thinking effort level */
   effort?: ThinkingEffort
+  /** Per-conversation thinking budget cap — max thinking tokens per turn (0 = no limit) */
+  thinkingBudget?: number
 }
 
 export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
@@ -123,6 +125,8 @@ export interface ContextUsage {
   percentage: number
   level: ContextUsageLevel
   qualityLevel?: 'excellent' | 'good' | 'moderate' | 'low'
+  /** Prompt cache hit rate (0–100) — ratio of cache-read tokens to total input. */
+  cacheHitRate?: number
   /** SDK-native breakdown by category (system prompt, tools, messages, etc.) */
   categories?: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
   /** Full Claude Code-style breakdown for the compact-context modal. */
@@ -477,6 +481,7 @@ export type ModelAction =
   | 'grill'
   | 'council-member'
   | 'council-chairman'
+  | 'grill:plan'
 
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
@@ -1380,6 +1385,49 @@ export interface CouncilSession {
   memberStatuses: Record<CouncilAdvisorRole, CouncilMemberStatus>
   createdAt: string
   completedAt?: string
+}
+
+// ── Grill Structured Plan ──────────────────────────────────────────────────
+
+/** Structured plan generated during the grill completion phase */
+export interface GrillStructuredPlan {
+  /** Version for forward compatibility */
+  version: 1
+  /** Idea title */
+  title: string
+  /** Executive summary (2-3 sentences) */
+  summary: string
+  /** Goal classification */
+  goalType: 'feature' | 'refactor' | 'bugfix' | 'tests'
+  /** All grill decisions organized by track */
+  decisions: Array<{
+    trackId: string
+    trackName: string
+    score: number
+    items: Array<{
+      question: string
+      answer: string
+      rationale: string
+    }>
+  }>
+  /** Implementation plan items */
+  items: Array<{
+    id: string
+    title: string
+    description: string
+    scope: 'backend' | 'frontend' | 'database' | 'shared' | 'tests'
+    files: string[]
+    dependsOn: string[]
+    includesTests: boolean
+  }>
+  /** Identified risks */
+  risks: string[]
+  /** Constraints derived from grill decisions */
+  constraints: string[]
+  /** Original idea description */
+  originalDescription: string
+  /** Full requirement document (markdown) */
+  requirementDocument: string
 }
 
 /** Framed input passed to all council members */

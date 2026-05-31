@@ -335,6 +335,9 @@ export const IPC_CHANNELS = {
   SDK_HOOK_LIFECYCLE: 'sdk:hookLifecycle',
   SDK_SESSION_STATE: 'sdk:sessionState',
   SDK_AUTH_STATUS: 'sdk:authStatus',
+  SDK_TOOL_USE_SUMMARY: 'sdk:toolUseSummary',
+  /** F4: LSP diagnostics from OpenCode's compiler/linter integration */
+  SDK_LSP_DIAGNOSTICS: 'sdk:lspDiagnostics',
 
   // Elicitation — MCP server user input requests
   ELICITATION_REQUEST: 'elicitation:request',
@@ -416,6 +419,7 @@ export const IPC_CHANNELS = {
   GRILL_GET_SESSION: 'grill:getSession',
   GRILL_SAVE_ANSWERS: 'grill:saveAnswers',
   GRILL_STATUS_CHANGED: 'grill:statusChanged',
+  GRILL_GENERATE_PLAN: 'grill:generatePlan',
 
   // Project Creation
   PROJECT_CREATE: 'project:create',
@@ -442,6 +446,7 @@ export const IPC_CHANNELS = {
   MPA_APPROVAL_NEEDED: 'mpa:approvalNeeded',
   MPA_APPROVAL_RESPOND: 'mpa:approvalRespond',
   MPA_PIPELINE_COMPLETE: 'mpa:complete',
+  MPA_RESUME: 'mpa:resume',
 
   // Council (LLM Council — multi-advisor review)
   COUNCIL_START: 'council:start',
@@ -452,7 +457,9 @@ export const IPC_CHANNELS = {
   COUNCIL_PEER_REVIEW_COMPLETE: 'council:peerReviewComplete',
   COUNCIL_VERDICT: 'council:verdict',
   COUNCIL_PHASE_CHANGED: 'council:phaseChanged',
-  COUNCIL_COMPLETE: 'council:complete'
+  COUNCIL_COMPLETE: 'council:complete',
+  COUNCIL_RESUME: 'council:resume',
+  COUNCIL_GET_HISTORY: 'council:getHistory'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
@@ -545,7 +552,8 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   audit: 'claude-opus-4-8',
   grill: 'claude-opus-4-8',
   'council-member': 'claude-opus-4-8',
-  'council-chairman': 'claude-opus-4-8'
+  'council-chairman': 'claude-opus-4-8',
+  'grill:plan': 'claude-opus-4-8'
 } as const
 
 // ── Prompt Verbosity ─────────────────────────────────────────────────

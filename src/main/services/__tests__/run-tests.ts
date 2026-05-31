@@ -67,6 +67,9 @@ import './multi-session.test'
 // ─── Run 13: Council (LLM Council) ───
 import './council.service.test'
 
+// ─── Run 14: Grill Plan + Resume ───
+import './grill-plan-and-resume.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

@@ -77,11 +77,11 @@ echo "▸ Step 2b: Rebuild native modules against Electron headers"
 # better-sqlite3 is the only production native module that uses node-gyp.
 # Prebuilt NAPI modules (if any survived prune) don't need rebuilding.
 npx --yes @electron/rebuild \
-  --version 40.9.3 \
+  --version 40.10.0 \
   --module-dir "$ROOT" \
   --types prod \
   --force
-echo "  Native modules rebuilt for Electron 40.9.3"
+echo "  Native modules rebuilt for Electron 40.10.0"
 
 echo ""
 echo "▸ Step 2c: Strip runtime-unnecessary files from node_modules"

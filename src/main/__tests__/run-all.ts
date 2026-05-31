@@ -44,7 +44,7 @@ import '../services/__tests__/agent-token-tracker.test'
 import '../services/__tests__/elicitation.test'
 // Run 5 — P1 expansion
 import '../services/__tests__/model-config.test'
-import '../services/__tests__/opus-47-thinking.test'
+import '../services/__tests__/opus-48-thinking.test'
 import '../services/__tests__/session-recovery.test'
 import '../services/__tests__/health-check.test'
 // Run 6 — lifecycle
@@ -67,6 +67,31 @@ import '../services/__tests__/layer2-rename-migration.test'
 // ─────────────────────────────────────────────────────────────────────────────
 import '../ipc/__tests__/chat-protocol.test'
 import '../ipc/__tests__/validate-args.test'
+// Run 8 — bubble identity / role tagging / consent regression
+import '../services/__tests__/chat-stream-role-tagging.test'
+import '../services/__tests__/resolve-adapter-consent.test'
+import '../ipc/__tests__/chat-swap-handler.test'
+// Run 9 — renderer utilities (pure logic, no DOM)
+import '../services/__tests__/sentence-buffer.test'
+// Run 10 — onnxruntime-web WASM backend validation
+import '../services/__tests__/onnxruntime-web.test'
+
+// ─── Run 11: Prompt optimization (Opus 4.8) ───
+import '../services/__tests__/prompt-verbosity.test'
+import '../services/__tests__/prompt-lean-identity.test'
+import '../services/__tests__/prompt-lean-mode.test'
+
+// ─── Run 12: MPA (Multi-Phased Agent Pipeline) ───
+import '../services/__tests__/mpa-goal-conditions.test'
+import '../services/__tests__/mpa-preflight.test'
+import '../services/__tests__/mpa-orchestration.test'
+import '../services/__tests__/multi-session.test'
+
+// ─── Run 13: Council (LLM Council) ───
+import '../services/__tests__/council.service.test'
+
+// ─── Run 14: Grill Plan + Resume ───
+import '../services/__tests__/grill-plan-and-resume.test'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository tests (mirrors src/main/db/repositories/__tests__/run-tests.ts)

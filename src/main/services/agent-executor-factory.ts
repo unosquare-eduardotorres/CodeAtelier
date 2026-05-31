@@ -34,9 +34,17 @@ import { existsSync } from 'node:fs'
 
 export class AgentExecutorFactory {
   private readonly s: AgentSessionHost
+  /** Cached MCP config path — reused on continueSession turns to avoid rebuild. */
+  private cachedMcpConfigPath: string | undefined
 
   constructor(session: unknown) {
     this.s = session as AgentSessionHost
+  }
+
+  // F6: Invalidate the cached MCP config so the next turn rebuilds it.
+  // Called on mode switch to ensure permission changes take effect immediately.
+  invalidateMcpConfigCache(): void {
+    this.cachedMcpConfigPath = undefined
   }
 
   // ── resolveLocalContextWindow ─────────────────────────────────────────
@@ -153,10 +161,11 @@ export class AgentExecutorFactory {
 
   /**
    * Resolve thinking effort: user's per-conversation choice overrides the model default.
-   * Opus 4.8 defaults to 'high' (outperforms 4.7's 'xhigh'). All models now default to 'high'.
+   * Model-aware defaults: Haiku → 'medium' (saves thinking tokens without quality loss),
+   * Opus/Sonnet → 'high' (Opus 4.8 at high ≥ 4.7 at xhigh).
    */
   private resolveEffort(resolvedModel: string): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
-    const modelDefault: 'high' = 'high' // Unified default — Opus 4.8 at high ≥ 4.7 at xhigh
+    // Check per-conversation override first
     if (this.s.currentConversationId) {
       try {
         const conv = conversationRepository.findById(this.s.currentConversationId)
@@ -167,7 +176,28 @@ export class AgentExecutorFactory {
         /* non-fatal — use model default */
       }
     }
-    return modelDefault
+    // Model-aware defaults: Haiku uses fewer thinking tokens at 'medium'
+    // without quality loss. Opus and Sonnet benefit from 'high'.
+    if (resolvedModel.includes('haiku')) return 'medium'
+    return 'high'
+  }
+
+  /**
+   * Resolve per-conversation thinking budget cap.
+   * Returns undefined if no cap is set (unlimited thinking).
+   */
+  private resolveThinkingBudget(): number | undefined {
+    if (this.s.currentConversationId) {
+      try {
+        const conv = conversationRepository.findById(this.s.currentConversationId)
+        if (conv?.thinkingBudget && conv.thinkingBudget > 0) {
+          return conv.thinkingBudget
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
+    return undefined
   }
 
   // ── buildCLIExecuteOptions ────────────────────────────────────────────
@@ -181,7 +211,8 @@ export class AgentExecutorFactory {
     resumeAt: string | undefined
     abortController: AbortController
     mcpResult: AdapterMcpResult
-    localContextWindow?: number
+    // F14: localContextWindow removed — was accepted as a parameter but never
+    // referenced. Context window is resolved internally from the model config.
     /** Completion goal — Claude works autonomously until this condition is met */
     goal?: string
   }): CLIExecuteOptions {
@@ -192,6 +223,45 @@ export class AgentExecutorFactory {
     const modelAction = `${this.s.adapter.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
     const resolvedModel = modelConfigService.getModel(this.s.workspacePath!, modelAction)
 
+    const supports1M = supportsContext1M(resolvedModel)
+    const effectiveContextWindow = supports1M
+      ? CLAUDE_1M_CONTEXT_WINDOW
+      : CLAUDE_DEFAULT_CONTEXT_WINDOW
+    this.s.effectiveContextWindow = effectiveContextWindow
+
+    const canContinue = this.s.cliExecutor.isAlive() && !!sessionId
+
+    // ── Fast path: continueSession — skip expensive work ────────────────
+    // When the CLI process is alive and we're continuing the same session,
+    // only prompt, model, cwd, abortController, and continueSession are used
+    // by CLIExecutor.execute() (it writes the user message to stdin and reads
+    // stdout — no args are rebuilt, no files are spawned). Skip MCP config
+    // rebuild, system prompt file write, additional directories lookup, etc.
+    if (canContinue) {
+      return {
+        prompt,
+        model: resolvedModel,
+        cwd: this.s.workspacePath!,
+        abortController,
+        agentId: this.s.adapter.agentId,
+        effort: this.resolveEffort(resolvedModel),
+        continueSession: true,
+        // Reuse cached MCP config — process already has MCP servers connected
+        mcpConfigPath: this.cachedMcpConfigPath,
+        contextWindowSize: supports1M
+          ? effectiveContextWindow
+          : Math.round(effectiveContextWindow * 0.8),
+        autoCompactEnabled: true,
+        // F1: thinkingBudget must persist across continueSession turns to
+        // enforce user cost control on every turn, not just the first.
+        thinkingBudget: this.resolveThinkingBudget(),
+        // F2: goal must persist so MPA autonomous completion conditions
+        // are evaluated on every turn, not just the initial spawn.
+        goal: params.goal
+      }
+    }
+
+    // ── Full path: new process spawn — build all options ─────────────────
     let additionalDirectories: string[] | undefined
     try {
       if (this.s.workspaceId) {
@@ -202,14 +272,9 @@ export class AgentExecutorFactory {
       /* non-fatal */
     }
 
-    const supports1M = supportsContext1M(resolvedModel)
-    const effectiveContextWindow = supports1M
-      ? CLAUDE_1M_CONTEXT_WINDOW
-      : CLAUDE_DEFAULT_CONTEXT_WINDOW
-    this.s.effectiveContextWindow = effectiveContextWindow
-
-    const canContinue = this.s.cliExecutor.isAlive() && !!sessionId
-    const hookPaths = this.resolveHookPaths()
+    // Build and cache MCP config for reuse on subsequent continueSession turns
+    const mcpConfigPath = this.buildCLIMcpConfigPath(params)
+    this.cachedMcpConfigPath = mcpConfigPath
 
     return {
       prompt,
@@ -220,7 +285,7 @@ export class AgentExecutorFactory {
       allowedTools,
       disallowedTools,
       maxTurns: isBuildMode ? 50 : 30,
-      resume: canContinue ? undefined : sessionId,
+      resume: sessionId,
       resumeSessionAt: resumeAt,
       abortController,
       agentId: this.s.adapter.agentId,
@@ -232,9 +297,10 @@ export class AgentExecutorFactory {
         ? effectiveContextWindow
         : Math.round(effectiveContextWindow * 0.8),
       autoCompactEnabled: true,
-      continueSession: canContinue,
-      mcpConfigPath: this.buildCLIMcpConfigPath(params),
-      goal: params.goal
+      continueSession: false,
+      mcpConfigPath,
+      goal: params.goal,
+      thinkingBudget: this.resolveThinkingBudget()
     }
   }
 

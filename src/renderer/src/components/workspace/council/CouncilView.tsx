@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useMemo } from 'react'
-import { Hammer, RefreshCw, X, Landmark, Loader2 } from 'lucide-react'
+import { Hammer, Play, RefreshCw, X, Landmark, Loader2 } from 'lucide-react'
 import { useCouncilStore } from '@renderer/store/council.store'
 import { COUNCIL_ADVISOR_ROLES, COUNCIL_ADVISORS } from '../../../../../shared/constants'
 import CouncilMemberColumn from './CouncilMemberColumn'
@@ -122,6 +122,7 @@ export default function CouncilView({
   }, [handlePhaseChanged, handleMemberStream, handleMemberComplete, handlePeerReviewComplete, handleVerdict, handleComplete])
 
   const isRunning = phase !== 'complete' && phase !== 'cancelled' && phase !== 'failed'
+  const isFailed = phase === 'failed'
 
   const completedCount = useMemo(
     () => COUNCIL_ADVISOR_ROLES.filter((r) => advisors[r].status === 'completed').length,
@@ -273,6 +274,40 @@ export default function CouncilView({
               Revise Plan
             </button>
           )}
+          {onDismiss && (
+            <button
+              onClick={() => {
+                reset()
+                onDismiss()
+              }}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
+            >
+              <X size={14} />
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Failed state — show completed advisors + resume */}
+      {isFailed && (
+        <div className="flex items-center gap-2 px-5 py-3 border-t border-border-subtle bg-surface-overlay/95 backdrop-blur-sm">
+          <div className="flex-1">
+            <p className="text-xs text-amber-400">
+              Council failed at phase: {phase}. {completedCount}/5 advisors completed.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              // Resume will be handled by the parent passing in onResume
+              // For now, users can restart via the store
+              window.api.councilResume?.({ workspaceId: '' }).catch(console.error)
+            }}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-sm font-medium transition-colors press-scale"
+          >
+            <Play size={14} />
+            Resume
+          </button>
           {onDismiss && (
             <button
               onClick={() => {

@@ -585,6 +585,7 @@ const api = {
         inputTokens: number
         contextWindowSize: number
         percentage: number
+        cacheHitRate?: number
       }
       todoUpdate?: {
         action: 'add' | 'complete' | 'remove' | 'update'
@@ -626,6 +627,7 @@ const api = {
           inputTokens: number
           contextWindowSize: number
           percentage: number
+          cacheHitRate?: number
         }
         todoUpdate?: {
           action: 'add' | 'complete' | 'remove' | 'update'
@@ -957,7 +959,7 @@ const api = {
     data?: unknown[]
   }): void => {
     ipcRenderer.invoke(IPC_CHANNELS.LOG_FROM_RENDERER, args).catch(() => {
-      // Fallback silently — IPC may not be ready during early startup
+      /* non-fatal: IPC may not be ready during early startup — log forwarding is best-effort */
     })
   },
 
@@ -1745,6 +1747,9 @@ const api = {
   grillCondenseRequirement: (args: { text: string }): Promise<{ condensed: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT, args),
 
+  grillGeneratePlan: (args: { sessionId: string; workspaceId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GRILL_GENERATE_PLAN, args),
+
   grillGetStatus: (args: {
     workspaceId: string
   }): Promise<{
@@ -1823,6 +1828,9 @@ const api = {
     feedback?: string
   }): Promise<{ responded: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MPA_APPROVAL_RESPOND, args),
+
+  mpaResume: (args: { runId: string; workspaceId: string }): Promise<{ resumed: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MPA_RESUME, args),
 
   onMpaPhaseStart: (
     cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; iteration: number; agentRole: string }) => void
@@ -1991,7 +1999,13 @@ const api = {
     const handler = (): void => cb()
     ipcRenderer.on(IPC_CHANNELS.COUNCIL_COMPLETE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COUNCIL_COMPLETE, handler)
-  }
+  },
+
+  councilResume: (args: { sessionId: string; workspaceId: string }): Promise<{ resumed: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_RESUME, args),
+
+  councilGetHistory: (args: { workspaceId: string; limit?: number }): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_GET_HISTORY, args)
 } as const
 
 if (process.contextIsolated) {

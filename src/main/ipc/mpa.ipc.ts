@@ -160,6 +160,34 @@ export function registerMpaIpc(mainWindow: BrowserWindow): void {
       return { responded: true }
     }
   )
+
+  // ── mpa:resume — Resume a failed/stale run ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MPA_RESUME,
+    async (event, args: { runId: string; workspaceId: string }) => {
+      validateSender(event)
+
+      const workspace = workspaceRepository.findById(args.workspaceId)
+      if (!workspace) {
+        throw new Error(`Workspace not found: ${args.workspaceId}`)
+      }
+
+      // Wire event forwarding for this workspace
+      wireMpaEvents(mainWindow, args.workspaceId)
+
+      // Resume orchestration (non-blocking)
+      mpaOrchestrationService.resumeRun(args.runId).catch((err) => {
+        mpaLog.error('[mpa:resume] Resume failed:', err)
+      })
+
+      return { resumed: true }
+    }
+  )
+
+  // ── Stale run detection on registration ──
+  // Mark any runs that were 'running' when the app last quit as 'failed'
+  mpaOrchestrationService.reconcileStaleRuns()
 }
 
 // ── Event Forwarding (per-workspace, tagged with workspaceId) ──
