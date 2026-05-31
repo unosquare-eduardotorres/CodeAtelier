@@ -42,6 +42,7 @@ import {
 } from './council-parser'
 
 const councilLog = log.scope('council')
+const execFileAsync = promisify(execFile)
 
 // ── Internal session state ────────────────────────────────────────────
 
@@ -356,8 +357,6 @@ Blind Spots: ${r.blindSpots.join('; ')}`
       )
       .join('\n\n---\n\n')
 
-    const execFileAsync = promisify(execFile)
-
     const peerPromises = COUNCIL_ADVISOR_ROLES.map(async (role) => {
       try {
 
@@ -482,6 +481,13 @@ Respond ONLY with a JSON block:
       }
     }
     this.setPhase(entry, 'cancelled')
+  }
+
+  /** Graceful shutdown — cancel all councils and clear state. Called on app quit. */
+  async shutdown(): Promise<void> {
+    councilLog.info(`[council] Shutdown initiated — ${this.sessions.size} active sessions`)
+    this.cancel()
+    this.sessions.clear()
   }
 
   // Parsing functions extracted to council-parser.ts for testability

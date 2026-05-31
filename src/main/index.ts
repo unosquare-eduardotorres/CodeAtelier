@@ -23,6 +23,7 @@ import { eventLoggerService } from './services/event-logger.service'
 import { grillAgentService } from './services/grill-agent.service'
 import { auditAgentService } from './services/audit-agent.service'
 import { mpaOrchestrationService } from './services/mpa-orchestration.service'
+import { councilService } from './services/council.service'
 
 import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
@@ -438,6 +439,13 @@ app.on('before-quit', async (event) => {
     await mpaOrchestrationService.shutdown()
   } catch (e) {
     log.debug('MPA shutdown error (expected during quit):', e)
+  }
+
+  // Cleanup council evaluations
+  try {
+    await councilService.shutdown()
+  } catch (e) {
+    log.debug('Council shutdown error (expected during quit):', e)
   }
 
   // Cleanup memory feed (cancel in-progress claude -p summarizer)

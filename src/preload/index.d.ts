@@ -981,6 +981,27 @@ interface Api {
   onMpaApprovalNeeded: (cb: (data: { workspaceId: string; runId: string; phaseId: string; artifactId: string; artifact: unknown }) => void) => () => void
   onMpaPipelineComplete: (cb: (data: { workspaceId: string; runId: string; status: string; totalTokens: number }) => void) => () => void
 
+  // Council (LLM Council — multi-advisor review)
+  councilStart: (args: {
+    workspaceId: string
+    inputType: string
+    planContent: string
+    structuredPlan?: unknown
+    originalUserRequest: string
+    workspaceContext?: string
+    filesInScope?: string[]
+    conversationId?: string
+    llmProvider?: string
+  }) => Promise<void>
+  councilCancel: (args?: { workspaceId?: string }) => Promise<void>
+  councilGetSession: (args: { workspaceId: string }) => Promise<unknown>
+  onCouncilPhaseChanged: (cb: (data: { workspaceId: string; phase: string }) => void) => () => void
+  onCouncilMemberStream: (cb: (data: { advisorRole: string; type: string; content?: string; toolActivity?: Record<string, unknown> }) => void) => () => void
+  onCouncilMemberComplete: (cb: (data: { advisorRole: string; review: unknown }) => void) => () => void
+  onCouncilPeerReviewComplete: (cb: (data: { peerReviews: unknown[] }) => void) => () => void
+  onCouncilVerdict: (cb: (data: { verdict: unknown }) => void) => () => void
+  onCouncilComplete: (cb: () => void) => () => void
+
   // Multi-Workspace Session Management
   getAllWorkspaceStatuses: () => Promise<Record<string, unknown>>
   onWorkspaceStatusUpdate: (cb: (data: { workspaceId: string; status: string; agentId: string; agentType: string; elapsedMs: number; tokenUsage: number }) => void) => () => void

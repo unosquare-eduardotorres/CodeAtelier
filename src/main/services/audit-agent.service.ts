@@ -709,6 +709,13 @@ export class AuditAgentService extends EventEmitter {
 
     return hasEnoughFindings && hasEnoughCoverage
   }
+
+  /** Graceful shutdown — cancel all audits and clear state. Called on app quit. */
+  async shutdown(): Promise<void> {
+    auditLog.info(`[audit] Shutdown initiated — ${this.workspaceStates.size} active states`)
+    this.cancel() // Cancels all workspace audits
+    this.workspaceStates.clear()
+  }
 }
 
 // ── Weighted average calculation ───────────────────────────────────────────
@@ -728,12 +735,6 @@ function calculateOverallScore(
     totalWeight += weight
   }
   return Math.round(weightedSum / totalWeight)
-  /** Graceful shutdown — cancel all audits and clear state. Called on app quit. */
-  async shutdown(): Promise<void> {
-    auditLog.info(`[audit] Shutdown initiated — ${this.workspaceStates.size} active states`)
-    this.cancel() // Cancels all workspace audits
-    this.workspaceStates.clear()
-  }
 }
 
 export const auditAgentService = new AuditAgentService()
