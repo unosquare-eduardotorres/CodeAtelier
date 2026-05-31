@@ -78,6 +78,7 @@ src/
 | `planner`            | `.claude/skills/planner/SKILL.md`            | Plan-mode framing, breakdown patterns, scoping discipline        |
 | `security`           | `.claude/skills/security/SKILL.md`           | Threat modeling, secret handling, supply-chain hygiene           |
 | `infrastructure`     | `.claude/skills/infrastructure/SKILL.md`     | Containerization, Terraform, CI/CD, deployment topology          |
+| `coding-discipline`  | `.claude/skills/coding-discipline/SKILL.md`  | Always-on coding principles: think first, simplicity, surgical changes |
 
 ### Electron skill trigger
 

@@ -12,6 +12,7 @@ import type { ControlActionCallbacks } from '../../control-actions.tool'
 import { workspaceRepository } from '../../../db/repositories'
 import { detectTechStack } from '../../tech-stack-detector.service'
 import { MCP_TOOLS } from '../../../../shared/constants'
+import { modelConfigService } from '../../model-config.service'
 
 /**
  * Base adapter for MPA (Multi-Phased Agent) pipeline phases.
@@ -33,6 +34,8 @@ export abstract class MpaBaseAdapter implements AgentRoleAdapter {
   protected detectedTechs: string[] = []
   protected repomapEnabled = true
   protected semanticSearchEnabled = true
+  /** Resolved model ID for lean prompt gating (undefined for local LLMs) */
+  protected resolvedModel: string | undefined
 
   constructor(params: { workspaceId: string }) {
     this.workspaceId = params.workspaceId
@@ -70,8 +73,19 @@ export abstract class MpaBaseAdapter implements AgentRoleAdapter {
       ? detectTechStack(ctx.workspacePath).detectedTechs
       : []
 
+    // Resolve model for lean prompt optimization (Opus 4.8+ gets compressed prompts).
+    // MPA doesn't have its own ModelAction — planner/verifier reuse 'da-vinci:plan',
+    // builder reuses 'da-vinci:build'.
+    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
+    this.resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, this.getModelAction())
+
     // Build the phase-specific system prompt
     this.systemPrompt = this.buildPhaseSystemPrompt()
+  }
+
+  /** Return the ModelAction to use for model resolution (overridden by builder). */
+  protected getModelAction(): import('../../../../shared/types').ModelAction {
+    return 'da-vinci:plan' // Planner/verifier share plan-tier model
   }
 
   /** Subclasses implement to build phase-specific prompts. */

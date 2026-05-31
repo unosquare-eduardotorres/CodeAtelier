@@ -78,8 +78,14 @@ export class DaVinciPromptAssembler {
 
   /**
    * Strategy ζ: Cached system prompt snapshot. Rebuilt only when mode changes,
-   * conversation changes, or workspace settings update. Eliminates redundant DB queries
-   * + disk I/O (stat calls) on every turn.
+   * conversation changes, tone changes, or model changes. Eliminates redundant
+   * DB queries + disk I/O (stat calls) on every turn.
+   *
+   * NOTE: Feature flags (repomapEnabled, semanticSearchEnabled, githubConfigured)
+   * are intentionally NOT part of the cache key. MCP tool availability is static
+   * per session start (set in onSessionStart / refreshFeatureFlags) and does not
+   * toggle between turns. Adding feature flag invalidation would cause unnecessary
+   * cache misses.
    */
   private systemPromptSnapshot: string | null = null
   private systemPromptSnapshotMode: ConversationMode | null = null
@@ -283,13 +289,14 @@ export class DaVinciPromptAssembler {
       this.systemPromptSnapshotModel = opts.model ?? null
     }
 
-    // Diagnostic: hash the system prompt to verify cache prefix stability across turns.
-    // If the hash differs between turns, the system prompt changed and prompt caching
-    // will miss — explaining 0% cache hit rates.
-    const promptHash = Buffer.from(promptWithMcpGuidance).toString('base64').slice(0, 12)
-    this.log.info(
-      `[PIPELINE:prompt-hash] turn=${opts.turnCount} hash=${promptHash} reused=${!!canReuseSnapshot}`
-    )
+    // Diagnostic: hash the system prompt on cache misses to verify stability.
+    // If the hash differs between turns, prompt caching will miss.
+    if (!canReuseSnapshot) {
+      const promptHash = Buffer.from(promptWithMcpGuidance).toString('base64').slice(0, 12)
+      this.log.info(
+        `[PIPELINE:prompt-hash] turn=${opts.turnCount} hash=${promptHash} reused=false`
+      )
+    }
 
     this.log.info(
       `[PIPELINE:prompt-adaptive] conversationId=${opts.conversationId} turn=${opts.turnCount} budget=${budgetTier}`
@@ -312,13 +319,23 @@ export class DaVinciPromptAssembler {
    * Assembles the effective user message by prepending all strategy injections.
    *
    * Injection order (outermost → innermost, i.e. first prepended = outermost wrapper):
-   *   1. Strategy A: Pending specialist context
-   *   2. Strategy B: Pending compaction
-   *   3. Mode switch context
-   *   4. Mode indicator for resumed sessions
-   *   5. Strategy α: Conditional prefix (memory, images, direct-boost, plan reminder)
-   *   6. Strategy β: Specialist roster (turn 1 only)
-   *   7. Strategy C: Memory context
+   *   1. `<mode-context>` block (always — current mode instructions)
+   *   2. Strategy A: Pending specialist context (consumed on use)
+   *   3. Strategy B: Pending compaction (consumed on use)
+   *   4. Mode switch context (one-shot)
+   *   5. Mode indicator for resumed sessions
+   *   6. Strategy α: Conditional prefix (ask_user, memory protocol, images, direct-boost, plan reminder)
+   *   7. Strategy β: Specialist roster (turn 1 only)
+   *   8. Strategy C: Memory context (full on turns 1-2, feedback-only on turns 3+)
+   *
+   * @param opts.message - Raw user message text
+   * @param opts.conversationId - Conversation ID for per-conversation state lookup
+   * @param opts.hasImages - Whether the message includes image attachments
+   * @param opts.turnCount - Current turn number (1-indexed)
+   * @param opts.sessionId - SDK session ID (undefined on first turn)
+   * @param opts.mode - Current conversation mode (plan/build/danger)
+   * @param opts.model - Resolved model ID for lean/full verbosity gating
+   * @returns Fully-assembled effective message string with all injections prepended
    */
   buildEffectiveMessage(opts: BuildEffectiveMessageOptions): string {
     let effectiveMessage = opts.message
@@ -509,36 +526,33 @@ export class DaVinciPromptAssembler {
     this.pendingCompaction.clear()
   }
 
-  /** Clear turn count for a specific conversation */
+  /** Clear all per-conversation state (turn count, pending injections, compaction). */
   clearConversation(conversationId: string): void {
     this.turnCountMap.delete(conversationId)
+    this.pendingContextInjection.delete(conversationId)
+    this.pendingCompaction.delete(conversationId)
   }
 
   // ── Private Helpers ──
 
   /**
-   * Scale memory budget by turn count with progressive decay.
-   * Turn 1: full budget (memory is fresh context). Decays gradually to avoid
-   * a steep drop-off where user preferences stated on turn 2 are lost by turn 4.
+   * Progressive memory budget decay by turn count.
+   * Turn 1: full budget (memory is fresh). Decays gradually to avoid steep
+   * drop-off. Floor ensures critical user preferences survive long sessions.
    *
-   * Strategy 9: Memory budget floor — retain 300-500 chars for critical user
-   * preferences even in long conversations. Previously dropped to 0, causing the
-   * model to forget user preferences and corrections in extended sessions.
+   * Index = clamped turnCount. Last value is the floor for all subsequent turns.
    */
+  private static readonly MEMORY_BUDGET_TIERS = {
+    economy:  [2000, 2000, 1200, 800, 500, 300] as const,
+    standard: [3000, 3000, 2000, 1500, 1000, 700, 500] as const
+  } as const
+
   private getMemoryBudgetForTurn(turnCount: number, costPreference: CostPreference): number {
-    if (costPreference === 'economy') {
-      if (turnCount <= 1) return 2000
-      if (turnCount <= 2) return 1200
-      if (turnCount <= 3) return 800
-      if (turnCount <= 4) return 500
-      return 300
-    }
-    if (turnCount <= 1) return 3000
-    if (turnCount <= 2) return 2000
-    if (turnCount <= 3) return 1500
-    if (turnCount <= 4) return 1000
-    if (turnCount <= 5) return 700
-    return 500
+    const tiers = costPreference === 'economy'
+      ? DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.economy
+      : DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.standard
+    const idx = Math.min(turnCount, tiers.length - 1)
+    return tiers[idx]
   }
 
   /**
@@ -546,9 +560,10 @@ export class DaVinciPromptAssembler {
    * Used on turns 3+ to avoid re-injecting the full memory block that's already in history.
    */
   private extractFeedbackMemories(memoryContext: string): string | null {
-    // Look for a Feedback & Corrections section header (### or ##)
+    // Look for a Feedback & Corrections section header (### or ##).
+    // Handle literal &, &amp;, and &#38; in case the memory service encodes HTML entities.
     const feedbackMatch = memoryContext.match(
-      /#{2,3}\s*Feedback\s*[&]\s*Corrections\s*\n([\s\S]*?)(?=\n#{2,3}\s|\n---|$)/i
+      /#{2,3}\s*Feedback\s*(?:&|&amp;|&#38;)\s*Corrections\s*\n([\s\S]*?)(?=\n#{2,3}\s|\n---|$)/i
     )
     if (feedbackMatch?.[1]?.trim()) {
       return feedbackMatch[1].trim()

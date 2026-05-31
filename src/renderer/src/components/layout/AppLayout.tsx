@@ -23,10 +23,8 @@ import {
   useAgentStore,
   useChatStore,
   useChatActions,
-  useIdeaStore,
   useConversationSpecialistActions,
   useSpecialistStore,
-  useToastStore,
   useBugStore,
   useAuditStore,
   useIndexingStore,
@@ -35,8 +33,14 @@ import {
 import { useCouncilStore } from '@renderer/store/council.store'
 
 import StatusBar from './StatusBar'
-import type { ConversationMode } from '../../../../shared/types'
-import { useAppKeyboardShortcuts, useAppZoom, useBranchIndicator, useGrillStatus } from './hooks'
+import {
+  useAppKeyboardShortcuts,
+  useAppZoom,
+  useBranchIndicator,
+  useGrillStatus,
+  useWorkspaceListeners,
+  useNavigationHandlers
+} from './hooks'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
@@ -47,7 +51,6 @@ export default function AppLayout(): React.JSX.Element {
   const [workspaceSettingsTab, setWorkspaceSettingsTab] = useState<SettingsTab>('ideas')
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const agentStatus = useWorkspaceStore((s) => s.agentStatus)
-  const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
   const sessionOutputTokens = useAgentStore((s) => s.sessionOutputTokens)
   const contextWindowTokens = useAgentStore((s) => s.contextWindowTokens)
   const { updateMode, setCompactSuggestion } = useChatActions()
@@ -56,109 +59,8 @@ export default function AppLayout(): React.JSX.Element {
   const { hydrateConversationSpecialists } = useConversationSpecialistActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
   const [showNewChat, setShowNewChat] = useState(false)
-  const { createIdea, startGrill } = useIdeaStore()
   const [appVersion, setAppVersion] = useState<string>('')
   const repoInfo = useWorkspaceStore((s) => s.repoInfo)
-
-  // Multi-workspace: listen for background session status + permission events
-  useBackgroundSessionListeners()
-
-  // Extracted hooks — reduce AppLayout state/effect count
-  const zoomFactor = useAppZoom()
-  const { currentBranch, isGitRepo } = useBranchIndicator(activeWorkspace, activeConversation, repoInfo)
-  const grillStatus = useGrillStatus(activeWorkspace?.id)
-  const mpaStatus = useMpaStore((s) => s.isRunning || s.status.status === 'paused' ? s.status : null)
-  const registerMpaListeners = useMpaStore((s) => s.registerListeners)
-  const loadMpaStatus = useMpaStore((s) => s.loadStatus)
-
-  // Council status for status bar indicator + auto-navigation
-  const councilIsActive = useCouncilStore((s) => s.isActive)
-  const councilPhase = useCouncilStore((s) => s.isActive ? s.phase : null)
-
-  // Load app version once on mount
-  useEffect(() => {
-    window.api.getPlatformInfo().then((info) => setAppVersion(info.appVersion))
-  }, [])
-
-  // Bug tracker + toast
-  const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
-  const fetchBugCount = useBugStore((s) => s.fetchCount)
-  const addToast = useToastStore((s) => s.addToast)
-
-  // Audit status for status bar indicator
-  const auditRunning = useAuditStore((s) => s.isRunning)
-  const auditRerunning = useAuditStore((s) => s.rerunningTrackId)
-  const isAuditActive = auditRunning || !!auditRerunning
-  const isAuditPaused = useAuditStore((s) => s.isPaused)
-  const lastAuditScore = useAuditStore((s) => s.currentRun?.overallScore ?? null)
-  const loadLatestAudit = useAuditStore((s) => s.loadLatest)
-  const handleAuditComplete = useAuditStore((s) => s.handleComplete)
-
-  // Global audit listeners — keeps status bar in sync even when HealthPage is not mounted
-  useEffect(() => {
-    if (!activeWorkspace) return
-    loadLatestAudit(activeWorkspace.id)
-    const unsub = window.api.onAuditComplete(handleAuditComplete)
-    return unsub
-  }, [activeWorkspace?.id, loadLatestAudit, handleAuditComplete])
-
-  // Global MPA listeners — keeps status bar in sync even when GoalPage is not mounted
-  useEffect(() => {
-    if (!activeWorkspace) return
-    loadMpaStatus(activeWorkspace.id)
-    const cleanup = registerMpaListeners()
-    return cleanup
-  }, [activeWorkspace?.id, registerMpaListeners, loadMpaStatus])
-
-  // Auto-navigate to council tab when council starts
-  useEffect(() => {
-    if (councilIsActive) {
-      setWorkspaceSettingsTab('council')
-      setSidebarView('settings')
-    }
-  }, [councilIsActive])
-
-  // grillStatus is now provided by useGrillStatus hook above
-
-  /** Navigate to the grill session for a given idea */
-  const handleNavigateToGrill = useCallback((_ideaId: string) => {
-    // Navigate to Ideas tab (workspace settings) — the grill session will show
-    setWorkspaceSettingsTab('ideas')
-    setSidebarView('settings')
-    // The ideas list will show the active grill for this idea
-  }, [])
-
-  // Indexing status for status bar indicator
-  const indexingState = useIndexingStore((s) => s.indexingState)
-  const startIndexingListener = useIndexingStore((s) => s.startListening)
-  const stopIndexingListener = useIndexingStore((s) => s.stopListening)
-
-  useEffect(() => {
-    if (!activeWorkspace) return
-    startIndexingListener()
-    return () => stopIndexingListener()
-  }, [activeWorkspace?.id, startIndexingListener, stopIndexingListener])
-
-  // Indexing complete toast
-  useEffect(() => {
-    if (indexingState?.status === 'complete' && indexingState.processedChunks > 0) {
-      addToast({
-        type: 'success',
-        message: `Semantic search ready — ${indexingState.processedChunks.toLocaleString()} symbols indexed`
-      })
-    }
-  }, [indexingState?.status, indexingState?.processedChunks, addToast])
-
-  // MCP tools from Da Vinci status (moved from ChatPanel header to status bar)
-  const activeMcpTools = useAgentStore((s) => {
-    const davinci = s.statuses.find((st) => st.agentType === 'da-vinci')
-    return davinci?.activeMcpTools
-  })
-
-  // Context usage for status bar (read from chat store)
-  const contextUsage = useChatStore((s) =>
-    s.activeConversation ? s.contextUsages[s.activeConversation.id] : undefined
-  )
   const [pendingGrill, setPendingGrill] = useState<{
     ideaId: string
     conversationId: string
@@ -166,6 +68,59 @@ export default function AppLayout(): React.JSX.Element {
     ideaDescription?: string
     isNewSession?: boolean
   } | null>(null)
+
+  // Multi-workspace: listen for background session status + permission events
+  useBackgroundSessionListeners()
+
+  // ── Extracted hooks ──
+  const zoomFactor = useAppZoom()
+  const { currentBranch, isGitRepo } = useBranchIndicator(activeWorkspace, activeConversation, repoInfo)
+  const grillStatus = useGrillStatus(activeWorkspace?.id)
+  useWorkspaceListeners(activeWorkspace, setWorkspaceSettingsTab, setSidebarView)
+  const {
+    handleGoHome,
+    handleNavigateToChat,
+    handleFixInNewChat,
+    handleCreateIdea,
+    handleStartGrillMe,
+    handleNavigateToGrill
+  } = useNavigationHandlers(
+    activeWorkspace,
+    activeConversation,
+    setView,
+    setSidebarView,
+    setWorkspaceSettingsTab,
+    setShowNewChat,
+    setPendingGrill
+  )
+
+  const mpaStatus = useMpaStore((s) => s.isRunning || s.status.status === 'paused' ? s.status : null)
+  const councilPhase = useCouncilStore((s) => s.isActive ? s.phase : null)
+
+  // Load app version once on mount
+  useEffect(() => {
+    window.api.getPlatformInfo().then((info) => setAppVersion(info.appVersion))
+  }, [])
+
+  // Bug tracker + audit status for UI
+  const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
+  const auditRunning = useAuditStore((s) => s.isRunning)
+  const auditRerunning = useAuditStore((s) => s.rerunningTrackId)
+  const isAuditActive = auditRunning || !!auditRerunning
+  const isAuditPaused = useAuditStore((s) => s.isPaused)
+  const lastAuditScore = useAuditStore((s) => s.currentRun?.overallScore ?? null)
+
+  // MCP tools from Da Vinci status
+  const activeMcpTools = useAgentStore((s) => {
+    const davinci = s.statuses.find((st) => st.agentType === 'da-vinci')
+    return davinci?.activeMcpTools
+  })
+
+  // Context usage for status bar
+  const contextUsage = useChatStore((s) =>
+    s.activeConversation ? s.contextUsages[s.activeConversation.id] : undefined
+  )
+  const indexingState = useIndexingStore((s) => s.indexingState)
 
   // Auto-reset showNewChat when a conversation is selected
   useEffect(() => {
@@ -175,27 +130,9 @@ export default function AppLayout(): React.JSX.Element {
     }
   }, [activeConversation])
 
-  // Bug tracker: fetch count + listen for new bugs
-  useEffect(() => {
-    fetchBugCount()
-    const unsub = window.api.onNewBug(() => {
-      addToast({ message: 'A new bug was created', type: 'bug', onClickNavigate: 'bugs' })
-      fetchBugCount()
-    })
-    return unsub
-  }, [fetchBugCount, addToast])
-
-  // zoomFactor is now provided by useAppZoom hook above
-
-  const handleZoomIn = useCallback(() => {
-    window.api.zoomIn()
-  }, [])
-  const handleZoomOut = useCallback(() => {
-    window.api.zoomOut()
-  }, [])
-  const handleZoomReset = useCallback(() => {
-    window.api.zoomReset()
-  }, [])
+  const handleZoomIn = useCallback(() => { window.api.zoomIn() }, [])
+  const handleZoomOut = useCallback(() => { window.api.zoomOut() }, [])
+  const handleZoomReset = useCallback(() => { window.api.zoomReset() }, [])
 
   const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
   const loadSpecialists = useSpecialistStore((state) => state.loadSpecialists)
@@ -208,10 +145,7 @@ export default function AppLayout(): React.JSX.Element {
   }, [workspaceSpecialists.length, loadSpecialists])
 
   useEffect(() => {
-    if (!activeConversation?.id) {
-      return
-    }
-
+    if (!activeConversation?.id) return
     void hydrateConversationSpecialists(activeConversation.id).catch((error) => {
       console.error('[AppLayout] Failed to hydrate conversation specialists:', error)
     })
@@ -219,22 +153,12 @@ export default function AppLayout(): React.JSX.Element {
 
   // Navigate back — Esc key handler priority
   const navigateBack = useCallback(() => {
-    // Priority order:
-    // 1. If on app-settings or help page → go back to chat
-    // 2. If sidebar is on settings tab → switch back to chats tab
-    // 3. Otherwise → no-op (already at default chat view)
-
-    if (view === 'help') {
-      setView('chat')
-      return
-    }
-    if (view === 'app-settings') {
+    if (view === 'help' || view === 'app-settings') {
       setView('chat')
       return
     }
     if (sidebarView === 'settings') {
       setSidebarView('chat')
-      return
     }
   }, [view, sidebarView])
 
@@ -250,83 +174,19 @@ export default function AppLayout(): React.JSX.Element {
     setShowNewChat
   })
 
-  const handleGoHome = (): void => {
-    clearActiveWorkspace()
-    setView('chat')
-    setSidebarView('chat')
-  }
-
-  const handleNavigateToChat = (): void => {
-    setView('chat')
-    setSidebarView('chat')
-  }
-
-  const handleFixInNewChat = (): void => {
-    // Clear active conversation so ChatPanel shows NewChatPage
-    useChatStore.setState({ activeConversation: null, messages: [] })
-    setShowNewChat(true)
-    setView('chat')
-    setSidebarView('chat')
-  }
-
-  const handleOpenIdeas = (): void => {
-    setWorkspaceSettingsTab('ideas')
-    setSidebarView('settings')
-  }
-
-  const handleCreateIdea = async (data: { title: string; description?: string }): Promise<void> => {
-    if (!activeWorkspace) return
-    await createIdea(activeWorkspace.id, data.title, data.description ?? '')
-    handleOpenIdeas()
-  }
-
-  const handleStartGrillMe = async (): Promise<void> => {
-    if (!activeWorkspace || !activeConversation) return
-
-    try {
-      // 1. Create an idea from the conversation title
-      const idea = await createIdea(activeWorkspace.id, activeConversation.title, '')
-
-      // 2. Start a grill session on the new idea
-      const { idea: updatedIdea, conversation: grillConversation } = await startGrill(
-        idea.id,
-        activeWorkspace.id
-      )
-
-      // 3. Navigate to Ideas tab with the grill page open
-      setWorkspaceSettingsTab('ideas')
-      setSidebarView('settings')
-      setPendingGrill({
-        ideaId: updatedIdea.id,
-        conversationId: grillConversation.id,
-        ideaTitle: updatedIdea.title,
-        ideaDescription: updatedIdea.description,
-        isNewSession: true
-      })
-    } catch (error) {
-      console.error('[AppLayout] Failed to start grill from /grillme command:', error)
-    }
-  }
-
   const renderMainContent = (): React.JSX.Element => {
     if (view === 'bugs') {
       return <BugTrackerPage onBack={() => setView('chat')} />
     }
-
     if (view === 'help') {
       return <HelpView onBack={() => setView('chat')} />
     }
-
     if (view === 'app-settings') {
       return <SettingsPage onBack={() => setView('chat')} />
     }
-
-    // No workspace → show welcome/home screen
     if (!activeWorkspace) {
       return <WelcomeScreen />
     }
-
-    // When sidebar's settings tab is active, show selected settings content
     if (sidebarView === 'settings') {
       return (
         <WorkspaceSettingsContent
@@ -339,8 +199,6 @@ export default function AppLayout(): React.JSX.Element {
         />
       )
     }
-
-    // Default: chat
     return (
       <ChatPanel
         onCreateIdea={handleCreateIdea}
@@ -355,7 +213,6 @@ export default function AppLayout(): React.JSX.Element {
     )
   }
 
-  // Determine if sidebar should show (chat view or workspace settings view)
   const showLeftSidebar = view === 'chat' && activeWorkspace !== null
 
   return (
@@ -365,17 +222,16 @@ export default function AppLayout(): React.JSX.Element {
         className={`h-10 flex-shrink-0 bg-surface-base border-b border-border-subtle flex items-center pr-4 relative ${isMac ? 'pl-[80px]' : 'pl-20'}`}
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        {/* Centered title */}
         <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-text-secondary pointer-events-none">
           Code Atelier
         </span>
 
-        {/* Right-aligned buttons */}
         <div
           className="flex items-center gap-1.5 ml-auto relative z-10"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <button
+            type="button"
             onClick={handleGoHome}
             className="p-2.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
             title="Home"
@@ -384,6 +240,7 @@ export default function AppLayout(): React.JSX.Element {
             <Home size={16} />
           </button>
           <button
+            type="button"
             onClick={() => setView(view === 'app-settings' ? 'chat' : 'app-settings')}
             className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'app-settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title="Settings"
@@ -392,6 +249,7 @@ export default function AppLayout(): React.JSX.Element {
             <Sliders size={16} />
           </button>
           <button
+            type="button"
             onClick={() => setView(view === 'bugs' ? 'chat' : 'bugs')}
             className={`relative p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'bugs' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title="Bug Tracker"
@@ -405,6 +263,7 @@ export default function AppLayout(): React.JSX.Element {
             )}
           </button>
           <button
+            type="button"
             onClick={() => setView(view === 'help' ? 'chat' : 'help')}
             className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'help' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
             title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
@@ -415,18 +274,11 @@ export default function AppLayout(): React.JSX.Element {
         </div>
       </div>
 
-      {/* Auto-update banner */}
       <UpdateBanner />
-
-      {/* Memory feed progress banner */}
       <MemoryFeedBanner />
-
-      {/* Budget warning/exceeded banner */}
       <BudgetWarningBanner />
 
-      {/* Main content */}
       <div className="flex flex-1 min-h-0">
-        {/* Left sidebar — unified with Chats + Settings tabs */}
         {showLeftSidebar && (
           <Sidebar>
             <UnifiedSidebar
@@ -441,17 +293,12 @@ export default function AppLayout(): React.JSX.Element {
           </Sidebar>
         )}
 
-        {/* Main content — full width (no right panel) */}
         <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
       </div>
 
-      {/* Toast notifications */}
       <ToastContainer onNavigate={(target) => setView(target as typeof view)} />
-
-      {/* Multi-workspace notification stack (permissions + completions) */}
       <NotificationStack />
 
-      {/* Token details modal */}
       <TokenDetailsModal
         isOpen={tokenModalOpen}
         conversationId={activeConversation?.id ?? null}
@@ -460,7 +307,6 @@ export default function AppLayout(): React.JSX.Element {
         onClose={() => setTokenModalOpen(false)}
       />
 
-      {/* Status bar */}
       <StatusBar
         activeWorkspace={activeWorkspace}
         agentStatus={agentStatus}

@@ -186,16 +186,22 @@ inconsistent component patterns, and accessibility violations.`
 /**
  * Lean domain prompts for Opus 4.8+ — skip explicit tool name suggestions
  * (already covered by MCP guidance) to save ~40-60 tokens per audit session.
- * Only overrides domains that mention specific tool names in the full version.
+ * All 7 tracks have lean variants for consistency.
  */
-const AUDITOR_DOMAIN_PROMPTS_LEAN: Partial<Record<AuditTrackId, string>> = {
+const AUDITOR_DOMAIN_PROMPTS_LEAN: Record<AuditTrackId, string> = {
   code: `You audit code quality across frontend and backend: SOLID adherence, naming conventions, cyclomatic complexity, error handling, dead code, duplication, and type safety. Look for code smells, overly complex functions, and inconsistent patterns.`,
 
   testing: `You audit testing strategy: test pyramid balance, critical path coverage, fixture quality, assertion specificity, and CI/CD integration. Look for untested critical paths, brittle tests, and excessive mocking.`,
 
   architecture: `You audit software architecture: module boundaries and coupling, dependency direction, separation of concerns, API/IPC contract design, and scalability. Look for god modules, tight coupling, leaky abstractions, and circular dependencies.`,
 
-  security: `You audit security posture: input validation, auth patterns, secret management, context isolation (especially Electron), and dependency vulnerabilities. Look for injection risks, exposed secrets, and insecure defaults.`
+  security: `You audit security posture: input validation, auth patterns, secret management, context isolation (especially Electron), and dependency vulnerabilities. Look for injection risks, exposed secrets, and insecure defaults.`,
+
+  database: `You audit database layers: schema design, migration safety, query patterns, indexing, and data integrity. Look for N+1 queries, missing indexes, and unsafe migrations.`,
+
+  documentation: `You audit documentation: README completeness, inline docs (JSDoc/TSDoc), API docs, CLAUDE.md quality, and decision records. Look for undocumented APIs and stale docs.`,
+
+  'ui-ux': `You audit UI/UX: accessibility (WCAG), error/empty states, loading indicators, component consistency, and keyboard navigation.`
 }
 
 // ── Renderer ────────────────────────────────────────────────────────────────

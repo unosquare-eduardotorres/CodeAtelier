@@ -35,6 +35,7 @@ export default function GoalApprovalGate({
           <h3 className="text-sm font-semibold text-text-primary">Plan Review</h3>
         </div>
         <button
+          type="button"
           onClick={onCancel}
           className="text-text-muted hover:text-text-secondary transition-colors"
           title="Cancel goal"
@@ -131,12 +132,14 @@ export default function GoalApprovalGate({
           />
           <div className="flex justify-end gap-2">
             <button
+              type="button"
               onClick={() => setShowFeedback(false)}
               className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
             >
               Cancel
             </button>
             <button
+              type="button"
               onClick={() => feedback.trim() && onReject(feedback.trim())}
               disabled={!feedback.trim()}
               className="px-3 py-1.5 text-xs font-medium text-white bg-purple-500 hover:bg-purple-600 rounded-lg transition-colors disabled:opacity-50"
@@ -151,6 +154,7 @@ export default function GoalApprovalGate({
       {!showFeedback && (
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-border-subtle">
           <button
+            type="button"
             onClick={() => setShowFeedback(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary bg-surface-base hover:bg-surface-hover border border-border-subtle rounded-lg transition-colors"
           >
@@ -158,6 +162,7 @@ export default function GoalApprovalGate({
             Request Changes
           </button>
           <button
+            type="button"
             onClick={onApprove}
             className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white bg-success hover:bg-success/80 rounded-lg transition-colors"
           >

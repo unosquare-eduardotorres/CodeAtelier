@@ -1,14 +1,14 @@
 import { useEffect, useRef } from 'react'
 import { Terminal } from 'lucide-react'
+import { PHASE_CONFIG } from './constants'
+import type { MpaPhaseType } from '../../../../../shared/mpa-types'
 
 interface GoalPhaseStreamProps {
-  phaseId: string
   phaseType: string
   streamText: string
 }
 
 export default function GoalPhaseStream({
-  phaseId,
   phaseType,
   streamText
 }: GoalPhaseStreamProps): JSX.Element {
@@ -21,18 +21,15 @@ export default function GoalPhaseStream({
     }
   }, [streamText])
 
-  const phaseLabels: Record<string, string> = {
-    plan: '📋 Planner',
-    execute: '🔨 Builder',
-    verify: '✅ Verifier'
-  }
+  const config = PHASE_CONFIG[phaseType as MpaPhaseType]
+  const phaseLabel = config ? `${config.emoji} ${config.agentLabel}` : phaseType
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle">
         <Terminal size={14} className="text-text-muted" />
         <span className="text-xs font-medium text-text-secondary">
-          {phaseLabels[phaseType] ?? phaseType} Output
+          {phaseLabel} Output
         </span>
       </div>
 

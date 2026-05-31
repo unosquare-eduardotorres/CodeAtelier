@@ -31,13 +31,18 @@ export class MpaBuilderAdapter extends MpaBaseAdapter {
     this.agentId = `mpa-builder-${params.workspaceId}`
   }
 
+  protected getModelAction(): import('../../../../shared/types').ModelAction {
+    return 'da-vinci:build' // Builder uses build-tier model
+  }
+
   protected buildPhaseSystemPrompt(): string {
     return buildBuilderSystemPrompt({
       goal: this.goal,
       plan: this.plan,
       workspaceName: this.workspaceName,
       detectedTechs: this.detectedTechs,
-      verifierFeedback: this.verifierFeedback
+      verifierFeedback: this.verifierFeedback,
+      model: this.resolvedModel
     })
   }
 

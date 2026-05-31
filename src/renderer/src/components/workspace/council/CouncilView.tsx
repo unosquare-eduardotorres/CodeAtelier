@@ -12,7 +12,7 @@
 import { useEffect, useMemo } from 'react'
 import { Hammer, RefreshCw, X, Landmark, Loader2 } from 'lucide-react'
 import { useCouncilStore } from '@renderer/store/council.store'
-import { COUNCIL_ADVISOR_ROLES } from '../../../../../shared/constants'
+import { COUNCIL_ADVISOR_ROLES, COUNCIL_ADVISORS } from '../../../../../shared/constants'
 import CouncilMemberColumn from './CouncilMemberColumn'
 import CouncilVerdictCard from './CouncilVerdictCard'
 import CouncilRankingsMatrix from './CouncilRankingsMatrix'
@@ -96,6 +96,7 @@ export default function CouncilView({
   }, [])
 
   // Wire IPC listeners
+  // TODO: Reconcile IPC event types with store handler types to remove `as never` casts
   useEffect(() => {
     const api = window.api
     const cleanups: (() => void)[] = []

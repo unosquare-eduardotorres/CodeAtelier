@@ -110,7 +110,9 @@ export class GrillRoleAdapter implements AgentRoleAdapter {
     const featureFlags: PromptFeatureFlags = {
       repomapEnabled: this.repomapEnabled,
       semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: false // grill doesn't mount GitHub tools
+      githubConfigured: false, // grill doesn't mount GitHub tools
+      includeGitContext: this.llmProvider !== 'local-llm',
+      includeCheckpoint: false // grill doesn't mount checkpoint tools
     }
 
     this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags, resolvedModel)

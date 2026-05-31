@@ -30,7 +30,8 @@ export class MpaVerifierAdapter extends MpaBaseAdapter {
     return buildVerifierSystemPrompt({
       goal: this.goal,
       plan: this.plan,
-      workspaceName: this.workspaceName
+      workspaceName: this.workspaceName,
+      model: this.resolvedModel
     })
   }
 

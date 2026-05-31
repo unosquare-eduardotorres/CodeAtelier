@@ -246,6 +246,8 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
         ? promptBuilder.buildClaudeMdLayer(ctx.workspacePath, ctx.mode)
         : ''
       const layers = [modeSection, this.snapshot.prompt]
+      const baselineSkills = promptBuilder.skills.buildBaselineSkillsLayer()
+      if (baselineSkills) layers.push(baselineSkills)
       if (claudeMdLayer) layers.push(claudeMdLayer)
       // Append communication tone overlay for non-default tones.
       // Placed after the specialist's own prompt so it takes precedence.

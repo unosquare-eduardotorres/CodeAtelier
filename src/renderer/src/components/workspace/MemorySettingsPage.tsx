@@ -39,7 +39,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
       window.api
         .memoryGetFeedTimestamps({ workspaceId })
         .then(setFeedTimestamps)
-        .catch(() => {})
+        .catch((err) => console.warn('[MemorySettings] Non-fatal: feed timestamps load failed:', err))
     },
     [setFeedTimestamps]
   )

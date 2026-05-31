@@ -127,7 +127,7 @@ export const useProjectSpecialistStore = create<ProjectSpecialistState>((set, ge
       // Revert the optimistic update by reloading authoritative state.
       await get()
         .loadForWorkspace(workspaceId)
-        .catch(() => {})
+        .catch((err) => console.warn('[ProjectSpecialist] Non-fatal: revert reload failed:', err))
       set({ isLoading: false, error: (error as Error).message })
       throw error
     }

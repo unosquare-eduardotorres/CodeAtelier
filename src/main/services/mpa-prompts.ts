@@ -1,5 +1,6 @@
 import type { GrillDecision, MpaPlanArtifact, MpaVerifyReport } from '../../shared/mpa-types'
 import { sanitizePromptInput } from './sanitize-prompt-input'
+import { resolvePromptVerbosity } from '../../shared/constants'
 
 // ── Phase 1: Planner Agent Prompt ──
 
@@ -10,7 +11,10 @@ export function buildPlannerSystemPrompt(params: {
   grillDecisions?: GrillDecision[]
   previousPlan?: { contentJson: MpaPlanArtifact }
   userFeedback?: string
+  model?: string
 }): string {
+  const isLean = resolvePromptVerbosity(params.model ?? '') === 'lean'
+
   let prompt = `You are the Goal Planner — a read-only architect creating implementation plans.
 
 ## Goal
@@ -40,7 +44,16 @@ ${JSON.stringify(params.previousPlan.contentJson, null, 2)}
 `
   }
 
-  prompt += `
+  if (isLean) {
+    prompt += `
+## Instructions
+Investigate the codebase with code graph and search tools. Produce one \`goal-plan\` JSON block:
+{goalType, summary, items: [{id, title, description, files, scope, dependsOn, includesTests}], risks, existingPatterns}
+
+## Rules
+Read-only. Reference specific file paths. Order by dependency chain. Include tests within items (not separate). Reference existing patterns. Specific enough for an unfamiliar agent. One \`goal-plan\` block only.`
+  } else {
+    prompt += `
 ## What to Do
 Investigate the codebase using code graph and search tools to understand the architecture, existing patterns, and integration points. Then produce a structured implementation plan.
 
@@ -75,6 +88,7 @@ Emit exactly one fenced JSON code block tagged \`goal-plan\`:
 - Reference existing patterns you find — the builder should follow them.
 - The plan must be specific enough for an agent that has never seen the codebase.
 - Emit exactly one \`goal-plan\` block. No optional or nice-to-have items.`
+  }
 
   return prompt
 }
@@ -87,7 +101,10 @@ export function buildBuilderSystemPrompt(params: {
   workspaceName: string
   detectedTechs: string[]
   verifierFeedback?: MpaVerifyReport
+  model?: string
 }): string {
+  const isLean = resolvePromptVerbosity(params.model ?? '') === 'lean'
+
   const planItems = params.plan.items
     .map(
       (item) =>
@@ -124,7 +141,15 @@ ${params.verifierFeedback.issues
 `
   }
 
-  prompt += `
+  if (isLean) {
+    prompt += `
+## Instructions
+Implement every plan item in dependency order. Read existing code first, then implement. Write tests where includesTests: true. Run tests after all implementation, fix failures.
+
+## Rules
+Implement all items. No extras beyond plan. No TODOs or stubs. Match existing style. Report test command, pass/fail count, and failures.`
+  } else {
+    prompt += `
 ## What to Do
 Implement every plan item in dependency order. For each item, read existing code first to understand patterns, then implement. Write tests where items have includesTests: true. After implementing everything, run the project's test command and fix any failures.
 
@@ -135,6 +160,7 @@ Implement every plan item in dependency order. For each item, read existing code
 - Match existing code style, naming, and import conventions.
 - Run tests after all implementation is complete. Fix failures before stopping.
 - After running tests, report the command used, pass/fail count, and any failure messages in your response.`
+  }
 
   return prompt
 }
@@ -145,13 +171,35 @@ export function buildVerifierSystemPrompt(params: {
   goal: string
   plan: MpaPlanArtifact
   workspaceName: string
+  model?: string
 }): string {
+  const isLean = resolvePromptVerbosity(params.model ?? '') === 'lean'
+
   const planItems = params.plan.items
     .map(
       (item) =>
         `- **${item.id}: ${item.title}** — files: ${item.files.join(', ')} (scope: ${item.scope}${item.includesTests ? ', has tests' : ''})`
     )
     .join('\n')
+
+  if (isLean) {
+    return `You are the Goal Verifier — a read-only auditor checking plan implementation. Fresh pair of eyes.
+
+## Goal
+${sanitizePromptInput(params.goal)}
+
+## Plan to Verify
+${planItems}
+
+## Instructions
+For each item: verify files exist, functionality present, integration complete, tests exist. Check cross-layer connections. Run tests.
+
+Emit per-item \`goal-verify-item\` blocks: {planItemId, status: "implemented"|"partial"|"missing", detail, filesChecked}
+Then one \`goal-verify-report\`: {allComplete, totalItems: ${params.plan.items.length}, implemented, partial, missing, issues, crossCutting: {frontendBackendConnected, backendDatabaseConnected, routesRegistered, testsPass}, testOutput}
+
+## Rules
+Read-only. Verify every item. Read files before marking implemented. Run actual tests.`
+  }
 
   return `You are the Goal Verifier — a read-only auditor checking whether every plan item was actually implemented. You did not write this code. You are a fresh pair of eyes.
 

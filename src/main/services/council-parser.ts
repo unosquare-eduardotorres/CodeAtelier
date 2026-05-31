@@ -1,9 +1,10 @@
 /**
- * council-parser.ts — pure-function parsers for council structured output blocks.
+ * council-parser.ts — parsers for council structured output blocks.
  *
  * Extracts ```council-review, ```council-peer-review, and ```council-verdict
  * fenced JSON blocks from Claude CLI output text. Each function validates
- * required fields and normalises optional arrays.
+ * required fields and normalises optional arrays. Logs warnings/errors
+ * via electron-log for diagnostics.
  *
  * Extracted from CouncilService to improve testability and reduce god-file size.
  */

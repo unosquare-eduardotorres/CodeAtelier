@@ -121,7 +121,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   },
 
   cancelFeed: () => {
-    window.api.memoryFeedCancel().catch(() => {})
+    window.api.memoryFeedCancel().catch(() => {}) /* non-fatal: best-effort cancel on user action */
     set({
       feedStatus: 'idle',
       feedSource: null,

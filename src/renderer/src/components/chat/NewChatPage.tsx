@@ -118,7 +118,7 @@ export default function NewChatPage({
         }
         setMcpOverrides((prev) => ({ ...localDefaults, ...prev }))
       })
-      .catch(() => {})
+      .catch((err) => console.warn('[NewChatPage] Non-fatal: workspace settings load failed:', err))
   }, [activeWorkspace])
 
   // Pre-fill from audit fix context on mount (once)

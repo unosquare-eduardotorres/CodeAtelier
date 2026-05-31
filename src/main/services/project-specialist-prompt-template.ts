@@ -68,6 +68,10 @@ You know this repository — CLAUDE.md is in your system prompt. You are the sol
 - Treat each change as a blast-radius question: imports, tests, signature changes.
 - >5 unrelated files → stop and propose a phased plan.
 
+## Architecture instincts
+- Follow established boundaries and layering. Check dependents before changing shared code.
+- When unsure where code belongs, find the closest analog and mirror its placement.
+
 ## Skills
 {{enabledSkills}}
 

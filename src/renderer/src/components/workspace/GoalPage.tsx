@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Target, StopCircle } from 'lucide-react'
 import { useMpaStore } from '@renderer/store/mpa.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
@@ -7,7 +7,8 @@ import {
   GoalPhaseTimeline,
   GoalPhaseStream,
   GoalApprovalGate,
-  GoalRunHistory
+  GoalRunHistory,
+  GoalRunDetail
 } from './goals'
 import type { MpaGoalType, MpaPhaseType, MpaStatus } from '../../../../shared/mpa-types'
 
@@ -43,6 +44,9 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
   const {
     status,
     isRunning,
+    currentRun,
+    phases: runPhases,
+    artifacts,
     phaseStreamText,
     pendingApproval,
     preloadedGoal,
@@ -50,15 +54,19 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
     startGoal,
     cancelGoal,
     respondToApproval,
-    loadHistory
+    loadHistory,
+    loadRun
   } = useMpaStore()
+
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
 
   // Listeners are registered globally in AppLayout — no need to duplicate here
 
-  // Load history on workspace change
+  // Load history on workspace change (reset selected run on workspace switch)
   useEffect(() => {
     if (workspaceId) {
       loadHistory(workspaceId)
+      setSelectedRunId(null)
     }
   }, [workspaceId, loadHistory])
 
@@ -98,6 +106,18 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
     cancelGoal()
   }, [cancelGoal])
 
+  const handleSelectRun = useCallback(
+    (runId: string) => {
+      setSelectedRunId(runId)
+      loadRun(runId)
+    },
+    [loadRun]
+  )
+
+  const handleBackFromDetail = useCallback(() => {
+    setSelectedRunId(null)
+  }, [])
+
   // Get current phase stream text
   const currentPhaseEntries = Object.entries(phaseStreamText)
   const latestPhaseEntry =
@@ -130,7 +150,6 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
         {!isRunning && !pendingApproval && (
           <div className="bg-surface-raised rounded-xl border border-border-subtle p-4">
             <GoalInput
-              workspaceId={workspaceId}
               onStart={handleStart}
               disabled={isRunning}
             />
@@ -170,7 +189,6 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
               <div className="flex flex-col">
                 {latestPhaseEntry ? (
                   <GoalPhaseStream
-                    phaseId={latestPhaseEntry[0]}
                     phaseType={status.currentPhase ?? 'plan'}
                     streamText={latestPhaseEntry[1]}
                   />
@@ -184,9 +202,19 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
           </div>
         )}
 
-        {/* Past Goals */}
-        {!isRunning && !pendingApproval && (
-          <GoalRunHistory workspaceId={workspaceId} />
+        {/* Run Detail — shown when a past run is selected */}
+        {!isRunning && !pendingApproval && selectedRunId && currentRun?.id === selectedRunId && (
+          <GoalRunDetail
+            run={currentRun}
+            phases={runPhases}
+            artifacts={artifacts}
+            onBack={handleBackFromDetail}
+          />
+        )}
+
+        {/* Past Goals — shown when no run is selected */}
+        {!isRunning && !pendingApproval && !selectedRunId && (
+          <GoalRunHistory onSelectRun={handleSelectRun} />
         )}
       </div>
     </div>

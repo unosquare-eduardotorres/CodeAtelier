@@ -445,7 +445,7 @@ export class OpenCodeExecutor {
                 )
                 maxTurnsReached = true
                 if (this.client) {
-                  this.client.session.abort({ path: { id: openCodeSessionId } }).catch(() => {})
+                  this.client.session.abort({ path: { id: openCodeSessionId } }).catch(() => {}) /* non-fatal: best-effort abort after maxTurns */
                 }
               }
             }
@@ -482,7 +482,7 @@ export class OpenCodeExecutor {
       if ((error as Error).name === 'AbortError') {
         openCodeLog.info('[opencode] Request aborted')
         if (openCodeSessionId && this.client) {
-          this.client.session.abort({ path: { id: openCodeSessionId } }).catch(() => {})
+          this.client.session.abort({ path: { id: openCodeSessionId } }).catch(() => {}) /* non-fatal: best-effort abort on user cancellation */
         }
       } else {
         this.consecutiveErrors++

@@ -4,7 +4,6 @@ import type { BudgetTier, CommunicationTone, ConversationMode, PromptVerbosity, 
 import type { ContextWindowTier } from './context-management'
 import { promptBuilderLogger } from '../logger'
 import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.repository'
-import { skillRepository } from '../db/repositories/skill.repository'
 import {
   DEFAULT_PROMPTS,
   TONE_STYLE_DIRECTIVES,
@@ -13,6 +12,7 @@ import {
   UNIFIED_MODE_SECTION
 } from './default-prompts'
 import { resolvePromptVerbosity } from '../../shared/constants'
+import { SkillPromptComposer } from './skill-prompt-composer'
 
 // ── Prompt Builder Types ──
 
@@ -25,7 +25,10 @@ interface PromptBuildOptions {
   mode: ConversationMode
   /** Workspace path for CLAUDE.md project context injection */
   workspacePath?: string
-  /** Include auto memory context (generalist only) */
+  /**
+   * @deprecated Strategy C moved memory context to the user prompt (effectiveMessage prefix).
+   * This field is no longer passed by any caller. Left for backward compat — will be removed.
+   */
   memoryContext?: string
   /** Budget tier — controls context size for model-aware prompt budgeting (Strategy 4) */
   budgetTier?: BudgetTier
@@ -71,12 +74,8 @@ export class PromptBuilder {
    */
   private claudeMdCache: Map<string, { content: string; mtimeMs: number }> = new Map()
 
-  /**
-   * Strategy O: In-memory skill file cache with mtime invalidation.
-   * SKILL.md files rarely change during a session — cache them to eliminate
-   * per-turn readFileSync() calls and truncation overhead.
-   */
-  private skillFileCache: Map<string, { content: string; mtimeMs: number }> = new Map()
+  /** Delegated skill composition (extracted for testability + reduced complexity) */
+  private skillComposer = new SkillPromptComposer()
 
   /** Turn-based budget profile for generalist prompt assembly (S17 adaptive prompt). */
   getGeneralistBudgetTierForTurn(turnCount: number): BudgetTier {
@@ -141,6 +140,9 @@ export class PromptBuilder {
 
     this.appendPersonaLayer(layers, options, budgetTier)
     this.appendRoleAndIdentityLayers(layers, options)
+    // Always-on behavioral guidelines (coding discipline)
+    const baselineSkills = this.skillComposer.buildBaselineSkillsLayer(budgetTier)
+    if (baselineSkills) layers.push(baselineSkills)
     this.appendProjectContextLayer(layers, options, budgetTier)
     this.appendMemoryContextLayer(layers, options)
 
@@ -188,12 +190,12 @@ export class PromptBuilder {
         options.personaPrompt
     )
     if (options.personaSkills && options.personaSkills.length > 0) {
-      const filtered = this.filterAssignedSkills(
+      const filtered = this.skillComposer.filterAssignedSkills(
         options.personaSkills,
         options.personaSkillOverrides
       )
       if (filtered.length > 0) {
-        const content = this.buildSkillContent(filtered, budgetTier)
+        const content = this.skillComposer.buildSkillContent(filtered, budgetTier)
         if (content) layers.push(`## Domain Skills\n\n${content}`)
       }
     }
@@ -233,6 +235,7 @@ export class PromptBuilder {
    */
   private appendMemoryContextLayer(layers: string[], options: PromptBuildOptions): void {
     if (options.memoryContext) {
+      log.warn('[prompt-builder] memoryContext passed via PromptBuildOptions is deprecated (Strategy C). Memory should be in the user prompt.')
       layers.push(`## Auto Memory\n\n${options.memoryContext}`)
     }
   }
@@ -248,10 +251,18 @@ export class PromptBuilder {
     // Read from DB (user-editable). Falls back to defaults if DB is empty.
     const dbPrompt = coreAgentPromptRepository.findByRoleAndMode(role, mode)
     if (dbPrompt) {
-      // Append tone overlay when user has a non-default tone selected.
-      // The overlay takes precedence over the ## Style section in the DB prompt.
+      // Apply tone overlay when user has a non-default tone selected.
+      // If the DB prompt has a ## Style section, replace it inline to avoid
+      // duplicate/conflicting style guidance. Otherwise append as a new section.
       if (tone && tone !== 'default') {
         const directive = TONE_STYLE_DIRECTIVES[tone]
+        const styleSectionRe = /## Style\n[\s\S]*?(?=\n##|\n$)/
+        if (styleSectionRe.test(dbPrompt.promptText)) {
+          return dbPrompt.promptText.replace(
+            styleSectionRe,
+            `## Style\n${directive}`
+          )
+        }
         return dbPrompt.promptText + `\n\n## Communication Tone Override\n${directive}`
       }
       return dbPrompt.promptText
@@ -265,6 +276,11 @@ export class PromptBuilder {
       // Lean mode: skip UNIFIED_MODE_SECTION since per-message <mode-context>
       // block already provides detailed mode instructions every turn.
       // Saves ~80 tokens from the system prompt.
+      //
+      // CONTRACT: Lean mode REQUIRES the caller (DaVinciPromptAssembler.buildEffectiveMessage)
+      // to inject a <mode-context> block in every user message. Without it, the model
+      // has NO mode instructions. If adding a new lean-mode caller, ensure it also
+      // injects MODE_CONTEXT_SECTIONS_LEAN per message.
       if (verbosity === 'lean') return identity
       return UNIFIED_MODE_SECTION + '\n' + identity
     }
@@ -272,257 +288,11 @@ export class PromptBuilder {
   }
 
   /**
-   * Build deduplicated skill content for a specialist.
-   * Each skill's SKILL.md is read once and truncated to a budget.
-   *
-   * Strategy 3: Tiered skill loading — intelligently selects content:
-   * - Tier 1 (core principles, first ~1000 chars) — always included
-   * - Tier 2 (remaining content up to budget) — included for standard/full budgets
-   * Budget per skill scales with tier: minimal=500, standard=2000, full=4000
-   *
-   * Strategy 8 (Selective Skill Loading): When multiple skills are assigned,
-   * the most relevant skill (by keyword match against task context) gets the
-   * full budget; remaining skills get a condensed summary (~200 chars) to
-   * save 2,000-4,000 tokens per specialist.
+   * Public accessor for skill composition — used by external adapters
+   * (e.g., ProjectSpecialistRoleAdapter) that need direct skill assembly.
    */
-  private buildSkillContent(
-    skills: Skill[],
-    budgetTier: BudgetTier = 'standard',
-    taskContext?: string
-  ): string {
-    const activeSkills = skills.filter((s) => s.isActive)
-    if (activeSkills.length === 0) return ''
-    const normalizedTaskContext = taskContext?.trim().toLowerCase()
-    if (normalizedTaskContext) {
-      const hasRelevantSkill = activeSkills.some(
-        (skill) => this.skillRelevanceScore(skill, normalizedTaskContext) > 0
-      )
-      if (!hasRelevantSkill) {
-        log.info('Skipping skill content: no active skill matches task context relevance')
-        return ''
-      }
-    }
-
-    const baseBudget = budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 4000 : 2000
-
-    // Selective skill loading: rank skills by relevance when >1 skill and we have task context
-    let rankedSkills = activeSkills
-    if (activeSkills.length > 1 && normalizedTaskContext && budgetTier !== 'full') {
-      rankedSkills = [...activeSkills].sort((a, b) => {
-        const scoreA = this.skillRelevanceScore(a, normalizedTaskContext)
-        const scoreB = this.skillRelevanceScore(b, normalizedTaskContext)
-        return scoreB - scoreA // highest relevance first
-      })
-    }
-
-    const sections: string[] = []
-
-    for (let i = 0; i < rankedSkills.length; i++) {
-      const skill = rankedSkills[i]
-      // Primary skill gets full budget; secondary skills only included for full budget tier
-      // Strategy 6: Skip secondary skills entirely for non-full budget (200-char excerpts are useless)
-      const isPrimary = i === 0
-      if (!isPrimary && budgetTier !== 'full') continue
-      const budget = isPrimary ? baseBudget : Math.min(200, baseBudget)
-
-      try {
-        // Phase 7: Progressive skill loading — use tier data when available
-        // For minimal budget: inject tier2_instructions only (~500 tokens)
-        // For standard budget: inject tier2 + pre-computed summary
-        // For full budget: inject full content (tier3)
-
-        let selected: string | null = null
-
-        // Try tier2_instructions for minimal/standard budgets (fast path, no disk I/O)
-        if (skill.tier2Instructions && budgetTier === 'minimal') {
-          selected = skill.tier2Instructions.substring(0, budget)
-          log.info(
-            `Skill "${skill.name}" using tier2 instructions (${selected.length} chars, budget: minimal)`
-          )
-        }
-
-        // Try pre-computed semantic summary (token-optimized, ~50-60% savings)
-        if (!selected) {
-          const summaryTier = isPrimary ? budgetTier : 'minimal'
-          const summary = skillRepository.getSummary(skill.id, summaryTier)
-
-          if (summary) {
-            selected = summary
-            log.info(
-              `Skill "${skill.name}" using pre-computed ${summaryTier} summary (${summary.length} chars)`
-            )
-          }
-        }
-
-        // For standard budget with tier2: use tier2 + summary blend
-        if (!selected && skill.tier2Instructions && budgetTier === 'standard') {
-          selected = skill.tier2Instructions.substring(0, budget)
-          log.info(
-            `Skill "${skill.name}" using tier2 instructions (${selected.length} chars, budget: standard)`
-          )
-        }
-
-        // Fallback: read from disk if no pre-computed data available
-        if (!selected) {
-          const content = this.readSkillFile(skill.filePath)
-
-          if (content.length <= budget) {
-            selected = content
-          } else if (!isPrimary || budgetTier === 'minimal') {
-            // Condensed: extract skill title + first paragraph only
-            selected = content.substring(0, budget) + '\n\n[... see full skill file for details]'
-          } else {
-            // Primary skill: smart section extraction
-            selected = this.extractSkillSections(content, budget)
-          }
-
-          if (content.length > budget) {
-            log.info(
-              `Skill "${skill.name}" ${isPrimary ? 'trimmed' : 'condensed'} from ${content.length} to ~${budget} chars (budget: ${budgetTier}, fallback — no summary)`
-            )
-          }
-        }
-
-        sections.push(`## Skill: ${skill.name}\n${selected}`)
-      } catch {
-        log.warn(`Could not read skill file: ${skill.filePath}`)
-      }
-    }
-
-    // Strategy 6: Reduced hard cap from 8K to 4K — skills are implementation guides; 4K is enough
-    const SKILL_HARD_CAP = 4000
-    const totalContent = sections.join('\n\n')
-    if (totalContent.length > SKILL_HARD_CAP) {
-      // Truncate from end (lowest-relevance skills already sorted last)
-      let accumulated = ''
-      const capped: string[] = []
-      for (const section of sections) {
-        if (accumulated.length + section.length + 2 > SKILL_HARD_CAP) break
-        capped.push(section)
-        accumulated += section + '\n\n'
-      }
-      log.info(
-        `Skill content hard-capped: ${totalContent.length} → ${accumulated.length} chars (${SKILL_HARD_CAP} limit)`
-      )
-      return capped.join('\n\n')
-    }
-    return totalContent
-  }
-
-  /**
-   * Strategy O: Read a skill file with in-memory caching and mtime invalidation.
-   * SKILL.md files rarely change during a session — this eliminates redundant disk I/O.
-   */
-  private readSkillFile(filePath: string): string {
-    const cached = this.skillFileCache.get(filePath)
-    try {
-      const stat = statSync(filePath)
-      if (cached && cached.mtimeMs === stat.mtimeMs) {
-        return cached.content
-      }
-      const content = readFileSync(filePath, 'utf-8')
-      this.skillFileCache.set(filePath, { content, mtimeMs: stat.mtimeMs })
-      return content
-    } catch {
-      // stat failed — fall back to direct read (file may not exist)
-      const content = readFileSync(filePath, 'utf-8')
-      return content
-    }
-  }
-
-  /**
-   * Applies optional per-conversation skill overrides to the assigned skill list.
-   * When no overrides are provided, preserves the original list.
-   */
-  private filterAssignedSkills(skills: Skill[], skillOverrides?: string[]): Skill[] {
-    if (!skillOverrides) return skills
-
-    const overrideSet = new Set(
-      skillOverrides.map((value) => value.trim().toLowerCase()).filter((value) => value.length > 0)
-    )
-
-    return skills.filter((skill) => {
-      const id = skill.id.toLowerCase()
-      const name = skill.name.toLowerCase()
-      const filename = skill.filename.toLowerCase()
-      return overrideSet.has(id) || overrideSet.has(name) || overrideSet.has(filename)
-    })
-  }
-
-  /**
-   * Scores a skill's relevance to the given task context by keyword matching.
-   * Phase 7: Uses Tier 1 keywords (from structured tier1_json) for fast matching.
-   * Falls back to name-based keywords when tier1_json is not available.
-   * Returns a count of how many keywords appear in the context.
-   */
-  private skillRelevanceScore(skill: Skill, contextLower: string): number {
-    let keywords: string[]
-
-    // Prefer Tier 1 structured keywords (richer, includes heading terms + bold terms)
-    if (skill.tier1Json) {
-      try {
-        const tier1 = JSON.parse(skill.tier1Json) as { keywords?: string[] }
-        keywords = tier1.keywords ?? []
-      } catch {
-        keywords = []
-      }
-    } else {
-      // Fallback: derive from name only
-      keywords = skill.name
-        .toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, '')
-        .split(/[\s-]+/)
-        .filter((w) => w.length > 2)
-    }
-
-    return keywords.reduce((score, kw) => score + (contextLower.includes(kw) ? 1 : 0), 0)
-  }
-
-  /**
-   * Extracts skill content intelligently by preserving complete markdown sections
-   * up to the budget limit, rather than cutting mid-sentence.
-   */
-  private extractSkillSections(content: string, budget: number): string {
-    // Split into sections by ## headings
-    const sectionRegex = /^## .+$/gm
-    const sections: { start: number; header: string }[] = []
-    let match: RegExpExecArray | null
-
-    while ((match = sectionRegex.exec(content)) !== null) {
-      sections.push({ start: match.index, header: match[0] })
-    }
-
-    if (sections.length === 0) {
-      // No section headers — fall back to simple truncation
-      return content.substring(0, budget) + '\n\n[... truncated]'
-    }
-
-    // Always include content before first heading (preamble) + as many complete sections as fit
-    let result = ''
-    const preamble = content.substring(0, sections[0].start).trim()
-    if (preamble) {
-      result = preamble + '\n\n'
-    }
-
-    for (let i = 0; i < sections.length; i++) {
-      const sectionEnd = i + 1 < sections.length ? sections[i + 1].start : content.length
-      const sectionContent = content.substring(sections[i].start, sectionEnd)
-
-      if (result.length + sectionContent.length <= budget) {
-        result += sectionContent
-      } else {
-        // Can't fit whole section — add truncation notice and stop
-        const remaining = budget - result.length - 30 // leave room for truncation marker
-        if (remaining > 100) {
-          result += sectionContent.substring(0, remaining) + '\n\n[... truncated]'
-        } else {
-          result += '\n\n[... additional sections omitted]'
-        }
-        break
-      }
-    }
-
-    return result.trim()
+  get skills(): SkillPromptComposer {
+    return this.skillComposer
   }
 
   /**
@@ -673,6 +443,10 @@ export class PromptBuilder {
     const rolePrompt = this.getRolePrompt(options.role, options.mode, options.communicationTone)
     const condensed = this.extractEssentialSections(rolePrompt)
     if (condensed) layers.push(condensed)
+
+    // Layer 1.5: Baseline behavioral guidelines (always-on, condensed for local LLMs)
+    const baselineSkills = this.skillComposer.buildBaselineSkillsLayer('minimal')
+    if (baselineSkills) layers.push(baselineSkills)
 
     // Layer 2: Minimal project context (tech stack + key commands only)
     if (options.workspacePath) {

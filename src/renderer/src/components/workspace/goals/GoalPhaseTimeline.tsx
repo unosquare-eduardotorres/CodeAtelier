@@ -1,26 +1,6 @@
 import { CheckCircle, Circle, Loader2, User, XCircle } from 'lucide-react'
 import type { MpaPhaseType, MpaPhaseStatus } from '../../../../../shared/mpa-types'
-
-const PHASE_CONFIG: Record<
-  MpaPhaseType,
-  { label: string; emoji: string; description: string }
-> = {
-  plan: {
-    label: 'Plan',
-    emoji: '📋',
-    description: 'Read-only architect investigates codebase and produces implementation plan'
-  },
-  execute: {
-    label: 'Execute',
-    emoji: '🔨',
-    description: 'Builder implements every plan item in dependency order'
-  },
-  verify: {
-    label: 'Verify',
-    emoji: '✅',
-    description: 'Read-only verifier checks every item was actually implemented'
-  }
-}
+import { PHASE_CONFIG } from './constants'
 
 interface PhaseEntry {
   phaseType: MpaPhaseType

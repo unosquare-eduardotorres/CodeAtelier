@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Target, Zap, AlertCircle } from 'lucide-react'
 import { useMpaStore } from '@renderer/store/mpa.store'
+import { GOAL_TYPE_LABELS, PHASE_CONFIG } from './constants'
 import type { MpaClassifyResult, MpaGoalType, MpaPhaseType } from '../../../../../shared/mpa-types'
 
 const EXAMPLES = [
@@ -10,21 +11,7 @@ const EXAMPLES = [
   'Add unit tests for all services in src/services'
 ]
 
-const GOAL_TYPE_LABELS: Record<MpaGoalType, { emoji: string; label: string }> = {
-  feature: { emoji: '🟢', label: 'Feature' },
-  refactor: { emoji: '🔵', label: 'Refactor' },
-  bugfix: { emoji: '🟡', label: 'Bug Fix' },
-  tests: { emoji: '🟣', label: 'Tests' }
-}
-
-const PHASE_LABELS: Record<MpaPhaseType, string> = {
-  plan: '📋 Plan',
-  execute: '🔨 Execute',
-  verify: '✅ Verify'
-}
-
 interface GoalInputProps {
-  workspaceId: string
   onStart: (params: {
     goal: string
     title: string
@@ -34,7 +21,7 @@ interface GoalInputProps {
   disabled?: boolean
 }
 
-export default function GoalInput({ workspaceId, onStart, disabled }: GoalInputProps): JSX.Element {
+export default function GoalInput({ onStart, disabled }: GoalInputProps): JSX.Element {
   const [goalText, setGoalText] = useState('')
   const [classification, setClassification] = useState<MpaClassifyResult | null>(null)
   const [classifying, setClassifying] = useState(false)
@@ -123,7 +110,10 @@ export default function GoalInput({ workspaceId, onStart, disabled }: GoalInputP
                 </span>
                 <span className="text-text-muted">·</span>
                 <span className="text-text-secondary">
-                  {classification.phases.map((p) => PHASE_LABELS[p as MpaPhaseType]).join(' → ')}
+                  {classification.phases.map((p) => {
+                    const pc = PHASE_CONFIG[p as MpaPhaseType]
+                    return `${pc.emoji} ${pc.label}`
+                  }).join(' → ')}
                 </span>
               </div>
               {classification.phases.includes('plan') && (
@@ -139,6 +129,7 @@ export default function GoalInput({ workspaceId, onStart, disabled }: GoalInputP
                 <p className="text-danger">{classification.rejectionReason}</p>
                 {classification.suggestedGoal && (
                   <button
+                    type="button"
                     onClick={() => {
                       setGoalText(classification.suggestedGoal!)
                       setClassification(null)
@@ -164,6 +155,7 @@ export default function GoalInput({ workspaceId, onStart, disabled }: GoalInputP
         <div className="flex items-center gap-2">
           {!classification && goalText.trim().length >= 15 && (
             <button
+              type="button"
               onClick={handleClassify}
               disabled={disabled || classifying}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary bg-surface-base hover:bg-surface-hover border border-border-subtle rounded-lg transition-colors"
@@ -174,6 +166,7 @@ export default function GoalInput({ workspaceId, onStart, disabled }: GoalInputP
           )}
           {classification?.isValid && (
             <button
+              type="button"
               onClick={handleStart}
               disabled={disabled}
               className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors"
@@ -191,6 +184,7 @@ export default function GoalInput({ workspaceId, onStart, disabled }: GoalInputP
           <p className="text-xs text-text-muted">Examples:</p>
           {EXAMPLES.map((ex) => (
             <button
+              type="button"
               key={ex}
               onClick={() => {
                 setGoalText(ex)

@@ -91,7 +91,9 @@ export class CouncilMemberRoleAdapter implements AgentRoleAdapter {
       const featureFlags: PromptFeatureFlags = {
         repomapEnabled: this.repomapEnabled,
         semanticSearchEnabled: this.semanticSearchEnabled,
-        githubConfigured: false
+        githubConfigured: false,
+        includeGitContext: false, // council members don't mount git-context tools
+        includeCheckpoint: false  // council members don't mount checkpoint tools
       }
       this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags, this.resolvedModel)
     }

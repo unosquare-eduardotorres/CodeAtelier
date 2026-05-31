@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Bot, RefreshCw, Trash2, Loader2, Sparkles, Save, Power, PowerOff } from 'lucide-react'
+import { Bot, Loader2, Sparkles } from 'lucide-react'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import { ConfirmDialog } from '@renderer/components/common'
-import CodeEditor from './CodeEditor'
-import { useSpecialistStore } from '@renderer/store'
-import { getAgentMeta } from '@renderer/utils/agentMeta'
+import AgentListPanel from './AgentListPanel'
+import AgentDetailPanel from './AgentDetailPanel'
 import type { DiscoveredAgent } from '../../../../shared/types'
 
 interface AgentsListProps {
@@ -13,7 +12,6 @@ interface AgentsListProps {
 
 export default function AgentsList({ workspacePath }: AgentsListProps): React.JSX.Element {
   const { agents, loadAgents, deployAll } = useSettingsStore()
-  const { specialists } = useSpecialistStore()
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set())
   const [deleteTarget, setDeleteTarget] = useState<DiscoveredAgent | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -49,9 +47,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
   useEffect(() => {
     if (selectedAgent) {
       const updated = agents.find((a) => a.filename === selectedAgent.filename)
-      if (updated) {
-        setSelectedAgent(updated)
-      }
+      if (updated) setSelectedAgent(updated)
     }
   }, [agents, selectedAgent])
 
@@ -63,12 +59,8 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
   const handleSync = async (agent: DiscoveredAgent): Promise<void> => {
     const id = agent.filename
     setSyncingIds((prev) => new Set(prev).add(id))
-
     try {
-      await window.api.syncAgentToWorkspace({
-        workspacePath,
-        filename: agent.filename
-      })
+      await window.api.syncAgentToWorkspace({ workspacePath, filename: agent.filename })
       await loadAgents(workspacePath)
     } catch (error) {
       console.error('Failed to sync agent:', error)
@@ -84,16 +76,9 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
   const handleDeleteConfirm = async (): Promise<void> => {
     if (!deleteTarget) return
     setDeletingId(deleteTarget.filename)
-
     try {
-      await window.api.deleteAgentFromWorkspace({
-        workspacePath,
-        filename: deleteTarget.filename
-      })
-      // If we deleted the selected agent, deselect
-      if (selectedAgent?.filename === deleteTarget.filename) {
-        setSelectedAgent(null)
-      }
+      await window.api.deleteAgentFromWorkspace({ workspacePath, filename: deleteTarget.filename })
+      if (selectedAgent?.filename === deleteTarget.filename) setSelectedAgent(null)
       await loadAgents(workspacePath)
     } catch (error) {
       console.error('Failed to delete agent:', error)
@@ -107,15 +92,9 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
     setTogglingId(agent.filename)
     try {
       if (agent.isActive) {
-        await window.api.deactivateAgent({
-          workspacePath,
-          agentName: agent.parsed.name
-        })
+        await window.api.deactivateAgent({ workspacePath, agentName: agent.parsed.name })
       } else {
-        await window.api.activateAgent({
-          workspacePath,
-          agentName: agent.parsed.name
-        })
+        await window.api.activateAgent({ workspacePath, agentName: agent.parsed.name })
       }
       await loadAgents(workspacePath)
     } catch (error) {
@@ -129,10 +108,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
     if (!selectedAgent || !hasEditorChanges) return
     setIsSaving(true)
     try {
-      await window.api.writeWorkspaceFile({
-        filePath: selectedAgent.filePath,
-        content: editorContent
-      })
+      await window.api.writeWorkspaceFile({ filePath: selectedAgent.filePath, content: editorContent })
       setInitialContent(editorContent)
       setHasEditorChanges(false)
       await loadAgents(workspacePath)
@@ -197,297 +173,29 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
   return (
     <>
       <div className="flex h-full min-h-0">
-        {/* Left: Agent list */}
-        <div className="w-[280px] flex-shrink-0 border-r border-border-subtle overflow-y-auto">
-          <div className="p-3">
-            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3">
-              Agents ({sortedAgents.length})
-            </h3>
-            <div className="space-y-1">
-              {sortedAgents.map((agent) => {
-                const meta = getAgentMeta(agent.parsed.name, specialists)
-                const icon = meta?.icon ?? '🤖'
-                const displayName = meta?.displayName ?? agent.parsed.name
-                const isSelected = selectedAgent?.filename === agent.filename
-                const isSyncing = syncingIds.has(agent.filename)
-                const isDeleting = deletingId === agent.filename
-                const isToggling = togglingId === agent.filename
-
-                return (
-                  <div
-                    key={agent.filename}
-                    onClick={() => handleSelectAgent(agent)}
-                    className={`group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'bg-primary-muted border border-primary/20'
-                        : 'hover:bg-surface-overlay border border-transparent'
-                    }`}
-                  >
-                    {/* Icon */}
-                    <span className="text-base flex-shrink-0">{icon}</span>
-
-                    {/* Name + status */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-medium text-text-primary truncate">
-                          {displayName}
-                        </span>
-                        {/* Active indicator dot */}
-                        <span
-                          className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                            agent.isActive ? 'bg-success' : 'bg-surface-overlay'
-                          }`}
-                          title={agent.isActive ? 'Active' : 'Inactive'}
-                        />
-                      </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span
-                          className={`text-xs ${
-                            agent.isDeployed ? 'text-success' : 'text-text-muted'
-                          }`}
-                        >
-                          {agent.isDeployed ? 'Deployed' : 'Not deployed'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Inline actions */}
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                      {/* Sync */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleSync(agent)
-                        }}
-                        disabled={isSyncing}
-                        className="p-1 rounded hover:bg-primary-muted text-text-muted hover:text-primary-text transition-colors disabled:opacity-50"
-                        title="Sync agent to workspace"
-                      >
-                        {isSyncing ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : (
-                          <RefreshCw size={12} />
-                        )}
-                      </button>
-
-                      {/* Activate/Deactivate */}
-                      {agent.isDeployed && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleActivateToggle(agent)
-                          }}
-                          disabled={isToggling}
-                          className={`p-1 rounded transition-colors disabled:opacity-50 ${
-                            agent.isActive
-                              ? 'hover:bg-warning-muted text-success hover:text-mode-build-text'
-                              : 'hover:bg-success-muted text-text-muted hover:text-success'
-                          }`}
-                          title={agent.isActive ? 'Deactivate' : 'Activate'}
-                        >
-                          {isToggling ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : agent.isActive ? (
-                            <PowerOff size={12} />
-                          ) : (
-                            <Power size={12} />
-                          )}
-                        </button>
-                      )}
-
-                      {/* Delete */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteTarget(agent)
-                        }}
-                        disabled={isDeleting}
-                        className="p-1 rounded hover:bg-danger-muted text-text-muted hover:text-danger transition-colors disabled:opacity-50"
-                        title="Delete agent from workspace"
-                      >
-                        {isDeleting ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : (
-                          <Trash2 size={12} />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Right: Detail panel */}
-        <div className="flex-1 overflow-y-auto">
-          {selectedAgent ? (
-            <div className="p-4 space-y-4">
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="text-xl">
-                    {getAgentMeta(selectedAgent.parsed.name, specialists)?.icon ?? '🤖'}
-                  </span>
-                  <div>
-                    <h3 className="text-sm font-semibold text-text-primary">
-                      {getAgentMeta(selectedAgent.parsed.name, specialists)?.displayName ??
-                        selectedAgent.parsed.name}
-                    </h3>
-                    {selectedAgent.parsed.description && (
-                      <p className="text-xs text-text-secondary mt-0.5">
-                        {selectedAgent.parsed.description}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Activate/Deactivate button */}
-                {selectedAgent.isDeployed && (
-                  <button
-                    onClick={() => handleActivateToggle(selectedAgent)}
-                    disabled={togglingId === selectedAgent.filename}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
-                      selectedAgent.isActive
-                        ? 'bg-warning-muted text-mode-build-text border border-mode-build/30 hover:bg-mode-build-muted'
-                        : 'bg-success-muted text-success border border-success/30 hover:bg-success-muted'
-                    }`}
-                  >
-                    {togglingId === selectedAgent.filename ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : selectedAgent.isActive ? (
-                      <PowerOff size={12} />
-                    ) : (
-                      <Power size={12} />
-                    )}
-                    {selectedAgent.isActive ? 'Deactivate' : 'Activate'}
-                  </button>
-                )}
-              </div>
-
-              {/* Config info */}
-              <div className="grid grid-cols-2 gap-3">
-                {/* Model */}
-                <div className="bg-surface-overlay rounded-lg p-3 border border-border-subtle">
-                  <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                    Model
-                  </label>
-                  <p className="text-sm text-text-primary mt-1">{selectedAgent.parsed.model}</p>
-                </div>
-
-                {/* Status */}
-                <div className="bg-surface-overlay rounded-lg p-3 border border-border-subtle">
-                  <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                    Status
-                  </label>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span
-                      className={`w-2 h-2 rounded-full ${
-                        selectedAgent.isActive ? 'bg-success' : 'bg-surface-overlay'
-                      }`}
-                    />
-                    <span
-                      className={`text-sm ${
-                        selectedAgent.isActive ? 'text-success' : 'text-text-secondary'
-                      }`}
-                    >
-                      {selectedAgent.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Tools */}
-              {selectedAgent.parsed.tools.length > 0 && (
-                <div className="bg-surface-overlay rounded-lg p-3 border border-border-subtle">
-                  <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                    Tools
-                  </label>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {selectedAgent.parsed.tools.map((tool) => (
-                      <span
-                        key={tool}
-                        className="px-2 py-0.5 text-xs rounded-md bg-surface-float text-text-body font-mono"
-                      >
-                        {tool}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Skills */}
-              {selectedAgent.parsed.skills.length > 0 && (
-                <div className="bg-surface-overlay rounded-lg p-3 border border-border-subtle">
-                  <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                    Skills
-                  </label>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {selectedAgent.parsed.skills.map((skill) => (
-                      <span
-                        key={skill}
-                        className="px-2 py-0.5 text-xs rounded-md bg-primary-muted text-primary-text font-medium"
-                      >
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* YAML Editor */}
-              {selectedAgent.isDeployed && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-text-muted uppercase tracking-wider font-medium">
-                      Agent YAML
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-text-muted font-mono truncate max-w-[200px]">
-                        {selectedAgent.filePath}
-                      </span>
-                      <button
-                        onClick={handleSaveYaml}
-                        disabled={!hasEditorChanges || isSaving}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                          hasEditorChanges
-                            ? 'bg-primary hover:bg-primary-hover text-white'
-                            : 'bg-surface-overlay text-text-muted cursor-not-allowed'
-                        }`}
-                      >
-                        {isSaving ? (
-                          <>
-                            <Loader2 size={12} className="animate-spin" />
-                            Saving...
-                          </>
-                        ) : (
-                          <>
-                            <Save size={12} />
-                            Save
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                  <CodeEditor
-                    value={editorContent}
-                    onChange={handleEditorChange}
-                    language="yaml"
-                    className="min-h-[300px] max-h-[500px]"
-                  />
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full py-16 text-center">
-              <Bot size={24} className="text-border-default mb-2" />
-              <p className="text-sm text-text-secondary">Select an agent to view details</p>
-            </div>
-          )}
-        </div>
+        <AgentListPanel
+          agents={sortedAgents}
+          selectedAgent={selectedAgent}
+          syncingIds={syncingIds}
+          deletingId={deletingId}
+          togglingId={togglingId}
+          onSelect={handleSelectAgent}
+          onSync={handleSync}
+          onActivateToggle={handleActivateToggle}
+          onDelete={setDeleteTarget}
+        />
+        <AgentDetailPanel
+          selectedAgent={selectedAgent}
+          togglingId={togglingId}
+          editorContent={editorContent}
+          hasEditorChanges={hasEditorChanges}
+          isSaving={isSaving}
+          onActivateToggle={handleActivateToggle}
+          onEditorChange={handleEditorChange}
+          onSaveYaml={handleSaveYaml}
+        />
       </div>
 
-      {/* Delete confirmation */}
       <ConfirmDialog
         isOpen={deleteTarget !== null}
         title="Delete Agent"

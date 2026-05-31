@@ -39,7 +39,8 @@ export class MpaPlannerAdapter extends MpaBaseAdapter {
       detectedTechs: this.detectedTechs,
       grillDecisions: this.grillDecisions,
       previousPlan: this.previousPlan,
-      userFeedback: this.userFeedback
+      userFeedback: this.userFeedback,
+      model: this.resolvedModel
     })
   }
 

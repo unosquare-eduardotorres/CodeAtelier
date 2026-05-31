@@ -120,7 +120,7 @@ export function useGrillSession(opts: {
       .then((settings) => {
         setGrillProvider((settings.llmProvider as LLMProvider) ?? 'claude')
       })
-      .catch(() => {})
+      .catch((err) => console.warn('[useGrillSession] Non-fatal: workspace settings load failed:', err))
   }, [activeWorkspace?.id])
 
   // ── Start track evaluation ──

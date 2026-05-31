@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Lightbulb } from 'lucide-react'
-import { useWorkspaceStore } from '@renderer/store'
+import { useWorkspaceStore, useChatStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
 import EventLogPage from './EventLogPage'
@@ -122,7 +122,12 @@ export default function WorkspaceSettingsContent({
             onNavigateToChat()
           }}
           onRevisePlan={(feedback) => {
-            // Feedback is available for DaVinci to incorporate
+            // Inject council feedback into chat as a local message
+            const { appendLocalMessage } = useChatStore.getState()
+            appendLocalMessage(
+              `🏛️ **Council Review Feedback:**\n\n${feedback}\n\nPlease revise the plan based on this feedback.`,
+              { role: 'user' }
+            )
             onNavigateToChat()
           }}
           onDismiss={() => onNavigateToChat()}

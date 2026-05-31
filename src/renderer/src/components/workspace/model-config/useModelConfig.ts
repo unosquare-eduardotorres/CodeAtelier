@@ -104,7 +104,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     window.api
       .getPlatformInfo()
       .then(setPlatformInfo)
-      .catch(() => {})
+      .catch((err) => console.warn('[useModelConfig] Non-fatal: platform info load failed:', err))
   }, [])
 
   // Load current workspace settings

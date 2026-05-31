@@ -226,6 +226,170 @@ export class ChatStreamService {
     })
   }
 
+  // ── Stream Listener Factory ──
+
+  /**
+   * Builds the per-stream event listeners as a cohesive object.
+   * Extracted from stream() to reduce its cyclomatic complexity.
+   */
+  private buildStreamListeners(ctx: {
+    conversationId: string
+    requestId: string
+    streamingRole: 'da-vinci' | 'specialist'
+    phase: ConversationPhase
+    streamedContent: { value: string }
+    planInjected: { value: boolean }
+    workspacePath: string | undefined
+    specialistMeta: { specialist: string; taskId?: string } | undefined
+    adapterAgentId: string
+    resolveDone: () => void
+    rejectDone: (err: Error) => void
+  }): {
+    onChunk: (chunk: StreamChunk) => void
+    onComplete: () => void
+    onIntent: (intent: AgentIntent) => Promise<void>
+    onPlanEvent: (data: PlanDetectedEvent) => void
+    cleanupListeners: () => void
+  } {
+    const onChunk = (chunk: StreamChunk): void => {
+      try {
+        log.info(`[STREAM:chunk] type=${chunk.type} len=${chunk.content?.length ?? 0} convId=${ctx.conversationId.slice(0, 8)}`)
+        forwardChunkToRenderer(
+          this.mainWindow,
+          ctx.conversationId,
+          ctx.streamingRole,
+          chunk,
+          ctx.streamedContent,
+          ctx.workspacePath,
+          ctx.specialistMeta,
+          ctx.phase,
+          ctx.requestId
+        )
+      } catch (error) {
+        log.error('Failed to forward chunk to renderer:', error)
+      }
+    }
+
+    const onComplete = (): void => {
+      if (this.isStopped) {
+        cleanupListeners()
+        ctx.resolveDone()
+        return
+      }
+
+      const finalize = async (): Promise<void> => {
+        try {
+          log.info('Agent complete — saving to DB:', { contentLen: ctx.streamedContent.value.length })
+          const cleanedContent = ctx.streamedContent.value.trim()
+
+          if (!cleanedContent) {
+            const accumulatedText = chatAgentService.getStreamedContent()
+            log.error(
+              `[PIPELINE:silent-failure] Agent completed with no streamed content. ` +
+                `streamedLen=${ctx.streamedContent.value.length} ` +
+                `accumulatedLen=${accumulatedText?.length ?? 0} ` +
+                `executorBackend=${chatAgentService.getExecutorBackend()} ` +
+                `role=${ctx.streamingRole} specialist=${ctx.specialistMeta?.specialist ?? 'none'} ` +
+                `accumulatedPreview=${(accumulatedText ?? '').slice(0, 200).replace(/\n/g, ' ')}`
+            )
+          }
+
+          const savedMessage = messageRepository.create(
+            ctx.conversationId,
+            ctx.streamingRole,
+            cleanedContent,
+            ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
+          )
+          log.info('Agent message saved, id:', savedMessage.id)
+
+          // Process memory blocks
+          try {
+            const wpPath = chatAgentService.getWorkspacePath()
+            const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
+            const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
+            if (workspace) {
+              const memoriesCreated = memoryService.processMemoryBlocks(
+                ctx.streamedContent.value,
+                ctx.conversationId,
+                ctx.adapterAgentId,
+                workspace.id
+              )
+              if (memoriesCreated > 0) {
+                log.info(`Created ${memoriesCreated} memories from agent response`)
+              }
+            }
+          } catch (memErr) {
+            log.warn('Memory block processing failed:', memErr)
+          }
+
+          log.info(`[PIPELINE:agent-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`)
+          this.mainWindow.webContents.send(
+            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+            createCompleteMessage({ conversationId: ctx.conversationId, messageId: savedMessage.id, requestId: ctx.requestId })
+          )
+        } catch (error) {
+          log.error('Failed to save generalist message:', error)
+          this.mainWindow.webContents.send(
+            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+            createTextChunk({
+              conversationId: ctx.conversationId,
+              requestId: ctx.requestId,
+              text: `\n\n**Error saving response:** ${(error as Error).message}`,
+              role: ctx.streamingRole
+            })
+          )
+          this.mainWindow.webContents.send(
+            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+            createCompleteMessage({ conversationId: ctx.conversationId, messageId: `error-${Date.now()}`, requestId: ctx.requestId })
+          )
+        }
+
+        conversationStateMachine.transition('chatAgentComplete')
+        cleanupListeners()
+        ctx.resolveDone()
+      }
+
+      finalize().catch((err) => {
+        log.error('[PIPELINE:complete] Finalize failed:', err)
+        cleanupListeners()
+        ctx.rejectDone(err instanceof Error ? err : new Error(String(err)))
+      })
+    }
+
+    const onIntent = async (_intent: AgentIntent): Promise<void> => {
+      // No-op — handled by IntentRouter's persistent listener
+    }
+
+    const onPlanEvent = (data: PlanDetectedEvent): void => {
+      if (ctx.planInjected.value) {
+        log.warn('[PIPELINE:plan-skipped] Plan already injected this stream — skipping duplicate')
+        return
+      }
+      ctx.planInjected.value = true
+
+      const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
+      ctx.streamedContent.value += planBlock
+      this.mainWindow.webContents.send(
+        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+        createTextChunk({
+          conversationId: ctx.conversationId,
+          requestId: ctx.requestId,
+          text: planBlock,
+          role: ctx.streamingRole
+        })
+      )
+      log.info('[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer')
+    }
+
+    const cleanupListeners = (): void => {
+      if (conversationLifecycle.isActive) {
+        conversationLifecycle.complete()
+      }
+    }
+
+    return { onChunk, onComplete, onIntent, onPlanEvent, cleanupListeners }
+  }
+
   // ── Stream Lifecycle ──
 
   /**
@@ -381,180 +545,25 @@ export class ChatStreamService {
     messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson)
     log.info('User message saved to DB')
 
-    // ── Setup shared state for listeners ──
+    // ── Build per-stream listeners (extracted for reduced complexity) ──
     const streamedContent = { value: '' }
     const planInjected = { value: false }
     const workspacePath = chatAgentService.getWorkspacePath() ?? undefined
 
-    // ── Step 4: Define listeners ──
-    const onChunk = (chunk: StreamChunk): void => {
-      try {
-        log.info(`[STREAM:chunk] type=${chunk.type} len=${chunk.content?.length ?? 0} convId=${conversationId.slice(0, 8)}`)
-        forwardChunkToRenderer(
-          this.mainWindow,
-          conversationId,
-          streamingRole,
-          chunk,
-          streamedContent,
-          workspacePath,
-          specialistMeta,
-          phase,
-          requestId
-        )
-      } catch (error) {
-        log.error('Failed to forward chunk to renderer:', error)
-      }
-    }
-
-    const onComplete = (): void => {
-      if (this.isStopped) {
-        cleanupListeners()
-        resolveDone() // Resolve even on stop — the stop was intentional
-        return
-      }
-
-      const finalize = async (): Promise<void> => {
-        // Persist the generalist response to the DB before finishing the turn.
-        try {
-          log.info('Agent complete — saving to DB:', {
-            contentLen: streamedContent.value.length
-          })
-          const cleanedContent = streamedContent.value.trim()
-
-          if (!cleanedContent) {
-            // Diagnostic logging — surface enough context to triage the
-            // "blank bubble" failure mode without lying to the user via a
-            // misleading "_No response received_" placeholder.
-            const accumulatedText = chatAgentService.getStreamedContent()
-            log.error(
-              `[PIPELINE:silent-failure] Agent completed with no streamed content. ` +
-                `streamedLen=${streamedContent.value.length} ` +
-                `accumulatedLen=${accumulatedText?.length ?? 0} ` +
-                `executorBackend=${chatAgentService.getExecutorBackend()} ` +
-                `role=${streamingRole} specialist=${specialistMeta?.specialist ?? 'none'} ` +
-                `accumulatedPreview=${(accumulatedText ?? '').slice(0, 200).replace(/\n/g, ' ')}`
-            )
-          }
-
-          // Save an empty bubble when there's truly no response — the UI's
-          // tool-activity panel still shows what work was done. We avoid the
-          // "_No response received_" placeholder because it overwrites the
-          // tool-activity history that *was* successfully streamed.
-          const savedMessage = messageRepository.create(
-            conversationId,
-            streamingRole,
-            cleanedContent,
-            specialistMeta?.specialist ?? adapterAgentId
-          )
-          log.info('Agent message saved, id:', savedMessage.id)
-
-          // Process memory blocks
-          try {
-            const wpPath = chatAgentService.getWorkspacePath()
-            const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
-            const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
-            if (workspace) {
-              const memoriesCreated = memoryService.processMemoryBlocks(
-                streamedContent.value,
-                conversationId,
-                adapterAgentId,
-                workspace.id
-              )
-              if (memoriesCreated > 0) {
-                log.info(`Created ${memoriesCreated} memories from agent response`)
-              }
-            }
-          } catch (memErr) {
-            log.warn('Memory block processing failed:', memErr)
-          }
-
-          log.info(
-            `[PIPELINE:agent-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`
-          )
-          this.mainWindow.webContents.send(
-            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-            createCompleteMessage({
-              conversationId,
-              messageId: savedMessage.id,
-              requestId
-            })
-          )
-        } catch (error) {
-          log.error('Failed to save generalist message:', error)
-          this.mainWindow.webContents.send(
-            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-            createTextChunk({
-              conversationId,
-              requestId,
-              text: `\n\n**Error saving response:** ${(error as Error).message}`,
-              role: streamingRole
-            })
-          )
-          this.mainWindow.webContents.send(
-            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-            createCompleteMessage({
-              conversationId,
-              messageId: `error-${Date.now()}`,
-              requestId
-            })
-          )
-        }
-
-        conversationStateMachine.transition('chatAgentComplete')
-
-        cleanupListeners()
-        resolveDone()
-      }
-
-      finalize().catch((err) => {
-        log.error('[PIPELINE:complete] Finalize failed:', err)
-        cleanupListeners()
-        rejectDone(err instanceof Error ? err : new Error(String(err)))
+    const { onChunk, onComplete, onIntent, onPlanEvent, cleanupListeners } =
+      this.buildStreamListeners({
+        conversationId,
+        requestId,
+        streamingRole,
+        phase,
+        streamedContent,
+        planInjected,
+        workspacePath,
+        specialistMeta,
+        adapterAgentId,
+        resolveDone,
+        rejectDone
       })
-    }
-
-    // 'intent' events are forwarded by IntentRouter's persistent listener;
-    // no per-stream handling is required here.
-    const onIntent = async (_intent: AgentIntent): Promise<void> => {
-      // No-op.
-    }
-
-    // Plan event handler — injects ```plan``` block into streamed content so it's
-    // persisted to DB and the renderer's regex renders the TaskPlanCard.
-    // Must ALSO send the block as a chunk so the renderer's streamingContent includes it
-    // (finalizeStream builds contentMd from renderer-side streamingContent, not the DB).
-    const onPlanEvent = (data: PlanDetectedEvent): void => {
-      // Guard: only one plan per stream — skip subsequent emit_plan calls
-      if (planInjected.value) {
-        log.warn('[PIPELINE:plan-skipped] Plan already injected this stream — skipping duplicate')
-        return
-      }
-      planInjected.value = true
-
-      const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
-      streamedContent.value += planBlock
-      this.mainWindow.webContents.send(
-        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-        createTextChunk({
-          conversationId,
-          requestId,
-          text: planBlock,
-          role: streamingRole
-        })
-      )
-      log.info(
-        '[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer'
-      )
-    }
-
-    // cleanupListeners delegates to lifecycle disposers for centralized cleanup
-    const cleanupListeners = (): void => {
-      // Lifecycle disposers handle: streamingLock, activeRequestId, listener removal
-      // If lifecycle is still active, complete it. If already completed/aborted, this is a no-op.
-      if (conversationLifecycle.isActive) {
-        conversationLifecycle.complete()
-      }
-    }
 
     // ── Step 3 + 5: Mode switch + send ──
     try {

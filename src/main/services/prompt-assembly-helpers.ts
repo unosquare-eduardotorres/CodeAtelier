@@ -17,6 +17,7 @@ import {
   CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN,
   DIRECT_ANSWER_BOOST_PROMPT,
   DIRECT_ANSWER_BOOST_PROMPT_LEAN,
+  DIRECT_ANSWER_PLAN_MODE_EARLY,
   GIT_CONTEXT_GUIDANCE_PROMPT,
   GIT_CONTEXT_GUIDANCE_PROMPT_LEAN,
   GITHUB_CONTEXT_GUIDANCE_PROMPT,
@@ -27,7 +28,10 @@ import {
   MAESTRO_GUIDANCE_PROMPT_LEAN,
   MEMORY_PROTOCOL_PROMPT,
   MEMORY_PROTOCOL_PROMPT_LEAN,
+  PLAN_REMINDER_FULL,
+  PLAN_REMINDER_LEAN,
   REPOMAP_GUIDANCE_PROMPT,
+  REPOMAP_GUIDANCE_PROMPT_LEAN,
   SEMANTIC_SEARCH_GUIDANCE_PROMPT,
   SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN
 } from './default-prompts'
@@ -42,6 +46,10 @@ export interface PromptFeatureFlags {
   repomapEnabled: boolean
   semanticSearchEnabled: boolean
   githubConfigured: boolean
+  /** Whether git-context tools are mounted (default true). Set false for local-LLM adapters that skip git tools. */
+  includeGitContext?: boolean
+  /** Whether checkpoint-context tools are mounted (default true). Set false for evaluation adapters that skip checkpoints. */
+  includeCheckpoint?: boolean
   /** External MCPs active for this chat (e.g. { maestro: true }) — drives prompt guidance injection */
   externalMcpActive?: Record<string, boolean>
 }
@@ -63,22 +71,20 @@ export function appendMcpToolGuidance(
   const verbosity = resolvePromptVerbosity(model ?? '')
   const appendSections: string[] = []
 
-  // Lean: Code Graph rules already merged into identity prompt's ## Code Exploration — skip REPOMAP_GUIDANCE
-  if (verbosity !== 'lean') {
-    if (featureFlags.repomapEnabled && !basePrompt.includes('## Code Graph')) {
-      appendSections.push(REPOMAP_GUIDANCE_PROMPT)
-    }
+  // Lean: use compressed Code Graph guidance. Full: use verbose priority rules.
+  if (featureFlags.repomapEnabled && !basePrompt.includes('## Code Graph')) {
+    appendSections.push(verbosity === 'lean' ? REPOMAP_GUIDANCE_PROMPT_LEAN : REPOMAP_GUIDANCE_PROMPT)
   }
 
   if (featureFlags.semanticSearchEnabled && !basePrompt.includes('## Semantic Search')) {
     appendSections.push(verbosity === 'lean' ? SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN : SEMANTIC_SEARCH_GUIDANCE_PROMPT)
   }
 
-  if (!basePrompt.includes('## Git Context')) {
+  if ((featureFlags.includeGitContext !== false) && !basePrompt.includes('## Git Context')) {
     appendSections.push(verbosity === 'lean' ? GIT_CONTEXT_GUIDANCE_PROMPT_LEAN : GIT_CONTEXT_GUIDANCE_PROMPT)
   }
 
-  if (!basePrompt.includes('## Checkpoint Tools')) {
+  if ((featureFlags.includeCheckpoint !== false) && !basePrompt.includes('## Checkpoint Tools')) {
     appendSections.push(verbosity === 'lean' ? CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN : CHECKPOINT_CONTEXT_GUIDANCE_PROMPT)
   }
 
@@ -143,9 +149,7 @@ export function buildConditionalPrefix(opts: {
       // Lightweight signal for plan-mode questions on early turns.
       // DIRECT_ANSWER_BOOST_PROMPT references "conversation history" which doesn't
       // exist on turn 1-2, so we use a targeted one-liner instead.
-      sections.push(
-        `[This is a question — answer it directly in plain text. Do NOT call emit_plan for explanations or Q&A.]`
-      )
+      sections.push(DIRECT_ANSWER_PLAN_MODE_EARLY)
     }
   }
 
@@ -162,11 +166,10 @@ export function buildConditionalPrefix(opts: {
   const planReminderInjected = isPlanGenerationRequest || (mode === 'plan' && !isSimpleQuestion)
 
   if (planReminderInjected) {
-    // Lean + turn 1: Opus knows emit_plan from tool schema — short reminder suffices.
-    const planReminder =
-      turnCount <= 1 && verbosity !== 'lean'
-        ? `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards.]`
-        : `[Use emit_plan for plans.]`
+    // Turn 1: full reminder (unless lean). Turns 2+: always minimal echo.
+    const planReminder = turnCount > 1
+      ? PLAN_REMINDER_LEAN
+      : (verbosity === 'lean' ? PLAN_REMINDER_LEAN : PLAN_REMINDER_FULL)
     sections.push(planReminder)
   }
 

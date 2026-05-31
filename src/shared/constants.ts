@@ -1267,6 +1267,13 @@ export const OLLAMA_DEFAULT_PORT = 11434 as const
 /** Default oMLX connection (Apple Silicon native) */
 export const OMLX_DEFAULT_PORT = 8000 as const
 
+/**
+ * Skill filenames that are ALWAYS injected into every prompt — DaVinci,
+ * Project Specialist, and local LLM paths. These are foundational behavioral
+ * guidelines, not domain-specific knowledge.
+ */
+export const BASELINE_SKILL_FILENAMES = ['coding-discipline'] as const
+
 /** Recommended local models — curated by memory tier (Mac-first, MLX-optimized where available) */
 export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[] = [
   // 8GB tier

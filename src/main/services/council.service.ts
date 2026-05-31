@@ -13,7 +13,10 @@
  * GrillAgentService and AuditAgentService.
  */
 
+import { execFile } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import os from 'node:os'
+import { promisify } from 'node:util'
 import log from 'electron-log'
 import type {
   CouncilAdvisorRole,
@@ -52,7 +55,6 @@ interface AdvisorInstance {
 }
 
 interface CouncilSessionEntry {
-  id: string
   workspaceId: string
   workspacePath: string
   conversationId?: string
@@ -113,7 +115,6 @@ export class CouncilService extends EventEmitter {
       return
     }
 
-    const sessionId = `council-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
     const framedInput: CouncilFramedInput = {
       planContent: params.planContent,
       structuredPlan: params.structuredPlan,
@@ -137,7 +138,6 @@ export class CouncilService extends EventEmitter {
     }
 
     const entry: CouncilSessionEntry = {
-      id: sessionId,
       workspaceId: params.workspaceId,
       workspacePath: params.workspacePath,
       conversationId: params.conversationId,
@@ -187,6 +187,12 @@ export class CouncilService extends EventEmitter {
       this.setPhase(entry, 'failed')
     } finally {
       entry.running = false
+      // Defensive cleanup — stop any sessions still held by advisors
+      for (const advisor of entry.advisors.values()) {
+        if (advisor.session) {
+          try { await advisor.session.stop() } catch { /* non-fatal */ }
+        }
+      }
       this.sessions.delete(params.workspaceId)
       this.emit('complete', { workspaceId: params.workspaceId })
     }
@@ -291,9 +297,6 @@ export class CouncilService extends EventEmitter {
           councilLog.warn(`[council:${role}] completed but no council-review block found`)
         }
 
-        // Cleanup
-        try { await session.stop() } catch { /* non-fatal */ }
-
         this.emit('member-complete', {
           workspaceId: entry.workspaceId,
           advisorRole: role,
@@ -310,6 +313,8 @@ export class CouncilService extends EventEmitter {
           review: null
         })
         return null
+      } finally {
+        try { await session.stop() } catch { /* non-fatal */ }
       }
     })
 
@@ -351,12 +356,10 @@ Blind Spots: ${r.blindSpots.join('; ')}`
       )
       .join('\n\n---\n\n')
 
+    const execFileAsync = promisify(execFile)
+
     const peerPromises = COUNCIL_ADVISOR_ROLES.map(async (role) => {
       try {
-        // Use async CLI call for peer review — avoids blocking the main thread
-        const { execFile } = await import('node:child_process')
-        const { promisify } = await import('node:util')
-        const execFileAsync = promisify(execFile)
 
         const systemPrompt = `You are a peer reviewer in an LLM Council. You are reading ${reviews.length} anonymized advisor responses (labeled A through ${String.fromCharCode(64 + reviews.length)}).
 
@@ -444,7 +447,6 @@ Respond ONLY with a JSON block:
       })
 
       // Use OS temp dir as working directory (chairman has no tools)
-      const os = await import('node:os')
       const workDir = os.tmpdir()
 
       await session.start(workDir, 'plan')
@@ -453,8 +455,6 @@ Respond ONLY with a JSON block:
 
       const responseText = session.getStreamedContent()
       const verdict = parseCouncilVerdict(responseText)
-
-      try { await session.stop() } catch { /* non-fatal */ }
 
       if (verdict) {
         councilLog.info(`[council:chairman] completed — overall score=${verdict.overallScore}`)
@@ -466,6 +466,8 @@ Respond ONLY with a JSON block:
     } catch (err) {
       councilLog.error('[council:chairman] failed:', err)
       return null
+    } finally {
+      try { await session.stop() } catch { /* non-fatal */ }
     }
   }
 
@@ -476,6 +478,7 @@ Respond ONLY with a JSON block:
     for (const advisor of entry.advisors.values()) {
       if (advisor.session) {
         try { advisor.session.cancelCurrentQuery() } catch { /* non-fatal */ }
+        try { advisor.session.stop() } catch { /* non-fatal — stop() may be sync or already stopped */ }
       }
     }
     this.setPhase(entry, 'cancelled')

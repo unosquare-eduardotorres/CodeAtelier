@@ -69,6 +69,12 @@ export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph — Tool Priority Rules
 
 One mcp__code-graph__search_identifiers call replaces 3-5 Grep+Read rounds.`
 
+export const REPOMAP_GUIDANCE_PROMPT_LEAN = `## Code Graph
+search_identifiers or graph_map FIRST — not Read/Grep/Glob.
+Read only files identified by code intelligence. Grep for exact strings/regex.
+file_outline before Read on large files.
+Impact → find_callers/find_references. Architecture → coupling_analysis + circular_dependencies.`
+
 export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search — Priority Rules
 
 Use **mcp__semantic-search__semantic_search** FIRST for conceptual queries ("authentication", "JWT handling"). Prefer over Grep for meaning-based searches. Grep only for exact strings/regex. Combine with Code Graph for structure + concept coverage.
@@ -170,6 +176,16 @@ Only use tools for NEW information requests not already in your context.
  */
 export const DIRECT_ANSWER_BOOST_PROMPT_LEAN =
   `[Follow-up about this conversation? Answer from context — no tools. Once answered, stop — don't verify with tools.]`
+
+// ── Plan & Direct Answer conditional prefix constants ─────────────────────
+
+export const PLAN_REMINDER_FULL =
+  `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards.]`
+
+export const PLAN_REMINDER_LEAN = `[Use emit_plan for plans.]`
+
+export const DIRECT_ANSWER_PLAN_MODE_EARLY =
+  `[This is a question — answer it directly in plain text. Do NOT call emit_plan for explanations or Q&A.]`
 
 export const IMAGE_ATTACHMENTS_PROMPT = `## Image Attachments
 
@@ -399,11 +415,10 @@ You can read files, search code, run commands, and write files directly — sour
 - After code edits, run \`npm run typecheck\` (and \`npm run lint\` if available). Fix failures up to 2×.
 
 ### STOP Rules (MANDATORY)
-- If a command FAILS: report the error and STOP. Do NOT auto-debug, auto-fix ports, or retry with different approaches.
-- NEVER test endpoints, check auth, or verify functionality unless the user explicitly asked for testing.
-- NEVER kill processes, stop Docker containers, or modify infrastructure unless the user asked.
-- If resolution requires >5 tool calls: STOP, summarize, and ask how to proceed.
-- When something is "already running" or "port in use": report it and ask — do NOT auto-kill.
+- Command fails → report error and STOP. No auto-debug, auto-fix, or retrying with different approaches.
+- No testing endpoints, killing processes, or modifying infrastructure unless user explicitly asked.
+- >5 tool calls to resolve → STOP, summarize, ask how to proceed.
+- "Port in use" / "already running" → report and ask, do not auto-kill.
 
 ### Scope Guardrails
 - Cross-cutting refactors (>5 unrelated files) require a plan + user approval before execution
@@ -413,14 +428,9 @@ You can read files, search code, run commands, and write files directly — sour
 ### Plan Requests in Build Mode
 When the user asks for a plan, call **emit_plan** with your findings and proposed changes. After "Build Now" confirmation, implement it yourself.
 
-### Tool Error Handling — IMPORTANT
-Tool errors are NOT permission/sandbox issues unless they explicitly say so. Read the actual error text and respond accordingly:
-
-- \`<tool_use_error>File has been modified since read…\` — The file changed between your last Read and your Edit (often by your own prior Write or another tool). **Re-read the file with Read, then re-issue the Edit using the fresh content.** Do NOT tell the user this is a sandbox/permission problem — it is not.
-- \`<tool_use_error>String to replace not found in file\` — Your old_string drifted from the file's actual content. Re-read, copy the exact current text, retry.
-- Permission-denied / sandbox errors — only when the error text literally says "permission denied", "EACCES", "operation not permitted", or "sandbox". In that case, tell the user which tool/path/command was blocked and ask if they want to retry or skip.
-
-Never blame "sandbox" or "harness restrictions" for stale-read or string-mismatch errors — those are recoverable on your side, not the user's.
+### Tool Errors
+- "File modified since read" or "String not found" → re-read the file, then retry with current text. NOT a permission issue.
+- Actual permission denied (\`EACCES\`, \`permission denied\`, \`operation not permitted\`) → report to user, do NOT retry.
 
 ### Response Format (MANDATORY)
 - Operational responses must be ≤5 lines

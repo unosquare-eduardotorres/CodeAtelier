@@ -30,6 +30,7 @@ import { detectTechStack } from '../tech-stack-detector.service'
 import { chatAgentLogger } from '../../logger'
 import { appendMcpToolGuidance, type PromptFeatureFlags } from '../prompt-assembly-helpers'
 import { modelConfigService } from '../model-config.service'
+import { buildReadOnlyToolConfig } from './evaluation-mcp-config'
 
 export class AuditRoleAdapter implements AgentRoleAdapter {
   readonly role = 'audit' as const
@@ -114,7 +115,9 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
     const featureFlags: PromptFeatureFlags = {
       repomapEnabled: this.repomapEnabled,
       semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: false // auditors don't mount GitHub tools
+      githubConfigured: false, // auditors don't mount GitHub tools
+      includeGitContext: this.llmProvider !== 'local-llm',
+      includeCheckpoint: false // auditors don't mount checkpoint tools
     }
 
     this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags, resolvedModel)
@@ -145,125 +148,14 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
   }
 
   buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
-    // Local LLM path — mount code-graph, semantic-search (if enabled), code-analysis.
-    // Skip git-context to save tokens (Bash + git CLI equivalent).
-    if (this.llmProvider === 'local-llm') {
-      // MCP servers configured externally via McpConfigWriter (CLI) or OpenCode config.
-      return {
-        allowedTools: [
-          'Read',
-          'Glob',
-          'Grep',
-          'WebSearch',
-          'WebFetch',
-          // Code graph (if mounted)
-          ...(this.repomapEnabled && ctx.workspaceId
-            ? [
-                'mcp__code-graph__graph_map',
-                'mcp__code-graph__search_identifiers',
-                'mcp__code-graph__find_dead_code',
-                'mcp__code-graph__file_outline',
-                'mcp__code-graph__find_callers',
-                'mcp__code-graph__find_callees',
-                'mcp__code-graph__find_references',
-                'mcp__code-graph__file_dependencies',
-                'mcp__code-graph__file_dependents',
-                'mcp__code-graph__symbol_hotspots',
-                'mcp__code-graph__coupling_analysis',
-                'mcp__code-graph__circular_dependencies',
-                'mcp__code-graph__module_boundary_health'
-              ]
-            : []),
-          // Semantic search (if mounted)
-          ...(this.semanticSearchEnabled && ctx.workspaceId
-            ? [
-                'mcp__semantic-search__semantic_search',
-                'mcp__semantic-search__similar_code',
-                'mcp__semantic-search__codebase_concepts'
-              ]
-            : []),
-          // Code analysis (always)
-          'mcp__code-analysis__todo_scanner',
-          'mcp__code-analysis__dependency_health',
-          'mcp__code-analysis__test_coverage_map'
-        ],
-        disallowedTools: [
-          'Write',
-          'Edit',
-          'Bash',
-          'ListDir',
-          'Agent',
-          'ToolSearch',
-          'ExitPlanMode',
-          'AskUserQuestion',
-          'TodoWrite', // deprecated — kept for backward compat
-          'TaskCreate', // new Task tools (SDK 0.2.136+)
-          'TaskUpdate'
-        ]
-      }
-    }
-
-    // MCP servers configured externally via McpConfigWriter (CLI) or OpenCode config.
-    // Read-only — NO control-actions MCP, NO checkpoint-context, NO github-context
-
-    return {
-      // Explicit allow-list: read-only tools only
-      allowedTools: [
-        'Read',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch',
-        // Code graph MCP tools (if mounted)
-        ...(this.repomapEnabled && ctx.workspaceId
-          ? [
-              'mcp__code-graph__graph_map',
-              'mcp__code-graph__search_identifiers',
-              'mcp__code-graph__find_dead_code',
-              'mcp__code-graph__file_outline',
-              'mcp__code-graph__find_callers',
-              'mcp__code-graph__find_callees',
-              'mcp__code-graph__find_references',
-              'mcp__code-graph__file_dependencies',
-              'mcp__code-graph__file_dependents',
-              'mcp__code-graph__symbol_hotspots',
-              'mcp__code-graph__coupling_analysis',
-              'mcp__code-graph__circular_dependencies',
-              'mcp__code-graph__module_boundary_health'
-            ]
-          : []),
-        // Semantic search (if mounted)
-        ...(this.semanticSearchEnabled && ctx.workspaceId
-          ? [
-              'mcp__semantic-search__semantic_search',
-              'mcp__semantic-search__similar_code',
-              'mcp__semantic-search__codebase_concepts'
-            ]
-          : []),
-        // Git context (always)
-        'mcp__git-context__git_log',
-        'mcp__git-context__git_diff',
-        'mcp__git-context__git_blame',
-        // Code analysis (always)
-        'mcp__code-analysis__todo_scanner',
-        'mcp__code-analysis__dependency_health',
-        'mcp__code-analysis__test_coverage_map'
-      ],
-      // Explicitly block all write + agent tools
-      disallowedTools: [
-        'Write',
-        'Edit',
-        'Bash',
-        'ListDir',
-        'Agent',
-        'ToolSearch',
-        'ExitPlanMode',
-        'AskUserQuestion',
-        'TodoWrite', // deprecated — kept for backward compat
-        'TaskCreate', // new Task tools (SDK 0.2.136+)
-        'TaskUpdate'
-      ]
-    }
+    // Use the shared read-only tool config — same pattern as grill/council adapters.
+    // Local LLMs skip git-context to save tokens (Bash + git CLI equivalent).
+    return buildReadOnlyToolConfig({
+      repomapEnabled: this.repomapEnabled,
+      semanticSearchEnabled: this.semanticSearchEnabled,
+      hasWorkspace: !!ctx.workspaceId,
+      includeGitContext: this.llmProvider !== 'local-llm'
+    })
   }
 
   buildControlCallbacks(_params: {

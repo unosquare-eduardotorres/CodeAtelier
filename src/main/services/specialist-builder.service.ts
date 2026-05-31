@@ -62,6 +62,10 @@ interface SpecialistRow {
   build_status: 'pending' | 'building' | 'ready' | 'failed'
   stack_fingerprint: string | null
   detected_techs: string
+  last_built_at?: string
+  updated_at?: string
+  skill_recommendations_hash?: string | null
+  skill_recommendations_json?: string | null
 }
 
 interface WorkspaceRow {
@@ -365,11 +369,17 @@ export class SpecialistBuilderService {
     }
   }
 
+  /** Hard cap on specialist skill section size (chars). Matches DaVinci's 4K budget. */
+  private static readonly SKILL_BUDGET_CHARS = 4000
+
   /**
    * Read `specialist_skills.is_enabled = 1` rows for this specialist and
    * format them as a bullet list of skill names + descriptions. The builder
    * injects this into the prompt so enabled skills actually influence the
    * Project Specialist's behavior.
+   *
+   * Capped at SKILL_BUDGET_CHARS to prevent unbounded prompt growth when
+   * many skills are enabled.
    */
   private readEnabledSkills(specialistId: string): string {
     const db = getDatabase()
@@ -386,9 +396,19 @@ export class SpecialistBuilderService {
     if (rows.length === 0) {
       return '(no skills enabled yet — enable from the Skills tab)'
     }
-    return rows
-      .map((r) => `- **${r.name}**${r.description ? ` — ${r.description}` : ''}`)
-      .join('\n')
+
+    const lines: string[] = []
+    let totalChars = 0
+    for (const r of rows) {
+      const line = `- **${r.name}**${r.description ? ` — ${r.description}` : ''}`
+      if (totalChars + line.length > SpecialistBuilderService.SKILL_BUDGET_CHARS && lines.length > 0) {
+        lines.push(`_(${rows.length - lines.length} more skills omitted — budget cap reached)_`)
+        break
+      }
+      lines.push(line)
+      totalChars += line.length + 1 // +1 for newline
+    }
+    return lines.join('\n')
   }
 
   /**
