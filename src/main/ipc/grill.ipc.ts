@@ -7,22 +7,22 @@
 
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
-import { IPC_CHANNELS, MCP_TOOLS } from '../../shared/constants'
-import type { GrillTrackId, GrillEvaluation, LLMProvider } from '../../shared/types'
+import { IPC_CHANNELS } from '../../shared/constants'
+import type { GrillTrackId, GrillEvaluation, LLMProvider, GrillStructuredPlan } from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
-import { summarizeToolInput } from '../services/agent-base.service'
-import { extractResultSummary, reportToolError } from './chat-shared'
+import { processToolChunk } from './tool-chunk-processor'
+import { createTimedCleanupMap } from './listener-cleanup'
 import { workspaceRepository } from '../db/repositories'
 import { grillAgentService } from '../services/grill-agent.service'
 import { grillPersistenceController } from '../services/grill-persistence.controller'
 import { grillPlanGeneratorService } from '../services/grill-plan-generator.service'
+import { getSessionEventRouter } from '../services/session-event-router'
 import { validateSender } from './validate-sender'
 import log from 'electron-log'
-import type { GrillStructuredPlan } from '../../shared/types'
 
 const grillLog = log.scope('grill-ipc')
 
-export function registerGrillIpc(mainWindow: BrowserWindow): void {
+export function registerGrillIpc(_mainWindow: BrowserWindow): void {
   // ── grill:evaluate — start a grill evaluation ──────────────────────
 
   ipcMain.handle(
@@ -76,7 +76,7 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
         const llmProvider: LLMProvider = explicitProvider ?? 'claude'
 
         // Wire event forwarding (no persistence controller for greenfield)
-        wireGrillEvents(mainWindow, '')
+        wireGrillEvents(workspaceId, '')
 
         grillAgentService
           .evaluateGreenfield({
@@ -113,7 +113,7 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
       const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
 
       // Wire event forwarding (through persistence controller)
-      wireGrillEvents(mainWindow, workspace.repoPath)
+      wireGrillEvents(workspaceId, workspace.repoPath)
 
       // Start the evaluation (non-blocking — runs in background)
       grillAgentService
@@ -138,7 +138,7 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.GRILL_CANCEL, (event): void => {
     validateSender(event)
     grillAgentService.cancel()
-    grillPersistenceController.clearTracking(mainWindow)
+    grillPersistenceController.clearTracking()
   })
 
   // ── grill:getStatus — current grill status for a workspace ────────
@@ -161,7 +161,7 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.GRILL_SAVE_ANSWERS,
     (event, args: { sessionId: string; questionStates: Record<string, unknown> }): void => {
       validateSender(event)
-      grillPersistenceController.saveAnswers(args.sessionId, args.questionStates, mainWindow)
+      grillPersistenceController.saveAnswers(args.sessionId, args.questionStates)
     }
   )
 
@@ -250,126 +250,69 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
 
 // ── Event forwarding ─────────────────────────────────────────────────────
 
-/**
- * Wire one-time event listeners for the current grill evaluation.
- * Transforms stream chunks, then routes through the persistence controller
- * which both persists to DB and forwards to the renderer.
- */
-/** Whether global listeners have been wired (only once). */
-let grillListenersWired = false
+const grillCleanup = createTimedCleanupMap('grill')
 
 /**
- * Wire persistent event listeners for grill evaluations.
- * Called once on first evaluation — listeners persist across evaluations
- * to support concurrent per-workspace sessions.
+ * Wire per-workspace event listeners for the current grill evaluation.
+ * Transforms stream chunks, then routes through the persistence controller
+ * which both persists to DB and forwards to the renderer via SessionEventRouter.
  */
-function wireGrillEvents(mainWindow: BrowserWindow, workspacePath: string): void {
-  if (grillListenersWired) return
-  grillListenersWired = true
+function wireGrillEvents(workspaceId: string, workspacePath: string): void {
+  const cleanups = grillCleanup.prepareCleanups(workspaceId)
+  const router = getSessionEventRouter()
 
   // ── stream — transform chunk + route through persistence ──
-  grillAgentService.on('stream', (data: { workspaceId?: string; chunk: StreamChunk }) => {
-    const { chunk } = data
+  grillCleanup.addListener<{ workspaceId?: string; chunk: StreamChunk }>(
+    cleanups,
+    grillAgentService,
+    'stream',
+    (data) => {
+      const { chunk } = data
 
-    if (chunk.type === 'text' && chunk.content) {
-      grillPersistenceController.handleStreamChunk(
-        { type: 'text', content: chunk.content },
-        mainWindow
-      )
-    } else if (chunk.type === 'tool_use') {
-      // Skip control tools
-      if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
-
-      let inputSummary: string | undefined
-      if (chunk.toolInput) {
-        try {
-          const parsed = JSON.parse(chunk.toolInput) as Record<string, unknown>
-          inputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
-        } catch {
-          inputSummary = chunk.toolInput.slice(0, 120)
+      if (chunk.type === 'text' && chunk.content) {
+        grillPersistenceController.handleStreamChunk(
+          { type: 'text', content: chunk.content },
+          workspaceId,
+          router
+        )
+      } else if (
+        chunk.type === 'tool_use' ||
+        chunk.type === 'tool_result' ||
+        chunk.type === 'tool_progress'
+      ) {
+        const result = processToolChunk(chunk, {
+          workspacePath,
+          agentType: 'grill',
+          formatTagsToSkip: ['grill-evaluation']
+        })
+        if (result) {
+          grillPersistenceController.handleStreamChunk(result, workspaceId, router)
         }
       }
-
-      grillPersistenceController.handleStreamChunk(
-        {
-          type: 'tool_activity',
-          toolActivity: {
-            id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            toolName: chunk.toolName ?? 'Unknown',
-            status: 'running' as const,
-            input: inputSummary,
-            startedAt: Date.now()
-          }
-        },
-        mainWindow
-      )
-    } else if (chunk.type === 'tool_result') {
-      // Skip control tools
-      if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
-
-      const isToolError =
-        typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
-
-      // Skip reporting prompt-format artifacts that the model sometimes emits as tool calls.
-      // grill-evaluation is a fenced-block language tag, not a real tool.
-      const GRILL_FORMAT_TAGS = new Set(['grill-evaluation'])
-
-      // Auto-capture tool errors to the bug tracker (skip known format tags)
-      if (isToolError && chunk.content && !GRILL_FORMAT_TAGS.has(chunk.toolName ?? '')) {
-        reportToolError(chunk.toolName ?? 'Unknown', chunk.content, { agentType: 'grill' })
-      }
-
-      const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
-      const resultSummary = resultSummaryObj?.result
-      const resultDetail = resultSummaryObj?.resultDetail
-
-      let inputSummary: string | undefined
-      if (chunk.content) {
-        try {
-          const parsed = JSON.parse(chunk.content) as Record<string, unknown>
-          inputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
-        } catch {
-          // Non-JSON content — skip input summary
-        }
-      }
-
-      const toolActivity: Record<string, unknown> = {
-        id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        toolName: chunk.toolName ?? 'Unknown',
-        status: isToolError ? 'error' : 'completed',
-        completedAt: Date.now()
-      }
-      if (inputSummary) toolActivity.input = inputSummary
-      if (resultSummary) toolActivity.result = resultSummary
-      if (resultDetail) toolActivity.resultDetail = resultDetail
-
-      grillPersistenceController.handleStreamChunk(
-        { type: 'tool_activity', toolActivity },
-        mainWindow
-      )
-    } else if (chunk.type === 'tool_progress') {
-      grillPersistenceController.handleStreamChunk(
-        {
-          type: 'tool_activity',
-          toolActivity: {
-            id: chunk.toolId ?? `tool-${Date.now()}`,
-            toolName: chunk.toolName ?? 'Unknown',
-            status: 'running' as const,
-            elapsedSeconds: chunk.elapsedSeconds
-          }
-        },
-        mainWindow
-      )
     }
-  })
+  )
 
   // ── evaluation — through persistence controller ──
-  grillAgentService.on('evaluation', (data: GrillEvaluation & { workspaceId?: string }) => {
-    grillPersistenceController.handleEvaluationResult(data, mainWindow)
-  })
+  grillCleanup.addListener<GrillEvaluation & { workspaceId?: string }>(
+    cleanups,
+    grillAgentService,
+    'evaluation',
+    (data) => {
+      grillPersistenceController.handleEvaluationResult(data, workspaceId, router)
+    }
+  )
 
   // ── complete — through persistence controller ──
-  grillAgentService.on('complete', (_data?: { workspaceId?: string }) => {
-    grillPersistenceController.handleComplete(mainWindow)
-  })
+  grillCleanup.addListener<{ workspaceId?: string } | undefined>(
+    cleanups,
+    grillAgentService,
+    'complete',
+    () => {
+      grillPersistenceController.handleComplete(workspaceId, router)
+      grillCleanup.runCleanup(workspaceId)
+    }
+  )
+
+  // Safety net: auto-clean listeners after 60 min (max adapter timeout is 45 min)
+  grillCleanup.scheduleAutoCleanup(workspaceId, cleanups, 60 * 60_000)
 }

@@ -3,25 +3,25 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 [data-theme="porcelain"] {
   /* ── Surface layers (light → dark) ── */
-  --color-surface-base: #f8f9fb;
-  --color-surface-raised: #f0f1f4;
+  --color-surface-base: #f9fafb;
+  --color-surface-raised: #ecedf2;
   --color-surface-overlay: #e8e9ed;
   --color-surface-float: #dddee3;
 
   /* ── Border layers (slate-based) ── */
-  --color-border-subtle: rgba(100, 116, 139, 0.12);
-  --color-border-default: rgba(100, 116, 139, 0.22);
-  --color-border-strong: rgba(100, 116, 139, 0.40);
+  --color-border-subtle: rgba(100, 116, 139, 0.20);
+  --color-border-default: rgba(100, 116, 139, 0.32);
+  --color-border-strong: rgba(100, 116, 139, 0.50);
 
   /* ── Text hierarchy (dark on light) ── */
   --color-text-primary: #1e293b;
-  --color-text-body: #334155;
+  --color-text-body: #303c50;
   --color-text-secondary: #64748b;
   --color-text-muted: #94a3b8;
 
   /* ── Code text ── */
   --color-code-text: #1e293b;
-  --color-code-inline: #0369a1;
+  --color-code-inline: #0b5d92;
   --color-text-emphasis: #0f172a;
 
   /* ── Primary accent (Charcoal Slate) ── */
@@ -30,8 +30,8 @@
   --color-primary-muted: rgba(71, 85, 105, 0.10);
   --color-primary-text: #1e293b;
 
-  /* ── Accent (Ocean Blue) ── */
-  --color-accent: #0284c7;
+  /* ── Accent (Ocean Blue — APCA-calibrated for surface-overlay #e8e9ed) ── */
+  --color-accent: #0564a0;
   --color-accent-muted: rgba(2, 132, 199, 0.10);
 
   /* ── Teal / Forest ── */
@@ -56,27 +56,27 @@
   --color-mode-plan: #e0f2fe;
   --color-mode-plan-muted: rgba(14, 165, 233, 0.08);
   --color-mode-plan-text: #0369a1;
-  --color-mode-plan-border: rgba(14, 165, 233, 0.20);
+  --color-mode-plan-border: rgba(14, 165, 233, 0.30);
 
   --color-mode-build: #fef3c7;
   --color-mode-build-muted: rgba(245, 158, 11, 0.08);
   --color-mode-build-text: #92400e;
-  --color-mode-build-border: rgba(245, 158, 11, 0.20);
+  --color-mode-build-border: rgba(245, 158, 11, 0.30);
 
   --color-mode-danger: #fee2e2;
   --color-mode-danger-muted: rgba(220, 38, 38, 0.08);
   --color-mode-danger-text: #dc2626;
-  --color-mode-danger-border: rgba(220, 38, 38, 0.20);
+  --color-mode-danger-border: rgba(220, 38, 38, 0.30);
 
   /* ── Plan Card ── */
   --color-plan-card: #0284c7;
   --color-plan-card-muted: rgba(2, 132, 199, 0.08);
-  --color-plan-card-border: rgba(2, 132, 199, 0.20);
+  --color-plan-card-border: rgba(2, 132, 199, 0.30);
   --color-plan-card-text: #0369a1;
   --color-plan-card-section-bg: rgba(2, 132, 199, 0.04);
   --color-plan-card-accent: #0d9488;
   --color-plan-card-phase-bg: rgba(13, 148, 136, 0.06);
-  --color-plan-card-phase-border: rgba(13, 148, 136, 0.15);
+  --color-plan-card-phase-border: rgba(13, 148, 136, 0.25);
 
   /* ── Panel colors ── */
   --color-panel-olive: #f5f5f4;
@@ -98,10 +98,10 @@
   --color-agent-cloud: #0d9488;
 
   /* ── Special-purpose tokens ── */
-  --color-user-bubble: rgba(71, 85, 105, 0.06);
+  --color-user-bubble: rgba(71, 85, 105, 0.10);
   --color-grill: #ea580c;
   --color-grill-muted: rgba(234, 88, 12, 0.10);
-  --color-gold-glow: rgba(71, 85, 105, 0.08);
+  --color-gold-glow: rgba(71, 85, 105, 0.12);
   --color-gold-muted: #94a3b8;
 
   /* ── Component tokens ── */
@@ -110,7 +110,7 @@
   --color-button-danger-bg: var(--color-danger);
 
   --color-card-bg: rgba(71, 85, 105, 0.02);
-  --color-card-border: var(--color-border-subtle);
+  --color-card-border: var(--color-border-default);
 
   --color-input-bg: #ffffff;
   --color-input-border: var(--color-border-default);
@@ -120,24 +120,24 @@
   --color-modal-border: var(--color-border-default);
 
   --color-sidebar-bg: var(--color-surface-raised);
-  --color-sidebar-active: var(--color-primary-muted);
+  --color-sidebar-active: rgba(71, 85, 105, 0.16);
 
   /* ── Zebra stripe for tables ── */
   --color-table-zebra: rgba(71, 85, 105, 0.03);
 
   /* ── Scrollbar ── */
-  --color-scrollbar-thumb: rgba(100, 116, 139, 0.25);
-  --color-scrollbar-thumb-hover: rgba(100, 116, 139, 0.40);
+  --color-scrollbar-thumb: rgba(100, 116, 139, 0.35);
+  --color-scrollbar-thumb-hover: rgba(100, 116, 139, 0.50);
 
   /* ── Selection ── */
-  --color-selection-bg: rgba(71, 85, 105, 0.20);
+  --color-selection-bg: rgba(71, 85, 105, 0.25);
   --color-selection-text: var(--color-text-primary);
 
   /* ── Hover lift shadow ── */
-  --color-hover-shadow: rgba(71, 85, 105, 0.12);
+  --color-hover-shadow: rgba(71, 85, 105, 0.20);
 
   /* ── Specialist radial gradient ── */
-  --color-specialist-glow: rgba(71, 85, 105, 0.06);
+  --color-specialist-glow: rgba(71, 85, 105, 0.10);
   --color-specialist-mid: rgba(221, 222, 227, 0.4);
 
   /* ── Porcelain-specific: disable grain overlay ── */
@@ -153,9 +153,29 @@
 }
 
 [data-theme="porcelain"] ::-webkit-scrollbar-thumb {
-  background: rgba(100, 116, 139, 0.25);
+  background: rgba(100, 116, 139, 0.35);
 }
 
 [data-theme="porcelain"] ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.40);
+  background: rgba(100, 116, 139, 0.50);
+}
+
+/* ── Porcelain shadow elevation — Linear/Notion-style depth for light theme ── */
+[data-theme="porcelain"] .shadow-sm {
+  --tw-shadow: 0 1px 2px rgba(100, 116, 139, 0.07), 0 2px 8px rgba(100, 116, 139, 0.09);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+[data-theme="porcelain"] .shadow-lg {
+  --tw-shadow: 0 4px 16px rgba(100, 116, 139, 0.12), 0 2px 4px rgba(100, 116, 139, 0.06);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+[data-theme="porcelain"] .shadow-xl {
+  --tw-shadow: 0 8px 24px rgba(100, 116, 139, 0.14), 0 2px 8px rgba(100, 116, 139, 0.08);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+[data-theme="porcelain"] .hover-lift:hover {
+  box-shadow: 0 4px 16px rgba(100, 116, 139, 0.16), 0 2px 4px rgba(100, 116, 139, 0.06);
 }

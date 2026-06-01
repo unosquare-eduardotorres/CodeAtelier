@@ -67,7 +67,6 @@ interface CouncilState {
   handleMemberComplete: (advisorRole: string, review: CouncilReview | null) => void
   handlePeerReviewComplete: (peerReviews: CouncilPeerReview[]) => void
   handleVerdict: (verdict: CouncilVerdict) => void
-  handleComplete: () => void
   reset: () => void
 }
 
@@ -194,10 +193,6 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
 
   handleVerdict: (verdict) => {
     set({ verdict })
-  },
-
-  handleComplete: () => {
-    set({ phase: 'complete' })
   },
 
   reset: () => {

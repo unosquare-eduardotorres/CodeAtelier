@@ -16,7 +16,7 @@ const log = chatIpcLogger
 export function reportToolError(
   toolName: string,
   errorContent: string,
-  context: { agentType: 'da-vinci' | 'grill' | 'audit'; workspaceId?: string; agentId?: string }
+  context: { agentType: string; workspaceId?: string; agentId?: string }
 ): void {
   try {
     const firstLine = errorContent.split('\n')[0]?.trim() ?? 'Unknown error'

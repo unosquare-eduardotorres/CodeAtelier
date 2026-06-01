@@ -15,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 96
+const CURRENT_SCHEMA_VERSION = 98
 
 interface Migration {
   version: number
@@ -2285,6 +2285,26 @@ const migrations: Migration[] = [
         ALTER TABLE council_sessions ADD COLUMN completed_advisors TEXT DEFAULT '[]';
       `)
       dbLogger.info('[migration-96] ✓ Added resume columns to council_sessions')
+    }
+  },
+  {
+    version: 97,
+    name: 'recover-persona-specialist-id',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE conversations
+        ADD COLUMN persona_specialist_id TEXT DEFAULT NULL
+        REFERENCES specialists(id) ON DELETE SET NULL
+      `)
+      dbLogger.info('[migration-97] ✓ Recovered persona_specialist_id column')
+    }
+  },
+  {
+    version: 98,
+    name: 'add-tool-activities-json-to-messages',
+    up: (db) => {
+      db.exec(`ALTER TABLE messages ADD COLUMN tool_activities_json TEXT DEFAULT NULL`)
+      dbLogger.info('[migration-98] ✓ Added tool_activities_json to messages')
     }
   }
 ]

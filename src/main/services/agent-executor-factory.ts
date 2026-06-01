@@ -233,6 +233,15 @@ export class AgentExecutorFactory {
 
     const canContinue = this.s.cliExecutor.isAlive() && !!sessionId
 
+    // C2: Log tool availability on EVERY turn (not just first spawn)
+    this.s.log.info(
+      `[CLI:tools] turn=every allowedTools=${allowedTools?.length ?? 'all'} ` +
+      `disallowed=[${disallowedTools?.join(',') ?? ''}] ` +
+      `hasEmitPlan=${allowedTools === undefined || allowedTools.includes('mcp__control-actions__emit_plan')} ` +
+      `hasCodeGraph=${allowedTools === undefined || allowedTools.some((t: string) => t.includes('code-graph'))} ` +
+      `canContinue=${canContinue}`
+    )
+
     // ── Fast path: continueSession — skip expensive work ────────────────
     // When the CLI process is alive and we're continuing the same session,
     // only prompt, model, cwd, abortController, and continueSession are used
@@ -343,8 +352,8 @@ export class AgentExecutorFactory {
       this.s.log.info(`[buildCLIMcpConfigPath] MCP config written: ${configPath}`)
       return configPath
     } catch (error) {
-      this.s.log.warn('[buildCLIMcpConfigPath] Failed to write MCP config:', error)
-      return undefined
+      this.s.log.error('[buildCLIMcpConfigPath] CRITICAL: MCP config write failed:', error)
+      throw error  // Don't swallow — agent needs control tools
     }
   }
 

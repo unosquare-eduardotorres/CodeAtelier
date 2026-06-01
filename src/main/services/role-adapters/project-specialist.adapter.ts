@@ -14,49 +14,32 @@
  */
 
 import type {
-  AgentIntent,
-  CommunicationTone,
   ConversationMode,
-  MemoryType,
   ModelAction
 } from '../../../shared/types'
 import {
-  EXTERNAL_MCP_INTEGRATIONS,
-  LOCAL_MCP_INTEGRATIONS,
   RECOMMENDED_LOCAL_MODELS
 } from '../../../shared/constants'
 import type {
-  AdapterIntentContext,
-  AdapterMcpContext,
-  AdapterMcpResult,
   AdapterPromptContext,
   AdapterPromptResult,
-  AdapterSessionLifecycleCtx,
-  AgentRoleAdapter,
-  AgentSessionEventName
+  AdapterSessionLifecycleCtx
 } from '../agent-session.types'
-import type { ControlActionCallbacks } from '../control-actions.tool'
 import { getDatabase } from '../../db/index'
-import { chatAgentLogger } from '../../logger'
 import {
-  conversationRepository,
-  memoryRepository,
   workspaceRepository
 } from '../../db/repositories'
-import { githubService } from '../github.service'
-import { intentDetector } from '../intent-detector'
-import { appendMcpToolGuidance, buildConditionalPrefix } from '../prompt-assembly-helpers'
-import { buildWorkspaceMcpConfig } from '../workspace-mcp-config'
+import { appendMcpToolGuidance, buildConditionalPrefix, buildModeContextPrefix } from '../prompt-assembly-helpers'
 import {
-  MODE_CONTEXT_SECTIONS,
-  MODE_CONTEXT_SECTIONS_LEAN,
   UNIFIED_MODE_SECTION,
-  TONE_STYLE_DIRECTIVES
+  TONE_STYLE_DIRECTIVES,
+  TOOL_PRIORITY_DIRECTIVE
 } from '../default-prompts'
-import { resolvePromptVerbosity } from '../../../shared/constants'
 import { modelConfigService } from '../model-config.service'
 import { promptBuilder } from '../prompt-builder'
 import { resolveContextTier } from '../context-management'
+import { SystemPromptCache } from '../system-prompt-cache'
+import { BaseRoleAdapter } from './base.adapter'
 
 interface SpecialistSnapshot {
   id: string
@@ -66,71 +49,41 @@ interface SpecialistSnapshot {
   buildStatus: string
 }
 
-export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
+export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
   readonly role = 'project-specialist' as const
   readonly agentId: string
 
-  private readonly log = chatAgentLogger
   private readonly workspaceId: string
   private snapshot: SpecialistSnapshot | null = null
 
-  /** Feature flags refreshed from workspace settings each send(). */
-  private repomapEnabled = true
-  private semanticSearchEnabled = true
-  private githubConfigured = false
-
-  /**
-   * Strategy Λ: Locked MCP feature flags — snapshotted at onSessionStart()
-   * and used for buildMcpConfig() + MCP guidance in the system prompt.
-   * Prevents mid-session tool set drift that would break prompt cache prefix.
-   */
-  private lockedMcpFlags: {
-    repomapEnabled: boolean
-    semanticSearchEnabled: boolean
-    githubConfigured: boolean
-  } | null = null
-
-  /**
-   * Cached system-prompt assembly (mode + identity + CLAUDE.md + MCP guidance).
-   * Mirrors DaVinciPromptAssembler: rebuild on turn 1, reuse on turns 2+ when
-   * (conversationId, mode) match. Invalidated on conversation switch, mode
-   * switch, and session stop.
-   */
-  private systemPromptSnapshot: string | null = null
-  private systemPromptSnapshotMode: ConversationMode | null = null
-  private systemPromptSnapshotConversationId: string | null = null
-  private systemPromptSnapshotTone: CommunicationTone | null = null
-  private systemPromptSnapshotModel: string | null = null
-
-  /** Cached communication tone to avoid DB queries on every turn */
-  private cachedTone: CommunicationTone | null = null
-  private cachedToneConversationId: string | null = null
+  /** Pattern 7: Extracted system-prompt snapshot cache. */
+  private readonly promptCache = new SystemPromptCache()
 
   constructor(params: { workspaceId: string; agentId?: string }) {
+    super()
     this.workspaceId = params.workspaceId
     this.agentId = params.agentId ?? `workspace-specialist-${params.workspaceId}`
   }
 
-  async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
+  override async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
     this.loadSnapshot()
-    this.refreshWorkspaceFlags(ctx.workspaceId)
 
-    // Strategy Λ: Lock MCP flags at session start for tool set stability.
-    this.lockedMcpFlags = {
-      repomapEnabled: this.repomapEnabled,
-      semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: this.githubConfigured
-    }
+    // Pattern 2: Centralized workspace feature flag refresh
+    this.refreshWorkspaceFeatureFlags(ctx.workspaceId, ctx.workspacePath)
+
+    // Pattern 6 / Strategy Λ: Lock MCP flags at session start
+    this.lockMcpFlags()
   }
 
-  refreshFeatureFlags(ctx: AdapterSessionLifecycleCtx): void {
+  override refreshFeatureFlags(ctx: AdapterSessionLifecycleCtx): void {
     // Re-read the snapshot — the builder may have updated prompt between sends
     // (skills toggled, prompt rebuilt). Also refresh workspace feature flags.
     this.loadSnapshot()
-    this.refreshWorkspaceFlags(ctx.workspaceId)
+    // Pattern 2: Centralized workspace feature flag refresh
+    this.refreshWorkspaceFeatureFlags(ctx.workspaceId, ctx.workspacePath)
   }
 
-  onConversationSwitch(_conversationId: string): void {
+  override onConversationSwitch(_conversationId: string): void {
     // Drop the cached system-prompt — the next buildPrompts() will rebuild
     // with the new conversation context (and re-read CLAUDE.md if it changed).
     this.invalidateSnapshot()
@@ -142,13 +95,8 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
    * mode switches or other lifecycle events.
    */
   invalidateSnapshot(): void {
-    this.systemPromptSnapshot = null
-    this.systemPromptSnapshotMode = null
-    this.systemPromptSnapshotConversationId = null
-    this.systemPromptSnapshotTone = null
-    this.systemPromptSnapshotModel = null
-    this.cachedTone = null
-    this.cachedToneConversationId = null
+    this.promptCache.invalidate()
+    this.invalidateToneCache()
   }
 
   buildPrompts(ctx: AdapterPromptContext): AdapterPromptResult {
@@ -169,36 +117,12 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       return { systemPrompt: msg, effectiveMessage: ctx.message }
     }
 
-    // ── Resolve effective communication tone (cached to skip DB queries on turns 2+) ──
-    // Resolution chain: conversation override → workspace default → 'default'
-    // Tone rarely changes mid-session — reuse cached value when conversation hasn't changed.
-    let communicationTone: CommunicationTone
-    if (
-      this.cachedTone &&
-      this.cachedToneConversationId === ctx.conversationId &&
-      ctx.turnCount > 1
-    ) {
-      communicationTone = this.cachedTone
-    } else {
-      communicationTone = 'default'
-      try {
-        if (ctx.conversationId) {
-          const conv = conversationRepository.findById(ctx.conversationId)
-          if (conv?.communicationTone) {
-            communicationTone = conv.communicationTone
-          }
-        }
-        if (communicationTone === 'default') {
-          const wsSettings = workspaceRepository.getSettings(this.workspaceId)
-          const wsTone = wsSettings.communicationTone as CommunicationTone | undefined
-          if (wsTone && wsTone !== 'default') communicationTone = wsTone
-        }
-      } catch {
-        /* non-fatal — fallback to default tone */
-      }
-      this.cachedTone = communicationTone
-      this.cachedToneConversationId = ctx.conversationId
-    }
+    // Pattern 5: Centralized communication tone resolution
+    const communicationTone = this.resolveCommunicationTone(
+      ctx.conversationId,
+      this.workspaceId,
+      ctx.turnCount
+    )
 
     // Local LLM: condensed prompt — skip skills, memory, caching strategies.
     // S5: Inject plan-focused directive with context tier for local plan mode.
@@ -221,25 +145,21 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
     }
 
     // ── System-prompt assembly with snapshot cache ─────────────────
-    // Layering mirrors DaVinci:
-    //   [MODE SECTION] → [specialists.prompt — identity] → [CLAUDE.md layer] →
-    //   [tone overlay (non-default only)] → [MCP guidance turn 1 only]
-    //
-    // Always rebuild on turn 1 to pick up fresh CLAUDE.md and prompt edits.
-    // On turns 2+ reuse when (conversationId, mode, tone) match the cached snapshot.
+    // Pattern 1: Centralized model resolution
     const isBuildMode = ctx.mode === 'build' || ctx.mode === 'danger'
-    const resolvedModel = modelConfigService.getModel(ctx.workspacePath, `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction)
-    const cacheValid =
-      ctx.turnCount > 1 &&
-      this.systemPromptSnapshot !== null &&
-      this.systemPromptSnapshotMode === ctx.mode &&
-      this.systemPromptSnapshotConversationId === ctx.conversationId &&
-      this.systemPromptSnapshotTone === communicationTone &&
-      this.systemPromptSnapshotModel === (resolvedModel ?? null)
+    const resolvedModel = this.resolveModel(ctx.workspacePath, `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction)
+
+    // Pattern 7: SystemPromptCache for snapshot reuse
+    const cacheKeys = {
+      mode: ctx.mode,
+      conversationId: ctx.conversationId,
+      tone: communicationTone,
+      model: resolvedModel ?? null
+    }
 
     let systemPrompt: string
-    if (cacheValid) {
-      systemPrompt = this.systemPromptSnapshot as string
+    if (this.promptCache.isValid(cacheKeys, ctx.turnCount)) {
+      systemPrompt = this.promptCache.get()!
     } else {
       const modeSection = UNIFIED_MODE_SECTION
       const claudeMdLayer = ctx.workspacePath
@@ -250,17 +170,12 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
       if (baselineSkills) layers.push(baselineSkills)
       if (claudeMdLayer) layers.push(claudeMdLayer)
       // Append communication tone overlay for non-default tones.
-      // Placed after the specialist's own prompt so it takes precedence.
       if (communicationTone !== 'default') {
         layers.push(`## Communication Tone Override\n${TONE_STYLE_DIRECTIVES[communicationTone]}`)
       }
       const basePrompt = layers.join('\n\n')
       // Strategy Λ: Use locked flags so MCP guidance matches the mounted tool set.
-      const mcpFlags = this.lockedMcpFlags ?? {
-        repomapEnabled: this.repomapEnabled,
-        semanticSearchEnabled: this.semanticSearchEnabled,
-        githubConfigured: this.githubConfigured
-      }
+      const mcpFlags = this.getLockedMcpFlags()
       // Resolve which external MCPs are active — drives prompt guidance injection
       const externalMcpActive = this.resolveExternalMcpActive(
         ctx.workspaceId ?? this.workspaceId,
@@ -270,18 +185,16 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
         ...mcpFlags,
         externalMcpActive
       }, resolvedModel)
-      this.systemPromptSnapshot = systemPrompt
-      this.systemPromptSnapshotMode = ctx.mode
-      this.systemPromptSnapshotConversationId = ctx.conversationId
-      this.systemPromptSnapshotTone = communicationTone
-      this.systemPromptSnapshotModel = resolvedModel ?? null
+
+      // Ensure Tool Priority directive is present
+      if (!systemPrompt.includes('## Tool Priority')) {
+        systemPrompt += '\n' + TOOL_PRIORITY_DIRECTIVE
+      }
+      this.promptCache.set(systemPrompt, cacheKeys)
     }
 
-    // Inject <mode-context> block per-message (same as DaVinci assembler).
-    const verbosity = resolvePromptVerbosity(resolvedModel ?? '')
-    const modeSections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
-    const modeBlock = modeSections[ctx.mode] ?? modeSections.plan
-    let effectiveMessage = `<mode-context>\n${modeBlock.trim()}\n</mode-context>\n\n${ctx.message}`
+    // Pattern 8: Centralized mode-context prefix
+    let effectiveMessage = `${buildModeContextPrefix(ctx.mode, resolvedModel)}\n\n${ctx.message}`
 
     // User-turn prefix (ASK + MEMORY + IMAGE + DIRECT + plan reminder).
     const conditionalPrefix = buildConditionalPrefix({
@@ -298,116 +211,16 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
     return { systemPrompt, effectiveMessage }
   }
 
-  buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
-    if (!this.snapshot) this.loadSnapshot()
-
-    // Strategy Λ: Use locked flags for stable tool set across all turns.
-    // Exception: externalMcpActive is ALWAYS read fresh (per-message toggling).
-    const baseMcpFlags = this.lockedMcpFlags ?? {
-      repomapEnabled: this.repomapEnabled,
-      semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: this.githubConfigured
-    }
-
-    // Resolve external MCP active states via shared helper (same logic as buildPrompts)
-    const externalMcpActive = this.resolveExternalMcpActive(ctx.workspaceId, ctx.conversationId)
-
-    // Resolve per-chat local MCP active state from conversation overrides
-    const localMcpActive: Record<string, boolean> = {}
-    try {
-      const conv = ctx.conversationId ? conversationRepository.findById(ctx.conversationId) : null
-      const chatOverrides = conv?.mcpOverrides ?? {}
-      for (const lm of LOCAL_MCP_INTEGRATIONS) {
-        localMcpActive[lm.id] = chatOverrides[lm.id] !== false
-      }
-    } catch (err) {
-      this.log.error('[adapter:local-mcp] Failed to resolve local MCP overrides:', err)
-    }
-
-    return buildWorkspaceMcpConfig({
-      mode: ctx.mode,
-      workspacePath: ctx.workspacePath,
-      workspaceId: ctx.workspaceId,
-      conversationId: ctx.conversationId,
-      featureFlags: { ...baseMcpFlags, externalMcpActive, localMcpActive },
-      controlCallbacks: ctx.controlCallbacks,
-      isLocalProvider: modelConfigService.isLocalProvider(ctx.workspacePath),
-      contextTier: ctx.contextTier
-    })
+  protected override resolveWorkspaceId(): string | null {
+    return this.workspaceId
   }
 
-  buildControlCallbacks(params: {
-    conversationId: string | null
-    emit: (event: AgentSessionEventName, payload: unknown) => void
-    getAccumulatedText: () => string
-  }): ControlActionCallbacks {
-    return {
-      onPlan: () => {
-        /* wrapped by session */
-      },
-      onAskUser: () => {
-        /* wrapped by session */
-      },
-      onMemory: (memory: { type: MemoryType; title: string; content: string }) => {
-        // Persist immediately — identical to DaVinciRoleAdapter. The workspace
-        // is already known via this.workspaceId, so no need to scan all workspaces.
-        try {
-          const workspace = workspaceRepository.findById(this.workspaceId)
-          const memWorkspaceId =
-            memory.type === 'user' || memory.type === 'feedback' ? null : (workspace?.id ?? null)
-          const mem = memoryRepository.createIfNotDuplicate({
-            workspaceId: memWorkspaceId,
-            type: memory.type,
-            title: memory.title,
-            content: memory.content,
-            tags: [],
-            sourceConversationId: params.conversationId ?? undefined,
-            sourceAgentId: this.agentId,
-            importance: 5
-          })
-          if (mem) {
-            this.log.info(`[specialist] Memory created: [${memory.type}] ${memory.title}`)
-          } else {
-            this.log.info(
-              `[specialist] Memory skipped (duplicate): [${memory.type}] ${memory.title}`
-            )
-          }
-        } catch (err) {
-          this.log.warn('[specialist] Failed to persist tool-emitted memory:', err)
-        }
-      }
-    }
-  }
-
-  emitDetectedIntents(ctx: AdapterIntentContext): void {
-    // Same intent-detection path as DaVinci: grill / askUser / plan are surfaced
-    // via control-tool MCP events, plus a fallback 'response' intent if nothing
-    // else fired.
-    const detectedIntents = intentDetector.detectAll(
-      ctx.accumulatedText,
-      ctx.controlToolState,
-      ctx.mode
-    )
-
-    for (const intent of detectedIntents) {
-      ctx.emit('intent', intent)
-    }
-
-    if (detectedIntents.length === 0) {
-      this.log.info(`[PIPELINE:response-path] no-action textLen=${ctx.accumulatedText.length}`)
-      ctx.emit('intent', {
-        type: 'response',
-        content: ctx.accumulatedText
-      } as AgentIntent)
-    }
-  }
-
-  onSessionStop(): void {
+  override onSessionStop(): void {
     this.snapshot = null
     this.repomapEnabled = true
     this.semanticSearchEnabled = true
     this.githubConfigured = false
-    this.lockedMcpFlags = null
+    this.unlockMcpFlags()
     this.invalidateSnapshot()
   }
 
@@ -446,29 +259,6 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
     }
   }
 
-  /**
-   * Read workspace settings for repomap / semantic-search / github flags.
-   * Mirrors DaVinciRoleAdapter.refreshFeatureFlags so both roles honor the
-   * same workspace-level MCP toggles.
-   */
-  private refreshWorkspaceFlags(workspaceId: string | null): void {
-    if (!workspaceId) {
-      this.repomapEnabled = false
-      this.semanticSearchEnabled = false
-      this.githubConfigured = false
-      return
-    }
-    try {
-      if (!workspaceId) return
-      const settings = workspaceRepository.getSettings(workspaceId)
-      this.repomapEnabled = settings.repomapEnabled !== false
-      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
-      this.githubConfigured = githubService.isConfigured(workspaceId)
-    } catch {
-      /* non-fatal */
-    }
-  }
-
   /** The workspace this adapter is bound to. */
   getWorkspaceId(): string {
     return this.workspaceId
@@ -491,40 +281,4 @@ export class ProjectSpecialistRoleAdapter implements AgentRoleAdapter {
     return 'plan'
   }
 
-  /**
-   * Read workspace settings + conversation overrides to determine which
-   * external MCPs are active for this chat. Used by both buildPrompts
-   * (prompt guidance injection) and buildMcpConfig (tool mounting).
-   */
-  private resolveExternalMcpActive(
-    workspaceId: string | null,
-    conversationId: string | null
-  ): Record<string, boolean> {
-    const result: Record<string, boolean> = {}
-    try {
-      const wsSettings = workspaceId ? workspaceRepository.getSettings(workspaceId) : {}
-      const conv = conversationId ? conversationRepository.findById(conversationId) : null
-      const chatOverrides = conv?.mcpOverrides ?? {}
-
-      this.log.info(
-        `[adapter:resolve-external-mcp] workspaceId=${workspaceId} conversationId=${conversationId} ` +
-          `wsFound=${!!workspaceId} wsSettingsKeys=${Object.keys(wsSettings)
-            .filter((k) => k.includes('Available'))
-            .join(',')} ` +
-          `convFound=${!!conv} chatOverrides=${JSON.stringify(chatOverrides)}`
-      )
-
-      for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
-        const wsAvailable = !!wsSettings[`${integration.id}Available`]
-        const chatActive = !!chatOverrides[integration.id]
-        result[integration.id] = wsAvailable && chatActive
-        this.log.info(
-          `[adapter:resolve-external-mcp] ${integration.id}: wsAvailable=${wsAvailable} chatActive=${chatActive} → mounted=${result[integration.id]}`
-        )
-      }
-    } catch (err) {
-      this.log.error('[adapter:external-mcp] Failed to resolve MCP state:', err)
-    }
-    return result
-  }
 }

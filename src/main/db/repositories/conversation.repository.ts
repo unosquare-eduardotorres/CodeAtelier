@@ -116,6 +116,12 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
 
   delete(id: string): void {
     this.runTransaction(() => {
+      // Tables without FK cascade — clean explicitly to prevent orphaned rows
+      this.db().prepare('DELETE FROM checkpoints WHERE conversation_id = ?').run(id)
+      this.db().prepare('DELETE FROM turn_usage WHERE conversation_id = ?').run(id)
+      // events are kept for audit (time-pruned separately via pruneOlderThan) — do NOT delete here
+
+      // FK-cascaded tables (explicit delete for messages; attachments cascade from messages)
       this.db().prepare('DELETE FROM messages WHERE conversation_id = ?').run(id)
       this.db().prepare('DELETE FROM conversations WHERE id = ?').run(id)
     })

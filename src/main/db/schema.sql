@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   summary TEXT,
   claude_session_id TEXT,
+  persona_specialist_id TEXT DEFAULT NULL REFERENCES specialists(id) ON DELETE SET NULL,
   llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm')),
   effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))
 );
@@ -35,7 +36,8 @@ CREATE TABLE IF NOT EXISTS messages (
   content_md TEXT NOT NULL,
   attachments_json TEXT DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  parent_message_id TEXT REFERENCES messages(id)
+  parent_message_id TEXT REFERENCES messages(id),
+  tool_activities_json TEXT DEFAULT NULL
 );
 
 -- Attachments: context files uploaded by user

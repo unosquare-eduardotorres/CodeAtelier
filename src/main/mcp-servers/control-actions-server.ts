@@ -296,11 +296,13 @@ async function main(): Promise<void> {
   connectIpc()
   setupResponseListener()
 
+  console.error('[control-actions-server] Tools registered: emit_plan, ask_user, emit_memory')
+
   const transport = new StdioServerTransport()
   await server.connect(transport)
 
   console.error(
-    `[control-actions-server] Started (workspace=${WORKSPACE_PATH}, mode=${CONVERSATION_MODE})`
+    `[control-actions-server] Started (workspace=${WORKSPACE_PATH}, mode=${CONVERSATION_MODE}, ipc=${IPC_SOCKET_PATH ? 'connected' : 'NONE'})`
   )
 }
 

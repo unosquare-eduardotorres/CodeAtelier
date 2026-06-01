@@ -16,6 +16,7 @@ import { COUNCIL_ADVISOR_ROLES, COUNCIL_ADVISORS } from '../../../../../shared/c
 import CouncilMemberColumn from './CouncilMemberColumn'
 import CouncilVerdictCard from './CouncilVerdictCard'
 import CouncilRankingsMatrix from './CouncilRankingsMatrix'
+import AdvisorIcon from './AdvisorIcon'
 
 interface CouncilViewProps {
   /** Called when user clicks "Accept & Build" */
@@ -83,7 +84,6 @@ export default function CouncilView({
     handleMemberComplete,
     handlePeerReviewComplete,
     handleVerdict,
-    handleComplete,
     reset,
     startCouncil,
     setSessionIdentity
@@ -118,12 +118,11 @@ export default function CouncilView({
       )
     )
     cleanups.push(api.onCouncilVerdict((data) => handleVerdict(data.verdict as never)))
-    cleanups.push(api.onCouncilComplete(() => handleComplete()))
 
     return () => {
       cleanups.forEach((fn) => fn())
     }
-  }, [handlePhaseChanged, handleMemberStream, handleMemberComplete, handlePeerReviewComplete, handleVerdict, handleComplete])
+  }, [handlePhaseChanged, handleMemberStream, handleMemberComplete, handlePeerReviewComplete, handleVerdict])
 
   const isRunning = phase !== 'complete' && phase !== 'cancelled' && phase !== 'failed'
   const isFailed = phase === 'failed'
@@ -197,7 +196,7 @@ export default function CouncilView({
                       key={role}
                       className="flex flex-col items-center gap-1 p-3 rounded-lg bg-surface-overlay border border-border-subtle"
                     >
-                      <span className="text-2xl">{a.emoji}</span>
+                      <AdvisorIcon advisor={a} size={28} className="text-text-secondary" />
                       <span className="text-xs font-medium text-text-primary">{a.name}</span>
                       <span className="text-lg font-bold text-text-primary">
                         {advisor.review.score}
@@ -235,6 +234,47 @@ export default function CouncilView({
                   <CouncilRankingsMatrix peerReviews={peerReviews} />
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Cancelled / Failed — show collected work + status message */}
+        {(phase === 'cancelled' || phase === 'failed') && (
+          <div className="h-full overflow-y-auto p-5">
+            <div className="max-w-3xl mx-auto space-y-6">
+              <div className="text-center py-4">
+                <p className="text-sm text-text-secondary">
+                  {phase === 'cancelled'
+                    ? 'This council session was cancelled.'
+                    : 'This council session encountered an error.'}
+                </p>
+              </div>
+
+              {/* Show completed advisor scores */}
+              {completedCount > 0 && (
+                <div className="grid grid-cols-5 gap-2">
+                  {COUNCIL_ADVISOR_ROLES.map((role) => {
+                    const advisor = advisors[role]
+                    if (!advisor.review) return null
+                    const a = COUNCIL_ADVISORS[role]
+                    return (
+                      <div
+                        key={role}
+                        className="flex flex-col items-center gap-1 p-3 rounded-lg bg-surface-overlay border border-border-subtle"
+                      >
+                        <AdvisorIcon advisor={a} size={28} className="text-text-secondary" />
+                        <span className="text-xs font-medium text-text-primary">{a.name}</span>
+                        <span className="text-lg font-bold text-text-primary">
+                          {advisor.review.score}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {peerReviews.length > 0 && <CouncilRankingsMatrix peerReviews={peerReviews} />}
+              {verdict && <CouncilVerdictCard verdict={verdict} />}
             </div>
           </div>
         )}
@@ -298,7 +338,7 @@ export default function CouncilView({
         <div className="flex items-center gap-2 px-5 py-3 border-t border-border-subtle bg-surface-overlay/95 backdrop-blur-sm">
           <div className="flex-1">
             <p className="text-xs text-amber-400">
-              Council failed at phase: {phase}. {completedCount}/5 advisors completed.
+              Council failed. {completedCount}/5 advisors had completed.
             </p>
           </div>
           <button
@@ -316,6 +356,29 @@ export default function CouncilView({
             <Play size={14} />
             Resume
           </button>
+          {onDismiss && (
+            <button
+              onClick={() => {
+                reset()
+                onDismiss()
+              }}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
+            >
+              <X size={14} />
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Cancelled state — dismiss button */}
+      {phase === 'cancelled' && (
+        <div className="flex items-center gap-2 px-5 py-3 border-t border-border-subtle bg-surface-overlay/95 backdrop-blur-sm">
+          <div className="flex-1">
+            <p className="text-xs text-text-secondary">
+              Council was cancelled. {completedCount}/5 advisors had completed.
+            </p>
+          </div>
           {onDismiss && (
             <button
               onClick={() => {

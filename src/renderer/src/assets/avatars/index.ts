@@ -16,16 +16,16 @@ import ca3 from './code-atelier/mannequin-3.png'
 import ca4 from './code-atelier/mannequin-4.png'
 import ca5 from './code-atelier/mannequin-5.png'
 
-// ── Neon Forge set (placeholders — user will provide custom images) ──
-import nfUser from './neon-forge/user.png'
-import nfDaVinci from './neon-forge/da-vinci.png'
-import nfAuditor from './neon-forge/atelier-auditor.png'
-import nfGrillme from './neon-forge/grillme.png'
-import nfMain from './neon-forge/mannequin-main.png'
-import nf2 from './neon-forge/mannequin-2.png'
-import nf3 from './neon-forge/mannequin-3.png'
-import nf4 from './neon-forge/mannequin-4.png'
-import nf5 from './neon-forge/mannequin-5.png'
+// ── Glass set (placeholders — user will provide custom images) ──
+import glUser from './glass/user.png'
+import glDaVinci from './glass/da-vinci.png'
+import glAuditor from './glass/atelier-auditor.png'
+import glGrillme from './glass/grillme.png'
+import glMain from './glass/mannequin-main.png'
+import gl2 from './glass/mannequin-2.png'
+import gl3 from './glass/mannequin-3.png'
+import gl4 from './glass/mannequin-4.png'
+import gl5 from './glass/mannequin-5.png'
 
 // ── Porcelain set (placeholders — user will provide custom images) ──
 import pcUser from './porcelain/user.png'
@@ -61,16 +61,16 @@ const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
     'mannequin-4': ca4,
     'mannequin-5': ca5
   },
-  'neon-forge': {
-    user: nfUser,
-    'da-vinci': nfDaVinci,
-    'atelier-auditor': nfAuditor,
-    grillme: nfGrillme,
-    'mannequin-main': nfMain,
-    'mannequin-2': nf2,
-    'mannequin-3': nf3,
-    'mannequin-4': nf4,
-    'mannequin-5': nf5
+  glass: {
+    user: glUser,
+    'da-vinci': glDaVinci,
+    'atelier-auditor': glAuditor,
+    grillme: glGrillme,
+    'mannequin-main': glMain,
+    'mannequin-2': gl2,
+    'mannequin-3': gl3,
+    'mannequin-4': gl4,
+    'mannequin-5': gl5
   },
   porcelain: {
     user: pcUser,
@@ -82,6 +82,18 @@ const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
     'mannequin-3': pc3,
     'mannequin-4': pc4,
     'mannequin-5': pc5
+  },
+  // Developer theme reuses Code Atelier avatars (neutral palette works well)
+  developer: {
+    user: caUser,
+    'da-vinci': caDaVinci,
+    'atelier-auditor': caAuditor,
+    grillme: caGrillme,
+    'mannequin-main': caMain,
+    'mannequin-2': ca2,
+    'mannequin-3': ca3,
+    'mannequin-4': ca4,
+    'mannequin-5': ca5
   }
 }
 

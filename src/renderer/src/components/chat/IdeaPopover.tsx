@@ -76,9 +76,9 @@ export default function IdeaPopover({
           {/* Body */}
           <div className="p-4 space-y-3">
             <p className="text-xs text-text-secondary leading-relaxed">
-              Save this idea for later. You can find it in{' '}
+              Park this idea for later. Find it in{' '}
               <span className="text-text-primary font-medium">Workspace Settings → Ideas</span>,
-              then refine it with &quot;Grill Me&quot; or convert it directly into a work item.
+              then grill it with an AI analyst or start building right away.
             </p>
             <input
               type="text"

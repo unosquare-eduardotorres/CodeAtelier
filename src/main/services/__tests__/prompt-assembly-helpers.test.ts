@@ -9,9 +9,32 @@ import { test, describe, summaryAsync } from './test-harness'
 import { appendMcpToolGuidance, buildConditionalPrefix } from '../prompt-assembly-helpers'
 
 describe('appendMcpToolGuidance', () => {
-  test('no-op after turn 1', () => {
+  test('turn 2+ appends compact tool priority reminder for non-lean models with repomap', () => {
     const out = appendMcpToolGuidance('BASE', 2, {
       repomapEnabled: true,
+      semanticSearchEnabled: true,
+      githubConfigured: true
+    })
+    assert.ok(out.includes('Tool Priority'), 'Should include compact tool priority reminder')
+    assert.ok(out.includes('search_identifiers'), 'Should mention search_identifiers')
+    assert.ok(out.includes('emit_plan'), 'Should include lean plan output guidance')
+    // Should NOT include the full guidance blocks
+    assert.ok(!out.includes('## Code Graph'), 'Should NOT include full Code Graph guidance')
+    assert.ok(!out.includes('## Semantic Search'), 'Should NOT include full Semantic Search guidance')
+  })
+
+  test('turn 2+ is no-op for lean models', () => {
+    const out = appendMcpToolGuidance('BASE', 2, {
+      repomapEnabled: true,
+      semanticSearchEnabled: true,
+      githubConfigured: true
+    }, 'claude-opus-4-8')
+    assert.equal(out, 'BASE')
+  })
+
+  test('turn 2+ is no-op when repomap disabled', () => {
+    const out = appendMcpToolGuidance('BASE', 2, {
+      repomapEnabled: false,
       semanticSearchEnabled: true,
       githubConfigured: true
     })

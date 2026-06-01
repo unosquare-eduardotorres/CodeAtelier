@@ -151,15 +151,6 @@ export interface AgentRoleAdapter {
    */
   emitDetectedIntents(ctx: AdapterIntentContext): void
 
-  /** Compaction-specific tweaks — adapter can override compaction thresholds. */
-  getCompactionThresholds?(costPreference: CostPreference): {
-    suggest: number
-    auto: number
-  } | null
-
-  /** Persona support — adapter can expose a persona override or return null. */
-  getPersonaId?(): string | null
-
   /** Reset adapter state when the session stops. */
   onSessionStop(): void
 }

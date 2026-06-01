@@ -51,7 +51,7 @@ interface ChatState {
   /** Conversation phase — more precise than isStreaming boolean */
   streamingPhase: ConversationPhase | null
   toolActivities: ToolActivity[]
-  /** Finalized streaming segments — each gets its own MessageBubble */
+  /** Streaming segments accumulated during streaming — merged into a single message on completion */
   streamingSegments: StreamSegment[]
 
   /** Backend state machine mirror — single source of truth for conversation lifecycle state */

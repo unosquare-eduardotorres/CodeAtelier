@@ -211,6 +211,8 @@ export interface CompletionNotification {
 }
 
 // ── Tool Activity ──
+export type ToolOperationType = 'read' | 'write' | 'edit' | 'search' | 'shell' | 'codegraph' | 'other'
+
 export interface ToolActivity {
   id: string
   toolName: string
@@ -223,6 +225,12 @@ export interface ToolActivity {
   completedAt?: number
   /** Updated by tool_progress events — elapsed time in seconds */
   elapsedSeconds?: number
+  /** Workspace-relative file path (e.g., "src/main/app.ts") */
+  filePath?: string
+  /** Line range (e.g., "42-56") */
+  lineRange?: string
+  /** Operation classification */
+  operationType?: ToolOperationType
 }
 
 // ── Specialist & Skill Models ──
@@ -317,7 +325,7 @@ export interface SpecialistTokenEstimate {
 export type ChatBubbleSize = 'small' | 'medium' | 'large' | 'xl'
 
 /** Visual theme for the entire application */
-export type AppTheme = 'code-atelier' | 'neon-forge' | 'porcelain'
+export type AppTheme = 'code-atelier' | 'glass' | 'porcelain' | 'developer'
 
 /** GitHub PAT type — classic uses OAuth scopes, fine-grained uses granular permissions */
 export type GitHubTokenType = 'classic' | 'fine-grained' | 'unknown'

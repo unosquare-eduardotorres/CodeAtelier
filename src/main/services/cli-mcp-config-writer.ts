@@ -125,7 +125,9 @@ export class CliMcpConfigWriter {
           'main',
           'mcp-servers'
         )
-      : join(__dirname, '..', 'mcp-servers')
+      : join(__dirname, 'mcp-servers')
+
+    log.info(`[cli-mcp-config] serverBasePath=${serverBasePath} isPackaged=${app.isPackaged}`)
 
     // ── Code Graph ──
     if (featureFlags.repomapEnabled && workspaceId) {

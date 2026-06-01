@@ -15,7 +15,9 @@ import {
   Loader2,
   Clock
 } from 'lucide-react'
+import ToolActivityBlock from '../../chat/ToolActivityBlock'
 import ReactMarkdown from 'react-markdown'
+import AdvisorIcon from './AdvisorIcon'
 import type { CouncilAdvisorRole, CouncilMemberStatus, CouncilReview } from '../../../../../shared/types'
 import { COUNCIL_ADVISORS } from '../../../../../shared/constants'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
@@ -79,21 +81,6 @@ function VerdictBadge({ verdict }: { verdict: string }): React.JSX.Element {
   )
 }
 
-function ToolActivityBadge({ activity }: { activity: ToolActivity }): React.JSX.Element {
-  const isRunning = activity.status === 'running'
-  return (
-    <span
-      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono ${
-        isRunning
-          ? 'bg-info/10 text-info border border-info/20'
-          : 'bg-surface-float text-text-secondary border border-border-subtle'
-      }`}
-    >
-      {isRunning && <Loader2 size={8} className="animate-spin" />}
-      {activity.toolName.replace(/^mcp__[^_]+__/, '')}
-    </span>
-  )
-}
 
 export default function CouncilMemberColumn({
   role,
@@ -117,15 +104,12 @@ export default function CouncilMemberColumn({
     ]
   }, [segments, currentToolActivities])
 
-  const runningTools = allToolActivities.filter((t) => t.status === 'running')
 
   return (
     <div className="flex flex-col h-full min-w-0 border border-border-subtle rounded-lg bg-surface-overlay overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle bg-surface-float/50">
-        <span className="text-lg" role="img" aria-label={advisor.name}>
-          {advisor.emoji}
-        </span>
+        <AdvisorIcon advisor={advisor} size={20} className="text-text-secondary flex-shrink-0" />
         <div className="flex flex-col min-w-0">
           <span className="text-sm font-semibold text-text-primary truncate">
             {advisor.name}
@@ -156,13 +140,9 @@ export default function CouncilMemberColumn({
           </div>
         )}
 
-        {/* Tool activity badges */}
-        {runningTools.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-2">
-            {runningTools.map((tool) => (
-              <ToolActivityBadge key={tool.id} activity={tool} />
-            ))}
-          </div>
+        {/* Tool activity — compact rows with expand panel */}
+        {allToolActivities.length > 0 && (
+          <ToolActivityBlock activities={allToolActivities} defaultExpanded={status === 'running'} />
         )}
       </div>
 

@@ -77,6 +77,7 @@ const api = {
     name: string
     parentFolder: string
     description: string
+    attachments?: string[]
     grillDecisions?: GrillDecision[]
     trackScores?: GrillTrackScore[]
     tempGrillSessionId?: string

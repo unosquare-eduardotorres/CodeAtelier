@@ -70,6 +70,9 @@ import './council.service.test'
 // ─── Run 14: Grill Plan + Resume ───
 import './grill-plan-and-resume.test'
 
+// ─── Run 15: Tool Chunk Processor (centralized pipeline) ───
+import '../../ipc/__tests__/tool-chunk-processor.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

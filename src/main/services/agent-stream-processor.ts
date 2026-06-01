@@ -286,6 +286,30 @@ export class AgentStreamProcessor {
       this.s.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
     }
 
+    if (chunk.type === 'subagent_start') {
+      // Count sub-agent spawns against the circuit breaker — each sub-agent
+      // makes 20-90+ internal tool calls that bypass the normal tool_use count.
+      // Count the spawn itself as 10 tool calls (conservative estimate of cost).
+      for (let i = 0; i < 10; i++) {
+        const cbResult = this.s.circuitBreaker.onToolUse({
+          isBuildMode,
+          accumulatedTextLength: this.s.accumulatedText.length,
+          conversationId,
+          isLocalProvider: this.s.llmProvider === 'local-llm',
+          contextTier: ctx.contextTier
+        })
+        if (cbResult.broken) {
+          this.s.log.warn(
+            `[PIPELINE:subagent-circuit-break] Sub-agent spawn tripped circuit breaker at ${this.s.circuitBreaker.count} tool calls`
+          )
+          if (cbResult.errorChunk) {
+            this.s.emit('chunk', cbResult.errorChunk)
+          }
+          return 'break'
+        }
+      }
+    }
+
     // F12: Removed dead `promptSuggestion` event emission — no listener exists.
     // The chunk is already forwarded to the renderer via emit('chunk', chunk) below,
     // which the chunk-router routes through handlePromptSuggestion.

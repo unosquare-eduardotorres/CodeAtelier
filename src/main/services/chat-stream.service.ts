@@ -15,7 +15,7 @@ import type {
 import { memoryService } from './memory.service'
 import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
-import { flushTextBatcher } from '../ipc/chunk-router'
+import { flushTextBatcher, getAndClearToolActivities } from '../ipc/chunk-router'
 import {
   createTextChunk,
   createCompleteMessage,
@@ -80,6 +80,9 @@ export class ChatStreamService {
    */
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null
 
+  /** Cleanup functions for all persistent event listeners registered in registerEventForwarders(). */
+  private eventCleanups: Array<() => void> = []
+
   // N14: Track hook lifecycle listener for cleanup
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private hookLifecycleHandler?: ((...args: any[]) => void) | undefined
@@ -117,7 +120,7 @@ export class ChatStreamService {
 
   private registerEventForwarders(): void {
     // compactNeeded is not an intent — keep as direct forwarder
-    chatAgentService.on('compactNeeded', (data: CompactNeededMessage['compactNeeded']) => {
+    const onCompactNeeded = (data: CompactNeededMessage['compactNeeded']): void => {
       this.mainWindow.webContents.send(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createCompactNeeded({
@@ -127,32 +130,35 @@ export class ChatStreamService {
           compactNeeded: data
         })
       )
-    })
+    }
+    chatAgentService.on('compactNeeded', onCompactNeeded)
+    this.eventCleanups.push(() => chatAgentService.off('compactNeeded', onCompactNeeded))
 
     // Legacy forwarders for MCP-triggered events (fire during streaming)
     // These handle the immediate path when control tools fire via MCP callbacks.
-    chatAgentService.on(
-      'askQuestion',
-      (data: { questions: GrillQuestion[]; action?: string; requestId?: string }) => {
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
-          conversationId: chatAgentService.getCurrentConversationId() || '',
-          questions: data.questions,
-          action: data.action,
-          requestId: data.requestId
-        })
-      }
-    )
+    const onAskQuestion = (data: { questions: GrillQuestion[]; action?: string; requestId?: string }): void => {
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
+        conversationId: chatAgentService.getCurrentConversationId() || '',
+        questions: data.questions,
+        action: data.action,
+        requestId: data.requestId
+      })
+    }
+    chatAgentService.on('askQuestion', onAskQuestion)
+    this.eventCleanups.push(() => chatAgentService.off('askQuestion', onAskQuestion))
 
     // Elicitation — MCP server user input requests forwarded to renderer
-    chatAgentService.on('elicitation', (data: ElicitationEvent) => {
+    const onElicitation = (data: ElicitationEvent): void => {
       this.mainWindow.webContents.send(IPC_CHANNELS.ELICITATION_REQUEST, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         ...data
       })
-    })
+    }
+    chatAgentService.on('elicitation', onElicitation)
+    this.eventCleanups.push(() => chatAgentService.off('elicitation', onElicitation))
 
     // Budget cap reached — forward as a CHAT_MESSAGE_CHUNK with budgetCapReached field
-    chatAgentService.on('budgetCapReached', (data: { conversationId: string; message: string }) => {
+    const onBudgetCapReached = (data: { conversationId: string; message: string }): void => {
       this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId: data.conversationId,
         requestId: this.activeRequestId ?? undefined,
@@ -161,7 +167,9 @@ export class ChatStreamService {
           canContinue: true
         }
       })
-    })
+    }
+    chatAgentService.on('budgetCapReached', onBudgetCapReached)
+    this.eventCleanups.push(() => chatAgentService.off('budgetCapReached', onBudgetCapReached))
 
     // NOTE: The persistent 'plan' listener was removed to prevent duplicate delivery.
     // Plan events are now handled exclusively by the per-message onPlanEvent listener
@@ -169,59 +177,12 @@ export class ChatStreamService {
     // for DB persistence. The CHAT_PLAN IPC is still sent by the IntentRouter below
     // for regex-fallback detected plans.
 
-    // Multi-workspace: forward permission events from background workspaces.
-    // When a non-active workspace emits elicitation/askQuestion, send a
-    // PERMISSION_REQUEST so the NotificationStack can show a toast.
-    chatAgentService.on(
-      'elicitation:ws',
-      (workspaceId: string, data: ElicitationEvent) => {
-        if (workspaceId !== chatAgentService.activeWorkspaceId) {
-          // Background workspace — route through permission system
-          try {
-            const router = getSessionEventRouter()
-            router.sendPermissionRequest({
-              id: `elicit-${data.requestId ?? Date.now()}`,
-              workspaceId,
-              workspaceName: this.resolveWorkspaceName(workspaceId),
-              type: 'elicitation',
-              summary: data.message || 'Permission request from MCP server',
-              isSimple: data.mode !== 'form',
-              payload: data,
-              receivedAt: Date.now()
-            })
-          } catch {
-            // SessionEventRouter not yet initialized — fall through to legacy path
-          }
-        }
-      }
-    )
-
-    chatAgentService.on(
-      'askQuestion:ws',
-      (workspaceId: string, data: { questions: GrillQuestion[]; action?: string; requestId?: string }) => {
-        if (workspaceId !== chatAgentService.activeWorkspaceId) {
-          try {
-            const router = getSessionEventRouter()
-            router.sendPermissionRequest({
-              id: `ask-${data.requestId ?? Date.now()}`,
-              workspaceId,
-              workspaceName: this.resolveWorkspaceName(workspaceId),
-              type: 'askQuestion',
-              summary: data.questions?.[0]?.text || 'Question from agent',
-              isSimple: false,
-              payload: data,
-              receivedAt: Date.now()
-            })
-          } catch {
-            // SessionEventRouter not yet initialized — fall through to legacy path
-          }
-        }
-      }
-    )
+    // Multi-workspace permission routing for background workspaces
+    this.registerMultiWorkspaceForwarders()
 
     // Typed intent handler — routes post-stream intents (regex fallback + grill events)
     // via IntentRouter. Skips plan/askUser if they were already sent by MCP forwarders above.
-    chatAgentService.on('intent', (intent: AgentIntent) => {
+    const onIntent = (intent: AgentIntent): void => {
       const conversationId = chatAgentService.getCurrentConversationId() || ''
 
       // Skip types that were already forwarded by MCP legacy listeners
@@ -229,7 +190,9 @@ export class ChatStreamService {
       // but IntentDetector.detectAll() already filters out MCP-fired types, so these
       // intents only arrive here when they're regex-fallback detected)
       this.intentRouter.route(conversationId, intent)
-    })
+    }
+    chatAgentService.on('intent', onIntent)
+    this.eventCleanups.push(() => chatAgentService.off('intent', onIntent))
 
     // F7: Wire hook lifecycle events to the stream pipeline.
     // The HookEngine emits 'hookLifecycle' events when hooks start/complete/fail.
@@ -270,6 +233,58 @@ export class ChatStreamService {
       )
     }
     hookEngine.on('hookLifecycle', this.hookLifecycleHandler)
+  }
+
+  /**
+   * Register event forwarders for multi-workspace permission routing.
+   * When a non-active workspace emits elicitation/askQuestion, routes through
+   * SessionEventRouter so the NotificationStack can show a permission toast.
+   * Extracted from registerEventForwarders() — structurally identical pair.
+   */
+  private registerMultiWorkspaceForwarders(): void {
+    const onElicitationWs = (workspaceId: string, data: ElicitationEvent): void => {
+      if (workspaceId !== chatAgentService.activeWorkspaceId) {
+        try {
+          const router = getSessionEventRouter()
+          router.sendPermissionRequest({
+            id: `elicit-${data.requestId ?? Date.now()}`,
+            workspaceId,
+            workspaceName: this.resolveWorkspaceName(workspaceId),
+            type: 'elicitation',
+            summary: data.message || 'Permission request from MCP server',
+            isSimple: data.mode !== 'form',
+            payload: data,
+            receivedAt: Date.now()
+          })
+        } catch {
+          // SessionEventRouter not yet initialized — fall through to legacy path
+        }
+      }
+    }
+    chatAgentService.on('elicitation:ws', onElicitationWs)
+    this.eventCleanups.push(() => chatAgentService.off('elicitation:ws', onElicitationWs))
+
+    const onAskQuestionWs = (workspaceId: string, data: { questions: GrillQuestion[]; action?: string; requestId?: string }): void => {
+      if (workspaceId !== chatAgentService.activeWorkspaceId) {
+        try {
+          const router = getSessionEventRouter()
+          router.sendPermissionRequest({
+            id: `ask-${data.requestId ?? Date.now()}`,
+            workspaceId,
+            workspaceName: this.resolveWorkspaceName(workspaceId),
+            type: 'askQuestion',
+            summary: data.questions?.[0]?.text || 'Question from agent',
+            isSimple: false,
+            payload: data,
+            receivedAt: Date.now()
+          })
+        } catch {
+          // SessionEventRouter not yet initialized — fall through to legacy path
+        }
+      }
+    }
+    chatAgentService.on('askQuestion:ws', onAskQuestionWs)
+    this.eventCleanups.push(() => chatAgentService.off('askQuestion:ws', onAskQuestionWs))
   }
 
   // ── Stream Listener Factory ──
@@ -341,15 +356,33 @@ export class ChatStreamService {
                 `role=${ctx.streamingRole} specialist=${ctx.specialistMeta?.specialist ?? 'none'} ` +
                 `accumulatedPreview=${(accumulatedText ?? '').slice(0, 200).replace(/\n/g, ' ')}`
             )
+
+            // Surface the failure to the user instead of saving an empty message
+            this.mainWindow.webContents.send(
+              IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+              createTextChunk({
+                conversationId: ctx.conversationId,
+                requestId: ctx.requestId,
+                text: '\n\n**Error:** Agent produced no response. Check the app logs for details.',
+                role: ctx.streamingRole
+              })
+            )
           }
 
           const savedMessage = messageRepository.create(
             ctx.conversationId,
             ctx.streamingRole,
-            cleanedContent,
+            cleanedContent || '**Error:** Agent produced no response. Check the app logs for details.',
             ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
           )
           log.info('Agent message saved, id:', savedMessage.id)
+
+          // Persist tool activities accumulated during streaming
+          const toolActivities = getAndClearToolActivities(ctx.conversationId)
+          if (toolActivities.length > 0) {
+            messageRepository.updateToolActivities(savedMessage.id, toolActivities)
+            log.info(`[PIPELINE:tool-activities-persisted] messageId=${savedMessage.id} count=${toolActivities.length}`)
+          }
 
           // Process memory blocks
           try {
@@ -560,33 +593,12 @@ export class ChatStreamService {
 
     // ── Step 1: Process attachments ──
     let fullContent = text
-    const imageAttachments: ImageAttachment[] = []
+    let imageAttachments: ImageAttachment[] = []
 
     if (attachments && attachments.length > 0) {
-      const attachmentContents: string[] = []
-      for (const filePath of attachments) {
-        try {
-          if (fileService.isImageFile(filePath)) {
-            const { base64, mimeType } = fileService.readImageAsBase64(filePath)
-            const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'image'
-            imageAttachments.push({ base64, mimeType, fileName })
-            attachmentContents.push(
-              `\n---\n**Attached image: ${fileName}** (${mimeType}) — visible in the conversation\n`
-            )
-          } else {
-            const content = fileService.readFileContent(filePath)
-            const tokens = fileService.estimateTokens(content)
-            attachmentContents.push(
-              `\n---\n**Attached file: ${filePath}** (${tokens} tokens)\n\`\`\`\n${content}\n\`\`\`\n`
-            )
-          }
-        } catch (error) {
-          attachmentContents.push(
-            `\n---\n**Failed to read: ${filePath}**: ${(error as Error).message}\n`
-          )
-        }
-      }
-      fullContent += attachmentContents.join('')
+      const result = this.processAttachments(attachments)
+      fullContent += result.textContent
+      imageAttachments = result.images
     }
 
     // ── Step 2: Save user message to DB ──
@@ -651,6 +663,12 @@ export class ChatStreamService {
         specialistMeta?.specialist ?? adapterAgentId
       )
 
+      // Persist any tool activities accumulated before the error
+      const errorToolActivities = getAndClearToolActivities(conversationId)
+      if (errorToolActivities.length > 0) {
+        messageRepository.updateToolActivities(savedMessage.id, errorToolActivities)
+      }
+
       this.mainWindow.webContents.send(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createTextChunk({
@@ -674,6 +692,43 @@ export class ChatStreamService {
 
     // Return StreamHandle — callers can optionally await `done` for full pipeline completion
     return { done, abort: () => conversationLifecycle.abort('external'), requestId }
+  }
+
+  /**
+   * Process file attachments into text content and image data.
+   * Detects images vs text files, reads content, estimates tokens.
+   * Extracted from stream() — pure data-transformation concern.
+   */
+  private processAttachments(
+    attachments: string[]
+  ): { textContent: string; images: ImageAttachment[] } {
+    const images: ImageAttachment[] = []
+    const parts: string[] = []
+
+    for (const filePath of attachments) {
+      try {
+        if (fileService.isImageFile(filePath)) {
+          const { base64, mimeType } = fileService.readImageAsBase64(filePath)
+          const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'image'
+          images.push({ base64, mimeType, fileName })
+          parts.push(
+            `\n---\n**Attached image: ${fileName}** (${mimeType}) — visible in the conversation\n`
+          )
+        } else {
+          const content = fileService.readFileContent(filePath)
+          const tokens = fileService.estimateTokens(content)
+          parts.push(
+            `\n---\n**Attached file: ${filePath}** (${tokens} tokens)\n\`\`\`\n${content}\n\`\`\`\n`
+          )
+        }
+      } catch (error) {
+        parts.push(
+          `\n---\n**Failed to read: ${filePath}**: ${(error as Error).message}\n`
+        )
+      }
+    }
+
+    return { textContent: parts.join(''), images }
   }
 
   // ── Stop ──
@@ -717,6 +772,13 @@ export class ChatStreamService {
         )
         log.info('Stopped message saved to DB, id:', savedMessage.id)
 
+        // Persist tool activities accumulated before user stopped
+        const stopToolActivities = getAndClearToolActivities(conversationId)
+        if (stopToolActivities.length > 0) {
+          messageRepository.updateToolActivities(savedMessage.id, stopToolActivities)
+          log.info(`[PIPELINE:tool-activities-persisted-on-stop] count=${stopToolActivities.length}`)
+        }
+
         this.mainWindow.webContents.send(
           IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
           createCompleteMessage({
@@ -744,8 +806,15 @@ export class ChatStreamService {
     await chatAgentService.compact(extractNuance)
   }
 
-  // N14: Clean up persistent listeners when the service is replaced
+  // N14: Clean up all persistent listeners when the service is replaced
   dispose(): void {
+    // Clean up all persistent event forwarders registered in registerEventForwarders()
+    for (const cleanup of this.eventCleanups) {
+      cleanup()
+    }
+    this.eventCleanups = []
+
+    // hookLifecycle cleanup (stored separately as named handler)
     if (this.hookLifecycleHandler) {
       hookEngine.off('hookLifecycle', this.hookLifecycleHandler)
       this.hookLifecycleHandler = undefined

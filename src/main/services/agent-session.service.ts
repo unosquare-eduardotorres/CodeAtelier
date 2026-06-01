@@ -468,37 +468,15 @@ export class AgentSessionService extends AgentBaseService {
       : undefined
 
     // S6+S12: Inject conversation context for local LLMs on subsequent turns.
-    // Uses S12 context reconstruction (plan state + messages + summary) as the
-    // primary source. Falls back to S6 conversation summary alone.
-    // Since local LLMs don't have SDK session resume, this carries forward context.
     let enrichedMessage = effectiveMessage
     if (this.llmProvider === 'local-llm' && turnCount > 1 && !sessionId) {
-      try {
-        // S12: Full context reconstruction from plan state + messages
-        const localCtxWin = localContextWindow ?? this.resolveLocalContextWindow()
-        const reconstructed = localContextReconstructor.buildContextFromHistory({
-          conversationId,
-          maxTokenBudget: Math.floor(localCtxWin * 0.25), // 25% of context window
-          tier: contextTier ?? resolveContextTier(localCtxWin)
-        })
-        if (reconstructed) {
-          enrichedMessage = `## Previous Context\n${reconstructed}\n\n## Current Request\n${effectiveMessage}`
-          this.log.info(
-            `[S12:context-reconstructed] conversationId=${conversationId} len=${reconstructed.length}`
-          )
-        } else {
-          // S6: Fallback to simple conversation summary
-          const summary = conversationRepository.getSummary(conversationId)
-          if (summary) {
-            enrichedMessage = `## Previous Context\n${summary}\n\n## Current Request\n${effectiveMessage}`
-            this.log.info(
-              `[S6:context-injected] conversationId=${conversationId} summaryLen=${summary.length}`
-            )
-          }
-        }
-      } catch {
-        /* non-fatal — proceed without context */
-      }
+      const ctxWindow = localContextWindow ?? this.resolveLocalContextWindow()
+      enrichedMessage = this.enrichLocalLLMContext({
+        message: effectiveMessage,
+        conversationId,
+        localContextWindow: ctxWindow,
+        contextTier: contextTier ?? resolveContextTier(ctxWindow)
+      })
     }
 
     const sdkPrompt = this.buildSdkPrompt(enrichedMessage, images)
@@ -533,7 +511,11 @@ export class AgentSessionService extends AgentBaseService {
     // Start IPC bridge for CLI/OpenCode backends — the control-actions MCP server
     // sends plan/askUser/memory events through a Unix domain socket.
     if (this.executorBackend === 'cli' || this.executorBackend === 'opencode') {
-      await this.ensureIpcBridge(conversationId)
+      try {
+        await this.ensureIpcBridge(conversationId)
+      } catch (err) {
+        this.log.error('[send] IPC bridge failed — control-actions in log-only mode:', err)
+      }
     }
 
     // S9: Pre-flight context budget audit for local LLMs — catch "system prompt ate
@@ -997,28 +979,7 @@ export class AgentSessionService extends AgentBaseService {
       }
 
       // ── Select executor backend ──
-      // Extract prompt for non-SDK backends. For images, sdkPrompt is an
-      // AsyncIterable<AgentPromptInput> whose single message contains content
-      // blocks (image + text). We extract those blocks so the CLI backend
-      // can send them via stream-json's user message format.
-      let cliPromptInput: string | Array<Record<string, unknown>> = ''
-      if (typeof sdkPrompt === 'string') {
-        cliPromptInput = sdkPrompt
-      } else {
-        // Extract content blocks from AsyncIterable<AgentPromptInput>
-        // (single-message iterable produced by buildSdkPrompt for images)
-        try {
-          for await (const msg of sdkPrompt) {
-            const message = msg.message as { content: Array<Record<string, unknown>> } | undefined
-            if (message?.content) {
-              cliPromptInput = message.content
-              break // Only one message in the iterable
-            }
-          }
-        } catch {
-          cliPromptInput = '[failed to extract image content]'
-        }
-      }
+      const cliPromptInput = await this.extractPromptContent(sdkPrompt)
 
       let executorStream: AsyncGenerator<StreamChunk>
       switch (this.executorBackend) {
@@ -1182,50 +1143,8 @@ export class AgentSessionService extends AgentBaseService {
       }
     }
 
-    // Generate opencode.json config with MCP servers
-    try {
-      const featureFlags = this.resolveWorkspaceMcpFlags()
-
-      // Pass IPC socket path for control-actions bidirectional communication
-      const socketPath = this.ipcBridge?.getSocketPath() ?? undefined
-
-      // Resolve context tier for tier-aware config (compaction, timeouts)
-      const isLocal = this.llmProvider === 'local-llm'
-      let contextTier: ContextWindowTier | undefined
-      if (isLocal) {
-        const ctxWindow = this.resolveLocalContextWindow()
-        contextTier = resolveContextTier(ctxWindow)
-      }
-
-      const configPath = openCodeConfigWriter.writeConfig({
-        workspacePath: this.workspacePath!,
-        workspaceId: this.workspaceId,
-        conversationId: this.currentConversationId,
-        mode: this.currentMode,
-        provider: providerConfig,
-        featureFlags,
-        ipcSocketPath: socketPath,
-        isLocalProvider: isLocal,
-        contextTier
-      })
-
-      // Store config path for server startup
-      this._openCodeConfigPath = configPath
-
-      // #6: Generate OpenCode agent definitions (DaVinci + Specialist)
-      try {
-        openCodeAgentWriter.writeAgents({
-          workspacePath: this.workspacePath!,
-          provider: providerConfig,
-          davinciSystemPrompt: params.systemPrompt,
-          mode: this.currentMode
-        })
-      } catch (agentErr) {
-        this.log.warn('[opencode] Failed to write agent definitions:', agentErr)
-      }
-    } catch (error) {
-      this.log.warn('[opencode] Failed to write config:', error)
-    }
+    // Generate opencode.json config + agent definitions
+    this.writeOpenCodeConfigFiles({ providerConfig, systemPrompt: params.systemPrompt })
 
     // Start OpenCode server if not running
     if (!openCodeExecutor.isRunning()) {
@@ -1244,33 +1163,8 @@ export class AgentSessionService extends AgentBaseService {
       }
     }
 
-    // A-1: Prime the session with workspace context before the first real prompt.
-    // Only prime on the first message (no existing session for this conversation).
-    // Gate behind contextPrimingEnabled setting for independent testing.
-    const existingSessionId = this.currentConversationId
-      ? openCodeExecutor.getSessionId(this.currentConversationId)
-      : undefined
-    if (!existingSessionId) {
-      try {
-        const contextParts = await this.buildPrimingContext(prompt)
-        if (contextParts.length > 0) {
-          // Create a temporary session so primeSession can inject context.
-          // The real session will be created by execute() — priming goes into
-          // the first session created for this conversationId.
-          this.log.info(
-            `[opencode] Priming session with ${contextParts.length} context parts`
-          )
-          // Priming will happen inside execute() after session creation.
-          // Store priming parts for the executor to use.
-          this._pendingPrimingContext = contextParts
-        }
-      } catch (primingErr) {
-        // Non-fatal — priming failure should not block the real prompt
-        this.log.warn('[opencode] Context priming failed:', primingErr)
-      }
-    }
-
-    // A-1: Consume pending priming context for the first execute call
+    // Prepare priming context for first message, then consume it
+    await this.prepareOpenCodePriming(prompt)
     const primingContext = this._pendingPrimingContext
     this._pendingPrimingContext = undefined
 
@@ -1309,6 +1203,143 @@ export class AgentSessionService extends AgentBaseService {
       if (ocSessionId) {
         this.sessionMap.set(this.currentConversationId, ocSessionId)
       }
+    }
+  }
+
+  /**
+   * Extract prompt content from either a string or AsyncIterable<AgentPromptInput>.
+   * For images, the iterable contains content blocks (image + text) that need
+   * extraction for CLI/OpenCode backends.
+   * Extracted from executeStream() — reusable prompt resolution concern.
+   */
+  private async extractPromptContent(
+    sdkPrompt: string | AsyncIterable<AgentPromptInput>
+  ): Promise<string | Array<Record<string, unknown>>> {
+    if (typeof sdkPrompt === 'string') return sdkPrompt
+    try {
+      for await (const msg of sdkPrompt) {
+        const message = msg.message as { content: Array<Record<string, unknown>> } | undefined
+        if (message?.content) {
+          return message.content
+        }
+      }
+    } catch {
+      return '[failed to extract image content]'
+    }
+    return ''
+  }
+
+  /**
+   * S6+S12: Enrich a message with conversation context for local LLMs.
+   * Tries S12 full context reconstruction first (plan state + messages),
+   * falls back to S6 conversation summary alone.
+   * Extracted from send() — dual-fallback context injection concern.
+   */
+  private enrichLocalLLMContext(params: {
+    message: string
+    conversationId: string
+    localContextWindow: number
+    contextTier: ContextWindowTier
+  }): string {
+    try {
+      const reconstructed = localContextReconstructor.buildContextFromHistory({
+        conversationId: params.conversationId,
+        maxTokenBudget: Math.floor(params.localContextWindow * 0.25), // 25% of context window
+        tier: params.contextTier
+      })
+      if (reconstructed) {
+        this.log.info(
+          `[S12:context-reconstructed] conversationId=${params.conversationId} len=${reconstructed.length}`
+        )
+        return `## Previous Context\n${reconstructed}\n\n## Current Request\n${params.message}`
+      }
+      // S6: Fallback to simple conversation summary
+      const summary = conversationRepository.getSummary(params.conversationId)
+      if (summary) {
+        this.log.info(
+          `[S6:context-injected] conversationId=${params.conversationId} summaryLen=${summary.length}`
+        )
+        return `## Previous Context\n${summary}\n\n## Current Request\n${params.message}`
+      }
+    } catch {
+      /* non-fatal — proceed without context */
+    }
+    return params.message
+  }
+
+  /**
+   * Prepare priming context for the first OpenCode message.
+   * Checks for an existing session; if none, gathers workspace context
+   * and stores it as _pendingPrimingContext for the executor to consume.
+   * Extracted from executeOpenCodeStream() — self-contained priming concern.
+   */
+  private async prepareOpenCodePriming(prompt: string): Promise<void> {
+    const existingSessionId = this.currentConversationId
+      ? openCodeExecutor.getSessionId(this.currentConversationId)
+      : undefined
+    if (existingSessionId) return
+
+    try {
+      const contextParts = await this.buildPrimingContext(prompt)
+      if (contextParts.length > 0) {
+        this.log.info(
+          `[opencode] Priming session with ${contextParts.length} context parts`
+        )
+        this._pendingPrimingContext = contextParts
+      }
+    } catch (primingErr) {
+      // Non-fatal — priming failure should not block the real prompt
+      this.log.warn('[opencode] Context priming failed:', primingErr)
+    }
+  }
+
+  /**
+   * Write opencode.json config + agent definitions to disk.
+   * Extracted from executeOpenCodeStream() — cohesive config generation concern.
+   */
+  private writeOpenCodeConfigFiles(params: {
+    providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
+    systemPrompt: string
+  }): void {
+    try {
+      const featureFlags = this.resolveWorkspaceMcpFlags()
+      const socketPath = this.ipcBridge?.getSocketPath() ?? undefined
+
+      // Resolve context tier for tier-aware config (compaction, timeouts)
+      const isLocal = this.llmProvider === 'local-llm'
+      let contextTier: ContextWindowTier | undefined
+      if (isLocal) {
+        const ctxWindow = this.resolveLocalContextWindow()
+        contextTier = resolveContextTier(ctxWindow)
+      }
+
+      const configPath = openCodeConfigWriter.writeConfig({
+        workspacePath: this.workspacePath!,
+        workspaceId: this.workspaceId,
+        conversationId: this.currentConversationId,
+        mode: this.currentMode,
+        provider: params.providerConfig,
+        featureFlags,
+        ipcSocketPath: socketPath,
+        isLocalProvider: isLocal,
+        contextTier
+      })
+
+      this._openCodeConfigPath = configPath
+
+      // #6: Generate OpenCode agent definitions (DaVinci + Specialist)
+      try {
+        openCodeAgentWriter.writeAgents({
+          workspacePath: this.workspacePath!,
+          provider: params.providerConfig,
+          davinciSystemPrompt: params.systemPrompt,
+          mode: this.currentMode
+        })
+      } catch (agentErr) {
+        this.log.warn('[opencode] Failed to write agent definitions:', agentErr)
+      }
+    } catch (error) {
+      this.log.warn('[opencode] Failed to write config:', error)
     }
   }
 
@@ -1377,6 +1408,8 @@ export class AgentSessionService extends AgentBaseService {
     // N10: Clean up stale listeners if the bridge is being restarted
     if (this.ipcBridge) {
       this.ipcBridge.removeAllListeners()
+      // Invalidate cached MCP config so the next turn rebuilds with the new socket path
+      this.executorFactory.invalidateMcpConfigCache()
     }
 
     const bridge = new IpcBridge()
@@ -1415,7 +1448,13 @@ export class AgentSessionService extends AgentBaseService {
       this.log.info(`[ipc-bridge] Memory event received for ${this.currentConversationId}`)
     })
 
-    this.log.info(`[ensureIpcBridge] Bridge started on ${bridge.getSocketPath()}`)
+    const socketPath = bridge.getSocketPath()
+    this.log.info(
+      `[ensureIpcBridge] Bridge started — socketPath=${socketPath ? socketPath : 'MISSING'}`
+    )
+    if (!socketPath) {
+      this.log.warn('[ensureIpcBridge] Socket path is null — control-actions MCP server will run in log-only mode')
+    }
   }
 
   /**

@@ -24,6 +24,11 @@ import type { ConversationMode } from '../../shared/types'
 import type { ContextWindowTier } from './context-management'
 import type { OpenCodeProviderConfig } from './opencode-executor'
 import { EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
+import {
+  LOCAL_MCP_SERVER_DEFS,
+  FORMATTER_DEFS,
+  buildLocalMcpServersFromRegistry
+} from './opencode-config-writer/opencode-config-data'
 
 const configLog = log.scope('OpenCodeConfigWriter')
 
@@ -483,54 +488,14 @@ export class OpenCodeConfigWriter {
 
   /**
    * B-6: Auto-detect the project's code formatter.
-   * Checks for Prettier, Biome, and dprint configs in the workspace.
+   * Uses FORMATTER_DEFS registry — adding a new formatter is a data entry.
    */
   private detectFormatter(workspacePath: string): NonNullable<OpenCodeConfig['formatter']> {
-    // Check for Prettier
-    const prettierConfigs = [
-      '.prettierrc',
-      '.prettierrc.json',
-      '.prettierrc.js',
-      '.prettierrc.cjs',
-      '.prettierrc.mjs',
-      'prettier.config.js',
-      'prettier.config.cjs',
-      'prettier.config.mjs'
-    ]
-    for (const config of prettierConfigs) {
-      if (existsSync(join(workspacePath, config))) {
-        return {
-          enabled: true,
-          command: ['npx', 'prettier', '--write'],
-          extensions: ['.ts', '.tsx', '.js', '.jsx', '.json', '.css', '.md']
-        }
+    for (const def of FORMATTER_DEFS) {
+      if (def.configFiles.some((f) => existsSync(join(workspacePath, f)))) {
+        return { enabled: true, command: def.command, extensions: def.extensions }
       }
     }
-
-    // Check for Biome
-    if (
-      existsSync(join(workspacePath, 'biome.json')) ||
-      existsSync(join(workspacePath, 'biome.jsonc'))
-    ) {
-      return {
-        enabled: true,
-        command: ['npx', '@biomejs/biome', 'format', '--write'],
-        extensions: ['.ts', '.tsx', '.js', '.jsx', '.json']
-      }
-    }
-
-    // Check for dprint
-    if (
-      existsSync(join(workspacePath, 'dprint.json')) ||
-      existsSync(join(workspacePath, '.dprint.json'))
-    ) {
-      return {
-        enabled: true,
-        command: ['npx', 'dprint', 'fmt'],
-        extensions: ['.ts', '.tsx', '.js', '.jsx', '.json', '.md']
-      }
-    }
-
     // No specific formatter detected — use enabled-only (OpenCode default formatter)
     return { enabled: true }
   }
@@ -661,11 +626,8 @@ export class OpenCodeConfigWriter {
     return servers
   }
 
-  /** Local MCP servers bundled with the app (code-graph, semantic-search, git, etc.) */
+  /** Local MCP servers bundled with the app — built from declarative registry. */
   private buildLocalMcpServers(opts: OpenCodeConfigWriterOptions): OpenCodeConfig['mcp'] {
-    const servers: OpenCodeConfig['mcp'] = {}
-    const { featureFlags, workspaceId, workspacePath, contextTier } = opts
-
     // Resolve server script base path
     const serverBasePath = app.isPackaged
       ? join(
@@ -674,91 +636,9 @@ export class OpenCodeConfigWriter {
           'main',
           'mcp-servers'
         )
-      : join(__dirname, '..', 'mcp-servers')
+      : join(__dirname, 'mcp-servers')
 
-    // ── Code Graph ──
-    if (featureFlags.repomapEnabled && workspaceId) {
-      servers['code-graph'] = {
-        type: 'local',
-        command: ['node', join(serverBasePath, 'code-graph-server.js')],
-        environment: {
-          WORKSPACE_ID: workspaceId,
-          WORKSPACE_PATH: workspacePath,
-          ...(contextTier ? { CONTEXT_TIER: contextTier } : {})
-        },
-        // 6D-1: Code-graph indexes large repos — 5s default is too short
-        timeout: 15_000
-      }
-    }
-
-    // ── Semantic Search ──
-    if (featureFlags.semanticSearchEnabled && workspaceId) {
-      servers['semantic-search'] = {
-        type: 'local',
-        command: ['node', join(serverBasePath, 'semantic-search-server.js')],
-        environment: { WORKSPACE_ID: workspaceId },
-        // 6D-1: Embedding queries can be slow on first call
-        timeout: 10_000
-      }
-    }
-
-    // ── Git Context ──
-    servers['git-context'] = {
-      type: 'local',
-      command: ['node', join(serverBasePath, 'git-context-server.js')],
-      environment: { WORKSPACE_PATH: workspacePath },
-      // 6D-1: Large repos with deep history
-      timeout: 10_000
-    }
-
-    // ── Checkpoint Context ──
-    if (opts.conversationId) {
-      servers['checkpoint-context'] = {
-        type: 'local',
-        command: ['node', join(serverBasePath, 'checkpoint-context-server.js')],
-        environment: {
-          CONVERSATION_ID: opts.conversationId,
-          WORKSPACE_PATH: workspacePath
-        },
-        timeout: 8_000
-      }
-    }
-
-    // ── GitHub Context ──
-    if (featureFlags.githubConfigured && workspaceId) {
-      servers['github-context'] = {
-        type: 'local',
-        command: ['node', join(serverBasePath, 'github-context-server.js')],
-        environment: {
-          WORKSPACE_ID: workspaceId,
-          WORKSPACE_PATH: workspacePath
-        },
-        timeout: 8_000
-      }
-    }
-
-    // ── Code Analysis ──
-    servers['code-analysis'] = {
-      type: 'local',
-      command: ['node', join(serverBasePath, 'code-analysis-server.js')],
-      environment: { WORKSPACE_PATH: workspacePath },
-      timeout: 8_000
-    }
-
-    // ── Control Actions ──
-    servers['control-actions'] = {
-      type: 'local',
-      command: ['node', join(serverBasePath, 'control-actions-server.js')],
-      environment: {
-        WORKSPACE_PATH: workspacePath,
-        ...(opts.ipcSocketPath ? { IPC_SOCKET_PATH: opts.ipcSocketPath } : {}),
-        ...(opts.conversationId ? { CONVERSATION_ID: opts.conversationId } : {}),
-        CONVERSATION_MODE: opts.mode
-      },
-      timeout: 8_000
-    }
-
-    return servers
+    return buildLocalMcpServersFromRegistry(LOCAL_MCP_SERVER_DEFS, opts, serverBasePath)
   }
 
   /** External MCP integrations (Maestro, etc.) registered via feature flags. */

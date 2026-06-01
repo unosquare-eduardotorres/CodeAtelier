@@ -14,9 +14,10 @@ import {
   useAgentStore,
   useUpdateStore,
   useMemoryStore,
-  useProfileStore
+  useProfileStore,
+  useAppPreferenceActions
 } from '@renderer/store'
-import type { ConversationPhase } from '../../shared/types'
+import type { ConversationPhase, ToolActivity } from '../../shared/types'
 import { rendererLog } from '@renderer/utils/logger'
 import { useTodoStore } from '@renderer/store/todo.store'
 import { useDiagnosticsStore } from '@renderer/store/diagnostics.store'
@@ -69,6 +70,9 @@ function App(): React.JSX.Element {
   const loadProfile = useProfileStore((s) => s.loadProfile)
   const saveProfile = useProfileStore((s) => s.saveProfile)
 
+  // App preferences (theme, warnings, etc.)
+  const { loadPreferences } = useAppPreferenceActions()
+
   const handleWelcomeComplete = useCallback(
     async (displayName: string, avatarKey: string) => {
       await saveProfile(displayName, avatarKey)
@@ -81,6 +85,8 @@ function App(): React.JSX.Element {
     loadProfile()
     // Load workspaces on mount
     loadWorkspaces()
+    // Load app preferences (theme, warnings) on mount
+    loadPreferences()
 
     // Set up IPC event listeners for streaming
     const unsubChunk = window.api.onMessageChunk((data) => {
@@ -136,18 +142,13 @@ function App(): React.JSX.Element {
           })
         } else if (data.toolActivity.status === 'running') {
           addToolActivity({
-            id: data.toolActivity.id,
-            toolName: data.toolActivity.toolName,
+            ...data.toolActivity,
             status: 'running',
-            input: data.toolActivity.input,
             startedAt: data.toolActivity.startedAt ?? Date.now()
-          })
+          } as ToolActivity)
         } else {
           updateToolActivity({
-            id: data.toolActivity.id,
-            toolName: data.toolActivity.toolName,
-            status: data.toolActivity.status,
-            input: data.toolActivity.input,
+            ...data.toolActivity,
             completedAt: data.toolActivity.completedAt ?? Date.now()
           })
         }
@@ -371,6 +372,7 @@ function App(): React.JSX.Element {
   }, [
     loadProfile,
     loadWorkspaces,
+    loadPreferences,
     appendStreamChunk,
     handleKeepalive,
     updateStreamingIdentity,

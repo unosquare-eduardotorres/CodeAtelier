@@ -3,6 +3,9 @@ import { GrillQuestionCard, ToolActivityBlock } from '@renderer/components/chat'
 import IdeaPopover from './IdeaPopover'
 import { Avatar, CompactContextModal } from '@renderer/components/common'
 import AutoModeSwitchPill from './AutoModeSwitchPill'
+import DiagnosticsPanel from './DiagnosticsPanel'
+import HookActivityIndicator from './HookActivityIndicator'
+import type { ToolActivity } from '../../../../shared/types'
 
 interface MessageListFooterProps {
   promptSuggestion: string | null
@@ -11,7 +14,7 @@ interface MessageListFooterProps {
   ideaPopoverData: { title: string; description: string } | null
   onCloseIdeaPopover: () => void
   thinkingIdentity: { name: string; avatarKey: string; accentColor: string }
-  allStreamingTools: Array<{ id: string; name: string; status: string; serverName?: string }>
+  allStreamingTools: ToolActivity[]
 }
 
 export default function MessageListFooter({
@@ -129,6 +132,11 @@ export default function MessageListFooter({
         }}
       />
 
+      {/* LSP diagnostics panel (N3 — populated via App.tsx subscription) */}
+      {activeConversationId && (
+        <DiagnosticsPanel conversationId={activeConversationId} />
+      )}
+
       {/* Pending questions card */}
       {hasPendingQuestions && pendingQuestions && (
         <div className="flex justify-start px-4">
@@ -170,6 +178,8 @@ export default function MessageListFooter({
                   <ToolActivityBlock activities={allStreamingTools} defaultExpanded />
                 </div>
               )}
+              {/* Hook execution indicator (N5 — populated via App.tsx subscription) */}
+              <HookActivityIndicator />
             </div>
           </div>
         </div>

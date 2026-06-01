@@ -889,6 +889,18 @@ export const GRILL_TRACKS: Record<GrillTrackId, GrillTrack> = {
   }
 } as const
 
+/** Greenfield-relevant tracks for the Create Project wizard (5 of 8) */
+export const GREENFIELD_TRACKS: GrillTrackId[] = [
+  'requirements',
+  'architecture',
+  'ux-ui',
+  'security',
+  'data'
+] as const
+
+/** Pre-selected tracks when the Focus Areas step mounts */
+export const GREENFIELD_DEFAULT_TRACKS: GrillTrackId[] = ['requirements', 'architecture'] as const
+
 // ── Audit Tracks (Workspace Health) ──────────────────────────────────────────
 
 export const AUDIT_TRACKS: Record<AuditTrackId, AuditTrack> = {
@@ -999,7 +1011,7 @@ import type { CouncilAdvisorRole } from './types'
 export interface CouncilAdvisorDefinition {
   id: CouncilAdvisorRole
   name: string
-  emoji: string
+  icon: string
   thinkingStyle: string
   toolAccess: 'full' | 'none'
   toolGuidance: string
@@ -1009,7 +1021,7 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
   contrarian: {
     id: 'contrarian',
     name: 'The Contrarian',
-    emoji: '😈',
+    icon: 'ShieldAlert',
     thinkingStyle:
       'Actively looks for what\'s wrong, what\'s missing, what will fail. Assumes the plan has a fatal flaw and tries to find it.',
     toolAccess: 'full',
@@ -1019,7 +1031,7 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
   'first-principles': {
     id: 'first-principles',
     name: 'The First Principles Thinker',
-    emoji: '🔬',
+    icon: 'Microscope',
     thinkingStyle:
       'Ignores the surface-level plan and asks "what are we actually trying to solve?" Strips assumptions. Rebuilds the problem from ground up. Sometimes the most valuable output is "you\'re solving the wrong problem."',
     toolAccess: 'full',
@@ -1029,7 +1041,7 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
   expansionist: {
     id: 'expansionist',
     name: 'The Expansionist',
-    emoji: '🚀',
+    icon: 'Rocket',
     thinkingStyle:
       'Looks for upside everyone else is missing. What could be bigger? What adjacent opportunity is hiding? Doesn\'t care about risk (that\'s the Contrarian\'s job).',
     toolAccess: 'full',
@@ -1039,7 +1051,7 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
   outsider: {
     id: 'outsider',
     name: 'The Outsider',
-    emoji: '👀',
+    icon: 'Eye',
     thinkingStyle:
       'Has zero context about the codebase, project, or history. Responds purely to what\'s in front of them. Catches the curse of knowledge: things obvious to the team but confusing to everyone else.',
     toolAccess: 'none',
@@ -1049,7 +1061,7 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
   executor: {
     id: 'executor',
     name: 'The Executor',
-    emoji: '⚡',
+    icon: 'Zap',
     thinkingStyle:
       'Only cares about one thing: can this actually be done, and what\'s the fastest path? If the plan sounds brilliant but has no clear first step, says so.',
     toolAccess: 'full',

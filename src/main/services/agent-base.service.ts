@@ -4,6 +4,10 @@ import type { LogFunctions } from 'electron-log'
 import type { AgentStatus } from '../../shared/types'
 import { buildEnvWithPath } from './env-utils'
 import { agentSessionRepository } from '../db/repositories'
+import { summarizeToolInput } from './tool-input-summarizer'
+
+// Re-export for backward compatibility — consumers import from here or the barrel
+export { summarizeToolInput }
 
 export interface StreamChunk {
   type:

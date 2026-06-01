@@ -66,4 +66,13 @@ describe('Lean Identity Prompt', () => {
     assert.ok(lean.includes('find_callers'), 'Missing find_callers guidance')
     assert.ok(lean.includes('file_dependents'), 'Missing file_dependents guidance')
   })
+
+  test('full prompt includes ## Tool Priority section', () => {
+    const full = buildDaVinciIdentityPrompt('default')
+    assert.ok(full.includes('## Tool Priority'), 'Full prompt should include ## Tool Priority section')
+    assert.ok(
+      full.includes('Code Graph and Semantic Search tools FIRST'),
+      'Tool Priority should mention Code Graph and Semantic Search'
+    )
+  })
 })

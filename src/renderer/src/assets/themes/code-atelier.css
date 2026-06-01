@@ -3,26 +3,26 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 [data-theme="code-atelier"] {
   /* ── Surface layers (dark → light) ── */
-  --color-surface-base: #090d0f;
-  --color-surface-raised: #111c21;
-  --color-surface-overlay: #162228;
-  --color-surface-float: #1e2c30;
+  --color-surface-base: #111a1e;
+  --color-surface-raised: #182428;
+  --color-surface-overlay: #1e2c31;
+  --color-surface-float: #263538;
 
   /* ── Border layers (gold-based) ── */
   --color-border-subtle: rgba(184, 151, 106, 0.15);
   --color-border-default: rgba(184, 151, 106, 0.28);
   --color-border-strong: rgba(184, 151, 106, 0.45);
 
-  /* ── Text hierarchy (gold tones on dark) ── */
-  --color-text-primary: #c8b89a;
-  --color-text-body: #afc2c6;
-  --color-text-secondary: #6a7a7e;
-  --color-text-muted: #5a6a6e;
+  /* ── Text hierarchy (warm neutrals on dark — APCA-calibrated for surface-overlay #1e2c31) ── */
+  --color-text-primary: #ece6dc;
+  --color-text-body: #dcdcd8;
+  --color-text-secondary: #a2a8ac;
+  --color-text-muted: #889094;
 
   /* ── Code text ── */
   --color-code-text: #d4cfc4;
-  --color-code-inline: #88c4ba;
-  --color-text-emphasis: #c4d0d4;
+  --color-code-inline: #98d8d4;
+  --color-text-emphasis: #f0ece8;
 
   /* ── Primary accent (Atelier Gold) ── */
   --color-primary: #b8976a;
@@ -31,8 +31,8 @@
   --color-primary-text: #c8b89a;
 
   /* ── Accent (Jewel Copper) ── */
-  --color-accent: #c4714a;
-  --color-accent-muted: rgba(196, 113, 74, 0.15);
+  --color-accent: #84d0e6;
+  --color-accent-muted: rgba(123, 184, 201, 0.15);
 
   /* ── Deep Teal / Forest Green ── */
   --color-teal: #1f6b5e;
@@ -112,7 +112,7 @@
   --color-card-bg: rgba(184, 151, 106, 0.02);
   --color-card-border: var(--color-border-subtle);
 
-  --color-input-bg: #0d1618;
+  --color-input-bg: #0f1b1f;
   --color-input-border: var(--color-border-default);
   --color-input-focus: var(--color-primary);
 

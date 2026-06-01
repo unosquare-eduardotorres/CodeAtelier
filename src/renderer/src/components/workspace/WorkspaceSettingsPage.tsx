@@ -289,8 +289,8 @@ export default function WorkspaceSettingsPage({
                   <h3 className="text-sm font-semibold text-text-primary">Ideas</h3>
                 </div>
                 <p className="text-xs text-text-secondary mb-4">
-                  Captured ideas for future work items. Refine them with &quot;Grill Me&quot; or
-                  convert directly into conversations.
+                  Your idea parking lot. Grill ideas with an AI analyst before building, or jump
+                  straight into a chat session.
                 </p>
                 <IdeasList
                   onNavigateToChat={onBack}

@@ -59,124 +59,154 @@ type EventHandler = (
   state: NormalizerState
 ) => StreamChunk[]
 
+// ── Per-part-type sub-handlers for message.part.updated ──
+
+/** Handle text part — includes thinking→text turn boundary detection (F16). */
+function handleTextPart(
+  part: Record<string, unknown>,
+  state: NormalizerState
+): StreamChunk[] {
+  const text = part.content as string | undefined
+  if (!text) return []
+
+  const chunks: StreamChunk[] = []
+  // F16: Emit turn_boundary when transitioning from thinking→text
+  // so the renderer shows visual separation between thinking and response.
+  if (state.lastPartType === 'thinking' && state.hasPriorText) {
+    chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
+  }
+  chunks.push({ type: 'text', content: text })
+  state.lastPartType = 'text'
+  state.hasPriorText = true
+  return chunks
+}
+
+/** Handle tool-invocation part — call, partial (streaming args), and result sub-states. */
+function handleToolInvocationPart(
+  part: Record<string, unknown>,
+  state: NormalizerState
+): StreamChunk[] {
+  const chunks: StreamChunk[] = []
+  const toolName = part.toolName as string | undefined
+  const toolId = part.toolCallId as string | undefined
+  // N1: Renamed from `state` to avoid shadowing the NormalizerState parameter
+  const invocationState = part.state as string | undefined
+
+  if (invocationState === 'call' && toolName) {
+    state.lastPartType = 'tool'
+    chunks.push({ type: 'tool_use', toolName, toolId })
+  }
+
+  if (invocationState === 'partial' && toolName) {
+    const partialArgs = part.args as Record<string, unknown> | undefined
+    if (partialArgs) {
+      const inputPreview = summarizeToolInput(toolName, partialArgs)
+      if (inputPreview) {
+        chunks.push({
+          type: 'tool_progress',
+          toolName,
+          toolId,
+          toolInput: inputPreview,
+          content: `${toolName}: ${inputPreview}`
+        })
+      }
+    }
+  }
+
+  if (invocationState === 'result') {
+    const result = part.result as string | undefined
+    const resultStr = typeof result === 'string' ? result : JSON.stringify(result)
+    chunks.push({
+      type: 'tool_result',
+      toolName: toolName ?? 'unknown',
+      toolId,
+      content: resultStr
+    })
+
+    // Generate a human-readable tool_use_summary
+    const toolNameStr = toolName ?? 'unknown'
+    const resultSummaryObj = extractResultSummary(toolNameStr, resultStr)
+    let inputSummary: string | undefined
+    const toolInput = part.args as Record<string, unknown> | undefined
+    if (toolInput) inputSummary = summarizeToolInput(toolNameStr, toolInput)
+
+    if (resultSummaryObj?.result || inputSummary) {
+      chunks.push({
+        type: 'tool_use_summary',
+        toolName: toolNameStr,
+        toolId,
+        content: [
+          inputSummary ? `Input: ${inputSummary}` : '',
+          resultSummaryObj?.result ? `Result: ${resultSummaryObj.result}` : ''
+        ]
+          .filter(Boolean)
+          .join(' — ')
+      })
+    }
+  }
+
+  return chunks
+}
+
+/**
+ * Handle thinking / reasoning part — both map to the 'thinking' chunk type.
+ * 6C-1: 'reasoning' / 'reasoning-delta' treated identically to 'thinking'.
+ */
+function handleThinkingPart(
+  part: Record<string, unknown>,
+  state: NormalizerState
+): StreamChunk[] {
+  const content = part.content as string | undefined
+  if (!content) return []
+  state.lastPartType = 'thinking'
+  return [{ type: 'thinking', content }]
+}
+
+/** GAP-9: Handle structured_output / structured-output part. */
+function handleStructuredOutputPart(
+  part: Record<string, unknown>
+): StreamChunk[] {
+  const data = part.content ?? part.data ?? part.result
+  if (!data) return []
+  return [
+    {
+      type: 'structured_output',
+      structuredOutput: {
+        data,
+        schemaName: part.schemaName as string | undefined
+      },
+      content: typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+    }
+  ]
+}
+
 // ── Per-event-type handler functions ──
 
+/** Dispatcher for message.part.updated — delegates to per-part-type sub-handlers. */
 function handleMessagePartUpdated(
   properties: EventProperties,
   _sessionId: string,
   _tokenUsage: ExecutorTokenUsage,
   state: NormalizerState
 ): StreamChunk[] {
-  const chunks: StreamChunk[] = []
   const part = properties.part as Record<string, unknown> | undefined
+  if (!part?.type) return []
 
-  if (part?.type === 'text') {
-    const text = part.content as string | undefined
-    // F16: Emit turn_boundary when transitioning from thinking→text
-    // so the renderer shows visual separation between thinking and response.
-    if (text && state.lastPartType === 'thinking' && state.hasPriorText) {
-      chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
-    }
-    if (text) {
-      chunks.push({ type: 'text', content: text })
-      state.lastPartType = 'text'
-      state.hasPriorText = true
-    }
+  switch (part.type) {
+    case 'text':
+      return handleTextPart(part, state)
+    case 'tool-invocation':
+      return handleToolInvocationPart(part, state)
+    case 'thinking':
+    case 'reasoning':
+    case 'reasoning-delta':
+      return handleThinkingPart(part, state)
+    case 'structured_output':
+    case 'structured-output':
+      return handleStructuredOutputPart(part)
+    default:
+      return []
   }
-
-  if (part?.type === 'tool-invocation') {
-    const toolName = part.toolName as string | undefined
-    const toolId = part.toolCallId as string | undefined
-    // N1: Renamed from `state` to avoid shadowing the NormalizerState parameter
-    const invocationState = part.state as string | undefined
-
-    if (invocationState === 'call' && toolName) {
-      state.lastPartType = 'tool'
-      chunks.push({ type: 'tool_use', toolName, toolId })
-    }
-
-    if (invocationState === 'partial' && toolName) {
-      const partialArgs = part.args as Record<string, unknown> | undefined
-      if (partialArgs) {
-        const inputPreview = summarizeToolInput(toolName, partialArgs)
-        if (inputPreview) {
-          chunks.push({
-            type: 'tool_progress',
-            toolName,
-            toolId,
-            toolInput: inputPreview,
-            content: `${toolName}: ${inputPreview}`
-          })
-        }
-      }
-    }
-
-    if (invocationState === 'result') {
-      const result = part.result as string | undefined
-      const resultStr = typeof result === 'string' ? result : JSON.stringify(result)
-      chunks.push({
-        type: 'tool_result',
-        toolName: toolName ?? 'unknown',
-        toolId,
-        content: resultStr
-      })
-
-      // Generate a human-readable tool_use_summary
-      const toolNameStr = toolName ?? 'unknown'
-      const resultSummaryObj = extractResultSummary(toolNameStr, resultStr)
-      let inputSummary: string | undefined
-      const toolInput = part.args as Record<string, unknown> | undefined
-      if (toolInput) inputSummary = summarizeToolInput(toolNameStr, toolInput)
-
-      if (resultSummaryObj?.result || inputSummary) {
-        chunks.push({
-          type: 'tool_use_summary',
-          toolName: toolNameStr,
-          toolId,
-          content: [
-            inputSummary ? `Input: ${inputSummary}` : '',
-            resultSummaryObj?.result ? `Result: ${resultSummaryObj.result}` : ''
-          ]
-            .filter(Boolean)
-            .join(' — ')
-        })
-      }
-    }
-  }
-
-  if (part?.type === 'thinking') {
-    const thinking = part.content as string | undefined
-    if (thinking) {
-      chunks.push({ type: 'thinking', content: thinking })
-      state.lastPartType = 'thinking'
-    }
-  }
-
-  // 6C-1: Handle 'reasoning' / 'reasoning-delta' part type (same UI as thinking)
-  if (part?.type === 'reasoning' || part?.type === 'reasoning-delta') {
-    const reasoning = part.content as string | undefined
-    if (reasoning) {
-      chunks.push({ type: 'thinking', content: reasoning })
-      state.lastPartType = 'thinking' // N1: Parity with thinking handler for turn boundary detection
-    }
-  }
-
-  // GAP-9: Surface structured output from agent response
-  if (part?.type === 'structured_output' || part?.type === 'structured-output') {
-    const data = part.content ?? part.data ?? part.result
-    if (data) {
-      chunks.push({
-        type: 'structured_output',
-        structuredOutput: {
-          data,
-          schemaName: part.schemaName as string | undefined
-        },
-        content: typeof data === 'string' ? data : JSON.stringify(data, null, 2)
-      })
-    }
-  }
-
-  return chunks
 }
 
 function handleSessionUpdated(

@@ -19,8 +19,8 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { writeFileSync, mkdirSync, existsSync, unlinkSync, readdirSync, statSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -34,6 +34,7 @@ import {
   normalizeMessage,
   executorLog
 } from './executor-utils/index'
+import { buildEnvWithPath } from './env-utils'
 import type { StreamState } from './executor-utils/index'
 
 // ── Re-export types for external consumers ──
@@ -127,6 +128,12 @@ export interface CLIExecuteResult {
 
 // ── CLIExecutor class ──
 
+/** Per-message timeout for iterator.next() — prevents indefinite hangs when CLI stalls. */
+const MESSAGE_TIMEOUT_MS = 5 * 60_000 // 5 minutes
+
+/** Regex for stderr patterns that indicate real errors (not progress info). */
+const STDERR_ERROR_PATTERN = /error|fatal|panic|ENOENT|EACCES|permission denied|segfault|SIGABRT/i
+
 export class CLIExecutor {
   private cliProcess: ChildProcess | null = null
   private sessionId: string | undefined = undefined
@@ -136,11 +143,17 @@ export class CLIExecutor {
   private lastSystemPromptHash: string | null = null
   /** Persisted NDJSON iterator — survives across turns so multi-turn stdin/stdout works */
   private ndjsonIterator: AsyncGenerator<Record<string, unknown>> | null = null
-
-  /** The active CLI process (for status checks) */
-  getProcess(): ChildProcess | null {
-    return this.cliProcess
-  }
+  /**
+   * Ready-state flag for multi-turn stdin writes.
+   * Set to true after receiving a `result` event (end-of-turn),
+   * set to false immediately after writing a new message.
+   * Prevents writing while the CLI is still processing a previous turn.
+   */
+  private cliReadyForInput = false
+  /** Last captured stderr error lines — used to provide context when CLI exits with non-zero code */
+  private lastStderrError: string | null = null
+  /** Exit code from the most recent process exit — checked after stream exhausts */
+  private lastExitCode: number | null = null
 
   /** Get the captured session ID */
   getSessionId(): string | undefined {
@@ -172,73 +185,22 @@ export class CLIExecutor {
     const tools = new ToolTracker()
     const state: StreamState = { streamedTextLength: 0 }
 
+    // Reset per-execution error state
+    this.lastStderrError = null
+    this.lastExitCode = null
+
     heartbeat.start()
 
     try {
       // If continuing an existing session, write the prompt to stdin
       if (options.continueSession && this.isAlive() && this.cliProcess?.stdin) {
+        if (!this.cliReadyForInput) {
+          executorLog.warn('[CLI:send] CLI not ready for input — previous turn may still be processing')
+        }
         executorLog.info('[CLI:send] Continuing existing session — writing message to stdin')
-        writeNdjsonMessage(this.cliProcess.stdin, buildUserMessage(options.prompt))
+        await this.writeToStdin(buildUserMessage(options.prompt))
       } else {
-        // Spawn a fresh CLI process
-        const args = this.buildCLIArgs(options)
-        const env = this.buildProcessEnv(options)
-
-        executorLog.info(
-          `[CLI:spawn] claude ${args.join(' ').replace(/--system-prompt ".*?"/, '--system-prompt "..."')}`
-        )
-        executorLog.info(`[CLI:args] ${args.join(' ')}`)
-
-        // Kill any existing process before spawning new one
-        await this.killProcess()
-
-        this.cliProcess = spawn('claude', args, {
-          cwd: options.cwd,
-          env,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          // Don't kill the process when the parent exits — we manage lifecycle explicitly
-          detached: false
-        })
-
-        // Wire abort controller to process kill
-        if (options.abortController) {
-          const signal = options.abortController.signal
-          if (signal.aborted) {
-            this.cliProcess.kill('SIGTERM')
-          } else {
-            signal.addEventListener(
-              'abort',
-              () => {
-                this.killProcess()
-              },
-              { once: true }
-            )
-          }
-        }
-
-        // Log stderr for diagnostics (not fatal — CLI writes progress info there)
-        this.cliProcess.stderr?.on('data', (data: Buffer) => {
-          const text = data.toString('utf-8').trim()
-          if (text) {
-            executorLog.info(`[CLI:stderr] ${text.slice(0, 500)}`)
-          }
-        })
-
-        // Handle process exit
-        this.cliProcess.on('exit', (code, signal) => {
-          executorLog.info(`[CLI:exit] code=${code} signal=${signal}`)
-          this.cliProcess = null
-        })
-
-        this.cliProcess.on('error', (err) => {
-          executorLog.error('[CLI:error]', err)
-          this.cliProcess = null
-        })
-
-        // Write the initial user message to stdin
-        if (this.cliProcess.stdin) {
-          writeNdjsonMessage(this.cliProcess.stdin, buildUserMessage(options.prompt))
-        }
+        await this.spawnCLIProcess(options)
       }
 
       // Read NDJSON from stdout — reuse the iterator across turns so the
@@ -259,7 +221,19 @@ export class CLIExecutor {
       let msgCount = 0
       try {
         while (true) {
-          const iterResult = await this.ndjsonIterator.next()
+          // Per-message timeout prevents indefinite hangs when CLI stalls
+          // (e.g., MCP tool deadlock). Global session timeout is 10-30 min;
+          // this provides faster detection at the message level.
+          let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+          const iterResult = await Promise.race([
+            this.ndjsonIterator.next(),
+            new Promise<never>((_, reject) => {
+              timeoutHandle = setTimeout(
+                () => reject(new Error(`CLI message timeout — no NDJSON received for ${MESSAGE_TIMEOUT_MS / 1000}s`)),
+                MESSAGE_TIMEOUT_MS
+              )
+            })
+          ]).finally(() => clearTimeout(timeoutHandle))
           if (iterResult.done) {
             executorLog.info('[CLI:stream] Iterator exhausted (process ended)')
             this.ndjsonIterator = null
@@ -293,7 +267,8 @@ export class CLIExecutor {
           // Stop consuming on the result event (end-of-turn) so the caller can
           // finalize. The iterator stays alive for the next turn.
           if (msg.type === 'result') {
-            executorLog.info('[CLI:result-received] Turn complete — pausing stream read')
+            this.cliReadyForInput = true
+            executorLog.info('[CLI:result-received] Turn complete — pausing stream read (ready for input)')
             break
           }
         }
@@ -306,6 +281,20 @@ export class CLIExecutor {
         this.ndjsonIterator = null
       }
       executorLog.info(`[CLI:stream-end] Total NDJSON messages received: ${msgCount}`)
+
+      // Detect CLI crash: process exited with non-zero code and produced no messages
+      if (msgCount === 0 && this.lastExitCode !== null && this.lastExitCode !== 0) {
+        const stderrHint = this.lastStderrError
+          ? ` — ${this.lastStderrError}`
+          : ''
+        executorLog.error(
+          `[CLI:crash-detected] CLI exited with code ${this.lastExitCode} before producing any output${stderrHint}`
+        )
+        yield {
+          type: 'error',
+          error: `CLI failed to start (exit code ${this.lastExitCode})${stderrHint}`
+        }
+      }
     } catch (error) {
       executorLog.error('CLI execution error:', error)
       telemetry.recordFailure(error as Error)
@@ -427,8 +416,15 @@ export class CLIExecutor {
     if (!this.cliProcess) return
 
     const proc = this.cliProcess
+    const iter = this.ndjsonIterator
     this.cliProcess = null
     this.ndjsonIterator = null
+    this.cliReadyForInput = false
+
+    // Properly close the async generator to release stream references
+    if (iter) {
+      try { await iter.return?.(undefined) } catch { /* ignore — process is dying */ }
+    }
 
     return new Promise<void>((resolve) => {
       const forceKillTimer = setTimeout(() => {
@@ -458,6 +454,110 @@ export class CLIExecutor {
   }
 
   // ── Private helpers ──
+
+  /**
+   * Spawn a fresh CLI process, wire abort/stderr/exit handlers, and write
+   * the initial user message to stdin.
+   * Extracted from execute() — cohesive process lifecycle setup concern.
+   */
+  private async spawnCLIProcess(options: CLIExecuteOptions): Promise<void> {
+    // Kill any existing process BEFORE building args — killProcess() calls
+    // cleanupSystemPromptFile() which deletes this.systemPromptFile.
+    // If buildCLIArgs runs first, it writes a new prompt file that
+    // killProcess then immediately deletes (race condition).
+    await this.killProcess()
+
+    const args = this.buildCLIArgs(options)
+    const env = this.buildProcessEnv(options)
+
+    executorLog.info(
+      `[CLI:spawn] claude ${args.join(' ').replace(/--system-prompt ".*?"/, '--system-prompt "..."')}`
+    )
+    executorLog.info(`[CLI:args] ${args.join(' ')}`)
+
+    // MCP diagnostic — surface config path and tool counts for debugging
+    const mcpConfigIdx = args.indexOf('--mcp-config')
+    const allowedToolsIdx = args.indexOf('--allowedTools')
+    executorLog.info(
+      `[CLI:mcp-diag] mcp-config=${mcpConfigIdx >= 0 ? args[mcpConfigIdx + 1] : 'NONE'} ` +
+      `allowedToolsCount=${allowedToolsIdx >= 0 ? args[allowedToolsIdx + 1]?.split(',').length : 0} ` +
+      `permissionMode=${args[args.indexOf('--permission-mode') + 1] ?? 'unset'}`
+    )
+
+    this.cliProcess = spawn('claude', args, {
+      cwd: options.cwd,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: false
+    })
+
+    // Wire abort controller to process kill
+    if (options.abortController) {
+      const signal = options.abortController.signal
+      if (signal.aborted) {
+        this.cliProcess.kill('SIGTERM')
+      } else {
+        signal.addEventListener(
+          'abort',
+          () => {
+            this.killProcess()
+          },
+          { once: true }
+        )
+      }
+    }
+
+    // Log stderr — upgrade to ERROR level for patterns that indicate real failures
+    this.cliProcess.stderr?.on('data', (data: Buffer) => {
+      const text = data.toString('utf-8').trim()
+      if (!text) return
+      if (STDERR_ERROR_PATTERN.test(text)) {
+        executorLog.error(`[CLI:stderr-ERROR] ${text.slice(0, 500)}`)
+        this.lastStderrError = text.slice(0, 500)
+      } else {
+        executorLog.info(`[CLI:stderr] ${text.slice(0, 500)}`)
+      }
+    })
+
+    // Handle process exit
+    this.cliProcess.on('exit', (code, signal) => {
+      executorLog.info(`[CLI:exit] code=${code} signal=${signal}`)
+      this.lastExitCode = code
+      this.cliProcess = null
+    })
+
+    this.cliProcess.on('error', (err) => {
+      executorLog.error('[CLI:error]', err)
+      this.cliProcess = null
+    })
+
+    // Write the initial user message to stdin
+    if (this.cliProcess.stdin) {
+      await this.writeToStdin(buildUserMessage(options.prompt))
+    }
+  }
+
+  /**
+   * Write a message to stdin with backpressure handling.
+   * If the kernel buffer is full, waits for 'drain' before resolving.
+   * Ensures messages aren't silently dropped under heavy load.
+   */
+  private async writeToStdin(message: Record<string, unknown>): Promise<void> {
+    if (!this.cliProcess?.stdin) {
+      executorLog.warn('[CLI:writeToStdin] No stdin available — message dropped')
+      return
+    }
+    const accepted = writeNdjsonMessage(this.cliProcess.stdin, message)
+    if (!accepted) {
+      // stdin buffer is full — wait for it to drain before continuing
+      await new Promise<void>((resolve) => {
+        this.cliProcess?.stdin?.once('drain', resolve)
+        // Safety: resolve after 10s if drain never fires (process may have died)
+        setTimeout(resolve, 10_000)
+      })
+    }
+    this.cliReadyForInput = false
+  }
 
   /**
    * Build CLI arguments from execute options.
@@ -508,9 +608,15 @@ export class CLIExecutor {
       args.push('--system-prompt-file', promptFilePath)
     }
 
-    // Session resume
+    // Session resume — validate format before passing to CLI
     if (options.resume) {
-      args.push('--resume', options.resume)
+      if (/^[a-zA-Z0-9_-]{8,}$/.test(options.resume)) {
+        args.push('--resume', options.resume)
+      } else {
+        executorLog.warn(
+          `[CLI:invalid-resume] Malformed session ID (skipping --resume): ${options.resume.slice(0, 30)}`
+        )
+      }
     }
 
     // Resume at specific message (undo support)
@@ -553,7 +659,7 @@ export class CLIExecutor {
     // Betas (1M context)
     if (options.betas?.length) {
       for (const beta of options.betas) {
-        args.push('--beta', beta)
+        args.push('--betas', beta)
       }
     }
 
@@ -599,7 +705,7 @@ export class CLIExecutor {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
     }
-    const filePath = join(dir, `system-prompt-${Date.now()}.md`)
+    const filePath = join(dir, `system-prompt-${Date.now()}-${randomUUID().slice(0, 8)}.md`)
     writeFileSync(filePath, prompt, 'utf-8')
     this.systemPromptFile = filePath
     this.lastSystemPromptHash = hash
@@ -627,7 +733,7 @@ export class CLIExecutor {
    */
   private buildProcessEnv(options: CLIExecuteOptions): Record<string, string | undefined> {
     return {
-      ...process.env,
+      ...buildEnvWithPath(),
       ...(options.envOverrides ?? {}),
       CLAUDE_AGENT_SDK_CLIENT_APP: `code-atelier/${app.getVersion()}`
     }
@@ -635,32 +741,38 @@ export class CLIExecutor {
 }
 
 /**
- * Resolve the Claude CLI binary path for packaged Electron apps.
- * In dev mode, returns undefined (CLI found via PATH).
- * In packaged apps, checks standard install locations.
+ * Sweep stale system-prompt temp files from /tmp/code-atelier-prompts/.
+ * Removes files older than 24 hours. Call on app startup to prevent
+ * accumulation from crashes that skip normal cleanup.
  */
-export function resolveClaudeBinaryPath(): string | undefined {
-  if (!app.isPackaged) return undefined
+export function cleanupStalePromptFiles(): void {
+  const dir = join(tmpdir(), 'code-atelier-prompts')
+  if (!existsSync(dir)) return
 
-  // Standard macOS installation paths
-  const candidates = [
-    '/usr/local/bin/claude',
-    join(process.env.HOME ?? '', '.claude', 'bin', 'claude'),
-    '/opt/homebrew/bin/claude'
-  ]
+  const MAX_AGE_MS = 24 * 60 * 60_000 // 24 hours
+  const now = Date.now()
+  let removed = 0
 
-  // In packaged apps, prefer the system-installed claude binary
-  for (const candidate of candidates) {
-    try {
-      const fs = require('node:fs')
-      if (fs.existsSync(candidate)) {
-        return candidate
+  try {
+    for (const file of readdirSync(dir)) {
+      const filePath = join(dir, file)
+      try {
+        const stat = statSync(filePath)
+        if (now - stat.mtimeMs > MAX_AGE_MS) {
+          unlinkSync(filePath)
+          removed++
+        }
+      } catch {
+        // Non-fatal — skip individual files that can't be stat'd/removed
       }
-    } catch {
-      // Continue checking
     }
+    if (removed > 0) {
+      executorLog.info(`[CLI:cleanup] Removed ${removed} stale prompt file(s) from ${dir}`)
+    }
+  } catch {
+    // Non-fatal — directory access issues
   }
-
-  return undefined
 }
+
+
 

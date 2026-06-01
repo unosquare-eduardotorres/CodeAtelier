@@ -637,52 +637,8 @@ export class OpenCodeExecutor {
     if (!this.client || !contextParts.length) return
 
     try {
-      // 6E-2: Try file.status() first for structured uncommitted changes.
-      // Falls back to session.shell() git command if unavailable.
-      let usedFileStatus = false
-      try {
-        const fileStatus = await this.client.file.status({})
-        if (fileStatus.data && fileStatus.data.length > 0) {
-          const statusLines = fileStatus.data
-            .map((f: { status: string; path: string }) => `  ${f.status} ${f.path}`)
-            .join('\n')
-          const gitIdx = contextParts.findIndex((p) =>
-            p.text.includes('[Workspace Context: Recent Changes]')
-          )
-          if (gitIdx >= 0) {
-            contextParts[gitIdx] = {
-              type: 'text',
-              text: `[Workspace Context: Uncommitted Changes]\n${statusLines}`
-            }
-            usedFileStatus = true
-          }
-        }
-      } catch {
-        // file.status() not available — fall through to shell
-      }
-
-      // B-4: Use session.shell() for git context if file.status() didn't work
-      if (!usedFileStatus) {
-        try {
-          const gitResult = await this.client.session.shell({
-            path: { id: sessionId },
-            body: { command: 'git diff --stat HEAD~3 2>/dev/null || echo "(no recent commits)"' }
-          })
-          if (gitResult.data?.stdout && gitResult.data.stdout.trim().length > 10) {
-            const gitIdx = contextParts.findIndex((p) =>
-              p.text.includes('[Workspace Context: Recent Changes]')
-            )
-            if (gitIdx >= 0) {
-              contextParts[gitIdx] = {
-                type: 'text',
-                text: `[Workspace Context: Recent Changes (live)]\n${gitResult.data.stdout.trim()}`
-              }
-            }
-          }
-        } catch {
-          // session.shell() not available or failed — fall back to static context parts
-        }
-      }
+      // 6E-2/B-4: Enrich git context via file.status() or session.shell() fallback
+      await this.enrichGitContext(sessionId, contextParts)
 
       await this.client.session.prompt({
         path: { id: sessionId },
@@ -697,6 +653,57 @@ export class OpenCodeExecutor {
     } catch (err) {
       // Non-fatal — priming failure shouldn't block the real prompt
       openCodeLog.warn(`[opencode] Session priming failed: ${(err as Error).message}`)
+    }
+  }
+
+  /**
+   * 6E-2/B-4: Enrich git context in priming parts via dual-fallback.
+   * Tries file.status() first for structured uncommitted changes,
+   * falls back to session.shell() git diff if unavailable.
+   * Mutates the matching contextParts entry in place.
+   */
+  private async enrichGitContext(
+    sessionId: string,
+    contextParts: Array<{ type: 'text'; text: string }>
+  ): Promise<void> {
+    if (!this.client) return
+
+    const gitIdx = contextParts.findIndex((p) =>
+      p.text.includes('[Workspace Context: Recent Changes]')
+    )
+    if (gitIdx < 0) return
+
+    // Try file.status() first for structured uncommitted changes
+    try {
+      const fileStatus = await this.client.file.status({})
+      if (fileStatus.data && fileStatus.data.length > 0) {
+        const statusLines = fileStatus.data
+          .map((f: { status: string; path: string }) => `  ${f.status} ${f.path}`)
+          .join('\n')
+        contextParts[gitIdx] = {
+          type: 'text',
+          text: `[Workspace Context: Uncommitted Changes]\n${statusLines}`
+        }
+        return
+      }
+    } catch {
+      // file.status() not available — fall through to shell
+    }
+
+    // B-4: Fall back to session.shell() for git diff context
+    try {
+      const gitResult = await this.client.session.shell({
+        path: { id: sessionId },
+        body: { command: 'git diff --stat HEAD~3 2>/dev/null || echo "(no recent commits)"' }
+      })
+      if (gitResult.data?.stdout && gitResult.data.stdout.trim().length > 10) {
+        contextParts[gitIdx] = {
+          type: 'text',
+          text: `[Workspace Context: Recent Changes (live)]\n${gitResult.data.stdout.trim()}`
+        }
+      }
+    } catch {
+      // session.shell() not available or failed — keep static context parts
     }
   }
 
@@ -842,32 +849,9 @@ export class OpenCodeExecutor {
    * Returns a descriptive error string if the provider is down, or null if OK.
    */
   async verifyProvider(providerId: string, baseUrl?: string): Promise<string | null> {
-    // For local providers (Ollama/oMLX), ping the health endpoint directly
-    if (providerId === 'ollama') {
-      const url = baseUrl ?? 'http://localhost:11434'
-      try {
-        const response = await fetch(`${url}/api/tags`, {
-          signal: AbortSignal.timeout(5000)
-        })
-        if (!response.ok) {
-          return `Ollama is not responding (HTTP ${response.status}). Ensure Ollama is running at ${url}`
-        }
-      } catch {
-        return `Cannot reach Ollama at ${url}. Is it running? Try: ollama serve`
-      }
-    } else if (providerId === 'omlx') {
-      const url = baseUrl ?? 'http://localhost:8080'
-      try {
-        const response = await fetch(`${url}/health`, {
-          signal: AbortSignal.timeout(5000)
-        })
-        if (!response.ok) {
-          return `oMLX is not responding (HTTP ${response.status}). Ensure oMLX is running at ${url}`
-        }
-      } catch {
-        return `Cannot reach oMLX at ${url}. Is it running?`
-      }
-    }
+    // For local providers, ping the health endpoint directly
+    const localCheck = await this.checkLocalProviderHealth(providerId, baseUrl)
+    if (localCheck) return localCheck
 
     // For all providers, verify via SDK if available
     if (this.client) {
@@ -996,6 +980,38 @@ export class OpenCodeExecutor {
   // ── Private helpers ──
 
   /**
+   * GAP-24: Check local provider health by pinging their HTTP endpoint.
+   * Returns a descriptive error string if unreachable, or null if healthy/not-local.
+   */
+  private async checkLocalProviderHealth(
+    providerId: string,
+    baseUrl?: string
+  ): Promise<string | null> {
+    const LOCAL_PROVIDERS: Record<string, { defaultUrl: string; healthPath: string; hint?: string }> = {
+      ollama: { defaultUrl: 'http://localhost:11434', healthPath: '/api/tags', hint: 'Try: ollama serve' },
+      omlx: { defaultUrl: 'http://localhost:8080', healthPath: '/health' }
+    }
+
+    const provider = LOCAL_PROVIDERS[providerId]
+    if (!provider) return null
+
+    const url = baseUrl ?? provider.defaultUrl
+    try {
+      const response = await fetch(`${url}${provider.healthPath}`, {
+        signal: AbortSignal.timeout(5000)
+      })
+      if (!response.ok) {
+        return `${providerId} is not responding (HTTP ${response.status}). Ensure ${providerId} is running at ${url}`
+      }
+    } catch {
+      const hint = provider.hint ? ` ${provider.hint}` : ''
+      return `Cannot reach ${providerId} at ${url}. Is it running?${hint}`
+    }
+
+    return null
+  }
+
+  /**
    * #3: Check if an error message indicates a transient/retriable condition.
    */
   private isTransientError(errorMessage: string): boolean {
@@ -1088,15 +1104,8 @@ export class OpenCodeExecutor {
     provider: OpenCodeProviderConfig,
     outputSchema?: Record<string, unknown>
   ): Record<string, unknown> {
-    const parts: Array<Record<string, unknown>> = []
-    const hasPluginSystemPromptHook = !!process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
-    if (systemPrompt && !hasPluginSystemPromptHook) {
-      parts.push({ type: 'text', text: `[System Instructions]\n${systemPrompt}` })
-    }
-    parts.push({ type: 'text', text: prompt })
-
     const body: Record<string, unknown> = {
-      parts,
+      parts: this.buildPromptParts(prompt, systemPrompt),
       model: {
         providerID: provider.providerId,
         modelID: provider.modelId
@@ -1105,14 +1114,28 @@ export class OpenCodeExecutor {
 
     // ENH-10: Include retry config so OpenCode auto-retries on invalid JSON
     if (outputSchema) {
-      body.format = {
-        type: 'json_schema',
-        schema: outputSchema,
-        retries: 2
-      }
+      body.format = { type: 'json_schema', schema: outputSchema, retries: 2 }
     }
 
     return body
+  }
+
+  /**
+   * Build the text content parts for a prompt.
+   * Separates part construction from model config merging for clarity.
+   */
+  private buildPromptParts(
+    prompt: string,
+    systemPrompt: string
+  ): Array<Record<string, unknown>> {
+    const parts: Array<Record<string, unknown>> = []
+    // D-1: Only inject system prompt as text if the plugin hook isn't active
+    const hasPluginSystemPromptHook = !!process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
+    if (systemPrompt && !hasPluginSystemPromptHook) {
+      parts.push({ type: 'text', text: `[System Instructions]\n${systemPrompt}` })
+    }
+    parts.push({ type: 'text', text: prompt })
+    return parts
   }
 
   /**

@@ -488,15 +488,18 @@ You are in PLAN mode. Your job: produce a WRITTEN PLAN, not execute changes.
 1. PARSE the request — identify what the user wants (0 tools)
 2. LOCATE files — use Glob/Grep/FindSymbol (2-3 calls max)
 3. READ key sections — use Read with offset+limit (2-3 calls max)
-4. WRITE THE PLAN — numbered list of specific file changes
+4. EMIT THE PLAN — call **emit_plan** with your findings and proposed file changes.
+   If emit_plan is unavailable, output a numbered list of specific file changes.
 
 ### Rules:
-- Maximum ${budget} tool calls total. Then WRITE.
+- Maximum ${budget} tool calls total. Then EMIT.
 - After reading 2-3 files, you have enough context. STOP exploring.
 - A partial plan is ALWAYS better than no plan.
 - NEVER explore "just in case."
 
 ### Output Format:
+Call **emit_plan** with type, title, and phases listing specific file changes.
+Fallback (if emit_plan unavailable):
 1. **\`path/to/file.tsx\`** — Description of change
 2. **\`path/to/other.ts\`** — Description of change
 `

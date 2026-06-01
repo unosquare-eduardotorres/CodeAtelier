@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback, type JSX } from 'react'
-import { Target, StopCircle } from 'lucide-react'
+import { Target, StopCircle, Plus, ClipboardList, UserCheck, Code2, CheckCircle2 } from 'lucide-react'
 import { useMpaStore } from '@renderer/store/mpa.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
 import {
-  GoalInput,
   GoalPhaseTimeline,
   GoalPhaseStream,
   GoalApprovalGate,
   GoalRunHistory,
-  GoalRunDetail
+  GoalRunDetail,
+  StartGoalModal
 } from './goals'
 import type { MpaGoalType, MpaPhaseType, MpaStatus } from '../../../../shared/mpa-types'
 
@@ -51,6 +51,7 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
     pendingApproval,
     preloadedGoal,
     configuredPhases,
+    history,
     startGoal,
     cancelGoal,
     respondToApproval,
@@ -59,6 +60,7 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
   } = useMpaStore()
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [showStartModal, setShowStartModal] = useState(false)
 
   // Listeners are registered globally in AppLayout — no need to duplicate here
 
@@ -150,14 +152,89 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
             </button>
           )}
         </div>
+        <p className="text-xs text-text-secondary">
+          Define a high-level objective and let an AI agent plan, implement, and verify it automatically.
+        </p>
 
-        {/* New Goal Input — shown when not running */}
-        {!isRunning && !pendingApproval && (
-          <div className="bg-surface-raised rounded-xl border border-border-subtle p-4">
-            <GoalInput
-              onStart={handleStart}
-              disabled={isRunning}
-            />
+        {/* Empty state — no history, not running */}
+        {!isRunning && !pendingApproval && !selectedRunId && history.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-10 px-4">
+            <div className="max-w-2xl w-full space-y-6">
+              {/* Header */}
+              <div className="text-center space-y-2">
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-cyan-500/15 mb-2">
+                  <Target size={28} className="text-cyan-400" />
+                </div>
+                <h2 className="text-lg font-semibold text-text-primary">Your Goals</h2>
+                <p className="text-sm text-text-secondary max-w-md mx-auto">
+                  Describe what you want to achieve. The agent will
+                  <span className="text-text-primary font-medium"> plan, execute, and verify </span>
+                  autonomously — pausing for your approval before writing code.
+                </p>
+              </div>
+
+              {/* 4-phase workflow cards */}
+              <div className="grid grid-cols-4 gap-3">
+                <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-cyan-500/15 flex items-center justify-center">
+                      <ClipboardList size={14} className="text-cyan-400" />
+                    </div>
+                    <span className="text-sm font-semibold text-text-primary">Plan</span>
+                  </div>
+                  <p className="text-xs text-text-secondary leading-relaxed">
+                    Agent analyzes your goal and produces a step-by-step implementation plan.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-cyan-400/20 bg-cyan-500/5 p-3 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-cyan-500/15 flex items-center justify-center">
+                      <UserCheck size={14} className="text-cyan-400" />
+                    </div>
+                    <span className="text-sm font-semibold text-text-primary">Review</span>
+                  </div>
+                  <p className="text-xs text-text-secondary leading-relaxed">
+                    You approve, reject, or refine the plan before any code is written.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-accent/15 flex items-center justify-center">
+                      <Code2 size={14} className="text-accent" />
+                    </div>
+                    <span className="text-sm font-semibold text-text-primary">Execute</span>
+                  </div>
+                  <p className="text-xs text-text-secondary leading-relaxed">
+                    Agent implements the approved plan across your codebase.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-success/15 flex items-center justify-center">
+                      <CheckCircle2 size={14} className="text-success" />
+                    </div>
+                    <span className="text-sm font-semibold text-text-primary">Verify</span>
+                  </div>
+                  <p className="text-xs text-text-secondary leading-relaxed">
+                    Runs quality checks and confirms the implementation is correct.
+                  </p>
+                </div>
+              </div>
+
+              {/* CTA */}
+              <div className="flex justify-center">
+                <button
+                  onClick={() => setShowStartModal(true)}
+                  className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 rounded-xl transition-colors"
+                >
+                  <Plus size={16} />
+                  Start Your First Goal
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -218,11 +295,19 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
           />
         )}
 
-        {/* Past Goals — shown when no run is selected */}
-        {!isRunning && !pendingApproval && !selectedRunId && (
-          <GoalRunHistory onSelectRun={handleSelectRun} />
+        {/* Past Goals — shown when no run is selected and history exists */}
+        {!isRunning && !pendingApproval && !selectedRunId && history.length > 0 && (
+          <GoalRunHistory onSelectRun={handleSelectRun} onNewGoal={() => setShowStartModal(true)} />
         )}
       </div>
+
+      {showStartModal && (
+        <StartGoalModal
+          onStart={handleStart}
+          disabled={isRunning}
+          onClose={() => setShowStartModal(false)}
+        />
+      )}
     </div>
   )
 }

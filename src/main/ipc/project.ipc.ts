@@ -6,7 +6,7 @@
  */
 
 import { ipcMain } from 'electron'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs'
 import { join, resolve, basename } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { GrillDecision, GrillTrackScore } from '../../shared/types'
@@ -28,6 +28,7 @@ export function registerProjectIpc(): void {
         name: string
         parentFolder: string
         description: string
+        attachments?: string[]
         grillDecisions?: GrillDecision[]
         trackScores?: GrillTrackScore[]
         tempGrillSessionId?: string
@@ -35,8 +36,15 @@ export function registerProjectIpc(): void {
     ) => {
       validateSender(event)
 
-      const { name, parentFolder, description, grillDecisions, trackScores, tempGrillSessionId } =
-        args
+      const {
+        name,
+        parentFolder,
+        description,
+        attachments,
+        grillDecisions,
+        trackScores,
+        tempGrillSessionId
+      } = args
 
       // ── Validate inputs ──
       if (!name || typeof name !== 'string' || name.trim().length === 0 || name.length > 255) {
@@ -92,6 +100,26 @@ export function registerProjectIpc(): void {
       } catch (err) {
         projectLog.error('[project:create] Failed to write CLAUDE.md:', err)
         // Non-fatal — workspace can still be registered
+      }
+
+      // ── Step 2b: Copy attachments into project ──
+      if (attachments && attachments.length > 0) {
+        const contextDir = join(projectPath, '.context')
+        try {
+          mkdirSync(contextDir, { recursive: true })
+          for (const srcPath of attachments) {
+            if (existsSync(srcPath)) {
+              const fileName = basename(srcPath)
+              copyFileSync(srcPath, join(contextDir, fileName))
+            }
+          }
+          projectLog.info(
+            `[project:create] ${attachments.length} attachment(s) copied to .context/`
+          )
+        } catch (err) {
+          projectLog.error('[project:create] Failed to copy attachments:', err)
+          // Non-fatal — project still usable
+        }
       }
 
       // ── Step 3: Register workspace in DB ──

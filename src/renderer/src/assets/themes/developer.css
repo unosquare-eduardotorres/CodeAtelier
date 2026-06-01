@@ -1,0 +1,146 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Developer — Neutral, low-chroma dark theme optimized for long coding sessions.
+   Inspired by VS Code Dark+, One Dark Pro, GitHub Dark. Pure function, no personality.
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="developer"] {
+  /* ── Surface layers (dark → light) ── */
+  --color-surface-base: #1e1e1e;
+  --color-surface-raised: #252526;
+  --color-surface-overlay: #2d2d2d;
+  --color-surface-float: #383838;
+
+  /* ── Border layers (neutral gray) ── */
+  --color-border-subtle: rgba(255, 255, 255, 0.06);
+  --color-border-default: rgba(255, 255, 255, 0.12);
+  --color-border-strong: rgba(255, 255, 255, 0.22);
+
+  /* ── Text hierarchy (pure neutral — APCA-calibrated for surface-overlay #2d2d2d) ── */
+  --color-text-primary: #e9e9e9;
+  --color-text-body: #dedede;
+  --color-text-secondary: #a8a8a8;
+  --color-text-muted: #909090;
+
+  /* ── Code text ── */
+  --color-code-text: #d4d4d4;
+  --color-code-inline: #9ed6f4;
+  --color-text-emphasis: #eeeeee;
+
+  /* ── Primary accent (Classic Blue) ── */
+  --color-primary: #569cd6;
+  --color-primary-hover: #6cb0e0;
+  --color-primary-muted: rgba(86, 156, 214, 0.15);
+  --color-primary-text: #9cdcfe;
+
+  /* ── Accent (Soft Teal) ── */
+  --color-accent: #58dac2;
+  --color-accent-muted: rgba(78, 201, 176, 0.15);
+
+  /* ── Teal / Forest ── */
+  --color-teal: #4ec9b0;
+  --color-teal-light: #73d9c8;
+  --color-teal-muted: rgba(78, 201, 176, 0.18);
+  --color-teal-text: #4ec9b0;
+  --color-forest: #2d7d6b;
+  --color-forest-light: #4ec9b0;
+
+  /* ── Semantic status ── */
+  --color-success: #4ec9b0;
+  --color-success-muted: rgba(78, 201, 176, 0.15);
+  --color-warning: #dcdcaa;
+  --color-warning-muted: rgba(220, 220, 170, 0.15);
+  --color-danger: #f44747;
+  --color-danger-muted: rgba(244, 71, 71, 0.15);
+  --color-info: #569cd6;
+  --color-info-muted: rgba(86, 156, 214, 0.15);
+
+  /* ── Mode tokens (Plan / Build / Danger) ── */
+  --color-mode-plan: #264f78;
+  --color-mode-plan-muted: rgba(38, 79, 120, 0.3);
+  --color-mode-plan-text: #9cdcfe;
+  --color-mode-plan-border: rgba(38, 79, 120, 0.3);
+
+  --color-mode-build: #4e4e2e;
+  --color-mode-build-muted: rgba(78, 78, 46, 0.3);
+  --color-mode-build-text: #dcdcaa;
+  --color-mode-build-border: rgba(78, 78, 46, 0.3);
+
+  --color-mode-danger: #6b2020;
+  --color-mode-danger-muted: rgba(107, 32, 32, 0.3);
+  --color-mode-danger-text: #f44747;
+  --color-mode-danger-border: rgba(107, 32, 32, 0.4);
+
+  /* ── Plan Card ── */
+  --color-plan-card: #569cd6;
+  --color-plan-card-muted: rgba(86, 156, 214, 0.12);
+  --color-plan-card-border: rgba(86, 156, 214, 0.3);
+  --color-plan-card-text: #9cdcfe;
+  --color-plan-card-section-bg: rgba(86, 156, 214, 0.06);
+  --color-plan-card-accent: #4ec9b0;
+  --color-plan-card-phase-bg: rgba(78, 201, 176, 0.12);
+  --color-plan-card-phase-border: rgba(78, 201, 176, 0.25);
+
+  /* ── Panel colors ── */
+  --color-panel-olive: #2d2d2d;
+  --color-panel-terracotta: #3d2b2b;
+  --color-panel-teal: #264f42;
+  --color-panel-navy: #1e2d3d;
+
+  /* ── Agent-specific colors (neutral-shifted) ── */
+  --color-agent-react: #61dafb;
+  --color-agent-dotnet: #c586c0;
+  --color-agent-agentic: #dcdcaa;
+  --color-agent-postgres: #569cd6;
+  --color-agent-ux: #c586c0;
+  --color-agent-git: #858585;
+  --color-agent-requirements: #4ec9b0;
+  --color-agent-codeplanner: #b5cea8;
+  --color-agent-execution: #ce9178;
+  --color-agent-cicd: #f44747;
+  --color-agent-cloud: #4ec9b0;
+
+  /* ── Special-purpose tokens ── */
+  --color-user-bubble: rgba(86, 156, 214, 0.08);
+  --color-grill: #ce9178;
+  --color-grill-muted: rgba(206, 145, 120, 0.15);
+  --color-gold-glow: rgba(86, 156, 214, 0.15);
+  --color-gold-muted: #264f78;
+
+  /* ── Component tokens ── */
+  --color-button-primary-bg: var(--color-primary);
+  --color-button-primary-hover: var(--color-primary-hover);
+  --color-button-danger-bg: var(--color-danger);
+
+  --color-card-bg: rgba(255, 255, 255, 0.02);
+  --color-card-border: var(--color-border-subtle);
+
+  --color-input-bg: #1a1a1a;
+  --color-input-border: var(--color-border-default);
+  --color-input-focus: var(--color-primary);
+
+  --color-modal-bg: var(--color-surface-float);
+  --color-modal-border: var(--color-border-default);
+
+  --color-sidebar-bg: var(--color-surface-raised);
+  --color-sidebar-active: var(--color-primary-muted);
+
+  /* ── Zebra stripe for tables ── */
+  --color-table-zebra: rgba(255, 255, 255, 0.02);
+
+  /* ── Scrollbar ── */
+  --color-scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
+
+  /* ── Selection ── */
+  --color-selection-bg: rgba(86, 156, 214, 0.3);
+  --color-selection-text: #e0e0e0;
+
+  /* ── Hover lift shadow ── */
+  --color-hover-shadow: rgba(0, 0, 0, 0.25);
+
+  /* ── Specialist radial gradient ── */
+  --color-specialist-glow: rgba(86, 156, 214, 0.08);
+  --color-specialist-mid: rgba(37, 37, 38, 0.4);
+
+  /* ── Developer-specific: no grain ── */
+  --grain-opacity: 0;
+}

@@ -1,5 +1,6 @@
 import { MpaBaseAdapter } from './mpa-base.adapter'
 import { buildBuilderSystemPrompt } from '../../mpa-prompts'
+import { TOOL_PRIORITY_DIRECTIVE_BUILDER } from '../../default-prompts'
 import type { AgentRole } from '../../../../shared/types'
 import type { AdapterMcpContext, AdapterMcpResult } from '../../agent-session.types'
 import type { MpaPlanArtifact, MpaVerifyReport } from '../../../../shared/mpa-types'
@@ -36,6 +37,9 @@ export class MpaBuilderAdapter extends MpaBaseAdapter {
   }
 
   protected buildPhaseSystemPrompt(): string {
+    // Builder uses TOOL_PRIORITY_DIRECTIVE_BUILDER (write-mode variant).
+    // Embedding it here means the base class's appendToolGuidance() skips
+    // the generic directive (it checks for '## Tool Priority' already present).
     return buildBuilderSystemPrompt({
       goal: this.goal,
       plan: this.plan,
@@ -43,7 +47,7 @@ export class MpaBuilderAdapter extends MpaBaseAdapter {
       detectedTechs: this.detectedTechs,
       verifierFeedback: this.verifierFeedback,
       model: this.resolvedModel
-    })
+    }) + TOOL_PRIORITY_DIRECTIVE_BUILDER
   }
 
   protected getPhaseMessage(): string {

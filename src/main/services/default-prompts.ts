@@ -245,6 +245,10 @@ ${styleDirective}
 - NEVER end your response with only tool usage.
 - Pattern: tools → read results → write summary.
 
+## Tool Priority
+Use Code Graph and Semantic Search tools FIRST for any code investigation.
+Read, Grep, Glob are secondary — only after code intelligence identifies targets.
+
 ## Code Exploration
 Always use code intelligence tools (Code Graph, Semantic Search) FIRST — not Read/Grep/Glob. Read only files identified by those tools — max 3 reads per question. See tool guidance sections for full rules.
 
@@ -387,7 +391,8 @@ at the start of each user message. Always follow the mode instructions in that b
 override any prior mode context in the conversation.
 
 - **Plan** = read-only: read/search files, run read-only shell commands for investigation
-  (git log, ls, npm ls, reading logs), answer questions, draft plans via emit_plan.
+  (git log, ls, npm ls, reading logs), answer questions, call **emit_plan** for plans.
+  Write/Edit are blocked — but emit_plan is ALWAYS available for structured plan output.
   Do NOT write/edit files or run destructive commands.
 - **Build** = full access with safety guardrails: read, write, execute, implement.
   A safety classifier reviews actions — genuinely dangerous commands will be flagged.
@@ -561,3 +566,40 @@ export const MODE_CONTEXT_SECTIONS_LEAN: Record<ConversationMode, string> = {
   build: BUILD_MODE_SECTION_LEAN,
   danger: DANGER_MODE_SECTION_LEAN
 }
+
+// ── Tool Priority Directive ────────────────────────────────────────────────
+/**
+ * Centralized plan output guidance — single source of truth for emit_plan awareness.
+ * Referenced by: specialist template, DaVinci identity, local LLM directive,
+ * PLAN_MODE_SECTION, and turn-2+ reminders.
+ *
+ * Full version: explicit workflow for models that need guidance (Sonnet, Haiku, local LLMs).
+ * Lean version: minimal for Opus 4.8+ (infers usage from tool schema).
+ */
+export const PLAN_OUTPUT_GUIDANCE = `## Plan Output
+For action/change requests (implement, fix, refactor, add, investigate, audit, review):
+1. Read 2–5 relevant files to ground your proposal
+2. Call **emit_plan** with type, title, phases, and real file paths
+3. User sees an interactive card with Build Now / Refine buttons
+
+Plain-text plans are NOT actionable — only emit_plan renders interactive cards.
+Write/Edit are blocked in Plan mode — but emit_plan is ALWAYS available.
+Questions (why/what/how/explain) → answer directly in text. Do NOT use emit_plan for Q&A.`
+
+export const PLAN_OUTPUT_GUIDANCE_LEAN =
+  `Use **emit_plan** for action/change proposals — not plain text. Write/Edit are blocked but emit_plan is always available. Questions → text answer.`
+
+// Shared constant injected into evaluation agent prompts (grill, council, audit, MPA).
+// Changing this single constant updates all agents simultaneously.
+
+export const TOOL_PRIORITY_DIRECTIVE = `
+## Tool Priority
+Use Code Graph (search_identifiers, graph_map, file_outline) and Semantic Search FIRST — not Read/Grep/Glob.
+Read only files identified by code intelligence. Grep only for exact strings/regex inside function bodies.`
+
+/** Builder-specific variant — includes write-mode context (file_outline, find_references before changes) */
+export const TOOL_PRIORITY_DIRECTIVE_BUILDER = `
+## Tool Priority
+Use code graph tools (file_outline, find_references, find_callers) FIRST to understand structure before writing code.
+file_outline before Read on large files. find_references before changing signatures.
+Read only files identified by code intelligence. Grep for exact strings only.`

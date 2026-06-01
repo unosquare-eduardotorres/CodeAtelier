@@ -65,12 +65,22 @@ export function* normalizeMessage(
     // Log MCP server connection status (helps diagnose silent failures)
     const mcpServers = msg.mcp_servers as Array<{ name: string; status: string }> | undefined
     if (mcpServers?.length) {
+      // Separate CLI built-in servers (claude.ai Google Drive, Gmail, etc.) from our local servers
       const failed = mcpServers.filter((s) => s.status !== 'connected')
-      if (failed.length > 0) {
+      const ourFailed = failed.filter((s) => !s.name.startsWith('claude.ai '))
+      const builtInFailed = failed.filter((s) => s.name.startsWith('claude.ai '))
+
+      if (ourFailed.length > 0) {
         executorLog.warn(
-          `[init] MCP server(s) failed to connect: ${failed.map((s) => `${s.name}=${s.status}`).join(', ')}`
+          `[init] MCP server(s) failed to connect: ${ourFailed.map((s) => `${s.name}=${s.status}`).join(', ')}`
         )
-      } else {
+      }
+      if (builtInFailed.length > 0) {
+        executorLog.debug(
+          `[init] CLI built-in MCP servers not authenticated (harmless): ${builtInFailed.map((s) => s.name).join(', ')}`
+        )
+      }
+      if (failed.length === 0) {
         executorLog.info(`[init] All ${mcpServers.length} MCP server(s) connected`)
       }
     }
@@ -194,8 +204,9 @@ export function* normalizeMessage(
         const toolInput = cb.input as Record<string, unknown> | undefined
         const hasInput = toolInput && Object.keys(toolInput).length > 0
 
+        const inputSummary = hasInput ? summarizeToolInput(toolName, toolInput, cwd) : undefined
         if (toolId) {
-          tools.register(toolId, toolName)
+          tools.register(toolId, toolName, inputSummary)
         }
 
         tools.hasPriorContent = true
@@ -203,7 +214,7 @@ export function* normalizeMessage(
           type: 'tool_use',
           toolName,
           toolId,
-          toolInput: hasInput ? summarizeToolInput(toolName, toolInput, cwd) : undefined
+          toolInput: inputSummary
         }
       }
     }
@@ -244,6 +255,8 @@ export function* normalizeMessage(
         if (block.type === 'tool_result') {
           const toolUseId = block.tool_use_id as string | undefined
           const toolName = tools.resolve(toolUseId)
+          // Retrieve stored input summary before consuming the tracker entry
+          const storedInput = tools.resolveInput(toolUseId)
           tools.consume(toolUseId)
 
           let resultContent: string | undefined
@@ -260,6 +273,7 @@ export function* normalizeMessage(
             type: 'tool_result',
             toolName,
             toolId: toolUseId,
+            toolInput: storedInput,
             content: resultContent
           }
         }

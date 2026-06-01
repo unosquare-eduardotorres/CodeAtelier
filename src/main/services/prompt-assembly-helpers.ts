@@ -28,6 +28,9 @@ import {
   MAESTRO_GUIDANCE_PROMPT_LEAN,
   MEMORY_PROTOCOL_PROMPT,
   MEMORY_PROTOCOL_PROMPT_LEAN,
+  MODE_CONTEXT_SECTIONS,
+  MODE_CONTEXT_SECTIONS_LEAN,
+  PLAN_OUTPUT_GUIDANCE_LEAN,
   PLAN_REMINDER_FULL,
   PLAN_REMINDER_LEAN,
   REPOMAP_GUIDANCE_PROMPT,
@@ -65,7 +68,15 @@ export function appendMcpToolGuidance(
   featureFlags: PromptFeatureFlags,
   model?: string
 ): string {
-  if (turnCount > 1) return basePrompt
+  // Turn 2+: lean reminder (~20 tokens) instead of full guidance (~200 tokens).
+  // Lean models already have tool priority in their identity prompt every turn.
+  if (turnCount > 1) {
+    const verbosity2 = resolvePromptVerbosity(model ?? '')
+    if (verbosity2 !== 'lean' && featureFlags.repomapEnabled) {
+      return basePrompt + '\n\n## Tool Priority\nUse Code Graph (search_identifiers, graph_map) and Semantic Search FIRST — not Read/Grep/Glob. Read only files identified by code intelligence.\n\n' + PLAN_OUTPUT_GUIDANCE_LEAN
+    }
+    return basePrompt
+  }
 
   const verbosity = resolvePromptVerbosity(model ?? '')
   const appendSections: string[] = []
@@ -142,34 +153,27 @@ export function buildConditionalPrefix(opts: {
     sections.push(verbosity === 'lean' ? IMAGE_ATTACHMENTS_PROMPT_LEAN : IMAGE_ATTACHMENTS_PROMPT)
   }
 
-  // Strategy N: Direct Answer Boost — only inject on turn 3+ when there's
-  // conversation history to reference (irrelevant on early turns).
+  // ── isPlanGenerationRequest — moved up to suppress contradictory direct-answer signal ──
+  const isPlanGenerationRequest =
+    /\b(create a plan|draft a plan|propose a plan|make a plan|write a plan|design a plan|plan for|plan to (implement|build|add|create|fix|refactor)|how (would|should|can) (I|we|you)|what('s| is) the (best|right) (way|approach)|investigate|diagnose|audit|analyze|review|examine|what.*(wrong|broken|failing|issue)|assess|evaluate|improve|optimize)\b/i.test(
+      message
+    )
+
+  // Strategy N: Direct Answer Boost
   if (conditionalSections.includeDirectAnswerBoost) {
     if (turnCount >= 3) {
-      // Lean: use compressed direct-answer boost
       sections.push(verbosity === 'lean' ? DIRECT_ANSWER_BOOST_PROMPT_LEAN : DIRECT_ANSWER_BOOST_PROMPT)
-    } else if (mode === 'plan') {
-      // Lightweight signal for plan-mode questions on early turns.
-      // DIRECT_ANSWER_BOOST_PROMPT references "conversation history" which doesn't
-      // exist on turn 1-2, so we use a targeted one-liner instead.
+    } else if (mode === 'plan' && !isPlanGenerationRequest) {
+      // Suppressed when isPlanGenerationRequest is true — plan intent overrides "don't use emit_plan"
       sections.push(DIRECT_ANSWER_PLAN_MODE_EARLY)
     }
   }
 
-  // Strategy ζ: Plan Output Reinforcement.
-  // Plan mode: remind about emit_plan UNLESS the message is clearly a question.
-  // Build mode: only when the user is explicitly asking for a plan.
-  const isPlanGenerationRequest =
-    /\b(create a plan|draft a plan|propose a plan|make a plan|write a plan|design a plan|plan for|plan to (implement|build|add|create|fix|refactor)|how (would|should|can) (I|we|you)|what('s| is) the (best|right) (way|approach)|investigate|diagnose|audit|analyze|what.*(wrong|broken|failing|issue)|assess|evaluate)\b/i.test(
-      message
-    )
-  // Simple questions in plan mode should get direct answers, not plan reminders.
-  // isPlanGenerationRequest acts as an override: explicit plan intent always wins.
+  // Strategy ζ: Plan Output Reinforcement (isPlanGenerationRequest already computed above)
   const isSimpleQuestion = conditionalSections.includeDirectAnswerBoost
   const planReminderInjected = isPlanGenerationRequest || (mode === 'plan' && !isSimpleQuestion)
 
   if (planReminderInjected) {
-    // Turn 1: full reminder (unless lean). Turns 2+: always minimal echo.
     const planReminder = turnCount > 1
       ? PLAN_REMINDER_LEAN
       : (verbosity === 'lean' ? PLAN_REMINDER_LEAN : PLAN_REMINDER_FULL)
@@ -183,4 +187,15 @@ export function buildConditionalPrefix(opts: {
   return sections.length > 0
     ? `[Contextual guidelines for this message]\n\n${sections.join('\n\n')}`
     : ''
+}
+
+/**
+ * Pattern 8: Build the `<mode-context>` block injected per-message.
+ * Shared by DaVinciPromptAssembler and ProjectSpecialistRoleAdapter.
+ */
+export function buildModeContextPrefix(mode: ConversationMode, model?: string): string {
+  const verbosity = resolvePromptVerbosity(model ?? '')
+  const sections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
+  const block = sections[mode] ?? sections.plan
+  return `<mode-context>\n${block.trim()}\n</mode-context>`
 }

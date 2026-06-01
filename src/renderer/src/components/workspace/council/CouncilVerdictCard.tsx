@@ -19,6 +19,7 @@ import {
   Target
 } from 'lucide-react'
 import ScoreGauge from '../ScoreGauge'
+import AdvisorIcon from './AdvisorIcon'
 import type { CouncilVerdict, CouncilAdvisorRole } from '../../../../../shared/types'
 import { COUNCIL_ADVISORS } from '../../../../../shared/constants'
 
@@ -93,7 +94,7 @@ export default function CouncilVerdictCard({
                   key={role}
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-float border border-border-subtle"
                 >
-                  <span className="text-sm">{advisor.emoji}</span>
+                  <AdvisorIcon advisor={advisor} size={14} className="text-text-secondary" />
                   <span className="text-xs text-text-secondary">{advisor.name}</span>
                   <span className="text-xs font-bold text-text-primary">{score}</span>
                 </div>

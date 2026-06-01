@@ -8,12 +8,12 @@
 
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { mainLogger } from '../logger'
+import baseLog from '../logger'
 import { chatAgentService } from '../services'
 import { mpaOrchestrationService } from '../services/mpa-orchestration.service'
 import { validateSender } from './validate-sender'
 
-const log = mainLogger.scope('permission-ipc')
+const log = baseLog.scope('permission-ipc')
 
 export function registerPermissionIpc(): void {
   ipcMain.handle(

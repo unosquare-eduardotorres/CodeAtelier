@@ -7,17 +7,19 @@
  */
 
 import { useState, useCallback, useMemo } from 'react'
-import { FolderOpen, ArrowRight, SkipForward } from 'lucide-react'
+import { FolderOpen, ArrowRight } from 'lucide-react'
+import { AttachmentDropzone } from '@renderer/components/chat'
 
 interface WizardSetupStepProps {
   projectName: string
   parentFolder: string
   description: string
+  attachments: string[]
   onProjectNameChange: (name: string) => void
   onParentFolderChange: (folder: string) => void
   onDescriptionChange: (desc: string) => void
+  onAttachmentsChange: (attachments: string[]) => void
   onNext: () => void
-  onSkipGrill: () => void
 }
 
 /** Characters not allowed in folder names */
@@ -28,11 +30,12 @@ export default function WizardSetupStep({
   projectName,
   parentFolder,
   description,
+  attachments,
   onProjectNameChange,
   onParentFolderChange,
   onDescriptionChange,
-  onNext,
-  onSkipGrill
+  onAttachmentsChange,
+  onNext
 }: WizardSetupStepProps): React.JSX.Element {
   const [folderError, setFolderError] = useState<string | null>(null)
 
@@ -123,25 +126,29 @@ export default function WizardSetupStep({
         )}
       </div>
 
-      {/* Description */}
+      {/* Description + Attachments */}
       <div className="flex flex-col gap-1.5">
         <label htmlFor="project-description" className="text-sm font-medium text-text-primary">
           Description
         </label>
-        <textarea
-          id="project-description"
-          value={description}
-          onChange={(e) => onDescriptionChange(e.target.value)}
-          rows={5}
-          placeholder={`Describe what you want to build. For example:\n\n"I want to build a macOS menu bar app that tracks my daily water intake, reminds me to drink, and shows weekly stats. It should sync across my Apple devices via iCloud."`}
-          className="w-full px-3 py-2.5 rounded-lg bg-surface-overlay border border-border-subtle
-                     text-sm text-text-primary placeholder:text-text-muted resize-y min-h-[120px]
-                     focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/40
-                     transition-colors leading-relaxed"
-        />
+        <AttachmentDropzone
+          attachments={attachments}
+          onAttachmentsChange={onAttachmentsChange}
+          conversationId="wizard-setup"
+        >
+          <textarea
+            id="project-description"
+            value={description}
+            onChange={(e) => onDescriptionChange(e.target.value)}
+            rows={5}
+            placeholder={`Describe what you want to build. For example:\n\n"I want to build a macOS menu bar app that tracks my daily water intake, reminds me to drink, and shows weekly stats. It should sync across my Apple devices via iCloud."`}
+            className="flex-1 w-full bg-transparent text-sm text-text-primary placeholder:text-text-muted
+                       resize-y min-h-[120px] focus:outline-none leading-relaxed"
+          />
+        </AttachmentDropzone>
         <div className="flex justify-between">
           <p className="text-xs text-text-muted">
-            The more detail you provide, the better the AI can help you plan
+            Drop images, mockups, or documents to include as context
           </p>
           {description.length > 0 && (
             <span className="text-xs text-text-muted">{description.length} chars</span>
@@ -150,19 +157,7 @@ export default function WizardSetupStep({
       </div>
 
       {/* Buttons */}
-      <div className="flex items-center justify-between pt-4 border-t border-border-subtle">
-        <button
-          type="button"
-          onClick={onSkipGrill}
-          disabled={!isValid}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium
-                     text-text-secondary hover:text-text-primary hover:bg-surface-overlay
-                     transition-colors disabled:opacity-40 disabled:cursor-not-allowed
-                     focus:outline-none focus:ring-2 focus:ring-primary/50"
-        >
-          <SkipForward size={14} />
-          Skip Grilling
-        </button>
+      <div className="flex items-center justify-end pt-4 border-t border-border-subtle">
         <button
           type="button"
           onClick={onNext}
@@ -172,7 +167,7 @@ export default function WizardSetupStep({
                      transition-colors disabled:opacity-40 disabled:cursor-not-allowed
                      focus:outline-none focus:ring-2 focus:ring-primary/50 press-scale"
         >
-          Next: Grill Session
+          Next
           <ArrowRight size={14} />
         </button>
       </div>

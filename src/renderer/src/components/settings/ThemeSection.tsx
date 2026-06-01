@@ -11,19 +11,25 @@ const THEME_OPTIONS: {
     value: 'code-atelier',
     label: 'Code Atelier',
     description: 'Renaissance gold & teal',
-    preview: ['#090d0f', '#111c21', '#b8976a', '#c4714a']
+    preview: ['#111a1e', '#182428', '#b8976a', '#7bb8c9']
   },
   {
-    value: 'neon-forge',
-    label: 'Neon Forge',
-    description: 'Cyberpunk cyan & magenta',
-    preview: ['#0a0e1a', '#111827', '#06b6d4', '#e879f9']
+    value: 'glass',
+    label: 'Glass',
+    description: 'Frosted glass, violet depth',
+    preview: ['#0b0e18', '#161a2c', '#8b5cf6', '#67e8f9']
   },
   {
     value: 'porcelain',
     label: 'Porcelain',
     description: 'Ceramic elegance, cool whites',
     preview: ['#f8f9fb', '#f0f1f4', '#475569', '#0284c7']
+  },
+  {
+    value: 'developer',
+    label: 'Developer',
+    description: 'Neutral dark, zero distraction',
+    preview: ['#1e1e1e', '#252526', '#569cd6', '#4ec9b0']
   }
 ]
 
@@ -37,7 +43,7 @@ export default function ThemeSection(): React.JSX.Element {
       <p className="text-xs text-text-secondary mt-0.5 mb-3">
         Choose the visual style for the entire application.
       </p>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {THEME_OPTIONS.map((opt) => (
           <button
             key={opt.value}

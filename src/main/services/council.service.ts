@@ -236,7 +236,8 @@ export class CouncilService extends EventEmitter {
         }
       }
       this.sessions.delete(params.workspaceId)
-      this.emit('complete', { workspaceId: params.workspaceId })
+      // Signal session teardown (NOT 'complete' — that's phase-specific via setPhase)
+      this.emit('session-ended', { workspaceId: params.workspaceId })
     }
   }
 

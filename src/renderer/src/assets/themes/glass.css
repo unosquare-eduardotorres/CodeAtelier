@@ -1,0 +1,204 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Glass — Frosted glass, violet depth: translucent surfaces with backdrop
+   blur, frosted white borders, and violet/cyan accents
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="glass"] {
+  /* ── Surface layers (opaque base → translucent raised) ── */
+  --color-surface-base: #0b0e18;
+  --color-surface-raised: rgba(16, 22, 40, 0.72);
+  --color-surface-overlay: rgba(22, 30, 52, 0.78);
+  --color-surface-float: rgba(32, 40, 68, 0.85);
+
+  /* ── Border layers (frosted white) ── */
+  --color-border-subtle: rgba(255, 255, 255, 0.07);
+  --color-border-default: rgba(255, 255, 255, 0.13);
+  --color-border-strong: rgba(255, 255, 255, 0.24);
+
+  /* ── Text hierarchy (cool-tinted for glass depth) ── */
+  --color-text-primary: #eeeef6;
+  --color-text-body: #d0d0e0;
+  --color-text-secondary: #9898b0;
+  --color-text-muted: #6a6a82;
+
+  /* ── Code text ── */
+  --color-code-text: #e2e2f0;
+  --color-code-inline: #c4b5fd;
+  --color-text-emphasis: #f4f4fa;
+
+  /* ── Primary accent (Violet) ── */
+  --color-primary: #8b5cf6;
+  --color-primary-hover: #a78bfa;
+  --color-primary-muted: rgba(139, 92, 246, 0.15);
+  --color-primary-text: #c4b5fd;
+
+  /* ── Accent (Cyan — glass complement) ── */
+  --color-accent: #67e8f9;
+  --color-accent-muted: rgba(103, 232, 249, 0.15);
+
+  /* ── Teal / Forest ── */
+  --color-teal: #0891b2;
+  --color-teal-light: #22d3ee;
+  --color-teal-muted: rgba(8, 145, 178, 0.18);
+  --color-teal-text: #67e8f9;
+  --color-forest: #1e1b4b;
+  --color-forest-light: #7c3aed;
+
+  /* ── Semantic status ── */
+  --color-success: #34d399;
+  --color-success-muted: rgba(52, 211, 153, 0.15);
+  --color-warning: #fbbf24;
+  --color-warning-muted: rgba(251, 191, 36, 0.15);
+  --color-danger: #f87171;
+  --color-danger-muted: rgba(248, 113, 113, 0.15);
+  --color-info: #60a5fa;
+  --color-info-muted: rgba(96, 165, 250, 0.15);
+
+  /* ── Mode tokens (Plan / Build / Danger) ── */
+  --color-mode-plan: #1e1b4b;
+  --color-mode-plan-muted: rgba(30, 27, 75, 0.3);
+  --color-mode-plan-text: #c4b5fd;
+  --color-mode-plan-border: rgba(30, 27, 75, 0.3);
+
+  --color-mode-build: #7c3aed;
+  --color-mode-build-muted: rgba(124, 58, 237, 0.3);
+  --color-mode-build-text: #a78bfa;
+  --color-mode-build-border: rgba(124, 58, 237, 0.3);
+
+  --color-mode-danger: #991b1b;
+  --color-mode-danger-muted: rgba(153, 27, 27, 0.3);
+  --color-mode-danger-text: #f87171;
+  --color-mode-danger-border: rgba(153, 27, 27, 0.4);
+
+  /* ── Plan Card ── */
+  --color-plan-card: #8b5cf6;
+  --color-plan-card-muted: rgba(139, 92, 246, 0.12);
+  --color-plan-card-border: rgba(139, 92, 246, 0.3);
+  --color-plan-card-text: #c4b5fd;
+  --color-plan-card-section-bg: rgba(139, 92, 246, 0.06);
+  --color-plan-card-accent: #67e8f9;
+  --color-plan-card-phase-bg: rgba(103, 232, 249, 0.12);
+  --color-plan-card-phase-border: rgba(103, 232, 249, 0.25);
+
+  /* ── Panel colors ── */
+  --color-panel-olive: #1e1b4b;
+  --color-panel-terracotta: #4c1d95;
+  --color-panel-teal: #164e63;
+  --color-panel-navy: #0f0a2e;
+
+  /* ── Agent-specific colors (violet-shifted palette) ── */
+  --color-agent-react: #38bdf8;
+  --color-agent-dotnet: #c084fc;
+  --color-agent-agentic: #fbbf24;
+  --color-agent-postgres: #60a5fa;
+  --color-agent-ux: #f472b6;
+  --color-agent-git: #94a3b8;
+  --color-agent-requirements: #34d399;
+  --color-agent-codeplanner: #a3e635;
+  --color-agent-execution: #fb923c;
+  --color-agent-cicd: #f87171;
+  --color-agent-cloud: #2dd4bf;
+
+  /* ── Special-purpose tokens ── */
+  --color-user-bubble: rgba(139, 92, 246, 0.08);
+  --color-grill: #a78bfa;
+  --color-grill-muted: rgba(167, 139, 250, 0.15);
+  --color-gold-glow: rgba(139, 92, 246, 0.15);
+  --color-gold-muted: #5b21b6;
+
+  /* ── Component tokens ── */
+  --color-button-primary-bg: var(--color-primary);
+  --color-button-primary-hover: var(--color-primary-hover);
+  --color-button-danger-bg: var(--color-danger);
+
+  --color-card-bg: rgba(139, 92, 246, 0.02);
+  --color-card-border: var(--color-border-subtle);
+
+  --color-input-bg: #070a14;
+  --color-input-border: var(--color-border-default);
+  --color-input-focus: var(--color-primary);
+
+  --color-modal-bg: var(--color-surface-float);
+  --color-modal-border: var(--color-border-default);
+
+  --color-sidebar-bg: var(--color-surface-raised);
+  --color-sidebar-active: var(--color-primary-muted);
+
+  /* ── Zebra stripe for tables ── */
+  --color-table-zebra: rgba(139, 92, 246, 0.02);
+
+  /* ── Scrollbar ── */
+  --color-scrollbar-thumb: rgba(139, 92, 246, 0.2);
+  --color-scrollbar-thumb-hover: rgba(139, 92, 246, 0.35);
+
+  /* ── Selection ── */
+  --color-selection-bg: rgba(139, 92, 246, 0.3);
+  --color-selection-text: #c4b5fd;
+
+  /* ── Hover lift shadow ── */
+  --color-hover-shadow: rgba(139, 92, 246, 0.12);
+
+  /* ── Specialist radial gradient ── */
+  --color-specialist-glow: rgba(139, 92, 246, 0.08);
+  --color-specialist-mid: rgba(22, 30, 52, 0.4);
+
+  /* ── Glass-specific: subtle grain for frosted texture ── */
+  --grain-opacity: 0.02;
+
+  /* ── Glass-specific: chat-icon pulse ── */
+  --color-chat-icon-pulse: rgba(139, 92, 246, 0.40);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Glass structural rules — backdrop-filter, violet shadows, frosted scrollbar
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Glass backdrop-filter on structural surfaces ── */
+[data-theme="glass"] .bg-sidebar-bg,
+[data-theme="glass"] .bg-surface-raised {
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+[data-theme="glass"] .bg-surface-overlay {
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+}
+
+[data-theme="glass"] .bg-surface-float,
+[data-theme="glass"] .bg-modal-bg {
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* ── Glass shadow elevation — violet-tinted depth ── */
+[data-theme="glass"] .shadow-sm {
+  --tw-shadow: 0 2px 8px rgba(0, 0, 0, 0.30), 0 0 1px rgba(139, 92, 246, 0.10);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+[data-theme="glass"] .shadow-lg {
+  --tw-shadow: 0 4px 20px rgba(0, 0, 0, 0.40), 0 0 1px rgba(139, 92, 246, 0.12);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+[data-theme="glass"] .shadow-xl {
+  --tw-shadow: 0 8px 32px rgba(0, 0, 0, 0.50), 0 0 1px rgba(139, 92, 246, 0.15);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+[data-theme="glass"] .hover-lift:hover {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.40), 0 0 20px rgba(139, 92, 246, 0.12);
+}
+
+/* ── Glass scrollbar ── */
+[data-theme="glass"] ::-webkit-scrollbar-track {
+  background: rgba(11, 14, 24, 0.5);
+}
+
+[data-theme="glass"] ::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.25);
+}
+
+[data-theme="glass"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.40);
+}

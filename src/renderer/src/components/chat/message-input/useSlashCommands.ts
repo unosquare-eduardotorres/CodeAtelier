@@ -98,7 +98,7 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   },
   {
     command: '/grillme',
-    description: 'Deep-dive interview to clarify your plan',
+    description: 'Grill an idea — AI-led Q&A across 8 specialist tracks',
     icon: Flame,
     iconColor: 'text-grill'
   },
@@ -160,7 +160,7 @@ const HELP_DESCRIPTIONS: Record<string, string> = {
   '/clear': 'Clear chat display (keeps AI context)',
   '/effort': 'Set thinking depth — `/effort low` | `/effort medium` | `/effort high`',
   '/todos': 'Show/hide agent task list',
-  '/grillme': 'Deep-dive interview to clarify your plan',
+  '/grillme': 'Grill an idea — AI-led Q&A across 8 specialist tracks',
   '/voice': 'Toggle push-to-talk voice input',
   '/undo': 'Undo last build changes — reverts files to the previous checkpoint',
   '/rewind':

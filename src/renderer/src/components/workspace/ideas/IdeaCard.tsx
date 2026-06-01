@@ -237,6 +237,7 @@ export default function IdeaCard({
             <>
               <button
                 onClick={() => onStartGrill(idea)}
+                title="Launch a structured Q&A session where an AI analyst evaluates your idea across 8 specialist tracks, scoring gaps and asking clarifying questions."
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
               >
                 <Flame size={12} />
@@ -244,10 +245,11 @@ export default function IdeaCard({
               </button>
               <button
                 onClick={() => onConvertDirect(idea)}
+                title="Skip the grill and send this idea straight to a new chat conversation to start working on it immediately."
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
               >
                 <Play size={12} />
-                Convert Directly
+                Start Building
               </button>
             </>
           )}
@@ -256,6 +258,7 @@ export default function IdeaCard({
             <>
               <button
                 onClick={() => onContinueGrill(idea)}
+                title="Resume the grill Q&A session where you left off."
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
               >
                 <Flame size={12} />
@@ -263,10 +266,11 @@ export default function IdeaCard({
               </button>
               <button
                 onClick={() => onConvertDirect(idea)}
+                title="End the grill and send this idea to a new chat conversation to start building."
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
               >
                 <Play size={12} />
-                Convert Directly
+                Start Building
               </button>
             </>
           )}
@@ -313,6 +317,15 @@ export default function IdeaCard({
             <Trash2 size={12} />
           </button>
         </div>
+      )}
+
+      {/* Inline hint for draft ideas */}
+      {!editing && idea.status === 'draft' && (
+        <p className="text-[10px] text-text-muted ml-[22px] mt-1.5">
+          <span className="text-accent font-medium">Grill Me</span> = AI-led deep-dive interview
+          {' · '}
+          <span className="text-primary-text font-medium">Start Building</span> = jump to chat now
+        </p>
       )}
 
       {/* Grill summary — expandable */}

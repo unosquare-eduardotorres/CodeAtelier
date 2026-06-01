@@ -9,6 +9,7 @@
 
 import { COUNCIL_ADVISORS } from '../../../../../shared/constants'
 import type { CouncilPeerReview, CouncilAdvisorRole } from '../../../../../shared/types'
+import AdvisorIcon from './AdvisorIcon'
 
 interface CouncilRankingsMatrixProps {
   peerReviews: CouncilPeerReview[]
@@ -38,7 +39,7 @@ export default function CouncilRankingsMatrix({
               className="rounded-lg border border-border-subtle bg-surface-overlay p-3"
             >
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm">{reviewer?.emoji ?? '👤'}</span>
+                <AdvisorIcon advisor={reviewer} size={14} className="text-text-secondary" />
                 <span className="text-xs font-semibold text-text-primary">
                   {reviewer?.name ?? pr.reviewerRole}
                 </span>

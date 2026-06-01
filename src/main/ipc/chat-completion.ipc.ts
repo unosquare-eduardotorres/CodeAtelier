@@ -1,6 +1,6 @@
 import { ipcMain, app } from 'electron'
 import { join, resolve } from 'node:path'
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import simpleGit from 'simple-git'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
@@ -64,6 +64,14 @@ export function registerChatCompletionIpc(): void {
 
     // Delete conversation (cascades: file_changes, messages, attachments, agent_worktrees)
     conversationRepository.delete(conversationId)
+
+    // Clean up clipboard images for this conversation
+    try {
+      const imageDir = join(app.getPath('userData'), 'chat-images', conversationId)
+      rmSync(imageDir, { recursive: true, force: true })
+    } catch {
+      /* best effort — directory may not exist */
+    }
   })
 
   // ── /complete: commit changes, push, create PR, and clean up ──
@@ -168,6 +176,14 @@ export function registerChatCompletionIpc(): void {
         // 8. Cleanup: stop agents, delete conversation
         chatAgentService.clearSession(conversationId)
         conversationRepository.delete(conversationId)
+
+        // Clean up clipboard images for this conversation
+        try {
+          const imageDir = join(app.getPath('userData'), 'chat-images', conversationId)
+          rmSync(imageDir, { recursive: true, force: true })
+        } catch {
+          /* best effort — directory may not exist */
+        }
 
         return { branch: branchName, commitHash, prUrl }
       } catch (error) {

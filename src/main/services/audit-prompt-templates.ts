@@ -12,6 +12,7 @@
 import type { AuditTrackId } from '../../shared/types'
 import { AUDIT_TRACKS, resolvePromptVerbosity } from '../../shared/constants'
 
+
 // ── Base Template ──────────────────────────────────────────────────────────
 
 const AUDIT_SYSTEM_PROMPT_TEMPLATE = `You are the **{{auditorName}}** — a senior specialist performing a read-only workspace health audit.

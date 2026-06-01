@@ -5,13 +5,57 @@
 
 import type { BrowserWindow } from 'electron'
 import type { StreamChunk } from '../services'
-import { summarizeToolInput } from '../services'
-import { IPC_CHANNELS, MCP_TOOLS } from '../../shared/constants'
-import type { ConversationPhase } from '../../shared/types'
+import { IPC_CHANNELS } from '../../shared/constants'
+import type { ConversationPhase, ToolActivity } from '../../shared/types'
 import { createTextChunk, createToolActivityChunk, createTurnBoundary } from './chat-protocol'
-import { extractResultSummary } from './tool-result-summarizer'
-import { reportToolError } from './tool-error-reporter'
+import { processToolChunk } from './tool-chunk-processor'
 import { chatIpcLogger } from '../logger'
+
+// ── Tool Activity Persistence Accumulator ──────────────────────────────
+// Collects completed ToolActivity objects during streaming, keyed by
+// conversationId → toolId. Merges tool_use (running) and tool_result
+// (completed) by ID so the persisted entry has both startedAt and result.
+// Retrieved and cleared by getAndClearToolActivities() during finalize.
+
+const toolActivityStore = new Map<string, Map<string, ToolActivity>>()
+
+function accumulateToolActivity(
+  conversationId: string,
+  partial: Partial<ToolActivity> & { id: string; toolName: string }
+): void {
+  let convMap = toolActivityStore.get(conversationId)
+  if (!convMap) {
+    convMap = new Map<string, ToolActivity>()
+    toolActivityStore.set(conversationId, convMap)
+  }
+  const existing = convMap.get(partial.id)
+  if (existing) {
+    // Merge: preserve earlier startedAt, overlay new fields
+    convMap.set(partial.id, {
+      ...existing,
+      ...partial,
+      startedAt: existing.startedAt || partial.startedAt || 0
+    })
+  } else {
+    convMap.set(partial.id, {
+      status: 'running',
+      startedAt: Date.now(),
+      ...partial
+    } as ToolActivity)
+  }
+}
+
+/**
+ * Retrieve and clear accumulated tool activities for a conversation.
+ * Called during finalize to persist tool activities to the DB.
+ * Filters out activities still in 'running' state (incomplete).
+ */
+export function getAndClearToolActivities(conversationId: string): ToolActivity[] {
+  const convMap = toolActivityStore.get(conversationId)
+  toolActivityStore.delete(conversationId)
+  if (!convMap) return []
+  return [...convMap.values()]
+}
 
 // ── Shared context passed to all handlers ──
 
@@ -107,12 +151,6 @@ function basePayload(ctx: ChunkRouterContext) {
   }
 }
 
-/** Generate a unique tool ID with better collision resistance */
-function generateToolId(prefix: string, existingId?: string | null): string {
-  if (existingId) return existingId
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-}
-
 // ── Per-type handler functions ──
 
 function handleText(ctx: ChunkRouterContext, chunk: StreamChunk): void {
@@ -136,79 +174,24 @@ function handleThinking(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   )
 }
 
-function handleToolUse(ctx: ChunkRouterContext, chunk: StreamChunk): void {
-  // Flush pending text before tool activity
-  textBatcher.flush()
-  // Control tools are internal — don't show as tool activity in the UI
-  if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
+function handleToolChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  // Flush pending text before tool activity (tool_use starts a new visual block)
+  if (chunk.type === 'tool_use') textBatcher.flush()
+
+  const result = processToolChunk(chunk, {
+    workspacePath: ctx.workspacePath,
+    agentType: ctx.specialistMeta?.specialist ?? ctx.role,
+    workspaceId: ctx.conversationId,
+    agentId: ctx.specialistMeta?.taskId
+  })
+  if (!result) return
+
+  // Accumulate for DB persistence (merge tool_use → tool_result by id)
+  accumulateToolActivity(ctx.conversationId, result.toolActivity)
 
   safeSend(ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-    createToolActivityChunk({
-      ...basePayload(ctx),
-      toolActivity: {
-        id: generateToolId('tool', chunk.toolId),
-        toolName: chunk.toolName ?? 'Unknown',
-        status: 'running' as const,
-        input: chunk.toolInput,
-        startedAt: Date.now()
-      }
-    })
-  )
-}
-
-function handleToolResult(ctx: ChunkRouterContext, chunk: StreamChunk): void {
-  // Control tool results are internal
-  if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
-
-  let toolInputSummary: string | undefined
-  if (chunk.content) {
-    try {
-      const parsed = JSON.parse(chunk.content) as Record<string, unknown>
-      toolInputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, ctx.workspacePath)
-    } catch {
-      toolInputSummary = chunk.content.slice(0, 120)
-    }
-  }
-
-  const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
-  let resultSummary = resultSummaryObj?.result
-  const resultDetail = resultSummaryObj?.resultDetail
-
-  // For Read, compose file path into result so it's always visible
-  if (chunk.toolName === 'Read' && toolInputSummary && resultSummary) {
-    resultSummary = `${resultSummary} — ${toolInputSummary}`
-  }
-
-  // Tag the activity as 'error' when the SDK returned a tool_use_error
-  const isToolError =
-    typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
-
-  // Auto-capture tool errors to the bug tracker
-  if (isToolError && chunk.content) {
-    reportToolError(chunk.toolName ?? 'Unknown', chunk.content, {
-      agentType: ctx.specialistMeta?.specialist ?? ctx.role,
-      workspaceId: ctx.conversationId,
-      agentId: ctx.specialistMeta?.taskId
-    })
-  }
-
-  const toolActivity: Record<string, unknown> = {
-    id: generateToolId('tool', chunk.toolId),
-    toolName: chunk.toolName ?? 'Unknown',
-    status: isToolError ? 'error' : 'completed',
-    completedAt: Date.now()
-  }
-  if (toolInputSummary) toolActivity.input = toolInputSummary
-  if (resultSummary) toolActivity.result = resultSummary
-  if (resultDetail) toolActivity.resultDetail = resultDetail
-
-  safeSend(ctx,
-    IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-    createToolActivityChunk({
-      ...basePayload(ctx),
-      toolActivity: toolActivity as { id: string; toolName: string }
-    })
+    createToolActivityChunk({ ...basePayload(ctx), toolActivity: result.toolActivity })
   )
 }
 
@@ -247,20 +230,7 @@ function handleStatus(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   )
 }
 
-function handleToolProgress(ctx: ChunkRouterContext, chunk: StreamChunk): void {
-  safeSend(ctx,
-    IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-    createToolActivityChunk({
-      ...basePayload(ctx),
-      toolActivity: {
-        id: generateToolId('tool', chunk.toolId),
-        toolName: chunk.toolName ?? 'Unknown',
-        status: 'running' as const,
-        elapsedSeconds: chunk.elapsedSeconds
-      }
-    })
-  )
-}
+
 
 function handleRateLimit(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   safeSend(ctx, IPC_CHANNELS.SDK_RATE_LIMIT, {
@@ -374,6 +344,12 @@ function isStatusLabel(content: string): boolean {
   )
 }
 
+/** Generate a unique ID for sub-agent tool activities (not part of processToolChunk pipeline) */
+function generateSubagentId(prefix: string, existingId?: string | null): string {
+  if (existingId) return existingId
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
+
 // ── SubAgent lifecycle handlers ──
 // These map the subagent_* chunks from stream-normalizer into tool activity
 // events so sub-agent work appears in the tool activity panel.
@@ -381,19 +357,19 @@ function isStatusLabel(content: string): boolean {
 // tool activity entry, so prose is readable while the accordion shows a summary.
 
 function handleSubagentStart(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  const activity = {
+    id: generateSubagentId('subagent', chunk.toolId),
+    toolName: chunk.toolName ?? 'Agent',
+    status: 'running' as const,
+    input: chunk.content ? truncate(chunk.content, 80) : undefined,
+    startedAt: Date.now()
+  }
+  accumulateToolActivity(ctx.conversationId, activity)
+
   // Emit tool activity for the accordion (short summary only)
   safeSend(ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-    createToolActivityChunk({
-      ...basePayload(ctx),
-      toolActivity: {
-        id: generateToolId('subagent', chunk.toolId),
-        toolName: chunk.toolName ?? 'Agent',
-        status: 'running' as const,
-        input: chunk.content ? truncate(chunk.content, 80) : undefined,
-        startedAt: Date.now()
-      }
-    })
+    createToolActivityChunk({ ...basePayload(ctx), toolActivity: activity })
   )
 }
 
@@ -420,7 +396,7 @@ function handleSubagentProgress(ctx: ChunkRouterContext, chunk: StreamChunk): vo
     createToolActivityChunk({
       ...basePayload(ctx),
       toolActivity: {
-        id: generateToolId('subagent', chunk.toolId),
+        id: generateSubagentId('subagent', chunk.toolId),
         toolName: chunk.toolName ?? 'Agent',
         status: 'running' as const,
         result: truncate(content, 80)
@@ -446,18 +422,18 @@ function handleSubagentComplete(ctx: ChunkRouterContext, chunk: StreamChunk): vo
   }
 
   // Tool activity: mark as complete with short summary
+  const activity = {
+    id: generateSubagentId('subagent', chunk.toolId),
+    toolName: 'Agent',
+    status: (chunk.toolInput === 'completed' ? 'completed' : 'error') as 'completed' | 'error',
+    result: truncate(content, 80),
+    completedAt: Date.now()
+  }
+  accumulateToolActivity(ctx.conversationId, activity)
+
   safeSend(ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-    createToolActivityChunk({
-      ...basePayload(ctx),
-      toolActivity: {
-        id: generateToolId('subagent', chunk.toolId),
-        toolName: 'Agent',
-        status: (chunk.toolInput === 'completed' ? 'completed' : 'error') as 'completed' | 'error',
-        result: truncate(content, 80),
-        completedAt: Date.now()
-      }
-    })
+    createToolActivityChunk({ ...basePayload(ctx), toolActivity: activity })
   )
 }
 
@@ -490,12 +466,12 @@ type ChunkHandler = (ctx: ChunkRouterContext, chunk: StreamChunk) => void
 const CHUNK_HANDLERS: Record<string, ChunkHandler> = {
   text: handleText,
   thinking: handleThinking,
-  tool_use: handleToolUse,
-  tool_result: handleToolResult,
+  tool_use: handleToolChunk,
+  tool_result: handleToolChunk,
   turn_boundary: handleTurnBoundary,
   error: handleError,
   status: handleStatus,
-  tool_progress: handleToolProgress,
+  tool_progress: handleToolChunk,
   rate_limit: handleRateLimit,
   api_retry: handleApiRetry,
   compact_boundary: handleCompactBoundary,

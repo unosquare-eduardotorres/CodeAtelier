@@ -27,6 +27,7 @@ import { councilService } from './services/council.service'
 
 import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
+import { cleanupStalePromptFiles } from './services/cli-executor'
 
 // Initialize electron-log for the main process
 // Must happen before app.whenReady() for early error capture
@@ -359,6 +360,9 @@ app.whenReady().then(() => {
     submitURL: '',
     uploadToServer: false
   })
+
+  // ── Startup cleanup: remove stale system-prompt temp files from prior crashes ──
+  cleanupStalePromptFiles()
 
   // ── Security: Restrict web permissions (#7) ──
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {

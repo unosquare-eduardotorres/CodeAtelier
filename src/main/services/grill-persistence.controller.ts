@@ -8,12 +8,12 @@
  *   4. Handle reconnect — when renderer mounts, serve full state from DB + attach to live events
  */
 
-import type { BrowserWindow } from 'electron'
 import log from 'electron-log'
 import type { GrillTrackId, GrillEvaluation } from '../../shared/types'
 import type { GrillSession, GrillSessionStatus } from '../db/repositories/grill-session.repository'
 import { grillSessionRepository } from '../db/repositories'
 import { IPC_CHANNELS } from '../../shared/constants'
+import { getSessionEventRouter, type SessionEventRouter } from './session-event-router'
 
 const ctrlLog = log.scope('grill-persistence')
 
@@ -78,10 +78,11 @@ export class GrillPersistenceController {
   /** Handle stream chunk — buffer and forward to renderer */
   handleStreamChunk(
     chunkData: { type: string; content?: string; toolActivity?: Record<string, unknown> },
-    mainWindow: BrowserWindow
+    workspaceId: string,
+    router: SessionEventRouter
   ): void {
-    // Forward to renderer immediately (same as before)
-    mainWindow.webContents.send(IPC_CHANNELS.GRILL_STREAM_CHUNK, chunkData)
+    // Forward to renderer immediately via router
+    router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_STREAM_CHUNK, workspaceId, chunkData)
 
     // Buffer agent content for DB persistence
     if (chunkData.type === 'text' && chunkData.content) {
@@ -125,9 +126,13 @@ export class GrillPersistenceController {
   }
 
   /** Handle evaluation result — persist score + questions, update status */
-  handleEvaluationResult(evaluation: GrillEvaluation, mainWindow: BrowserWindow): void {
-    // Forward to renderer
-    mainWindow.webContents.send(IPC_CHANNELS.GRILL_EVALUATION_RESULT, evaluation)
+  handleEvaluationResult(
+    evaluation: GrillEvaluation,
+    workspaceId: string,
+    router: SessionEventRouter
+  ): void {
+    // Forward to renderer via router
+    router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_EVALUATION_RESULT, workspaceId, evaluation as unknown as Record<string, unknown>)
 
     if (!this.activeSessionId) return
 
@@ -153,7 +158,7 @@ export class GrillPersistenceController {
     grillSessionRepository.updateStatus(this.activeSessionId, 'awaiting_answers')
 
     // Emit status change
-    this.emitStatusChange(mainWindow, 'awaiting_answers')
+    this.emitStatusChange(workspaceId, router, 'awaiting_answers')
 
     ctrlLog.info(
       `[grill-persistence] Evaluation complete — session=${this.activeSessionId} score=${evaluation.score}`
@@ -161,9 +166,9 @@ export class GrillPersistenceController {
   }
 
   /** Handle stream complete — flush buffer, finalize */
-  handleComplete(mainWindow: BrowserWindow): void {
-    // Forward to renderer
-    mainWindow.webContents.send(IPC_CHANNELS.GRILL_STREAM_COMPLETE, {})
+  handleComplete(workspaceId: string, router: SessionEventRouter): void {
+    // Forward to renderer via router
+    router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_STREAM_COMPLETE, workspaceId, {})
 
     // Flush any remaining buffered messages
     this.flushToDb()
@@ -174,21 +179,16 @@ export class GrillPersistenceController {
   /** Save user's question answers to DB */
   saveAnswers(
     sessionId: string,
-    questionStates: Record<string, unknown>,
-    mainWindow?: BrowserWindow
+    questionStates: Record<string, unknown>
   ): void {
     const session = grillSessionRepository.findById(sessionId)
     if (!session) return
 
     grillSessionRepository.updateQuestionStates(sessionId, questionStates, session.currentIteration)
-
-    if (mainWindow) {
-      this.emitStatusChange(mainWindow, session.status)
-    }
   }
 
   /** Mark session as evaluating (re-evaluation after answers) */
-  markEvaluating(sessionId: string, mainWindow: BrowserWindow): void {
+  markEvaluating(sessionId: string, workspaceId: string): void {
     grillSessionRepository.updateStatus(sessionId, 'evaluating')
     this.activeSessionId = sessionId
 
@@ -198,7 +198,8 @@ export class GrillPersistenceController {
       this.activeTrackId = session.trackId
     }
 
-    this.emitStatusChange(mainWindow, 'evaluating')
+    const router = getSessionEventRouter()
+    this.emitStatusChange(workspaceId, router, 'evaluating')
   }
 
   /** Get the current grill status for a workspace (for status bar + icons) */
@@ -226,11 +227,14 @@ export class GrillPersistenceController {
   }
 
   /** Clear active tracking (on cancel) */
-  clearTracking(mainWindow?: BrowserWindow): void {
+  clearTracking(): void {
     if (this.activeSessionId) {
       grillSessionRepository.updateStatus(this.activeSessionId, 'cancelled')
-      if (mainWindow) {
-        this.emitStatusChange(mainWindow, 'cancelled')
+      try {
+        const router = getSessionEventRouter()
+        this.emitStatusChange('', router, 'cancelled')
+      } catch {
+        /* router may not be initialized during early cancellation */
       }
     }
     this.flushToDb()
@@ -269,7 +273,11 @@ export class GrillPersistenceController {
   }
 
   /** Emit status change event to renderer */
-  private emitStatusChange(mainWindow: BrowserWindow, status: GrillSessionStatus): void {
+  private emitStatusChange(
+    workspaceId: string,
+    router: SessionEventRouter,
+    status: GrillSessionStatus
+  ): void {
     const payload: GrillStatusPayload = {
       status,
       ideaId: this.activeIdeaId ?? '',
@@ -285,7 +293,11 @@ export class GrillPersistenceController {
       }
     }
 
-    mainWindow.webContents.send(IPC_CHANNELS.GRILL_STATUS_CHANGED, payload)
+    router.sendWorkspaceEvent(
+      IPC_CHANNELS.GRILL_STATUS_CHANGED,
+      workspaceId,
+      payload as unknown as Record<string, unknown>
+    )
   }
 }
 

@@ -183,11 +183,11 @@
 .btn-primary {
   background: linear-gradient(135deg, var(--color-primary), var(--color-gold-muted));
   color: var(--color-surface-base);
-  font-family: var(--ca-font-display);
-  font-weight: 500;
-  font-size: 16px;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
+  font-family: var(--ca-font-body);
+  font-weight: 600;
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0.02em;
   padding: 14px 40px;
   border-radius: 2px;
   border: none;
@@ -203,11 +203,11 @@
 .btn-secondary {
   background: transparent;
   color: var(--color-primary);
-  font-family: var(--ca-font-display);
-  font-weight: 500;
-  font-size: 16px;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
+  font-family: var(--ca-font-body);
+  font-weight: 600;
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0.02em;
   padding: 14px 40px;
   border-radius: 2px;
   border: 1px solid var(--color-border-default);
@@ -222,10 +222,10 @@
 
 /* ── UI label utility — uppercase Cormorant for buttons/nav/labels ── */
 .label-ui {
-  font-family: var(--ca-font-display);
+  font-family: var(--ca-font-body);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
+  text-transform: none;
+  letter-spacing: 0.02em;
 }
 
 @layer base {
@@ -319,7 +319,7 @@
   --tw-prose-counters: var(--color-text-secondary);
   color: var(--color-text-body); /* explicit — don't rely on Tailwind prose-invert for dark mode */
   font-size: 14px; /* was 15px — tighter for chat density */
-  line-height: 1.55; /* was 1.65 — less vertical air */
+  line-height: 1.65; /* comfortable reading for mixed code/prose content */
   max-width: none; /* let bubble container percentage caps handle width — responsive across resolutions */
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -356,27 +356,27 @@
 }
 
 .prose h1 {
-  font-size: 1.2em; /* was 1.35em — flatter hierarchy */
-  margin-top: 0.7em;
-  margin-bottom: 0.35em;
+  font-size: 1.35em; /* visible top-level heading: 18.9px at base 14 */
+  margin-top: 1em;
+  margin-bottom: 0.5em;
 }
 
 .prose h2 {
-  font-size: 1.1em; /* was 1.2em */
-  margin-top: 0.6em;
-  margin-bottom: 0.3em;
+  font-size: 1.2em; /* clear step down from h1: 16.8px at base 14 */
+  margin-top: 0.85em;
+  margin-bottom: 0.4em;
 }
 
 .prose h3 {
-  font-size: 1.05em; /* was 1.1em */
-  margin-top: 0.5em;
-  margin-bottom: 0.25em;
+  font-size: 1.1em; /* distinct from body: 15.4px at base 14 */
+  margin-top: 0.7em;
+  margin-bottom: 0.3em;
 }
 
 .prose h4 {
-  font-size: 1em; /* was 1.05em — same as body, bold is enough */
-  margin-top: 0.4em;
-  margin-bottom: 0.2em;
+  font-size: 1em; /* same as body, bold differentiates */
+  margin-top: 0.6em;
+  margin-bottom: 0.25em;
 }
 
 /* Bold — cool bright emphasis (not gold) */
@@ -415,25 +415,21 @@
   padding-left: 0.25em;
 }
 
-/* ── Section divider: subtle line before lists that follow a paragraph ── */
+/* Section spacing between paragraphs and lists — no divider lines,
+   heading hierarchy + spacing handle visual grouping */
 .prose p + ul,
 .prose p + ol {
-  margin-top: 1em;
-  padding-top: 0.75em;
-  border-top: 1px solid var(--color-border-subtle);
+  margin-top: 0.75em;
 }
 
-/* ── Section divider: after a list before a trailing paragraph ── */
 .prose ul + p,
 .prose ol + p {
-  margin-top: 1em;
-  padding-top: 0.75em;
-  border-top: 1px solid var(--color-border-subtle);
+  margin-top: 0.75em;
 }
 
 .prose ol > li::marker {
-  color: var(--color-primary);
-  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-weight: 500;
 }
 
 .prose ul > li::marker {
@@ -645,7 +641,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Grain overlay — subtle texture for dark themes (Code Atelier & Neon Forge)
+   Grain overlay — subtle texture for dark themes (Code Atelier & Glass)
    Disabled for Porcelain via --grain-opacity: 0
    ═══════════════════════════════════════════════════════════════════════════ */
 body::after {
@@ -654,7 +650,7 @@ body::after {
   inset: 0;
   z-index: 9999;
   pointer-events: none;
-  opacity: var(--grain-opacity, 0.04);
+  opacity: var(--grain-opacity, 0.015);
   mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23g)'/%3E%3C/svg%3E");
 }

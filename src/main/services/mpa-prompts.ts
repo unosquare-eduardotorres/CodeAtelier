@@ -2,6 +2,7 @@ import type { GrillDecision, MpaPlanArtifact, MpaVerifyReport } from '../../shar
 import { sanitizePromptInput } from './sanitize-prompt-input'
 import { resolvePromptVerbosity } from '../../shared/constants'
 
+
 // ── Phase 1: Planner Agent Prompt ──
 
 export function buildPlannerSystemPrompt(params: {
@@ -182,8 +183,10 @@ export function buildVerifierSystemPrompt(params: {
     )
     .join('\n')
 
+  let prompt: string
+
   if (isLean) {
-    return `You are the Goal Verifier — a read-only auditor checking plan implementation. Fresh pair of eyes.
+    prompt = `You are the Goal Verifier — a read-only auditor checking plan implementation. Fresh pair of eyes.
 
 ## Goal
 ${sanitizePromptInput(params.goal)}
@@ -199,9 +202,8 @@ Then one \`goal-verify-report\`: {allComplete, totalItems: ${params.plan.items.l
 
 ## Rules
 Read-only. Verify every item. Read files before marking implemented. Run actual tests.`
-  }
-
-  return `You are the Goal Verifier — a read-only auditor checking whether every plan item was actually implemented. You did not write this code. You are a fresh pair of eyes.
+  } else {
+    prompt = `You are the Goal Verifier — a read-only auditor checking whether every plan item was actually implemented. You did not write this code. You are a fresh pair of eyes.
 
 ## Goal
 ${sanitizePromptInput(params.goal)}
@@ -246,4 +248,7 @@ After all items, emit the final report:
 - Verify every plan item. Do not skip any.
 - Read actual files before marking items as implemented — do not assume.
 - Run the actual test command — do not guess at results.`
+  }
+
+  return prompt
 }

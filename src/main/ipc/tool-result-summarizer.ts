@@ -56,7 +56,13 @@ function checkToolUseError(content: string): ToolResultSummary | undefined {
 
 // ── SDK builtin tool handlers ──
 
-const summarizeWrite: Summarizer = () => ({ result: 'Done' })
+const summarizeWrite: Summarizer = (content) => {
+  if (!content || content.length < 10) return { result: 'Done' }
+  return {
+    result: 'Done',
+    resultDetail: content.slice(0, DETAIL_CAP)
+  }
+}
 
 const summarizeBash: Summarizer = (content) => {
   const lines = content.split('\n').filter((l) => l.trim())
@@ -84,7 +90,10 @@ const summarizeBash: Summarizer = (content) => {
 
 const summarizeRead: Summarizer = (content) => {
   const lineCount = content.split('\n').length
-  return { result: `${lineCount} line${lineCount !== 1 ? 's' : ''} read` }
+  return {
+    result: `${lineCount} line${lineCount !== 1 ? 's' : ''} read`,
+    resultDetail: content.length > 40 ? content.slice(0, DETAIL_CAP) : undefined
+  }
 }
 
 const summarizeGrep: Summarizer = (content) => {
