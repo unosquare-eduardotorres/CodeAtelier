@@ -1,6 +1,6 @@
-import { Loader2, CheckCircle, AlertTriangle, X, Eye, Play, Landmark } from 'lucide-react'
+import { Loader2, CheckCircle, AlertTriangle, X, Eye, Play, Landmark, Trash2 } from 'lucide-react'
 import type { CouncilSessionStatus } from '../../../../../main/db/repositories/council-session.repository'
-import type { CouncilInputType, CouncilVerdict } from '../../../../../shared/types'
+import type { CouncilInputType, CouncilVerdict, CouncilPeerReview, CouncilReview } from '../../../../../shared/types'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -12,6 +12,10 @@ export interface CouncilSessionSummary {
   verdict: CouncilVerdict | null
   createdAt: string
   completedAdvisors: string[]
+  // Fields needed for hydration + title extraction
+  peerReviews?: CouncilPeerReview[]
+  advisorReviews?: CouncilReview[]
+  structuredPlanJson?: string | null
 }
 
 // ── Status badge config ────────────────────────────────────────────────────
@@ -89,33 +93,55 @@ function relativeTime(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+// ── Title extraction ──────────────────────────────────────────────────────
+
+/** Extract a human-readable title from session inputContent.
+ *  Plan card flow stores raw JSON; manual flow stores plain text. */
+function extractDisplayTitle(session: CouncilSessionSummary): string {
+  // Try to parse as JSON (plan card stores structured plan JSON as inputContent)
+  try {
+    const parsed = JSON.parse(session.inputContent)
+    if (typeof parsed.title === 'string' && parsed.title.trim()) {
+      return parsed.title.trim()
+    }
+  } catch { /* not JSON — use as plain text */ }
+
+  // Plain text — use first meaningful line
+  const firstLine = session.inputContent.split('\n').find(l => l.trim())?.trim() ?? session.inputContent
+  return firstLine.length > 100 ? firstLine.slice(0, 100) + '…' : firstLine
+}
+
 // ── Card component ─────────────────────────────────────────────────────────
 
 interface CouncilSessionCardProps {
   session: CouncilSessionSummary
   onView: (sessionId: string) => void
   onResume?: (sessionId: string) => void
+  onDelete?: (sessionId: string) => void
 }
 
 export default function CouncilSessionCard({
   session,
   onView,
-  onResume
+  onResume,
+  onDelete
 }: CouncilSessionCardProps): React.JSX.Element {
   const config = STATUS_CONFIG[session.status]
-  const truncatedContent =
-    session.inputContent.length > 80
-      ? session.inputContent.slice(0, 80) + '…'
-      : session.inputContent
+  const displayTitle = extractDisplayTitle(session)
 
   return (
-    <div className="w-full flex items-center gap-3 px-3 py-2.5 bg-surface-base rounded-lg border border-border-subtle hover:bg-surface-hover transition-colors">
+    <div className="group w-full flex items-center gap-3 p-4 bg-surface-overlay rounded-lg border border-border-subtle hover:border-border-default transition-colors shadow-sm">
       {/* Icon */}
       <Landmark size={16} className="text-purple-400/50 flex-shrink-0" />
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-text-primary truncate">{truncatedContent}</p>
+        <p
+          className="text-base font-normal text-text-primary truncate"
+          style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}
+        >
+          {displayTitle}
+        </p>
         <div className="flex items-center gap-2 mt-0.5">
           <span className="text-[10px] text-text-muted">
             {INPUT_TYPE_LABELS[session.inputType] ?? session.inputType}
@@ -147,7 +173,8 @@ export default function CouncilSessionCard({
 
       {/* Actions */}
       <div className="flex items-center gap-1 flex-shrink-0">
-        {(session.status === 'completed' || session.status === 'running') && (
+        {(session.status === 'completed' || session.status === 'running' ||
+          session.status === 'failed' || session.status === 'cancelled') && (
           <button
             type="button"
             onClick={() => onView(session.id)}
@@ -165,6 +192,17 @@ export default function CouncilSessionCard({
           >
             <Play size={12} />
             Resume
+          </button>
+        )}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(session.id)}
+            className="flex items-center p-1 text-text-muted hover:text-error hover:bg-error/10 rounded transition-colors"
+            aria-label="Delete session"
+            title="Delete session"
+          >
+            <Trash2 size={12} />
           </button>
         )}
       </div>

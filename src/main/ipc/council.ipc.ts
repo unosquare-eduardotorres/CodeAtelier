@@ -187,6 +187,17 @@ export function registerCouncilIpc(_mainWindow: BrowserWindow): void {
     }
   )
 
+  // ── council:deleteSession — delete a council session by ID ───
+
+  ipcMain.handle(
+    IPC_CHANNELS.COUNCIL_DELETE_SESSION,
+    (event, args: { sessionId: string }): { deleted: boolean } => {
+      validateSender(event)
+      const deleted = councilSessionRepository.deleteSession(args.sessionId)
+      return { deleted }
+    }
+  )
+
   // ── Stale session detection on registration ───
   councilService.reconcileStaleRuns()
 }

@@ -17,7 +17,7 @@ const THEME_OPTIONS: {
     value: 'glass',
     label: 'Glass',
     description: 'Frosted glass, violet depth',
-    preview: ['#0b0e18', '#161a2c', '#8b5cf6', '#67e8f9']
+    preview: ['#0c0e1a', '#161c30', '#7c8cf7', '#a78bfa']
   },
   {
     value: 'porcelain',
@@ -29,7 +29,7 @@ const THEME_OPTIONS: {
     value: 'developer',
     label: 'Developer',
     description: 'Neutral dark, zero distraction',
-    preview: ['#1e1e1e', '#252526', '#569cd6', '#4ec9b0']
+    preview: ['#1a1b26', '#1f2133', '#7aa2f7', '#73daca']
   }
 ]
 

@@ -1022,6 +1022,7 @@ interface Api {
   onCouncilComplete: (cb: () => void) => () => void
   councilResume: (args: { sessionId: string; workspaceId: string }) => Promise<{ resumed: boolean }>
   councilGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
+  councilDeleteSession: (args: { sessionId: string }) => Promise<{ deleted: boolean }>
 
   // Multi-Workspace Session Management
   getAllWorkspaceStatuses: () => Promise<Record<string, unknown>>

@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react'
 import { Landmark, Plus, FileText, Users, Award, ShieldAlert, Compass, TrendingUp, Eye, Wrench } from 'lucide-react'
 import { useCouncilStore } from '@renderer/store/council.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
-import { Skeleton } from '@renderer/components/common'
+import { ConfirmDialog, Skeleton } from '@renderer/components/common'
 import CouncilView from './CouncilView'
 import CouncilFilterBar, { type CouncilFilter } from './CouncilFilterBar'
 import CouncilSessionCard, { type CouncilSessionSummary } from './CouncilSessionCard'
@@ -45,6 +45,7 @@ export default function CouncilLanding({
   const [searchQuery, setSearchQuery] = useState('')
   const [showStartModal, setShowStartModal] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   // Load history on mount + workspace change
   useEffect(() => {
@@ -120,17 +121,36 @@ export default function CouncilLanding({
       const session = history.find((s) => s.id === sessionId)
       if (!session) return
 
+      const councilState = useCouncilStore.getState()
+
       if (session.status === 'running') {
         // Rehydrate the council view for a running session
-        const councilState = useCouncilStore.getState()
         councilState.startCouncil()
         councilState.setSessionIdentity(sessionId, workspaceId)
+      } else {
+        // Hydrate store from completed/failed/cancelled session record
+        councilState.hydrateFromRecord({
+          sessionId,
+          workspaceId,
+          phase: session.status === 'completed' ? 'complete' : session.status === 'failed' ? 'failed' : 'cancelled',
+          verdict: session.verdict,
+          peerReviews: session.peerReviews ?? [],
+          advisorReviews: session.advisorReviews ?? []
+        })
       }
-      // For completed sessions, we could expand inline — for now, just log
-      // TODO: Implement detail view for completed sessions
     },
     [history, workspaceId]
   )
+
+  const handleDelete = useCallback(async (sessionId: string) => {
+    try {
+      await window.api.councilDeleteSession({ sessionId })
+      setHistory(prev => prev.filter(s => s.id !== sessionId))
+    } catch (err) {
+      console.error('Failed to delete council session:', err)
+    }
+    setDeleteTarget(null)
+  }, [])
 
   const handleResume = useCallback(
     async (sessionId: string) => {
@@ -324,6 +344,7 @@ export default function CouncilLanding({
               session={session}
               onView={handleView}
               onResume={handleResume}
+              onDelete={(id) => setDeleteTarget(id)}
             />
           ))}
         </div>
@@ -336,6 +357,16 @@ export default function CouncilLanding({
           onClose={() => setShowStartModal(false)}
         />
       )}
+
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        title="Delete Council Session"
+        message="Are you sure you want to delete this council session? This action cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => deleteTarget && handleDelete(deleteTarget)}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </>
   )
 }

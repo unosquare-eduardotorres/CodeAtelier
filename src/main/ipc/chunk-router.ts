@@ -48,7 +48,7 @@ function accumulateToolActivity(
 /**
  * Retrieve and clear accumulated tool activities for a conversation.
  * Called during finalize to persist tool activities to the DB.
- * Filters out activities still in 'running' state (incomplete).
+ * Returns all activities including 'running' ones (e.g. subagents interrupted mid-execution).
  */
 export function getAndClearToolActivities(conversationId: string): ToolActivity[] {
   const convMap = toolActivityStore.get(conversationId)
@@ -390,18 +390,18 @@ function handleSubagentProgress(ctx: ChunkRouterContext, chunk: StreamChunk): vo
     )
   }
 
-  // Also emit tool activity update (short summary only)
+  // Accumulate for DB persistence (captures intermediate result text)
+  const activity = {
+    id: generateSubagentId('subagent', chunk.toolId),
+    toolName: chunk.toolName ?? 'Agent',
+    status: 'running' as const,
+    result: truncate(content, 80)
+  }
+  accumulateToolActivity(ctx.conversationId, activity)
+
   safeSend(ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-    createToolActivityChunk({
-      ...basePayload(ctx),
-      toolActivity: {
-        id: generateSubagentId('subagent', chunk.toolId),
-        toolName: chunk.toolName ?? 'Agent',
-        status: 'running' as const,
-        result: truncate(content, 80)
-      }
-    })
+    createToolActivityChunk({ ...basePayload(ctx), toolActivity: activity })
   )
 }
 

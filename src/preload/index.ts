@@ -2042,7 +2042,10 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_RESUME, args),
 
   councilGetHistory: (args: { workspaceId: string; limit?: number }): Promise<unknown[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_GET_HISTORY, args)
+    ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_GET_HISTORY, args),
+
+  councilDeleteSession: (args: { sessionId: string }): Promise<{ deleted: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_DELETE_SESSION, args)
 } as const
 
 if (process.contextIsolated) {

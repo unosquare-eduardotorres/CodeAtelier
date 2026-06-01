@@ -25,6 +25,13 @@ const BUBBLE_SIZE_CLASSES: Record<ChatBubbleSize, { text: string; maxWidth: stri
   xl: { text: 'text-base leading-relaxed', maxWidth: 'max-w-[85%]' }
 }
 
+const AVATAR_SIZE_MAP: Record<ChatBubbleSize, 'md' | 'lg' | 'xl'> = {
+  small: 'md',
+  medium: 'lg',
+  large: 'xl',
+  xl: 'xl'
+}
+
 interface AuditMessageBubbleProps {
   content: string
   toolActivities: ToolActivity[]
@@ -61,7 +68,7 @@ export default function AuditMessageBubble({
     <div className="flex gap-3 flex-row">
       {/* Avatar — branded auditor portrait */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey="atelier-auditor" size="xl" />
+        <Avatar avatarKey="atelier-auditor" size={AVATAR_SIZE_MAP[bubbleSize]} />
       </div>
 
       <div className="flex flex-col min-w-0 max-w-[85%] items-start">

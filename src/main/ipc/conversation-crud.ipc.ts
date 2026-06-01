@@ -1,4 +1,6 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
+import { rmSync } from 'node:fs'
+import { join } from 'node:path'
 import simpleGit from 'simple-git'
 import {
   conversationRepository,
@@ -168,6 +170,14 @@ export function registerConversationCrudIpc(): void {
       chatAgentService.clearSession(conversationId)
 
       conversationRepository.delete(conversationId)
+
+      // Clean up clipboard images for this conversation
+      try {
+        const imageDir = join(app.getPath('userData'), 'chat-images', conversationId)
+        rmSync(imageDir, { recursive: true, force: true })
+      } catch {
+        /* best effort — directory may not exist */
+      }
     }
   )
 

@@ -1,119 +1,119 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Developer — Neutral, low-chroma dark theme optimized for long coding sessions.
-   Inspired by VS Code Dark+, One Dark Pro, GitHub Dark. Pure function, no personality.
+   Developer — "Tokyo One": Cool blue-dark foundations, refined desaturated
+   accents. Inspired by Tokyo Night × One Dark Pro. Professional focus.
    ═══════════════════════════════════════════════════════════════════════════ */
 [data-theme="developer"] {
-  /* ── Surface layers (dark → light) ── */
-  --color-surface-base: #1e1e1e;
-  --color-surface-raised: #252526;
-  --color-surface-overlay: #2d2d2d;
-  --color-surface-float: #383838;
+  /* ── Surface layers (cool blue-gray, NOT neutral gray) ── */
+  --color-surface-base: #1a1b26;
+  --color-surface-raised: #1f2133;
+  --color-surface-overlay: #24283b;
+  --color-surface-float: #2f3347;
 
-  /* ── Border layers (neutral gray) ── */
-  --color-border-subtle: rgba(255, 255, 255, 0.06);
-  --color-border-default: rgba(255, 255, 255, 0.12);
-  --color-border-strong: rgba(255, 255, 255, 0.22);
+  /* ── Border layers (blue-gray tinted) ── */
+  --color-border-subtle: rgba(148, 163, 184, 0.08);
+  --color-border-default: rgba(148, 163, 184, 0.15);
+  --color-border-strong: rgba(148, 163, 184, 0.25);
 
-  /* ── Text hierarchy (pure neutral — APCA-calibrated for surface-overlay #2d2d2d) ── */
-  --color-text-primary: #e9e9e9;
-  --color-text-body: #dedede;
-  --color-text-secondary: #a8a8a8;
-  --color-text-muted: #909090;
+  /* ── Text hierarchy (blue-tinted whites — crisp, never yellow) ── */
+  --color-text-primary: #c0caf5;
+  --color-text-body: #a9b1d6;
+  --color-text-secondary: #787c99;
+  --color-text-muted: #565a6e;
 
   /* ── Code text ── */
-  --color-code-text: #d4d4d4;
-  --color-code-inline: #9ed6f4;
-  --color-text-emphasis: #eeeeee;
+  --color-code-text: #a9b1d6;
+  --color-code-inline: #7dcfff;
+  --color-text-emphasis: #c0caf5;
 
-  /* ── Primary accent (Classic Blue) ── */
-  --color-primary: #569cd6;
-  --color-primary-hover: #6cb0e0;
-  --color-primary-muted: rgba(86, 156, 214, 0.15);
-  --color-primary-text: #9cdcfe;
+  /* ── Primary accent (Tokyo Night blue — refined, not neon) ── */
+  --color-primary: #7aa2f7;
+  --color-primary-hover: #89b4fa;
+  --color-primary-muted: rgba(122, 162, 247, 0.15);
+  --color-primary-text: #89b4fa;
 
-  /* ── Accent (Soft Teal) ── */
-  --color-accent: #58dac2;
-  --color-accent-muted: rgba(78, 201, 176, 0.15);
+  /* ── Accent (soft teal-green — muted, NOT neon) ── */
+  --color-accent: #73daca;
+  --color-accent-muted: rgba(115, 218, 202, 0.12);
 
   /* ── Teal / Forest ── */
-  --color-teal: #4ec9b0;
-  --color-teal-light: #73d9c8;
-  --color-teal-muted: rgba(78, 201, 176, 0.18);
-  --color-teal-text: #4ec9b0;
-  --color-forest: #2d7d6b;
-  --color-forest-light: #4ec9b0;
+  --color-teal: #73daca;
+  --color-teal-light: #9ae0d4;
+  --color-teal-muted: rgba(115, 218, 202, 0.18);
+  --color-teal-text: #73daca;
+  --color-forest: #1a3348;
+  --color-forest-light: #73daca;
 
   /* ── Semantic status ── */
-  --color-success: #4ec9b0;
-  --color-success-muted: rgba(78, 201, 176, 0.15);
-  --color-warning: #dcdcaa;
-  --color-warning-muted: rgba(220, 220, 170, 0.15);
-  --color-danger: #f44747;
-  --color-danger-muted: rgba(244, 71, 71, 0.15);
-  --color-info: #569cd6;
-  --color-info-muted: rgba(86, 156, 214, 0.15);
+  --color-success: #9ece6a;
+  --color-success-muted: rgba(158, 206, 106, 0.15);
+  --color-warning: #e0af68;
+  --color-warning-muted: rgba(224, 175, 104, 0.15);
+  --color-danger: #f7768e;
+  --color-danger-muted: rgba(247, 118, 142, 0.15);
+  --color-info: #7dcfff;
+  --color-info-muted: rgba(125, 207, 255, 0.15);
 
   /* ── Mode tokens (Plan / Build / Danger) ── */
-  --color-mode-plan: #264f78;
-  --color-mode-plan-muted: rgba(38, 79, 120, 0.3);
-  --color-mode-plan-text: #9cdcfe;
-  --color-mode-plan-border: rgba(38, 79, 120, 0.3);
+  --color-mode-plan: #1f2e50;
+  --color-mode-plan-muted: rgba(31, 46, 80, 0.3);
+  --color-mode-plan-text: #89b4fa;
+  --color-mode-plan-border: rgba(31, 46, 80, 0.3);
 
-  --color-mode-build: #4e4e2e;
-  --color-mode-build-muted: rgba(78, 78, 46, 0.3);
-  --color-mode-build-text: #dcdcaa;
-  --color-mode-build-border: rgba(78, 78, 46, 0.3);
+  --color-mode-build: #3b3926;
+  --color-mode-build-muted: rgba(59, 57, 38, 0.3);
+  --color-mode-build-text: #e0af68;
+  --color-mode-build-border: rgba(59, 57, 38, 0.3);
 
-  --color-mode-danger: #6b2020;
-  --color-mode-danger-muted: rgba(107, 32, 32, 0.3);
-  --color-mode-danger-text: #f44747;
-  --color-mode-danger-border: rgba(107, 32, 32, 0.4);
+  --color-mode-danger: #5a1a26;
+  --color-mode-danger-muted: rgba(90, 26, 38, 0.3);
+  --color-mode-danger-text: #f7768e;
+  --color-mode-danger-border: rgba(90, 26, 38, 0.4);
 
   /* ── Plan Card ── */
-  --color-plan-card: #569cd6;
-  --color-plan-card-muted: rgba(86, 156, 214, 0.12);
-  --color-plan-card-border: rgba(86, 156, 214, 0.3);
-  --color-plan-card-text: #9cdcfe;
-  --color-plan-card-section-bg: rgba(86, 156, 214, 0.06);
-  --color-plan-card-accent: #4ec9b0;
-  --color-plan-card-phase-bg: rgba(78, 201, 176, 0.12);
-  --color-plan-card-phase-border: rgba(78, 201, 176, 0.25);
+  --color-plan-card: #7aa2f7;
+  --color-plan-card-muted: rgba(122, 162, 247, 0.12);
+  --color-plan-card-border: rgba(122, 162, 247, 0.3);
+  --color-plan-card-text: #89b4fa;
+  --color-plan-card-section-bg: rgba(122, 162, 247, 0.06);
+  --color-plan-card-accent: #73daca;
+  --color-plan-card-phase-bg: rgba(115, 218, 202, 0.12);
+  --color-plan-card-phase-border: rgba(115, 218, 202, 0.25);
 
   /* ── Panel colors ── */
-  --color-panel-olive: #2d2d2d;
-  --color-panel-terracotta: #3d2b2b;
-  --color-panel-teal: #264f42;
-  --color-panel-navy: #1e2d3d;
+  --color-panel-olive: #24283b;
+  --color-panel-terracotta: #3b2634;
+  --color-panel-teal: #1a3348;
+  --color-panel-navy: #1a2038;
 
-  /* ── Agent-specific colors (neutral-shifted) ── */
-  --color-agent-react: #61dafb;
-  --color-agent-dotnet: #c586c0;
-  --color-agent-agentic: #dcdcaa;
-  --color-agent-postgres: #569cd6;
-  --color-agent-ux: #c586c0;
-  --color-agent-git: #858585;
-  --color-agent-requirements: #4ec9b0;
-  --color-agent-codeplanner: #b5cea8;
-  --color-agent-execution: #ce9178;
-  --color-agent-cicd: #f44747;
-  --color-agent-cloud: #4ec9b0;
+  /* ── Agent-specific colors (cool-shifted palette) ── */
+  --color-agent-react: #7dcfff;
+  --color-agent-dotnet: #bb9af7;
+  --color-agent-agentic: #e0af68;
+  --color-agent-postgres: #7aa2f7;
+  --color-agent-ux: #bb9af7;
+  --color-agent-git: #787c99;
+  --color-agent-requirements: #73daca;
+  --color-agent-codeplanner: #9ece6a;
+  --color-agent-execution: #ff9e64;
+  --color-agent-cicd: #f7768e;
+  --color-agent-cloud: #73daca;
 
   /* ── Special-purpose tokens ── */
-  --color-user-bubble: rgba(86, 156, 214, 0.08);
-  --color-grill: #ce9178;
-  --color-grill-muted: rgba(206, 145, 120, 0.15);
-  --color-gold-glow: rgba(86, 156, 214, 0.15);
-  --color-gold-muted: #264f78;
+  --color-user-bubble: rgba(122, 162, 247, 0.08);
+  --color-grill: #ff9e64;
+  --color-grill-muted: rgba(255, 158, 100, 0.15);
+  --color-gold-glow: rgba(122, 162, 247, 0.15);
+  --color-gold-muted: #1f2e50;
 
   /* ── Component tokens ── */
   --color-button-primary-bg: var(--color-primary);
   --color-button-primary-hover: var(--color-primary-hover);
   --color-button-danger-bg: var(--color-danger);
 
-  --color-card-bg: rgba(255, 255, 255, 0.02);
+  --color-card-bg: rgba(148, 163, 184, 0.02);
   --color-card-border: var(--color-border-subtle);
 
-  --color-input-bg: #1a1a1a;
+  --color-input-bg: #161720;
   --color-input-border: var(--color-border-default);
   --color-input-focus: var(--color-primary);
 
@@ -124,22 +124,22 @@
   --color-sidebar-active: var(--color-primary-muted);
 
   /* ── Zebra stripe for tables ── */
-  --color-table-zebra: rgba(255, 255, 255, 0.02);
+  --color-table-zebra: rgba(148, 163, 184, 0.02);
 
   /* ── Scrollbar ── */
-  --color-scrollbar-thumb: rgba(255, 255, 255, 0.15);
-  --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
+  --color-scrollbar-thumb: rgba(148, 163, 184, 0.15);
+  --color-scrollbar-thumb-hover: rgba(148, 163, 184, 0.25);
 
   /* ── Selection ── */
-  --color-selection-bg: rgba(86, 156, 214, 0.3);
-  --color-selection-text: #e0e0e0;
+  --color-selection-bg: rgba(122, 162, 247, 0.3);
+  --color-selection-text: #c0caf5;
 
   /* ── Hover lift shadow ── */
   --color-hover-shadow: rgba(0, 0, 0, 0.25);
 
   /* ── Specialist radial gradient ── */
-  --color-specialist-glow: rgba(86, 156, 214, 0.08);
-  --color-specialist-mid: rgba(37, 37, 38, 0.4);
+  --color-specialist-glow: rgba(122, 162, 247, 0.08);
+  --color-specialist-mid: rgba(31, 33, 51, 0.4);
 
   /* ── Developer-specific: no grain ── */
   --grain-opacity: 0;

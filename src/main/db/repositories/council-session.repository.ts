@@ -175,6 +175,14 @@ export class CouncilSessionRepository extends BaseRepository<CouncilSessionRow, 
     ).run(status, completedAt, id)
   }
 
+  /** Delete a council session by ID */
+  deleteSession(id: string): boolean {
+    const result = this.db().prepare(
+      `DELETE FROM council_sessions WHERE id = ?`
+    ).run(id)
+    return result.changes > 0
+  }
+
   /** Find sessions for a workspace, newest first */
   findByWorkspace(workspaceId: string, limit = 20): CouncilSessionRecord[] {
     const rows = this.db()

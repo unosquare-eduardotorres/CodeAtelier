@@ -95,11 +95,16 @@ export default function GoalRunHistory({
               type="button"
               key={run.id}
               onClick={() => onSelectRun?.(run.id)}
-              className="w-full flex items-center gap-3 px-3 py-2 bg-surface-base rounded-lg border border-border-subtle hover:bg-surface-hover transition-colors text-left"
+              className="group w-full flex items-center gap-3 p-4 bg-surface-overlay rounded-lg border border-border-subtle hover:border-border-default transition-colors shadow-sm text-left"
             >
               <span className={config.color}>{config.icon}</span>
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-text-primary truncate">{run.title}</p>
+                <p
+                className="text-base font-normal text-text-primary truncate"
+                style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}
+              >
+                {run.title}
+              </p>
                 <p className="text-[10px] text-text-muted">
                   {dateStr} · {run.goalType} · {run.totalTokens > 0 ? `${Math.round(run.totalTokens / 1000)}K tok` : '—'}
                   {(run.status === 'failed' || run.status === 'cancelled') && (

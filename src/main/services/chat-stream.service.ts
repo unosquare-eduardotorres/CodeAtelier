@@ -591,6 +591,9 @@ export class ChatStreamService {
       })
     }, 30_000)
 
+    // Clear any stale tool activities from a previous crashed stream
+    getAndClearToolActivities(conversationId)
+
     // ── Step 1: Process attachments ──
     let fullContent = text
     let imageAttachments: ImageAttachment[] = []

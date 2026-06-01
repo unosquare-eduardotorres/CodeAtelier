@@ -459,7 +459,8 @@ export const IPC_CHANNELS = {
   COUNCIL_PHASE_CHANGED: 'council:phaseChanged',
   COUNCIL_COMPLETE: 'council:complete',
   COUNCIL_RESUME: 'council:resume',
-  COUNCIL_GET_HISTORY: 'council:getHistory'
+  COUNCIL_GET_HISTORY: 'council:getHistory',
+  COUNCIL_DELETE_SESSION: 'council:deleteSession'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */

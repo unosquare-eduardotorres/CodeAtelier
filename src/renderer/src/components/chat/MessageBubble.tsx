@@ -103,6 +103,14 @@ const BUBBLE_SIZE_CLASSES: Record<
   xl: { text: 'text-base leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[92%]' }
 }
 
+/** Avatar portrait size — scales with the user's bubble-size preference */
+const AVATAR_SIZE_MAP: Record<ChatBubbleSize, 'md' | 'lg' | 'xl'> = {
+  small: 'md',     // 48px
+  medium: 'lg',    // 64px
+  large: 'xl',     // 80px
+  xl: 'xl'         // 80px
+}
+
 // Module-level constants — stable references, never recreated on render
 const REMARK_PLUGINS_BASE = [
   remarkGfm,
@@ -255,7 +263,7 @@ function MessageBubbleInner({
     >
       {/* Avatar */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey={identity.avatarKey} size="xl" accentColor={identity.accentColor} />
+        <Avatar avatarKey={identity.avatarKey} size={AVATAR_SIZE_MAP[bubbleSize]} accentColor={identity.accentColor} />
       </div>
 
       {/* Content */}

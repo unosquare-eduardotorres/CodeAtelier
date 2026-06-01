@@ -15,6 +15,22 @@ import { CodeBlock } from '../chat/CodeBlock'
 import { remarkStripStrayBackticks } from '../chat/remark-plugins'
 import ToolActivityBlock from '../chat/ToolActivityBlock'
 import type { ToolActivity } from '../../../../shared/types'
+import type { ChatBubbleSize } from '../../../../shared/types'
+import { useChatBubbleSize } from '@renderer/store'
+
+const BUBBLE_SIZE_CLASSES: Record<ChatBubbleSize, { text: string }> = {
+  small: { text: 'text-xs leading-relaxed' },
+  medium: { text: 'text-sm leading-relaxed' },
+  large: { text: 'text-sm leading-relaxed' },
+  xl: { text: 'text-base leading-relaxed' }
+}
+
+const AVATAR_SIZE_MAP: Record<ChatBubbleSize, 'md' | 'lg' | 'xl'> = {
+  small: 'md',
+  medium: 'lg',
+  large: 'xl',
+  xl: 'xl'
+}
 
 interface GrillMessageBubbleProps {
   content: string
@@ -41,11 +57,14 @@ export default function GrillMessageBubble({
   toolActivities,
   isStreaming
 }: GrillMessageBubbleProps): React.JSX.Element {
+  const bubbleSize = useChatBubbleSize()
+  const sizeClasses = BUBBLE_SIZE_CLASSES[bubbleSize]
+
   return (
     <div className="flex gap-3 flex-row">
       {/* Avatar — grill analyst portrait */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey="grillme" size="xl" />
+        <Avatar avatarKey="grillme" size={AVATAR_SIZE_MAP[bubbleSize]} />
       </div>
 
       <div className="flex flex-col min-w-0 max-w-[85%] items-start">
@@ -54,7 +73,7 @@ export default function GrillMessageBubble({
         {/* Markdown content */}
         <div className="rounded-md px-5 py-4 bg-surface-overlay text-text-body border-l-[3px] border-accent/60 shadow-sm overflow-hidden min-w-0">
           {content ? (
-            <div className="prose max-w-none overflow-hidden text-sm">
+            <div className={`prose max-w-none overflow-hidden ${sizeClasses.text}`}>
               <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkBreaks, remarkStripStrayBackticks]}
                 rehypePlugins={[rehypeRaw]}
