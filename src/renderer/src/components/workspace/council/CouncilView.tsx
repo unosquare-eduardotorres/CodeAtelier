@@ -89,16 +89,6 @@ export default function CouncilView({
     setSessionIdentity
   } = useCouncilStore()
 
-  // Cleanup accumulators on unmount if council is no longer active
-  useEffect(() => {
-    return () => {
-      const { phase: currentPhase } = useCouncilStore.getState()
-      if (currentPhase === 'complete' || currentPhase === 'cancelled' || currentPhase === 'failed') {
-        useCouncilStore.getState().reset()
-      }
-    }
-  }, [])
-
   // Wire IPC listeners
   // TODO: Reconcile IPC event types with store handler types to remove `as never` casts
   useEffect(() => {
