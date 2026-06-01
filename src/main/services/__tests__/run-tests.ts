@@ -73,6 +73,14 @@ import './grill-plan-and-resume.test'
 // ─── Run 15: Tool Chunk Processor (centralized pipeline) ───
 import '../../ipc/__tests__/tool-chunk-processor.test'
 
+// ─── Run 16: Context usage level/quality resolution ───
+import './context-usage-level.test'
+
+// ─── Run 17: Context compaction verification (badge + thresholds + local) ───
+import './compaction-thresholds.test'
+import './local-compaction.test'
+import './auto-compact-options.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

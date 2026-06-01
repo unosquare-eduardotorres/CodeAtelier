@@ -428,10 +428,6 @@ export class ChatAgentService extends EventEmitter {
     return this.getActiveSession()?.isRunning() ?? false
   }
 
-  getActiveQuery(): null {
-    return this.getActiveSession()?.getActiveQuery() ?? null
-  }
-
   /**
    * Route the renderer's answer to an ask_user question back through the IPC bridge
    * to the control-actions MCP server's pending askUserAndWaitForResponse promise.

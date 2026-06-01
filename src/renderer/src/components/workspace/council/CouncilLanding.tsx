@@ -25,14 +25,28 @@ interface CouncilLandingProps {
   onAcceptAndBuild?: () => void
   onRevisePlan?: (feedback: string) => void
   onDismiss?: () => void
+  onSendToGoal?: (goal: string, title: string) => void
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
 
+/** Extract a display title from raw input content (may be JSON plan or plain text). */
+function extractInputTitle(inputContent: string): string {
+  try {
+    const parsed = JSON.parse(inputContent)
+    if (typeof parsed.title === 'string' && parsed.title.trim()) {
+      return parsed.title.trim()
+    }
+  } catch { /* not JSON — use as plain text */ }
+  const firstLine = inputContent.split('\n').find((l) => l.trim())?.trim() ?? inputContent
+  return firstLine.length > 100 ? firstLine.slice(0, 100) + '…' : firstLine
+}
+
 export default function CouncilLanding({
   onAcceptAndBuild,
   onRevisePlan,
-  onDismiss
+  onDismiss,
+  onSendToGoal
 }: CouncilLandingProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const workspaceId = activeWorkspace?.id ?? ''
@@ -105,6 +119,7 @@ export default function CouncilLanding({
           originalUserRequest: content.split('\n')[0].slice(0, 100)
         })
         councilState.setSessionIdentity(sessionId, workspaceId)
+        councilState.setInputTitle(extractInputTitle(content))
         setShowStartModal(false)
       } catch (err) {
         console.error('Failed to start council:', err)
@@ -135,7 +150,8 @@ export default function CouncilLanding({
           phase: session.status === 'completed' ? 'complete' : session.status === 'failed' ? 'failed' : 'cancelled',
           verdict: session.verdict,
           peerReviews: session.peerReviews ?? [],
-          advisorReviews: session.advisorReviews ?? []
+          advisorReviews: session.advisorReviews ?? [],
+          inputTitle: extractInputTitle(session.inputContent)
         })
       }
     },
@@ -171,7 +187,14 @@ export default function CouncilLanding({
   // ── Active council → delegate to CouncilView ──────────────────────────
 
   if (councilIsActive) {
-    return <CouncilView onAcceptAndBuild={onAcceptAndBuild} onRevisePlan={onRevisePlan} onDismiss={onDismiss} />
+    return (
+      <CouncilView
+        onAcceptAndBuild={onAcceptAndBuild}
+        onRevisePlan={onRevisePlan}
+        onDismiss={onDismiss}
+        onSendToGoal={onSendToGoal}
+      />
+    )
   }
 
   // ── Loading skeleton ──────────────────────────────────────────────────
@@ -205,8 +228,8 @@ export default function CouncilLanding({
           <div className="max-w-2xl w-full space-y-6">
             {/* Header */}
             <div className="text-center space-y-2">
-              <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-purple-500/15 mb-2">
-                <Landmark size={28} className="text-purple-400" />
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-500/15 mb-2">
+                <Landmark size={28} className="text-indigo-400" />
               </div>
               <h2 className="text-lg font-semibold text-text-primary">Your Council</h2>
               <p className="text-sm text-text-secondary max-w-md mx-auto">
@@ -222,8 +245,8 @@ export default function CouncilLanding({
               {/* Step 1: Submit */}
               <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4 space-y-2">
                 <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-purple-500/15 flex items-center justify-center">
-                    <FileText size={14} className="text-purple-400" />
+                  <div className="w-7 h-7 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+                    <FileText size={14} className="text-indigo-400" />
                   </div>
                   <span className="text-sm font-semibold text-text-primary">Submit</span>
                 </div>
@@ -234,10 +257,10 @@ export default function CouncilLanding({
               </div>
 
               {/* Step 2: Review */}
-              <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-4 space-y-2">
+              <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4 space-y-2">
                 <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-purple-500/15 flex items-center justify-center">
-                    <Users size={14} className="text-purple-400" />
+                  <div className="w-7 h-7 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+                    <Users size={14} className="text-indigo-400" />
                   </div>
                   <span className="text-sm font-semibold text-text-primary">Review</span>
                 </div>
@@ -290,7 +313,7 @@ export default function CouncilLanding({
             <div className="flex justify-center">
               <button
                 onClick={() => setShowStartModal(true)}
-                className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 rounded-xl transition-colors"
+                className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded-xl transition-colors"
               >
                 <Plus size={16} />
                 New Council Review
@@ -323,7 +346,7 @@ export default function CouncilLanding({
 
       {filteredHistory.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-8 text-center">
-          <Landmark size={32} className="text-purple-400/30 mb-3" />
+          <Landmark size={32} className="text-indigo-400/30 mb-3" />
           <p className="text-sm text-text-secondary">
             {searchQuery
               ? 'No sessions match your search'

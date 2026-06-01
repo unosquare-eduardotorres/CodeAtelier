@@ -32,8 +32,7 @@ const TONE_PREVIEWS: Record<CommunicationTone, string> = {
   optimistic:
     '"Good catch — we\'re one fix away from solid. Add a fallback on line 42 and this whole flow is rock-solid."',
   brutal: '"Bug. Line 42, no null check. Crashes on empty API response. Add a fallback."',
-  caveman:
-    '"Bug line 42. Null check missing. Variable uninitialized when API return empty array. Fix: add fallback."'
+  caveman: '"FIX BUG line 42. Null check missing"'
 }
 
 const COST_PREF_ICON: Record<CostPreference, React.ReactNode> = {

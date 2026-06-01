@@ -6,16 +6,15 @@
  * Questions render inline as interactive cards — no freeform text input.
  */
 
-import { useEffect, useRef, useMemo } from 'react'
-import { Loader2 } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { useGrillStreamStore } from '@renderer/store/grill-stream.store'
-import type { GrillStreamSegment } from '@renderer/store/grill-stream.store'
 import { Avatar } from '@renderer/components/common'
-import { QuestionItem } from '@renderer/components/chat'
+import { MessageBubble, QuestionItem } from '@renderer/components/chat'
+import type { MessageIdentity } from '@renderer/components/chat'
 import type { QuestionState } from '@renderer/components/chat'
 import type { GrillQuestion, ToolActivity } from '../../../../shared/types'
-import { stripGrillEvaluationBlocks } from '@renderer/utils/strip-grill-json'
-import GrillMessageBubble from './GrillMessageBubble'
+import { grillAgentToMessage } from '@renderer/utils/grillMessageAdapter'
+import GrillThinkingIndicator from './GrillThinkingIndicator'
 import GrillEvaluationBubble from './GrillEvaluationBubble'
 
 // ── Message types for grill chat history ────────────────────────────────────
@@ -40,6 +39,15 @@ const DEFAULT_QUESTION_STATE: QuestionState = {
   otherText: '',
   otherSelected: false,
   skipped: false
+}
+
+// ── Grill agent identity (passed to MessageBubble as override) ──────────────
+
+const GRILL_IDENTITY: MessageIdentity = {
+  displayName: 'Grill Analyst',
+  subtitle: null,
+  avatarKey: 'grillme',
+  accentColor: 'var(--color-accent, #D4A574)'
 }
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -68,49 +76,16 @@ export default function GrillChatView({
 }: GrillChatViewProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Read live streaming state from the dedicated grill stream store (segment-based)
+  // Read live streaming tool activities for the thinking indicator
   const segments = useGrillStreamStore((s) => s.segments)
-  const currentContent = useGrillStreamStore((s) => s.currentContent)
   const currentToolActivities = useGrillStreamStore((s) => s.currentToolActivities)
-  const isStreaming = useGrillStreamStore((s) => s.isStreaming)
-
-  // Build cleaned segments for rendering — strip grill-evaluation JSON from each
-  const cleanSegments = useMemo(() => {
-    const result: GrillStreamSegment[] = []
-
-    // Finalized segments
-    for (const seg of segments) {
-      const cleaned = stripGrillEvaluationBlocks(seg.content)
-      if (cleaned || seg.toolActivities.length > 0) {
-        result.push({
-          content: cleaned,
-          toolActivities: seg.toolActivities,
-          timestamp: seg.timestamp
-        })
-      }
-    }
-
-    // Current (in-progress) segment
-    const cleanedCurrent = currentContent ? stripGrillEvaluationBlocks(currentContent) : ''
-    if (cleanedCurrent || currentToolActivities.length > 0) {
-      result.push({
-        content: cleanedCurrent,
-        toolActivities: currentToolActivities,
-        timestamp: Date.now()
-      })
-    }
-
-    return result
-  }, [segments, currentContent, currentToolActivities])
-
-  const hasStreamingContent = cleanSegments.length > 0
 
   // Auto-scroll on new content
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [currentContent, currentToolActivities.length, segments.length, messages.length, phase])
+  }, [currentToolActivities.length, segments.length, messages.length, phase])
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
@@ -132,11 +107,10 @@ export default function GrillChatView({
           switch (msg.type) {
             case 'agent':
               return (
-                <GrillMessageBubble
+                <MessageBubble
                   key={`msg-${i}`}
-                  content={msg.content}
-                  toolActivities={msg.toolActivities}
-                  isStreaming={false}
+                  message={grillAgentToMessage(msg.content, msg.toolActivities, i)}
+                  identityOverride={GRILL_IDENTITY}
                 />
               )
             case 'evaluation':
@@ -190,25 +164,15 @@ export default function GrillChatView({
           }
         })}
 
-        {/* Live streaming section — renders each segment as its own bubble */}
-        {phase === 'evaluating' &&
-          (hasStreamingContent ? (
-            <>
-              {cleanSegments.map((seg, idx) => (
-                <GrillMessageBubble
-                  key={`stream-seg-${idx}`}
-                  content={seg.content}
-                  toolActivities={seg.toolActivities}
-                  isStreaming={isStreaming && idx === cleanSegments.length - 1}
-                />
-              ))}
-            </>
-          ) : (
-            <div className="flex items-center gap-2 text-sm text-text-muted ml-11">
-              <Loader2 size={14} className="animate-spin text-accent" />
-              Analyzing your requirement…
-            </div>
-          ))}
+        {/* During evaluation: thinking indicator (matches regular chat pattern) */}
+        {phase === 'evaluating' && (
+          <GrillThinkingIndicator
+            toolActivities={[
+              ...segments.flatMap((s) => s.toolActivities),
+              ...currentToolActivities
+            ]}
+          />
+        )}
 
         {/* Question cards — interactive, inline in chat flow */}
         {phase === 'answering' && currentQuestions && currentQuestions.length > 0 && (

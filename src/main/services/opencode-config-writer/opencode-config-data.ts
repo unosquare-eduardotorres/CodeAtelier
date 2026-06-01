@@ -95,19 +95,31 @@ export const LOCAL_MCP_SERVER_DEFS: LocalMcpServerDef[] = [
 ]
 
 /**
+ * MCP servers that open the SQLite DB via getDatabase(). They run as plain `node`
+ * (no Electron app global) so they must receive DB_PATH (the userData dir) explicitly.
+ */
+export const DB_BACKED_SERVER_IDS = new Set(['code-graph', 'semantic-search'])
+
+/**
  * Build local MCP server entries from the declarative registry.
  * Replaces the 97-line imperative buildLocalMcpServers() method.
+ *
+ * @param dbDir Electron userData dir, injected as DB_PATH for DB-backed servers.
  */
 export function buildLocalMcpServersFromRegistry(
   defs: LocalMcpServerDef[],
   opts: OpenCodeConfigWriterOptions,
-  serverBasePath: string
+  serverBasePath: string,
+  dbDir?: string
 ): Record<string, { type: 'local'; command: string[]; environment?: Record<string, string>; timeout: number }> {
   const servers: Record<string, { type: 'local'; command: string[]; environment?: Record<string, string>; timeout: number }> = {}
 
   for (const def of defs) {
     if (!def.condition(opts)) continue
     const env = def.environment(opts)
+    if (dbDir && DB_BACKED_SERVER_IDS.has(def.id)) {
+      env.DB_PATH = dbDir
+    }
     servers[def.id] = {
       type: 'local',
       command: ['node', join(serverBasePath, def.serverScript)],

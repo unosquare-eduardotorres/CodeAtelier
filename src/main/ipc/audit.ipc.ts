@@ -14,13 +14,21 @@ import type {
   AuditTrackId,
   AuditFinding,
   AuditRun,
+  AuditPlanRecord,
+  AuditSelectedSkills,
   LLMProvider
 } from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
 import { processToolChunk } from './tool-chunk-processor'
 import { createTimedCleanupMap } from './listener-cleanup'
-import { auditRepository, conversationRepository, messageRepository } from '../db/repositories'
+import {
+  auditRepository,
+  auditPlanRepository,
+  conversationRepository,
+  messageRepository
+} from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
+import { auditPlanGeneratorService } from '../services/audit-plan-generator.service'
 import { detectTechStack } from '../services/tech-stack-detector.service'
 import {
   auditAgentService,
@@ -57,11 +65,12 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
         mode: AuditMode
         tracks: AuditTrackId[]
         llmProvider?: LLMProvider
+        selectedSkills?: AuditSelectedSkills
       }
     ): Promise<AuditRun> => {
       validateSender(event)
 
-      const { workspaceId, mode, tracks, llmProvider: explicitProvider } = args
+      const { workspaceId, mode, tracks, llmProvider: explicitProvider, selectedSkills } = args
 
       if (auditAgentService.isRunning) {
         throw new Error('An audit is already running. Cancel it first.')
@@ -81,7 +90,13 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
       const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
 
       // Create new run in DB (deletes previous for this workspace)
-      const run = auditRepository.createRun(workspaceId, mode, tracks, detectedTechs)
+      const run = auditRepository.createRun(
+        workspaceId,
+        mode,
+        tracks,
+        detectedTechs,
+        selectedSkills ?? {}
+      )
       const results = auditRepository.createResults(run.id, tracks)
       run.results = results
 
@@ -160,7 +175,10 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
         .then(() => {
           // Recalculate overall score after single track re-run
           const results = auditRepository.findResultsByRunId(latestRun.id)
-          const completed = results.filter((r) => r.status === 'completed' && r.score !== null)
+          // Exclude insufficient-coverage tracks — mirrors calculateOverallScore.
+          const completed = results.filter(
+            (r) => r.status === 'completed' && r.score !== null && r.coverageSufficient !== false
+          )
           const hasFailed = results.some((r) => r.status === 'failed')
 
           let newOverall: number | null = null
@@ -310,6 +328,48 @@ function registerAuditQueryHandlers(mainWindow: BrowserWindow): void {
     (event, args: { workspaceId: string; limit?: number }): AuditRun[] => {
       validateSender(event)
       return auditRepository.getHistoryForWorkspace(args.workspaceId, args.limit ?? 10)
+    }
+  )
+
+  // ── audit:deleteRun — delete a single past run ──────────────────────
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_DELETE_RUN,
+    (event, args: { runId: string }): { deleted: boolean } => {
+      validateSender(event)
+      const deleted = auditRepository.deleteRun(args.runId)
+      auditLog.info(`[audit:deleteRun] runId=${args.runId} deleted=${deleted}`)
+      return { deleted }
+    }
+  )
+
+  // ── audit:generatePlan — synthesize a remediation plan from findings ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_GENERATE_PLAN,
+    async (
+      event,
+      args: { workspaceId: string; runId: string; findings: AuditFinding[] }
+    ): Promise<AuditPlanRecord> => {
+      validateSender(event)
+      auditLog.info(
+        `[audit:generatePlan] runId=${args.runId} findings=${args.findings.length}`
+      )
+      return auditPlanGeneratorService.generate({
+        workspaceId: args.workspaceId,
+        runId: args.runId,
+        findings: args.findings
+      })
+    }
+  )
+
+  // ── audit:getPlans — list plans persisted for a run ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_GET_PLANS,
+    (event, args: { runId: string }): AuditPlanRecord[] => {
+      validateSender(event)
+      return auditPlanRepository.getPlansForRun(args.runId)
     }
   )
 }

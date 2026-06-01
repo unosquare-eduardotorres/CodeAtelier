@@ -422,6 +422,11 @@ export function* normalizeMessage(
   // ── system/compact_boundary ──
   if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
     const meta = msg.compact_metadata as Record<string, unknown> | undefined
+    // Instrumentation: confirm the CLI's auto-compact actually fired and at what size.
+    executorLog.info(
+      `[compaction:boundary] SDK/CLI auto-compact fired — trigger=${meta?.trigger ?? 'auto'} ` +
+        `preTokens=${meta?.pre_tokens ?? '?'}`
+    )
     yield {
       type: 'compact_boundary',
       content: `Context compacted (trigger: ${meta?.trigger ?? 'auto'}, pre-tokens: ${meta?.pre_tokens ?? '?'})`

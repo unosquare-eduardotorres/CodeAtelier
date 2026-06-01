@@ -4,6 +4,9 @@ import type {
   GrillTrack,
   AuditTrackId,
   AuditTrack,
+  AuditSkill,
+  AuditApplicability,
+  AuditResult,
   ModelAction
 } from './types'
 
@@ -407,6 +410,9 @@ export const IPC_CHANNELS = {
   AUDIT_RESUME: 'audit:resume',
   AUDIT_INTERMEDIATE: 'audit:intermediate',
   AUDIT_GET_HISTORY: 'audit:getHistory',
+  AUDIT_DELETE_RUN: 'audit:deleteRun',
+  AUDIT_GENERATE_PLAN: 'audit:generatePlan',
+  AUDIT_GET_PLANS: 'audit:getPlans',
 
   // Grill (dedicated agent)
   GRILL_EVALUATE: 'grill:evaluate',
@@ -1004,6 +1010,85 @@ export const AUDIT_TRACKS: Record<AuditTrackId, AuditTrack> = {
     ]
   }
 } as const
+
+/**
+ * Resolve whether a track result should count toward the overall score.
+ *
+ * Prefers the service-derived `applicability` when present (live runs); falls
+ * back to deriving from coverage data when reading a persisted run (the field
+ * is not stored in the DB). A track with no inspected files is treated as
+ * not-applicable; a track that failed the coverage gate is insufficient.
+ */
+export function deriveApplicability(
+  result: Pick<
+    AuditResult,
+    'applicability' | 'coverageSufficient' | 'coverageStats' | 'status'
+  >
+): AuditApplicability {
+  if (result.applicability) return result.applicability
+  if (result.status !== 'completed') return 'ok'
+  const fileCount = result.coverageStats?.fileCount ?? 0
+  if (fileCount === 0) return 'not-applicable'
+  if (result.coverageSufficient === false) return 'insufficient'
+  return 'ok'
+}
+
+/**
+ * Curated, selectable skills per auditor track (Deep mode). Selection is
+ * persisted with the run and shown on revisit; skill *execution* in the audit
+ * prompt/tools is deferred.
+ */
+export const AUDIT_TRACK_SKILLS: Record<AuditTrackId, AuditSkill[]> = {
+  database: [
+    { id: 'schema-design', name: 'Schema Design', description: 'Normalization, table structure, and relationships', icon: 'Table2' },
+    { id: 'fk-integrity', name: 'FK & Integrity', description: 'Foreign keys, constraints, and referential integrity', icon: 'Link2' },
+    { id: 'query-performance', name: 'Query Performance', description: 'N+1 queries, slow patterns, and query shape', icon: 'Gauge' },
+    { id: 'indexing', name: 'Indexing', description: 'Index coverage and missing/duplicate indexes', icon: 'ListTree' },
+    { id: 'migration-safety', name: 'Migration Safety', description: 'Reversibility and destructive-change detection', icon: 'GitBranch' }
+  ],
+  code: [
+    { id: 'solid', name: 'SOLID Principles', description: 'Single-responsibility, coupling, and cohesion', icon: 'Boxes' },
+    { id: 'complexity', name: 'Complexity', description: 'Cyclomatic complexity and deeply nested logic', icon: 'Workflow' },
+    { id: 'error-handling', name: 'Error Handling', description: 'Swallowed errors and missing failure paths', icon: 'OctagonAlert' },
+    { id: 'dead-code', name: 'Dead Code', description: 'Unused exports, unreachable code, and duplication', icon: 'Trash2' },
+    { id: 'naming', name: 'Naming & Consistency', description: 'Naming conventions and stylistic consistency', icon: 'CaseSensitive' }
+  ],
+  testing: [
+    { id: 'pyramid', name: 'Test Pyramid', description: 'Unit/integration/E2E balance', icon: 'Pyramid' },
+    { id: 'critical-path', name: 'Critical Path Coverage', description: 'Coverage of high-risk flows', icon: 'Target' },
+    { id: 'assertion-quality', name: 'Assertion Quality', description: 'Specific, meaningful assertions', icon: 'CheckCheck' },
+    { id: 'fixtures', name: 'Fixtures & Mocks', description: 'Fixture quality and over-mocking', icon: 'Package' },
+    { id: 'ci-integration', name: 'CI Integration', description: 'Tests wired into CI gates', icon: 'GitPullRequestArrow' }
+  ],
+  architecture: [
+    { id: 'boundaries', name: 'Module Boundaries', description: 'Layering and boundary leakage', icon: 'LayoutGrid' },
+    { id: 'dependency-direction', name: 'Dependency Direction', description: 'Circular and inverted dependencies', icon: 'ArrowLeftRight' },
+    { id: 'separation', name: 'Separation of Concerns', description: 'Mixed responsibilities across layers', icon: 'SplitSquareHorizontal' },
+    { id: 'contracts', name: 'API/IPC Contracts', description: 'Contract design and versioning', icon: 'FileCode2' },
+    { id: 'scalability', name: 'Scalability Patterns', description: 'Bottlenecks and scaling concerns', icon: 'TrendingUp' }
+  ],
+  security: [
+    { id: 'authn-authz', name: 'AuthN / AuthZ', description: 'Authentication and authorization gaps', icon: 'KeyRound' },
+    { id: 'secret-scanning', name: 'Secret Scanning', description: 'Hardcoded secrets and credential leaks', icon: 'EyeOff' },
+    { id: 'input-validation', name: 'Input Validation', description: 'Sanitization and injection surfaces', icon: 'ShieldAlert' },
+    { id: 'context-isolation', name: 'Context Isolation', description: 'Electron CSP and context isolation', icon: 'Lock' },
+    { id: 'dependency-vulns', name: 'Dependency Vulns', description: 'Vulnerable or outdated dependencies', icon: 'PackageX' }
+  ],
+  documentation: [
+    { id: 'readme', name: 'README Quality', description: 'Setup, usage, and completeness', icon: 'BookOpen' },
+    { id: 'inline-docs', name: 'Inline Docs', description: 'JSDoc/TSDoc coverage on public APIs', icon: 'MessageSquareText' },
+    { id: 'api-docs', name: 'API Documentation', description: 'Endpoint/IPC documentation', icon: 'FileText' },
+    { id: 'project-guide', name: 'Project Guide', description: 'CLAUDE.md / contributor guide quality', icon: 'Compass' },
+    { id: 'decision-records', name: 'Decision Records', description: 'Changelogs and architectural decisions', icon: 'History' }
+  ],
+  'ui-ux': [
+    { id: 'accessibility', name: 'Accessibility', description: 'WCAG compliance and ARIA usage', icon: 'Accessibility' },
+    { id: 'states', name: 'Empty & Error States', description: 'Loading, empty, and error handling', icon: 'LoaderCircle' },
+    { id: 'responsiveness', name: 'Responsiveness', description: 'Layout across viewport sizes', icon: 'MonitorSmartphone' },
+    { id: 'consistency', name: 'Component Consistency', description: 'Reuse and visual consistency', icon: 'Component' },
+    { id: 'keyboard-nav', name: 'Keyboard Navigation', description: 'Focus order and keyboard access', icon: 'Keyboard' }
+  ]
+}
 
 // ── Council Advisors (LLM Council) ────────────────────────────────────────────
 

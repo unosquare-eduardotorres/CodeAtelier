@@ -132,7 +132,7 @@ export default function CouncilSessionCard({
   return (
     <div className="group w-full flex items-center gap-3 p-4 bg-surface-overlay rounded-lg border border-border-subtle hover:border-border-default transition-colors shadow-sm">
       {/* Icon */}
-      <Landmark size={16} className="text-purple-400/50 flex-shrink-0" />
+      <Landmark size={16} className="text-indigo-400/50 flex-shrink-0" />
 
       {/* Content */}
       <div className="flex-1 min-w-0">

@@ -223,7 +223,10 @@ export default function IdeaCard({
 
           {/* Description */}
           {idea.description && (
-            <p className="text-xs text-text-secondary mb-3 ml-[22px] line-clamp-2">
+            <p
+              className="text-xs text-text-secondary mb-3 ml-[22px] line-clamp-2"
+              style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}
+            >
               {idea.description}
             </p>
           )}

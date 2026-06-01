@@ -204,7 +204,7 @@ export default function CreateProjectWizard({
       </div>
 
       {/* Step content */}
-      <div className="flex-1 overflow-y-auto flex flex-col">
+      <div className="flex-1 flex flex-col overflow-hidden">
         {currentStep === 'setup' && (
           <div className="flex-1 flex flex-col items-center justify-center p-8">
             <WizardStepIndicator currentStep={currentStep} onGoToStep={goToStep} />

@@ -49,8 +49,8 @@ export default function GrillPage({
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
 
   // Generate structured plan from grill session
-  const handleGeneratePlan = useCallback(async () => {
-    if (!activeWorkspace) return
+  const handleGeneratePlan = useCallback(async (): Promise<GrillStructuredPlan | null> => {
+    if (!activeWorkspace) return null
     session.setPhase('completing')
     setPlanError(null)
 
@@ -61,16 +61,39 @@ export default function GrillPage({
       })
       if (plan && typeof plan === 'object' && 'items' in plan && Array.isArray(plan.items)) {
         setStructuredPlan(plan)
-      } else {
-        throw new Error('Invalid plan structure returned from API')
+        session.setPhase('completed')
+        return plan
       }
-      session.setPhase('completed')
+      throw new Error('Invalid plan structure returned from API')
     } catch (err) {
       console.error('Plan generation failed:', err)
       setPlanError(err instanceof Error ? err.message : 'Plan generation failed')
       session.setPhase('selecting') // Revert on error
+      return null
     }
   }, [activeWorkspace, conversationId, session])
+
+  // Complete the grilling, generate the plan, then hand off into the goal preload
+  const handleStartGoal = useCallback(async () => {
+    // 1 + 2. Complete the grilling and generate the structured plan
+    const plan = await handleGeneratePlan()
+    if (!plan) return // generation failed — error already surfaced, stay on grill
+
+    // 3. Hand off the generated plan into the goal preload
+    const grillDecisions: GrillDecision[] = session.decisions.map((d) => ({
+      header: d.question,
+      selectedOption: d.answer,
+      reason: d.questionFull ?? ''
+    }))
+    useMpaStore.getState().setPreloadedGoal({
+      text: plan.requirementDocument?.trim()
+        ? plan.requirementDocument
+        : `${ideaTitle}${ideaDescription ? ': ' + ideaDescription : ''}`,
+      grillSessionId: conversationId,
+      grillDecisions
+    })
+    onNavigateToGoals?.()
+  }, [handleGeneratePlan, session.decisions, ideaTitle, ideaDescription, conversationId, onNavigateToGoals])
 
   // Back to grill from completed phase
   const handleBackToGrill = useCallback(() => {
@@ -232,7 +255,7 @@ export default function GrillPage({
           isCondensing={session.isCondensing}
         />
       ) : (
-        <div className="flex flex-1 min-h-0">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
           <GrillChatView
             messages={session.chatMessages}
             phase={session.phase}
@@ -276,24 +299,7 @@ export default function GrillPage({
         onSubmit={session.handleSubmit}
         onGeneratePlan={handleGeneratePlan}
         onBackToGrill={handleBackToGrill}
-        onStartGoal={() => {
-          // Extract decisions for goal context
-          const grillDecisions: GrillDecision[] = session.decisions.map((d) => ({
-            header: d.question,
-            selectedOption: d.answer,
-            reason: d.questionFull ?? ''
-          }))
-          // Pre-load goal with grill context
-          useMpaStore.getState().setPreloadedGoal({
-            text: `${ideaTitle}${ideaDescription ? ': ' + ideaDescription : ''}`,
-            grillSessionId: conversationId,
-            grillDecisions
-          })
-          // Navigate to goals
-          if (onNavigateToGoals) {
-            onNavigateToGoals()
-          }
-        }}
+        onStartGoal={handleStartGoal}
         onCouncilSweep={structuredPlan ? async () => {
           if (!activeWorkspace) return
           const councilStore = useCouncilStore.getState()

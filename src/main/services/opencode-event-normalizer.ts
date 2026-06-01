@@ -225,16 +225,23 @@ function handleSessionUpdated(
       usage.cacheCreationInputTokens ?? tokenUsage.cacheCreationInputTokens
   }
 
-  // GAP-12: Emit per-turn context usage updates (gated by 2% minimum delta)
-  if (usage?.inputTokens && usage?.contextWindowSize) {
-    const percentage = Math.round((usage.inputTokens / usage.contextWindowSize) * 100)
+  // GAP-12: Emit per-turn context usage updates (gated by 2% minimum delta).
+  // Context consumption = fresh input + cache reads + cache writes, matching
+  // Claude Code / agent-stream-processor. Using usage.inputTokens alone misses
+  // cached tokens (often the bulk of the window) and under-reported usage.
+  const contextTokens =
+    (usage?.inputTokens ?? 0) +
+    (usage?.cacheReadInputTokens ?? 0) +
+    (usage?.cacheCreationInputTokens ?? 0)
+  if (contextTokens > 0 && usage?.contextWindowSize) {
+    const percentage = Math.round((contextTokens / usage.contextWindowSize) * 100)
     const lastPct = state.lastContextPercentage ?? 0
     if (Math.abs(percentage - lastPct) >= 2) {
       state.lastContextPercentage = percentage
       chunks.push({
         type: 'context_usage_update',
         contextUsageUpdate: {
-          inputTokens: usage.inputTokens,
+          inputTokens: contextTokens,
           contextWindowSize: usage.contextWindowSize,
           percentage
         }
@@ -301,13 +308,17 @@ function handleSessionCompacted(properties: EventProperties): StreamChunk[] {
 
   // 6C-4: Emit context usage reset so the UI badge refreshes post-compaction
   const usage = properties.usage as Record<string, number> | undefined
-  if (usage?.inputTokens && usage?.contextWindowSize) {
+  const contextTokens =
+    (usage?.inputTokens ?? 0) +
+    (usage?.cacheReadInputTokens ?? 0) +
+    (usage?.cacheCreationInputTokens ?? 0)
+  if (contextTokens > 0 && usage?.contextWindowSize) {
     chunks.push({
       type: 'context_usage_update',
       contextUsageUpdate: {
-        inputTokens: usage.inputTokens,
+        inputTokens: contextTokens,
         contextWindowSize: usage.contextWindowSize,
-        percentage: Math.round((usage.inputTokens / usage.contextWindowSize) * 100)
+        percentage: Math.round((contextTokens / usage.contextWindowSize) * 100)
       }
     })
   } else {

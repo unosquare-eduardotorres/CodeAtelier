@@ -8,7 +8,8 @@ import type {
   AuditRunStatus,
   AuditorStatus,
   AuditFinding,
-  AuditCoverageStats
+  AuditCoverageStats,
+  AuditSelectedSkills
 } from '../../../shared/types'
 
 // ── Row shapes (snake_case from DB) ──
@@ -21,6 +22,7 @@ interface AuditRunRow {
   overall_score: number | null
   selected_tracks: string // JSON
   detected_techs: string // JSON
+  selected_skills: string | null // JSON (per-track skill ids)
   created_at: string
   updated_at: string
 }
@@ -52,6 +54,7 @@ function mapRunRow(row: AuditRunRow, results: AuditResult[] = []): AuditRun {
     overallScore: row.overall_score,
     selectedTracks: safeParseJSON<AuditTrackId[]>(row.selected_tracks, []),
     detectedTechs: safeParseJSON<string[]>(row.detected_techs, []),
+    selectedSkills: safeParseJSON<AuditSelectedSkills>(row.selected_skills, {}),
     results,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -91,7 +94,8 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
     workspaceId: string,
     mode: AuditMode,
     selectedTracks: AuditTrackId[],
-    detectedTechs: string[]
+    detectedTechs: string[],
+    selectedSkills: AuditSelectedSkills = {}
   ): AuditRun {
     const db = this.db()
 
@@ -105,15 +109,16 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
 
     const row = db
       .prepare(
-        `INSERT INTO audit_runs (workspace_id, mode, status, selected_tracks, detected_techs)
-         VALUES (?, ?, 'pending', ?, ?)
+        `INSERT INTO audit_runs (workspace_id, mode, status, selected_tracks, detected_techs, selected_skills)
+         VALUES (?, ?, 'pending', ?, ?, ?)
          RETURNING *`
       )
       .get(
         workspaceId,
         mode,
         JSON.stringify(selectedTracks),
-        JSON.stringify(detectedTechs)
+        JSON.stringify(detectedTechs),
+        JSON.stringify(selectedSkills)
       ) as AuditRunRow
 
     return mapRunRow(row)
@@ -249,6 +254,26 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
         .all(row.id) as AuditResultRow[]
       return mapRunRow(row, resultRows.map(mapResultRow))
     })
+  }
+
+  /** Find a single run by id, joined with its results. */
+  findRunById(runId: string): AuditRun | null {
+    const db = this.db()
+    const runRow = db.prepare('SELECT * FROM audit_runs WHERE id = ?').get(runId) as
+      | AuditRunRow
+      | undefined
+    if (!runRow) return null
+    const resultRows = db
+      .prepare('SELECT * FROM audit_results WHERE audit_run_id = ? ORDER BY created_at')
+      .all(runId) as AuditResultRow[]
+    return mapRunRow(runRow, resultRows.map(mapResultRow))
+  }
+
+  /** Delete a run (and, via CASCADE, its results). Returns true if a row was removed. */
+  deleteRun(runId: string): boolean {
+    const db = this.db()
+    const info = db.prepare('DELETE FROM audit_runs WHERE id = ?').run(runId)
+    return info.changes > 0
   }
 
   /** Get the latest run for a workspace, joined with its results. */

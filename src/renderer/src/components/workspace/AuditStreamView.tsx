@@ -1,16 +1,20 @@
 /**
  * AuditStreamView — chat-like scrollable container for audit execution.
  *
- * Renders one AuditMessageBubble per finalized segment plus one for the
- * current (streaming) segment, with auto-scrolling.
+ * Reuses the chat MessageBubble (via an auditor identity override) to render
+ * finalized analysis segments, matching the natural chat rendering. While a
+ * track is still streaming, an AuditThinkingIndicator (dots + live tools) is
+ * shown so content reveals on finalize instead of stuttering token-by-token.
  * Read-only — no input box, audits are fully automated.
  */
 
-import { useEffect, useRef } from 'react'
-import { Loader2 } from 'lucide-react'
+import { useEffect, useMemo, useRef } from 'react'
 import type { AuditTrackId } from '../../../../shared/types'
 import { useAuditStore } from '@renderer/store'
-import AuditMessageBubble from './AuditMessageBubble'
+import { MessageBubble } from '@renderer/components/chat'
+import type { MessageIdentity } from '@renderer/components/chat'
+import { auditSegmentToMessage } from '@renderer/utils/auditMessageAdapter'
+import AuditThinkingIndicator from './AuditThinkingIndicator'
 import AuditResultBubble from './AuditResultBubble'
 
 interface AuditStreamViewProps {
@@ -33,8 +37,18 @@ export default function AuditStreamView({
   const segments = trackData?.segments ?? []
   const currentContent = trackData?.currentContent ?? ''
   const currentToolActivities = trackData?.currentToolActivities ?? []
-  const hasCurrentSegment = currentContent || currentToolActivities.length > 0
-  const hasAnyContent = segments.length > 0 || hasCurrentSegment
+  const hasAnyContent = segments.length > 0 || currentContent || currentToolActivities.length > 0
+
+  // Auditor identity override — reuses MessageBubble's chat rendering pipeline.
+  const auditIdentity = useMemo<MessageIdentity>(
+    () => ({
+      displayName: `${trackName} Auditor`,
+      subtitle: null,
+      avatarKey: 'atelier-auditor',
+      accentColor: 'var(--color-primary, #6366F1)'
+    }),
+    [trackName]
+  )
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -47,27 +61,19 @@ export default function AuditStreamView({
     <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4">
       {hasAnyContent ? (
         <>
-          {/* Finalized segments */}
+          {/* Finalized segments — rendered as clean chat bubbles (reveal-on-finalize) */}
           {segments.map((seg, i) => (
-            <AuditMessageBubble
+            <MessageBubble
               key={`seg-${i}`}
-              content={seg.content}
+              message={auditSegmentToMessage(seg.content, seg.toolActivities, i)}
               toolActivities={seg.toolActivities}
-              trackName={trackName}
-              isStreaming={false}
-              timestamp={seg.timestamp}
+              identityOverride={auditIdentity}
             />
           ))}
 
-          {/* Current streaming segment */}
-          {hasCurrentSegment && (
-            <AuditMessageBubble
-              content={currentContent}
-              toolActivities={currentToolActivities}
-              trackName={trackName}
-              isStreaming={isStreaming}
-              timestamp={Date.now()}
-            />
+          {/* In-progress analysis — thinking dots + live tools instead of a stuttering bubble */}
+          {isStreaming && (
+            <AuditThinkingIndicator trackName={trackName} toolActivities={currentToolActivities} />
           )}
 
           {isCompleted && trackResult && (
@@ -80,10 +86,7 @@ export default function AuditStreamView({
           )}
         </>
       ) : isStreaming ? (
-        <div className="flex items-center gap-2 text-sm text-text-muted">
-          <Loader2 size={14} className="animate-spin" />
-          Starting audit…
-        </div>
+        <AuditThinkingIndicator trackName={trackName} toolActivities={[]} />
       ) : (
         <span className="text-text-muted text-sm italic">Waiting to start…</span>
       )}

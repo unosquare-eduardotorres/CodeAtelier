@@ -27,6 +27,88 @@ interface CouncilVerdictCardProps {
   verdict: CouncilVerdict
 }
 
+/**
+ * VerdictText — converts the chairman's dense prose strings into readable
+ * structure. The source isn't markdown, so we detect inline enumerations:
+ *   1. Numbered lists: 2+ inline `(n)` markers → optional intro + ordered list.
+ *   2. Bullet lists: `• ` separators → unordered list.
+ *   3. Fallback: split on newlines/blank lines → one paragraph per chunk.
+ */
+function VerdictText({ text }: { text: string }): React.JSX.Element | null {
+  if (!text) return null
+
+  // 1. Numbered lists — inline `(1) … (2) …` enumerations.
+  const markers = text.match(/\(\d+\)/g)
+  if (markers && markers.length >= 2) {
+    const firstIdx = text.indexOf(markers[0])
+    const intro = text.slice(0, firstIdx).trim()
+    const items = text
+      .slice(firstIdx)
+      .split(/(?=\(\d+\)\s)/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    return (
+      <div className="space-y-2">
+        {intro && <p className="text-sm text-text-body leading-relaxed">{intro}</p>}
+        <ol className="space-y-1.5">
+          {items.map((item, i) => {
+            const m = item.match(/^\((\d+)\)\s*([\s\S]*)$/)
+            return (
+              <li key={i} className="flex gap-2 text-sm text-text-body leading-relaxed">
+                <span className="font-semibold text-text-primary tabular-nums flex-shrink-0">
+                  {m?.[1] ?? i + 1}.
+                </span>
+                <span>{m?.[2] ?? item}</span>
+              </li>
+            )
+          })}
+        </ol>
+      </div>
+    )
+  }
+
+  // 2. Bullet lists — `• ` separated clauses.
+  if (text.includes('• ')) {
+    const parts = text
+      .split('• ')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const [intro, ...bullets] = parts
+    // If the text starts with `• `, there is no intro chunk.
+    const hasIntro = !text.trimStart().startsWith('• ')
+    const items = hasIntro ? bullets : parts
+    const lead = hasIntro ? intro : ''
+    return (
+      <div className="space-y-2">
+        {lead && <p className="text-sm text-text-body leading-relaxed">{lead}</p>}
+        <ul className="space-y-1.5">
+          {items.map((item, i) => (
+            <li key={i} className="flex gap-2 text-sm text-text-body leading-relaxed">
+              <span className="text-text-secondary flex-shrink-0">•</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
+  }
+
+  // 3. Paragraph fallback — respect real line breaks the LLM emits.
+  const paragraphs = text
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return (
+    <div className="space-y-2">
+      {paragraphs.map((p, i) => (
+        <p key={i} className="text-sm text-text-body leading-relaxed">
+          {p}
+        </p>
+      ))}
+    </div>
+  )
+}
+
 function SectionBlock({
   icon: Icon,
   title,
@@ -40,11 +122,11 @@ function SectionBlock({
 }): React.JSX.Element {
   return (
     <div className={`rounded-lg border border-border-subtle p-3 border-l-2 ${accentColor}`}>
-      <div className="flex items-center gap-2 mb-1.5">
+      <div className="flex items-center gap-2 mb-2">
         <Icon size={14} className="text-text-secondary" />
         <span className="text-sm font-semibold text-text-primary">{title}</span>
       </div>
-      <p className="text-sm text-text-body leading-relaxed">{content}</p>
+      <VerdictText text={content} />
     </div>
   )
 }
@@ -67,15 +149,13 @@ export default function CouncilVerdictCard({
         <ScoreGauge score={verdict.overallScore} size={100} />
         <div className="flex-1 min-w-0">
           <h3 className="text-lg font-bold text-text-primary mb-1">Council Verdict</h3>
-          <p className="text-sm text-text-body leading-relaxed">
-            {verdict.sections.recommendation}
-          </p>
+          <VerdictText text={verdict.sections.recommendation} />
           {verdict.sections.oneThingFirst && (
             <div className="mt-3 flex items-start gap-2 p-2 rounded bg-primary/10 border border-primary/20">
               <Target size={14} className="text-primary mt-0.5 flex-shrink-0" />
               <div>
                 <span className="text-xs font-semibold text-primary">Do This First</span>
-                <p className="text-sm text-text-body">{verdict.sections.oneThingFirst}</p>
+                <VerdictText text={verdict.sections.oneThingFirst} />
               </div>
             </div>
           )}
@@ -122,7 +202,7 @@ export default function CouncilVerdictCard({
           icon={Eye}
           title="Blind Spots"
           content={verdict.sections.blindSpots}
-          accentColor="border-l-error"
+          accentColor="border-l-danger"
         />
         <SectionBlock
           icon={Lightbulb}

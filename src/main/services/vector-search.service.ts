@@ -175,6 +175,13 @@ class VectorSearchService extends EventEmitter {
   private preprocessingOptions = new Map<string, PreprocessingOptions>()
   /** Tracks when the embedding phase started (per-workspace) for ETA calculation */
   private embeddingStartTimes = new Map<string, number>()
+  /** Tracks when the AI-description preprocessing phase started (per-workspace) for ETA calculation */
+  private descriptionStartTimes = new Map<string, number>()
+  /** Throttle bookkeeping for progress emission (per-workspace) */
+  private lastEmitAt = new Map<string, number>()
+  private lastEmitStatus = new Map<string, IndexingState['status']>()
+  private pendingEmit = new Map<string, ReturnType<typeof setTimeout>>()
+  private static readonly EMIT_THROTTLE_MS = 150
 
   private makeDefaultState(): IndexingState {
     return {
@@ -890,6 +897,12 @@ class VectorSearchService extends EventEmitter {
     this.indexingStates.delete(workspaceId)
     this.preprocessingOptions.delete(workspaceId)
     this.embeddingStartTimes.delete(workspaceId)
+    this.descriptionStartTimes.delete(workspaceId)
+    const pending = this.pendingEmit.get(workspaceId)
+    if (pending) clearTimeout(pending)
+    this.pendingEmit.delete(workspaceId)
+    this.lastEmitAt.delete(workspaceId)
+    this.lastEmitStatus.delete(workspaceId)
     log.info(`[VectorSearch] Disposed workspace ${workspaceId}`)
   }
 
@@ -1215,24 +1228,92 @@ class VectorSearchService extends EventEmitter {
 
   private emitProgress(workspaceId: string): void {
     const state = this.indexingStates.get(workspaceId)
-    if (state) {
-      // Compute ETA during embedding phase
-      if (
-        (state.status === 'indexing-chunks' || state.status === 'embedding') &&
-        state.totalChunks > 0 &&
-        state.processedChunks > 0
-      ) {
-        const startTime = this.embeddingStartTimes.get(workspaceId)
-        if (startTime) {
-          const elapsed = Date.now() - startTime
-          const rate = state.processedChunks / elapsed // chunks per ms
-          const remaining = state.totalChunks - state.processedChunks
-          const etaMs = remaining / rate
-          state.estimatedRemaining = formatEta(etaMs)
-        }
+    if (!state) return
+
+    // Compute ETA during embedding phase
+    if (
+      (state.status === 'indexing-chunks' || state.status === 'embedding') &&
+      state.totalChunks > 0 &&
+      state.processedChunks > 0
+    ) {
+      const startTime = this.embeddingStartTimes.get(workspaceId)
+      if (startTime) {
+        const elapsed = Date.now() - startTime
+        const rate = state.processedChunks / elapsed // chunks per ms
+        const remaining = state.totalChunks - state.processedChunks
+        const etaMs = remaining / rate
+        state.estimatedRemaining = formatEta(etaMs)
       }
-      this.emit('progress', state)
+    } else if (state.status === 'preprocessing') {
+      // Compute ETA for the AI-description sub-phase here (rather than in the
+      // renderer) so the panel stays a pure read of state.estimatedRemaining —
+      // the renderer's lint rules forbid Date.now()/ref-writes during render.
+      let startTime = this.descriptionStartTimes.get(workspaceId)
+      if (!startTime) {
+        startTime = Date.now()
+        this.descriptionStartTimes.set(workspaceId, startTime)
+      }
+      if (state.descriptionsTotal > 0 && state.descriptionsProcessed > 0) {
+        const elapsed = Date.now() - startTime
+        const rate = state.descriptionsProcessed / elapsed // descriptions per ms
+        const remaining = state.descriptionsTotal - state.descriptionsProcessed
+        state.estimatedRemaining = rate > 0 ? formatEta(remaining / rate) : undefined
+      } else {
+        state.estimatedRemaining = undefined
+      }
+    } else {
+      // Reset the description-phase start once we leave preprocessing.
+      this.descriptionStartTimes.delete(workspaceId)
     }
+
+    // Throttle high-frequency progress (preprocessing/embedding fires once per
+    // file/batch) to at most ~1 emit / EMIT_THROTTLE_MS. This caps renderer
+    // update frequency regardless of repo size — without this, an emit storm
+    // drives setState faster than React can commit and trips the
+    // "Maximum update depth exceeded" guard. Status transitions and terminal
+    // states always emit immediately so no important update is dropped.
+    const now = Date.now()
+    const statusChanged = state.status !== this.lastEmitStatus.get(workspaceId)
+    const isTerminal =
+      state.status === 'complete' ||
+      state.status === 'error' ||
+      state.status === 'paused' ||
+      state.status === 'idle'
+    const lastAt = this.lastEmitAt.get(workspaceId) ?? 0
+
+    if (statusChanged || isTerminal || now - lastAt >= VectorSearchService.EMIT_THROTTLE_MS) {
+      this.flushEmit(workspaceId, state, now)
+      // Reset throttle bookkeeping once indexing settles so the next run is clean.
+      if (isTerminal) {
+        this.lastEmitAt.delete(workspaceId)
+        this.lastEmitStatus.delete(workspaceId)
+      }
+      return
+    }
+
+    // Otherwise schedule a single trailing-edge emit so the latest mutated
+    // state in this throttle window is not lost.
+    if (!this.pendingEmit.has(workspaceId)) {
+      const delay = VectorSearchService.EMIT_THROTTLE_MS - (now - lastAt)
+      const timer = setTimeout(() => {
+        this.pendingEmit.delete(workspaceId)
+        const latest = this.indexingStates.get(workspaceId)
+        if (latest) this.flushEmit(workspaceId, latest, Date.now())
+      }, delay)
+      this.pendingEmit.set(workspaceId, timer)
+    }
+  }
+
+  /** Perform the actual progress emit and record throttle bookkeeping. */
+  private flushEmit(workspaceId: string, state: IndexingState, now: number): void {
+    const pending = this.pendingEmit.get(workspaceId)
+    if (pending) {
+      clearTimeout(pending)
+      this.pendingEmit.delete(workspaceId)
+    }
+    this.lastEmitAt.set(workspaceId, now)
+    this.lastEmitStatus.set(workspaceId, state.status)
+    this.emit('progress', state)
   }
 
   /**

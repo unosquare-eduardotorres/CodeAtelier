@@ -65,16 +65,26 @@ describe('appendMcpToolGuidance', () => {
     assert.ok(allOn.includes('## GitHub Tools'), 'GitHub should be appended when enabled')
   })
 
-  test('lean mode skips REPOMAP_GUIDANCE on turn 1', () => {
+  test('lean mode injects compressed REPOMAP_GUIDANCE when base lacks ## Code Exploration', () => {
     const out = appendMcpToolGuidance('BASE', 1, {
       repomapEnabled: true,
       semanticSearchEnabled: true,
       githubConfigured: false
     }, 'claude-opus-4-8')
-    // Lean: Code Graph rules are merged into identity prompt
-    assert.ok(!out.includes('## Code Graph'), 'Lean mode should skip REPOMAP_GUIDANCE')
+    // Specialist/evaluation adapters have no ## Code Exploration — they get the lean guidance.
+    assert.ok(out.includes('## Code Graph'), 'Lean non-DaVinci should get compressed Code Graph guidance')
     // But semantic search should still be present
     assert.ok(out.includes('## Semantic Search'), 'Semantic search should still be injected')
+  })
+
+  test('lean mode skips REPOMAP_GUIDANCE when base already has ## Code Exploration (DaVinci)', () => {
+    const out = appendMcpToolGuidance('BASE\n\n## Code Exploration\nbuilt-in', 1, {
+      repomapEnabled: true,
+      semanticSearchEnabled: false,
+      githubConfigured: false
+    }, 'claude-opus-4-8')
+    // DaVinci lean identity already covers Code Graph rules — avoid duplication.
+    assert.ok(!out.includes('## Code Graph'), 'DaVinci lean should not duplicate Code Graph guidance')
   })
 
   test('full mode includes REPOMAP_GUIDANCE on turn 1', () => {

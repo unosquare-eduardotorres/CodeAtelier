@@ -42,5 +42,6 @@ export { TurnUsageRepository, turnUsageRepository } from './turn-usage.repositor
 export type { TurnUsage } from './turn-usage.repository'
 
 export { AuditRepository, auditRepository } from './audit.repository'
+export { AuditPlanRepository, auditPlanRepository } from './audit-plan.repository'
 export { GrillSessionRepository, grillSessionRepository } from './grill-session.repository'
 export type { GrillSession, GrillSessionStatus } from './grill-session.repository'

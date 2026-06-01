@@ -72,6 +72,11 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
     }
   }, [workspaceId, loadHistory])
 
+  // Auto-open the Start Goal modal when a goal is handed off from the grill
+  useEffect(() => {
+    if (preloadedGoal) setShowStartModal(true)
+  }, [preloadedGoal])
+
   const handleStart = useCallback(
     async (params: {
       goal: string

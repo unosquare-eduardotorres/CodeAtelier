@@ -32,6 +32,13 @@ export interface ExecutorTokenUsage {
   output: number
   cacheReadInputTokens: number
   cacheCreationInputTokens: number
+  /**
+   * Current context-window occupancy — the prompt size of the latest API
+   * round-trip, NOT the per-turn accumulated sum. Used for the context badge
+   * and compaction thresholds. Optional: backends that don't report per-call
+   * usage (e.g. OpenCode) omit it, and consumers fall back to the summed totals.
+   */
+  contextWindowTokens?: number
 }
 
 /**

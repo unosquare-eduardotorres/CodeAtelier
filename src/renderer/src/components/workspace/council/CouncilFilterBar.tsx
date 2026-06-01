@@ -33,7 +33,7 @@ export default function CouncilFilterBar({
             onClick={() => onFilterChange(tab.value)}
             className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
               filter === tab.value
-                ? 'bg-purple-500/20 text-purple-400'
+                ? 'bg-indigo-500/20 text-indigo-400'
                 : 'text-text-secondary hover:text-text-primary hover:bg-surface-float'
             }`}
           >
@@ -51,12 +51,12 @@ export default function CouncilFilterBar({
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search council sessions..."
-          className="w-full pl-8 pr-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 transition-colors"
+          className="w-full pl-8 pr-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-colors"
         />
       </div>
       <button
         onClick={onNewCouncil}
-        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 rounded-lg transition-colors ml-auto"
+        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded-lg transition-colors ml-auto"
       >
         <Plus size={14} />
         New Council

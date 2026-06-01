@@ -19,6 +19,7 @@ import type {
   AuditFinding,
   AuditorStatus,
   AuditTrack,
+  AuditApplicability,
   AuditCoverageStats,
   LLMProvider
 } from '../../shared/types'
@@ -60,6 +61,7 @@ export interface AuditResultPayload {
   skillsUsed: string[]
   coverageStats?: AuditCoverageStats
   coverageSufficient?: boolean
+  applicability?: AuditApplicability
 }
 
 export interface AuditIntermediateFindingsPayload {
@@ -465,6 +467,15 @@ export class AuditAgentService extends EventEmitter {
     gated.coveragePercent =
       discovery.totalFiles > 0 ? Math.round((stats.fileCount / discovery.totalFiles) * 100) : null
 
+    // Derive applicability: no files discovered for this track ⇒ not-applicable;
+    // failed coverage gate ⇒ insufficient; otherwise the score is trustworthy.
+    const applicability: AuditApplicability =
+      discovery.totalFiles === 0 || stats.fileCount === 0
+        ? 'not-applicable'
+        : gated.isSufficient
+          ? 'ok'
+          : 'insufficient'
+
     return {
       trackId: params.trackId,
       score: gated.score,
@@ -473,7 +484,8 @@ export class AuditAgentService extends EventEmitter {
       summary: gated.summary,
       skillsUsed: [],
       coverageStats: gated.coverageStats,
-      coverageSufficient: gated.isSufficient
+      coverageSufficient: gated.isSufficient,
+      applicability
     }
   }
 
@@ -777,7 +789,11 @@ function calculateOverallScore(
   results: AuditResultPayload[],
   tracks: Record<AuditTrackId, AuditTrack>
 ): number | null {
-  const completed = results.filter((r) => r.status === 'completed')
+  // Exclude tracks whose coverage was insufficient (or not-applicable) — a
+  // hallucinated 0 from an empty audit must not drag down the overall score.
+  const completed = results.filter(
+    (r) => r.status === 'completed' && r.coverageSufficient !== false
+  )
   if (completed.length === 0) return null
 
   let weightedSum = 0

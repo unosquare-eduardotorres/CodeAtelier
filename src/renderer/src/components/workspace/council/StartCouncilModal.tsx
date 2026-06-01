@@ -46,12 +46,12 @@ export default function StartCouncilModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-surface-float rounded-xl border border-purple-500/30 shadow-xl w-[520px] overflow-hidden">
+      <div className="bg-surface-float rounded-xl border border-indigo-500/30 shadow-xl w-[520px] overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-purple-500/10 border-b border-purple-500/20">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-indigo-500/10 border-b border-indigo-500/20">
           <div className="flex items-center gap-2">
-            <Landmark size={16} className="text-purple-400" />
-            <span className="text-sm font-medium text-purple-400">New Council Review</span>
+            <Landmark size={16} className="text-indigo-400" />
+            <span className="text-sm font-medium text-indigo-400">New Council Review</span>
           </div>
           <button
             onClick={onClose}
@@ -71,7 +71,7 @@ export default function StartCouncilModal({
                 onClick={() => setInputType(type.value)}
                 className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                   inputType === type.value
-                    ? 'bg-purple-500/20 text-purple-400'
+                    ? 'bg-indigo-500/20 text-indigo-400'
                     : 'text-text-secondary hover:text-text-primary hover:bg-surface-float'
                 }`}
               >
@@ -98,7 +98,7 @@ export default function StartCouncilModal({
                   : 'Type your question here...'
             }
             rows={6}
-            className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20 transition-colors resize-none"
+            className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20 transition-colors resize-none"
             autoFocus
           />
         </div>
@@ -124,7 +124,7 @@ export default function StartCouncilModal({
             <button
               onClick={() => content.trim() && onStart(inputType, content.trim())}
               disabled={!content.trim() || isStarting}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-purple-500 rounded-lg hover:brightness-110 disabled:opacity-30 transition-colors"
+              className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-500 rounded-lg hover:brightness-110 disabled:opacity-30 transition-colors"
             >
               Start Review
             </button>

@@ -24,6 +24,7 @@ import {
 } from '../../shared/constants'
 
 import { modelConfigService } from './model-config.service'
+import { resolveClaudeCompactionEnv, resolveSdkContextWindowSize } from './compaction-policy'
 import {
   conversationRepository,
   workspaceRepository
@@ -231,6 +232,12 @@ export class AgentExecutorFactory {
       : CLAUDE_DEFAULT_CONTEXT_WINDOW
     this.s.effectiveContextWindow = effectiveContextWindow
 
+    const sdkContextWindowSize = resolveSdkContextWindowSize(supports1M, effectiveContextWindow)
+    // The `claude` CLI controls its auto-compact window via env vars, not argv
+    // flags. Without this, 1M models use the (smaller) model-default window —
+    // inflating the context badge and triggering premature auto-compact.
+    const compactionEnv = resolveClaudeCompactionEnv(supports1M, effectiveContextWindow)
+
     const canContinue = this.s.cliExecutor.isAlive() && !!sessionId
 
     // C2: Log tool availability on EVERY turn (not just first spawn)
@@ -259,10 +266,11 @@ export class AgentExecutorFactory {
         continueSession: true,
         // Reuse cached MCP config — process already has MCP servers connected
         mcpConfigPath: this.cachedMcpConfigPath,
-        contextWindowSize: supports1M
-          ? effectiveContextWindow
-          : Math.round(effectiveContextWindow * 0.8),
+        contextWindowSize: sdkContextWindowSize,
         autoCompactEnabled: true,
+        // No-op on a live process (env only applies at spawn) — included for a
+        // consistent option shape with the new-spawn path.
+        envOverrides: compactionEnv,
         // F1: thinkingBudget must persist across continueSession turns to
         // enforce user cost control on every turn, not just the first.
         thinkingBudget: this.resolveThinkingBudget(),
@@ -287,6 +295,14 @@ export class AgentExecutorFactory {
     const mcpConfigPath = this.buildCLIMcpConfigPath(params)
     this.cachedMcpConfigPath = mcpConfigPath
 
+    // Instrumentation: one-line snapshot of the resolved compaction config on spawn.
+    this.s.log.info(
+      `[compaction:config] model=${resolvedModel} supports1M=${supports1M} ` +
+        `contextWindowSize=${sdkContextWindowSize} autoCompactEnabled=true ` +
+        `autoCompactWindow=${compactionEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW} ` +
+        `pctOverride=${compactionEnv.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ?? 'none'}`
+    )
+
     return {
       prompt,
       systemPrompt,
@@ -308,10 +324,10 @@ export class AgentExecutorFactory {
       // Sonnet → no fallback (it IS the fallback target).
       fallbackModel: resolvedModel.includes('opus') ? 'claude-sonnet-4-6' : undefined,
       additionalDirectories,
-      contextWindowSize: supports1M
-        ? effectiveContextWindow
-        : Math.round(effectiveContextWindow * 0.8),
+      contextWindowSize: sdkContextWindowSize,
       autoCompactEnabled: true,
+      // Wire compaction window into the CLI's process env (see resolveClaudeCompactionEnv).
+      envOverrides: compactionEnv,
       continueSession: false,
       mcpConfigPath,
       goal: params.goal,

@@ -44,8 +44,10 @@ import type {
   ContextUsage,
   StructuredPlan,
   AuditRun,
+  AuditPlanRecord,
   AuditMode,
   AuditTrackId,
+  AuditSelectedSkills,
   AuditFinding,
   AuditProgressEvent,
   AuditResult,
@@ -1664,6 +1666,7 @@ const api = {
     mode: AuditMode
     tracks: AuditTrackId[]
     llmProvider?: LLMProvider
+    selectedSkills?: AuditSelectedSkills
   }): Promise<AuditRun> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_START, args),
 
   auditCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_CANCEL),
@@ -1691,6 +1694,18 @@ const api = {
 
   auditGetHistory: (args: { workspaceId: string; limit?: number }): Promise<AuditRun[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_HISTORY, args),
+
+  auditDeleteRun: (args: { runId: string }): Promise<{ deleted: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_DELETE_RUN, args),
+
+  auditGeneratePlan: (args: {
+    workspaceId: string
+    runId: string
+    findings: AuditFinding[]
+  }): Promise<AuditPlanRecord> => ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GENERATE_PLAN, args),
+
+  auditGetPlans: (args: { runId: string }): Promise<AuditPlanRecord[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_PLANS, args),
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)

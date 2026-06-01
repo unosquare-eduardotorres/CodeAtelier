@@ -50,7 +50,10 @@ class EmbeddingProviderService extends EventEmitter {
   /** Lazily resolve cache directory — deferred so the module can be imported outside Electron */
   private get cacheDir(): string {
     if (!this._cacheDir) {
-      this._cacheDir = path.join(app.getPath('userData'), 'models')
+      // Standalone MCP-server processes (plain node, no Electron app) pass the userData
+      // dir via DB_PATH. Fall back to app.getPath() in the main process.
+      const userDataDir = process.env.DB_PATH ?? app.getPath('userData')
+      this._cacheDir = path.join(userDataDir, 'models')
     }
     return this._cacheDir
   }

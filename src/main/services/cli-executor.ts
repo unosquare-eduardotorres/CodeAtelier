@@ -123,6 +123,8 @@ export interface CLIExecuteResult {
     output: number
     cacheReadInputTokens: number
     cacheCreationInputTokens: number
+    /** Current context occupancy (latest round-trip prompt size, not the sum). */
+    contextWindowTokens?: number
   }
 }
 

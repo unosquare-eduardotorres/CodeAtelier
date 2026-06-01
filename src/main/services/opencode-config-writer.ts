@@ -638,7 +638,14 @@ export class OpenCodeConfigWriter {
         )
       : join(__dirname, 'mcp-servers')
 
-    return buildLocalMcpServersFromRegistry(LOCAL_MCP_SERVER_DEFS, opts, serverBasePath)
+    // DB-backed servers (code-graph, semantic-search) run as plain `node` and can't
+    // call app.getPath() — pass the userData dir as DB_PATH so they locate the DB.
+    return buildLocalMcpServersFromRegistry(
+      LOCAL_MCP_SERVER_DEFS,
+      opts,
+      serverBasePath,
+      app.getPath('userData')
+    )
   }
 
   /** External MCP integrations (Maestro, etc.) registered via feature flags. */

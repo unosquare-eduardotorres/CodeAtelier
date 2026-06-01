@@ -83,7 +83,8 @@ export default function AppLayout(): React.JSX.Element {
     handleFixInNewChat,
     handleCreateIdea,
     handleStartGrillMe,
-    handleNavigateToGrill
+    handleNavigateToGrill,
+    handleSendPlanToGrill
   } = useNavigationHandlers(
     activeWorkspace,
     activeConversation,
@@ -194,6 +195,7 @@ export default function AppLayout(): React.JSX.Element {
           onNavigateToChat={handleNavigateToChat}
           onFixInNewChat={handleFixInNewChat}
           onSettingsTabChange={(t) => setWorkspaceSettingsTab(t)}
+          onSendPlanToGrill={handleSendPlanToGrill}
           pendingGrill={pendingGrill}
           onPendingGrillConsumed={() => setPendingGrill(null)}
         />

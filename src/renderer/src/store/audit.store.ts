@@ -13,6 +13,8 @@ import type {
   AuditResult,
   AuditStreamChunkEvent,
   AuditIntermediateEvent,
+  AuditSelectedSkills,
+  AuditPlanRecord,
   LLMProvider,
   ToolActivity
 } from '../../../shared/types'
@@ -77,26 +79,35 @@ interface AuditState {
   isPaused: boolean
   rerunningTrackId: AuditTrackId | null
   liveStreamText: Record<string, string> // trackId → live text (legacy, still used by progress)
-  selectedFindings: AuditFinding[] // for "Fix in Chat"
+  selectedFindings: AuditFinding[] // for "Fix in Chat" / Build Plan
   pendingFixContext: { title: string; description: string } | null
+  // Plan generation
+  currentPlan: AuditPlanRecord | null
+  isGeneratingPlan: boolean
 
   // Per-track segment-based streaming state
   perTrackStreaming: Record<string, SegmentState>
 
   // Actions
   loadLatest: (workspaceId: string) => Promise<void>
+  openRun: (run: AuditRun) => void
   startAudit: (
     workspaceId: string,
     mode: AuditMode,
     tracks: AuditTrackId[],
-    llmProvider?: LLMProvider
+    llmProvider?: LLMProvider,
+    selectedSkills?: AuditSelectedSkills
   ) => Promise<void>
   cancelAudit: () => Promise<void>
   pauseAudit: () => Promise<void>
   resumeAudit: (workspaceId: string) => Promise<void>
   rerunTrack: (workspaceId: string, trackId: AuditTrackId, mode: AuditMode) => Promise<void>
   toggleFinding: (finding: AuditFinding) => void
+  selectAllInTrack: (trackId: AuditTrackId, severity?: AuditFinding['severity']) => void
+  selectAllAcrossTracks: () => void
   clearSelectedFindings: () => void
+  generatePlan: (workspaceId: string) => Promise<AuditPlanRecord>
+  clearPlan: () => void
   setPendingFixContext: (ctx: { title: string; description: string } | null) => void
   convertFindings: (workspaceId: string) => Promise<string> // returns conversationId
   handleProgress: (data: AuditProgressEvent) => void
@@ -119,7 +130,23 @@ export const useAuditStore = create<AuditState>((set, get) => {
     liveStreamText: {},
     selectedFindings: [],
     pendingFixContext: null,
+    currentPlan: null,
+    isGeneratingPlan: false,
     perTrackStreaming: {},
+
+    openRun: (run) => {
+      auditInternals.resetAll()
+      set({
+        currentRun: run,
+        isRunning: false,
+        isPaused: false,
+        rerunningTrackId: null,
+        liveStreamText: {},
+        perTrackStreaming: {},
+        selectedFindings: [],
+        currentPlan: null
+      })
+    },
 
     loadLatest: async (workspaceId) => {
       try {
@@ -138,7 +165,7 @@ export const useAuditStore = create<AuditState>((set, get) => {
       }
     },
 
-    startAudit: async (workspaceId, mode, tracks, llmProvider?) => {
+    startAudit: async (workspaceId, mode, tracks, llmProvider?, selectedSkills?) => {
       try {
         auditInternals.resetAll()
         set({
@@ -148,7 +175,13 @@ export const useAuditStore = create<AuditState>((set, get) => {
           perTrackStreaming: {},
           selectedFindings: []
         })
-        const run = await window.api.auditStart({ workspaceId, mode, tracks, llmProvider })
+        const run = await window.api.auditStart({
+          workspaceId,
+          mode,
+          tracks,
+          llmProvider,
+          selectedSkills
+        })
         set({ currentRun: run })
       } catch (error) {
         rendererLog.error('Failed to start audit:', error)
@@ -232,13 +265,61 @@ export const useAuditStore = create<AuditState>((set, get) => {
         if (exists) {
           return { selectedFindings: s.selectedFindings.filter((f) => f.id !== finding.id) }
         }
-        // Max 10 selections
-        if (s.selectedFindings.length >= 10) return s
+        // No cap — selection spans all tracks.
         return { selectedFindings: [...s.selectedFindings, finding] }
       })
     },
 
+    selectAllInTrack: (trackId, severity) => {
+      set((s) => {
+        const result = s.currentRun?.results.find((r) => r.trackId === trackId)
+        if (!result) return s
+        const toAdd = result.findings.filter((f) =>
+          severity ? f.severity === severity : f.severity !== 'info'
+        )
+        const byId = new Map(s.selectedFindings.map((f) => [f.id, f]))
+        for (const f of toAdd) byId.set(f.id, f)
+        return { selectedFindings: [...byId.values()] }
+      })
+    },
+
+    selectAllAcrossTracks: () => {
+      set((s) => {
+        if (!s.currentRun) return s
+        const byId = new Map(s.selectedFindings.map((f) => [f.id, f]))
+        for (const r of s.currentRun.results) {
+          if (r.status !== 'completed') continue
+          for (const f of r.findings) {
+            if (f.severity !== 'info') byId.set(f.id, f)
+          }
+        }
+        return { selectedFindings: [...byId.values()] }
+      })
+    },
+
     clearSelectedFindings: () => set({ selectedFindings: [] }),
+
+    generatePlan: async (workspaceId) => {
+      const { currentRun, selectedFindings } = get()
+      if (!currentRun) throw new Error('No audit run loaded')
+      if (selectedFindings.length === 0) throw new Error('No findings selected')
+      set({ isGeneratingPlan: true })
+      try {
+        const plan = await window.api.auditGeneratePlan({
+          workspaceId,
+          runId: currentRun.id,
+          findings: selectedFindings
+        })
+        set({ currentPlan: plan, isGeneratingPlan: false })
+        return plan
+      } catch (error) {
+        rendererLog.error('Failed to generate audit plan:', error)
+        set({ isGeneratingPlan: false })
+        throw error
+      }
+    },
+
+    clearPlan: () => set({ currentPlan: null }),
 
     setPendingFixContext: (ctx) => set({ pendingFixContext: ctx }),
 
@@ -360,7 +441,9 @@ export const useAuditStore = create<AuditState>((set, get) => {
         liveStreamText: {},
         perTrackStreaming: {},
         selectedFindings: [],
-        pendingFixContext: null
+        pendingFixContext: null,
+        currentPlan: null,
+        isGeneratingPlan: false
       })
     }
   }

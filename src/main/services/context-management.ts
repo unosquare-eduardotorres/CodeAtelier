@@ -15,11 +15,16 @@
  *   - Future-proofing for when the SDK adds server-side clearing APIs
  *   - Documentation of the intended compaction strategy
  *
- * The SDK subprocess (Claude Code) handles the compaction pipeline internally
- * when autoCompactEnabled is true. The contextWindowSize passed to the SDK
- * controls when auto-compact fires (~80-95% of that value). For 200K models
- * (Opus/Haiku), we shrink contextWindowSize to 160K and set
- * CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80 so compaction fires at ~128K tokens.
+ * The `claude` CLI handles the compaction pipeline internally. Note the CLI
+ * does NOT read `contextWindowSize`/`autoCompactEnabled` from argv — those are
+ * not forwarded as flags. The compaction window is controlled purely via
+ * process env vars, wired in agent-executor-factory.ts (resolveClaudeCompactionEnv):
+ *   - CLAUDE_CODE_AUTO_COMPACT_WINDOW = effective window. 1M models MUST set
+ *     1000000 here or the CLI falls back to its smaller model-default window
+ *     (which inflates the context badge and triggers premature auto-compact).
+ *   - CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80 for 200K models (Opus<=4.7/Haiku), so
+ *     auto-compact fires at ~80% of the usable window (~128-152K) instead of
+ *     the usable-13K default. Honoured by claude-code >= 2.1.x.
  */
 
 // ── Context Window Tiers ─────────────────────────────────────────────

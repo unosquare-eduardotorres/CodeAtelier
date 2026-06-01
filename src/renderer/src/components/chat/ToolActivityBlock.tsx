@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import type { ToolActivity, ToolOperationType } from '../../../../shared/types'
 import { MCP_DISPLAY_NAMES } from '../../../../shared/constants'
+import { copyTextToClipboard } from '../../utils/clipboard'
 
 /**
  * Shortens long absolute paths to show `…/parentFolder/file.ext`.
@@ -78,11 +79,10 @@ function CopyButton({ text }: { text: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(text)
+    if (await copyTextToClipboard(text)) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch { /* ignore */ }
+    }
   }
 
   return (

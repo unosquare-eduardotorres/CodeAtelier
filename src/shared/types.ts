@@ -1171,6 +1171,17 @@ export interface AuditTrack {
   scoringFocus: string[] // key areas this auditor evaluates
 }
 
+/** A curated, selectable focus area for an auditor in Deep mode. */
+export interface AuditSkill {
+  id: string
+  name: string
+  description: string
+  icon: string // Lucide icon name
+}
+
+/** Per-track selected skill ids (Deep mode). */
+export type AuditSelectedSkills = Partial<Record<AuditTrackId, string[]>>
+
 export interface AuditFinding {
   id: string // generated UUID
   severity: 'info' | 'low' | 'medium' | 'high' | 'critical'
@@ -1187,6 +1198,14 @@ export interface AuditCoverageStats {
   readToolCount: number
 }
 
+/**
+ * Whether a track's score should count toward the overall score.
+ * - 'ok'             — sufficient evidence, score is trustworthy
+ * - 'not-applicable' — no files of this track's kind exist in the repo
+ * - 'insufficient'   — some files inspected but coverage too low to trust
+ */
+export type AuditApplicability = 'ok' | 'not-applicable' | 'insufficient'
+
 export interface AuditResult {
   id: string
   auditRunId: string
@@ -1202,6 +1221,12 @@ export interface AuditResult {
   coverageStats?: AuditCoverageStats
   /** Whether the audit had sufficient evidence to trust the score */
   coverageSufficient?: boolean
+  /**
+   * Whether this track counts toward the overall score. Derived in the audit
+   * service from file discovery + coverage gate. Not persisted — recompute via
+   * `deriveApplicability` when reading a run back from the DB.
+   */
+  applicability?: AuditApplicability
   /** Runtime-only: multi-round progress (not persisted to DB) */
   roundProgress?: {
     roundNumber: number
@@ -1219,9 +1244,46 @@ export interface AuditRun {
   overallScore: number | null
   selectedTracks: AuditTrackId[]
   detectedTechs: string[]
+  /** Per-track skills the user selected for this run (Deep mode). Execution deferred. */
+  selectedSkills?: AuditSelectedSkills
   results: AuditResult[] // joined for UI convenience
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * Structured remediation plan synthesized from selected audit findings.
+ * Modeled on GrillStructuredPlan. `requirementDocument` is the markdown handed
+ * off when routing to Chat / Grill / Goals / Council / Export.
+ */
+export interface AuditPlan {
+  version: 1
+  title: string
+  summary: string
+  items: Array<{
+    id: string
+    title: string
+    description: string
+    scope: 'backend' | 'frontend' | 'database' | 'shared' | 'tests'
+    severity?: 'info' | 'low' | 'medium' | 'high' | 'critical'
+    files: string[]
+    recommendation: string
+    dependsOn?: string[]
+  }>
+  risks: string[]
+  sourceFindingIds: string[]
+  requirementDocument: string
+}
+
+/** A persisted audit plan with its DB identity. */
+export interface AuditPlanRecord {
+  id: string
+  auditRunId: string
+  title: string
+  summary: string
+  plan: AuditPlan
+  sourceFindingIds: string[]
+  createdAt: string
 }
 
 export interface AuditProgressEvent {

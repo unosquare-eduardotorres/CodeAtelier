@@ -11,8 +11,14 @@ export interface ToolResultSummary {
   resultDetail?: string
 }
 
-/** Cap for resultDetail content — ~2K chars */
-const DETAIL_CAP = 2048
+/** Cap for resultDetail content — ~8K chars */
+const DETAIL_CAP = 8192
+
+/** Cap detail content, appending an explicit marker when truncating. */
+function capDetail(content: string): string {
+  if (content.length <= DETAIL_CAP) return content
+  return content.slice(0, DETAIL_CAP) + `\n… (truncated — ${content.length - DETAIL_CAP} more chars)`
+}
 
 type Summarizer = (content: string) => ToolResultSummary | undefined
 
@@ -42,16 +48,16 @@ function checkToolUseError(content: string): ToolResultSummary | undefined {
   const inner = (match?.[1] ?? content).trim()
 
   if (/modified since read/i.test(inner))
-    return { result: 'Stale read — re-read needed', resultDetail: inner.slice(0, DETAIL_CAP) }
+    return { result: 'Stale read — re-read needed', resultDetail: capDetail(inner) }
   if (/string to replace not found/i.test(inner))
-    return { result: 'String not found — re-read needed', resultDetail: inner.slice(0, DETAIL_CAP) }
+    return { result: 'String not found — re-read needed', resultDetail: capDetail(inner) }
   if (/permission denied|EACCES|operation not permitted/i.test(inner))
-    return { result: 'Permission denied', resultDetail: inner.slice(0, DETAIL_CAP) }
+    return { result: 'Permission denied', resultDetail: capDetail(inner) }
 
   const oneLine = inner.split('\n')[0]?.trim() ?? 'Tool error'
   const shortResult =
     oneLine.length > 80 ? `Error: ${oneLine.slice(0, 77)}…` : `Error: ${oneLine}`
-  return { result: shortResult, resultDetail: inner.slice(0, DETAIL_CAP) }
+  return { result: shortResult, resultDetail: capDetail(inner) }
 }
 
 // ── SDK builtin tool handlers ──
@@ -60,7 +66,7 @@ const summarizeWrite: Summarizer = (content) => {
   if (!content || content.length < 10) return { result: 'Done' }
   return {
     result: 'Done',
-    resultDetail: content.slice(0, DETAIL_CAP)
+    resultDetail: capDetail(content)
   }
 }
 
@@ -75,7 +81,7 @@ const summarizeBash: Summarizer = (content) => {
         exitMatch[1] === '0' ? 'Success (exit 0)' : `Failed (exit ${exitMatch[1]})`
       return {
         result: shortResult,
-        resultDetail: lines.length > 1 ? content.slice(0, DETAIL_CAP) : undefined
+        resultDetail: lines.length > 1 ? capDetail(content) : undefined
       }
     }
   }
@@ -84,7 +90,7 @@ const summarizeBash: Summarizer = (content) => {
   const shortResult = firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine
   return {
     result: shortResult,
-    resultDetail: lines.length > 1 ? content.slice(0, DETAIL_CAP) : undefined
+    resultDetail: lines.length > 1 || firstLine.length > 80 ? capDetail(content) : undefined
   }
 }
 
@@ -92,7 +98,7 @@ const summarizeRead: Summarizer = (content) => {
   const lineCount = content.split('\n').length
   return {
     result: `${lineCount} line${lineCount !== 1 ? 's' : ''} read`,
-    resultDetail: content.length > 40 ? content.slice(0, DETAIL_CAP) : undefined
+    resultDetail: content.length > 40 ? capDetail(content) : undefined
   }
 }
 
@@ -101,7 +107,7 @@ const summarizeGrep: Summarizer = (content) => {
   const detail = matchLines.slice(0, 30).join('\n')
   return {
     result: pluralize(matchLines.length, 'match', 'matches'),
-    resultDetail: detail.length > 0 ? detail.slice(0, DETAIL_CAP) : undefined
+    resultDetail: detail.length > 0 ? capDetail(detail) : undefined
   }
 }
 
@@ -110,7 +116,7 @@ const summarizeGlob: Summarizer = (content) => {
   const detail = fileLines.slice(0, 50).join('\n')
   return {
     result: `${fileLines.length} file${fileLines.length !== 1 ? 's' : ''} found`,
-    resultDetail: detail.length > 0 ? detail.slice(0, DETAIL_CAP) : undefined
+    resultDetail: detail.length > 0 ? capDetail(detail) : undefined
   }
 }
 
@@ -130,7 +136,7 @@ const EXACT_HANDLERS: Record<string, Summarizer> = {
 function summarizeCodeGraph(content: string): ToolResultSummary | undefined {
   try {
     const parsed = JSON.parse(content)
-    const detail = content.slice(0, DETAIL_CAP)
+    const detail = capDetail(content)
 
     if (parsed.symbols?.length !== undefined) return { result: pluralize(parsed.symbols.length, 'symbol'), resultDetail: detail }
     if (parsed.callers?.length !== undefined) return { result: pluralize(parsed.callers.length, 'caller'), resultDetail: detail }
@@ -156,7 +162,7 @@ function summarizeCodeGraph(content: string): ToolResultSummary | undefined {
 function summarizeCodeAnalysis(content: string): ToolResultSummary | undefined {
   try {
     const parsed = JSON.parse(content)
-    const detail = content.slice(0, DETAIL_CAP)
+    const detail = capDetail(content)
 
     if (parsed.totalCount !== undefined) {
       const mode = parsed.mode === 'overview' ? ' (overview)' : ''
@@ -184,7 +190,7 @@ function summarizeCodeAnalysis(content: string): ToolResultSummary | undefined {
 function summarizeGitContext(content: string): ToolResultSummary | undefined {
   try {
     const parsed = JSON.parse(content)
-    const detail = content.slice(0, DETAIL_CAP)
+    const detail = capDetail(content)
 
     if (parsed.commits?.length !== undefined) return { result: pluralize(parsed.commits.length, 'commit'), resultDetail: detail }
     if (parsed.hunks?.length !== undefined) return { result: pluralize(parsed.hunks.length, 'diff hunk'), resultDetail: detail }
@@ -198,7 +204,7 @@ function summarizeGitContext(content: string): ToolResultSummary | undefined {
 function summarizeSemanticSearch(content: string): ToolResultSummary | undefined {
   try {
     const parsed = JSON.parse(content)
-    const detail = content.slice(0, DETAIL_CAP)
+    const detail = capDetail(content)
 
     if (parsed.results?.length !== undefined) return { result: pluralize(parsed.results.length, 'result'), resultDetail: detail }
     if (parsed.concepts?.length !== undefined) return { result: pluralize(parsed.concepts.length, 'concept'), resultDetail: detail }
@@ -223,8 +229,8 @@ function defaultSummary(content: string): ToolResultSummary | undefined {
   const firstLine = content.split('\n')[0]?.trim()
   if (!firstLine) return undefined
   const shortResult = firstLine.length > 80 ? firstLine.slice(0, 77) + '...' : firstLine
-  const hasMore = content.length > firstLine.length + 1
-  return { result: shortResult, resultDetail: hasMore ? content.slice(0, DETAIL_CAP) : undefined }
+  const truncated = shortResult !== firstLine || content.length > firstLine.length + 1
+  return { result: shortResult, resultDetail: truncated ? capDetail(content) : undefined }
 }
 
 // ── Public API ──
@@ -232,7 +238,7 @@ function defaultSummary(content: string): ToolResultSummary | undefined {
 /**
  * Extracts a brief human-readable result summary from a tool result.
  * Returns both a short `result` (one-line) and an optional `resultDetail`
- * (expanded text, up to ~2K chars) for the expand panel in ToolActivityBlock.
+ * (expanded text, up to ~8K chars) for the expand panel in ToolActivityBlock.
  */
 export function extractResultSummary(
   toolName: string,

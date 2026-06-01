@@ -23,6 +23,7 @@ import MessageCardRenderer from './MessageCardRenderer'
 import AttachmentList from './AttachmentList'
 import { useMessageContent } from './useMessageContent'
 import { useMessageIdentity } from './useMessageIdentity'
+import type { MessageIdentity } from './useMessageIdentity'
 import { useChatBubbleSize, useWorkspaceStore } from '@renderer/store'
 import { useCouncilStore } from '@renderer/store/council.store'
 import type { ChatBubbleSize } from '../../../../shared/types'
@@ -45,6 +46,8 @@ interface MessageBubbleProps {
   toolActivities?: ToolActivity[]
   /** Chat actions passed from parent to avoid per-bubble store subscriptions */
   actions?: MessageBubbleActions
+  /** Override the auto-resolved identity (name, avatar, color). Used by Grill. */
+  identityOverride?: MessageIdentity
 }
 
 function formatTime(dateStr: string): string {
@@ -186,13 +189,15 @@ function MessageBubbleInner({
   message,
   isStreaming,
   toolActivities,
-  actions
+  actions,
+  identityOverride
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const bubbleSize = useChatBubbleSize()
   const sizeClasses = BUBBLE_SIZE_CLASSES[bubbleSize]
-  const { updateMode, sendMessage, appendLocalMessage, buildFromPlan } = actions!
-  const identity = useMessageIdentity(message)
+  const { updateMode, sendMessage, appendLocalMessage, buildFromPlan } = actions ?? ({} as MessageBubbleActions)
+  const autoIdentity = useMessageIdentity(message)
+  const identity = identityOverride ?? autoIdentity
 
   // Extracted hook: parses message content to detect structured blocks
   const content = useMessageContent(message.contentMd, message.attachmentsJson, isUser)

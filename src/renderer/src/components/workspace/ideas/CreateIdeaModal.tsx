@@ -49,10 +49,10 @@ export default function CreateIdeaModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-surface-float rounded-xl border border-warning/30 shadow-xl w-[480px] overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-surface-float rounded-xl border border-warning/30 shadow-xl w-[640px] max-w-full max-h-[85vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-warning-muted border-b border-warning/20">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-warning-muted border-b border-warning/20 flex-shrink-0">
           <div className="flex items-center gap-2">
             <Lightbulb size={16} className="text-warning" />
             <span className="text-sm font-medium text-warning">New Idea</span>
@@ -66,7 +66,7 @@ export default function CreateIdeaModal({
         </div>
 
         {/* Body */}
-        <div className="p-4 space-y-3">
+        <div className="p-4 space-y-3 flex flex-col flex-1 min-h-0 overflow-y-auto">
           <input
             type="text"
             placeholder="Idea title..."
@@ -94,17 +94,16 @@ export default function CreateIdeaModal({
           )}
 
           <textarea
-            placeholder="Description (optional)..."
+            placeholder="Describe your idea — context, goal, sections, requirements. Markdown welcome."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             onKeyDown={handleKeyDown}
-            rows={4}
-            className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-warning/50 focus:ring-1 focus:ring-warning/20 transition-colors resize-none"
+            className="w-full flex-1 min-h-[260px] bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-warning/50 focus:ring-1 focus:ring-warning/20 transition-colors resize-y leading-relaxed"
           />
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-border-subtle">
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border-subtle flex-shrink-0">
           <span className="text-[11px] text-text-muted">
             {title.trim() ? '⌘+Enter to save' : ' '}
           </span>

@@ -51,8 +51,10 @@ import type {
   StructuredPlan,
   BugRecord,
   AuditRun,
+  AuditPlanRecord,
   AuditMode,
   AuditTrackId,
+  AuditSelectedSkills,
   AuditFinding,
   AuditProgressEvent,
   AuditResult,
@@ -890,6 +892,7 @@ interface Api {
     mode: AuditMode
     tracks: AuditTrackId[]
     llmProvider?: LLMProvider
+    selectedSkills?: AuditSelectedSkills
   }) => Promise<AuditRun>
   auditCancel: () => Promise<void>
   auditGetLatest: (args: { workspaceId: string }) => Promise<AuditRun | null>
@@ -905,6 +908,13 @@ interface Api {
   auditResume: (args: { workspaceId: string }) => Promise<AuditRun | null>
   auditExportMarkdown: (args: { workspaceId: string }) => Promise<void>
   auditGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<AuditRun[]>
+  auditDeleteRun: (args: { runId: string }) => Promise<{ deleted: boolean }>
+  auditGeneratePlan: (args: {
+    workspaceId: string
+    runId: string
+    findings: AuditFinding[]
+  }) => Promise<AuditPlanRecord>
+  auditGetPlans: (args: { runId: string }) => Promise<AuditPlanRecord[]>
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
   onAuditResult: (cb: (data: AuditResult) => void) => () => void
   onAuditComplete: (cb: (data: AuditRun) => void) => () => void

@@ -14,10 +14,11 @@ import {
   IPC_CHANNELS,
   supportsContext1M
 } from '../../shared/constants'
-import type { ConversationMode, ContextUsageLevel, ThinkingEffort } from '../../shared/types'
+import type { ConversationMode, ThinkingEffort } from '../../shared/types'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
+import { resolveContextLevel } from './context-usage-level'
 
 const log = chatIpcLogger
 
@@ -130,7 +131,12 @@ export function registerChatModeIpc(): void {
   )
 
   // ── Context usage: return token consumption for a conversation ──
-  // Strategy: SDK-first (accurate, live) → DB fallback (historical/idle)
+  // Computed from the last persisted turn's tokens vs. the resolved context
+  // window. (The former SDK getContextUsage() "Strategy 1" was removed: the CLI
+  // and OpenCode backends don't expose a Query object — getActiveQuery() always
+  // returned null — so this DB-backed computation is the single source of truth.
+  // Live per-turn updates are pushed separately via the context_usage_update
+  // chunk in agent-stream-processor.processMetaChunk.)
   ipcMain.handle(
     IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE,
     async (event, rawArgs: unknown) => {
@@ -138,111 +144,6 @@ export function registerChatModeIpc(): void {
       const args = requireObject(rawArgs, IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE)
       const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CONVERSATION_GET_CONTEXT_USAGE)
 
-      // ── Strategy 1: Use SDK native context usage (accurate, live) ──
-      const activeQuery = chatAgentService.getActiveQuery()
-      const currentConvId = chatAgentService.getCurrentConversationId()
-
-      if (activeQuery && currentConvId === conversationId) {
-        try {
-          const sdkUsage = await activeQuery.getContextUsage()
-          if (sdkUsage && typeof sdkUsage === 'object' && 'totalTokens' in sdkUsage) {
-            const sdk = sdkUsage as {
-              totalTokens: number
-              maxTokens: number
-              percentage?: number
-              model?: string
-              categories?: {
-                name: string
-                tokens: number
-                color: string
-                isDeferred?: boolean
-              }[]
-              mcpTools?: {
-                name: string
-                serverName: string
-                tokens: number
-                isLoaded?: boolean
-              }[]
-              systemTools?: { name: string; tokens: number }[]
-              deferredBuiltinTools?: { name: string; tokens: number; isLoaded: boolean }[]
-              memoryFiles?: { path: string; type: string; tokens: number }[]
-              autoCompactThreshold?: number
-              isAutoCompactEnabled?: boolean
-            }
-            // For local LLMs: SDK reports the backend's working limit (oMLX scales
-            // it down, Ollama defaults by VRAM). Override with the resolved model
-            // context window so the UI shows the real capability.
-            let effectiveMaxTokens = sdk.maxTokens
-            const conversation = conversationRepository.findById(conversationId)
-            if (conversation) {
-              const workspace = workspaceRepository.findById(conversation.workspaceId)
-              if (workspace && modelConfigService.isLocalProvider(workspace.repoPath)) {
-                const llmConfig = modelConfigService.getLocalLLMConfig(workspace.repoPath)
-                const ctxSettings = workspaceRepository.getSettings(workspace.id)
-                const userOverride = ctxSettings.localContextWindow
-                const resolved = await contextWindowResolver.resolve(llmConfig, userOverride)
-                if (resolved > sdk.maxTokens) {
-                  log.info(
-                    `[ContextUsage] Overriding SDK maxTokens ${sdk.maxTokens} → ${resolved} (${llmConfig.backend})`
-                  )
-                  effectiveMaxTokens = resolved
-                }
-              }
-            }
-
-            const percentage =
-              sdk.percentage && effectiveMaxTokens === sdk.maxTokens
-                ? sdk.percentage
-                : Math.round((sdk.totalTokens / effectiveMaxTokens) * 100)
-            // Quality window scales with context window: 50% of max, capped at 500K
-            // For 1M context: 500K quality window. For 200K context: 100K quality window.
-            const effectiveQualityWindow = Math.min(Math.round(effectiveMaxTokens * 0.5), 500_000)
-            const qualityPercentage = Math.round((sdk.totalTokens / effectiveQualityWindow) * 100)
-            const level: ContextUsageLevel =
-              qualityPercentage > 80
-                ? 'critical'
-                : qualityPercentage > 60
-                  ? 'red'
-                  : qualityPercentage > 40
-                    ? 'yellow'
-                    : 'green'
-            const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
-              qualityPercentage <= 40
-                ? 'excellent'
-                : qualityPercentage <= 60
-                  ? 'good'
-                  : qualityPercentage <= 80
-                    ? 'moderate'
-                    : 'low'
-
-            return {
-              conversationId,
-              inputTokens: sdk.totalTokens,
-              contextWindowSize: effectiveMaxTokens,
-              percentage,
-              level,
-              qualityLevel,
-              categories: sdk.categories,
-              breakdown: {
-                categories: sdk.categories,
-                mcpTools: sdk.mcpTools,
-                systemTools: sdk.systemTools,
-                deferredBuiltinTools: sdk.deferredBuiltinTools,
-                memoryFiles: sdk.memoryFiles,
-                autoCompactThreshold: sdk.autoCompactThreshold,
-                isAutoCompactEnabled: sdk.isAutoCompactEnabled
-              },
-              model: sdk.model,
-              source: 'sdk' as const
-            }
-          }
-        } catch (err) {
-          log.warn('SDK getContextUsage failed, falling back to DB:', err)
-          // Fall through to DB-based calculation
-        }
-      }
-
-      // ── Strategy 2: DB fallback (historical/idle conversations) ──
       const lastTurn = turnUsageRepository.getLastTurn(conversationId)
       // Prefer context_tokens (SDK-reported, accounts for post-compaction state)
       // over summing raw API fields (which reflect pre-compaction totals).
@@ -273,26 +174,8 @@ export function registerChatModeIpc(): void {
           }
         }
       }
-      // Quality window scales with context window: 50% of max, capped at 500K
-      const effectiveQualityWindow = Math.min(Math.round(contextWindowSize * 0.5), 500_000)
       const percentage = Math.round((inputTokens / contextWindowSize) * 100)
-      const qualityPercentage = Math.round((inputTokens / effectiveQualityWindow) * 100)
-      const level: ContextUsageLevel =
-        qualityPercentage > 80
-          ? 'critical'
-          : qualityPercentage > 60
-            ? 'red'
-            : qualityPercentage > 40
-              ? 'yellow'
-              : 'green'
-      const qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' =
-        qualityPercentage <= 40
-          ? 'excellent'
-          : qualityPercentage <= 60
-            ? 'good'
-            : qualityPercentage <= 80
-              ? 'moderate'
-              : 'low'
+      const { level, qualityLevel } = resolveContextLevel(percentage, contextWindowSize)
 
       return {
         conversationId,

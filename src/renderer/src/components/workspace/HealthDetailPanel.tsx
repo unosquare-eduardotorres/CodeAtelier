@@ -29,11 +29,12 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AuditTrackId, AuditRun, AuditMode, AuditFinding } from '../../../../shared/types'
-import { AUDIT_TRACKS } from '../../../../shared/constants'
+import { AUDIT_TRACKS, deriveApplicability } from '../../../../shared/constants'
 import AuditStreamView from './AuditStreamView'
 import AuditScoreHero from './AuditScoreHero'
 import CompletedFindingsList from './CompletedFindingsList'
 import type { SeverityFilter } from './CompletedFindingsList'
+import HealthOverview from './health/HealthOverview'
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Database,
@@ -90,6 +91,7 @@ interface HealthDetailPanelProps {
   rerunningTrackId: AuditTrackId | null
   selectedFindings: AuditFinding[]
   onToggleFinding: (finding: AuditFinding) => void
+  onSelectTrack: (trackId: AuditTrackId) => void
   onConvertToChat: () => void
   onRerunTrack: (trackId: AuditTrackId) => void
   onAutoFix: (finding: AuditFinding, trackName: string) => void
@@ -104,6 +106,7 @@ export default function HealthDetailPanel({
   rerunningTrackId,
   selectedFindings,
   onToggleFinding,
+  onSelectTrack,
   onConvertToChat,
   onRerunTrack,
   onAutoFix,
@@ -115,6 +118,10 @@ export default function HealthDetailPanel({
 
   // ── A) No track selected ──
   if (!activeTrackId) {
+    // Default to the Overview dashboard once a run has produced results.
+    if (currentRun && currentRun.results.some((r) => r.status === 'completed')) {
+      return <HealthOverview currentRun={currentRun} onSelectTrack={onSelectTrack} />
+    }
     return <EmptyState mode={mode} detectedTechs={currentRun?.detectedTechs ?? []} />
   }
 
@@ -331,7 +338,7 @@ export default function HealthDetailPanel({
           TrackIcon={Icon}
           score={result?.score}
           summary={result?.summary}
-          coverageSufficient={result?.coverageSufficient}
+          applicability={result ? deriveApplicability(result) : 'ok'}
           coverageFileCount={result?.coverageStats?.fileCount ?? 0}
           issueCount={issues.length}
           passedCount={passedChecks.length}

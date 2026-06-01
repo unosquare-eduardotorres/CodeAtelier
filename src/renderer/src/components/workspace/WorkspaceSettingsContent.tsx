@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Landmark, Lightbulb } from 'lucide-react'
-import { useWorkspaceStore, useChatStore } from '@renderer/store'
+import { useWorkspaceStore, useChatStore, useMpaStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
 import EventLogPage from './EventLogPage'
@@ -26,6 +26,7 @@ interface WorkspaceSettingsContentProps {
   onNavigateToChat: () => void
   onFixInNewChat: () => void
   onSettingsTabChange?: (tab: SettingsTab) => void
+  onSendPlanToGrill?: (title: string, description: string) => void
   pendingGrill?: {
     ideaId: string
     conversationId: string
@@ -41,6 +42,7 @@ export default function WorkspaceSettingsContent({
   onNavigateToChat,
   onFixInNewChat,
   onSettingsTabChange,
+  onSendPlanToGrill,
   pendingGrill,
   onPendingGrillConsumed
 }: WorkspaceSettingsContentProps): React.JSX.Element {
@@ -113,13 +115,19 @@ export default function WorkspaceSettingsContent({
     >
       {tab === 'specialist' && <SpecialistPage />}
       {tab === 'health' && (
-        <HealthPage onNavigateToChat={onNavigateToChat} onFixInNewChat={onFixInNewChat} />
+        <HealthPage
+          onNavigateToChat={onNavigateToChat}
+          onFixInNewChat={onFixInNewChat}
+          onSendPlanToGrill={onSendPlanToGrill}
+          onNavigateToCouncil={() => onSettingsTabChange?.('council')}
+          onNavigateToGoals={() => onSettingsTabChange?.('goals')}
+        />
       )}
       {tab === 'goals' && <GoalPage onNavigateToChat={onNavigateToChat} />}
       {tab === 'council' && (
         <div className="p-6">
           <div className="flex items-center gap-2 mb-2">
-            <Landmark size={16} className="text-purple-400" />
+            <Landmark size={16} className="text-indigo-400" />
             <h3 className="text-sm font-semibold text-text-primary">Council</h3>
           </div>
           <p className="text-xs text-text-secondary mb-4">
@@ -138,7 +146,15 @@ export default function WorkspaceSettingsContent({
               )
               onNavigateToChat()
             }}
-            onDismiss={() => onNavigateToChat()}
+            onDismiss={() => {
+              // In standalone context: just reset, stay on council page
+              // CouncilView already calls reset() before onDismiss
+            }}
+            onSendToGoal={(goal, title) => {
+              const { setPreloadedGoal } = useMpaStore.getState()
+              setPreloadedGoal({ text: `${title}\n\n${goal}` })
+              onSettingsTabChange?.('goals')
+            }}
           />
         </div>
       )}

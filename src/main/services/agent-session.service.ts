@@ -255,11 +255,6 @@ export class AgentSessionService extends AgentBaseService {
     return this._lastTimedOut
   }
 
-  /** @deprecated SDK backend removed. CLI and OpenCode don't expose a Query object. */
-  getActiveQuery(): null {
-    return null
-  }
-
   getSessionId(conversationId: string): string | undefined {
     return this.sessionMap.get(conversationId)
   }
@@ -1261,6 +1256,11 @@ export class AgentSessionService extends AgentBaseService {
         )
         return `## Previous Context\n${summary}\n\n## Current Request\n${params.message}`
       }
+      // Neither S12 reconstruction nor an S6 summary was available — the raw
+      // message is sent unchanged. Logged so live runs can confirm the path.
+      this.log.info(
+        `[S6:no-context] conversationId=${params.conversationId} — no reconstruction or summary, using raw message`
+      )
     } catch {
       /* non-fatal — proceed without context */
     }

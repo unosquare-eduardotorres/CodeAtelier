@@ -53,9 +53,12 @@ interface CouncilState {
   currentSessionId: string | null
   /** Workspace ID for the active council session */
   currentWorkspaceId: string | null
+  /** Title of the content being reviewed (extracted from input) */
+  inputTitle: string | null
 
   // Actions
   startCouncil: () => void
+  setInputTitle: (title: string) => void
   setSessionIdentity: (sessionId: string, workspaceId: string) => void
   handlePhaseChanged: (phase: CouncilPhase) => void
   handleMemberStream: (data: {
@@ -75,6 +78,7 @@ interface CouncilState {
     verdict: CouncilVerdict | null
     peerReviews: CouncilPeerReview[]
     advisorReviews: CouncilReview[]
+    inputTitle?: string
   }) => void
   reset: () => void
 }
@@ -128,6 +132,7 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
   verdict: null,
   currentSessionId: null,
   currentWorkspaceId: null,
+  inputTitle: null,
 
   startCouncil: () => {
     resetAccumulators()
@@ -138,8 +143,13 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
       peerReviews: [],
       verdict: null,
       currentSessionId: null,
-      currentWorkspaceId: null
+      currentWorkspaceId: null,
+      inputTitle: null
     })
+  },
+
+  setInputTitle: (title) => {
+    set({ inputTitle: title })
   },
 
   setSessionIdentity: (sessionId, workspaceId) => {
@@ -225,7 +235,8 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
       peerReviews: record.peerReviews,
       verdict: record.verdict,
       currentSessionId: record.sessionId,
-      currentWorkspaceId: record.workspaceId
+      currentWorkspaceId: record.workspaceId,
+      inputTitle: record.inputTitle ?? null
     })
   },
 
@@ -238,7 +249,8 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
       peerReviews: [],
       verdict: null,
       currentSessionId: null,
-      currentWorkspaceId: null
+      currentWorkspaceId: null,
+      inputTitle: null
     })
   }
 }))

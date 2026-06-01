@@ -69,6 +69,15 @@ export class GrillPersistenceController {
     this.activeIdeaId = ideaId
     this.activeTrackId = trackId
 
+    // Emit status change so the bottom status bar shows the active "Grilling…"
+    // pill immediately. Mirrors the markEvaluating / clearTracking pattern.
+    try {
+      const router = getSessionEventRouter()
+      this.emitStatusChange(workspaceId, router, 'evaluating')
+    } catch {
+      /* router may not be initialized yet */
+    }
+
     ctrlLog.info(
       `[grill-persistence] Tracking session=${session.id} idea=${ideaId} track=${trackId}`
     )

@@ -10,6 +10,7 @@ interface NavigationHandlers {
   handleCreateIdea: (data: { title: string; description?: string }) => Promise<void>
   handleStartGrillMe: () => Promise<void>
   handleNavigateToGrill: (ideaId: string) => void
+  handleSendPlanToGrill: (title: string, description: string) => Promise<void>
 }
 
 /**
@@ -94,6 +95,32 @@ export function useNavigationHandlers(
     setSidebarView('settings')
   }, [setWorkspaceSettingsTab, setSidebarView])
 
+  // Route a generated plan (e.g. from a Health audit) into a fresh Grill session.
+  const handleSendPlanToGrill = useCallback(
+    async (title: string, description: string): Promise<void> => {
+      if (!activeWorkspace) return
+      try {
+        const idea = await createIdea(activeWorkspace.id, title, description)
+        const { idea: updatedIdea, conversation: grillConversation } = await startGrill(
+          idea.id,
+          activeWorkspace.id
+        )
+        setWorkspaceSettingsTab('ideas')
+        setSidebarView('settings')
+        setPendingGrill({
+          ideaId: updatedIdea.id,
+          conversationId: grillConversation.id,
+          ideaTitle: updatedIdea.title,
+          ideaDescription: updatedIdea.description,
+          isNewSession: true
+        })
+      } catch (error) {
+        console.error('[AppLayout] Failed to send plan to grill:', error)
+      }
+    },
+    [activeWorkspace, createIdea, startGrill, setWorkspaceSettingsTab, setSidebarView, setPendingGrill]
+  )
+
   return {
     handleGoHome,
     handleNavigateToChat,
@@ -101,6 +128,7 @@ export function useNavigationHandlers(
     handleOpenIdeas,
     handleCreateIdea,
     handleStartGrillMe,
-    handleNavigateToGrill
+    handleNavigateToGrill,
+    handleSendPlanToGrill
   }
 }

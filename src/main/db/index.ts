@@ -15,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 98
+const CURRENT_SCHEMA_VERSION = 100
 
 interface Migration {
   version: number
@@ -2306,6 +2306,35 @@ const migrations: Migration[] = [
       db.exec(`ALTER TABLE messages ADD COLUMN tool_activities_json TEXT DEFAULT NULL`)
       dbLogger.info('[migration-98] ✓ Added tool_activities_json to messages')
     }
+  },
+  {
+    version: 99,
+    name: 'add-selected-skills-to-audit-runs',
+    up: (db) => {
+      db.exec(
+        `ALTER TABLE audit_runs ADD COLUMN selected_skills TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(selected_skills))`
+      )
+      dbLogger.info('[migration-99] ✓ Added selected_skills column to audit_runs')
+    }
+  },
+  {
+    version: 100,
+    name: 'create-audit-plans-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS audit_plans (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          audit_run_id TEXT NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL DEFAULT '',
+          plan_json TEXT NOT NULL CHECK (json_valid(plan_json)),
+          source_finding_ids TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(source_finding_ids)),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_plans_run ON audit_plans(audit_run_id);
+      `)
+      dbLogger.info('[migration-100] ✓ Created audit_plans table')
+    }
   }
 ]
 
@@ -2355,8 +2384,11 @@ function runMigrations(database: Database.Database): void {
 export function getDatabase(): Database.Database {
   if (db) return db
 
-  const newDbPath = join(app.getPath('userData'), 'code-atelier.db')
-  const oldDbPath = join(app.getPath('userData'), 'agent-studio.db')
+  // Standalone MCP-server processes run as plain `node` (no Electron app global),
+  // so `app.getPath()` is undefined and would crash. They pass DB_PATH explicitly.
+  const userDataDir = process.env.DB_PATH ?? app.getPath('userData')
+  const newDbPath = join(userDataDir, 'code-atelier.db')
+  const oldDbPath = join(userDataDir, 'agent-studio.db')
 
   // Migrate DB filename for existing installations
   if (!existsSync(newDbPath) && existsSync(oldDbPath)) {

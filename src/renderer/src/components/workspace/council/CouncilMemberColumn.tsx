@@ -32,7 +32,7 @@ interface CouncilMemberColumnProps {
   review: CouncilReview | null
 }
 
-function StatusBadge({ status }: { status: CouncilMemberStatus }): React.JSX.Element {
+export function StatusBadge({ status }: { status: CouncilMemberStatus }): React.JSX.Element {
   switch (status) {
     case 'pending':
       return (
@@ -61,7 +61,7 @@ function StatusBadge({ status }: { status: CouncilMemberStatus }): React.JSX.Ele
   }
 }
 
-function VerdictBadge({ verdict }: { verdict: string }): React.JSX.Element {
+export function VerdictBadge({ verdict }: { verdict: string }): React.JSX.Element {
   const colors: Record<string, string> = {
     'proceed-with-changes': 'bg-success/20 text-success border-success/30',
     'needs-revision': 'bg-warning/20 text-warning border-warning/30',

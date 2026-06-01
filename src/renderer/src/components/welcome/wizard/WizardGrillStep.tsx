@@ -13,7 +13,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { ArrowRight, Pause, CheckCircle2, Loader2, SkipForward, Circle, Minus } from 'lucide-react'
+import { ArrowRight, Pause, CheckCircle2, Loader2, SkipForward, RefreshCw, Circle, Minus } from 'lucide-react'
 import {
   useGrillStreamStore,
   getFlatContent,
@@ -387,6 +387,80 @@ export default function WizardGrillStep({
     advanceToNextTrack
   ])
 
+  // ── Re-evaluate same track (new round, no advance) ──
+  const handleReEvaluate = useCallback(() => {
+    if (!currentIteration || !activeTrack) return
+
+    // Capture decisions (same as handleSubmitAnswers)
+    const newDecisions: GrillDecision[] = []
+    for (const q of currentIteration.questions) {
+      const state = questionStates[q.id]
+      if (!state || (state.skipped && state.selectedOptions.length === 0)) continue
+      newDecisions.push({
+        trackId: activeTrack,
+        questionId: q.id,
+        questionText: q.header || q.question.slice(0, 60),
+        selectedOption: state.selectedOptions.join(', ') || 'Skipped',
+        otherText: state.otherText || undefined
+      })
+    }
+
+    // Merge decisions
+    const existingKeys = new Set(newDecisions.map((d) => `${d.trackId}:${d.questionId}`))
+    const merged = [
+      ...grillDecisions.filter((d) => !existingKeys.has(`${d.trackId}:${d.questionId}`)),
+      ...newDecisions
+    ]
+    onDecisionsChange(merged)
+
+    // Add user answers to chat
+    const userSummary = currentIteration.questions
+      .map((q) => {
+        const state = questionStates[q.id]
+        if (!state) return null
+        const answer = state.skipped
+          ? 'Skipped'
+          : state.selectedOptions.join(', ') + (state.otherText ? ` — ${state.otherText}` : '')
+        return `**${q.header || 'Q'}**: ${answer}`
+      })
+      .filter(Boolean)
+      .join('\n')
+
+    setChatMessages((prev) => [...prev, { type: 'user', content: userSummary }])
+
+    // Build iteration history from ALL decisions so far
+    const allDecisions = [...merged]
+    const iterationHistory = allDecisions
+      .map(
+        (d) =>
+          `- [${GRILL_TRACKS[d.trackId]?.name ?? d.trackId}] **${d.questionText}**: ${d.selectedOption}${d.otherText ? ` (${d.otherText})` : ''}`
+      )
+      .join('\n')
+
+    // Re-evaluate same track (non-advancing)
+    setPhase('evaluating')
+    useGrillStreamStore.getState().reset()
+
+    const existingTrackScore = trackScores.find((ts) => ts.trackId === activeTrack)
+
+    window.api.grillEvaluate({
+      workspaceId: 'greenfield',
+      trackId: activeTrack,
+      ideaTitle: projectName,
+      ideaDescription: projectDescription,
+      previousScore: existingTrackScore?.score,
+      greenfield: true,
+      projectName,
+      iterationHistory
+    }).catch((error) => {
+      console.error('Re-evaluation failed:', error)
+      setPhase('answering')
+    })
+  }, [
+    currentIteration, activeTrack, questionStates, grillDecisions,
+    onDecisionsChange, trackScores, projectName, projectDescription
+  ])
+
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
@@ -402,7 +476,7 @@ export default function WizardGrillStep({
         {/* Main content — Chat view */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Chat view */}
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 overflow-hidden">
             <GrillChatView
               messages={chatMessages}
               phase={phase}
@@ -419,7 +493,7 @@ export default function WizardGrillStep({
           </div>
 
           {/* Footer buttons */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-border-subtle bg-surface-base">
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border-subtle bg-surface-base flex-shrink-0">
             <button
               type="button"
               onClick={onBack}
@@ -432,7 +506,7 @@ export default function WizardGrillStep({
             </button>
 
             <div className="flex items-center gap-2">
-              {/* Skip Track button */}
+              {/* Skip Track */}
               {phase !== 'evaluating' && !allTracksDone && (
                 <button
                   type="button"
@@ -447,6 +521,21 @@ export default function WizardGrillStep({
                 </button>
               )}
 
+              {/* Submit & Re-evaluate (same track, new round) */}
+              {phase === 'answering' && (
+                <button
+                  type="button"
+                  onClick={handleReEvaluate}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium
+                             border border-primary text-primary hover:bg-primary/10
+                             transition-colors press-scale"
+                >
+                  <RefreshCw size={14} />
+                  Submit & Re-evaluate
+                </button>
+              )}
+
+              {/* Submit & Next (advance to next track) */}
               {phase === 'answering' && (
                 <button
                   type="button"
