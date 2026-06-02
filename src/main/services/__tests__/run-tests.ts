@@ -67,6 +67,7 @@ import './council.service.test'
 
 // ─── Run 14: Grill Plan + Resume ───
 import './grill-plan-and-resume.test'
+import './grill-handoff-utils.test'
 
 // ─── Run 15: Tool Chunk Processor (centralized pipeline) ───
 import '../../ipc/__tests__/tool-chunk-processor.test'

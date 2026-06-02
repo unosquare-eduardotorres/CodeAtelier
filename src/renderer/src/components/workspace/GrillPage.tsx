@@ -113,6 +113,7 @@ interface GrillPageProps {
   ideaTitle: string
   ideaDescription?: string
   isNewSession?: boolean
+  reviewMode?: boolean
   onBack: () => void
   onComplete: () => void
   onNavigateToGoals?: () => void
@@ -125,6 +126,7 @@ export default function GrillPage({
   ideaTitle,
   ideaDescription,
   isNewSession,
+  reviewMode,
   onBack,
   onComplete,
   onNavigateToGoals,

@@ -112,7 +112,9 @@ describe('LlamafileEmbeddingManager', () => {
       let sentInput: string[] = []
       global.fetch = (async (_url: string, init?: RequestInit) => {
         sentInput = parseInput(init)
-        return jsonResponse({ data: sentInput.map((s, i) => ({ index: i, embedding: [s.length] })) })
+        return jsonResponse({
+          data: sentInput.map((s, i) => ({ index: i, embedding: [s.length] }))
+        })
       }) as FetchFn
       const big = 'x'.repeat(cap * 3)
       const capped = await llamafileEmbeddingProvider.embed([big])

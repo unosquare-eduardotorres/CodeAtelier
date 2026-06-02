@@ -275,7 +275,14 @@ export default function IdeasList({
   // Bypasses startGrill so it never flips idea.status back to 'grilling'.
   const handleReviewPlan = (idea: Idea): void => {
     if (!onOpenGrillSession) return
-    onOpenGrillSession(idea.id, idea.grillConversationId ?? '', idea.title, false, idea.description, true)
+    onOpenGrillSession(
+      idea.id,
+      idea.grillConversationId ?? '',
+      idea.title,
+      false,
+      idea.description,
+      true
+    )
   }
 
   const handleGoToConversation = async (conversationId: string): Promise<void> => {

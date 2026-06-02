@@ -642,18 +642,18 @@ export class ChatStreamService {
     const workspacePath = chatAgentService.getWorkspacePath() ?? undefined
 
     const { onChunk, onComplete, onIntent, onPlanEvent } = this.buildStreamListeners({
-        conversationId,
-        requestId,
-        streamingRole,
-        phase,
-        streamedContent,
-        planInjected,
-        workspacePath,
-        specialistMeta,
-        adapterAgentId,
-        resolveDone,
-        rejectDone
-      })
+      conversationId,
+      requestId,
+      streamingRole,
+      phase,
+      streamedContent,
+      planInjected,
+      workspacePath,
+      specialistMeta,
+      adapterAgentId,
+      resolveDone,
+      rejectDone
+    })
 
     // ── Step 3 + 5: Mode switch + send ──
     try {

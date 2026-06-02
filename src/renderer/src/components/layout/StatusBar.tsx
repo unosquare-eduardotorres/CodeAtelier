@@ -10,15 +10,15 @@ import {
   GitBranch
 } from 'lucide-react'
 import type { ContextUsage } from '../../../../shared/types'
+import { StatusIndicator } from './status-bar/StatusIndicator'
 import {
-  StatusIndicator,
   computeAuditIndicator,
   computeGrillIndicator,
   computeGoalIndicator,
   computeCouncilIndicator,
   computeIndexingIndicator
-} from './status-bar/StatusIndicator'
-import type { MpaStatusInfo, IndexingStateInfo } from './status-bar/StatusIndicator'
+} from './status-bar/status-indicator-helpers'
+import type { MpaStatusInfo, IndexingStateInfo } from './status-bar/status-indicator-helpers'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 

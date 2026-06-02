@@ -7,7 +7,6 @@
  */
 
 import React from 'react'
-import type { ReactNode } from 'react'
 import {
   ClipboardList,
   FileCode,
@@ -19,41 +18,12 @@ import {
   ArrowRight,
   Lightbulb
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { remarkStripStrayBackticks } from '../remark-plugins'
 import type { StructuredPlan } from '../../../../../shared/types'
 import { MermaidDiagram } from '@renderer/components/common'
-import { RootCausesList, PhasesList } from './PlanHelpers'
-
-// ── SectionCard — reusable wrapper ──
-
-function SectionCard({
-  icon: Icon,
-  iconColor,
-  label,
-  className = 'pt-3 border-t border-border-subtle',
-  labelColor = 'text-text-secondary',
-  children
-}: {
-  icon: LucideIcon
-  iconColor?: string
-  label: string
-  className?: string
-  labelColor?: string
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <div className={className}>
-      <div className={`flex items-center gap-2 text-sm font-semibold ${labelColor} mb-2`}>
-        <Icon size={14} className={iconColor} />
-        {label}
-      </div>
-      {children}
-    </div>
-  )
-}
+import { RootCausesList, PhasesList, SectionCard } from './PlanHelpers'
 
 // ── Helpers ──
 

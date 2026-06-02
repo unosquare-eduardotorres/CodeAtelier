@@ -32,10 +32,7 @@ interface CdpResponse {
 
 let ws: WebSocket
 let msgId = 0
-const pending = new Map<
-  number,
-  { resolve: (v: CdpResponse) => void; reject: (e: Error) => void }
->()
+const pending = new Map<number, { resolve: (v: CdpResponse) => void; reject: (e: Error) => void }>()
 
 function cdpSend(method: string, params: Record<string, unknown> = {}): Promise<CdpResponse> {
   return new Promise((resolve, reject) => {

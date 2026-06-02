@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { ClipboardList, ChevronDown, ChevronRight } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { remarkStripStrayBackticks } from '../remark-plugins'
@@ -14,6 +16,34 @@ function riskColor(risk: 'low' | 'medium' | 'high'): string {
   if (risk === 'low') return 'text-success'
   if (risk === 'medium') return 'text-warning'
   return 'text-danger'
+}
+
+// ── SectionCard — reusable wrapper ──
+
+export function SectionCard({
+  icon: Icon,
+  iconColor,
+  label,
+  className = 'pt-3 border-t border-border-subtle',
+  labelColor = 'text-text-secondary',
+  children
+}: {
+  icon: LucideIcon
+  iconColor?: string
+  label: string
+  className?: string
+  labelColor?: string
+  children: ReactNode
+}): React.JSX.Element {
+  return (
+    <div className={className}>
+      <div className={`flex items-center gap-2 text-sm font-semibold ${labelColor} mb-2`}>
+        <Icon size={14} className={iconColor} />
+        {label}
+      </div>
+      {children}
+    </div>
+  )
 }
 
 export function RootCausesList({ rootCauses }: { rootCauses: PlanRootCause[] }): React.JSX.Element {
