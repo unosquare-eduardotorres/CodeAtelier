@@ -84,7 +84,9 @@ function mapResultRow(row: AuditResultRow): AuditResult {
 
 export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
   protected readonly tableName = 'audit_runs'
-  protected mapRow(row: AuditRunRow): AuditRun { return mapRunRow(row) }
+  protected mapRow(row: AuditRunRow): AuditRun {
+    return mapRunRow(row)
+  }
 
   /**
    * Create a new run, keeping only the 10 most recent runs for the workspace.
@@ -291,7 +293,6 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
 
     return mapRunRow(runRow, resultRows.map(mapResultRow))
   }
-
 
   /** Find a result by its ID. */
   findResultById(resultId: string): AuditResult | null {

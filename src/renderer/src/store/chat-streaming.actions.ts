@@ -15,11 +15,7 @@ import {
   StreamSegmentAccumulator,
   type SegmentState
 } from '@renderer/utils/stream-segment-accumulator'
-import type {
-  ConversationPhase,
-  Message,
-  ToolActivity
-} from '../../../shared/types'
+import type { ConversationPhase, Message, ToolActivity } from '../../../shared/types'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -47,7 +43,11 @@ export interface ChatStreamingState {
 }
 
 type GetFn = () => ChatStreamingState
-type SetFn = (partial: Partial<ChatStreamingState> | ((state: ChatStreamingState) => Partial<ChatStreamingState>)) => void
+type SetFn = (
+  partial:
+    | Partial<ChatStreamingState>
+    | ((state: ChatStreamingState) => Partial<ChatStreamingState>)
+) => void
 
 // ── ChatStreamingInternals ──────────────────────────────────────────────────
 

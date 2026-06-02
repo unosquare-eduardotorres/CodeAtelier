@@ -61,13 +61,14 @@ export default function GoalPhaseTimeline({
           const isCurrent = entry.phaseType === currentPhaseType && entry.status === 'running'
 
           return (
-            <div key={`${entry.phaseType}-${idx}`} className="flex items-start gap-3 mb-3 last:mb-0">
+            <div
+              key={`${entry.phaseType}-${idx}`}
+              className="flex items-start gap-3 mb-3 last:mb-0"
+            >
               {/* Connector line */}
               <div className="flex flex-col items-center">
                 <StatusIcon status={entry.status} />
-                {idx < entries.length - 1 && (
-                  <div className="w-px h-6 bg-border-subtle mt-1" />
-                )}
+                {idx < entries.length - 1 && <div className="w-px h-6 bg-border-subtle mt-1" />}
               </div>
 
               {/* Content */}
@@ -88,9 +89,7 @@ export default function GoalPhaseTimeline({
                   )}
                 </div>
                 <p className="text-xs text-text-muted mt-0.5">
-                  {isGate
-                    ? 'Review and approve the implementation plan'
-                    : config.description}
+                  {isGate ? 'Review and approve the implementation plan' : config.description}
                 </p>
               </div>
             </div>

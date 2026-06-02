@@ -7,7 +7,10 @@ interface AppPreferenceRow {
   updated_at: string
 }
 
-export class AppPreferenceRepository extends BaseRepository<AppPreferenceRow, { key: string; value: string }> {
+export class AppPreferenceRepository extends BaseRepository<
+  AppPreferenceRow,
+  { key: string; value: string }
+> {
   protected readonly tableName = 'app_preferences'
   protected mapRow(row: AppPreferenceRow): { key: string; value: string } {
     return { key: row.key, value: row.value }

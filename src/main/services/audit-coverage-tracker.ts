@@ -105,7 +105,11 @@ export class AuditCoverageTracker {
     const input = chunk.toolInput.trim()
 
     // Read/Write/Edit tools: toolInput IS the file path (relative, no spaces)
-    if ((toolName === 'Read' || toolName === 'Write' || toolName === 'Edit') && input && !input.includes(' ')) {
+    if (
+      (toolName === 'Read' || toolName === 'Write' || toolName === 'Edit') &&
+      input &&
+      !input.includes(' ')
+    ) {
       this.inspectedFiles.add(this.normalizePath(input))
       return
     }

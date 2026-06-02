@@ -30,8 +30,6 @@ interface BackgroundSessionState {
 
   /** Mark a permission as having fallen back to badge display (toast dismissed/timed out). */
   markBadgeFallback: (id: string) => void
-
-
 }
 
 // Preserve Zustand state across HMR (dev only)
@@ -39,7 +37,7 @@ const previousState = import.meta.hot?.data?.backgroundSessionStoreState as
   | Partial<BackgroundSessionState>
   | undefined
 
-export const useBackgroundSessionStore = create<BackgroundSessionState>((set, get) => ({
+export const useBackgroundSessionStore = create<BackgroundSessionState>((set, _get) => ({
   statuses: previousState?.statuses ?? {},
   pendingPermissions: previousState?.pendingPermissions ?? [],
 
@@ -63,8 +61,7 @@ export const useBackgroundSessionStore = create<BackgroundSessionState>((set, ge
       pendingPermissions: s.pendingPermissions.map((p) =>
         p.id === id ? { ...p, badgeFallback: true } : p
       )
-    })),
-
+    }))
 }))
 
 // Preserve state on HMR dispose

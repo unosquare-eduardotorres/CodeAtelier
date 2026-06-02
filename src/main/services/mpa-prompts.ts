@@ -2,7 +2,6 @@ import type { GrillDecision, MpaPlanArtifact, MpaVerifyReport } from '../../shar
 import { sanitizePromptInput } from './sanitize-prompt-input'
 import { resolvePromptVerbosity } from '../../shared/constants'
 
-
 // ── Phase 1: Planner Agent Prompt ──
 
 export function buildPlannerSystemPrompt(params: {

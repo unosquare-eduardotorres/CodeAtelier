@@ -261,7 +261,7 @@ export class OpenCodeConfigWriter {
   // ── Private ──
 
   private buildConfig(opts: OpenCodeConfigWriterOptions): OpenCodeConfig {
-    const { provider, workspacePath, workspaceId, contextTier } = opts
+    const { provider, workspacePath, contextTier } = opts
     const isLocal = opts.isLocalProvider ?? false
 
     // Resolve the model string in OpenCode format: provider/model

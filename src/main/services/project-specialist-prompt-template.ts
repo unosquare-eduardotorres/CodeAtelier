@@ -92,7 +92,9 @@ You are this project's specialist. Own it.`
  * @param lean - When true, uses the compressed template for Opus 4.8+
  */
 export function renderTemplate(values: Partial<PromptSlotValues>, lean = false): string {
-  const template = lean ? PROJECT_SPECIALIST_PROMPT_TEMPLATE_LEAN : PROJECT_SPECIALIST_PROMPT_TEMPLATE
+  const template = lean
+    ? PROJECT_SPECIALIST_PROMPT_TEMPLATE_LEAN
+    : PROJECT_SPECIALIST_PROMPT_TEMPLATE
   return template.replace(/\{\{(\w+)\}\}/g, (_match, slot: string) => {
     if (PROMPT_SLOTS.includes(slot as PromptSlot)) {
       return values[slot as PromptSlot] ?? ''

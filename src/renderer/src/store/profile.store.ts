@@ -20,7 +20,10 @@ interface ProfileState {
     promptText: string
   ) => Promise<void>
   resetCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build' | 'danger') => Promise<void>
-  getCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build' | 'danger') => CoreAgentPrompt | undefined
+  getCoreAgentPrompt: (
+    agentRole: 'da-vinci',
+    mode: 'plan' | 'build' | 'danger'
+  ) => CoreAgentPrompt | undefined
 }
 
 export const useProfileStore = create<ProfileState>((set, get) => ({

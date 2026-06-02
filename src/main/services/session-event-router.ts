@@ -9,9 +9,7 @@
 
 import type { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type {
-  PendingPermission
-} from '../../shared/types'
+import type { PendingPermission } from '../../shared/types'
 
 export interface TaggedEvent {
   workspaceId: string
@@ -34,11 +32,7 @@ export class SessionEventRouter {
    * Send a workspace-scoped event to the renderer.
    * Enforces workspaceId is always present in the payload.
    */
-  sendWorkspaceEvent(
-    channel: string,
-    workspaceId: string,
-    payload: Record<string, unknown>
-  ): void {
+  sendWorkspaceEvent(channel: string, workspaceId: string, payload: Record<string, unknown>): void {
     this.mainWindow.webContents.send(channel, { workspaceId, ...payload })
   }
 
@@ -49,7 +43,6 @@ export class SessionEventRouter {
       ...permission
     })
   }
-
 }
 
 // ── Singleton ──
@@ -66,5 +59,3 @@ export function getSessionEventRouter(): SessionEventRouter {
   }
   return _sessionEventRouter
 }
-
-

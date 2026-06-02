@@ -111,8 +111,14 @@ export function buildLocalMcpServersFromRegistry(
   opts: OpenCodeConfigWriterOptions,
   serverBasePath: string,
   dbDir?: string
-): Record<string, { type: 'local'; command: string[]; environment?: Record<string, string>; timeout: number }> {
-  const servers: Record<string, { type: 'local'; command: string[]; environment?: Record<string, string>; timeout: number }> = {}
+): Record<
+  string,
+  { type: 'local'; command: string[]; environment?: Record<string, string>; timeout: number }
+> {
+  const servers: Record<
+    string,
+    { type: 'local'; command: string[]; environment?: Record<string, string>; timeout: number }
+  > = {}
 
   for (const def of defs) {
     if (!def.condition(opts)) continue
@@ -145,8 +151,14 @@ export interface FormatterDef {
 export const FORMATTER_DEFS: FormatterDef[] = [
   {
     configFiles: [
-      '.prettierrc', '.prettierrc.json', '.prettierrc.js', '.prettierrc.cjs',
-      '.prettierrc.mjs', 'prettier.config.js', 'prettier.config.cjs', 'prettier.config.mjs'
+      '.prettierrc',
+      '.prettierrc.json',
+      '.prettierrc.js',
+      '.prettierrc.cjs',
+      '.prettierrc.mjs',
+      'prettier.config.js',
+      'prettier.config.cjs',
+      'prettier.config.mjs'
     ],
     command: ['npx', 'prettier', '--write'],
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.json', '.css', '.md']

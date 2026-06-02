@@ -32,11 +32,7 @@ export interface TimedCleanupMap {
     handler: (data: T) => void
   ) => void
   /** Schedule auto-cleanup if completion event doesn't fire within timeout. */
-  scheduleAutoCleanup: (
-    workspaceId: string,
-    cleanups: Array<() => void>,
-    timeoutMs: number
-  ) => void
+  scheduleAutoCleanup: (workspaceId: string, cleanups: Array<() => void>, timeoutMs: number) => void
   /** Run cleanup immediately (called on completion). */
   runCleanup: (workspaceId: string) => void
 }
@@ -68,11 +64,7 @@ export function createTimedCleanupMap(label: string): TimedCleanupMap {
       cleanups.push(() => emitter.off(event, handler as (...args: unknown[]) => void))
     },
 
-    scheduleAutoCleanup(
-      workspaceId: string,
-      cleanups: Array<() => void>,
-      timeoutMs: number
-    ): void {
+    scheduleAutoCleanup(workspaceId: string, cleanups: Array<() => void>, timeoutMs: number): void {
       const timeoutId = setTimeout(() => {
         if (map.has(workspaceId)) {
           cleanupLog.warn(

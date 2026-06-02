@@ -53,18 +53,15 @@ export default function HealthLanding({
     return cleanup
   }, [workspaceId, refresh])
 
-  const handleDelete = useCallback(
-    async (runId: string) => {
-      try {
-        await window.api.auditDeleteRun({ runId })
-        setHistory((prev) => prev.filter((r) => r.id !== runId))
-      } catch {
-        // non-critical
-      }
-      setDeleteTarget(null)
-    },
-    []
-  )
+  const handleDelete = useCallback(async (runId: string) => {
+    try {
+      await window.api.auditDeleteRun({ runId })
+      setHistory((prev) => prev.filter((r) => r.id !== runId))
+    } catch {
+      // non-critical
+    }
+    setDeleteTarget(null)
+  }, [])
 
   // ── Loading skeleton ──
   if (isLoading) {

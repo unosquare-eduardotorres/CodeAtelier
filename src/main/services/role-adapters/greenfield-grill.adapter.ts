@@ -102,14 +102,26 @@ export class GreenfieldGrillRoleAdapter extends BaseRoleAdapter {
     return {
       allowedTools: ['WebSearch', 'WebFetch'],
       disallowedTools: [
-        'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep',
-        'Agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion',
-        'TodoWrite', 'TaskCreate', 'TaskUpdate'
+        'Read',
+        'Write',
+        'Edit',
+        'Bash',
+        'Glob',
+        'Grep',
+        'Agent',
+        'ToolSearch',
+        'ExitPlanMode',
+        'AskUserQuestion',
+        'TodoWrite',
+        'TaskCreate',
+        'TaskUpdate'
       ]
     }
   }
 
-  protected override persistMemory(): void { /* no-op */ }
+  protected override persistMemory(): void {
+    /* no-op */
+  }
 
   override onSessionStop(): void {
     this.systemPrompt = null
@@ -129,9 +141,7 @@ export class GreenfieldGrillRoleAdapter extends BaseRoleAdapter {
       ? GRILL_QUESTION_QUALITY_RULES_LEAN
       : `${GRILL_QUESTION_QUALITY_RULES}\n${GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA}`
 
-    const scoringRules = lean
-      ? GRILL_SCORING_RULES_LEAN
-      : GRILL_SCORING_RULES
+    const scoringRules = lean ? GRILL_SCORING_RULES_LEAN : GRILL_SCORING_RULES
 
     // Lean: compressed instructions — Opus narrates naturally
     const instructions = lean

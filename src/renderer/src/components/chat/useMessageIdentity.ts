@@ -7,11 +7,7 @@
 
 import { useMemo } from 'react'
 import type { Message } from '../../../../shared/types'
-import {
-  useSpecialistStore,
-  useChatStore,
-  useWorkspaceStore
-} from '@renderer/store'
+import { useSpecialistStore, useChatStore, useWorkspaceStore } from '@renderer/store'
 import { CORE_AGENT_DEFAULTS, USER_AVATAR_KEY } from '@renderer/utils/agentIdentity'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'

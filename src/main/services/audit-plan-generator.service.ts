@@ -151,9 +151,7 @@ class AuditPlanGeneratorService {
       return stdout
     } catch (err) {
       planLog.error('[audit-plan] Claude CLI call failed:', err)
-      throw new Error(
-        `Plan generation failed: ${err instanceof Error ? err.message : String(err)}`
-      )
+      throw new Error(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 

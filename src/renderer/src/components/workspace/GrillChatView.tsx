@@ -52,7 +52,13 @@ const GRILL_IDENTITY: MessageIdentity = {
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
-export type GrillPhase = 'selecting' | 'evaluating' | 'answering' | 'paused' | 'completing' | 'completed'
+export type GrillPhase =
+  | 'selecting'
+  | 'evaluating'
+  | 'answering'
+  | 'paused'
+  | 'completing'
+  | 'completed'
 
 interface GrillChatViewProps {
   messages: GrillChatMessage[]

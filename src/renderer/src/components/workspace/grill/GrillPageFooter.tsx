@@ -1,4 +1,15 @@
-import { ArrowLeft, Check, FileText, Landmark, LayoutGrid, Loader2, MessageSquare, Play, Target, Undo2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  Check,
+  FileText,
+  Landmark,
+  LayoutGrid,
+  Loader2,
+  MessageSquare,
+  Play,
+  Target,
+  Undo2
+} from 'lucide-react'
 import type { GrillPhase } from '../GrillChatView'
 
 interface GrillPageFooterProps {
@@ -156,20 +167,23 @@ export default function GrillPageFooter({
               Switch Track
             </button>
           )}
-          {phase !== 'evaluating' && phase !== 'selecting' && phase !== 'completing' && phase !== 'completed' && (
-            <button
-              onClick={onConvertDirectly}
-              aria-label="Convert idea directly to conversation"
-              className={`flex items-center gap-1.5 rounded-lg text-sm transition-colors press-scale ${
-                shouldSuggestCompletion
-                  ? 'px-5 py-2.5 bg-success hover:bg-success-hover text-white font-semibold'
-                  : 'px-3 py-2.5 border border-success text-success hover:bg-success/10 font-medium'
-              }`}
-            >
-              {shouldSuggestCompletion && <Check size={14} />}
-              Convert Directly
-            </button>
-          )}
+          {phase !== 'evaluating' &&
+            phase !== 'selecting' &&
+            phase !== 'completing' &&
+            phase !== 'completed' && (
+              <button
+                onClick={onConvertDirectly}
+                aria-label="Convert idea directly to conversation"
+                className={`flex items-center gap-1.5 rounded-lg text-sm transition-colors press-scale ${
+                  shouldSuggestCompletion
+                    ? 'px-5 py-2.5 bg-success hover:bg-success-hover text-white font-semibold'
+                    : 'px-3 py-2.5 border border-success text-success hover:bg-success/10 font-medium'
+                }`}
+              >
+                {shouldSuggestCompletion && <Check size={14} />}
+                Convert Directly
+              </button>
+            )}
           {phase === 'answering' && !questionsRepeated && (
             <button
               onClick={onSubmit}
@@ -181,16 +195,21 @@ export default function GrillPageFooter({
               Submit &amp; Re-evaluate
             </button>
           )}
-          {onStartGoal && phase !== 'evaluating' && phase !== 'selecting' && phase !== 'completing' && phase !== 'completed' && trackScoresCount > 0 && (
-            <button
-              onClick={onStartGoal}
-              aria-label="Start goal-based quality completion"
-              className="flex items-center gap-1.5 px-5 py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg text-sm font-semibold transition-colors press-scale"
-            >
-              <Target size={14} />
-              Start Goal
-            </button>
-          )}
+          {onStartGoal &&
+            phase !== 'evaluating' &&
+            phase !== 'selecting' &&
+            phase !== 'completing' &&
+            phase !== 'completed' &&
+            trackScoresCount > 0 && (
+              <button
+                onClick={onStartGoal}
+                aria-label="Start goal-based quality completion"
+                className="flex items-center gap-1.5 px-5 py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg text-sm font-semibold transition-colors press-scale"
+              >
+                <Target size={14} />
+                Start Goal
+              </button>
+            )}
         </div>
       </div>
     </div>

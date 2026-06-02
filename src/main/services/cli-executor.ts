@@ -25,7 +25,11 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { StreamChunk } from './agent-base.service'
-import { parseNdjsonStream, writeNdjsonMessage, buildUserMessage } from './cli-executor/ndjson-parser'
+import {
+  parseNdjsonStream,
+  writeNdjsonMessage,
+  buildUserMessage
+} from './cli-executor/ndjson-parser'
 import {
   HeartbeatMonitor,
   TokenAccountant,
@@ -197,7 +201,9 @@ export class CLIExecutor {
       // If continuing an existing session, write the prompt to stdin
       if (options.continueSession && this.isAlive() && this.cliProcess?.stdin) {
         if (!this.cliReadyForInput) {
-          executorLog.warn('[CLI:send] CLI not ready for input — previous turn may still be processing')
+          executorLog.warn(
+            '[CLI:send] CLI not ready for input — previous turn may still be processing'
+          )
         }
         executorLog.info('[CLI:send] Continuing existing session — writing message to stdin')
         await this.writeToStdin(buildUserMessage(options.prompt))
@@ -231,7 +237,12 @@ export class CLIExecutor {
             this.ndjsonIterator.next(),
             new Promise<never>((_, reject) => {
               timeoutHandle = setTimeout(
-                () => reject(new Error(`CLI message timeout — no NDJSON received for ${MESSAGE_TIMEOUT_MS / 1000}s`)),
+                () =>
+                  reject(
+                    new Error(
+                      `CLI message timeout — no NDJSON received for ${MESSAGE_TIMEOUT_MS / 1000}s`
+                    )
+                  ),
                 MESSAGE_TIMEOUT_MS
               )
             })
@@ -248,7 +259,9 @@ export class CLIExecutor {
 
           // Log first 5 messages for diagnostics — helps verify CLI is producing expected types
           if (msgCount <= 5) {
-            executorLog.info(`[CLI:msg#${msgCount}] type=${msg.type} subtype=${(msg as Record<string, unknown>).subtype ?? 'none'}`)
+            executorLog.info(
+              `[CLI:msg#${msgCount}] type=${msg.type} subtype=${(msg as Record<string, unknown>).subtype ?? 'none'}`
+            )
           }
 
           // Emit pending heartbeat if timer fired between iterations
@@ -270,7 +283,9 @@ export class CLIExecutor {
           // finalize. The iterator stays alive for the next turn.
           if (msg.type === 'result') {
             this.cliReadyForInput = true
-            executorLog.info('[CLI:result-received] Turn complete — pausing stream read (ready for input)')
+            executorLog.info(
+              '[CLI:result-received] Turn complete — pausing stream read (ready for input)'
+            )
             break
           }
         }
@@ -286,9 +301,7 @@ export class CLIExecutor {
 
       // Detect CLI crash: process exited with non-zero code and produced no messages
       if (msgCount === 0 && this.lastExitCode !== null && this.lastExitCode !== 0) {
-        const stderrHint = this.lastStderrError
-          ? ` — ${this.lastStderrError}`
-          : ''
+        const stderrHint = this.lastStderrError ? ` — ${this.lastStderrError}` : ''
         executorLog.error(
           `[CLI:crash-detected] CLI exited with code ${this.lastExitCode} before producing any output${stderrHint}`
         )
@@ -425,7 +438,11 @@ export class CLIExecutor {
 
     // Properly close the async generator to release stream references
     if (iter) {
-      try { await iter.return?.(undefined) } catch { /* ignore — process is dying */ }
+      try {
+        await iter.return?.(undefined)
+      } catch {
+        /* ignore — process is dying */
+      }
     }
 
     return new Promise<void>((resolve) => {
@@ -482,8 +499,8 @@ export class CLIExecutor {
     const allowedToolsIdx = args.indexOf('--allowedTools')
     executorLog.info(
       `[CLI:mcp-diag] mcp-config=${mcpConfigIdx >= 0 ? args[mcpConfigIdx + 1] : 'NONE'} ` +
-      `allowedToolsCount=${allowedToolsIdx >= 0 ? args[allowedToolsIdx + 1]?.split(',').length : 0} ` +
-      `permissionMode=${args[args.indexOf('--permission-mode') + 1] ?? 'unset'}`
+        `allowedToolsCount=${allowedToolsIdx >= 0 ? args[allowedToolsIdx + 1]?.split(',').length : 0} ` +
+        `permissionMode=${args[args.indexOf('--permission-mode') + 1] ?? 'unset'}`
     )
 
     this.cliProcess = spawn('claude', args, {
@@ -775,6 +792,3 @@ export function cleanupStalePromptFiles(): void {
     // Non-fatal — directory access issues
   }
 }
-
-
-

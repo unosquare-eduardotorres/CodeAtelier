@@ -324,17 +324,6 @@ describe('VectorSearchService.indexProject — phase transitions', () => {
   })
 })
 
-describe('EmbeddingProviderService — WASM config', () => {
-  const source = readFileSync(
-    path.join(process.cwd(), 'src/main/services/embedding-provider.service.ts'),
-    'utf-8'
-  )
-
-  test('numThreads is set to 1 (single-threaded WASM)', () => {
-    assert.ok(source.includes('numThreads = 1'), 'Should use single-threaded WASM (Electron main process constraint)')
-  })
-})
-
 // ── Summary ──
 
 console.log(`\n${'─'.repeat(40)}`)

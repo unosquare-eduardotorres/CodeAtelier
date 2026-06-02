@@ -1,8 +1,7 @@
 import { EventEmitter } from 'node:events'
 import log from 'electron-log/main'
 import { memoryCheckpoint } from './indexing-diagnostics'
-import { embeddingProvider } from './embedding-provider.service'
-import { embeddingWorkerManager } from './embedding-worker-manager'
+import { llamafileEmbeddingProvider } from './llamafile-embedding.service'
 import { descriptionCache } from './description-cache.service'
 import { generateHeuristicDescription } from './heuristic-description.service'
 import {
@@ -18,18 +17,22 @@ import {
   type EmbeddingEntry
 } from '../db/repositories/chunk-embedding.repository'
 import { getDatabase } from '../db/index'
+import { LLAMAFILE_EMBEDDING } from '../../shared/constants'
 import type { IndexingState, SemanticSearchResult } from '../../shared/types'
 
-/** Embedding model name — stored in indexing_state for provenance */
-const EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2' as const
+/**
+ * Embedding model name — stored in indexing_state for provenance. Changing this
+ * value invalidates persisted embeddings (see loadPersistedIndex) and triggers
+ * a full re-index, which transparently handles the vector-dimension change.
+ */
+const EMBEDDING_MODEL_NAME = LLAMAFILE_EMBEDDING.model.modelName
 
 /**
  * Max batch size for embedding calls.
  *
- * With the WASM backend (via patch-package swap of onnxruntime-node →
- * onnxruntime-web), memory is managed by the V8/WASM runtime. Batch size 32
- * is safe with the smaller all-MiniLM-L6-v2 model (~60MB peak). The adaptive
- * retry in embed() will halve the batch on OOM errors as a safety net.
+ * Texts are POSTed to the llamafile server's /v1/embeddings endpoint in
+ * batches of 32. The adaptive retry in embed() halves the batch on error as a
+ * safety net for oversized requests.
  */
 const EMBEDDING_BATCH_SIZE = 32
 
@@ -469,7 +472,12 @@ class VectorSearchService extends EventEmitter {
 
       // Phase 1: Preprocess chunks
       const processedChunks = await this.preprocessChunks(
-        workspaceId, workspacePath, tags, fileContents, preprocessOpts, state
+        workspaceId,
+        workspacePath,
+        tags,
+        fileContents,
+        preprocessOpts,
+        state
       )
 
       if (preprocessOpts.cancelled) {
@@ -481,12 +489,25 @@ class VectorSearchService extends EventEmitter {
 
       // Phase 2: Embed chunks with checkpoint support
       const result = await this.embedChunksWithCheckpoints(
-        workspaceId, workspacePath, processedChunks, fileContents, preprocessOpts, state, collection
+        workspaceId,
+        workspacePath,
+        processedChunks,
+        fileContents,
+        preprocessOpts,
+        state,
+        collection
       )
 
       // Phase 3: Persist (only on success)
       if (result === 'completed') {
-        this.persistIndex(workspaceId, processedChunks, fileContents, workspacePath, state, collection)
+        this.persistIndex(
+          workspaceId,
+          processedChunks,
+          fileContents,
+          workspacePath,
+          state,
+          collection
+        )
       } else if (result === 'cancelled') {
         state.status = 'idle'
         this.updateIndexingStateDb(workspaceId, 'idle')
@@ -526,13 +547,20 @@ class VectorSearchService extends EventEmitter {
 
     // Shared description strategy (also used by reindexFiles)
     const { getDescription, getBatchDescriptions } = this.setupDescriptionStrategy(
-      preprocessOpts, workspacePath, state
+      preprocessOpts,
+      workspacePath,
+      state
     )
 
-    memoryCheckpoint('PREPROCESS_PIPELINE_ENTER', { generateDescriptions: !!preprocessOpts.generateDescriptions })
+    memoryCheckpoint('PREPROCESS_PIPELINE_ENTER', {
+      generateDescriptions: !!preprocessOpts.generateDescriptions
+    })
 
     const processedChunks = await runPreprocessingPipeline(
-      tags, fileContents, projectName, preprocessOpts,
+      tags,
+      fileContents,
+      projectName,
+      preprocessOpts,
       (update) => {
         state.processedFiles = update.processedFiles
         state.totalFiles = update.totalFiles
@@ -553,7 +581,10 @@ class VectorSearchService extends EventEmitter {
       }
     )
 
-    memoryCheckpoint('PREPROCESS_PIPELINE_EXIT', { processedChunks: processedChunks.length, cancelled: !!preprocessOpts.cancelled })
+    memoryCheckpoint('PREPROCESS_PIPELINE_EXIT', {
+      processedChunks: processedChunks.length,
+      cancelled: !!preprocessOpts.cancelled
+    })
     return processedChunks
   }
 
@@ -607,8 +638,14 @@ class VectorSearchService extends EventEmitter {
 
     // Sub-method 3: Core batch embedding loop with checkpointing
     return this.embedBatchLoop(
-      workspaceId, processedChunks, startOffset, collection,
-      state, preprocessOpts, fileMtimes, embedFn
+      workspaceId,
+      processedChunks,
+      startOffset,
+      collection,
+      state,
+      preprocessOpts,
+      fileMtimes,
+      embedFn
     )
   }
 
@@ -639,7 +676,10 @@ class VectorSearchService extends EventEmitter {
   /**
    * Build a map of relative file path → mtime for persistence.
    */
-  private buildFileMtimeMap(workspacePath: string, fileContents: Map<string, string>): Map<string, number> {
+  private buildFileMtimeMap(
+    workspacePath: string,
+    fileContents: Map<string, string>
+  ): Map<string, number> {
     const fileMtimes = new Map<string, number>()
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import for persistence
     const { statSync } = require('node:fs') as typeof import('node:fs')
@@ -692,7 +732,8 @@ class VectorSearchService extends EventEmitter {
 
     // Shared description strategy (also used by preprocessChunks)
     const { getDescription, getBatchDescriptions } = this.setupDescriptionStrategy(
-      preprocessOpts, workspacePath
+      preprocessOpts,
+      workspacePath
     )
 
     // Preprocess only the changed chunks
@@ -709,8 +750,8 @@ class VectorSearchService extends EventEmitter {
     if (processedChunks.length === 0) return
 
     // Ensure embedding model is loaded before first use
-    if (!embeddingProvider.isReady) {
-      await embeddingProvider.initialize()
+    if (!llamafileEmbeddingProvider.isReady) {
+      await llamafileEmbeddingProvider.initialize()
     }
 
     // Embed and upsert in batches
@@ -719,7 +760,7 @@ class VectorSearchService extends EventEmitter {
       const texts = batch.map((c) => c.embedText)
 
       try {
-        const embeddings = await embeddingProvider.embed(texts)
+        const embeddings = await llamafileEmbeddingProvider.embed(texts)
         const ids = batch.map((c) => c.id)
         collection.upsert(ids, embeddings, batch)
       } catch (error) {
@@ -763,10 +804,10 @@ class VectorSearchService extends EventEmitter {
 
     try {
       // Ensure embedding model is loaded before first use
-      if (!embeddingProvider.isReady) {
-        await embeddingProvider.initialize()
+      if (!llamafileEmbeddingProvider.isReady) {
+        await llamafileEmbeddingProvider.initialize()
       }
-      const [queryEmbedding] = await embeddingProvider.embed([query])
+      const [queryEmbedding] = await llamafileEmbeddingProvider.embed([query])
       return collection.query(queryEmbedding, options?.nResults ?? 5, options?.where)
     } catch (error) {
       log.error(`[VectorSearch] Search failed for workspace ${workspaceId}:`, error)
@@ -791,10 +832,10 @@ class VectorSearchService extends EventEmitter {
 
     try {
       // Ensure embedding model is loaded before first use
-      if (!embeddingProvider.isReady) {
-        await embeddingProvider.initialize()
+      if (!llamafileEmbeddingProvider.isReady) {
+        await llamafileEmbeddingProvider.initialize()
       }
-      const [codeEmbedding] = await embeddingProvider.embed([code])
+      const [codeEmbedding] = await llamafileEmbeddingProvider.embed([code])
       const where = opts?.language ? { language: opts.language } : undefined
       return collection.query(codeEmbedding, opts?.nResults ?? 10, where)
     } catch (error) {
@@ -976,10 +1017,7 @@ class VectorSearchService extends EventEmitter {
    * Select k diverse cluster centers using maximin initialization.
    * Picks entries that maximize minimum distance from all existing centers.
    */
-  private selectClusterCenters(
-    entries: { embedding: number[] }[],
-    k: number
-  ): number[] {
+  private selectClusterCenters(entries: { embedding: number[] }[], k: number): number[] {
     const centers: number[] = [0] // start with first entry
     while (centers.length < Math.min(k, entries.length)) {
       let bestIdx = -1
@@ -1008,7 +1046,10 @@ class VectorSearchService extends EventEmitter {
    * Returns cluster objects with representative and member lists.
    */
   private assignClustersToMembers(
-    entries: { embedding: number[]; chunk: { metadata: { filePath: string; symbolName: string } } }[],
+    entries: {
+      embedding: number[]
+      chunk: { metadata: { filePath: string; symbolName: string } }
+    }[],
     centers: number[]
   ): {
     clusterId: number
@@ -1046,39 +1087,21 @@ class VectorSearchService extends EventEmitter {
   }
 
   /**
-   * Initialize the embedding model — prefer utility process worker,
-   * fallback to main-thread WASM backend.
-   * Returns the embed function to use for batch embedding.
+   * Initialize the embedding model via the llamafile sidecar (the only backend).
+   * Returns the embed function to use for batch embedding. Rejects if the
+   * sidecar can't be downloaded or started — there is no WASM fallback.
    */
   private async initializeEmbeddingModel(): Promise<(texts: string[]) => Promise<number[][]>> {
-    let useWorker = false
-    if (!embeddingWorkerManager.isReady) {
-      memoryCheckpoint('EMBEDDING_WORKER_INIT_START')
-      log.info('[VectorSearch] Initializing embedding worker (utility process)...')
-      try {
-        await embeddingWorkerManager.initialize()
-        useWorker = true
-        memoryCheckpoint('EMBEDDING_WORKER_INIT_DONE')
-      } catch (workerError) {
-        log.warn(
-          '[VectorSearch] Utility process failed, falling back to main-thread embedding:',
-          workerError
-        )
-        memoryCheckpoint('EMBEDDING_WORKER_FALLBACK', {
-          error: (workerError as Error).message
-        })
-        if (!embeddingProvider.isReady) {
-          await embeddingProvider.initialize()
-        }
-      }
+    if (!llamafileEmbeddingProvider.isReady) {
+      memoryCheckpoint('EMBEDDING_LLAMAFILE_INIT_START')
+      log.info('[VectorSearch] Initializing llamafile embedding server...')
+      await llamafileEmbeddingProvider.initialize()
+      memoryCheckpoint('EMBEDDING_LLAMAFILE_INIT_DONE')
     } else {
-      useWorker = true
-      memoryCheckpoint('EMBEDDING_WORKER_ALREADY_READY')
+      memoryCheckpoint('EMBEDDING_LLAMAFILE_ALREADY_READY')
     }
 
-    return useWorker
-      ? (texts: string[]) => embeddingWorkerManager.embed(texts)
-      : (texts: string[]) => embeddingProvider.embed(texts)
+    return (texts: string[]) => llamafileEmbeddingProvider.embed(texts)
   }
 
   /**
@@ -1134,9 +1157,7 @@ class VectorSearchService extends EventEmitter {
     fileMtimes: Map<string, number>,
     embedFn: (texts: string[]) => Promise<number[][]>
   ): Promise<'completed' | 'cancelled' | 'error'> {
-    const totalBatches = Math.ceil(
-      (processedChunks.length - startOffset) / EMBEDDING_BATCH_SIZE
-    )
+    const totalBatches = Math.ceil((processedChunks.length - startOffset) / EMBEDDING_BATCH_SIZE)
     let batchesSinceCheckpoint = 0
 
     for (let i = startOffset; i < processedChunks.length; i += EMBEDDING_BATCH_SIZE) {
@@ -1154,8 +1175,7 @@ class VectorSearchService extends EventEmitter {
       const batch = processedChunks.slice(i, i + EMBEDDING_BATCH_SIZE)
       const texts = batch.map((c) => c.embedText)
 
-      const isLogBatch =
-        batchNum === 1 || batchNum % 10 === 0 || batchNum === totalBatches
+      const isLogBatch = batchNum === 1 || batchNum % 10 === 0 || batchNum === totalBatches
       if (isLogBatch) {
         memoryCheckpoint(`EMBED_BATCH_${batchNum}/${totalBatches}`, {
           offset: i,

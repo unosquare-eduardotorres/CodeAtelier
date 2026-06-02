@@ -15,11 +15,7 @@ export class MpaVerifierAdapter extends MpaBaseAdapter {
   private readonly goal: string
   private readonly plan: MpaPlanArtifact
 
-  constructor(params: {
-    workspaceId: string
-    goal: string
-    plan: MpaPlanArtifact
-  }) {
+  constructor(params: { workspaceId: string; goal: string; plan: MpaPlanArtifact }) {
     super({ workspaceId: params.workspaceId })
     this.goal = params.goal
     this.plan = params.plan

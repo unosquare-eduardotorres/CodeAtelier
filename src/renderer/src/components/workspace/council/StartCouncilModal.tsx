@@ -81,9 +81,7 @@ export default function StartCouncilModal({
           </div>
 
           {/* Per-type description */}
-          <p className="text-xs text-text-secondary">
-            {TYPE_DESCRIPTIONS[inputType]}
-          </p>
+          <p className="text-xs text-text-secondary">{TYPE_DESCRIPTIONS[inputType]}</p>
 
           {/* Content textarea */}
           <textarea

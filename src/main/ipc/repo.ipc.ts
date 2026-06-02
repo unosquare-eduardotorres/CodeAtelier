@@ -23,20 +23,17 @@ export function registerRepoIpc(): void {
   })
 
   // Set or update the origin remote URL
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_SET_REMOTE,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_SET_REMOTE)
-      const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.REPO_SET_REMOTE)
-      const remoteUrl = requireString(args, 'remoteUrl', IPC_CHANNELS.REPO_SET_REMOTE)
+  ipcMain.handle(IPC_CHANNELS.REPO_SET_REMOTE, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_SET_REMOTE)
+    const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.REPO_SET_REMOTE)
+    const remoteUrl = requireString(args, 'remoteUrl', IPC_CHANNELS.REPO_SET_REMOTE)
 
-      const workspace = workspaceRepository.findById(workspaceId)
-      if (!workspace) throw new Error('Workspace not found')
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
 
-      await repoService.setRemote(workspace.repoPath, remoteUrl)
-    }
-  )
+    await repoService.setRemote(workspace.repoPath, remoteUrl)
+  })
 
   // Get repo info (isRepo, hasRemote, remoteUrl, currentBranch)
   ipcMain.handle(IPC_CHANNELS.REPO_GET_INFO, async (event, rawArgs: unknown) => {

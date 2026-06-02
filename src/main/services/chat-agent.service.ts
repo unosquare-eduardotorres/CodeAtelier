@@ -93,7 +93,9 @@ export class ChatAgentService extends EventEmitter {
       // Adapter may have changed (e.g., specialist build_status changed)
       const nextAdapter = this.resolveAdapter(workspacePath)
       if (nextAdapter !== existing.adapter) {
-        this.log.info(`[multi-session] Adapter changed for workspace ${workspaceId} — rebuilding session`)
+        this.log.info(
+          `[multi-session] Adapter changed for workspace ${workspaceId} — rebuilding session`
+        )
         await this.stopForWorkspace(workspaceId)
         // Fall through to create a new session below
       } else {

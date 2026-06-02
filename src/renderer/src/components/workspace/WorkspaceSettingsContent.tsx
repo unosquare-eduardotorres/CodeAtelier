@@ -64,6 +64,7 @@ export default function WorkspaceSettingsContent({
     ideaTitle: string
     ideaDescription?: string
     isNewSession?: boolean
+    reviewMode?: boolean
   } | null>(null)
 
   const workspacePath = activeWorkspace?.repoPath ?? null
@@ -177,6 +178,7 @@ export default function WorkspaceSettingsContent({
             ideaTitle={activeGrill.ideaTitle}
             ideaDescription={activeGrill.ideaDescription}
             isNewSession={activeGrill.isNewSession}
+            reviewMode={activeGrill.reviewMode}
             onBack={() => setActiveGrill(null)}
             onComplete={() => {
               setActiveGrill(null)
@@ -204,9 +206,17 @@ export default function WorkspaceSettingsContent({
                 conversationId,
                 ideaTitle,
                 isNewSession,
-                ideaDescription
+                ideaDescription,
+                reviewMode
               ) =>
-                setActiveGrill({ ideaId, conversationId, ideaTitle, ideaDescription, isNewSession })
+                setActiveGrill({
+                  ideaId,
+                  conversationId,
+                  ideaTitle,
+                  ideaDescription,
+                  isNewSession,
+                  reviewMode
+                })
               }
             />
           </div>

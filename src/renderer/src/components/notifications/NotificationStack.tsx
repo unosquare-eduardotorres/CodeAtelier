@@ -48,9 +48,7 @@ export default function NotificationStack(): React.JSX.Element | null {
 
   // Only show toasts for NON-active workspaces that haven't fallen back to badge
   const visiblePermissions = permissions.filter(
-    (p) =>
-      p.workspaceId !== activeWorkspaceId &&
-      !p.badgeFallback
+    (p) => p.workspaceId !== activeWorkspaceId && !p.badgeFallback
   )
 
   const handlePermissionRespond = useCallback(
@@ -92,12 +90,9 @@ export default function NotificationStack(): React.JSX.Element | null {
     [openWorkspace]
   )
 
-  const handleCompletionDismiss = useCallback(
-    (id: string) => {
-      setCompletions((prev) => prev.filter((c) => c.id !== id))
-    },
-    []
-  )
+  const handleCompletionDismiss = useCallback((id: string) => {
+    setCompletions((prev) => prev.filter((c) => c.id !== id))
+  }, [])
 
   const totalVisible = visiblePermissions.length + completions.length
   if (totalVisible === 0) return null

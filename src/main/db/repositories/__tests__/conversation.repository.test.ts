@@ -119,12 +119,16 @@ if (!env) {
         `INSERT INTO checkpoints (conversation_id, label, state_json) VALUES (?, ?, ?)`
       ).run(conv.id, 'test-checkpoint', '{}')
 
-      const before = db.prepare('SELECT COUNT(*) as cnt FROM checkpoints WHERE conversation_id = ?').get(conv.id) as { cnt: number }
+      const before = db
+        .prepare('SELECT COUNT(*) as cnt FROM checkpoints WHERE conversation_id = ?')
+        .get(conv.id) as { cnt: number }
       assert.equal(before.cnt, 1, 'checkpoint should exist before delete')
 
       conversationRepository.delete(conv.id)
 
-      const after = db.prepare('SELECT COUNT(*) as cnt FROM checkpoints WHERE conversation_id = ?').get(conv.id) as { cnt: number }
+      const after = db
+        .prepare('SELECT COUNT(*) as cnt FROM checkpoints WHERE conversation_id = ?')
+        .get(conv.id) as { cnt: number }
       assert.equal(after.cnt, 0, 'checkpoint should be cleaned up after delete')
     })
 
@@ -135,12 +139,16 @@ if (!env) {
         `INSERT INTO turn_usage (session_id, conversation_id, turn_number, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?)`
       ).run('session-1', conv.id, 1, 100, 50)
 
-      const before = db.prepare('SELECT COUNT(*) as cnt FROM turn_usage WHERE conversation_id = ?').get(conv.id) as { cnt: number }
+      const before = db
+        .prepare('SELECT COUNT(*) as cnt FROM turn_usage WHERE conversation_id = ?')
+        .get(conv.id) as { cnt: number }
       assert.equal(before.cnt, 1, 'turn_usage should exist before delete')
 
       conversationRepository.delete(conv.id)
 
-      const after = db.prepare('SELECT COUNT(*) as cnt FROM turn_usage WHERE conversation_id = ?').get(conv.id) as { cnt: number }
+      const after = db
+        .prepare('SELECT COUNT(*) as cnt FROM turn_usage WHERE conversation_id = ?')
+        .get(conv.id) as { cnt: number }
       assert.equal(after.cnt, 0, 'turn_usage should be cleaned up after delete')
     })
 
@@ -159,7 +167,7 @@ if (!env) {
       assert.equal(afterMsgs.length, 0)
     })
 
-    test('delete() does not affect other conversations\' data', () => {
+    test("delete() does not affect other conversations' data", () => {
       const conv1 = conversationRepository.create(wsId, 'Keep This')
       const conv2 = conversationRepository.create(wsId, 'Delete This')
 
@@ -172,8 +180,10 @@ if (!env) {
 
       conversationRepository.delete(conv2.id)
 
-      const remaining = db.prepare('SELECT COUNT(*) as cnt FROM checkpoints WHERE conversation_id = ?').get(conv1.id) as { cnt: number }
-      assert.equal(remaining.cnt, 1, 'other conversation\'s checkpoint should remain')
+      const remaining = db
+        .prepare('SELECT COUNT(*) as cnt FROM checkpoints WHERE conversation_id = ?')
+        .get(conv1.id) as { cnt: number }
+      assert.equal(remaining.cnt, 1, "other conversation's checkpoint should remain")
     })
   })
 }

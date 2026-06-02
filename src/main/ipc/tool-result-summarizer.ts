@@ -17,7 +17,9 @@ const DETAIL_CAP = 8192
 /** Cap detail content, appending an explicit marker when truncating. */
 function capDetail(content: string): string {
   if (content.length <= DETAIL_CAP) return content
-  return content.slice(0, DETAIL_CAP) + `\n… (truncated — ${content.length - DETAIL_CAP} more chars)`
+  return (
+    content.slice(0, DETAIL_CAP) + `\n… (truncated — ${content.length - DETAIL_CAP} more chars)`
+  )
 }
 
 type Summarizer = (content: string) => ToolResultSummary | undefined
@@ -34,8 +36,7 @@ function checkPersistedOutput(content: string): ToolResultSummary | undefined {
   if (content.includes('<persisted-output>') || content.includes('persisted-output')) {
     return {
       result: 'Result too large to display',
-      resultDetail:
-        'Output was persisted by the SDK. Check .claude/ directory for the full result.'
+      resultDetail: 'Output was persisted by the SDK. Check .claude/ directory for the full result.'
     }
   }
   return undefined
@@ -55,8 +56,7 @@ function checkToolUseError(content: string): ToolResultSummary | undefined {
     return { result: 'Permission denied', resultDetail: capDetail(inner) }
 
   const oneLine = inner.split('\n')[0]?.trim() ?? 'Tool error'
-  const shortResult =
-    oneLine.length > 80 ? `Error: ${oneLine.slice(0, 77)}…` : `Error: ${oneLine}`
+  const shortResult = oneLine.length > 80 ? `Error: ${oneLine.slice(0, 77)}…` : `Error: ${oneLine}`
   return { result: shortResult, resultDetail: capDetail(inner) }
 }
 
@@ -138,20 +138,39 @@ function summarizeCodeGraph(content: string): ToolResultSummary | undefined {
     const parsed = JSON.parse(content)
     const detail = capDetail(content)
 
-    if (parsed.symbols?.length !== undefined) return { result: pluralize(parsed.symbols.length, 'symbol'), resultDetail: detail }
-    if (parsed.callers?.length !== undefined) return { result: pluralize(parsed.callers.length, 'caller'), resultDetail: detail }
-    if (parsed.references?.length !== undefined) return { result: pluralize(parsed.references.length, 'reference'), resultDetail: detail }
-    if (parsed.callees?.length !== undefined) return { result: pluralize(parsed.callees.length, 'callee'), resultDetail: detail }
-    if (parsed.outline?.length !== undefined) return { result: `${parsed.outline.length} symbol${parsed.outline.length !== 1 ? 's' : ''} in outline`, resultDetail: detail }
-    if (parsed.coupledPairs?.length !== undefined) return { result: pluralize(parsed.coupledPairs.length, 'coupled pair'), resultDetail: detail }
-    if (parsed.cycles?.length !== undefined) return { result: pluralize(parsed.cycles.length, 'cycle'), resultDetail: detail }
-    if (parsed.boundaries?.length !== undefined) return { result: `${parsed.boundaries.length} module boundar${parsed.boundaries.length !== 1 ? 'ies' : 'y'}`, resultDetail: detail }
-    if (parsed.count !== undefined) return { result: pluralize(parsed.count, 'result'), resultDetail: detail }
-    if (parsed.definitions?.length !== undefined) return { result: pluralize(parsed.definitions.length, 'definition'), resultDetail: detail }
-    if (parsed.report) return { result: `${parsed.report.filesIncluded ?? '?'} files mapped`, resultDetail: detail }
+    if (parsed.symbols?.length !== undefined)
+      return { result: pluralize(parsed.symbols.length, 'symbol'), resultDetail: detail }
+    if (parsed.callers?.length !== undefined)
+      return { result: pluralize(parsed.callers.length, 'caller'), resultDetail: detail }
+    if (parsed.references?.length !== undefined)
+      return { result: pluralize(parsed.references.length, 'reference'), resultDetail: detail }
+    if (parsed.callees?.length !== undefined)
+      return { result: pluralize(parsed.callees.length, 'callee'), resultDetail: detail }
+    if (parsed.outline?.length !== undefined)
+      return {
+        result: `${parsed.outline.length} symbol${parsed.outline.length !== 1 ? 's' : ''} in outline`,
+        resultDetail: detail
+      }
+    if (parsed.coupledPairs?.length !== undefined)
+      return { result: pluralize(parsed.coupledPairs.length, 'coupled pair'), resultDetail: detail }
+    if (parsed.cycles?.length !== undefined)
+      return { result: pluralize(parsed.cycles.length, 'cycle'), resultDetail: detail }
+    if (parsed.boundaries?.length !== undefined)
+      return {
+        result: `${parsed.boundaries.length} module boundar${parsed.boundaries.length !== 1 ? 'ies' : 'y'}`,
+        resultDetail: detail
+      }
+    if (parsed.count !== undefined)
+      return { result: pluralize(parsed.count, 'result'), resultDetail: detail }
+    if (parsed.definitions?.length !== undefined)
+      return { result: pluralize(parsed.definitions.length, 'definition'), resultDetail: detail }
+    if (parsed.report)
+      return { result: `${parsed.report.filesIncluded ?? '?'} files mapped`, resultDetail: detail }
 
     // Generic fallback — find the first top-level array
-    const firstArr = Object.entries(parsed).find(([, v]) => Array.isArray(v)) as [string, unknown[]] | undefined
+    const firstArr = Object.entries(parsed).find(([, v]) => Array.isArray(v)) as
+      | [string, unknown[]]
+      | undefined
     if (firstArr) return { result: `${firstArr[1].length} ${firstArr[0]}`, resultDetail: detail }
   } catch {
     /* fall through to default */
@@ -166,17 +185,26 @@ function summarizeCodeAnalysis(content: string): ToolResultSummary | undefined {
 
     if (parsed.totalCount !== undefined) {
       const mode = parsed.mode === 'overview' ? ' (overview)' : ''
-      return { result: `${parsed.totalCount} marker${parsed.totalCount !== 1 ? 's' : ''} found${mode}`, resultDetail: detail }
+      return {
+        result: `${parsed.totalCount} marker${parsed.totalCount !== 1 ? 's' : ''} found${mode}`,
+        resultDetail: detail
+      }
     }
     if (parsed.summary?.totalSourceFiles !== undefined) {
       const s = parsed.summary
       const mode = parsed.mode === 'overview' ? ' (overview)' : ''
-      return { result: `${s.filesWithTests}/${s.totalSourceFiles} covered (${Math.round(s.coverageRatio * 100)}%)${mode}`, resultDetail: detail }
+      return {
+        result: `${s.filesWithTests}/${s.totalSourceFiles} covered (${Math.round(s.coverageRatio * 100)}%)${mode}`,
+        resultDetail: detail
+      }
     }
     if (parsed.counts?.total !== undefined) {
       const c = parsed.counts
       const outdated = c.outdated > 0 ? `, ${c.outdated} outdated` : ''
-      return { result: `${c.total} deps (${c.production} prod, ${c.dev} dev${outdated})`, resultDetail: detail }
+      return {
+        result: `${c.total} deps (${c.production} prod, ${c.dev} dev${outdated})`,
+        resultDetail: detail
+      }
     }
     if (parsed.count !== undefined) {
       return { result: pluralize(parsed.count, 'result'), resultDetail: detail }
@@ -192,9 +220,12 @@ function summarizeGitContext(content: string): ToolResultSummary | undefined {
     const parsed = JSON.parse(content)
     const detail = capDetail(content)
 
-    if (parsed.commits?.length !== undefined) return { result: pluralize(parsed.commits.length, 'commit'), resultDetail: detail }
-    if (parsed.hunks?.length !== undefined) return { result: pluralize(parsed.hunks.length, 'diff hunk'), resultDetail: detail }
-    if (parsed.lines?.length !== undefined) return { result: pluralize(parsed.lines.length, 'blame line'), resultDetail: detail }
+    if (parsed.commits?.length !== undefined)
+      return { result: pluralize(parsed.commits.length, 'commit'), resultDetail: detail }
+    if (parsed.hunks?.length !== undefined)
+      return { result: pluralize(parsed.hunks.length, 'diff hunk'), resultDetail: detail }
+    if (parsed.lines?.length !== undefined)
+      return { result: pluralize(parsed.lines.length, 'blame line'), resultDetail: detail }
   } catch {
     /* fall through */
   }
@@ -206,8 +237,10 @@ function summarizeSemanticSearch(content: string): ToolResultSummary | undefined
     const parsed = JSON.parse(content)
     const detail = capDetail(content)
 
-    if (parsed.results?.length !== undefined) return { result: pluralize(parsed.results.length, 'result'), resultDetail: detail }
-    if (parsed.concepts?.length !== undefined) return { result: pluralize(parsed.concepts.length, 'concept'), resultDetail: detail }
+    if (parsed.results?.length !== undefined)
+      return { result: pluralize(parsed.results.length, 'result'), resultDetail: detail }
+    if (parsed.concepts?.length !== undefined)
+      return { result: pluralize(parsed.concepts.length, 'concept'), resultDetail: detail }
   } catch {
     /* fall through */
   }

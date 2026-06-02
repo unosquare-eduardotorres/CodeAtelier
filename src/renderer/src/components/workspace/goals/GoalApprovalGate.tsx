@@ -65,10 +65,7 @@ export default function GoalApprovalGate({
           Implementation Items ({plan.items.length})
         </h4>
         {plan.items.map((item) => (
-          <div
-            key={item.id}
-            className="bg-surface-base rounded-lg border border-border-subtle p-3"
-          >
+          <div key={item.id} className="bg-surface-base rounded-lg border border-border-subtle p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">

@@ -229,8 +229,6 @@ describe('processToolChunk — tool_result', () => {
     const result = processToolChunk(chunk, BASE_OPTIONS)
     assert.ok(result)
     // Bash is not in COMPOSABLE_TOOLS — result should not be composed with input using " — "
-    const resultStr = result.toolActivity.result ?? ''
-    // If result has a separator, the input should still be separate
     assert.equal(result.toolActivity.toolName, 'Bash')
   })
 })

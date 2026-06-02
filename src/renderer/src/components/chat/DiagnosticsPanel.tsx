@@ -17,9 +17,7 @@ interface DiagnosticsPanelProps {
 export default function DiagnosticsPanel({
   conversationId
 }: DiagnosticsPanelProps): React.JSX.Element | null {
-  const diagnostics = useDiagnosticsStore(
-    (s) => s.diagnostics[conversationId] ?? EMPTY_DIAGNOSTICS
-  )
+  const diagnostics = useDiagnosticsStore((s) => s.diagnostics[conversationId] ?? EMPTY_DIAGNOSTICS)
   const expanded = useDiagnosticsStore((s) => s.expanded)
   const toggleExpanded = useDiagnosticsStore((s) => s.toggleExpanded)
 
@@ -29,12 +27,13 @@ export default function DiagnosticsPanel({
   const warnCount = diagnostics.filter((d) => d.severity === 'warning').length
   const hasErrors = errorCount > 0
 
-  const summary = [
-    errorCount > 0 ? `${errorCount} error${errorCount > 1 ? 's' : ''}` : '',
-    warnCount > 0 ? `${warnCount} warning${warnCount > 1 ? 's' : ''}` : ''
-  ]
-    .filter(Boolean)
-    .join(', ') || `${diagnostics.length} diagnostic${diagnostics.length > 1 ? 's' : ''}`
+  const summary =
+    [
+      errorCount > 0 ? `${errorCount} error${errorCount > 1 ? 's' : ''}` : '',
+      warnCount > 0 ? `${warnCount} warning${warnCount > 1 ? 's' : ''}` : ''
+    ]
+      .filter(Boolean)
+      .join(', ') || `${diagnostics.length} diagnostic${diagnostics.length > 1 ? 's' : ''}`
 
   return (
     <div className="mx-6 mb-2 rounded-lg border border-border-subtle bg-surface-overlay/60 backdrop-blur-sm overflow-hidden">

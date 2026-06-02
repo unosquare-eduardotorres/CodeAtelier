@@ -1,7 +1,7 @@
 import log from 'electron-log/main'
 import { basename, dirname } from 'node:path'
 import { memoryCheckpoint } from './indexing-diagnostics'
-import { SKIP_PATTERNS, matchesSkipPattern, shouldSkipFile } from './preprocessing/file-validation'
+import { shouldSkipFile } from './preprocessing/file-validation'
 import { extractRelevantImports } from './preprocessing/import-extraction'
 import { splitLongChunk } from './preprocessing/chunk-splitting'
 

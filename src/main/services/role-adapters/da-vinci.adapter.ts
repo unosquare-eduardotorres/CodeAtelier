@@ -10,11 +10,7 @@
  * functional drift — only structural reorganization.
  */
 
-import type {
-  ConversationMode,
-  ModelAction,
-  Specialist
-} from '../../../shared/types'
+import type { ConversationMode, ModelAction, Specialist } from '../../../shared/types'
 import type {
   AdapterPromptContext,
   AdapterPromptResult,
@@ -24,10 +20,7 @@ import { DA_VINCI_AGENT_ID } from '../../../shared/constants'
 import { DaVinciPromptAssembler } from '../da-vinci-prompt-assembler'
 import { memoryService } from '../memory.service'
 import { modelConfigService } from '../model-config.service'
-import {
-  specialistRepository,
-  workspaceRepository
-} from '../../db/repositories'
+import { specialistRepository, workspaceRepository } from '../../db/repositories'
 import { BaseRoleAdapter } from './base.adapter'
 
 export class DaVinciRoleAdapter extends BaseRoleAdapter {
@@ -212,6 +205,4 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
   clearConversation(conversationId: string): void {
     this.promptAssembler.clearConversation(conversationId)
   }
-
-
 }

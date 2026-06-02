@@ -66,9 +66,7 @@ export class CouncilChairmanRoleAdapter extends BaseRoleAdapter {
 
   buildPrompts(_ctx: AdapterPromptContext): AdapterPromptResult {
     if (!this.systemPrompt) {
-      throw new Error(
-        'CouncilChairmanRoleAdapter.buildPrompts() called before onSessionStart()'
-      )
+      throw new Error('CouncilChairmanRoleAdapter.buildPrompts() called before onSessionStart()')
     }
 
     return {
@@ -77,8 +75,12 @@ export class CouncilChairmanRoleAdapter extends BaseRoleAdapter {
     }
   }
 
-  protected override getMcpStrategy(): McpStrategy { return 'none' }
-  protected override persistMemory(): void { /* no-op */ }
+  protected override getMcpStrategy(): McpStrategy {
+    return 'none'
+  }
+  protected override persistMemory(): void {
+    /* no-op */
+  }
 
   override onSessionStop(): void {
     this.systemPrompt = null

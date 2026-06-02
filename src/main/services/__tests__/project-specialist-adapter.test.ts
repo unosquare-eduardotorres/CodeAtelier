@@ -61,7 +61,10 @@ describe('ProjectSpecialistRoleAdapter', () => {
     const { chatAgentService } =
       (await import('../chat-agent.service')) as typeof import('../chat-agent.service')
     const svc = chatAgentService as unknown as {
-      sessions: Map<string, { adapter: unknown; session: unknown; forwarderCleanups: unknown[]; workspacePath: string }>
+      sessions: Map<
+        string,
+        { adapter: unknown; session: unknown; forwarderCleanups: unknown[]; workspacePath: string }
+      >
       _activeWorkspaceId: string | null
     }
     const originalActiveId = svc._activeWorkspaceId

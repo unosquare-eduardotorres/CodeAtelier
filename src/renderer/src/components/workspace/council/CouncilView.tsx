@@ -66,9 +66,7 @@ function PhaseIndicator({ phase }: { phase: string }): React.JSX.Element {
                     : 'text-text-secondary'
               }`}
             >
-              {isActive && phase !== 'complete' && (
-                <Loader2 size={10} className="animate-spin" />
-              )}
+              {isActive && phase !== 'complete' && <Loader2 size={10} className="animate-spin" />}
               {p.label}
             </div>
           </div>
@@ -109,7 +107,9 @@ export default function CouncilView({
   const resolvedTitle = inputTitle ?? storeInputTitle ?? undefined
 
   // Local UI state
-  const [selectedAdvisor, setSelectedAdvisor] = useState<CouncilAdvisorRole>(COUNCIL_ADVISOR_ROLES[0])
+  const [selectedAdvisor, setSelectedAdvisor] = useState<CouncilAdvisorRole>(
+    COUNCIL_ADVISOR_ROLES[0]
+  )
   const [activeTab, setActiveTab] = useState<'overview' | 'advisors' | 'peer-reviews'>('overview')
 
   // Wire IPC listeners
@@ -126,16 +126,20 @@ export default function CouncilView({
       )
     )
     cleanups.push(
-      api.onCouncilPeerReviewComplete((data) =>
-        handlePeerReviewComplete(data.peerReviews as never)
-      )
+      api.onCouncilPeerReviewComplete((data) => handlePeerReviewComplete(data.peerReviews as never))
     )
     cleanups.push(api.onCouncilVerdict((data) => handleVerdict(data.verdict as never)))
 
     return () => {
       cleanups.forEach((fn) => fn())
     }
-  }, [handlePhaseChanged, handleMemberStream, handleMemberComplete, handlePeerReviewComplete, handleVerdict])
+  }, [
+    handlePhaseChanged,
+    handleMemberStream,
+    handleMemberComplete,
+    handlePeerReviewComplete,
+    handleVerdict
+  ])
 
   const isRunning = phase !== 'complete' && phase !== 'cancelled' && phase !== 'failed'
   const isFailed = phase === 'failed'
@@ -154,10 +158,7 @@ export default function CouncilView({
           <div className="min-w-0">
             <h2 className="text-base font-bold text-text-primary">LLM Council</h2>
             {resolvedTitle && (
-              <p
-                className="text-xs text-text-body truncate max-w-lg"
-                title={resolvedTitle}
-              >
+              <p className="text-xs text-text-body truncate max-w-lg" title={resolvedTitle}>
                 &ldquo;{resolvedTitle}&rdquo;
               </p>
             )}
@@ -247,7 +248,6 @@ export default function CouncilView({
 
       {/* ── Main content area ───────────────────────────────────────────── */}
       <div className="flex-1 overflow-hidden">
-
         {/* Phase 1: Framing / Deliberating — two-panel detail view */}
         {(phase === 'framing' || phase === 'deliberating') && (
           <div className="h-full flex gap-2 p-3 overflow-hidden">
@@ -280,13 +280,21 @@ export default function CouncilView({
                         : 'bg-surface-overlay border-border-subtle hover:bg-surface-hover'
                     }`}
                   >
-                    <AdvisorIcon advisor={def} size={16} className="text-text-secondary flex-shrink-0" />
+                    <AdvisorIcon
+                      advisor={def}
+                      size={16}
+                      className="text-text-secondary flex-shrink-0"
+                    />
                     <div className="flex-1 min-w-0">
-                      <span className="text-xs font-semibold text-text-primary truncate block">{def.name}</span>
+                      <span className="text-xs font-semibold text-text-primary truncate block">
+                        {def.name}
+                      </span>
                       <StatusBadge status={advisor.status} />
                     </div>
                     {advisor.review && (
-                      <span className="text-sm font-bold text-text-primary">{advisor.review.score}</span>
+                      <span className="text-sm font-bold text-text-primary">
+                        {advisor.review.score}
+                      </span>
                     )}
                   </button>
                 )
@@ -304,7 +312,8 @@ export default function CouncilView({
                 <Loader2 size={24} className="animate-spin text-indigo-400 mx-auto mb-2" />
                 <p className="text-sm text-text-primary font-medium">Peer review in progress</p>
                 <p className="text-xs text-text-muted mt-1">
-                  Advisors are anonymously cross-examining each other&apos;s findings. This typically takes ~90 seconds.
+                  Advisors are anonymously cross-examining each other&apos;s findings. This
+                  typically takes ~90 seconds.
                 </p>
               </div>
 
@@ -321,7 +330,9 @@ export default function CouncilView({
                       <AdvisorIcon advisor={a} size={28} className="text-text-secondary" />
                       <span className="text-xs font-medium text-text-primary">{a.name}</span>
                       {advisor.review ? (
-                        <span className="text-lg font-bold text-text-primary">{advisor.review.score}</span>
+                        <span className="text-lg font-bold text-text-primary">
+                          {advisor.review.score}
+                        </span>
                       ) : (
                         <span className="text-lg font-bold text-text-muted">&mdash;</span>
                       )}
@@ -343,9 +354,15 @@ export default function CouncilView({
                       const def = COUNCIL_ADVISORS[role]
                       return (
                         <div key={role} className="flex items-start gap-2">
-                          <AdvisorIcon advisor={def} size={14} className="text-text-secondary mt-0.5 flex-shrink-0" />
+                          <AdvisorIcon
+                            advisor={def}
+                            size={14}
+                            className="text-text-secondary mt-0.5 flex-shrink-0"
+                          />
                           <div>
-                            <span className="text-xs font-semibold text-text-primary">{def.name}</span>
+                            <span className="text-xs font-semibold text-text-primary">
+                              {def.name}
+                            </span>
                             <ul className="text-xs text-text-body mt-0.5 space-y-0.5">
                               {advisor.review.keyFindings.slice(0, 2).map((f, i) => (
                                 <li key={i}>• {f}</li>
@@ -397,7 +414,11 @@ export default function CouncilView({
                       : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
                   }`}
                 >
-                  {tab === 'overview' ? 'Overview' : tab === 'advisors' ? 'Advisor Details' : 'Peer Reviews'}
+                  {tab === 'overview'
+                    ? 'Overview'
+                    : tab === 'advisors'
+                      ? 'Advisor Details'
+                      : 'Peer Reviews'}
                 </button>
               ))}
             </div>
@@ -407,15 +428,16 @@ export default function CouncilView({
               <div className="max-w-3xl mx-auto space-y-4">
                 {activeTab === 'overview' && verdict && <CouncilVerdictCard verdict={verdict} />}
                 {activeTab === 'advisors' && <CouncilAdvisorDetailsTab advisors={advisors} />}
-                {activeTab === 'peer-reviews' && (
-                  peerReviews.length > 0
-                    ? <CouncilRankingsMatrix peerReviews={peerReviews} />
-                    : (
-                      <div className="text-center py-8">
-                        <p className="text-sm text-text-secondary">No peer review data available for this session.</p>
-                      </div>
-                    )
-                )}
+                {activeTab === 'peer-reviews' &&
+                  (peerReviews.length > 0 ? (
+                    <CouncilRankingsMatrix peerReviews={peerReviews} />
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-text-secondary">
+                        No peer review data available for this session.
+                      </p>
+                    </div>
+                  ))}
               </div>
             </div>
           </div>
@@ -478,7 +500,7 @@ export default function CouncilView({
               if (currentSessionId && currentWorkspaceId) {
                 const sid = currentSessionId
                 const wid = currentWorkspaceId
-                startCouncil()          // reset UI to clean state
+                startCouncil() // reset UI to clean state
                 setSessionIdentity(sid, wid) // re-set identity (startCouncil clears it)
                 window.api.councilResume({ sessionId: sid, workspaceId: wid }).catch(console.error)
               }

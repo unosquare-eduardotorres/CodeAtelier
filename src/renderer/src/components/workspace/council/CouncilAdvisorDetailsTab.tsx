@@ -8,7 +8,11 @@
 import AdvisorIcon from './AdvisorIcon'
 import { VerdictBadge } from './CouncilMemberColumn'
 import { COUNCIL_ADVISOR_ROLES, COUNCIL_ADVISORS } from '../../../../../shared/constants'
-import type { CouncilAdvisorRole, CouncilMemberStatus, CouncilReview } from '../../../../../shared/types'
+import type {
+  CouncilAdvisorRole,
+  CouncilMemberStatus,
+  CouncilReview
+} from '../../../../../shared/types'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import type { ToolActivity } from '../../../../../shared/types'
 

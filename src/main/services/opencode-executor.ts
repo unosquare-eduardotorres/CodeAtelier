@@ -373,7 +373,9 @@ export class OpenCodeExecutor {
                 )
                 maxTurnsReached = true
                 if (this.client) {
-                  this.client.session.abort({ path: { id: openCodeSessionId } }).catch(() => {}) /* non-fatal: best-effort abort after maxTurns */
+                  this.client.session
+                    .abort({ path: { id: openCodeSessionId } })
+                    .catch(() => {}) /* non-fatal: best-effort abort after maxTurns */
                 }
               }
             }
@@ -410,7 +412,9 @@ export class OpenCodeExecutor {
       if ((error as Error).name === 'AbortError') {
         openCodeLog.info('[opencode] Request aborted')
         if (openCodeSessionId && this.client) {
-          this.client.session.abort({ path: { id: openCodeSessionId } }).catch(() => {}) /* non-fatal: best-effort abort on user cancellation */
+          this.client.session
+            .abort({ path: { id: openCodeSessionId } })
+            .catch(() => {}) /* non-fatal: best-effort abort on user cancellation */
         }
       } else {
         this.consecutiveErrors++
@@ -987,8 +991,15 @@ export class OpenCodeExecutor {
     providerId: string,
     baseUrl?: string
   ): Promise<string | null> {
-    const LOCAL_PROVIDERS: Record<string, { defaultUrl: string; healthPath: string; hint?: string }> = {
-      ollama: { defaultUrl: 'http://localhost:11434', healthPath: '/api/tags', hint: 'Try: ollama serve' },
+    const LOCAL_PROVIDERS: Record<
+      string,
+      { defaultUrl: string; healthPath: string; hint?: string }
+    > = {
+      ollama: {
+        defaultUrl: 'http://localhost:11434',
+        healthPath: '/api/tags',
+        hint: 'Try: ollama serve'
+      },
       omlx: { defaultUrl: 'http://localhost:8080', healthPath: '/health' }
     }
 
@@ -1024,7 +1035,12 @@ export class OpenCodeExecutor {
   private computeTransientRetry(
     currentRetryCount: number,
     errorMessage: string
-  ): { attemptNumber: number; delayMs: number; startedMessage: string; resumingMessage: string } | null {
+  ): {
+    attemptNumber: number
+    delayMs: number
+    startedMessage: string
+    resumingMessage: string
+  } | null {
     if (currentRetryCount >= MAX_TRANSIENT_RETRIES) return null
 
     const attemptNumber = currentRetryCount + 1
@@ -1086,9 +1102,7 @@ export class OpenCodeExecutor {
         await this.primeSession(sessionId, options.primingContext)
       }
     } else {
-      openCodeLog.info(
-        `[opencode] Reusing session ${sessionId} for conversation=${conversationId}`
-      )
+      openCodeLog.info(`[opencode] Reusing session ${sessionId} for conversation=${conversationId}`)
     }
 
     return sessionId
@@ -1124,10 +1138,7 @@ export class OpenCodeExecutor {
    * Build the text content parts for a prompt.
    * Separates part construction from model config merging for clarity.
    */
-  private buildPromptParts(
-    prompt: string,
-    systemPrompt: string
-  ): Array<Record<string, unknown>> {
+  private buildPromptParts(prompt: string, systemPrompt: string): Array<Record<string, unknown>> {
     const parts: Array<Record<string, unknown>> = []
     // D-1: Only inject system prompt as text if the plugin hook isn't active
     const hasPluginSystemPromptHook = !!process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE

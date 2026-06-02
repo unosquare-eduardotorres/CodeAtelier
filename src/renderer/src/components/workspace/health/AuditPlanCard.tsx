@@ -89,7 +89,9 @@ export default function AuditPlanCard({
                 </p>
               )}
               {item.recommendation && (
-                <p className="text-[11px] text-text-muted mt-1.5 italic">💡 {item.recommendation}</p>
+                <p className="text-[11px] text-text-muted mt-1.5 italic">
+                  💡 {item.recommendation}
+                </p>
               )}
               {item.files.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-2">

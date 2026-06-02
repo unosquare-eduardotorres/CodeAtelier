@@ -9,16 +9,15 @@
  */
 
 import { useMemo } from 'react'
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Loader2,
-  Clock
-} from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Loader2, Clock } from 'lucide-react'
 import ToolActivityBlock from '../../chat/ToolActivityBlock'
 import ReactMarkdown from 'react-markdown'
 import AdvisorIcon from './AdvisorIcon'
-import type { CouncilAdvisorRole, CouncilMemberStatus, CouncilReview } from '../../../../../shared/types'
+import type {
+  CouncilAdvisorRole,
+  CouncilMemberStatus,
+  CouncilReview
+} from '../../../../../shared/types'
 import { COUNCIL_ADVISORS } from '../../../../../shared/constants'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import type { ToolActivity } from '../../../../../shared/types'
@@ -65,22 +64,23 @@ export function VerdictBadge({ verdict }: { verdict: string }): React.JSX.Elemen
   const colors: Record<string, string> = {
     'proceed-with-changes': 'bg-success/20 text-success border-success/30',
     'needs-revision': 'bg-warning/20 text-warning border-warning/30',
-    'rethink': 'bg-error/20 text-error border-error/30'
+    rethink: 'bg-error/20 text-error border-error/30'
   }
 
   const labels: Record<string, string> = {
     'proceed-with-changes': 'Proceed',
     'needs-revision': 'Revise',
-    'rethink': 'Rethink'
+    rethink: 'Rethink'
   }
 
   return (
-    <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${colors[verdict] ?? 'bg-surface-float text-text-body'}`}>
+    <span
+      className={`px-2 py-0.5 rounded-full text-xs font-medium border ${colors[verdict] ?? 'bg-surface-float text-text-body'}`}
+    >
       {labels[verdict] ?? verdict}
     </span>
   )
 }
-
 
 export default function CouncilMemberColumn({
   role,
@@ -98,12 +98,8 @@ export default function CouncilMemberColumn({
   }, [segments, currentContent])
 
   const allToolActivities = useMemo(() => {
-    return [
-      ...segments.flatMap((s) => s.toolActivities),
-      ...currentToolActivities
-    ]
+    return [...segments.flatMap((s) => s.toolActivities), ...currentToolActivities]
   }, [segments, currentToolActivities])
-
 
   return (
     <div className="flex flex-col h-full min-w-0 border border-border-subtle rounded-lg bg-surface-overlay overflow-hidden">
@@ -111,17 +107,13 @@ export default function CouncilMemberColumn({
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle bg-surface-float/50">
         <AdvisorIcon advisor={advisor} size={20} className="text-text-secondary flex-shrink-0" />
         <div className="flex flex-col min-w-0">
-          <span className="text-sm font-semibold text-text-primary truncate">
-            {advisor.name}
-          </span>
+          <span className="text-sm font-semibold text-text-primary truncate">{advisor.name}</span>
           <StatusBadge status={status} />
         </div>
         {review && (
           <div className="ml-auto flex items-center gap-2">
             <VerdictBadge verdict={review.verdict} />
-            <span className="text-lg font-bold text-text-primary">
-              {review.score}
-            </span>
+            <span className="text-lg font-bold text-text-primary">{review.score}</span>
           </div>
         )}
       </div>
@@ -142,7 +134,10 @@ export default function CouncilMemberColumn({
 
         {/* Tool activity — compact rows with expand panel */}
         {allToolActivities.length > 0 && (
-          <ToolActivityBlock activities={allToolActivities} defaultExpanded={status === 'running'} />
+          <ToolActivityBlock
+            activities={allToolActivities}
+            defaultExpanded={status === 'running'}
+          />
         )}
       </div>
 
@@ -152,7 +147,9 @@ export default function CouncilMemberColumn({
           <div className="text-xs text-text-secondary mb-1">Key Findings:</div>
           <ul className="text-xs text-text-body space-y-0.5">
             {review.keyFindings.slice(0, 3).map((finding, i) => (
-              <li key={i} className="truncate">• {finding}</li>
+              <li key={i} className="truncate">
+                • {finding}
+              </li>
             ))}
           </ul>
         </div>

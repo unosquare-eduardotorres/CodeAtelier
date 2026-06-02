@@ -106,7 +106,9 @@ export interface UpdateSpecialistInput {
 
 export class SpecialistRepository extends BaseRepository<SpecialistRow, Specialist> {
   protected readonly tableName = 'specialists'
-  protected mapRow(row: SpecialistRow): Specialist { return mapRow(row) }
+  protected mapRow(row: SpecialistRow): Specialist {
+    return mapRow(row)
+  }
 
   findAll(): Specialist[] {
     const rows = this.db()

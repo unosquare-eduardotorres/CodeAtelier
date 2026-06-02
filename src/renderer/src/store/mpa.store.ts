@@ -104,7 +104,12 @@ export const useMpaStore = create<MpaState>((set, get) => ({
 
   startGoal: async (params) => {
     try {
-      set({ isRunning: true, phaseStreamText: {}, pendingApproval: null, configuredPhases: params.phases })
+      set({
+        isRunning: true,
+        phaseStreamText: {},
+        pendingApproval: null,
+        configuredPhases: params.phases
+      })
       await window.api.mpaStart(params)
     } catch (error) {
       rendererLog.error('Failed to start MPA goal:', error)

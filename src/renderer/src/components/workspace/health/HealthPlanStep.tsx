@@ -49,8 +49,12 @@ export default function HealthPlanStep({
           {isGenerating ? (
             <>
               <Loader2 size={28} className="text-primary-text animate-spin" />
-              <span className="text-sm text-text-secondary">Synthesizing a plan from your findings…</span>
-              <span className="text-[11px] text-text-muted">This can take up to a couple of minutes.</span>
+              <span className="text-sm text-text-secondary">
+                Synthesizing a plan from your findings…
+              </span>
+              <span className="text-[11px] text-text-muted">
+                This can take up to a couple of minutes.
+              </span>
             </>
           ) : (
             <span className="text-sm text-text-muted italic">No plan generated yet.</span>

@@ -290,7 +290,12 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   )
 
   const verificationSection = visibleVerification.length > 0 && (
-    <SectionCard icon={CheckCircle2} iconColor="text-[var(--color-plan-card-accent)]" label="Verification" labelColor="text-[var(--color-plan-card-accent)]">
+    <SectionCard
+      icon={CheckCircle2}
+      iconColor="text-[var(--color-plan-card-accent)]"
+      label="Verification"
+      labelColor="text-[var(--color-plan-card-accent)]"
+    >
       <ol className="list-decimal pl-5 space-y-1.5 text-sm text-text-body">
         {visibleVerification.map((item, index) => (
           <li key={`verify-${index}`}>{item}</li>
@@ -303,7 +308,12 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
     'expectedOutcome' in structuredPlan &&
     typeof structuredPlan.expectedOutcome === 'string' &&
     structuredPlan.expectedOutcome.trim() && (
-      <SectionCard icon={CheckCircle2} iconColor="text-success" label="Expected Outcome" labelColor="text-success">
+      <SectionCard
+        icon={CheckCircle2}
+        iconColor="text-success"
+        label="Expected Outcome"
+        labelColor="text-success"
+      >
         <div className="text-sm text-text-body">{structuredPlan.expectedOutcome}</div>
       </SectionCard>
     )

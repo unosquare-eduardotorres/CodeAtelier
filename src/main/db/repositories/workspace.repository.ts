@@ -27,7 +27,9 @@ function mapRow(row: WorkspaceRow): Workspace {
 
 export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace> {
   protected readonly tableName = 'workspaces'
-  protected mapRow(row: WorkspaceRow): Workspace { return mapRow(row) }
+  protected mapRow(row: WorkspaceRow): Workspace {
+    return mapRow(row)
+  }
 
   create(name: string, repoPath: string, gitRemoteUrl?: string, isGitRepo = true): Workspace {
     const db = this.db()

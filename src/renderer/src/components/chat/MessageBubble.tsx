@@ -108,10 +108,10 @@ const BUBBLE_SIZE_CLASSES: Record<
 
 /** Avatar portrait size — scales with the user's bubble-size preference */
 const AVATAR_SIZE_MAP: Record<ChatBubbleSize, 'md' | 'lg' | 'xl'> = {
-  small: 'md',     // 48px
-  medium: 'lg',    // 64px
-  large: 'xl',     // 80px
-  xl: 'xl'         // 80px
+  small: 'md', // 48px
+  medium: 'lg', // 64px
+  large: 'xl', // 80px
+  xl: 'xl' // 80px
 }
 
 // Module-level constants — stable references, never recreated on render
@@ -157,7 +157,7 @@ const markdownComponents = {
       /^[/~][\w.\-/@ ]+\.\w{1,10}$/.test(text) ||
       /^[A-Z]:\\/.test(text) ||
       /^[\w@][\w.\-/@ ]*\/[\w.\-/@ ]*\.\w{1,10}$/.test(text) ||
-      /^[\w][\w.\-]*\.\w{2,10}$/.test(text)
+      /^[\w][\w.-]*\.\w{2,10}$/.test(text)
     if (isFilePath) {
       return <FilePathLink filePath={text} />
     }
@@ -195,7 +195,8 @@ function MessageBubbleInner({
   const isUser = message.role === 'user'
   const bubbleSize = useChatBubbleSize()
   const sizeClasses = BUBBLE_SIZE_CLASSES[bubbleSize]
-  const { updateMode, sendMessage, appendLocalMessage, buildFromPlan } = actions ?? ({} as MessageBubbleActions)
+  const { updateMode, sendMessage, appendLocalMessage, buildFromPlan } =
+    actions ?? ({} as MessageBubbleActions)
   const autoIdentity = useMessageIdentity(message)
   const identity = identityOverride ?? autoIdentity
 
@@ -245,16 +246,19 @@ function MessageBubbleInner({
     councilStore.startCouncil()
 
     // Start the council via IPC
-    window.api.councilStart({
-      workspaceId,
-      inputType: 'plan',
-      planContent,
-      structuredPlan: structuredPlan ?? undefined,
-      originalUserRequest: message.contentMd ?? '',
-      conversationId: undefined
-    }).then(({ sessionId }) => {
-      councilStore.setSessionIdentity(sessionId, workspaceId)
-    }).catch(console.error)
+    window.api
+      .councilStart({
+        workspaceId,
+        inputType: 'plan',
+        planContent,
+        structuredPlan: structuredPlan ?? undefined,
+        originalUserRequest: message.contentMd ?? '',
+        conversationId: undefined
+      })
+      .then(({ sessionId }) => {
+        councilStore.setSessionIdentity(sessionId, workspaceId)
+      })
+      .catch(console.error)
   }
 
   /** Shared AI bubble styles */
@@ -268,7 +272,11 @@ function MessageBubbleInner({
     >
       {/* Avatar */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey={identity.avatarKey} size={AVATAR_SIZE_MAP[bubbleSize]} accentColor={identity.accentColor} />
+        <Avatar
+          avatarKey={identity.avatarKey}
+          size={AVATAR_SIZE_MAP[bubbleSize]}
+          accentColor={identity.accentColor}
+        />
       </div>
 
       {/* Content */}
@@ -335,10 +343,7 @@ function MessageBubbleInner({
             )}
 
             {/* Attachments (images + files) */}
-            <AttachmentList
-              imageAttachments={imageAttachments}
-              fileAttachments={fileAttachments}
-            />
+            <AttachmentList imageAttachments={imageAttachments} fileAttachments={fileAttachments} />
 
             {(isUser ? displayContent : message.contentMd) ? (
               <div className={`prose max-w-none overflow-hidden ${sizeClasses.text}`}>

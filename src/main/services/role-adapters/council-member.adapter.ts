@@ -22,7 +22,6 @@ import { COUNCIL_ADVISORS, resolvePromptVerbosity } from '../../../shared/consta
 import { buildNoToolsConfig } from './evaluation-mcp-config'
 import { BaseRoleAdapter, type McpStrategy } from './base.adapter'
 
-
 export class CouncilMemberRoleAdapter extends BaseRoleAdapter {
   readonly role = 'council-member' as const
   readonly agentId: string
@@ -86,7 +85,7 @@ export class CouncilMemberRoleAdapter extends BaseRoleAdapter {
     }
   }
 
-  protected override getMcpStrategy(ctx?: AdapterMcpContext): McpStrategy {
+  protected override getMcpStrategy(_ctx?: AdapterMcpContext): McpStrategy {
     const advisor = COUNCIL_ADVISORS[this.advisorRole]
     return advisor.toolAccess === 'none' ? 'none' : 'readonly'
   }
@@ -98,8 +97,12 @@ export class CouncilMemberRoleAdapter extends BaseRoleAdapter {
     return super.buildMcpConfig(ctx)
   }
 
-  protected override getIncludeGitContext(): boolean { return this.llmProvider !== 'local-llm' }
-  protected override persistMemory(): void { /* no-op */ }
+  protected override getIncludeGitContext(): boolean {
+    return this.llmProvider !== 'local-llm'
+  }
+  protected override persistMemory(): void {
+    /* no-op */
+  }
 
   override onSessionStop(): void {
     this.systemPrompt = null

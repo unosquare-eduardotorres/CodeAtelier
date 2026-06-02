@@ -1,4 +1,4 @@
-import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
+import { useChatStore, useChatActions } from '@renderer/store'
 import { GrillQuestionCard, ToolActivityBlock } from '@renderer/components/chat'
 import IdeaPopover from './IdeaPopover'
 import { Avatar, CompactContextModal } from '@renderer/components/common'
@@ -85,9 +85,7 @@ export default function MessageListFooter({
         isOpen={!!compactSuggestion}
         inputTokens={compactSuggestion?.inputTokens ?? 0}
         contextWindowSize={
-          activeConversationId
-            ? contextUsages[activeConversationId]?.contextWindowSize
-            : undefined
+          activeConversationId ? contextUsages[activeConversationId]?.contextWindowSize : undefined
         }
         level={compactSuggestion?.level ?? 'suggest'}
         categories={
@@ -133,9 +131,7 @@ export default function MessageListFooter({
       />
 
       {/* LSP diagnostics panel (N3 — populated via App.tsx subscription) */}
-      {activeConversationId && (
-        <DiagnosticsPanel conversationId={activeConversationId} />
-      )}
+      {activeConversationId && <DiagnosticsPanel conversationId={activeConversationId} />}
 
       {/* Pending questions card */}
       {hasPendingQuestions && pendingQuestions && (

@@ -95,12 +95,7 @@ export function registerSdkControlIpc(): void {
   ipcMain.handle(IPC_CHANNELS.SDK_SUPPORTED_MODELS, async (event) => {
     validateSender(event)
     // Return static model list — the CLI doesn't expose supportedModels()
-    return [
-      'claude-sonnet-4-6',
-      'claude-sonnet-4-20250514',
-      'claude-opus-4-0',
-      'claude-haiku-3-5'
-    ]
+    return ['claude-sonnet-4-6', 'claude-sonnet-4-20250514', 'claude-opus-4-0', 'claude-haiku-3-5']
   })
 
   // ── SubAgent inspection — not available without SDK ────────────────────
@@ -153,7 +148,16 @@ export function registerSdkControlIpc(): void {
     // CLI supports --fork-session with --resume
     try {
       const { execFileSync } = await import('node:child_process')
-      const cliArgs = ['--resume', sessionId, '--fork-session', '-p', '--print', 'forked', '--output-format', 'json']
+      const cliArgs = [
+        '--resume',
+        sessionId,
+        '--fork-session',
+        '-p',
+        '--print',
+        'forked',
+        '--output-format',
+        'json'
+      ]
       const result = execFileSync('claude', cliArgs, { encoding: 'utf-8', timeout: 10_000 })
       return JSON.parse(result.trim())
     } catch (err) {

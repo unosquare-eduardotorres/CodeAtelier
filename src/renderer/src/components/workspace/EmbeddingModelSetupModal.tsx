@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, Check, Loader2, AlertTriangle, Download } from 'lucide-react'
+import { LLAMAFILE_EMBEDDING } from '../../../../shared/constants'
 import type { EmbeddingModelProgress } from '../../../../shared/types'
 
 interface EmbeddingModelSetupModalProps {
@@ -91,9 +92,15 @@ export default function EmbeddingModelSetupModal({
               <div className="flex items-center gap-3">
                 <Download size={16} className="text-primary" />
                 <div className="flex-1">
-                  <p className="text-sm text-text-body font-medium">Downloading embedding model</p>
+                  <p className="text-sm text-text-body font-medium">
+                    {progress?.phase === 'binary'
+                      ? 'Downloading runtime engine'
+                      : 'Downloading embedding model'}
+                  </p>
                   <p className="text-xs text-text-secondary mt-0.5">
-                    nomic-embed-text-v1.5 (~270 MB, one-time download)
+                    {progress?.phase === 'binary'
+                      ? `llamafile ${LLAMAFILE_EMBEDDING.engine.version} engine — one-time download`
+                      : `${LLAMAFILE_EMBEDDING.model.modelName} GGUF — one-time download`}
                   </p>
                 </div>
               </div>

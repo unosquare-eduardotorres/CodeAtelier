@@ -1,4 +1,4 @@
-import { ArrowLeft, Flame, Square, LayoutGrid } from 'lucide-react'
+import { ArrowLeft, Flame, Square, LayoutGrid, Trash2 } from 'lucide-react'
 import { GRILL_TRACKS } from '../../../../../shared/constants'
 import type { GrillTrackId } from '../../../../../shared/types'
 import type { GrillPhase } from '../GrillChatView'
@@ -10,6 +10,7 @@ interface GrillPageHeaderProps {
   onBack: () => void
   onStopGrill: () => void
   onBackToTracks: () => void
+  onDiscard: () => void
 }
 
 export default function GrillPageHeader({
@@ -18,8 +19,19 @@ export default function GrillPageHeader({
   phase,
   onBack,
   onStopGrill,
-  onBackToTracks
+  onBackToTracks,
+  onDiscard
 }: GrillPageHeaderProps): React.JSX.Element {
+  const handleDiscard = (): void => {
+    if (
+      window.confirm(
+        'Discard this grill? The chat, decisions, and any generated plan will be permanently deleted. This cannot be undone.'
+      )
+    ) {
+      onDiscard()
+    }
+  }
+
   return (
     <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-border-subtle bg-surface-raised sticky top-0 z-20">
       <div className="flex items-center gap-3 min-w-0">
@@ -61,6 +73,16 @@ export default function GrillPageHeader({
           >
             <LayoutGrid size={12} />
             All Tracks
+          </button>
+        )}
+        {phase !== 'selecting' && (
+          <button
+            onClick={handleDiscard}
+            aria-label="Discard grill session"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-danger hover:bg-danger-muted transition-colors text-xs"
+          >
+            <Trash2 size={12} />
+            Discard
           </button>
         )}
       </div>

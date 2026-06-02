@@ -32,7 +32,7 @@ try {
       execSync('bash "' + shScript + '"', { stdio: 'inherit', timeout: 30000 })
     }
   }
-} catch (e) {
+} catch {
   // Hooks degrade gracefully — never block Claude Code
   process.exit(0)
 }

@@ -122,7 +122,7 @@ export default function NewChatPage({
   }, [activeWorkspace])
 
   // Pre-fill from audit fix context on mount (once)
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally run once on mount
+
   useEffect(() => {
     if (pendingFixContext) {
       setTitle(pendingFixContext.title)
@@ -243,12 +243,25 @@ export default function NewChatPage({
           value={mode}
           onChange={setMode}
           options={[
-            { value: 'plan', label: 'Plan', icon: ClipboardList, activeClass: 'bg-mode-plan-muted text-mode-plan-text border border-mode-plan-border' },
-            { value: 'build', label: 'Build', icon: Hammer, activeClass: 'bg-mode-build-muted text-mode-build-text border border-mode-build-border' }
+            {
+              value: 'plan',
+              label: 'Plan',
+              icon: ClipboardList,
+              activeClass: 'bg-mode-plan-muted text-mode-plan-text border border-mode-plan-border'
+            },
+            {
+              value: 'build',
+              label: 'Build',
+              icon: Hammer,
+              activeClass:
+                'bg-mode-build-muted text-mode-build-text border border-mode-build-border'
+            }
           ]}
-          description={mode === 'plan'
-            ? 'Plan mode — read-only analysis, brainstorming, code review'
-            : 'Build mode — the agent can create and modify files in your workspace'}
+          description={
+            mode === 'plan'
+              ? 'Plan mode — read-only analysis, brainstorming, code review'
+              : 'Build mode — the agent can create and modify files in your workspace'
+          }
         />
 
         {/* Communication Tone */}
@@ -362,12 +375,24 @@ export default function NewChatPage({
           value={llmProvider}
           onChange={setLlmProvider}
           options={[
-            { value: 'claude', label: 'Claude', icon: Cloud, activeClass: 'bg-primary-muted text-primary-text border border-primary/30' },
-            { value: 'local-llm', label: 'Local LLM', icon: Monitor, activeClass: 'bg-primary-muted text-primary-text border border-primary/30' }
+            {
+              value: 'claude',
+              label: 'Claude',
+              icon: Cloud,
+              activeClass: 'bg-primary-muted text-primary-text border border-primary/30'
+            },
+            {
+              value: 'local-llm',
+              label: 'Local LLM',
+              icon: Monitor,
+              activeClass: 'bg-primary-muted text-primary-text border border-primary/30'
+            }
           ]}
-          description={llmProvider === 'local-llm' && localModelInfo
-            ? `Using ${localModelInfo.backend === 'omlx' ? '🐧 oMLX' : '🦙 Ollama'} — ${localModelInfo.model}`
-            : undefined}
+          description={
+            llmProvider === 'local-llm' && localModelInfo
+              ? `Using ${localModelInfo.backend === 'omlx' ? '🐧 oMLX' : '🦙 Ollama'} — ${localModelInfo.model}`
+              : undefined
+          }
         />
 
         {/* MCP Tools — system + external integrations */}

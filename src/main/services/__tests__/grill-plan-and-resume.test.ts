@@ -21,25 +21,31 @@ describe('GrillStructuredPlan', () => {
       title: 'Test Plan',
       summary: 'A test plan',
       goalType: 'feature' as const,
-      decisions: [{
-        trackId: 'architecture',
-        trackName: 'Architecture',
-        score: 8,
-        items: [{
-          question: 'What pattern?',
-          answer: 'MVC',
-          rationale: 'Industry standard'
-        }]
-      }],
-      items: [{
-        id: 'item-1',
-        title: 'Create service',
-        description: 'Create the service file',
-        scope: 'backend' as const,
-        files: ['src/main/services/test.ts'],
-        dependsOn: [],
-        includesTests: true
-      }],
+      decisions: [
+        {
+          trackId: 'architecture',
+          trackName: 'Architecture',
+          score: 8,
+          items: [
+            {
+              question: 'What pattern?',
+              answer: 'MVC',
+              rationale: 'Industry standard'
+            }
+          ]
+        }
+      ],
+      items: [
+        {
+          id: 'item-1',
+          title: 'Create service',
+          description: 'Create the service file',
+          scope: 'backend' as const,
+          files: ['src/main/services/test.ts'],
+          dependsOn: [],
+          includesTests: true
+        }
+      ],
       risks: ['API changes'],
       constraints: ['Must use TypeScript'],
       originalDescription: 'Test idea',
@@ -55,7 +61,11 @@ describe('GrillStructuredPlan', () => {
 
   test('plan items support all scope types', () => {
     const scopes: Array<'backend' | 'frontend' | 'database' | 'shared' | 'tests'> = [
-      'backend', 'frontend', 'database', 'shared', 'tests'
+      'backend',
+      'frontend',
+      'database',
+      'shared',
+      'tests'
     ]
     for (const scope of scopes) {
       const item = {
@@ -190,7 +200,7 @@ describe('MPA Resume Phase Detection', () => {
   test('determines remaining phases correctly', () => {
     const allPhases: string[] = ['plan', 'execute', 'verify']
     const completedPhases = new Set(['plan'])
-    const remaining = allPhases.filter(p => !completedPhases.has(p))
+    const remaining = allPhases.filter((p) => !completedPhases.has(p))
 
     assert.deepEqual(remaining, ['execute', 'verify'])
   })
@@ -198,7 +208,7 @@ describe('MPA Resume Phase Detection', () => {
   test('returns empty array when all phases complete', () => {
     const allPhases: string[] = ['plan', 'execute', 'verify']
     const completedPhases = new Set(['plan', 'execute', 'verify'])
-    const remaining = allPhases.filter(p => !completedPhases.has(p))
+    const remaining = allPhases.filter((p) => !completedPhases.has(p))
 
     assert.deepEqual(remaining, [])
   })
@@ -206,7 +216,7 @@ describe('MPA Resume Phase Detection', () => {
   test('handles single-phase runs', () => {
     const allPhases: string[] = ['plan']
     const completedPhases = new Set<string>()
-    const remaining = allPhases.filter(p => !completedPhases.has(p))
+    const remaining = allPhases.filter((p) => !completedPhases.has(p))
 
     assert.deepEqual(remaining, ['plan'])
   })
@@ -214,7 +224,7 @@ describe('MPA Resume Phase Detection', () => {
   test('preserves phase order during resume', () => {
     const allPhases: string[] = ['plan', 'execute', 'verify']
     const completedPhases = new Set(['execute']) // Only execute completed (unusual)
-    const remaining = allPhases.filter(p => !completedPhases.has(p))
+    const remaining = allPhases.filter((p) => !completedPhases.has(p))
 
     // Plan and verify still needed, in original order
     assert.deepEqual(remaining, ['plan', 'verify'])
@@ -287,7 +297,7 @@ describe('Council Resume Phase Detection', () => {
   test('partial advisor resume filters completed roles', () => {
     const allRoles = ['contrarian', 'first-principles', 'expansionist', 'outsider', 'executor']
     const completedRoles = new Set(['contrarian', 'first-principles', 'executor'])
-    const pendingRoles = allRoles.filter(role => !completedRoles.has(role))
+    const pendingRoles = allRoles.filter((role) => !completedRoles.has(role))
 
     assert.deepEqual(pendingRoles, ['expansionist', 'outsider'])
   })
@@ -295,7 +305,7 @@ describe('Council Resume Phase Detection', () => {
   test('no pending roles when all completed', () => {
     const allRoles = ['contrarian', 'first-principles', 'expansionist', 'outsider', 'executor']
     const completedRoles = new Set(allRoles)
-    const pendingRoles = allRoles.filter(role => !completedRoles.has(role))
+    const pendingRoles = allRoles.filter((role) => !completedRoles.has(role))
 
     assert.deepEqual(pendingRoles, [])
   })
@@ -303,7 +313,7 @@ describe('Council Resume Phase Detection', () => {
   test('all roles pending when none completed', () => {
     const allRoles = ['contrarian', 'first-principles', 'expansionist', 'outsider', 'executor']
     const completedRoles = new Set<string>()
-    const pendingRoles = allRoles.filter(role => !completedRoles.has(role))
+    const pendingRoles = allRoles.filter((role) => !completedRoles.has(role))
 
     assert.deepEqual(pendingRoles, allRoles)
   })
@@ -331,17 +341,15 @@ describe('Council Review Merge Logic', () => {
 
     const allReviews = Array.from(reviewsMap.values())
     assert.equal(allReviews.length, 3)
-    assert.ok(allReviews.find(r => r.advisorRole === 'contrarian'))
-    assert.ok(allReviews.find(r => r.advisorRole === 'executor'))
-    assert.ok(allReviews.find(r => r.advisorRole === 'outsider'))
+    assert.ok(allReviews.find((r) => r.advisorRole === 'contrarian'))
+    assert.ok(allReviews.find((r) => r.advisorRole === 'executor'))
+    assert.ok(allReviews.find((r) => r.advisorRole === 'outsider'))
   })
 
   test('new review for same role overwrites existing', () => {
     type Review = { advisorRole: string; score: number }
 
-    const existing: Review[] = [
-      { advisorRole: 'contrarian', score: 50 }
-    ]
+    const existing: Review[] = [{ advisorRole: 'contrarian', score: 50 }]
 
     const reviewsMap = new Map<string, Review>()
     for (const r of existing) {

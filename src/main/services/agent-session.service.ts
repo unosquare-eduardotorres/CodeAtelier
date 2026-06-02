@@ -39,12 +39,12 @@ import type { StreamChunk } from './agent-base.service'
 import type { ExecutorResult } from './executor-types'
 import { CLIExecutor } from './cli-executor'
 import type { CLIExecuteOptions, CLIExecuteResult } from './cli-executor'
-import { resolveContextTier, TIER_LIMITS } from './context-management'
+import { resolveContextTier } from './context-management'
 import type { ContextWindowTier } from './context-management'
 import { auditContextBudget, estimateToolCount } from './context-budget-auditor'
 import { authProvider } from './auth-provider'
 import { vectorSearchService } from './vector-search.service'
-import { conversationRepository, memoryRepository, workspaceRepository } from '../db/repositories'
+import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import type { ModelAction } from '../../shared/types'
 import { eventLoggerService } from './event-logger.service'
@@ -631,9 +631,7 @@ export class AgentSessionService extends AgentBaseService {
         danger: 'bypassPermissions'
       }
       const cliMode = cliPermMap[mode] ?? 'plan'
-      this.cliExecutor.setPermissionMode(
-        cliMode as 'plan' | 'auto' | 'bypassPermissions'
-      )
+      this.cliExecutor.setPermissionMode(cliMode as 'plan' | 'auto' | 'bypassPermissions')
       // F6: Invalidate cached MCP config so the next continueSession turn
       // rebuilds it with the new mode's permission level.
       this.executorFactory.invalidateMcpConfigCache()
@@ -700,9 +698,7 @@ export class AgentSessionService extends AgentBaseService {
             `[compaction] OpenCode compact #${this.compactCount} sent for session ${openCodeSessionId}`
           )
         } else {
-          this.log.warn(
-            `[compaction] OpenCode compact failed: ${result.error ?? 'unknown error'}`
-          )
+          this.log.warn(`[compaction] OpenCode compact failed: ${result.error ?? 'unknown error'}`)
         }
       } catch (err) {
         this.log.warn('[compaction] OpenCode compact threw:', err)
@@ -980,9 +976,10 @@ export class AgentSessionService extends AgentBaseService {
       switch (this.executorBackend) {
         case 'opencode':
           executorStream = this.executeOpenCodeStream({
-            prompt: typeof cliPromptInput === 'string'
-              ? cliPromptInput
-              : '[image attachments not supported in opencode mode]',
+            prompt:
+              typeof cliPromptInput === 'string'
+                ? cliPromptInput
+                : '[image attachments not supported in opencode mode]',
             systemPrompt,
             isBuildMode,
             abortController,
@@ -990,24 +987,26 @@ export class AgentSessionService extends AgentBaseService {
           })
           break
         case 'cli':
-        default: {
-          // Thread goal condition from MPA adapters (if set)
-          const adapterGoal = 'getGoalCondition' in this.adapter
-            ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
-            : null
-          executorStream = this.executeCLIStream({
-            prompt: cliPromptInput,
-            systemPrompt,
-            sessionId,
-            isBuildMode,
-            mode: this.currentMode,
-            resumeAt,
-            abortController,
-            mcpResult,
-            localContextWindow,
-            goal: adapterGoal ?? undefined
-          })
-        }
+        default:
+          {
+            // Thread goal condition from MPA adapters (if set)
+            const adapterGoal =
+              'getGoalCondition' in this.adapter
+                ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
+                : null
+            executorStream = this.executeCLIStream({
+              prompt: cliPromptInput,
+              systemPrompt,
+              sessionId,
+              isBuildMode,
+              mode: this.currentMode,
+              resumeAt,
+              abortController,
+              mcpResult,
+              localContextWindow,
+              goal: adapterGoal ?? undefined
+            })
+          }
           break
       }
 
@@ -1282,9 +1281,7 @@ export class AgentSessionService extends AgentBaseService {
     try {
       const contextParts = await this.buildPrimingContext(prompt)
       if (contextParts.length > 0) {
-        this.log.info(
-          `[opencode] Priming session with ${contextParts.length} context parts`
-        )
+        this.log.info(`[opencode] Priming session with ${contextParts.length} context parts`)
         this._pendingPrimingContext = contextParts
       }
     } catch (primingErr) {
@@ -1453,7 +1450,9 @@ export class AgentSessionService extends AgentBaseService {
       `[ensureIpcBridge] Bridge started — socketPath=${socketPath ? socketPath : 'MISSING'}`
     )
     if (!socketPath) {
-      this.log.warn('[ensureIpcBridge] Socket path is null — control-actions MCP server will run in log-only mode')
+      this.log.warn(
+        '[ensureIpcBridge] Socket path is null — control-actions MCP server will run in log-only mode'
+      )
     }
   }
 

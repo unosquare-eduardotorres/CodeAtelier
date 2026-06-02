@@ -100,13 +100,14 @@ export default function GoalRunHistory({
               <span className={config.color}>{config.icon}</span>
               <div className="flex-1 min-w-0">
                 <p
-                className="text-base font-normal text-text-primary truncate"
-                style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}
-              >
-                {run.title}
-              </p>
+                  className="text-base font-normal text-text-primary truncate"
+                  style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}
+                >
+                  {run.title}
+                </p>
                 <p className="text-[10px] text-text-muted">
-                  {dateStr} · {run.goalType} · {run.totalTokens > 0 ? `${Math.round(run.totalTokens / 1000)}K tok` : '—'}
+                  {dateStr} · {run.goalType} ·{' '}
+                  {run.totalTokens > 0 ? `${Math.round(run.totalTokens / 1000)}K tok` : '—'}
                   {(run.status === 'failed' || run.status === 'cancelled') && (
                     <span className="ml-1 text-amber-400">· resumable</span>
                   )}

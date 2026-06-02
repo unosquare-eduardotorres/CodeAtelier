@@ -42,7 +42,6 @@ import type {
   IndexingState,
   CodeGraphIndexingState,
   ContextUsage,
-  StructuredPlan,
   AuditRun,
   AuditPlanRecord,
   AuditMode,
@@ -1798,8 +1797,11 @@ const api = {
   grillCondenseRequirement: (args: { text: string }): Promise<{ condensed: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT, args),
 
-  grillGeneratePlan: (args: { sessionId: string; workspaceId: string }): Promise<GrillStructuredPlan> =>
-    ipcRenderer.invoke(IPC_CHANNELS.GRILL_GENERATE_PLAN, args),
+  grillGeneratePlan: (args: {
+    sessionId: string
+    ideaId?: string
+    workspaceId: string
+  }): Promise<GrillStructuredPlan> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_GENERATE_PLAN, args),
 
   grillGetStatus: (args: {
     workspaceId: string
@@ -1812,6 +1814,15 @@ const api = {
 
   grillGetSession: (args: { ideaId: string }): Promise<unknown | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_GET_SESSION, args),
+
+  grillListPlannedIdeas: (args: { workspaceId: string }): Promise<string[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GRILL_LIST_PLANNED_IDEAS, args),
+
+  grillComplete: (args: { ideaId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GRILL_COMPLETE, args),
+
+  grillDiscard: (args: { ideaId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GRILL_DISCARD, args),
 
   grillSaveAnswers: (args: {
     sessionId: string
@@ -1849,7 +1860,9 @@ const api = {
   mpaCancel: (args?: { workspaceId?: string }): Promise<{ cancelled: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MPA_CANCEL, args),
 
-  mpaGetStatus: (args: { workspaceId: string }): Promise<{
+  mpaGetStatus: (args: {
+    workspaceId: string
+  }): Promise<{
     status: string
     runId: string | null
     currentPhase: string | null
@@ -1865,7 +1878,9 @@ const api = {
   mpaGetHistory: (args: { workspaceId: string; limit?: number }): Promise<unknown[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.MPA_GET_HISTORY, args),
 
-  mpaClassifyGoal: (args: { goal: string }): Promise<{
+  mpaClassifyGoal: (args: {
+    goal: string
+  }): Promise<{
     goalType: string
     phases: string[]
     isValid: boolean
@@ -1884,41 +1899,122 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.MPA_RESUME, args),
 
   onMpaPhaseStart: (
-    cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; iteration: number; agentRole: string }) => void
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      phaseId: string
+      phaseType: string
+      iteration: number
+      agentRole: string
+    }) => void
   ): (() => void) => {
-    const handler = (_: unknown, data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; iteration: number; agentRole: string }): void => cb(data)
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        runId: string
+        phaseId: string
+        phaseType: string
+        iteration: number
+        agentRole: string
+      }
+    ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.MPA_PHASE_START, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_PHASE_START, handler)
   },
 
   onMpaPhaseProgress: (
-    cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; streamChunk: string }) => void
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      phaseId: string
+      phaseType: string
+      streamChunk: string
+    }) => void
   ): (() => void) => {
-    const handler = (_: unknown, data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; streamChunk: string }): void => cb(data)
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        runId: string
+        phaseId: string
+        phaseType: string
+        streamChunk: string
+      }
+    ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.MPA_PHASE_PROGRESS, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_PHASE_PROGRESS, handler)
   },
 
   onMpaPhaseComplete: (
-    cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; status: string; tokensUsed: number }) => void
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      phaseId: string
+      phaseType: string
+      status: string
+      tokensUsed: number
+    }) => void
   ): (() => void) => {
-    const handler = (_: unknown, data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; status: string; tokensUsed: number }): void => cb(data)
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        runId: string
+        phaseId: string
+        phaseType: string
+        status: string
+        tokensUsed: number
+      }
+    ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.MPA_PHASE_COMPLETE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_PHASE_COMPLETE, handler)
   },
 
   onMpaFeedbackLoop: (
-    cb: (data: { workspaceId: string; runId: string; fromPhase: string; toPhase: string; iteration: number; reason: string }) => void
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      fromPhase: string
+      toPhase: string
+      iteration: number
+      reason: string
+    }) => void
   ): (() => void) => {
-    const handler = (_: unknown, data: { workspaceId: string; runId: string; fromPhase: string; toPhase: string; iteration: number; reason: string }): void => cb(data)
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        runId: string
+        fromPhase: string
+        toPhase: string
+        iteration: number
+        reason: string
+      }
+    ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.MPA_FEEDBACK_LOOP, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_FEEDBACK_LOOP, handler)
   },
 
   onMpaApprovalNeeded: (
-    cb: (data: { workspaceId: string; runId: string; phaseId: string; artifactId: string; artifact: unknown }) => void
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      phaseId: string
+      artifactId: string
+      artifact: unknown
+    }) => void
   ): (() => void) => {
-    const handler = (_: unknown, data: { workspaceId: string; runId: string; phaseId: string; artifactId: string; artifact: unknown }): void => cb(data)
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        runId: string
+        phaseId: string
+        artifactId: string
+        artifact: unknown
+      }
+    ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.MPA_APPROVAL_NEEDED, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_APPROVAL_NEEDED, handler)
   },
@@ -1926,7 +2022,10 @@ const api = {
   onMpaPipelineComplete: (
     cb: (data: { workspaceId: string; runId: string; status: string; totalTokens: number }) => void
   ): (() => void) => {
-    const handler = (_: unknown, data: { workspaceId: string; runId: string; status: string; totalTokens: number }): void => cb(data)
+    const handler = (
+      _: unknown,
+      data: { workspaceId: string; runId: string; status: string; totalTokens: number }
+    ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.MPA_PIPELINE_COMPLETE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_PIPELINE_COMPLETE, handler)
   },
@@ -1947,18 +2046,56 @@ const api = {
    * Each store serves a distinct purpose; the duplicate listener cost is negligible.
    */
   onWorkspaceStatusUpdate: (
-    cb: (data: { workspaceId: string; status: string; agentId: string; agentType: string; elapsedMs: number; tokenUsage: number }) => void
+    cb: (data: {
+      workspaceId: string
+      status: string
+      agentId: string
+      agentType: string
+      elapsedMs: number
+      tokenUsage: number
+    }) => void
   ): (() => void) => {
-    const handler = (_: unknown, data: { workspaceId: string; status: string; agentId: string; agentType: string; elapsedMs: number; tokenUsage: number }): void => cb(data)
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        status: string
+        agentId: string
+        agentType: string
+        elapsedMs: number
+        tokenUsage: number
+      }
+    ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.AGENT_STATUS_UPDATE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_STATUS_UPDATE, handler)
   },
 
   /** Listen for permission requests from background workspaces. */
   onPermissionRequest: (
-    cb: (data: { id: string; workspaceId: string; workspaceName: string; type: string; summary: string; isSimple: boolean; payload: unknown; receivedAt: number }) => void
+    cb: (data: {
+      id: string
+      workspaceId: string
+      workspaceName: string
+      type: string
+      summary: string
+      isSimple: boolean
+      payload: unknown
+      receivedAt: number
+    }) => void
   ): (() => void) => {
-    const handler = (_: unknown, data: { id: string; workspaceId: string; workspaceName: string; type: string; summary: string; isSimple: boolean; payload: unknown; receivedAt: number }): void => cb(data)
+    const handler = (
+      _: unknown,
+      data: {
+        id: string
+        workspaceId: string
+        workspaceName: string
+        type: string
+        summary: string
+        isSimple: boolean
+        payload: unknown
+        receivedAt: number
+      }
+    ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.PERMISSION_REQUEST, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.PERMISSION_REQUEST, handler)
   },
@@ -1973,9 +2110,24 @@ const api = {
 
   /** Listen for completion/failure notifications from background workspaces. */
   onCompletionNotification: (
-    cb: (data: { workspaceId: string; workspaceName: string; service: string; status: string; summary: string }) => void
+    cb: (data: {
+      workspaceId: string
+      workspaceName: string
+      service: string
+      status: string
+      summary: string
+    }) => void
   ): (() => void) => {
-    const handler = (_: unknown, data: { workspaceId: string; workspaceName: string; service: string; status: string; summary: string }): void => cb(data)
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        workspaceName: string
+        service: string
+        status: string
+        summary: string
+      }
+    ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.COMPLETION_NOTIFICATION, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COMPLETION_NOTIFICATION, handler)
   },
@@ -2002,11 +2154,21 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_GET_SESSION, args),
 
   onCouncilMemberStream: (
-    cb: (data: { advisorRole: string; type: string; content?: string; toolActivity?: Record<string, unknown> }) => void
+    cb: (data: {
+      advisorRole: string
+      type: string
+      content?: string
+      toolActivity?: Record<string, unknown>
+    }) => void
   ): (() => void) => {
     const handler = (
       _: unknown,
-      data: { advisorRole: string; type: string; content?: string; toolActivity?: Record<string, unknown> }
+      data: {
+        advisorRole: string
+        type: string
+        content?: string
+        toolActivity?: Record<string, unknown>
+      }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, handler)
@@ -2015,25 +2177,18 @@ const api = {
   onCouncilMemberComplete: (
     cb: (data: { advisorRole: string; review: unknown }) => void
   ): (() => void) => {
-    const handler = (
-      _: unknown,
-      data: { advisorRole: string; review: unknown }
-    ): void => cb(data)
+    const handler = (_: unknown, data: { advisorRole: string; review: unknown }): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.COUNCIL_MEMBER_COMPLETE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COUNCIL_MEMBER_COMPLETE, handler)
   },
 
-  onCouncilPeerReviewComplete: (
-    cb: (data: { peerReviews: unknown[] }) => void
-  ): (() => void) => {
+  onCouncilPeerReviewComplete: (cb: (data: { peerReviews: unknown[] }) => void): (() => void) => {
     const handler = (_: unknown, data: { peerReviews: unknown[] }): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.COUNCIL_PEER_REVIEW_COMPLETE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COUNCIL_PEER_REVIEW_COMPLETE, handler)
   },
 
-  onCouncilVerdict: (
-    cb: (data: { verdict: unknown }) => void
-  ): (() => void) => {
+  onCouncilVerdict: (cb: (data: { verdict: unknown }) => void): (() => void) => {
     const handler = (_: unknown, data: { verdict: unknown }): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.COUNCIL_VERDICT, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COUNCIL_VERDICT, handler)
@@ -2053,8 +2208,10 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COUNCIL_COMPLETE, handler)
   },
 
-  councilResume: (args: { sessionId: string; workspaceId: string }): Promise<{ resumed: boolean }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_RESUME, args),
+  councilResume: (args: {
+    sessionId: string
+    workspaceId: string
+  }): Promise<{ resumed: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_RESUME, args),
 
   councilGetHistory: (args: { workspaceId: string; limit?: number }): Promise<unknown[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_GET_HISTORY, args),

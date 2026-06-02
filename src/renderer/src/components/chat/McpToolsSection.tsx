@@ -123,9 +123,7 @@ export default function McpToolsSection({
                     tokenImpact={i.tokenImpact}
                     description={i.description}
                     active={!!mcpOverrides[i.id]}
-                    onToggle={() =>
-                      setMcpOverrides((prev) => ({ ...prev, [i.id]: !prev[i.id] }))
-                    }
+                    onToggle={() => setMcpOverrides((prev) => ({ ...prev, [i.id]: !prev[i.id] }))}
                   />
                 ))}
               </div>

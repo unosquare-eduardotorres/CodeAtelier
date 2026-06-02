@@ -134,13 +134,10 @@ export function registerCouncilIpc(_mainWindow: BrowserWindow): void {
 
   // ── council:getSession — current council status for a workspace ───
 
-  ipcMain.handle(
-    IPC_CHANNELS.COUNCIL_GET_SESSION,
-    (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      return councilService.getSessionState(args.workspaceId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.COUNCIL_GET_SESSION, (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    return councilService.getSessionState(args.workspaceId)
+  })
 
   // ── council:resume — resume a failed/stale session ───
 
@@ -161,17 +158,23 @@ export function registerCouncilIpc(_mainWindow: BrowserWindow): void {
       wireCouncilEvents(args.workspaceId, workspace.repoPath)
 
       // Start persistence tracking
-      councilPersistenceController.startTracking(args.sessionId, args.workspaceId, workspace.repoPath)
+      councilPersistenceController.startTracking(
+        args.sessionId,
+        args.workspaceId,
+        workspace.repoPath
+      )
 
       // Resume (non-blocking)
-      councilService.resumeSession({
-        sessionId: args.sessionId,
-        workspaceId: args.workspaceId,
-        workspacePath: workspace.repoPath,
-        llmProvider
-      }).catch((err) => {
-        councilLog.error('[council:resume] Resume failed:', err)
-      })
+      councilService
+        .resumeSession({
+          sessionId: args.sessionId,
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath,
+          llmProvider
+        })
+        .catch((err) => {
+          councilLog.error('[council:resume] Resume failed:', err)
+        })
 
       return { resumed: true }
     }
@@ -235,14 +238,13 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
   )
 
   // ── member-complete — forward parsed review ──
-  councilCleanup.addListener<{ workspaceId: string; advisorRole: CouncilAdvisorRole; review: CouncilReview | null }>(
-    cleanups,
-    councilService,
-    'member-complete',
-    (data) => {
-      councilPersistenceController.handleMemberComplete(data, router)
-    }
-  )
+  councilCleanup.addListener<{
+    workspaceId: string
+    advisorRole: CouncilAdvisorRole
+    review: CouncilReview | null
+  }>(cleanups, councilService, 'member-complete', (data) => {
+    councilPersistenceController.handleMemberComplete(data, router)
+  })
 
   // ── peer-review-complete — forward rankings ──
   councilCleanup.addListener<{ workspaceId: string; peerReviews: CouncilPeerReview[] }>(
@@ -270,11 +272,9 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     councilService,
     'session-ended',
     (data) => {
-      councilPersistenceController
-        .handleSessionEnded(data, router)
-        .catch((err) => {
-          councilLog.error('[council:session-ended] handleSessionEnded failed:', err)
-        })
+      councilPersistenceController.handleSessionEnded(data, router).catch((err) => {
+        councilLog.error('[council:session-ended] handleSessionEnded failed:', err)
+      })
       councilCleanup.runCleanup(workspaceId)
     }
   )

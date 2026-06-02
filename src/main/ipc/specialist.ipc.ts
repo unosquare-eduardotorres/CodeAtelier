@@ -38,18 +38,15 @@ export function registerSpecialistIpc(): void {
     return specialistRepository.create(args)
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.SPECIALIST_UPDATE,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.SPECIALIST_UPDATE
-      const args = requireObject(rawArgs, ch)
-      const id = requireString(args, 'id', ch)
+  ipcMain.handle(IPC_CHANNELS.SPECIALIST_UPDATE, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.SPECIALIST_UPDATE
+    const args = requireObject(rawArgs, ch)
+    const id = requireString(args, 'id', ch)
 
-      const { id: _, ...data } = args as unknown as { id: string } & UpdateSpecialistInput
-      return specialistRepository.update(id, data)
-    }
-  )
+    const { id: _, ...data } = args as unknown as { id: string } & UpdateSpecialistInput
+    return specialistRepository.update(id, data)
+  })
 
   ipcMain.handle(IPC_CHANNELS.SPECIALIST_DELETE, async (event, rawArgs: unknown) => {
     validateSender(event)
@@ -81,29 +78,23 @@ export function registerSpecialistIpc(): void {
     specialistRepository.reorderPriorities(orderedIds)
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.SPECIALIST_ASSIGN_SKILL,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.SPECIALIST_ASSIGN_SKILL
-      const args = requireObject(rawArgs, ch)
-      const specialistId = requireString(args, 'specialistId', ch)
-      const skillId = requireString(args, 'skillId', ch)
+  ipcMain.handle(IPC_CHANNELS.SPECIALIST_ASSIGN_SKILL, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.SPECIALIST_ASSIGN_SKILL
+    const args = requireObject(rawArgs, ch)
+    const specialistId = requireString(args, 'specialistId', ch)
+    const skillId = requireString(args, 'skillId', ch)
 
-      specialistRepository.assignSkill(specialistId, skillId)
-    }
-  )
+    specialistRepository.assignSkill(specialistId, skillId)
+  })
 
-  ipcMain.handle(
-    IPC_CHANNELS.SPECIALIST_REMOVE_SKILL,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.SPECIALIST_REMOVE_SKILL
-      const args = requireObject(rawArgs, ch)
-      const specialistId = requireString(args, 'specialistId', ch)
-      const skillId = requireString(args, 'skillId', ch)
+  ipcMain.handle(IPC_CHANNELS.SPECIALIST_REMOVE_SKILL, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.SPECIALIST_REMOVE_SKILL
+    const args = requireObject(rawArgs, ch)
+    const specialistId = requireString(args, 'specialistId', ch)
+    const skillId = requireString(args, 'skillId', ch)
 
-      specialistRepository.removeSkill(specialistId, skillId)
-    }
-  )
+    specialistRepository.removeSkill(specialistId, skillId)
+  })
 }

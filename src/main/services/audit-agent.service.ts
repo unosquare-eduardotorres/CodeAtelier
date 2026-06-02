@@ -367,19 +367,22 @@ export class AuditAgentService extends EventEmitter {
       } satisfies AuditProgressPayload)
 
       try {
-        const roundResult = await this.runAuditRound({
-          workspaceId: params.workspaceId,
-          workspacePath: params.workspacePath,
-          trackId: params.trackId,
-          mode: params.mode,
-          batch,
-          roundNumber,
-          previousFindings: allFindings,
-          remainingFileCount: remainingFiles.length - batch.length,
-          coverageTracker,
-          isFirstRound: roundNumber === 1,
-          llmProvider: params.llmProvider
-        }, state)
+        const roundResult = await this.runAuditRound(
+          {
+            workspaceId: params.workspaceId,
+            workspacePath: params.workspacePath,
+            trackId: params.trackId,
+            mode: params.mode,
+            batch,
+            roundNumber,
+            previousFindings: allFindings,
+            remainingFileCount: remainingFiles.length - batch.length,
+            coverageTracker,
+            isFirstRound: roundNumber === 1,
+            llmProvider: params.llmProvider
+          },
+          state
+        )
 
         allFindings.push(...roundResult.findings)
 
@@ -395,7 +398,8 @@ export class AuditAgentService extends EventEmitter {
         this.emit('progress', {
           trackId: params.trackId,
           status: 'running',
-          streamChunk: `\n\n📊 Round ${roundNumber}: ${roundResult.findings.length} finding(s), ${stats.fileCount}/${discovery.totalFiles} files covered` +
+          streamChunk:
+            `\n\n📊 Round ${roundNumber}: ${roundResult.findings.length} finding(s), ${stats.fileCount}/${discovery.totalFiles} files covered` +
             (roundResult.findings.length === 0 && stats.toolCallCount === 0
               ? ` ⚠️ No tool calls detected — the LLM may not have responded properly.\n\n`
               : `\n\n`)
@@ -532,9 +536,7 @@ export class AuditAgentService extends EventEmitter {
 
       // Surface error chunks — CLI auth failures, API issues, invalid flags
       if (chunk.type === 'error' && chunk.error) {
-        auditLog.error(
-          `[audit:${params.trackId}] Error chunk: ${chunk.error.slice(0, 300)}`
-        )
+        auditLog.error(`[audit:${params.trackId}] Error chunk: ${chunk.error.slice(0, 300)}`)
         this.emit('progress', {
           trackId: params.trackId,
           status: 'running',
@@ -596,8 +598,8 @@ export class AuditAgentService extends EventEmitter {
       if (responseText.length < 50) {
         auditLog.error(
           `[audit:${params.trackId}] Round ${params.roundNumber} produced near-empty response ` +
-          `(${responseText.length} chars). Possible CLI/API issue. ` +
-          `Response: "${responseText.slice(0, 100)}"`
+            `(${responseText.length} chars). Possible CLI/API issue. ` +
+            `Response: "${responseText.slice(0, 100)}"`
         )
       }
 
@@ -613,16 +615,19 @@ export class AuditAgentService extends EventEmitter {
           `[audit:${params.trackId}] Round 1 produced ${responseText.length}-char response with 0 findings`
         )
         return {
-          findings: [{
-            id: randomUUID(),
-            severity: 'info' as const,
-            title: `${params.trackId} audit could not complete`,
-            description:
-              `The auditor received an empty or very short response (${responseText.length} chars) from the LLM. ` +
-              `This usually indicates a CLI authentication issue, API rate limit, or invalid CLI flags. ` +
-              `Check that the "claude" CLI is working by running "claude -p hello" in your terminal.`,
-            recommendation: 'Verify Claude CLI access: run "claude --version" and "claude -p hello" in your terminal.'
-          }],
+          findings: [
+            {
+              id: randomUUID(),
+              severity: 'info' as const,
+              title: `${params.trackId} audit could not complete`,
+              description:
+                `The auditor received an empty or very short response (${responseText.length} chars) from the LLM. ` +
+                `This usually indicates a CLI authentication issue, API rate limit, or invalid CLI flags. ` +
+                `Check that the "claude" CLI is working by running "claude -p hello" in your terminal.`,
+              recommendation:
+                'Verify Claude CLI access: run "claude --version" and "claude -p hello" in your terminal.'
+            }
+          ],
           score: null,
           summary: 'Audit could not complete — empty LLM response. Check Claude CLI configuration.'
         }
@@ -663,18 +668,28 @@ export class AuditAgentService extends EventEmitter {
         '```json\n{"score": <0-100>, "summary": "<2-3 sentences>", "findings": [{"severity": "...", "title": "...", "description": "...", "filePath": "...", "recommendation": "..."}]}\n```\n\n' +
         `Score conservatively. Include findings for what you DID inspect. Output ONLY the JSON block.`
 
-      const nudgeText = execFileSync('claude', [
-        '-p', nudgePrompt,
-        '--model', modelConfigService.getModel(params.workspacePath, 'da-vinci:plan'),
-        '--system-prompt', 'You are an audit result formatter. Output only the requested JSON block.',
-        '--permission-mode', 'plan',
-        '--max-turns', '1',
-        '--output-format', 'text'
-      ], {
-        encoding: 'utf-8',
-        timeout: 60_000,
-        cwd: params.workspacePath
-      })
+      const nudgeText = execFileSync(
+        'claude',
+        [
+          '-p',
+          nudgePrompt,
+          '--model',
+          modelConfigService.getModel(params.workspacePath, 'da-vinci:plan'),
+          '--system-prompt',
+          'You are an audit result formatter. Output only the requested JSON block.',
+          '--permission-mode',
+          'plan',
+          '--max-turns',
+          '1',
+          '--output-format',
+          'text'
+        ],
+        {
+          encoding: 'utf-8',
+          timeout: 60_000,
+          cwd: params.workspacePath
+        }
+      )
 
       const nudgeParsed = parseAuditResponse(nudgeText)
 

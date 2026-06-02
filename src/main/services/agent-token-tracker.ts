@@ -99,7 +99,8 @@ export class AgentTokenTracker {
       outputTokens: meta.tokenUsage.output,
       cacheReadTokens: cacheReadInputTokens,
       cacheCreationTokens: cacheCreationInputTokens,
-      cacheHitRate: effectiveInputForRate > 0 ? (cacheReadInputTokens / effectiveInputForRate) * 100 : 0,
+      cacheHitRate:
+        effectiveInputForRate > 0 ? (cacheReadInputTokens / effectiveInputForRate) * 100 : 0,
       timestamp: Date.now()
     })
 
@@ -162,11 +163,9 @@ export class AgentTokenTracker {
         if (dbTurns.length > 0) {
           let totalInput = 0
           let totalCacheRead = 0
-          let totalCacheCreation = 0
           const turnBreakdown: TurnBreakdownEntry[] = dbTurns.map((t) => {
             totalInput += t.inputTokens
             totalCacheRead += t.cacheReadTokens
-            totalCacheCreation += t.cacheCreationTokens
             const effectiveForRate = t.inputTokens + t.cacheReadTokens
             return {
               turn: t.turnNumber,

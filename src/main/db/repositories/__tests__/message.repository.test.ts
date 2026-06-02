@@ -123,7 +123,13 @@ if (!env) {
       const convId4 = seedConversation(db, wsId, 'ToolActivity List Test')
       const msg = messageRepository.create(convId4, 'da-vinci', 'Response')
       const activities = [
-        { id: 'tool-3', toolName: 'Bash', status: 'completed' as const, startedAt: 5000, completedAt: 6000 }
+        {
+          id: 'tool-3',
+          toolName: 'Bash',
+          status: 'completed' as const,
+          startedAt: 5000,
+          completedAt: 6000
+        }
       ]
       messageRepository.updateToolActivities(msg.id, activities)
 

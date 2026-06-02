@@ -23,10 +23,7 @@ import type {
   MemoryType,
   ModelAction
 } from '../../../shared/types'
-import {
-  EXTERNAL_MCP_INTEGRATIONS,
-  LOCAL_MCP_INTEGRATIONS
-} from '../../../shared/constants'
+import { EXTERNAL_MCP_INTEGRATIONS, LOCAL_MCP_INTEGRATIONS } from '../../../shared/constants'
 import type {
   AdapterIntentContext,
   AdapterMcpContext,
@@ -265,11 +262,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
    * Append Tool Priority + MCP guidance to a base prompt. Single call site.
    * Ensures `## Tool Priority` is present for all tool-equipped adapters.
    */
-  protected appendToolGuidance(
-    basePrompt: string,
-    turnCount: number,
-    model?: string
-  ): string {
+  protected appendToolGuidance(basePrompt: string, turnCount: number, model?: string): string {
     const flags = this.buildPromptFeatureFlags()
     // Tool Priority is always injected for adapters with tools
     const withPriority =
@@ -344,11 +337,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
     workspaceId: string | null,
     turnCount: number
   ): CommunicationTone {
-    if (
-      this.cachedTone &&
-      this.cachedToneConversationId === conversationId &&
-      turnCount > 1
-    ) {
+    if (this.cachedTone && this.cachedToneConversationId === conversationId && turnCount > 1) {
       return this.cachedTone
     }
     let tone: CommunicationTone = 'default'
@@ -408,11 +397,13 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
     semanticSearchEnabled: boolean
     githubConfigured: boolean
   } {
-    return this.lockedFlags ?? {
-      repomapEnabled: this.repomapEnabled,
-      semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: this.githubConfigured
-    }
+    return (
+      this.lockedFlags ?? {
+        repomapEnabled: this.repomapEnabled,
+        semanticSearchEnabled: this.semanticSearchEnabled,
+        githubConfigured: this.githubConfigured
+      }
+    )
   }
 
   /**

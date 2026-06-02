@@ -113,7 +113,10 @@ describe('SessionEventRouter', () => {
     }
 
     // Simulate router behavior
-    const send = (channel: string, payload: { workspaceId: string; [key: string]: unknown }): void => {
+    const send = (
+      channel: string,
+      payload: { workspaceId: string; [key: string]: unknown }
+    ): void => {
       mockWindow.webContents.send(channel, payload)
     }
 
@@ -146,7 +149,10 @@ describe('SessionEventRouter', () => {
       receivedAt: Date.now()
     }
 
-    mockWindow.webContents.send('permission:request', { workspaceId: permission.workspaceId, ...permission })
+    mockWindow.webContents.send('permission:request', {
+      workspaceId: permission.workspaceId,
+      ...permission
+    })
 
     assert.equal(sent.length, 1)
     assert.equal(sent[0].payload.workspaceId, 'ws-1')
@@ -234,16 +240,21 @@ describe('GrillAgentService Multi-Session Pattern', () => {
 
 describe('MPA Pipeline Multi-Session Pattern', () => {
   test('per-workspace gate resolution finds correct pipeline', () => {
-    const pipelines = new Map<string, {
-      runId: string
-      pendingResolve: ((result: { approved: boolean }) => void) | null
-    }>()
+    const pipelines = new Map<
+      string,
+      {
+        runId: string
+        pendingResolve: ((result: { approved: boolean }) => void) | null
+      }
+    >()
 
     let resolvedResult: { approved: boolean } | null = null
 
     pipelines.set('ws-1', {
       runId: 'run-1',
-      pendingResolve: (result) => { resolvedResult = result }
+      pendingResolve: (result) => {
+        resolvedResult = result
+      }
     })
     pipelines.set('ws-2', {
       runId: 'run-2',
@@ -298,5 +309,3 @@ describe('Permission Flow Routing', () => {
     assert.equal(isActive, true)
   })
 })
-
-

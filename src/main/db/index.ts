@@ -2169,7 +2169,9 @@ const migrations: Migration[] = [
     version: 91,
     name: 'add-conversation-effort',
     up: (db) => {
-      db.exec(`ALTER TABLE conversations ADD COLUMN effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))`)
+      db.exec(
+        `ALTER TABLE conversations ADD COLUMN effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))`
+      )
       dbLogger.info('[migration-91] ✓ Added effort column to conversations')
     }
   },

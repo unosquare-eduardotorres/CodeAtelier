@@ -12,7 +12,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { truncateToolOutput } from './output-cap'
 
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
 

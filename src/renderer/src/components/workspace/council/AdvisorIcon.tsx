@@ -18,10 +18,7 @@ interface AdvisorIconProps extends LucideProps {
   advisor: CouncilAdvisorDefinition | undefined
 }
 
-export default function AdvisorIcon({
-  advisor,
-  ...props
-}: AdvisorIconProps): React.JSX.Element {
-  const IconComponent = advisor ? ICON_MAP[advisor.icon] ?? User : User
+export default function AdvisorIcon({ advisor, ...props }: AdvisorIconProps): React.JSX.Element {
+  const IconComponent = advisor ? (ICON_MAP[advisor.icon] ?? User) : User
   return <IconComponent {...props} />
 }

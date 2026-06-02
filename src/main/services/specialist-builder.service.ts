@@ -401,7 +401,10 @@ export class SpecialistBuilderService {
     let totalChars = 0
     for (const r of rows) {
       const line = `- **${r.name}**${r.description ? ` — ${r.description}` : ''}`
-      if (totalChars + line.length > SpecialistBuilderService.SKILL_BUDGET_CHARS && lines.length > 0) {
+      if (
+        totalChars + line.length > SpecialistBuilderService.SKILL_BUDGET_CHARS &&
+        lines.length > 0
+      ) {
         lines.push(`_(${rows.length - lines.length} more skills omitted — budget cap reached)_`)
         break
       }

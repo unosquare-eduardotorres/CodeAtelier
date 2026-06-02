@@ -68,7 +68,11 @@ export class CouncilPersistenceController {
         type: 'text',
         content: chunk.content
       })
-    } else if (chunk.type === 'tool_use' || chunk.type === 'tool_result' || chunk.type === 'tool_progress') {
+    } else if (
+      chunk.type === 'tool_use' ||
+      chunk.type === 'tool_result' ||
+      chunk.type === 'tool_progress'
+    ) {
       const result = processToolChunk(chunk, { workspacePath, agentType: 'council' })
       if (result) {
         router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, workspaceId, {

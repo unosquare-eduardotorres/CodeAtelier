@@ -1,16 +1,8 @@
 import { useState, useEffect } from 'react'
-import {
-  Zap,
-  Activity,
-  Clock,
-  Users,
-  DollarSign,
-  ShieldCheck,
-  MessageSquare
-} from 'lucide-react'
+import { Zap, Activity, Clock, Users, DollarSign, ShieldCheck, MessageSquare } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { Skeleton } from '@renderer/components/common'
-import { StatCard, CacheEfficiencyPanel, UsageDataTable } from './token-usage'
+import { StatCard, CacheEfficiencyPanel } from './token-usage'
 import type { TokenSummary, AgentSessionRecord } from '../../../../shared/types'
 
 interface CostSummary {
@@ -279,9 +271,24 @@ export default function TokenUsagePage(): React.JSX.Element {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <StatCard icon={Zap} label="Total Tokens" value={formatTokens(summary?.totalTokens ?? 0)} subtitle="All-time for this workspace" />
-        <StatCard icon={Activity} label="Sessions" value={summary?.sessionCount ?? 0} subtitle="Agent sessions recorded" />
-        <StatCard icon={Users} label="Most Active" value={mostActiveAgent} subtitle="Highest token consumption" />
+        <StatCard
+          icon={Zap}
+          label="Total Tokens"
+          value={formatTokens(summary?.totalTokens ?? 0)}
+          subtitle="All-time for this workspace"
+        />
+        <StatCard
+          icon={Activity}
+          label="Sessions"
+          value={summary?.sessionCount ?? 0}
+          subtitle="Agent sessions recorded"
+        />
+        <StatCard
+          icon={Users}
+          label="Most Active"
+          value={mostActiveAgent}
+          subtitle="Highest token consumption"
+        />
       </div>
 
       {/* Per-Agent Breakdown */}

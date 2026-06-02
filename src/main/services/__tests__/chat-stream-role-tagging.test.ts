@@ -15,7 +15,6 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { chatAgentService } from '../chat-agent.service'
-import { DaVinciRoleAdapter } from '../role-adapters/da-vinci.adapter'
 import { ProjectSpecialistRoleAdapter } from '../role-adapters/project-specialist.adapter'
 import { trySetupTestDb } from '../../db/repositories/__tests__/db-test-helper'
 
@@ -38,7 +37,10 @@ describe('ChatStreamService role tagging', () => {
     const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-xyz' })
     // Inject via the sessions map + _activeWorkspaceId so getActiveAdapter() resolves it.
     const svc = chatAgentService as unknown as {
-      sessions: Map<string, { adapter: unknown; session: unknown; forwarderCleanups: unknown[]; workspacePath: string }>
+      sessions: Map<
+        string,
+        { adapter: unknown; session: unknown; forwarderCleanups: unknown[]; workspacePath: string }
+      >
       _activeWorkspaceId: string | null
     }
     const originalActiveId = svc._activeWorkspaceId

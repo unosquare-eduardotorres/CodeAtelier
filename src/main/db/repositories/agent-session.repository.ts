@@ -79,7 +79,9 @@ function toModel(row: AgentSessionRow): AgentSession {
 
 export class AgentSessionRepository extends BaseRepository<AgentSessionRow, AgentSession> {
   protected readonly tableName = 'agent_sessions'
-  protected mapRow(row: AgentSessionRow): AgentSession { return toModel(row) }
+  protected mapRow(row: AgentSessionRow): AgentSession {
+    return toModel(row)
+  }
 
   /** Create a new session record when an agent starts */
   create(
@@ -242,9 +244,10 @@ export class AgentSessionRepository extends BaseRepository<AgentSessionRow, Agen
                 COUNT(*) as total_turns
          FROM turn_usage WHERE ${filterColumn} = ?`
 
-    const turnTotals = this.db()
-      .prepare(turnQuery)
-      .get(filterValue) as { total_context_tokens: number; total_turns: number }
+    const turnTotals = this.db().prepare(turnQuery).get(filterValue) as {
+      total_context_tokens: number
+      total_turns: number
+    }
 
     const byAgent = this.db()
       .prepare(

@@ -93,7 +93,10 @@ describe('summarizeToolInput', () => {
   test('Edit — shows edit count for multiple edits', () => {
     const result = summarizeToolInput(
       'Edit',
-      { file_path: '/proj/src/bar.ts', edits: [{ old_string: 'a' }, { old_string: 'b' }, { old_string: 'c' }] },
+      {
+        file_path: '/proj/src/bar.ts',
+        edits: [{ old_string: 'a' }, { old_string: 'b' }, { old_string: 'c' }]
+      },
       '/proj'
     )
     assert.equal(result, 'src/bar.ts (3 edits)')

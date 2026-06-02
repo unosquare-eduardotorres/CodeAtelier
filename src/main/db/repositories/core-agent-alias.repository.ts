@@ -19,7 +19,9 @@ function mapRow(row: CoreAgentAliasRow): CoreAgentAlias {
 
 export class CoreAgentAliasRepository extends BaseRepository<CoreAgentAliasRow, CoreAgentAlias> {
   protected readonly tableName = 'core_agent_aliases'
-  protected mapRow(row: CoreAgentAliasRow): CoreAgentAlias { return mapRow(row) }
+  protected mapRow(row: CoreAgentAliasRow): CoreAgentAlias {
+    return mapRow(row)
+  }
 
   findAll(): CoreAgentAlias[] {
     const db = this.db()

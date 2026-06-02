@@ -88,7 +88,10 @@ class TextDeltaBatcher {
     this.contexts.set(key, ctx)
     this.buffers.set(key, (this.buffers.get(key) ?? '') + text)
     if (!this.timers.has(key)) {
-      this.timers.set(key, setTimeout(() => this.flushKey(key), TEXT_BATCH_INTERVAL_MS))
+      this.timers.set(
+        key,
+        setTimeout(() => this.flushKey(key), TEXT_BATCH_INTERVAL_MS)
+      )
     }
   }
 
@@ -141,7 +144,15 @@ function safeSend(ctx: ChunkRouterContext, channel: string, ...args: unknown[]):
 }
 
 /** Base payload fields shared by all IPC messages */
-function basePayload(ctx: ChunkRouterContext) {
+interface BasePayload {
+  conversationId: string
+  role: 'da-vinci' | 'specialist'
+  requestId?: string
+  specialist?: string
+  taskId?: string
+}
+
+function basePayload(ctx: ChunkRouterContext): BasePayload {
   return {
     conversationId: ctx.conversationId,
     ...(ctx.requestId ? { requestId: ctx.requestId } : {}),
@@ -168,7 +179,8 @@ function handleThinking(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   if (!chunk.content) return
   const thinkingText = `\n\n<details>\n<summary>💭 Reasoning</summary>\n\n${chunk.content}\n\n</details>\n\n`
   ctx.contentAccumulator.value += thinkingText
-  safeSend(ctx,
+  safeSend(
+    ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createTextChunk({ ...basePayload(ctx), text: thinkingText, phase: ctx.phase })
   )
@@ -189,7 +201,8 @@ function handleToolChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Accumulate for DB persistence (merge tool_use → tool_result by id)
   accumulateToolActivity(ctx.conversationId, result.toolActivity)
 
-  safeSend(ctx,
+  safeSend(
+    ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createToolActivityChunk({ ...basePayload(ctx), toolActivity: result.toolActivity })
   )
@@ -198,7 +211,8 @@ function handleToolChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 function handleTurnBoundary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush any pending text before emitting boundary
   textBatcher.flush()
-  safeSend(ctx,
+  safeSend(
+    ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createTurnBoundary({
       ...basePayload(ctx),
@@ -212,7 +226,8 @@ function handleError(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   textBatcher.flush()
   const errorText = `\n\n**Error:** ${chunk.error}`
   ctx.contentAccumulator.value += errorText
-  safeSend(ctx,
+  safeSend(
+    ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createTextChunk({ ...basePayload(ctx), text: errorText })
   )
@@ -224,13 +239,12 @@ function handleStatus(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   if (!chunk.content || chunk.content === 'heartbeat') return
   const statusText = `\n\n_${chunk.content}_\n\n`
   ctx.contentAccumulator.value += statusText
-  safeSend(ctx,
+  safeSend(
+    ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createTextChunk({ ...basePayload(ctx), text: statusText })
   )
 }
-
-
 
 function handleRateLimit(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   safeSend(ctx, IPC_CHANNELS.SDK_RATE_LIMIT, {
@@ -249,7 +263,8 @@ function handleApiRetry(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 function handleCompactBoundary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   const compactText = `\n\n_⚡ ${chunk.content}_\n\n`
   ctx.contentAccumulator.value += compactText
-  safeSend(ctx,
+  safeSend(
+    ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createTextChunk({ ...basePayload(ctx), text: compactText })
   )
@@ -367,7 +382,8 @@ function handleSubagentStart(ctx: ChunkRouterContext, chunk: StreamChunk): void 
   accumulateToolActivity(ctx.conversationId, activity)
 
   // Emit tool activity for the accordion (short summary only)
-  safeSend(ctx,
+  safeSend(
+    ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createToolActivityChunk({ ...basePayload(ctx), toolActivity: activity })
   )
@@ -380,7 +396,8 @@ function handleSubagentProgress(ctx: ChunkRouterContext, chunk: StreamChunk): vo
   // emit it as chat text so it renders in the message bubble, not just the tool accordion.
   if (content.length > 20 && !isStatusLabel(content)) {
     ctx.contentAccumulator.value += content
-    safeSend(ctx, 
+    safeSend(
+      ctx,
       IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
       createTextChunk({
         ...basePayload(ctx),
@@ -399,7 +416,8 @@ function handleSubagentProgress(ctx: ChunkRouterContext, chunk: StreamChunk): vo
   }
   accumulateToolActivity(ctx.conversationId, activity)
 
-  safeSend(ctx,
+  safeSend(
+    ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createToolActivityChunk({ ...basePayload(ctx), toolActivity: activity })
   )
@@ -411,7 +429,8 @@ function handleSubagentComplete(ctx: ChunkRouterContext, chunk: StreamChunk): vo
   // Emit long completion text as bubble content
   if (content.length > 20 && !isStatusLabel(content)) {
     ctx.contentAccumulator.value += content
-    safeSend(ctx, 
+    safeSend(
+      ctx,
       IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
       createTextChunk({
         ...basePayload(ctx),
@@ -431,7 +450,8 @@ function handleSubagentComplete(ctx: ChunkRouterContext, chunk: StreamChunk): vo
   }
   accumulateToolActivity(ctx.conversationId, activity)
 
-  safeSend(ctx,
+  safeSend(
+    ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createToolActivityChunk({ ...basePayload(ctx), toolActivity: activity })
   )
@@ -503,7 +523,7 @@ export function routeChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   } else {
     chatIpcLogger.warn(
       `[chunk-router] Unhandled chunk type: ${chunk.type} ` +
-      `(contentLen=${chunk.content?.length ?? 0})`
+        `(contentLen=${chunk.content?.length ?? 0})`
     )
   }
 }

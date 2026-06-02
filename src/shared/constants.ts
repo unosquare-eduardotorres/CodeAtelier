@@ -289,7 +289,7 @@ export const IPC_CHANNELS = {
   SUBSCRIPTION_CHECK_CLAUDE_CLI: 'subscription:checkClaudeCli',
   SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure',
 
-  // Embedding provider (replaces Ollama for semantic search)
+  // Embedding provider (llamafile sidecar — replaces Ollama/WASM for semantic search)
   EMBEDDING_CHECK_STATUS: 'embedding:checkStatus',
   EMBEDDING_INITIALIZE: 'embedding:initialize',
   EMBEDDING_MODEL_PROGRESS: 'embedding:modelProgress',
@@ -426,6 +426,9 @@ export const IPC_CHANNELS = {
   GRILL_SAVE_ANSWERS: 'grill:saveAnswers',
   GRILL_STATUS_CHANGED: 'grill:statusChanged',
   GRILL_GENERATE_PLAN: 'grill:generatePlan',
+  GRILL_COMPLETE: 'grill:complete',
+  GRILL_DISCARD: 'grill:discard',
+  GRILL_LIST_PLANNED_IDEAS: 'grill:listPlannedIdeas',
 
   // Project Creation
   PROJECT_CREATE: 'project:create',
@@ -752,7 +755,6 @@ export const SPECIALIST_BUDGET_CAPS = {
   complex: 2.0
 } as const satisfies Record<string, number>
 
-
 /**
  * Mode-aware budget cap multipliers for users who opt into custom caps.
  * Applied to the base `budgetCapUsd` from workspace settings.
@@ -773,7 +775,10 @@ export const BUDGET_CAP_MODE_MULTIPLIERS = {
  * without knowing about the legacy labels. Project Specialists use the
  * `'project-specialist:*'` keys that were added for the Phase 2 refactor.
  */
-export function getModelActionForRole(role: AgentRole, mode: 'plan' | 'build' | 'danger'): ModelAction {
+export function getModelActionForRole(
+  role: AgentRole,
+  mode: 'plan' | 'build' | 'danger'
+): ModelAction {
   if (role === 'da-vinci') {
     // Danger mode uses the same model tier as build
     return mode === 'build' || mode === 'danger' ? 'da-vinci:build' : 'da-vinci:plan'
@@ -781,7 +786,9 @@ export function getModelActionForRole(role: AgentRole, mode: 'plan' | 'build' | 
   if (role === 'audit') {
     return 'da-vinci:plan' // Audits always use plan-tier model
   }
-  return mode === 'build' || mode === 'danger' ? 'project-specialist:build' : 'project-specialist:plan'
+  return mode === 'build' || mode === 'danger'
+    ? 'project-specialist:build'
+    : 'project-specialist:plan'
 }
 
 /** Maximum skill file size in bytes (500 KB) */
@@ -1020,10 +1027,7 @@ export const AUDIT_TRACKS: Record<AuditTrackId, AuditTrack> = {
  * not-applicable; a track that failed the coverage gate is insufficient.
  */
 export function deriveApplicability(
-  result: Pick<
-    AuditResult,
-    'applicability' | 'coverageSufficient' | 'coverageStats' | 'status'
-  >
+  result: Pick<AuditResult, 'applicability' | 'coverageSufficient' | 'coverageStats' | 'status'>
 ): AuditApplicability {
   if (result.applicability) return result.applicability
   if (result.status !== 'completed') return 'ok'
@@ -1040,53 +1044,228 @@ export function deriveApplicability(
  */
 export const AUDIT_TRACK_SKILLS: Record<AuditTrackId, AuditSkill[]> = {
   database: [
-    { id: 'schema-design', name: 'Schema Design', description: 'Normalization, table structure, and relationships', icon: 'Table2' },
-    { id: 'fk-integrity', name: 'FK & Integrity', description: 'Foreign keys, constraints, and referential integrity', icon: 'Link2' },
-    { id: 'query-performance', name: 'Query Performance', description: 'N+1 queries, slow patterns, and query shape', icon: 'Gauge' },
-    { id: 'indexing', name: 'Indexing', description: 'Index coverage and missing/duplicate indexes', icon: 'ListTree' },
-    { id: 'migration-safety', name: 'Migration Safety', description: 'Reversibility and destructive-change detection', icon: 'GitBranch' }
+    {
+      id: 'schema-design',
+      name: 'Schema Design',
+      description: 'Normalization, table structure, and relationships',
+      icon: 'Table2'
+    },
+    {
+      id: 'fk-integrity',
+      name: 'FK & Integrity',
+      description: 'Foreign keys, constraints, and referential integrity',
+      icon: 'Link2'
+    },
+    {
+      id: 'query-performance',
+      name: 'Query Performance',
+      description: 'N+1 queries, slow patterns, and query shape',
+      icon: 'Gauge'
+    },
+    {
+      id: 'indexing',
+      name: 'Indexing',
+      description: 'Index coverage and missing/duplicate indexes',
+      icon: 'ListTree'
+    },
+    {
+      id: 'migration-safety',
+      name: 'Migration Safety',
+      description: 'Reversibility and destructive-change detection',
+      icon: 'GitBranch'
+    }
   ],
   code: [
-    { id: 'solid', name: 'SOLID Principles', description: 'Single-responsibility, coupling, and cohesion', icon: 'Boxes' },
-    { id: 'complexity', name: 'Complexity', description: 'Cyclomatic complexity and deeply nested logic', icon: 'Workflow' },
-    { id: 'error-handling', name: 'Error Handling', description: 'Swallowed errors and missing failure paths', icon: 'OctagonAlert' },
-    { id: 'dead-code', name: 'Dead Code', description: 'Unused exports, unreachable code, and duplication', icon: 'Trash2' },
-    { id: 'naming', name: 'Naming & Consistency', description: 'Naming conventions and stylistic consistency', icon: 'CaseSensitive' }
+    {
+      id: 'solid',
+      name: 'SOLID Principles',
+      description: 'Single-responsibility, coupling, and cohesion',
+      icon: 'Boxes'
+    },
+    {
+      id: 'complexity',
+      name: 'Complexity',
+      description: 'Cyclomatic complexity and deeply nested logic',
+      icon: 'Workflow'
+    },
+    {
+      id: 'error-handling',
+      name: 'Error Handling',
+      description: 'Swallowed errors and missing failure paths',
+      icon: 'OctagonAlert'
+    },
+    {
+      id: 'dead-code',
+      name: 'Dead Code',
+      description: 'Unused exports, unreachable code, and duplication',
+      icon: 'Trash2'
+    },
+    {
+      id: 'naming',
+      name: 'Naming & Consistency',
+      description: 'Naming conventions and stylistic consistency',
+      icon: 'CaseSensitive'
+    }
   ],
   testing: [
-    { id: 'pyramid', name: 'Test Pyramid', description: 'Unit/integration/E2E balance', icon: 'Pyramid' },
-    { id: 'critical-path', name: 'Critical Path Coverage', description: 'Coverage of high-risk flows', icon: 'Target' },
-    { id: 'assertion-quality', name: 'Assertion Quality', description: 'Specific, meaningful assertions', icon: 'CheckCheck' },
-    { id: 'fixtures', name: 'Fixtures & Mocks', description: 'Fixture quality and over-mocking', icon: 'Package' },
-    { id: 'ci-integration', name: 'CI Integration', description: 'Tests wired into CI gates', icon: 'GitPullRequestArrow' }
+    {
+      id: 'pyramid',
+      name: 'Test Pyramid',
+      description: 'Unit/integration/E2E balance',
+      icon: 'Pyramid'
+    },
+    {
+      id: 'critical-path',
+      name: 'Critical Path Coverage',
+      description: 'Coverage of high-risk flows',
+      icon: 'Target'
+    },
+    {
+      id: 'assertion-quality',
+      name: 'Assertion Quality',
+      description: 'Specific, meaningful assertions',
+      icon: 'CheckCheck'
+    },
+    {
+      id: 'fixtures',
+      name: 'Fixtures & Mocks',
+      description: 'Fixture quality and over-mocking',
+      icon: 'Package'
+    },
+    {
+      id: 'ci-integration',
+      name: 'CI Integration',
+      description: 'Tests wired into CI gates',
+      icon: 'GitPullRequestArrow'
+    }
   ],
   architecture: [
-    { id: 'boundaries', name: 'Module Boundaries', description: 'Layering and boundary leakage', icon: 'LayoutGrid' },
-    { id: 'dependency-direction', name: 'Dependency Direction', description: 'Circular and inverted dependencies', icon: 'ArrowLeftRight' },
-    { id: 'separation', name: 'Separation of Concerns', description: 'Mixed responsibilities across layers', icon: 'SplitSquareHorizontal' },
-    { id: 'contracts', name: 'API/IPC Contracts', description: 'Contract design and versioning', icon: 'FileCode2' },
-    { id: 'scalability', name: 'Scalability Patterns', description: 'Bottlenecks and scaling concerns', icon: 'TrendingUp' }
+    {
+      id: 'boundaries',
+      name: 'Module Boundaries',
+      description: 'Layering and boundary leakage',
+      icon: 'LayoutGrid'
+    },
+    {
+      id: 'dependency-direction',
+      name: 'Dependency Direction',
+      description: 'Circular and inverted dependencies',
+      icon: 'ArrowLeftRight'
+    },
+    {
+      id: 'separation',
+      name: 'Separation of Concerns',
+      description: 'Mixed responsibilities across layers',
+      icon: 'SplitSquareHorizontal'
+    },
+    {
+      id: 'contracts',
+      name: 'API/IPC Contracts',
+      description: 'Contract design and versioning',
+      icon: 'FileCode2'
+    },
+    {
+      id: 'scalability',
+      name: 'Scalability Patterns',
+      description: 'Bottlenecks and scaling concerns',
+      icon: 'TrendingUp'
+    }
   ],
   security: [
-    { id: 'authn-authz', name: 'AuthN / AuthZ', description: 'Authentication and authorization gaps', icon: 'KeyRound' },
-    { id: 'secret-scanning', name: 'Secret Scanning', description: 'Hardcoded secrets and credential leaks', icon: 'EyeOff' },
-    { id: 'input-validation', name: 'Input Validation', description: 'Sanitization and injection surfaces', icon: 'ShieldAlert' },
-    { id: 'context-isolation', name: 'Context Isolation', description: 'Electron CSP and context isolation', icon: 'Lock' },
-    { id: 'dependency-vulns', name: 'Dependency Vulns', description: 'Vulnerable or outdated dependencies', icon: 'PackageX' }
+    {
+      id: 'authn-authz',
+      name: 'AuthN / AuthZ',
+      description: 'Authentication and authorization gaps',
+      icon: 'KeyRound'
+    },
+    {
+      id: 'secret-scanning',
+      name: 'Secret Scanning',
+      description: 'Hardcoded secrets and credential leaks',
+      icon: 'EyeOff'
+    },
+    {
+      id: 'input-validation',
+      name: 'Input Validation',
+      description: 'Sanitization and injection surfaces',
+      icon: 'ShieldAlert'
+    },
+    {
+      id: 'context-isolation',
+      name: 'Context Isolation',
+      description: 'Electron CSP and context isolation',
+      icon: 'Lock'
+    },
+    {
+      id: 'dependency-vulns',
+      name: 'Dependency Vulns',
+      description: 'Vulnerable or outdated dependencies',
+      icon: 'PackageX'
+    }
   ],
   documentation: [
-    { id: 'readme', name: 'README Quality', description: 'Setup, usage, and completeness', icon: 'BookOpen' },
-    { id: 'inline-docs', name: 'Inline Docs', description: 'JSDoc/TSDoc coverage on public APIs', icon: 'MessageSquareText' },
-    { id: 'api-docs', name: 'API Documentation', description: 'Endpoint/IPC documentation', icon: 'FileText' },
-    { id: 'project-guide', name: 'Project Guide', description: 'CLAUDE.md / contributor guide quality', icon: 'Compass' },
-    { id: 'decision-records', name: 'Decision Records', description: 'Changelogs and architectural decisions', icon: 'History' }
+    {
+      id: 'readme',
+      name: 'README Quality',
+      description: 'Setup, usage, and completeness',
+      icon: 'BookOpen'
+    },
+    {
+      id: 'inline-docs',
+      name: 'Inline Docs',
+      description: 'JSDoc/TSDoc coverage on public APIs',
+      icon: 'MessageSquareText'
+    },
+    {
+      id: 'api-docs',
+      name: 'API Documentation',
+      description: 'Endpoint/IPC documentation',
+      icon: 'FileText'
+    },
+    {
+      id: 'project-guide',
+      name: 'Project Guide',
+      description: 'CLAUDE.md / contributor guide quality',
+      icon: 'Compass'
+    },
+    {
+      id: 'decision-records',
+      name: 'Decision Records',
+      description: 'Changelogs and architectural decisions',
+      icon: 'History'
+    }
   ],
   'ui-ux': [
-    { id: 'accessibility', name: 'Accessibility', description: 'WCAG compliance and ARIA usage', icon: 'Accessibility' },
-    { id: 'states', name: 'Empty & Error States', description: 'Loading, empty, and error handling', icon: 'LoaderCircle' },
-    { id: 'responsiveness', name: 'Responsiveness', description: 'Layout across viewport sizes', icon: 'MonitorSmartphone' },
-    { id: 'consistency', name: 'Component Consistency', description: 'Reuse and visual consistency', icon: 'Component' },
-    { id: 'keyboard-nav', name: 'Keyboard Navigation', description: 'Focus order and keyboard access', icon: 'Keyboard' }
+    {
+      id: 'accessibility',
+      name: 'Accessibility',
+      description: 'WCAG compliance and ARIA usage',
+      icon: 'Accessibility'
+    },
+    {
+      id: 'states',
+      name: 'Empty & Error States',
+      description: 'Loading, empty, and error handling',
+      icon: 'LoaderCircle'
+    },
+    {
+      id: 'responsiveness',
+      name: 'Responsiveness',
+      description: 'Layout across viewport sizes',
+      icon: 'MonitorSmartphone'
+    },
+    {
+      id: 'consistency',
+      name: 'Component Consistency',
+      description: 'Reuse and visual consistency',
+      icon: 'Component'
+    },
+    {
+      id: 'keyboard-nav',
+      name: 'Keyboard Navigation',
+      description: 'Focus order and keyboard access',
+      icon: 'Keyboard'
+    }
   ]
 }
 
@@ -1109,10 +1288,10 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
     name: 'The Contrarian',
     icon: 'ShieldAlert',
     thinkingStyle:
-      'Actively looks for what\'s wrong, what\'s missing, what will fail. Assumes the plan has a fatal flaw and tries to find it.',
+      "Actively looks for what's wrong, what's missing, what will fail. Assumes the plan has a fatal flaw and tries to find it.",
     toolAccess: 'full',
     toolGuidance:
-      'Use `find_references` on every file in scope to find hidden callers the plan doesn\'t account for. Use `coupling_analysis` to check if changes introduce tight coupling. Use `todo_scanner` to find existing technical debt in affected areas.'
+      "Use `find_references` on every file in scope to find hidden callers the plan doesn't account for. Use `coupling_analysis` to check if changes introduce tight coupling. Use `todo_scanner` to find existing technical debt in affected areas."
   },
   'first-principles': {
     id: 'first-principles',
@@ -1122,14 +1301,14 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
       'Ignores the surface-level plan and asks "what are we actually trying to solve?" Strips assumptions. Rebuilds the problem from ground up. Sometimes the most valuable output is "you\'re solving the wrong problem."',
     toolAccess: 'full',
     toolGuidance:
-      'Use `semantic_search` to find if the codebase already has a simpler solution to the underlying problem. Use `codebase_concepts` to understand existing patterns. Use `file_dependencies` to check if the plan\'s module decomposition aligns with existing architecture.'
+      "Use `semantic_search` to find if the codebase already has a simpler solution to the underlying problem. Use `codebase_concepts` to understand existing patterns. Use `file_dependencies` to check if the plan's module decomposition aligns with existing architecture."
   },
   expansionist: {
     id: 'expansionist',
     name: 'The Expansionist',
     icon: 'Rocket',
     thinkingStyle:
-      'Looks for upside everyone else is missing. What could be bigger? What adjacent opportunity is hiding? Doesn\'t care about risk (that\'s the Contrarian\'s job).',
+      "Looks for upside everyone else is missing. What could be bigger? What adjacent opportunity is hiding? Doesn't care about risk (that's the Contrarian's job).",
     toolAccess: 'full',
     toolGuidance:
       'Use `similar_code` to find related patterns that could benefit from the same changes. Use `file_outline` on adjacent files to spot opportunities the plan misses. Use `codebase_concepts` to find related features that could be enhanced while making these changes.'
@@ -1139,17 +1318,17 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
     name: 'The Outsider',
     icon: 'Eye',
     thinkingStyle:
-      'Has zero context about the codebase, project, or history. Responds purely to what\'s in front of them. Catches the curse of knowledge: things obvious to the team but confusing to everyone else.',
+      "Has zero context about the codebase, project, or history. Responds purely to what's in front of them. Catches the curse of knowledge: things obvious to the team but confusing to everyone else.",
     toolAccess: 'none',
     toolGuidance:
-      'You have NO access to the codebase. You evaluate the plan purely as written. If something is unclear without context, flag it. If the plan uses jargon without explanation, flag it. If a new team member couldn\'t follow this plan, that\'s a problem.'
+      "You have NO access to the codebase. You evaluate the plan purely as written. If something is unclear without context, flag it. If the plan uses jargon without explanation, flag it. If a new team member couldn't follow this plan, that's a problem."
   },
   executor: {
     id: 'executor',
     name: 'The Executor',
     icon: 'Zap',
     thinkingStyle:
-      'Only cares about one thing: can this actually be done, and what\'s the fastest path? If the plan sounds brilliant but has no clear first step, says so.',
+      "Only cares about one thing: can this actually be done, and what's the fastest path? If the plan sounds brilliant but has no clear first step, says so.",
     toolAccess: 'full',
     toolGuidance:
       'Use `file_outline` on target files to gauge actual complexity vs what the plan claims. Use `symbol_hotspots` to find frequently-changed symbols that are risky to modify. Use `git_log` and `git_blame` on affected files to understand change velocity and ownership. Use `test_coverage_map` to verify test claims.'
@@ -1363,7 +1542,6 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   }
 ] as const
 
-
 // ── Local LLM Provider ──
 
 /** Default Ollama connection */
@@ -1564,7 +1742,6 @@ export function findRecommendedModel(
   return RECOMMENDED_LOCAL_MODELS.find((m) => m.ollamaId === modelId || m.omlxId === modelId)
 }
 
-
 /** Full name → display name map — for renderer ToolActivityBlock */
 export const MCP_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
   Object.values(MCP_TOOLS).flatMap((server) =>
@@ -1745,3 +1922,55 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     ]
   }
 ] as const
+
+// ── Llamafile Embedding Sidecar ──────────────────────────────────────────────
+//
+// Code-search embeddings run through a downloaded llamafile server (native,
+// multi-threaded, GPU-capable) instead of in-process WASM. Both the engine
+// binary and the GGUF model are downloaded on first use (not bundled) and
+// pinned by SHA-256.
+//
+// Pins verified 2026-06-01 against the GitHub release + Hugging Face APIs.
+// To upgrade: bump the version/file, then update `sha256` + `sizeBytes` from
+//   - GitHub:  https://api.github.com/repos/mozilla-ai/llamafile/releases/latest (asset.digest)
+//   - HF:      https://huggingface.co/api/models/<repo>?blobs=true (siblings[].lfs.sha256)
+export const LLAMAFILE_EMBEDDING = {
+  /** Downloaded llamafile engine binary (Actually-Portable-Executable). */
+  engine: {
+    version: '0.10.2',
+    /** `-thin` build: ~44MB, no prebuilt GPU dylibs (CPU/Metal is plenty for embeddings). */
+    asset: 'llamafile-0.10.2-thin',
+    url: 'https://github.com/mozilla-ai/llamafile/releases/download/0.10.2/llamafile-0.10.2-thin',
+    sha256: '53c638390ba9b49b034615a7e9e3bfa00995f576e7730506d7f7e434ab8684e9',
+    sizeBytes: 44118372
+  },
+  /** Downloaded GGUF embedding model (nomic-embed-text-v1.5, 768-dim). */
+  model: {
+    file: 'nomic-embed-text-v1.5.Q4_K_M.gguf',
+    url: 'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf',
+    sha256: 'd4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac',
+    sizeBytes: 84106624,
+    /**
+     * Provenance string stored in indexing_state.embedding_model. Changing this
+     * triggers the existing model-change re-index in vector-search.service.ts.
+     */
+    modelName: 'nomic-embed-text-v1.5'
+  },
+  /** llamafile server launch + request defaults. */
+  server: {
+    host: '127.0.0.1',
+    /** mean pooling + L2 normalize matches the prior WASM pipeline's output shape. */
+    pooling: 'mean',
+    embdNormalize: '2',
+    /** Max seconds to wait for the spawned server to report healthy. */
+    healthTimeoutSec: 60,
+    /**
+     * Defensive per-input character cap. nomic-embed-text-v1.5's context is
+     * 2048 tokens and llama.cpp `/v1/embeddings` ERRORS (not truncates) on
+     * over-length input. ~8000 chars ≈ ~2000 tokens, restoring the prior
+     * "never hard-fail on a big chunk" behavior. A char cap is sufficient here
+     * — no tokenizer needed.
+     */
+    maxInputChars: 8000
+  }
+} as const

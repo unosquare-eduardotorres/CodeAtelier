@@ -12,7 +12,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { truncateToolOutput } from './output-cap'
 
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
 void process.env.WORKSPACE_PATH // Reserved for future Octokit integration

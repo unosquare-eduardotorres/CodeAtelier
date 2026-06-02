@@ -21,9 +21,14 @@ function mapRow(row: ConversationSpecialistRow): ConversationSpecialist {
   }
 }
 
-export class ConversationSpecialistRepository extends BaseRepository<ConversationSpecialistRow, ConversationSpecialist> {
+export class ConversationSpecialistRepository extends BaseRepository<
+  ConversationSpecialistRow,
+  ConversationSpecialist
+> {
   protected readonly tableName = 'conversation_specialists'
-  protected mapRow(row: ConversationSpecialistRow): ConversationSpecialist { return mapRow(row) }
+  protected mapRow(row: ConversationSpecialistRow): ConversationSpecialist {
+    return mapRow(row)
+  }
 
   /** Get all overrides for a conversation */
   findByConversation(conversationId: string): ConversationSpecialist[] {

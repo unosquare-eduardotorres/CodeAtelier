@@ -212,11 +212,25 @@ export default function StatusBar({
         </span>
 
         {/* Workflow indicators — computed via shared StatusIndicator pattern */}
-        <StatusIndicator {...computeAuditIndicator(isAuditActive, isAuditPaused, lastAuditScore, () => onNavigateToSettings('health'))} />
-        <StatusIndicator {...computeGrillIndicator(grillStatus, onNavigateToGrill, onNavigateToSettings)} />
-        <StatusIndicator {...computeGoalIndicator(mpaStatus, () => onNavigateToSettings('goals'))} />
-        <StatusIndicator {...computeCouncilIndicator(councilPhase ?? null, () => onNavigateToSettings('council'))} />
-        <StatusIndicator {...computeIndexingIndicator(indexingState, () => onNavigateToSettings('code-intelligence'))} />
+        <StatusIndicator
+          {...computeAuditIndicator(isAuditActive, isAuditPaused, lastAuditScore, () =>
+            onNavigateToSettings('health')
+          )}
+        />
+        <StatusIndicator
+          {...computeGrillIndicator(grillStatus, onNavigateToGrill, onNavigateToSettings)}
+        />
+        <StatusIndicator
+          {...computeGoalIndicator(mpaStatus, () => onNavigateToSettings('goals'))}
+        />
+        <StatusIndicator
+          {...computeCouncilIndicator(councilPhase ?? null, () => onNavigateToSettings('council'))}
+        />
+        <StatusIndicator
+          {...computeIndexingIndicator(indexingState, () =>
+            onNavigateToSettings('code-intelligence')
+          )}
+        />
 
         {/* Zoom controls */}
         <div className="flex items-center gap-0.5 border-l border-border-subtle pl-3 ml-1">

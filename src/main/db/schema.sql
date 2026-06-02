@@ -476,6 +476,7 @@ CREATE TABLE IF NOT EXISTS grill_sessions (
   history TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(history)),
   question_states TEXT DEFAULT NULL,
   current_iteration TEXT DEFAULT NULL,
+  plan_json TEXT DEFAULT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

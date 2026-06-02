@@ -110,10 +110,12 @@ export default function GoalInput({ onStart, disabled }: GoalInputProps): JSX.El
                 </span>
                 <span className="text-text-muted">·</span>
                 <span className="text-text-secondary">
-                  {classification.phases.map((p) => {
-                    const pc = PHASE_CONFIG[p as MpaPhaseType]
-                    return `${pc.emoji} ${pc.label}`
-                  }).join(' → ')}
+                  {classification.phases
+                    .map((p) => {
+                      const pc = PHASE_CONFIG[p as MpaPhaseType]
+                      return `${pc.emoji} ${pc.label}`
+                    })
+                    .join(' → ')}
                 </span>
               </div>
               {classification.phases.includes('plan') && (

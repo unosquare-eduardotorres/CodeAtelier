@@ -21,9 +21,7 @@ import {
 import { resolveContextTier } from './context-management'
 import { modelConfigService } from './model-config.service'
 import { RECOMMENDED_LOCAL_MODELS } from '../../shared/constants'
-import {
-  TOOL_PRIORITY_DIRECTIVE
-} from './default-prompts'
+import { TOOL_PRIORITY_DIRECTIVE } from './default-prompts'
 import { SystemPromptCache } from './system-prompt-cache'
 
 export type { PromptFeatureFlags }
@@ -267,7 +265,12 @@ export class DaVinciPromptAssembler {
       })
 
       // Strategy δ: MCP tool guidance sections on turn 1 only.
-      promptWithMcpGuidance = appendMcpToolGuidance(basePrompt, opts.turnCount, opts.featureFlags, opts.model)
+      promptWithMcpGuidance = appendMcpToolGuidance(
+        basePrompt,
+        opts.turnCount,
+        opts.featureFlags,
+        opts.model
+      )
 
       // Ensure Tool Priority directive is present (appendMcpToolGuidance only adds Code Graph guidance)
       if (!promptWithMcpGuidance.includes('## Tool Priority')) {
@@ -282,9 +285,7 @@ export class DaVinciPromptAssembler {
     // If the hash differs between turns, prompt caching will miss.
     if (!canReuseSnapshot) {
       const promptHash = Buffer.from(promptWithMcpGuidance).toString('base64').slice(0, 12)
-      this.log.info(
-        `[PIPELINE:prompt-hash] turn=${opts.turnCount} hash=${promptHash} reused=false`
-      )
+      this.log.info(`[PIPELINE:prompt-hash] turn=${opts.turnCount} hash=${promptHash} reused=false`)
     }
 
     this.log.info(
@@ -519,14 +520,15 @@ export class DaVinciPromptAssembler {
    * Index = clamped turnCount. Last value is the floor for all subsequent turns.
    */
   private static readonly MEMORY_BUDGET_TIERS = {
-    economy:  [2000, 2000, 1200, 800, 500, 300] as const,
+    economy: [2000, 2000, 1200, 800, 500, 300] as const,
     standard: [3000, 3000, 2000, 1500, 1000, 700, 500] as const
   } as const
 
   private getMemoryBudgetForTurn(turnCount: number, costPreference: CostPreference): number {
-    const tiers = costPreference === 'economy'
-      ? DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.economy
-      : DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.standard
+    const tiers =
+      costPreference === 'economy'
+        ? DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.economy
+        : DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.standard
     const idx = Math.min(turnCount, tiers.length - 1)
     return tiers[idx]
   }

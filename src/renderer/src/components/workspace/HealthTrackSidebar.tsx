@@ -200,7 +200,9 @@ export default function HealthTrackSidebar({
                     </span>
                   ) : (
                     score !== null && (
-                      <span className={`text-[11px] font-bold ${getScoreColor(score)}`}>{score}</span>
+                      <span className={`text-[11px] font-bold ${getScoreColor(score)}`}>
+                        {score}
+                      </span>
                     )
                   ))}
                 {status && <StatusIndicator status={status} />}

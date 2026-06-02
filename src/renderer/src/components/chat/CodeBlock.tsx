@@ -35,10 +35,7 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
     (codeChild?.props as { children?: React.ReactNode })?.children || ''
   ).replace(/\n$/, '')
 
-  const prismTheme = useMemo(
-    () => PRISM_THEME_MAP[appTheme] ?? themes.nightOwl,
-    [appTheme]
-  )
+  const prismTheme = useMemo(() => PRISM_THEME_MAP[appTheme] ?? themes.nightOwl, [appTheme])
 
   const handleCopy = useCallback(async () => {
     try {

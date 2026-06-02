@@ -1,6 +1,11 @@
 import { Loader2, CheckCircle, AlertTriangle, X, Eye, Play, Landmark, Trash2 } from 'lucide-react'
 import type { CouncilSessionStatus } from '../../../../../main/db/repositories/council-session.repository'
-import type { CouncilInputType, CouncilVerdict, CouncilPeerReview, CouncilReview } from '../../../../../shared/types'
+import type {
+  CouncilInputType,
+  CouncilVerdict,
+  CouncilPeerReview,
+  CouncilReview
+} from '../../../../../shared/types'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -66,11 +71,7 @@ function ScoreBadge({ score }: { score: number }): React.JSX.Element {
         ? 'text-warning bg-warning/10'
         : 'text-error bg-error/10'
 
-  return (
-    <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${color}`}>
-      {score}/100
-    </span>
-  )
+  return <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${color}`}>{score}/100</span>
 }
 
 // ── Relative time ──────────────────────────────────────────────────────────
@@ -104,10 +105,16 @@ function extractDisplayTitle(session: CouncilSessionSummary): string {
     if (typeof parsed.title === 'string' && parsed.title.trim()) {
       return parsed.title.trim()
     }
-  } catch { /* not JSON — use as plain text */ }
+  } catch {
+    /* not JSON — use as plain text */
+  }
 
   // Plain text — use first meaningful line
-  const firstLine = session.inputContent.split('\n').find(l => l.trim())?.trim() ?? session.inputContent
+  const firstLine =
+    session.inputContent
+      .split('\n')
+      .find((l) => l.trim())
+      ?.trim() ?? session.inputContent
   return firstLine.length > 100 ? firstLine.slice(0, 100) + '…' : firstLine
 }
 
@@ -157,9 +164,7 @@ export default function CouncilSessionCard({
             {session.completedAdvisors.length}/5 advisors
           </span>
           <span className="text-[10px] text-text-muted">·</span>
-          <span className="text-[10px] text-text-muted">
-            {relativeTime(session.createdAt)}
-          </span>
+          <span className="text-[10px] text-text-muted">{relativeTime(session.createdAt)}</span>
         </div>
       </div>
 
@@ -173,8 +178,10 @@ export default function CouncilSessionCard({
 
       {/* Actions */}
       <div className="flex items-center gap-1 flex-shrink-0">
-        {(session.status === 'completed' || session.status === 'running' ||
-          session.status === 'failed' || session.status === 'cancelled') && (
+        {(session.status === 'completed' ||
+          session.status === 'running' ||
+          session.status === 'failed' ||
+          session.status === 'cancelled') && (
           <button
             type="button"
             onClick={() => onView(session.id)}

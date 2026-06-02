@@ -6,16 +6,13 @@ import { requireObject, requireString } from './validate-args'
 
 export function registerGithubIpc(): void {
   // Validate + encrypt + store GitHub token
-  ipcMain.handle(
-    IPC_CHANNELS.GITHUB_SAVE_TOKEN,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const args = requireObject(rawArgs, IPC_CHANNELS.GITHUB_SAVE_TOKEN)
-      const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.GITHUB_SAVE_TOKEN)
-      const token = requireString(args, 'token', IPC_CHANNELS.GITHUB_SAVE_TOKEN)
-      return githubService.saveToken(workspaceId, token)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.GITHUB_SAVE_TOKEN, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.GITHUB_SAVE_TOKEN)
+    const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.GITHUB_SAVE_TOKEN)
+    const token = requireString(args, 'token', IPC_CHANNELS.GITHUB_SAVE_TOKEN)
+    return githubService.saveToken(workspaceId, token)
+  })
 
   // Validate token without storing
   ipcMain.handle(IPC_CHANNELS.GITHUB_VALIDATE_TOKEN, async (event, rawArgs: unknown) => {

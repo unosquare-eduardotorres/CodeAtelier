@@ -202,7 +202,8 @@ function App(): React.JSX.Element {
         // so the badge refreshes every turn instead of only on completion.
         const convId = data.conversationId
         if (convId) {
-          const { inputTokens, contextWindowSize, percentage, cacheHitRate } = data.contextUsageUpdate
+          const { inputTokens, contextWindowSize, percentage, cacheHitRate } =
+            data.contextUsageUpdate
           const effectiveQualityWindow = Math.min(Math.round(contextWindowSize * 0.5), 500_000)
           const qualityPct = Math.round((inputTokens / effectiveQualityWindow) * 100)
           const level =

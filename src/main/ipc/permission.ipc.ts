@@ -40,7 +40,9 @@ export function registerPermissionIpc(): void {
           if (session) {
             session.emit('elicitationResponse', response)
           } else {
-            log.warn(`[permission] No session for workspace ${workspaceId} — elicitation response dropped`)
+            log.warn(
+              `[permission] No session for workspace ${workspaceId} — elicitation response dropped`
+            )
           }
           break
         }
@@ -49,11 +51,7 @@ export function registerPermissionIpc(): void {
           // Route askQuestion response — extract requestId and answer from response
           const resp = response as { requestId?: string; answer?: string }
           if (resp.requestId && resp.answer) {
-            chatAgentService.respondToAskUserForWorkspace(
-              workspaceId,
-              resp.requestId,
-              resp.answer
-            )
+            chatAgentService.respondToAskUserForWorkspace(workspaceId, resp.requestId, resp.answer)
           } else {
             log.warn(`[permission] askQuestion response missing requestId or answer`)
           }

@@ -8,11 +8,16 @@
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { GrillTrackId, GrillEvaluation, LLMProvider, GrillStructuredPlan } from '../../shared/types'
+import type {
+  GrillTrackId,
+  GrillEvaluation,
+  LLMProvider,
+  GrillStructuredPlan
+} from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
 import { processToolChunk } from './tool-chunk-processor'
 import { createTimedCleanupMap } from './listener-cleanup'
-import { workspaceRepository } from '../db/repositories'
+import { workspaceRepository, grillSessionRepository, ideaRepository } from '../db/repositories'
 import { grillAgentService } from '../services/grill-agent.service'
 import { grillPersistenceController } from '../services/grill-persistence.controller'
 import { grillPlanGeneratorService } from '../services/grill-plan-generator.service'
@@ -169,27 +174,68 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.GRILL_GENERATE_PLAN,
-    async (event, args: { sessionId: string; workspaceId: string }): Promise<GrillStructuredPlan> => {
+    async (
+      event,
+      args: { sessionId: string; ideaId?: string; workspaceId: string }
+    ): Promise<GrillStructuredPlan> => {
       validateSender(event)
 
-      const { sessionId, workspaceId } = args
+      const { sessionId, ideaId, workspaceId } = args
       if (!sessionId || !workspaceId) {
         throw new Error('sessionId and workspaceId are required')
       }
 
-      grillLog.info(`[grill:generatePlan] Generating plan for session=${sessionId}`)
+      grillLog.info(
+        `[grill:generatePlan] Generating plan for idea=${ideaId ?? 'n/a'} session=${sessionId}`
+      )
 
       const workspace = workspaceRepository.findById(workspaceId)
       const workspacePath = workspace?.repoPath
 
       const plan = await grillPlanGeneratorService.generate({
         sessionId,
+        ideaId,
         workspaceId,
         workspacePath
       })
 
       grillLog.info(`[grill:generatePlan] ✓ Plan generated: ${plan.items.length} items`)
       return plan
+    }
+  )
+
+  // ── grill:complete — strip transient state at final handoff, keep plan ──
+
+  ipcMain.handle(IPC_CHANNELS.GRILL_COMPLETE, (event, args: { ideaId: string }): void => {
+    validateSender(event)
+    const { ideaId } = args
+    if (!ideaId) throw new Error('ideaId is required')
+
+    grillLog.info(`[grill:complete] Completing + stripping transient state for idea=${ideaId}`)
+    grillSessionRepository.completeAndStrip(ideaId)
+    ideaRepository.clearGrillDecisions(ideaId)
+  })
+
+  // ── grill:discard — delete the session row + snapshot entirely ──────
+
+  ipcMain.handle(IPC_CHANNELS.GRILL_DISCARD, (event, args: { ideaId: string }): void => {
+    validateSender(event)
+    const { ideaId } = args
+    if (!ideaId) throw new Error('ideaId is required')
+
+    grillLog.info(`[grill:discard] Discarding grill session + snapshot for idea=${ideaId}`)
+    grillSessionRepository.deleteByIdeaId(ideaId)
+    ideaRepository.clearGrillDecisions(ideaId)
+  })
+
+  // ── grill:listPlannedIdeas — idea IDs in a workspace that have a saved plan ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.GRILL_LIST_PLANNED_IDEAS,
+    (event, args: { workspaceId: string }): string[] => {
+      validateSender(event)
+      if (!args?.workspaceId) return []
+      return grillSessionRepository.findIdeaIdsWithPlan(args.workspaceId)
     }
   )
 
@@ -223,17 +269,27 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
           '- Output plain markdown — no code fences around the result'
         ].join('\n')
 
-        const condensed = execFileSync('claude', [
-          '-p', text,
-          '--model', 'claude-haiku-4-5-20251001',
-          '--system-prompt', systemPrompt,
-          '--permission-mode', 'plan',
-          '--max-turns', '1',
-          '--output-format', 'text'
-        ], {
-          encoding: 'utf-8',
-          timeout: 60_000
-        })
+        const condensed = execFileSync(
+          'claude',
+          [
+            '-p',
+            text,
+            '--model',
+            'claude-haiku-4-5-20251001',
+            '--system-prompt',
+            systemPrompt,
+            '--permission-mode',
+            'plan',
+            '--max-turns',
+            '1',
+            '--output-format',
+            'text'
+          ],
+          {
+            encoding: 'utf-8',
+            timeout: 60_000
+          }
+        )
 
         grillLog.info(
           `[grill:condense] Done — ${text.length} → ${condensed.length} chars (${Math.round((condensed.length / text.length) * 100)}%)`

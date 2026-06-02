@@ -13,35 +13,100 @@ import type { SectionKey } from './task-plan/TaskPlanSections'
 
 const SECTION_SEQUENCES: Record<string, SectionKey[]> = {
   bug: [
-    'title', 'summary', 'problemAnalysis', 'rootCauses', 'decisions',
-    'filesChanged', 'filesInScope', 'diagrams', 'sections', 'verification',
-    'expectedOutcome', 'risks', 'deferredItems', 'implementationOrder'
+    'title',
+    'summary',
+    'problemAnalysis',
+    'rootCauses',
+    'decisions',
+    'filesChanged',
+    'filesInScope',
+    'diagrams',
+    'sections',
+    'verification',
+    'expectedOutcome',
+    'risks',
+    'deferredItems',
+    'implementationOrder'
   ],
   investigation: [
-    'title', 'summary', 'problemAnalysis', 'rootCauses', 'decisions',
-    'filesChanged', 'filesInScope', 'diagrams', 'sections', 'verification',
-    'expectedOutcome', 'risks', 'deferredItems', 'implementationOrder'
+    'title',
+    'summary',
+    'problemAnalysis',
+    'rootCauses',
+    'decisions',
+    'filesChanged',
+    'filesInScope',
+    'diagrams',
+    'sections',
+    'verification',
+    'expectedOutcome',
+    'risks',
+    'deferredItems',
+    'implementationOrder'
   ],
   feature: [
-    'title', 'summary', 'currentState', 'decisions', 'phases', 'diagrams',
-    'sections', 'risks', 'expectedOutcome', 'verification', 'filesChanged',
-    'filesInScope', 'deferredItems', 'implementationOrder'
+    'title',
+    'summary',
+    'currentState',
+    'decisions',
+    'phases',
+    'diagrams',
+    'sections',
+    'risks',
+    'expectedOutcome',
+    'verification',
+    'filesChanged',
+    'filesInScope',
+    'deferredItems',
+    'implementationOrder'
   ],
   refactor: [
-    'title', 'summary', 'currentState', 'decisions', 'phases', 'filesChanged',
-    'filesInScope', 'diagrams', 'sections', 'risks', 'verification',
-    'deferredItems', 'implementationOrder'
+    'title',
+    'summary',
+    'currentState',
+    'decisions',
+    'phases',
+    'filesChanged',
+    'filesInScope',
+    'diagrams',
+    'sections',
+    'risks',
+    'verification',
+    'deferredItems',
+    'implementationOrder'
   ],
   audit: [
-    'title', 'summary', 'currentState', 'decisions', 'phases', 'filesChanged',
-    'filesInScope', 'diagrams', 'sections', 'risks', 'verification',
-    'deferredItems', 'implementationOrder'
+    'title',
+    'summary',
+    'currentState',
+    'decisions',
+    'phases',
+    'filesChanged',
+    'filesInScope',
+    'diagrams',
+    'sections',
+    'risks',
+    'verification',
+    'deferredItems',
+    'implementationOrder'
   ],
   default: [
-    'title', 'summary', 'problemAnalysis', 'rootCauses', 'currentState',
-    'decisions', 'phases', 'filesChanged', 'filesInScope', 'risks',
-    'verification', 'expectedOutcome', 'diagrams', 'sections',
-    'deferredItems', 'implementationOrder'
+    'title',
+    'summary',
+    'problemAnalysis',
+    'rootCauses',
+    'currentState',
+    'decisions',
+    'phases',
+    'filesChanged',
+    'filesInScope',
+    'risks',
+    'verification',
+    'expectedOutcome',
+    'diagrams',
+    'sections',
+    'deferredItems',
+    'implementationOrder'
   ]
 }
 
@@ -155,7 +220,13 @@ export default function TaskPlanCard({
   function renderSectionsForType(): React.ReactNode {
     const planType = structuredPlan?.type ?? 'default'
     const sequence = SECTION_SEQUENCES[planType] ?? SECTION_SEQUENCES.default
-    return <>{sequence.map((key) => <React.Fragment key={key}>{sectionMap[key]}</React.Fragment>)}</>
+    return (
+      <>
+        {sequence.map((key) => (
+          <React.Fragment key={key}>{sectionMap[key]}</React.Fragment>
+        ))}
+      </>
+    )
   }
 
   return (

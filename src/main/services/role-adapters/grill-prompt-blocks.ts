@@ -67,8 +67,7 @@ export const GRILL_QUESTION_QUALITY_RULES = `## Question Quality Rules
 - The recommended option's "recommendedReason" must reference concrete trade-offs (risk, complexity, reversibility) — not just "this is better"`
 
 /** Extra rule appended for greenfield evaluations (no codebase exists) */
-export const GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA =
-  `- Since there is NO existing codebase, focus questions on DESIGN CHOICES the user needs to make before building`
+export const GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA = `- Since there is NO existing codebase, focus questions on DESIGN CHOICES the user needs to make before building`
 
 /**
  * Lean question quality rules — compressed to essentials.

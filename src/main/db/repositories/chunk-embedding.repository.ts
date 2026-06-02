@@ -10,7 +10,8 @@ interface EmbeddingRow {
 
 /**
  * Serialize a number[] embedding to a Buffer for SQLite BLOB storage.
- * Vector size depends on the model (384 floats for all-MiniLM-L6-v2).
+ * Vector size depends on the model (768 floats for nomic-embed-text-v1.5).
+ * Storage is dimension-agnostic: a variable-length Float32 BLOB.
  */
 export function serializeEmbedding(vec: number[]): Buffer {
   return Buffer.from(new Float32Array(vec).buffer)
@@ -36,7 +37,11 @@ export interface EmbeddingEntry {
 export class ChunkEmbeddingRepository extends BaseRepository<EmbeddingRow, EmbeddingEntry> {
   protected readonly tableName = 'chunk_embeddings'
   protected mapRow(row: EmbeddingRow): EmbeddingEntry {
-    return { chunkId: row.chunk_id, embedding: deserializeEmbedding(row.embedding), model: row.model }
+    return {
+      chunkId: row.chunk_id,
+      embedding: deserializeEmbedding(row.embedding),
+      model: row.model
+    }
   }
 
   /**

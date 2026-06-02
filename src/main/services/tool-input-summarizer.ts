@@ -85,8 +85,7 @@ const STRATEGIES: Record<string, Strategy> = {
   Grep: {
     type: 'template',
     fn: (i, wp) =>
-      `/${i.pattern as string}/` +
-      (i.path ? ` in ${toRelativePath(i.path as string, wp)}` : '')
+      `/${i.pattern as string}/` + (i.path ? ` in ${toRelativePath(i.path as string, wp)}` : '')
   },
   Glob: { type: 'field', field: 'pattern' },
   WebSearch: { type: 'field', field: 'query' },
@@ -176,13 +175,11 @@ const STRATEGIES: Record<string, Strategy> = {
   // MCP tools: Git Context
   [MCP_TOOLS.GIT_CONTEXT.GIT_LOG.name]: {
     type: 'template',
-    fn: (i, wp) =>
-      `git log${i.path ? ` ${toRelativePath(i.path as string, wp)}` : ''}`
+    fn: (i, wp) => `git log${i.path ? ` ${toRelativePath(i.path as string, wp)}` : ''}`
   },
   [MCP_TOOLS.GIT_CONTEXT.GIT_DIFF.name]: {
     type: 'template',
-    fn: (i, wp) =>
-      `git diff${i.path ? ` ${toRelativePath(i.path as string, wp)}` : ''}`
+    fn: (i, wp) => `git diff${i.path ? ` ${toRelativePath(i.path as string, wp)}` : ''}`
   },
   [MCP_TOOLS.GIT_CONTEXT.GIT_BLAME.name]: {
     type: 'template',

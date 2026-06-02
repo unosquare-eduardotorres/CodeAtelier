@@ -74,7 +74,11 @@ export function appendMcpToolGuidance(
   if (turnCount > 1) {
     const verbosity2 = resolvePromptVerbosity(model ?? '')
     if (verbosity2 !== 'lean' && featureFlags.repomapEnabled) {
-      return basePrompt + '\n\n## Tool Priority\nUse Code Graph (search_identifiers, graph_map) and Semantic Search FIRST — not Read/Grep/Glob. Read only files identified by code intelligence.\n\n' + PLAN_OUTPUT_GUIDANCE_LEAN
+      return (
+        basePrompt +
+        '\n\n## Tool Priority\nUse Code Graph (search_identifiers, graph_map) and Semantic Search FIRST — not Read/Grep/Glob. Read only files identified by code intelligence.\n\n' +
+        PLAN_OUTPUT_GUIDANCE_LEAN
+      )
     }
     return basePrompt
   }
@@ -95,28 +99,42 @@ export function appendMcpToolGuidance(
   }
 
   if (featureFlags.semanticSearchEnabled && !basePrompt.includes('## Semantic Search')) {
-    appendSections.push(verbosity === 'lean' ? SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN : SEMANTIC_SEARCH_GUIDANCE_PROMPT)
+    appendSections.push(
+      verbosity === 'lean' ? SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN : SEMANTIC_SEARCH_GUIDANCE_PROMPT
+    )
   }
 
-  if ((featureFlags.includeGitContext !== false) && !basePrompt.includes('## Git Context')) {
-    appendSections.push(verbosity === 'lean' ? GIT_CONTEXT_GUIDANCE_PROMPT_LEAN : GIT_CONTEXT_GUIDANCE_PROMPT)
+  if (featureFlags.includeGitContext !== false && !basePrompt.includes('## Git Context')) {
+    appendSections.push(
+      verbosity === 'lean' ? GIT_CONTEXT_GUIDANCE_PROMPT_LEAN : GIT_CONTEXT_GUIDANCE_PROMPT
+    )
   }
 
-  if ((featureFlags.includeCheckpoint !== false) && !basePrompt.includes('## Checkpoint Tools')) {
-    appendSections.push(verbosity === 'lean' ? CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN : CHECKPOINT_CONTEXT_GUIDANCE_PROMPT)
+  if (featureFlags.includeCheckpoint !== false && !basePrompt.includes('## Checkpoint Tools')) {
+    appendSections.push(
+      verbosity === 'lean'
+        ? CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN
+        : CHECKPOINT_CONTEXT_GUIDANCE_PROMPT
+    )
   }
 
   if (featureFlags.githubConfigured && !basePrompt.includes('## GitHub Tools')) {
-    appendSections.push(verbosity === 'lean' ? GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN : GITHUB_CONTEXT_GUIDANCE_PROMPT)
+    appendSections.push(
+      verbosity === 'lean' ? GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN : GITHUB_CONTEXT_GUIDANCE_PROMPT
+    )
   }
 
   if (!basePrompt.includes('## Code Analysis')) {
-    appendSections.push(verbosity === 'lean' ? CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN : CODE_ANALYSIS_GUIDANCE_PROMPT)
+    appendSections.push(
+      verbosity === 'lean' ? CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN : CODE_ANALYSIS_GUIDANCE_PROMPT
+    )
   }
 
   // External MCP guidance — only when toggled ON for this chat
   if (featureFlags.externalMcpActive?.['maestro'] && !basePrompt.includes('## Maestro')) {
-    appendSections.push(verbosity === 'lean' ? MAESTRO_GUIDANCE_PROMPT_LEAN : MAESTRO_GUIDANCE_PROMPT)
+    appendSections.push(
+      verbosity === 'lean' ? MAESTRO_GUIDANCE_PROMPT_LEAN : MAESTRO_GUIDANCE_PROMPT
+    )
   }
 
   if (appendSections.length === 0) return basePrompt
@@ -137,7 +155,11 @@ export function buildConditionalPrefix(opts: {
 }): string {
   const { message, hasImages, mode, turnCount } = opts
   const verbosity = resolvePromptVerbosity(opts.model ?? '')
-  const conditionalSections = promptBuilder.getGeneralistConditionalSections(message, hasImages, verbosity)
+  const conditionalSections = promptBuilder.getGeneralistConditionalSections(
+    message,
+    hasImages,
+    verbosity
+  )
   const sections: string[] = []
 
   // Skip ask_user prompt on turns 2+ — already in history from turn 1.
@@ -166,7 +188,9 @@ export function buildConditionalPrefix(opts: {
   // Strategy N: Direct Answer Boost
   if (conditionalSections.includeDirectAnswerBoost) {
     if (turnCount >= 3) {
-      sections.push(verbosity === 'lean' ? DIRECT_ANSWER_BOOST_PROMPT_LEAN : DIRECT_ANSWER_BOOST_PROMPT)
+      sections.push(
+        verbosity === 'lean' ? DIRECT_ANSWER_BOOST_PROMPT_LEAN : DIRECT_ANSWER_BOOST_PROMPT
+      )
     } else if (mode === 'plan' && !isPlanGenerationRequest) {
       // Suppressed when isPlanGenerationRequest is true — plan intent overrides "don't use emit_plan"
       sections.push(DIRECT_ANSWER_PLAN_MODE_EARLY)
@@ -178,9 +202,12 @@ export function buildConditionalPrefix(opts: {
   const planReminderInjected = isPlanGenerationRequest || (mode === 'plan' && !isSimpleQuestion)
 
   if (planReminderInjected) {
-    const planReminder = turnCount > 1
-      ? PLAN_REMINDER_LEAN
-      : (verbosity === 'lean' ? PLAN_REMINDER_LEAN : PLAN_REMINDER_FULL)
+    const planReminder =
+      turnCount > 1
+        ? PLAN_REMINDER_LEAN
+        : verbosity === 'lean'
+          ? PLAN_REMINDER_LEAN
+          : PLAN_REMINDER_FULL
     sections.push(planReminder)
   }
 

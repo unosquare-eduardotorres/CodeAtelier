@@ -40,7 +40,9 @@ function toModel(row: CheckpointRow): CheckpointRecord {
 
 export class CheckpointRepository extends BaseRepository<CheckpointRow, CheckpointRecord> {
   protected readonly tableName = 'checkpoints'
-  protected mapRow(row: CheckpointRow): CheckpointRecord { return toModel(row) }
+  protected mapRow(row: CheckpointRow): CheckpointRecord {
+    return toModel(row)
+  }
 
   /** Get all checkpoints for a conversation, ordered by most recent first */
   findByConversation(conversationId: string): CheckpointRecord[] {

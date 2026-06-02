@@ -16,10 +16,7 @@ import type {
   DiscoveredAgent,
   SyncDiff,
   SyncResult,
-  ExecutionStrategy,
-  InvestigationDepth,
   CompleteResult,
-  GrillProposedTask,
   GrillQuestion,
   GrillTrackId,
   Memory,
@@ -48,7 +45,6 @@ import type {
   IndexingState,
   CodeGraphIndexingState,
   ContextUsage,
-  StructuredPlan,
   BugRecord,
   AuditRun,
   AuditPlanRecord,
@@ -607,9 +603,7 @@ interface Api {
   ) => () => void
 
   // Conversation Insights
-  getConversationInsights: (args: {
-    conversationId: string
-  }) => Promise<{
+  getConversationInsights: (args: { conversationId: string }) => Promise<{
     messageCount: { user: number; assistant: number }
     tokenSummary: { inputTokens: number; outputTokens: number }
     costCents: number
@@ -950,7 +944,11 @@ interface Api {
   ) => () => void
   onGrillStreamComplete: (cb: () => void) => () => void
   grillCondenseRequirement: (args: { text: string }) => Promise<{ condensed: string }>
-  grillGeneratePlan: (args: { sessionId: string; workspaceId: string }) => Promise<GrillStructuredPlan>
+  grillGeneratePlan: (args: {
+    sessionId: string
+    ideaId?: string
+    workspaceId: string
+  }) => Promise<GrillStructuredPlan>
   grillGetStatus: (args: { workspaceId: string }) => Promise<{
     status: string
     ideaId: string
@@ -958,6 +956,9 @@ interface Api {
     score: number | null
   } | null>
   grillGetSession: (args: { ideaId: string }) => Promise<unknown | null>
+  grillListPlannedIdeas: (args: { workspaceId: string }) => Promise<string[]>
+  grillComplete: (args: { ideaId: string }) => Promise<void>
+  grillDiscard: (args: { ideaId: string }) => Promise<void>
   grillSaveAnswers: (args: {
     sessionId: string
     questionStates: Record<string, unknown>
@@ -1000,14 +1001,63 @@ interface Api {
     rejectionReason?: string
     suggestedGoal?: string
   }>
-  mpaApprovalRespond: (args: { runId: string; approved: boolean; feedback?: string }) => Promise<{ responded: boolean }>
+  mpaApprovalRespond: (args: {
+    runId: string
+    approved: boolean
+    feedback?: string
+  }) => Promise<{ responded: boolean }>
   mpaResume: (args: { runId: string; workspaceId: string }) => Promise<{ resumed: boolean }>
-  onMpaPhaseStart: (cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; iteration: number; agentRole: string }) => void) => () => void
-  onMpaPhaseProgress: (cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; streamChunk: string }) => void) => () => void
-  onMpaPhaseComplete: (cb: (data: { workspaceId: string; runId: string; phaseId: string; phaseType: string; status: string; tokensUsed: number }) => void) => () => void
-  onMpaFeedbackLoop: (cb: (data: { workspaceId: string; runId: string; fromPhase: string; toPhase: string; iteration: number; reason: string }) => void) => () => void
-  onMpaApprovalNeeded: (cb: (data: { workspaceId: string; runId: string; phaseId: string; artifactId: string; artifact: unknown }) => void) => () => void
-  onMpaPipelineComplete: (cb: (data: { workspaceId: string; runId: string; status: string; totalTokens: number }) => void) => () => void
+  onMpaPhaseStart: (
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      phaseId: string
+      phaseType: string
+      iteration: number
+      agentRole: string
+    }) => void
+  ) => () => void
+  onMpaPhaseProgress: (
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      phaseId: string
+      phaseType: string
+      streamChunk: string
+    }) => void
+  ) => () => void
+  onMpaPhaseComplete: (
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      phaseId: string
+      phaseType: string
+      status: string
+      tokensUsed: number
+    }) => void
+  ) => () => void
+  onMpaFeedbackLoop: (
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      fromPhase: string
+      toPhase: string
+      iteration: number
+      reason: string
+    }) => void
+  ) => () => void
+  onMpaApprovalNeeded: (
+    cb: (data: {
+      workspaceId: string
+      runId: string
+      phaseId: string
+      artifactId: string
+      artifact: unknown
+    }) => void
+  ) => () => void
+  onMpaPipelineComplete: (
+    cb: (data: { workspaceId: string; runId: string; status: string; totalTokens: number }) => void
+  ) => () => void
 
   // Council (LLM Council — multi-advisor review)
   councilStart: (args: {
@@ -1025,8 +1075,17 @@ interface Api {
   councilCancel: (args?: { workspaceId?: string }) => Promise<void>
   councilGetSession: (args: { workspaceId: string }) => Promise<unknown>
   onCouncilPhaseChanged: (cb: (data: { workspaceId: string; phase: string }) => void) => () => void
-  onCouncilMemberStream: (cb: (data: { advisorRole: string; type: string; content?: string; toolActivity?: Record<string, unknown> }) => void) => () => void
-  onCouncilMemberComplete: (cb: (data: { advisorRole: string; review: unknown }) => void) => () => void
+  onCouncilMemberStream: (
+    cb: (data: {
+      advisorRole: string
+      type: string
+      content?: string
+      toolActivity?: Record<string, unknown>
+    }) => void
+  ) => () => void
+  onCouncilMemberComplete: (
+    cb: (data: { advisorRole: string; review: unknown }) => void
+  ) => () => void
   onCouncilPeerReviewComplete: (cb: (data: { peerReviews: unknown[] }) => void) => () => void
   onCouncilVerdict: (cb: (data: { verdict: unknown }) => void) => () => void
   onCouncilComplete: (cb: () => void) => () => void
@@ -1036,10 +1095,43 @@ interface Api {
 
   // Multi-Workspace Session Management
   getAllWorkspaceStatuses: () => Promise<Record<string, unknown>>
-  onWorkspaceStatusUpdate: (cb: (data: { workspaceId: string; status: string; agentId: string; agentType: string; elapsedMs: number; tokenUsage: number }) => void) => () => void
-  onPermissionRequest: (cb: (data: { id: string; workspaceId: string; workspaceName: string; type: string; summary: string; isSimple: boolean; payload: unknown; receivedAt: number }) => void) => () => void
-  respondToPermission: (args: { permissionId: string; workspaceId: string; type: string; response: unknown }) => Promise<void>
-  onCompletionNotification: (cb: (data: { workspaceId: string; workspaceName: string; service: string; status: string; summary: string }) => void) => () => void
+  onWorkspaceStatusUpdate: (
+    cb: (data: {
+      workspaceId: string
+      status: string
+      agentId: string
+      agentType: string
+      elapsedMs: number
+      tokenUsage: number
+    }) => void
+  ) => () => void
+  onPermissionRequest: (
+    cb: (data: {
+      id: string
+      workspaceId: string
+      workspaceName: string
+      type: string
+      summary: string
+      isSimple: boolean
+      payload: unknown
+      receivedAt: number
+    }) => void
+  ) => () => void
+  respondToPermission: (args: {
+    permissionId: string
+    workspaceId: string
+    type: string
+    response: unknown
+  }) => Promise<void>
+  onCompletionNotification: (
+    cb: (data: {
+      workspaceId: string
+      workspaceName: string
+      service: string
+      status: string
+      summary: string
+    }) => void
+  ) => () => void
 }
 
 declare global {

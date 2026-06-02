@@ -43,13 +43,19 @@ function extractStructuredMeta(
 
   // Determine operation type from tool name
   const operationType: ToolOperationType =
-    name === 'read' ? 'read' :
-    name === 'write' ? 'write' :
-    name === 'edit' || name === 'multiedit' ? 'edit' :
-    name === 'grep' || name === 'glob' ? 'search' :
-    name === 'bash' ? 'shell' :
-    (name.startsWith('mcp__code') || name.startsWith('mcp__semantic')) ? 'codegraph' :
-    'other'
+    name === 'read'
+      ? 'read'
+      : name === 'write'
+        ? 'write'
+        : name === 'edit' || name === 'multiedit'
+          ? 'edit'
+          : name === 'grep' || name === 'glob'
+            ? 'search'
+            : name === 'bash'
+              ? 'shell'
+              : name.startsWith('mcp__code') || name.startsWith('mcp__semantic')
+                ? 'codegraph'
+                : 'other'
 
   if (!toolInput) return { operationType }
 

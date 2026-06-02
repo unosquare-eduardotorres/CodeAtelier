@@ -7,7 +7,6 @@
 
 import { useState, useMemo, useCallback } from 'react'
 import {
-  Send,
   Minimize2,
   Trash2,
   HelpCircle,
@@ -163,8 +162,7 @@ const HELP_DESCRIPTIONS: Record<string, string> = {
   '/grillme': 'Grill an idea — AI-led Q&A across 8 specialist tracks',
   '/voice': 'Toggle push-to-talk voice input',
   '/undo': 'Undo last build changes — reverts files to the previous checkpoint',
-  '/rewind':
-    'Rewind to a previous checkpoint — reverts code AND removes messages after that point',
+  '/rewind': 'Rewind to a previous checkpoint — reverts code AND removes messages after that point',
   '/recap': 'Get a summary of what was done in this conversation',
   '/council': 'Run the LLM Council — 5 independent AI advisors review and cross-examine your plan',
   '/help': 'Show available commands'
@@ -229,9 +227,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             opts.setEffort(opts.currentConversationId, effort)
             opts.appendLocalMessage(`Thinking effort set to **${effort}**`)
           } else {
-            opts.appendLocalMessage(
-              'Usage: `/effort low` | `/effort medium` | `/effort high`'
-            )
+            opts.appendLocalMessage('Usage: `/effort low` | `/effort medium` | `/effort high`')
           }
         },
 
@@ -324,7 +320,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               originalUserRequest: inputContent
             })
             councilState.setSessionIdentity(sessionId, workspaceId)
-            opts.appendLocalMessage('**🏛️ LLM Council convened.** 5 advisors are now reviewing your input…')
+            opts.appendLocalMessage(
+              '**🏛️ LLM Council convened.** 5 advisors are now reviewing your input…'
+            )
           } catch (err) {
             opts.appendLocalMessage(
               `**Council failed:** ${err instanceof Error ? err.message : String(err)}`
@@ -335,10 +333,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         '/help': () => {
           const helpLines = SLASH_COMMANDS.filter(
             (c) => !c.providers || c.providers.includes(opts.currentProvider)
-          ).map(
-            (c) =>
-              `**\`${c.command}\`** — ${HELP_DESCRIPTIONS[c.command] ?? c.description}`
-          )
+          ).map((c) => `**\`${c.command}\`** — ${HELP_DESCRIPTIONS[c.command] ?? c.description}`)
           opts.appendLocalMessage(`### Available Commands\n\n${helpLines.join('\n')}`)
         }
       }

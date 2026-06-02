@@ -18,7 +18,16 @@ export type PromptVerbosity = 'full' | 'lean'
  * rewrote persisted values from `'generalist'` to `'da-vinci'` so the DB and
  * the type line up.
  */
-export type AgentRole = 'da-vinci' | 'project-specialist' | 'audit' | 'grill' | 'mpa-planner' | 'mpa-builder' | 'mpa-verifier' | 'council-member' | 'council-chairman'
+export type AgentRole =
+  | 'da-vinci'
+  | 'project-specialist'
+  | 'audit'
+  | 'grill'
+  | 'mpa-planner'
+  | 'mpa-builder'
+  | 'mpa-verifier'
+  | 'council-member'
+  | 'council-chairman'
 
 /** Communication tone for AI responses — workspace default + per-conversation override */
 export type CommunicationTone = 'default' | 'calm' | 'optimistic' | 'brutal' | 'caveman'
@@ -211,7 +220,14 @@ export interface CompletionNotification {
 }
 
 // ── Tool Activity ──
-export type ToolOperationType = 'read' | 'write' | 'edit' | 'search' | 'shell' | 'codegraph' | 'other'
+export type ToolOperationType =
+  | 'read'
+  | 'write'
+  | 'edit'
+  | 'search'
+  | 'shell'
+  | 'codegraph'
+  | 'other'
 
 export interface ToolActivity {
   id: string
@@ -904,15 +920,27 @@ export interface AutoConfigureResult {
 
 // ── Embedding Provider ──
 
-/** Status of the bundled embedding model */
+/** Which embedding backend is active. Currently llamafile-only. */
+export type EmbeddingBackend = 'llamafile'
+
+/** Which downloaded artefact a progress/phase event refers to. */
+export type EmbeddingDownloadPhase = 'binary' | 'model'
+
+/** Status of the downloaded embedding sidecar + model */
 export interface EmbeddingModelStatus {
-  /** Model is loaded and ready for inference */
+  /** Server is spawned and ready for inference */
   ready: boolean
-  /** Model files exist in local cache (no download needed) */
+  /** Both engine binary + GGUF model are present on disk (no download needed) */
   cached: boolean
+  /** Active embedding backend */
+  backend: EmbeddingBackend
+  /** Engine binary exists + passes the SHA-256/size check */
+  engineInstalled: boolean
+  /** GGUF model exists + passes the SHA-256/size check */
+  modelInstalled: boolean
 }
 
-/** Progress event during model download */
+/** Progress event during model/binary download */
 export interface EmbeddingModelProgress {
   /** Percentage 0–100 */
   progress: number
@@ -920,6 +948,8 @@ export interface EmbeddingModelProgress {
   loaded: number
   /** Total bytes */
   total: number
+  /** Which artefact this progress refers to ('binary' = engine, 'model' = GGUF) */
+  phase: EmbeddingDownloadPhase
 }
 
 // ── Ollama ──
@@ -1374,10 +1404,10 @@ export type CouncilInputType = 'plan' | 'requirement' | 'question'
 
 /** Current phase of the council process */
 export type CouncilPhase =
-  | 'framing'       // Step 1: context enrichment
-  | 'deliberating'  // Step 2: 5 parallel advisor sessions
-  | 'peer-review'   // Step 3: anonymous peer review
-  | 'synthesizing'  // Step 4: chairman synthesis
+  | 'framing' // Step 1: context enrichment
+  | 'deliberating' // Step 2: 5 parallel advisor sessions
+  | 'peer-review' // Step 3: anonymous peer review
+  | 'synthesizing' // Step 4: chairman synthesis
   | 'complete'
   | 'cancelled'
   | 'failed'

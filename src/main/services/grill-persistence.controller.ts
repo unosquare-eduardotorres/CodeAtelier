@@ -141,7 +141,11 @@ export class GrillPersistenceController {
     router: SessionEventRouter
   ): void {
     // Forward to renderer via router
-    router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_EVALUATION_RESULT, workspaceId, evaluation as unknown as Record<string, unknown>)
+    router.sendWorkspaceEvent(
+      IPC_CHANNELS.GRILL_EVALUATION_RESULT,
+      workspaceId,
+      evaluation as unknown as Record<string, unknown>
+    )
 
     if (!this.activeSessionId) return
 
@@ -186,10 +190,7 @@ export class GrillPersistenceController {
   }
 
   /** Save user's question answers to DB */
-  saveAnswers(
-    sessionId: string,
-    questionStates: Record<string, unknown>
-  ): void {
+  saveAnswers(sessionId: string, questionStates: Record<string, unknown>): void {
     const session = grillSessionRepository.findById(sessionId)
     if (!session) return
 

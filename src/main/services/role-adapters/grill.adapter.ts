@@ -31,7 +31,6 @@ import {
 } from './grill-prompt-blocks'
 import { sanitizePromptInput } from '../sanitize-prompt-input'
 
-
 export class GrillRoleAdapter extends BaseRoleAdapter {
   readonly role = 'grill' as const
   readonly agentId: string
@@ -88,8 +87,6 @@ export class GrillRoleAdapter extends BaseRoleAdapter {
     this.log.info(`[grill-adapter] ${this.trackId} grill started for workspace=${this.workspaceId}`)
   }
 
-
-
   buildPrompts(_ctx: AdapterPromptContext): AdapterPromptResult {
     if (!this.systemPrompt) {
       throw new Error(
@@ -110,11 +107,17 @@ export class GrillRoleAdapter extends BaseRoleAdapter {
     }
   }
 
-  protected override getMcpStrategy(): McpStrategy { return 'readonly' }
-  protected override getIncludeGitContext(): boolean { return this.llmProvider !== 'local-llm' }
+  protected override getMcpStrategy(): McpStrategy {
+    return 'readonly'
+  }
+  protected override getIncludeGitContext(): boolean {
+    return this.llmProvider !== 'local-llm'
+  }
 
   /** No-op memory persistence for evaluation adapters. */
-  protected override persistMemory(): void { /* no-op */ }
+  protected override persistMemory(): void {
+    /* no-op */
+  }
 
   override onSessionStop(): void {
     this.systemPrompt = null
@@ -132,13 +135,9 @@ export class GrillRoleAdapter extends BaseRoleAdapter {
       ? buildGrillEvaluationSchemaLean(this.trackId)
       : buildGrillEvaluationSchema(this.trackId)
 
-    const questionRules = lean
-      ? GRILL_QUESTION_QUALITY_RULES_LEAN
-      : GRILL_QUESTION_QUALITY_RULES
+    const questionRules = lean ? GRILL_QUESTION_QUALITY_RULES_LEAN : GRILL_QUESTION_QUALITY_RULES
 
-    const scoringRules = lean
-      ? GRILL_SCORING_RULES_LEAN
-      : GRILL_SCORING_RULES
+    const scoringRules = lean ? GRILL_SCORING_RULES_LEAN : GRILL_SCORING_RULES
 
     // Lean: compressed instructions — Opus narrates naturally and uses tools-first from schema
     const instructions = lean

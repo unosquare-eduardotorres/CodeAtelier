@@ -21,9 +21,7 @@ export default function StatCard({
         <Icon size={12} />
         {label}
       </div>
-      <div className="text-2xl font-display font-normal text-text-primary truncate">
-        {value}
-      </div>
+      <div className="text-2xl font-display font-normal text-text-primary truncate">{value}</div>
       <div className="text-xs text-text-secondary mt-1">{subtitle}</div>
     </div>
   )

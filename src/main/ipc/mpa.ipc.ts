@@ -206,7 +206,11 @@ function wireMpaEvents(workspaceId: string): void {
     'phaseStart',
     (payload) => {
       mpaLog.info(`[event] phaseStart: ${payload.phaseType} (iteration ${payload.iteration})`)
-      router.sendWorkspaceEvent(IPC_CHANNELS.MPA_PHASE_START, workspaceId, payload as unknown as Record<string, unknown>)
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.MPA_PHASE_START,
+        workspaceId,
+        payload as unknown as Record<string, unknown>
+      )
     }
   )
 
@@ -215,7 +219,11 @@ function wireMpaEvents(workspaceId: string): void {
     mpaOrchestrationService,
     'phaseProgress',
     (payload) => {
-      router.sendWorkspaceEvent(IPC_CHANNELS.MPA_PHASE_PROGRESS, workspaceId, payload as unknown as Record<string, unknown>)
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.MPA_PHASE_PROGRESS,
+        workspaceId,
+        payload as unknown as Record<string, unknown>
+      )
     }
   )
 
@@ -225,7 +233,11 @@ function wireMpaEvents(workspaceId: string): void {
     'phaseComplete',
     (payload) => {
       mpaLog.info(`[event] phaseComplete: ${payload.phaseType} — ${payload.status}`)
-      router.sendWorkspaceEvent(IPC_CHANNELS.MPA_PHASE_COMPLETE, workspaceId, payload as unknown as Record<string, unknown>)
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.MPA_PHASE_COMPLETE,
+        workspaceId,
+        payload as unknown as Record<string, unknown>
+      )
     }
   )
 
@@ -237,7 +249,11 @@ function wireMpaEvents(workspaceId: string): void {
       mpaLog.info(
         `[event] feedbackLoop: ${payload.fromPhase} → ${payload.toPhase} (iteration ${payload.iteration})`
       )
-      router.sendWorkspaceEvent(IPC_CHANNELS.MPA_FEEDBACK_LOOP, workspaceId, payload as unknown as Record<string, unknown>)
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.MPA_FEEDBACK_LOOP,
+        workspaceId,
+        payload as unknown as Record<string, unknown>
+      )
     }
   )
 
@@ -247,7 +263,11 @@ function wireMpaEvents(workspaceId: string): void {
     'approvalNeeded',
     (payload) => {
       mpaLog.info(`[event] approvalNeeded for run ${payload.runId}`)
-      router.sendWorkspaceEvent(IPC_CHANNELS.MPA_APPROVAL_NEEDED, workspaceId, payload as unknown as Record<string, unknown>)
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.MPA_APPROVAL_NEEDED,
+        workspaceId,
+        payload as unknown as Record<string, unknown>
+      )
     }
   )
 
@@ -257,7 +277,11 @@ function wireMpaEvents(workspaceId: string): void {
     'pipelineComplete',
     (payload) => {
       mpaLog.info(`[event] pipelineComplete: ${payload.status}`)
-      router.sendWorkspaceEvent(IPC_CHANNELS.MPA_PIPELINE_COMPLETE, workspaceId, payload as unknown as Record<string, unknown>)
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.MPA_PIPELINE_COMPLETE,
+        workspaceId,
+        payload as unknown as Record<string, unknown>
+      )
       mpaCleanup.runCleanup(workspaceId)
     }
   )

@@ -59,12 +59,12 @@ export interface UpdateSkillInput {
 
 export class SkillRepository extends BaseRepository<SkillRow, Skill> {
   protected readonly tableName = 'skills'
-  protected mapRow(row: SkillRow): Skill { return mapRow(row) }
+  protected mapRow(row: SkillRow): Skill {
+    return mapRow(row)
+  }
 
   findAll(): Skill[] {
-    const rows = this.db()
-      .prepare('SELECT * FROM skills ORDER BY name ASC')
-      .all() as SkillRow[]
+    const rows = this.db().prepare('SELECT * FROM skills ORDER BY name ASC').all() as SkillRow[]
     return rows.map(mapRow)
   }
 
@@ -191,9 +191,7 @@ export class SkillRepository extends BaseRepository<SkillRow, Skill> {
   /** Store Haiku-generated enrichment metadata for a skill */
   updateEnrichment(skillId: string, enrichmentJson: string): void {
     this.db()
-      .prepare(
-        `UPDATE skills SET enrichment_json = ?, updated_at = datetime('now') WHERE id = ?`
-      )
+      .prepare(`UPDATE skills SET enrichment_json = ?, updated_at = datetime('now') WHERE id = ?`)
       .run(enrichmentJson, skillId)
   }
 

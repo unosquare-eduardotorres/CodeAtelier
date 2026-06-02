@@ -13,13 +13,8 @@
  * intent detection) is identical to DaVinciRoleAdapter.
  */
 
-import type {
-  ConversationMode,
-  ModelAction
-} from '../../../shared/types'
-import {
-  RECOMMENDED_LOCAL_MODELS
-} from '../../../shared/constants'
+import type { ConversationMode, ModelAction } from '../../../shared/types'
+import { RECOMMENDED_LOCAL_MODELS } from '../../../shared/constants'
 import type {
   AdapterPromptContext,
   AdapterPromptResult,
@@ -27,9 +22,10 @@ import type {
 } from '../agent-session.types'
 import { getDatabase } from '../../db/index'
 import {
-  workspaceRepository
-} from '../../db/repositories'
-import { appendMcpToolGuidance, buildConditionalPrefix, buildModeContextPrefix } from '../prompt-assembly-helpers'
+  appendMcpToolGuidance,
+  buildConditionalPrefix,
+  buildModeContextPrefix
+} from '../prompt-assembly-helpers'
 import {
   UNIFIED_MODE_SECTION,
   TONE_STYLE_DIRECTIVES,
@@ -147,7 +143,10 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
     // ── System-prompt assembly with snapshot cache ─────────────────
     // Pattern 1: Centralized model resolution
     const isBuildMode = ctx.mode === 'build' || ctx.mode === 'danger'
-    const resolvedModel = this.resolveModel(ctx.workspacePath, `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction)
+    const resolvedModel = this.resolveModel(
+      ctx.workspacePath,
+      `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
+    )
 
     // Pattern 7: SystemPromptCache for snapshot reuse
     const cacheKeys = {
@@ -181,10 +180,15 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
         ctx.workspaceId ?? this.workspaceId,
         ctx.conversationId
       )
-      systemPrompt = appendMcpToolGuidance(basePrompt, ctx.turnCount, {
-        ...mcpFlags,
-        externalMcpActive
-      }, resolvedModel)
+      systemPrompt = appendMcpToolGuidance(
+        basePrompt,
+        ctx.turnCount,
+        {
+          ...mcpFlags,
+          externalMcpActive
+        },
+        resolvedModel
+      )
 
       // Ensure Tool Priority directive is present
       if (!systemPrompt.includes('## Tool Priority')) {
@@ -280,5 +284,4 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
   getMode(): ConversationMode {
     return 'plan'
   }
-
 }

@@ -18,9 +18,7 @@ export default function GoalArtifactViewer({ report }: GoalArtifactViewerProps):
       {/* Summary */}
       <div
         className={`rounded-lg border p-3 ${
-          report.allComplete
-            ? 'border-success/30 bg-success/5'
-            : 'border-warning/30 bg-warning/5'
+          report.allComplete ? 'border-success/30 bg-success/5' : 'border-warning/30 bg-warning/5'
         }`}
       >
         <div className="flex items-center gap-2 mb-2">
@@ -64,9 +62,7 @@ export default function GoalArtifactViewer({ report }: GoalArtifactViewerProps):
               ) : (
                 <XCircle size={12} className="text-danger" />
               )}
-              <span className="text-text-secondary">
-                {key.replace(/([A-Z])/g, ' $1').trim()}
-              </span>
+              <span className="text-text-secondary">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
             </div>
           ))}
         </div>
@@ -77,10 +73,7 @@ export default function GoalArtifactViewer({ report }: GoalArtifactViewerProps):
         <div className="space-y-2">
           <h4 className="text-xs font-medium text-text-secondary">Issues</h4>
           {report.issues.map((issue, i) => (
-            <div
-              key={i}
-              className="bg-surface-base rounded-lg border border-border-subtle p-2.5"
-            >
+            <div key={i} className="bg-surface-base rounded-lg border border-border-subtle p-2.5">
               <div className="flex items-center gap-2 mb-1">
                 {STATUS_ICONS[issue.status]}
                 <span className="text-xs font-mono text-text-muted">{issue.planItemId}</span>

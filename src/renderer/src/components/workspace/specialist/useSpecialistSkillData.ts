@@ -9,7 +9,11 @@ export function useSpecialistSkillData(opts: {
   skills: Skill[]
   specialistSkills: Array<{ id: string; isEnabled?: boolean }> | undefined
   skillRecommendations: Array<{ skillId: string; relevance: number; rationale: string }> | undefined
-}) {
+}): {
+  attachedSkillIds: Set<string>
+  recommendedSkills: Array<Skill & { relevance: number; rationale: string }>
+  otherSkills: Skill[]
+} {
   const { skills, specialistSkills, skillRecommendations } = opts
 
   const attachedSkillIds = useMemo(

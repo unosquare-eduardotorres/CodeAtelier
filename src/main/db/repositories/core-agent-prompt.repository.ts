@@ -25,7 +25,9 @@ function mapRow(row: CoreAgentPromptRow): CoreAgentPrompt {
 
 export class CoreAgentPromptRepository extends BaseRepository<CoreAgentPromptRow, CoreAgentPrompt> {
   protected readonly tableName = 'core_agent_prompts'
-  protected mapRow(row: CoreAgentPromptRow): CoreAgentPrompt { return mapRow(row) }
+  protected mapRow(row: CoreAgentPromptRow): CoreAgentPrompt {
+    return mapRow(row)
+  }
 
   findAll(): CoreAgentPrompt[] {
     const db = this.db()
@@ -35,7 +37,10 @@ export class CoreAgentPromptRepository extends BaseRepository<CoreAgentPromptRow
     return rows.map(mapRow)
   }
 
-  findByRoleAndMode(agentRole: 'da-vinci', mode: 'plan' | 'build' | 'danger'): CoreAgentPrompt | undefined {
+  findByRoleAndMode(
+    agentRole: 'da-vinci',
+    mode: 'plan' | 'build' | 'danger'
+  ): CoreAgentPrompt | undefined {
     const db = this.db()
     const row = db
       .prepare('SELECT * FROM core_agent_prompts WHERE agent_role = ? AND mode = ?')
@@ -43,7 +48,11 @@ export class CoreAgentPromptRepository extends BaseRepository<CoreAgentPromptRow
     return row ? mapRow(row) : undefined
   }
 
-  upsert(agentRole: 'da-vinci', mode: 'plan' | 'build' | 'danger', promptText: string): CoreAgentPrompt {
+  upsert(
+    agentRole: 'da-vinci',
+    mode: 'plan' | 'build' | 'danger',
+    promptText: string
+  ): CoreAgentPrompt {
     const db = this.db()
     const row = db
       .prepare(

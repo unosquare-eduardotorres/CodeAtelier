@@ -107,8 +107,7 @@ export class AgentStreamProcessor {
       meta.tokenUsage.cacheReadInputTokens +
       meta.tokenUsage.cacheCreationInputTokens
     const contextWindowTokens = meta.tokenUsage.contextWindowTokens ?? 0
-    const totalContextTokens =
-      contextWindowTokens > 0 ? contextWindowTokens : summedContextTokens
+    const totalContextTokens = contextWindowTokens > 0 ? contextWindowTokens : summedContextTokens
     const consumedContextTokens = totalContextTokens
 
     // Update lastContextTokens for all backends (badge, compact modal, etc.)

@@ -4,11 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from './test-harness'
-import {
-  planSchema,
-  askUserSchema,
-  emitMemorySchema
-} from '../control-actions.tool'
+import { planSchema, askUserSchema, emitMemorySchema } from '../control-actions.tool'
 import type { ControlActionCallbacks } from '../control-actions.tool'
 
 // -- Schema validation tests --

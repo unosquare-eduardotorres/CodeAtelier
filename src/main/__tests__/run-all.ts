@@ -73,8 +73,6 @@ import '../services/__tests__/resolve-adapter-consent.test'
 import '../ipc/__tests__/chat-swap-handler.test'
 // Run 9 — renderer utilities (pure logic, no DOM)
 import '../services/__tests__/sentence-buffer.test'
-// Run 10 — onnxruntime-web WASM backend validation
-import '../services/__tests__/onnxruntime-web.test'
 
 // ─── Run 11: Prompt optimization (Opus 4.8) ───
 import '../services/__tests__/prompt-verbosity.test'

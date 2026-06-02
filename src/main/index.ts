@@ -12,6 +12,7 @@ import {
   crashReporter
 } from 'electron'
 import { join } from 'node:path'
+import os from 'node:os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
@@ -27,6 +28,7 @@ import { councilService } from './services/council.service'
 
 import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
+import { llamafileEmbeddingProvider } from './services/llamafile-embedding.service'
 import { cleanupStalePromptFiles } from './services/cli-executor'
 
 // Initialize electron-log for the main process
@@ -55,9 +57,8 @@ process.on('unhandledRejection', (reason) => {
 function reportMainProcessBug(error: Error, severity: 'error' | 'fatal'): void {
   try {
     // Lazy import to avoid circular deps during early bootstrap
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { bugRepository } = require('./db/repositories/bug.repository')
-    const { BrowserWindow } = require('electron') as typeof import('electron')
-    const os = require('node:os')
 
     // Parse source file/line from stack trace
     let sourceFile: string | undefined
@@ -230,6 +231,7 @@ function createWindow(): void {
   // Clean up stale "running" sessions left over from a previous app crash/quit
   try {
     const { agentSessionRepository } =
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       require('./db/repositories') as typeof import('./db/repositories')
     const staleCount = agentSessionRepository.terminateStale()
     if (staleCount > 0) {
@@ -461,6 +463,13 @@ app.on('before-quit', async (event) => {
 
   // Stop all file watchers for Code Graph / Semantic Search
   fileWatcherService.stopAll()
+
+  // Kill the llamafile embedding sidecar so it doesn't orphan after quit
+  try {
+    llamafileEmbeddingProvider.dispose()
+  } catch (e) {
+    log.debug('Llamafile embedding dispose error (expected during quit):', e)
+  }
 
   closeDatabase()
   app.quit()

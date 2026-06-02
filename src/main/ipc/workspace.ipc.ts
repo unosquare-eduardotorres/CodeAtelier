@@ -20,91 +20,84 @@ export function registerWorkspaceIpc(): void {
     return workspaceRepository.findAll()
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.WORKSPACE_CREATE,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.WORKSPACE_CREATE
-      const args = requireObject(rawArgs, ch)
-      const name = requireString(args, 'name', ch)
-      const repoPath = requireString(args, 'repoPath', ch)
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_CREATE, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.WORKSPACE_CREATE
+    const args = requireObject(rawArgs, ch)
+    const name = requireString(args, 'name', ch)
+    const repoPath = requireString(args, 'repoPath', ch)
 
-      if (name.length > 255) {
-        throw new Error(`${ch}: workspace name too long (max 255 chars)`)
-      }
+    if (name.length > 255) {
+      throw new Error(`${ch}: workspace name too long (max 255 chars)`)
+    }
 
-      // Normalize path to prevent traversal attacks
-      const normalizedPath = resolve(repoPath)
+    // Normalize path to prevent traversal attacks
+    const normalizedPath = resolve(repoPath)
 
-      // Validate path exists
-      if (!existsSync(normalizedPath)) {
-        throw new Error(`Path does not exist: ${normalizedPath}`)
-      }
+    // Validate path exists
+    if (!existsSync(normalizedPath)) {
+      throw new Error(`Path does not exist: ${normalizedPath}`)
+    }
 
-      // Check if it's a git repository (no longer required)
-      let isGitRepo = false
-      let gitRemoteUrl: string | undefined
-      try {
-        const git = simpleGit(normalizedPath)
-        isGitRepo = await git.checkIsRepo()
-        if (isGitRepo) {
-          try {
-            const remotes = await git.getRemotes(true)
-            const origin = remotes.find((r) => r.name === 'origin')
-            gitRemoteUrl = origin?.refs?.fetch
-          } catch {
-            // No remote is fine
-          }
+    // Check if it's a git repository (no longer required)
+    let isGitRepo = false
+    let gitRemoteUrl: string | undefined
+    try {
+      const git = simpleGit(normalizedPath)
+      isGitRepo = await git.checkIsRepo()
+      if (isGitRepo) {
+        try {
+          const remotes = await git.getRemotes(true)
+          const origin = remotes.find((r) => r.name === 'origin')
+          gitRemoteUrl = origin?.refs?.fetch
+        } catch {
+          // No remote is fine
         }
-      } catch {
-        // Not a repo — fine, we allow non-git directories
       }
+    } catch {
+      // Not a repo — fine, we allow non-git directories
+    }
 
-      const workspace = workspaceRepository.create(
-        name.trim() || basename(normalizedPath),
-        normalizedPath,
-        gitRemoteUrl,
-        isGitRepo
-      )
+    const workspace = workspaceRepository.create(
+      name.trim() || basename(normalizedPath),
+      normalizedPath,
+      gitRemoteUrl,
+      isGitRepo
+    )
 
-      // Phase 2 refactor: seed a pending Project Specialist row so the user
-      // can build it on first open. Idempotent — migration 66 already does
-      // this for pre-existing workspaces; this covers workspaces added
-      // AFTER the migration ran.
-      try {
-        const db = getDatabase()
-        const existing = db
-          .prepare(`SELECT id FROM specialists WHERE workspace_id = ?`)
-          .get(workspace.id) as { id: string } | undefined
-        if (!existing) {
-          db.prepare(
-            `INSERT INTO specialists (workspace_id, agent_id, display_name, icon, color,
+    // Phase 2 refactor: seed a pending Project Specialist row so the user
+    // can build it on first open. Idempotent — migration 66 already does
+    // this for pre-existing workspaces; this covers workspaces added
+    // AFTER the migration ran.
+    try {
+      const db = getDatabase()
+      const existing = db
+        .prepare(`SELECT id FROM specialists WHERE workspace_id = ?`)
+        .get(workspace.id) as { id: string } | undefined
+      if (!existing) {
+        db.prepare(
+          `INSERT INTO specialists (workspace_id, agent_id, display_name, icon, color,
                prompt, priority, is_active, build_status, created_at, updated_at)
              VALUES (?, ?, ?, '🔧', '#6366F1', '', 1, 1, 'pending', datetime('now'), datetime('now'))`
-          ).run(
-            workspace.id,
-            `workspace-specialist-${workspace.id}`,
-            `${workspace.name} Specialist`
-          )
-          dbLogger.info(`Seeded pending Project Specialist for workspace ${workspace.id}`)
-        }
-      } catch (err) {
-        dbLogger.warn('Failed to seed Project Specialist on workspace create:', err)
+        ).run(workspace.id, `workspace-specialist-${workspace.id}`, `${workspace.name} Specialist`)
+        dbLogger.info(`Seeded pending Project Specialist for workspace ${workspace.id}`)
       }
-
-      // Auto-init git repo if not already a git repository
-      if (!isGitRepo) {
-        try {
-          await repoService.initRepo(normalizedPath)
-          dbLogger.info(`Auto-initialized git repo at ${normalizedPath}`)
-        } catch (err) {
-          dbLogger.warn('Auto-init git failed (non-fatal):', err)
-        }
-      }
-
-      return workspace
+    } catch (err) {
+      dbLogger.warn('Failed to seed Project Specialist on workspace create:', err)
     }
-  )
+
+    // Auto-init git repo if not already a git repository
+    if (!isGitRepo) {
+      try {
+        await repoService.initRepo(normalizedPath)
+        dbLogger.info(`Auto-initialized git repo at ${normalizedPath}`)
+      } catch (err) {
+        dbLogger.warn('Auto-init git failed (non-fatal):', err)
+      }
+    }
+
+    return workspace
+  })
 
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_OPEN, async (event, rawArgs: unknown) => {
     validateSender(event)
@@ -163,134 +156,124 @@ export function registerWorkspaceIpc(): void {
 
     // Stop any running sessions for this workspace before deleting
     const { chatAgentService } = await import('../services')
-    await chatAgentService.stopForWorkspace(id).catch(() => { /* non-fatal: workspace being deleted — session stop is best-effort */ })
+    await chatAgentService.stopForWorkspace(id).catch(() => {
+      /* non-fatal: workspace being deleted — session stop is best-effort */
+    })
 
     fileWatcherService.stop(id)
     workspaceRepository.delete(id)
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.WORKSPACE_GET_SETTINGS,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.WORKSPACE_GET_SETTINGS
-      const args = requireObject(rawArgs, ch)
-      const workspaceId = requireString(args, 'workspaceId', ch)
-      return workspaceRepository.getSettings(workspaceId)
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_GET_SETTINGS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.WORKSPACE_GET_SETTINGS
+    const args = requireObject(rawArgs, ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+    return workspaceRepository.getSettings(workspaceId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS
+    const args = requireObject(rawArgs, ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+    const settings = requirePlainObject(args, 'settings', ch)
+    // Merge with existing settings to avoid overwriting fields set by other services
+    // (e.g., githubTokenEncrypted set by github.service)
+    const existing = workspaceRepository.getSettings(workspaceId)
+    const merged = { ...existing, ...settings }
+    const result = workspaceRepository.updateSettings(workspaceId, merged)
+
+    // Update file watcher based on new settings
+    try {
+      const ws = workspaceRepository.findById(workspaceId)
+      if (ws) {
+        const s = merged as Record<string, unknown>
+        if (s.repomapEnabled || s.semanticSearchEnabled) {
+          fileWatcherService.start(workspaceId, ws.repoPath, {
+            codeGraphEnabled: !!s.repomapEnabled,
+            semanticSearchEnabled: !!s.semanticSearchEnabled
+          })
+        } else {
+          fileWatcherService.stop(workspaceId)
+        }
+      }
+    } catch (e) {
+      dbLogger.warn('Failed to update file watcher on settings change:', e)
     }
-  )
 
-  ipcMain.handle(
-    IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.WORKSPACE_UPDATE_SETTINGS
-      const args = requireObject(rawArgs, ch)
-      const workspaceId = requireString(args, 'workspaceId', ch)
-      const settings = requirePlainObject(args, 'settings', ch)
-      // Merge with existing settings to avoid overwriting fields set by other services
-      // (e.g., githubTokenEncrypted set by github.service)
-      const existing = workspaceRepository.getSettings(workspaceId)
-      const merged = { ...existing, ...settings }
-      const result = workspaceRepository.updateSettings(workspaceId, merged)
+    // ── Restart agent session when LLM provider changes ──
+    // The running AgentSessionService caches llmProvider at start().
+    // If it changes, we must restart so the new provider takes effect.
+    try {
+      const oldProvider = (existing.llmProvider as string) ?? 'claude'
+      const newProvider = (merged.llmProvider as string) ?? 'claude'
 
-      // Update file watcher based on new settings
-      try {
+      if (oldProvider !== newProvider && chatAgentService.isRunning()) {
         const ws = workspaceRepository.findById(workspaceId)
-        if (ws) {
-          const s = merged as Record<string, unknown>
-          if (s.repomapEnabled || s.semanticSearchEnabled) {
-            fileWatcherService.start(workspaceId, ws.repoPath, {
-              codeGraphEnabled: !!s.repomapEnabled,
-              semanticSearchEnabled: !!s.semanticSearchEnabled
-            })
-          } else {
-            fileWatcherService.stop(workspaceId)
-          }
+        if (ws && chatAgentService.getWorkspacePath() === ws.repoPath) {
+          dbLogger.info(
+            `[workspace:settings] LLM provider changed: ${oldProvider} → ${newProvider} — restarting agent session`
+          )
+          await chatAgentService.start(ws.repoPath)
         }
-      } catch (e) {
-        dbLogger.warn('Failed to update file watcher on settings change:', e)
       }
-
-      // ── Restart agent session when LLM provider changes ──
-      // The running AgentSessionService caches llmProvider at start().
-      // If it changes, we must restart so the new provider takes effect.
-      try {
-        const oldProvider = (existing.llmProvider as string) ?? 'claude'
-        const newProvider = (merged.llmProvider as string) ?? 'claude'
-
-        if (oldProvider !== newProvider && chatAgentService.isRunning()) {
-          const ws = workspaceRepository.findById(workspaceId)
-          if (ws && chatAgentService.getWorkspacePath() === ws.repoPath) {
-            dbLogger.info(
-              `[workspace:settings] LLM provider changed: ${oldProvider} → ${newProvider} — restarting agent session`
-            )
-            await chatAgentService.start(ws.repoPath)
-          }
-        }
-      } catch (e) {
-        dbLogger.warn('Failed to restart agent after LLM provider change:', e)
-      }
-
-      return result
+    } catch (e) {
+      dbLogger.warn('Failed to restart agent after LLM provider change:', e)
     }
-  )
 
-  ipcMain.handle(
-    IPC_CHANNELS.WORKSPACE_UPDATE_AUTH,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.WORKSPACE_UPDATE_AUTH
-      const args = requireObject(rawArgs, ch)
-      const workspaceId = requireString(args, 'workspaceId', ch)
-      const authMode = requireString(args, 'authMode', ch)
-      const anthropicApiKey = optionalString(args, 'anthropicApiKey', ch)
+    return result
+  })
 
-      if (authMode !== 'claude-max' && authMode !== 'api-key') {
-        throw new Error(`${ch}: authMode must be 'claude-max' or 'api-key'`)
-      }
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_UPDATE_AUTH, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.WORKSPACE_UPDATE_AUTH
+    const args = requireObject(rawArgs, ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+    const authMode = requireString(args, 'authMode', ch)
+    const anthropicApiKey = optionalString(args, 'anthropicApiKey', ch)
 
-      // Merge auth settings with existing workspace settings
-      const existing = workspaceRepository.getSettings(workspaceId)
-      const merged = {
-        ...existing,
-        authMode,
-        // Only store API key if auth mode is api-key, otherwise clear it
-        anthropicApiKey: authMode === 'api-key' ? anthropicApiKey : undefined
-      }
-      workspaceRepository.updateSettings(workspaceId, merged)
-
-      // Reload auth provider for the active workspace
-      const workspace = workspaceRepository.findAll().find((w) => w.id === workspaceId)
-      if (workspace) {
-        const { authProvider } = await import('../services/auth-provider')
-        authProvider.loadFromWorkspace(workspace.repoPath)
-      }
-
-      return { success: true }
+    if (authMode !== 'claude-max' && authMode !== 'api-key') {
+      throw new Error(`${ch}: authMode must be 'claude-max' or 'api-key'`)
     }
-  )
+
+    // Merge auth settings with existing workspace settings
+    const existing = workspaceRepository.getSettings(workspaceId)
+    const merged = {
+      ...existing,
+      authMode,
+      // Only store API key if auth mode is api-key, otherwise clear it
+      anthropicApiKey: authMode === 'api-key' ? anthropicApiKey : undefined
+    }
+    workspaceRepository.updateSettings(workspaceId, merged)
+
+    // Reload auth provider for the active workspace
+    const workspace = workspaceRepository.findAll().find((w) => w.id === workspaceId)
+    if (workspace) {
+      const { authProvider } = await import('../services/auth-provider')
+      authProvider.loadFromWorkspace(workspace.repoPath)
+    }
+
+    return { success: true }
+  })
 
   // ── External MCP prerequisite check ──
-  ipcMain.handle(
-    IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP
-      const args = requireObject(rawArgs, ch)
-      const command = requireString(args, 'command', ch)
-      // Sanitize: only allow simple command names (no slashes, spaces, or shell metacharacters)
-      if (!/^[a-zA-Z0-9_-]+$/.test(command)) {
-        throw new Error(`${ch}: invalid command name`)
-      }
-      try {
-        const result = execSync(`which ${command}`, { stdio: 'pipe', timeout: 3000 })
-        return { available: true, path: result.toString().trim() }
-      } catch {
-        return { available: false }
-      }
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP
+    const args = requireObject(rawArgs, ch)
+    const command = requireString(args, 'command', ch)
+    // Sanitize: only allow simple command names (no slashes, spaces, or shell metacharacters)
+    if (!/^[a-zA-Z0-9_-]+$/.test(command)) {
+      throw new Error(`${ch}: invalid command name`)
     }
-  )
+    try {
+      const result = execSync(`which ${command}`, { stdio: 'pipe', timeout: 3000 })
+      return { available: true, path: result.toString().trim() }
+    } catch {
+      return { available: false }
+    }
+  })
 
   ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_DIRECTORY, async (event) => {
     validateSender(event)

@@ -25,10 +25,7 @@ import {
 
 import { modelConfigService } from './model-config.service'
 import { resolveClaudeCompactionEnv, resolveSdkContextWindowSize } from './compaction-policy'
-import {
-  conversationRepository,
-  workspaceRepository
-} from '../db/repositories'
+import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { existsSync } from 'node:fs'
@@ -243,10 +240,10 @@ export class AgentExecutorFactory {
     // C2: Log tool availability on EVERY turn (not just first spawn)
     this.s.log.info(
       `[CLI:tools] turn=every allowedTools=${allowedTools?.length ?? 'all'} ` +
-      `disallowed=[${disallowedTools?.join(',') ?? ''}] ` +
-      `hasEmitPlan=${allowedTools === undefined || allowedTools.includes('mcp__control-actions__emit_plan')} ` +
-      `hasCodeGraph=${allowedTools === undefined || allowedTools.some((t: string) => t.includes('code-graph'))} ` +
-      `canContinue=${canContinue}`
+        `disallowed=[${disallowedTools?.join(',') ?? ''}] ` +
+        `hasEmitPlan=${allowedTools === undefined || allowedTools.includes('mcp__control-actions__emit_plan')} ` +
+        `hasCodeGraph=${allowedTools === undefined || allowedTools.some((t: string) => t.includes('code-graph'))} ` +
+        `canContinue=${canContinue}`
     )
 
     // ── Fast path: continueSession — skip expensive work ────────────────
@@ -369,7 +366,7 @@ export class AgentExecutorFactory {
       return configPath
     } catch (error) {
       this.s.log.error('[buildCLIMcpConfigPath] CRITICAL: MCP config write failed:', error)
-      throw error  // Don't swallow — agent needs control tools
+      throw error // Don't swallow — agent needs control tools
     }
   }
 
@@ -381,9 +378,7 @@ export class AgentExecutorFactory {
    *   build  → 'auto'              (AI safety classifier)
    *   danger → 'bypassPermissions' (unrestricted)
    */
-  private resolveCliPermissionMode(
-    mode: ConversationMode
-  ): 'plan' | 'auto' | 'bypassPermissions' {
+  private resolveCliPermissionMode(mode: ConversationMode): 'plan' | 'auto' | 'bypassPermissions' {
     switch (mode) {
       case 'danger':
         return 'bypassPermissions'

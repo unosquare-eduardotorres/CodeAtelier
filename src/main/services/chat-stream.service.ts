@@ -110,6 +110,7 @@ export class ChatStreamService {
   /** Resolve a workspace name from its ID (for permission toast labels). */
   private resolveWorkspaceName(workspaceId: string): string {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy load avoids db/repositories circular dependency
       const { workspaceRepository } = require('../db/repositories')
       const workspace = workspaceRepository.findById(workspaceId)
       return workspace?.name ?? workspaceId.slice(0, 8)
@@ -136,7 +137,11 @@ export class ChatStreamService {
 
     // Legacy forwarders for MCP-triggered events (fire during streaming)
     // These handle the immediate path when control tools fire via MCP callbacks.
-    const onAskQuestion = (data: { questions: GrillQuestion[]; action?: string; requestId?: string }): void => {
+    const onAskQuestion = (data: {
+      questions: GrillQuestion[]
+      action?: string
+      requestId?: string
+    }): void => {
       this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         questions: data.questions,
@@ -225,7 +230,7 @@ export class ChatStreamService {
         conversationId,
         this.currentStreamingRole,
         chunk,
-        { value: '' },  // hook chunks don't accumulate content
+        { value: '' }, // hook chunks don't accumulate content
         chatAgentService.getWorkspacePath() ?? undefined,
         undefined,
         'da-vinci-responding',
@@ -264,7 +269,10 @@ export class ChatStreamService {
     chatAgentService.on('elicitation:ws', onElicitationWs)
     this.eventCleanups.push(() => chatAgentService.off('elicitation:ws', onElicitationWs))
 
-    const onAskQuestionWs = (workspaceId: string, data: { questions: GrillQuestion[]; action?: string; requestId?: string }): void => {
+    const onAskQuestionWs = (
+      workspaceId: string,
+      data: { questions: GrillQuestion[]; action?: string; requestId?: string }
+    ): void => {
       if (workspaceId !== chatAgentService.activeWorkspaceId) {
         try {
           const router = getSessionEventRouter()
@@ -314,7 +322,9 @@ export class ChatStreamService {
   } {
     const onChunk = (chunk: StreamChunk): void => {
       try {
-        log.info(`[STREAM:chunk] type=${chunk.type} len=${chunk.content?.length ?? 0} convId=${ctx.conversationId.slice(0, 8)}`)
+        log.info(
+          `[STREAM:chunk] type=${chunk.type} len=${chunk.content?.length ?? 0} convId=${ctx.conversationId.slice(0, 8)}`
+        )
         forwardChunkToRenderer(
           this.mainWindow,
           ctx.conversationId,
@@ -343,7 +353,9 @@ export class ChatStreamService {
 
       const finalize = async (): Promise<void> => {
         try {
-          log.info('Agent complete — saving to DB:', { contentLen: ctx.streamedContent.value.length })
+          log.info('Agent complete — saving to DB:', {
+            contentLen: ctx.streamedContent.value.length
+          })
           const cleanedContent = ctx.streamedContent.value.trim()
 
           if (!cleanedContent) {
@@ -372,7 +384,8 @@ export class ChatStreamService {
           const savedMessage = messageRepository.create(
             ctx.conversationId,
             ctx.streamingRole,
-            cleanedContent || '**Error:** Agent produced no response. Check the app logs for details.',
+            cleanedContent ||
+              '**Error:** Agent produced no response. Check the app logs for details.',
             ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
           )
           log.info('Agent message saved, id:', savedMessage.id)
@@ -381,7 +394,9 @@ export class ChatStreamService {
           const toolActivities = getAndClearToolActivities(ctx.conversationId)
           if (toolActivities.length > 0) {
             messageRepository.updateToolActivities(savedMessage.id, toolActivities)
-            log.info(`[PIPELINE:tool-activities-persisted] messageId=${savedMessage.id} count=${toolActivities.length}`)
+            log.info(
+              `[PIPELINE:tool-activities-persisted] messageId=${savedMessage.id} count=${toolActivities.length}`
+            )
           }
 
           // Process memory blocks
@@ -404,10 +419,16 @@ export class ChatStreamService {
             log.warn('Memory block processing failed:', memErr)
           }
 
-          log.info(`[PIPELINE:agent-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`)
+          log.info(
+            `[PIPELINE:agent-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`
+          )
           this.mainWindow.webContents.send(
             IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-            createCompleteMessage({ conversationId: ctx.conversationId, messageId: savedMessage.id, requestId: ctx.requestId })
+            createCompleteMessage({
+              conversationId: ctx.conversationId,
+              messageId: savedMessage.id,
+              requestId: ctx.requestId
+            })
           )
         } catch (error) {
           log.error('Failed to save generalist message:', error)
@@ -422,7 +443,11 @@ export class ChatStreamService {
           )
           this.mainWindow.webContents.send(
             IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-            createCompleteMessage({ conversationId: ctx.conversationId, messageId: `error-${Date.now()}`, requestId: ctx.requestId })
+            createCompleteMessage({
+              conversationId: ctx.conversationId,
+              messageId: `error-${Date.now()}`,
+              requestId: ctx.requestId
+            })
           )
         }
 
@@ -460,7 +485,9 @@ export class ChatStreamService {
           role: ctx.streamingRole
         })
       )
-      log.info('[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer')
+      log.info(
+        '[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer'
+      )
     }
 
     const cleanupListeners = (): void => {
@@ -614,8 +641,7 @@ export class ChatStreamService {
     const planInjected = { value: false }
     const workspacePath = chatAgentService.getWorkspacePath() ?? undefined
 
-    const { onChunk, onComplete, onIntent, onPlanEvent, cleanupListeners } =
-      this.buildStreamListeners({
+    const { onChunk, onComplete, onIntent, onPlanEvent } = this.buildStreamListeners({
         conversationId,
         requestId,
         streamingRole,
@@ -702,9 +728,10 @@ export class ChatStreamService {
    * Detects images vs text files, reads content, estimates tokens.
    * Extracted from stream() — pure data-transformation concern.
    */
-  private processAttachments(
-    attachments: string[]
-  ): { textContent: string; images: ImageAttachment[] } {
+  private processAttachments(attachments: string[]): {
+    textContent: string
+    images: ImageAttachment[]
+  } {
     const images: ImageAttachment[] = []
     const parts: string[] = []
 
@@ -725,9 +752,7 @@ export class ChatStreamService {
           )
         }
       } catch (error) {
-        parts.push(
-          `\n---\n**Failed to read: ${filePath}**: ${(error as Error).message}\n`
-        )
+        parts.push(`\n---\n**Failed to read: ${filePath}**: ${(error as Error).message}\n`)
       }
     }
 
@@ -779,7 +804,9 @@ export class ChatStreamService {
         const stopToolActivities = getAndClearToolActivities(conversationId)
         if (stopToolActivities.length > 0) {
           messageRepository.updateToolActivities(savedMessage.id, stopToolActivities)
-          log.info(`[PIPELINE:tool-activities-persisted-on-stop] count=${stopToolActivities.length}`)
+          log.info(
+            `[PIPELINE:tool-activities-persisted-on-stop] count=${stopToolActivities.length}`
+          )
         }
 
         this.mainWindow.webContents.send(

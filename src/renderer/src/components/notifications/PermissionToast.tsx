@@ -19,23 +19,24 @@ interface PermissionToastProps {
 }
 
 function TypeBadge({ type }: { type: PermissionType }): React.JSX.Element {
-  const config: Record<PermissionType, { icon: typeof Shield; label: string; className: string }> = {
-    elicitation: {
-      icon: Shield,
-      label: 'Permission',
-      className: 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-    },
-    askQuestion: {
-      icon: MessageCircle,
-      label: 'Question',
-      className: 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-    },
-    mpaApproval: {
-      icon: CheckCircle2,
-      label: 'Approval',
-      className: 'bg-green-500/10 text-green-400 border-green-500/20'
+  const config: Record<PermissionType, { icon: typeof Shield; label: string; className: string }> =
+    {
+      elicitation: {
+        icon: Shield,
+        label: 'Permission',
+        className: 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+      },
+      askQuestion: {
+        icon: MessageCircle,
+        label: 'Question',
+        className: 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+      },
+      mpaApproval: {
+        icon: CheckCircle2,
+        label: 'Approval',
+        className: 'bg-green-500/10 text-green-400 border-green-500/20'
+      }
     }
-  }
 
   const { icon: Icon, label, className } = config[type]
 

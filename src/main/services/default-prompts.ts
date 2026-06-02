@@ -31,8 +31,7 @@ ask_user parameters:
  * Compressed ask_user guidance for Opus 4.8+ models.
  * Opus sees tool schemas natively — only needs behavioral reminders.
  */
-export const ASK_QUESTION_PROMPT_LEAN =
-  `[Use ask_user for clarifying questions with structured options. Mark one option "(recommended)" when you have a preference. 1-4 questions per call.]`
+export const ASK_QUESTION_PROMPT_LEAN = `[Use ask_user for clarifying questions with structured options. Mark one option "(recommended)" when you have a preference. 1-4 questions per call.]`
 
 export const MEMORY_PROTOCOL_PROMPT = `## Memory Protocol
 
@@ -51,8 +50,7 @@ Do NOT emit for: transient discussion, info already in CLAUDE.md/Auto Memory, or
  * Opus uses emit_memory naturally but needs the type taxonomy
  * to scope memories correctly (user vs project vs feedback vs reference).
  */
-export const MEMORY_PROTOCOL_PROMPT_LEAN =
-  `[emit_memory types: "user" (prefs, cross-workspace), "feedback" (corrections), "project" (arch decisions), "reference" (links/docs). Emit on preferences, corrections, architecture decisions.]`
+export const MEMORY_PROTOCOL_PROMPT_LEAN = `[emit_memory types: "user" (prefs, cross-workspace), "feedback" (corrections), "project" (arch decisions), "reference" (links/docs). Emit on preferences, corrections, architecture decisions.]`
 
 export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph — Tool Priority Rules
 
@@ -174,18 +172,15 @@ Only use tools for NEW information requests not already in your context.
  * Compressed direct-answer boost for Opus 4.8+ models.
  * 84% reduction from the full variant.
  */
-export const DIRECT_ANSWER_BOOST_PROMPT_LEAN =
-  `[Follow-up about this conversation? Answer from context — no tools. Once answered, stop — don't verify with tools.]`
+export const DIRECT_ANSWER_BOOST_PROMPT_LEAN = `[Follow-up about this conversation? Answer from context — no tools. Once answered, stop — don't verify with tools.]`
 
 // ── Plan & Direct Answer conditional prefix constants ─────────────────────
 
-export const PLAN_REMINDER_FULL =
-  `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards.]`
+export const PLAN_REMINDER_FULL = `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards.]`
 
 export const PLAN_REMINDER_LEAN = `[Use emit_plan for plans.]`
 
-export const DIRECT_ANSWER_PLAN_MODE_EARLY =
-  `[This is a question — answer it directly in plain text. Do NOT call emit_plan for explanations or Q&A.]`
+export const DIRECT_ANSWER_PLAN_MODE_EARLY = `[This is a question — answer it directly in plain text. Do NOT call emit_plan for explanations or Q&A.]`
 
 export const IMAGE_ATTACHMENTS_PROMPT = `## Image Attachments
 
@@ -200,8 +195,7 @@ When the user shares images (screenshots, diagrams, error pages):
  * Compressed image guidance for Opus 4.8+ models.
  * Opus doesn't search the filesystem for attached images.
  */
-export const IMAGE_ATTACHMENTS_PROMPT_LEAN =
-  `[Image attached — analyze it directly. Don't search the filesystem for it.]`
+export const IMAGE_ATTACHMENTS_PROMPT_LEAN = `[Image attached — analyze it directly. Don't search the filesystem for it.]`
 
 // ── Communication Tone Style Directives ──
 
@@ -586,8 +580,7 @@ Plain-text plans are NOT actionable — only emit_plan renders interactive cards
 Write/Edit are blocked in Plan mode — but emit_plan is ALWAYS available.
 Questions (why/what/how/explain) → answer directly in text. Do NOT use emit_plan for Q&A.`
 
-export const PLAN_OUTPUT_GUIDANCE_LEAN =
-  `Use **emit_plan** for action/change proposals — not plain text. Write/Edit are blocked but emit_plan is always available. Questions → text answer.`
+export const PLAN_OUTPUT_GUIDANCE_LEAN = `Use **emit_plan** for action/change proposals — not plain text. Write/Edit are blocked but emit_plan is always available. Questions → text answer.`
 
 // Shared constant injected into evaluation agent prompts (grill, council, audit, MPA).
 // Changing this single constant updates all agents simultaneously.

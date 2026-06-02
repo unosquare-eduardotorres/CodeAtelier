@@ -53,7 +53,7 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
 
 // ── Lifecycle Handlers ──────────────────────────────────────────────────────
 
-function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
+function registerAuditLifecycleHandlers(_mainWindow: BrowserWindow): void {
   // ── audit:start — start a new audit run ─────────────────────────────
 
   ipcMain.handle(
@@ -352,9 +352,7 @@ function registerAuditQueryHandlers(mainWindow: BrowserWindow): void {
       args: { workspaceId: string; runId: string; findings: AuditFinding[] }
     ): Promise<AuditPlanRecord> => {
       validateSender(event)
-      auditLog.info(
-        `[audit:generatePlan] runId=${args.runId} findings=${args.findings.length}`
-      )
+      auditLog.info(`[audit:generatePlan] runId=${args.runId} findings=${args.findings.length}`)
       return auditPlanGeneratorService.generate({
         workspaceId: args.workspaceId,
         runId: args.runId,
@@ -496,11 +494,7 @@ function registerAuditExportHandlers(mainWindow: BrowserWindow): void {
 /** Per-workspace listener cleanup functions. */
 const auditCleanup = createTimedCleanupMap('audit')
 
-function wireAuditEvents(
-  runId: string,
-  workspaceId: string,
-  workspacePath: string
-): void {
+function wireAuditEvents(runId: string, workspaceId: string, workspacePath: string): void {
   const cleanups = auditCleanup.prepareCleanups(workspaceId)
   const router = getSessionEventRouter()
 
@@ -521,42 +515,41 @@ function wireAuditEvents(
         }
       }
 
-      router.sendWorkspaceEvent(IPC_CHANNELS.AUDIT_PROGRESS, workspaceId, data as unknown as Record<string, unknown>)
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.AUDIT_PROGRESS,
+        workspaceId,
+        data as unknown as Record<string, unknown>
+      )
     }
   )
 
   // ── result ──
-  auditCleanup.addListener<AuditResultPayload>(
-    cleanups,
-    auditAgentService,
-    'result',
-    (data) => {
-      // Persist to DB (including coverage data)
-      const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
-      if (resultRow) {
-        auditRepository.updateResult(resultRow.id, {
-          status: data.status,
-          score: data.score,
-          findings: data.findings,
-          summary: data.summary,
-          skillsUsed: data.skillsUsed,
-          completedAt: new Date().toISOString(),
-          coverageStats: data.coverageStats,
-          coverageSufficient: data.coverageSufficient
-        })
-      }
-
-      // Forward to renderer
-      const updatedResult = resultRow ? auditRepository.findResultById(resultRow.id) : null
-      if (updatedResult) {
-        router.sendWorkspaceEvent(
-          IPC_CHANNELS.AUDIT_RESULT,
-          workspaceId,
-          updatedResult as unknown as Record<string, unknown>
-        )
-      }
+  auditCleanup.addListener<AuditResultPayload>(cleanups, auditAgentService, 'result', (data) => {
+    // Persist to DB (including coverage data)
+    const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
+    if (resultRow) {
+      auditRepository.updateResult(resultRow.id, {
+        status: data.status,
+        score: data.score,
+        findings: data.findings,
+        summary: data.summary,
+        skillsUsed: data.skillsUsed,
+        completedAt: new Date().toISOString(),
+        coverageStats: data.coverageStats,
+        coverageSufficient: data.coverageSufficient
+      })
     }
-  )
+
+    // Forward to renderer
+    const updatedResult = resultRow ? auditRepository.findResultById(resultRow.id) : null
+    if (updatedResult) {
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.AUDIT_RESULT,
+        workspaceId,
+        updatedResult as unknown as Record<string, unknown>
+      )
+    }
+  })
 
   // ── intermediate findings — live accumulation during multi-round ──
   auditCleanup.addListener<AuditIntermediateFindingsPayload>(

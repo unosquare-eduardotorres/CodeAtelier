@@ -29,9 +29,7 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
       {/* Header */}
       <div
         className={`flex items-center gap-3 px-4 py-3 border-b ${
-          hasErrors
-            ? 'border-warning/20 bg-warning/10'
-            : 'border-success/20 bg-success/10'
+          hasErrors ? 'border-warning/20 bg-warning/10' : 'border-success/20 bg-success/10'
         }`}
       >
         <div

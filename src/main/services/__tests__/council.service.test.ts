@@ -14,7 +14,6 @@ import { test, describe } from './test-harness'
 import { parseCouncilReview, parsePeerReview, parseCouncilVerdict } from '../council-parser'
 
 describe('CouncilService', () => {
-
   // ── council-review parsing ──────────────────────────────────────────
 
   describe('parseCouncilReview', () => {

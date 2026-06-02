@@ -44,7 +44,10 @@ describe('Lean Mode Blocks', () => {
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('emit_plan'), 'Missing emit_plan reference')
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('type'), 'Missing type field reference')
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('diagrams'), 'Missing diagrams reference')
-    assert.ok(PLAN_MODE_SECTION_LEAN.includes('Operational Requests'), 'Missing Operational Requests')
+    assert.ok(
+      PLAN_MODE_SECTION_LEAN.includes('Operational Requests'),
+      'Missing Operational Requests'
+    )
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('read-only'), 'Missing read-only indicator')
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('Phased Plans'), 'Missing Phased Plans section')
   })

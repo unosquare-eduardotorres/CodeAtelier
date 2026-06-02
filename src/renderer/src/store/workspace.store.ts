@@ -107,10 +107,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!snapshot || snapshot.agentStatus !== 'running') {
       set({ agentStatus: 'starting' })
     }
-    window.api.startAgent({ workspacePath: workspace.repoPath, workspaceId: workspace.id }).catch((error) => {
-      rendererLog.error('Failed to start agent runtime:', error)
-      set({ agentStatus: 'error' })
-    })
+    window.api
+      .startAgent({ workspacePath: workspace.repoPath, workspaceId: workspace.id })
+      .catch((error) => {
+        rendererLog.error('Failed to start agent runtime:', error)
+        set({ agentStatus: 'error' })
+      })
 
     // Load repo info + GitHub status in parallel (fire-and-forget)
     get().loadRepoInfo(id)

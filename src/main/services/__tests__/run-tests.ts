@@ -50,8 +50,6 @@ import './resolve-adapter-consent.test'
 import '../../ipc/__tests__/chat-swap-handler.test'
 // Run 9 — renderer utilities (pure logic, no DOM)
 import './sentence-buffer.test'
-// Run 10 — onnxruntime-web WASM backend validation
-import './onnxruntime-web.test'
 
 // ─── Run 11: Prompt optimization (Opus 4.8) ───
 import './prompt-verbosity.test'
@@ -80,6 +78,9 @@ import './context-usage-level.test'
 import './compaction-thresholds.test'
 import './local-compaction.test'
 import './auto-compact-options.test'
+
+// ─── Run 18: Llamafile embedding sidecar manager ───
+import './llamafile-embedding.test'
 
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls

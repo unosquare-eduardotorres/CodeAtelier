@@ -25,8 +25,8 @@ function IdeasEmptyState({ onCreateIdea }: { onCreateIdea: () => void }): React.
           <h2 className="text-lg font-semibold text-text-primary">Your Idea Board</h2>
           <p className="text-sm text-text-secondary max-w-md mx-auto">
             Capture rough ideas now, refine them later. Unlike chat, ideas
-            <span className="text-text-primary font-medium"> persist across sessions</span> and
-            can be thoroughly vetted before you start building.
+            <span className="text-text-primary font-medium"> persist across sessions</span> and can
+            be thoroughly vetted before you start building.
           </p>
         </div>
 
@@ -68,8 +68,8 @@ function IdeasEmptyState({ onCreateIdea }: { onCreateIdea: () => void }): React.
               <span className="text-sm font-semibold text-text-primary">Build</span>
             </div>
             <p className="text-xs text-text-secondary leading-relaxed">
-              When ready, convert your refined idea into a chat session and start building with
-              full context carried over.
+              When ready, convert your refined idea into a chat session and start building with full
+              context carried over.
             </p>
           </div>
         </div>
@@ -126,7 +126,8 @@ interface IdeasListProps {
     conversationId: string,
     ideaTitle: string,
     isNewSession?: boolean,
-    ideaDescription?: string
+    ideaDescription?: string,
+    reviewMode?: boolean
   ) => void
 }
 
@@ -152,6 +153,9 @@ export default function IdeasList({
 
   // Live grill status
   const [grillStatus, setGrillStatus] = useState<GrillStatus | null>(null)
+
+  // Idea IDs that have a persisted grill plan (eligible for read-only review)
+  const [plannedIdeaIds, setPlannedIdeaIds] = useState<Set<string>>(new Set())
 
   // New Idea modal state
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -184,6 +188,16 @@ export default function IdeasList({
     const unsub = window.api.onGrillStatusChanged(setGrillStatus)
     return unsub
   }, [activeWorkspace?.id])
+
+  // Load the set of ideas that have a persisted plan (re-runs when ideas change
+  // so a freshly handed-off plan surfaces a Review Plan button on return).
+  useEffect(() => {
+    if (!activeWorkspace) return
+    window.api
+      .grillListPlannedIdeas({ workspaceId: activeWorkspace.id })
+      .then((ids) => setPlannedIdeaIds(new Set(ids)))
+      .catch(() => setPlannedIdeaIds(new Set()))
+  }, [activeWorkspace?.id, ideas])
 
   // ── Idea action handlers ──
 
@@ -255,6 +269,13 @@ export default function IdeasList({
     } catch (error) {
       console.error('Failed to continue grill:', error)
     }
+  }
+
+  // Read-only re-open of a completed grill to review the generated plan.
+  // Bypasses startGrill so it never flips idea.status back to 'grilling'.
+  const handleReviewPlan = (idea: Idea): void => {
+    if (!onOpenGrillSession) return
+    onOpenGrillSession(idea.id, idea.grillConversationId ?? '', idea.title, false, idea.description, true)
   }
 
   const handleGoToConversation = async (conversationId: string): Promise<void> => {
@@ -371,11 +392,13 @@ export default function IdeasList({
               key={idea.id}
               idea={idea}
               grillStatus={grillStatus}
+              hasPlan={plannedIdeaIds.has(idea.id)}
               onStartGrill={handleStartGrill}
               onContinueGrill={handleContinueGrill}
               onConvertDirect={handleConvertDirect}
               onGoToConversation={handleGoToConversation}
               onCreatePlan={handleCreatePlanFromCompleted}
+              onReviewPlan={handleReviewPlan}
               onDelete={setDeleteTarget}
               onEdit={handleEdit}
             />

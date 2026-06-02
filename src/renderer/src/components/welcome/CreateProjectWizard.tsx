@@ -79,10 +79,7 @@ function WizardStepIndicator({
               {isDone ? (
                 <CheckCircle2 size={14} className="text-primary-text" />
               ) : (
-                <Circle
-                  size={14}
-                  className={isActive ? 'text-primary-text' : 'text-text-muted'}
-                />
+                <Circle size={14} className={isActive ? 'text-primary-text' : 'text-text-muted'} />
               )}
               {STEP_LABELS[step]}
             </button>

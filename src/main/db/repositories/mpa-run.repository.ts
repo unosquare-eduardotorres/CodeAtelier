@@ -90,7 +90,9 @@ function mapPhaseRow(row: MpaPhaseRow): MpaPhase {
 
 export class MpaRunRepository extends BaseRepository<MpaRunRow, MpaRun> {
   protected readonly tableName = 'mpa_runs'
-  protected mapRow(row: MpaRunRow): MpaRun { return mapRunRow(row) }
+  protected mapRow(row: MpaRunRow): MpaRun {
+    return mapRunRow(row)
+  }
 
   createRun(params: {
     workspaceId: string
@@ -254,18 +256,19 @@ export class MpaRunRepository extends BaseRepository<MpaRunRow, MpaRun> {
   }
 
   appendStreamContent(id: string, chunk: string): void {
-    this.db().prepare('UPDATE mpa_phases SET stream_content = stream_content || ? WHERE id = ?').run(
-      chunk,
-      id
-    )
+    this.db()
+      .prepare('UPDATE mpa_phases SET stream_content = stream_content || ? WHERE id = ?')
+      .run(chunk, id)
   }
 
   /** Mark all 'running' runs as 'failed' (for stale detection on app restart) */
   markStaleAsFailed(): number {
-    return this.db().prepare(
-      `UPDATE mpa_runs SET status = 'failed', completed_at = datetime('now')
+    return this.db()
+      .prepare(
+        `UPDATE mpa_runs SET status = 'failed', completed_at = datetime('now')
        WHERE status = 'running'`
-    ).run().changes
+      )
+      .run().changes
   }
 
   /** Find the latest resumable run for a workspace (failed or cancelled) */

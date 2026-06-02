@@ -48,11 +48,7 @@ export function parseCouncilReview(
     const parsed = JSON.parse(jsonStr) as CouncilReview
 
     // Validate required fields
-    if (
-      typeof parsed.score !== 'number' ||
-      !parsed.verdict ||
-      !Array.isArray(parsed.keyFindings)
-    ) {
+    if (typeof parsed.score !== 'number' || !parsed.verdict || !Array.isArray(parsed.keyFindings)) {
       councilLog.warn(`[council:${expectedRole}] Parsed council-review has invalid structure`)
       return null
     }

@@ -19,7 +19,16 @@ export function forwardChunkToRenderer(
   requestId?: string
 ): void {
   routeChunk(
-    { mainWindow, conversationId, role, contentAccumulator, workspacePath, specialistMeta, phase, requestId },
+    {
+      mainWindow,
+      conversationId,
+      role,
+      contentAccumulator,
+      workspacePath,
+      specialistMeta,
+      phase,
+      requestId
+    },
     chunk
   )
 }

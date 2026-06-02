@@ -27,7 +27,9 @@ export interface RepomapTag {
  */
 export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, RepomapTag> {
   protected readonly tableName = 'code_graph_tags'
-  protected mapRow(row: CodeGraphTagRow): RepomapTag { return mapRowToTag(row) }
+  protected mapRow(row: CodeGraphTagRow): RepomapTag {
+    return mapRowToTag(row)
+  }
 
   /**
    * Bulk upsert tags for a workspace. Deletes stale files first,

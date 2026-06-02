@@ -89,7 +89,16 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): void {
         window.api.zoomReset()
       }
     },
-    [activeWorkspace, activeConversation, updateMode, isStreaming, navigateBack, setSidebarCollapsed, setView, setShowNewChat]
+    [
+      activeWorkspace,
+      activeConversation,
+      updateMode,
+      isStreaming,
+      navigateBack,
+      setSidebarCollapsed,
+      setView,
+      setShowNewChat
+    ]
   )
 
   useEffect(() => {

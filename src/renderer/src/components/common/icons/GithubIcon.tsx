@@ -1,7 +1,7 @@
-import type { SVGProps } from 'react'
+import type { JSX, SVGProps } from 'react'
 
 /** GitHub logo — replaced from lucide-react brand icon (removed in v1). */
-export function GithubIcon(props: SVGProps<SVGSVGElement> & { size?: number }) {
+export function GithubIcon(props: SVGProps<SVGSVGElement> & { size?: number }): JSX.Element {
   const { size = 24, ...rest } = props
   return (
     <svg

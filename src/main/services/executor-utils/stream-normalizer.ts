@@ -50,7 +50,9 @@ export function* normalizeMessage(
 ): Generator<StreamChunk & { _meta?: ExecutorResult }> {
   // ── parse_error — structured error from NDJSON parser on malformed JSON ──
   if (msg.type === 'parse_error') {
-    executorLog.warn(`[normalizer] NDJSON parse error: ${msg.error} — raw: ${(msg.raw as string)?.slice(0, 100)}`)
+    executorLog.warn(
+      `[normalizer] NDJSON parse error: ${msg.error} — raw: ${(msg.raw as string)?.slice(0, 100)}`
+    )
     yield {
       type: 'error',
       error: `Stream parse error: ${msg.error}`
@@ -143,7 +145,9 @@ export function* normalizeMessage(
         tools.hasPriorText = true
         const text = delta.text as string
         state.streamedTextLength += text.length
-        executorLog.debug(`[normalizer:text] ${text.length} chars (totalStreamed=${state.streamedTextLength})`)
+        executorLog.debug(
+          `[normalizer:text] ${text.length} chars (totalStreamed=${state.streamedTextLength})`
+        )
         yield { type: 'text', content: text }
       }
       // Progressive extended thinking streaming (Opus 4.8+)
@@ -231,7 +235,9 @@ export function* normalizeMessage(
           `hasPriorContent=${tools.hasPriorContent} lastBlockType=${tools.lastBlockType}`
       )
       if (tools.hasPriorText) {
-        executorLog.info('[normalizer:turn_boundary] Emitting turn_boundary (text→new message transition)')
+        executorLog.info(
+          '[normalizer:turn_boundary] Emitting turn_boundary (text→new message transition)'
+        )
         yield { type: 'turn_boundary' as const, content: `turn-${Date.now()}` }
         // Next turn starts clean — only further text_deltas re-arm the flag.
         tools.hasPriorText = false
@@ -544,7 +550,7 @@ export function* normalizeMessage(
   ) {
     executorLog.warn(
       `[normalizer] Unknown message type: ${msg.type} ` +
-      `(subtype: ${(msg as Record<string, unknown>).subtype ?? 'none'}) — silently dropped`
+        `(subtype: ${(msg as Record<string, unknown>).subtype ?? 'none'}) — silently dropped`
     )
   }
 }

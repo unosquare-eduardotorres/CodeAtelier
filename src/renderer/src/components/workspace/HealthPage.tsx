@@ -123,7 +123,6 @@ export default function HealthPage({
   useEffect(() => {
     const status = currentRun?.status
     if (prevStatusRef.current === 'running' && status && status !== 'running') {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot on completion
       setActiveTrackId(null)
     }
     prevStatusRef.current = status
@@ -479,7 +478,7 @@ export default function HealthPage({
           isRunning={effectivelyRunning}
           allSelected={allSelected}
           onToggleAll={handleToggleAll}
-          hasResults={(currentRun?.results.some((r) => r.status === 'completed')) ?? false}
+          hasResults={currentRun?.results.some((r) => r.status === 'completed') ?? false}
           onShowOverview={() => handleSelectTrack(null)}
         />
         <HealthDetailPanel

@@ -20,9 +20,7 @@ export default function CouncilRankingsMatrix({
 }: CouncilRankingsMatrixProps): React.JSX.Element {
   if (peerReviews.length === 0) {
     return (
-      <div className="text-center text-text-secondary text-sm py-6">
-        No peer reviews available
-      </div>
+      <div className="text-center text-text-secondary text-sm py-6">No peer reviews available</div>
     )
   }
 

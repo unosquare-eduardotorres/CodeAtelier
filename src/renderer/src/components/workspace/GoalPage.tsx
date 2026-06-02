@@ -1,5 +1,13 @@
 import { useState, useEffect, useCallback, type JSX } from 'react'
-import { Target, StopCircle, Plus, ClipboardList, UserCheck, Code2, CheckCircle2 } from 'lucide-react'
+import {
+  Target,
+  StopCircle,
+  Plus,
+  ClipboardList,
+  UserCheck,
+  Code2,
+  CheckCircle2
+} from 'lucide-react'
 import { useMpaStore } from '@renderer/store/mpa.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
 import {
@@ -16,18 +24,20 @@ import type { MpaGoalType, MpaPhaseType, MpaStatus } from '../../../../shared/mp
 function buildPhaseEntries(
   configuredPhases: MpaPhaseType[],
   status: MpaStatus
-): Array<{ phaseType: MpaPhaseType; status: 'running' | 'completed' | 'pending'; iteration: number }> {
-  const phases = configuredPhases.length > 0 ? configuredPhases : ['plan', 'execute', 'verify'] as MpaPhaseType[]
+): Array<{
+  phaseType: MpaPhaseType
+  status: 'running' | 'completed' | 'pending'
+  iteration: number
+}> {
+  const phases =
+    configuredPhases.length > 0
+      ? configuredPhases
+      : (['plan', 'execute', 'verify'] as MpaPhaseType[])
   const currentIdx = phases.indexOf(status.currentPhase as MpaPhaseType)
 
   return phases.map((phaseType, idx) => ({
     phaseType,
-    status:
-      idx < currentIdx
-        ? 'completed'
-        : idx === currentIdx
-          ? 'running'
-          : 'pending',
+    status: idx < currentIdx ? 'completed' : idx === currentIdx ? 'running' : 'pending',
     iteration: idx === currentIdx ? status.iteration : 1
   }))
 }
@@ -125,17 +135,18 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
     setSelectedRunId(null)
   }, [])
 
-  const handleResume = useCallback(async (runId: string) => {
-    if (!workspaceId) return
-    await window.api.mpaResume({ runId, workspaceId })
-  }, [workspaceId])
+  const handleResume = useCallback(
+    async (runId: string) => {
+      if (!workspaceId) return
+      await window.api.mpaResume({ runId, workspaceId })
+    },
+    [workspaceId]
+  )
 
   // Get current phase stream text
   const currentPhaseEntries = Object.entries(phaseStreamText)
   const latestPhaseEntry =
-    currentPhaseEntries.length > 0
-      ? currentPhaseEntries[currentPhaseEntries.length - 1]
-      : null
+    currentPhaseEntries.length > 0 ? currentPhaseEntries[currentPhaseEntries.length - 1] : null
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
@@ -158,7 +169,8 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
           )}
         </div>
         <p className="text-xs text-text-secondary">
-          Define a high-level objective and let an AI agent plan, implement, and verify it automatically.
+          Define a high-level objective and let an AI agent plan, implement, and verify it
+          automatically.
         </p>
 
         {/* Empty state — no history, not running */}
@@ -262,11 +274,7 @@ export default function GoalPage({ onNavigateToChat }: GoalPageProps): JSX.Eleme
               {/* Timeline sidebar */}
               <div className="p-4 overflow-y-auto">
                 <GoalPhaseTimeline
-                  phases={
-                    status.currentPhase
-                      ? buildPhaseEntries(configuredPhases, status)
-                      : []
-                  }
+                  phases={status.currentPhase ? buildPhaseEntries(configuredPhases, status) : []}
                   currentPhaseType={status.currentPhase as MpaPhaseType | null}
                   awaitingApproval={status.awaitingApproval}
                 />

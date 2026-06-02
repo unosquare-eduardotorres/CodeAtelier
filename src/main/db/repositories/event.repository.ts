@@ -61,7 +61,9 @@ function toModel(row: EventRow): EventRecord {
 
 export class EventRepository extends BaseRepository<EventRow, EventRecord> {
   protected readonly tableName = 'events'
-  protected mapRow(row: EventRow): EventRecord { return toModel(row) }
+  protected mapRow(row: EventRow): EventRecord {
+    return toModel(row)
+  }
 
   /** Insert a new event record */
   create(opts: {

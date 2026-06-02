@@ -24,8 +24,7 @@ import {
   RefreshCw,
   Zap,
   Microscope,
-  ShieldCheck,
-  AlertTriangle
+  ShieldCheck
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AuditTrackId, AuditRun, AuditMode, AuditFinding } from '../../../../shared/types'

@@ -108,12 +108,20 @@ export class AuditRoleAdapter extends BaseRoleAdapter {
     }
   }
 
-  protected override getMcpStrategy(): McpStrategy { return 'readonly' }
-  protected override getIncludeGitContext(): boolean { return this.llmProvider !== 'local-llm' }
-  protected override persistMemory(): void { /* no-op */ }
+  protected override getMcpStrategy(): McpStrategy {
+    return 'readonly'
+  }
+  protected override getIncludeGitContext(): boolean {
+    return this.llmProvider !== 'local-llm'
+  }
+  protected override persistMemory(): void {
+    /* no-op */
+  }
 
   /** No-op — auditors don't emit intents. */
-  override emitDetectedIntents(_ctx: AdapterIntentContext): void { /* no-op */ }
+  override emitDetectedIntents(_ctx: AdapterIntentContext): void {
+    /* no-op */
+  }
 
   override onSessionStop(): void {
     this.systemPrompt = null

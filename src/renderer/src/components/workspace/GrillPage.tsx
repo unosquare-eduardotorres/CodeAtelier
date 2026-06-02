@@ -1,15 +1,111 @@
-import { MessageSquare, ClipboardList, FileText, CheckCircle } from 'lucide-react'
+import {
+  MessageSquare,
+  ClipboardList,
+  FileText,
+  CheckCircle,
+  ChevronDown,
+  ChevronRight,
+  CheckSquare
+} from 'lucide-react'
 import { useState, useCallback } from 'react'
 import type { LLMProvider, GrillStructuredPlan } from '../../../../shared/types'
 import GrillChatView from './GrillChatView'
 import GrillDecisionsView from './GrillDecisionsView'
 import { GrillTrackSelector } from './GrillTrackSelector'
 import GrillSidebar from './GrillSidebar'
-import { useGrillSession, GrillPageHeader, GrillPageFooter } from './grill'
+import {
+  useGrillSession,
+  GrillPageHeader,
+  GrillPageFooter,
+  RequirementDocumentPanel
+} from './grill'
+import { deriveGrillDecisions } from './grill/handoff-utils'
 import { useMpaStore } from '@renderer/store/mpa.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
 import { useCouncilStore } from '@renderer/store/council.store'
-import type { GrillDecision } from '../../../../shared/mpa-types'
+
+// ── Goal-type badge labels ────────────────────────────────────────────────
+
+const GOAL_TYPE_LABELS: Record<GrillStructuredPlan['goalType'], string> = {
+  feature: '✨ Feature',
+  refactor: '♻️ Refactor',
+  bugfix: '🐛 Bug Fix',
+  tests: '🧪 Tests'
+}
+
+// ── Plan decisions, grouped by track (collapsible) ────────────────────────
+
+function PlanDecisionGroups({
+  decisions
+}: {
+  decisions: GrillStructuredPlan['decisions']
+}): React.JSX.Element {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+
+  const toggle = (id: string): void =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+        <ClipboardList size={14} className="text-accent" />
+        Decisions ({decisions.reduce((n, t) => n + t.items.length, 0)})
+      </h3>
+      {decisions.map((track) => {
+        const isCollapsed = collapsed.has(track.trackId)
+        return (
+          <div
+            key={track.trackId}
+            className="rounded-lg border border-border-subtle bg-surface-overlay overflow-hidden"
+          >
+            <button
+              onClick={() => toggle(track.trackId)}
+              className="w-full px-4 py-2.5 flex items-center gap-2 bg-surface-base/40 hover:bg-surface-base/60 transition-colors text-left"
+            >
+              {isCollapsed ? (
+                <ChevronRight size={14} className="text-text-muted flex-shrink-0" />
+              ) : (
+                <ChevronDown size={14} className="text-text-muted flex-shrink-0" />
+              )}
+              <span className="text-xs font-semibold text-accent">{track.trackName}</span>
+              {track.score != null && (
+                <>
+                  <span className="text-text-muted">·</span>
+                  <span className="text-xs font-medium text-text-secondary">{track.score}/100</span>
+                </>
+              )}
+              <span className="text-xs text-text-muted ml-auto">
+                {track.items.length} decision{track.items.length !== 1 ? 's' : ''}
+              </span>
+            </button>
+            {!isCollapsed && (
+              <div className="divide-y divide-border-subtle">
+                {track.items.map((item, idx) => (
+                  <div key={idx} className="px-4 py-3">
+                    <div className="text-xs font-medium text-text-secondary mb-1">
+                      Q: {item.question}
+                    </div>
+                    <div className="text-sm text-text-body mb-1">A: {item.answer}</div>
+                    {item.rationale && (
+                      <p className="text-xs text-text-muted leading-relaxed italic">
+                        {item.rationale}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 interface GrillPageProps {
   ideaId: string
@@ -34,6 +130,8 @@ export default function GrillPage({
   onNavigateToGoals,
   onNavigateToCouncil
 }: GrillPageProps): React.JSX.Element {
+  const [structuredPlan, setStructuredPlan] = useState<GrillStructuredPlan | null>(null)
+
   const session = useGrillSession({
     ideaId,
     conversationId,
@@ -41,10 +139,10 @@ export default function GrillPage({
     ideaDescription,
     isNewSession,
     onBack,
-    onComplete
+    onComplete,
+    onRestorePlan: setStructuredPlan
   })
 
-  const [structuredPlan, setStructuredPlan] = useState<GrillStructuredPlan | null>(null)
   const [planError, setPlanError] = useState<string | null>(null)
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
 
@@ -57,6 +155,7 @@ export default function GrillPage({
     try {
       const plan = await window.api.grillGeneratePlan({
         sessionId: conversationId,
+        ideaId,
         workspaceId: activeWorkspace.id
       })
       if (plan && typeof plan === 'object' && 'items' in plan && Array.isArray(plan.items)) {
@@ -71,20 +170,16 @@ export default function GrillPage({
       session.setPhase('selecting') // Revert on error
       return null
     }
-  }, [activeWorkspace, conversationId, session])
+  }, [activeWorkspace, conversationId, ideaId, session])
 
   // Complete the grilling, generate the plan, then hand off into the goal preload
   const handleStartGoal = useCallback(async () => {
-    // 1 + 2. Complete the grilling and generate the structured plan
-    const plan = await handleGeneratePlan()
+    // 1 + 2. Reuse the already-restored/generated plan; only generate when none exists.
+    const plan = structuredPlan ?? (await handleGeneratePlan())
     if (!plan) return // generation failed — error already surfaced, stay on grill
 
     // 3. Hand off the generated plan into the goal preload
-    const grillDecisions: GrillDecision[] = session.decisions.map((d) => ({
-      header: d.question,
-      selectedOption: d.answer,
-      reason: d.questionFull ?? ''
-    }))
+    const grillDecisions = deriveGrillDecisions(plan, session.decisions)
     useMpaStore.getState().setPreloadedGoal({
       text: plan.requirementDocument?.trim()
         ? plan.requirementDocument
@@ -93,7 +188,33 @@ export default function GrillPage({
       grillDecisions
     })
     onNavigateToGoals?.()
-  }, [handleGeneratePlan, session.decisions, ideaTitle, ideaDescription, conversationId, onNavigateToGoals])
+
+    // Final handoff — strip transient chat/decisions, keep the plan-only view.
+    try {
+      await window.api.grillComplete({ ideaId })
+    } catch (err) {
+      console.error('grillComplete failed:', err)
+    }
+  }, [
+    handleGeneratePlan,
+    structuredPlan,
+    session.decisions,
+    ideaTitle,
+    ideaDescription,
+    conversationId,
+    ideaId,
+    onNavigateToGoals
+  ])
+
+  // Discard the entire grill — delete the session row + snapshot, then leave.
+  const handleDiscard = useCallback(async () => {
+    try {
+      await window.api.grillDiscard({ ideaId })
+    } catch (err) {
+      console.error('grillDiscard failed:', err)
+    }
+    onBack()
+  }, [ideaId, onBack])
 
   // Back to grill from completed phase
   const handleBackToGrill = useCallback(() => {
@@ -110,6 +231,7 @@ export default function GrillPage({
         onBack={onBack}
         onStopGrill={session.handleStopGrill}
         onBackToTracks={session.handleBackToTracks}
+        onDiscard={handleDiscard}
       />
 
       {/* Tab toggle — Chat / Decisions (only visible when not in track-selection phase) */}
@@ -152,7 +274,9 @@ export default function GrillPage({
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
             <div className="animate-spin h-8 w-8 border-2 border-accent border-t-transparent rounded-full mx-auto" />
-            <p className="text-text-secondary text-sm">Generating structured implementation plan…</p>
+            <p className="text-text-secondary text-sm">
+              Generating structured implementation plan…
+            </p>
             <p className="text-text-muted text-xs">This may take a minute</p>
           </div>
         </div>
@@ -165,7 +289,16 @@ export default function GrillPage({
                 <CheckCircle size={20} className="text-success" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-text-primary">{structuredPlan.title}</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-text-primary">
+                    {structuredPlan.title}
+                  </h2>
+                  {structuredPlan.goalType && (
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-accent/15 text-accent">
+                      {GOAL_TYPE_LABELS[structuredPlan.goalType] ?? structuredPlan.goalType}
+                    </span>
+                  )}
+                </div>
                 <p className="text-sm text-text-secondary">{structuredPlan.summary}</p>
               </div>
             </div>
@@ -177,18 +310,46 @@ export default function GrillPage({
                 Implementation Items ({structuredPlan.items.length})
               </h3>
               {structuredPlan.items.map((item, i) => (
-                <div key={item.id || i} className="p-3 rounded-lg border border-border-subtle bg-surface-overlay">
+                <div
+                  key={item.id || i}
+                  className="p-3 rounded-lg border border-border-subtle bg-surface-overlay"
+                >
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-accent/15 text-accent">{item.scope}</span>
+                    <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-accent/15 text-accent">
+                      {item.scope}
+                    </span>
                     <span className="text-sm font-medium text-text-primary">{item.title}</span>
                   </div>
                   <p className="text-xs text-text-secondary">{item.description}</p>
                   {item.files.length > 0 && (
                     <p className="text-xs text-text-muted mt-1">Files: {item.files.join(', ')}</p>
                   )}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
+                    {item.includesTests && (
+                      <span className="inline-flex items-center gap-1 text-xs text-success">
+                        <CheckSquare size={11} />
+                        Includes tests
+                      </span>
+                    )}
+                    {item.dependsOn.length > 0 && (
+                      <span className="text-xs text-text-muted">
+                        Depends on: {item.dependsOn.join(', ')}
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
+
+            {/* Decisions by track */}
+            {structuredPlan.decisions.length > 0 && (
+              <PlanDecisionGroups decisions={structuredPlan.decisions} />
+            )}
+
+            {/* Requirement Document — the artifact handed to MPA / Council */}
+            {structuredPlan.requirementDocument && (
+              <RequirementDocumentPanel text={structuredPlan.requirementDocument} />
+            )}
 
             {/* Risks */}
             {structuredPlan.risks.length > 0 && (
@@ -196,7 +357,9 @@ export default function GrillPage({
                 <h3 className="text-sm font-semibold text-text-primary">⚠️ Risks</h3>
                 <ul className="list-disc list-inside space-y-1">
                   {structuredPlan.risks.map((risk, i) => (
-                    <li key={i} className="text-xs text-text-secondary">{risk}</li>
+                    <li key={i} className="text-xs text-text-secondary">
+                      {risk}
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -208,7 +371,9 @@ export default function GrillPage({
                 <h3 className="text-sm font-semibold text-text-primary">🔒 Constraints</h3>
                 <ul className="list-disc list-inside space-y-1">
                   {structuredPlan.constraints.map((c, i) => (
-                    <li key={i} className="text-xs text-text-secondary">{c}</li>
+                    <li key={i} className="text-xs text-text-secondary">
+                      {c}
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -298,24 +463,35 @@ export default function GrillPage({
         onBackToTracks={session.handleBackToTracks}
         onSubmit={session.handleSubmit}
         onGeneratePlan={handleGeneratePlan}
-        onBackToGrill={handleBackToGrill}
+        onBackToGrill={reviewMode ? undefined : handleBackToGrill}
         onStartGoal={handleStartGoal}
-        onCouncilSweep={structuredPlan ? async () => {
-          if (!activeWorkspace) return
-          const councilStore = useCouncilStore.getState()
-          councilStore.startCouncil()
-          // Send the structured plan to the council
-          const { sessionId } = await window.api.councilStart({
-            workspaceId: activeWorkspace.id,
-            inputType: 'plan',
-            planContent: structuredPlan.requirementDocument,
-            structuredPlan,
-            originalUserRequest: ideaTitle,
-            grillSessionId: conversationId
-          })
-          councilStore.setSessionIdentity(sessionId, activeWorkspace.id)
-          onNavigateToCouncil?.()
-        } : undefined}
+        onCouncilSweep={
+          structuredPlan
+            ? async () => {
+                if (!activeWorkspace) return
+                const councilStore = useCouncilStore.getState()
+                councilStore.startCouncil()
+                // Send the structured plan to the council
+                const { sessionId } = await window.api.councilStart({
+                  workspaceId: activeWorkspace.id,
+                  inputType: 'plan',
+                  planContent: structuredPlan.requirementDocument,
+                  structuredPlan,
+                  originalUserRequest: ideaTitle,
+                  grillSessionId: conversationId
+                })
+                councilStore.setSessionIdentity(sessionId, activeWorkspace.id)
+                onNavigateToCouncil?.()
+
+                // Final handoff — strip transient chat/decisions, keep the plan-only view.
+                try {
+                  await window.api.grillComplete({ ideaId })
+                } catch (err) {
+                  console.error('grillComplete failed:', err)
+                }
+              }
+            : undefined
+        }
       />
     </div>
   )

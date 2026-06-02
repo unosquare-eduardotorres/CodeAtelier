@@ -39,7 +39,9 @@ function mapRow(row: MpaArtifactRow): MpaArtifact {
 
 export class MpaArtifactRepository extends BaseRepository<MpaArtifactRow, MpaArtifact> {
   protected readonly tableName = 'mpa_artifacts'
-  protected mapRow(row: MpaArtifactRow): MpaArtifact { return mapRow(row) }
+  protected mapRow(row: MpaArtifactRow): MpaArtifact {
+    return mapRow(row)
+  }
 
   create(params: {
     runId: string
@@ -73,8 +75,6 @@ export class MpaArtifactRepository extends BaseRepository<MpaArtifactRow, MpaArt
   findByRun(runId: string): MpaArtifact[] {
     return this.findManyBy('run_id', runId, { orderBy: 'created_at ASC' })
   }
-
-
 }
 
 export const mpaArtifactRepository = new MpaArtifactRepository()

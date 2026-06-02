@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useGrillStreamStore } from '@renderer/store/grill-stream.store'
 import type { QuestionState } from '@renderer/components/chat'
-import type { GrillTrackId, GrillTrackScore, LLMProvider } from '../../../../../shared/types'
+import type { GrillTrackId, GrillTrackScore } from '../../../../../shared/types'
 import { GRILL_TRACKS } from '../../../../../shared/constants'
 import type { GrillChatMessage, GrillPhase } from '../GrillChatView'
 import type { GrillIteration } from './useGrillQuestionState'
@@ -24,6 +24,7 @@ export function useGrillActions(opts: {
   history: HistoryEntry[]
   trackScores: GrillTrackScore[]
   questionStates: Record<string, QuestionState>
+  chatMessages: GrillChatMessage[]
   condensedDocument: string | undefined
   saveDecisions: (
     score: number,
@@ -66,6 +67,7 @@ export function useGrillActions(opts: {
     history,
     trackScores,
     questionStates,
+    chatMessages,
     condensedDocument,
     saveDecisions,
     formatAnswers,
@@ -106,15 +108,19 @@ export function useGrillActions(opts: {
     const newIterationCount = iterationCount + 1
     setIterationCount(newIterationCount)
 
-    setChatMessages((prev) => [
-      ...prev,
+    // Build the new messages array explicitly so the persisted snapshot includes
+    // the just-submitted iteration (avoids the one-iteration lag from the stale
+    // chatMessages closure that setChatMessages' updater would otherwise hide).
+    const updatedMessages: GrillChatMessage[] = [
+      ...chatMessages,
       {
         type: 'questions',
         questions: currentIteration.questions,
         questionStates: { ...questionStates }
       },
       { type: 'user', content: answersText }
-    ])
+    ]
+    setChatMessages(updatedMessages)
 
     const newHistory: HistoryEntry = {
       iteration: newIterationCount,
@@ -127,7 +133,7 @@ export function useGrillActions(opts: {
     setHistory(updatedHistory)
     setPhase('evaluating')
     setQuestionsRepeated(false)
-    await saveDecisions(currentIteration.score, updatedHistory, trackScores)
+    await saveDecisions(currentIteration.score, updatedHistory, trackScores, updatedMessages)
     useGrillStreamStore.getState().reset()
 
     const historyText = updatedHistory
@@ -170,6 +176,7 @@ export function useGrillActions(opts: {
     saveDecisions,
     trackScores,
     questionStates,
+    chatMessages,
     ideaId,
     setIterationCount,
     setChatMessages,
@@ -183,13 +190,10 @@ export function useGrillActions(opts: {
   }, [finalize])
 
   const handleStopGrill = useCallback(async () => {
-    try {
-      await window.api.grillCancel()
-    } catch (error) {
-      console.error('Failed to cancel grill:', error)
-    }
-    setPhase('paused')
-  }, [setPhase])
+    // Stop = cancel + persist (mirrors Save & Exit without the navigation), so a
+    // stopped grill restores with full state instead of an agent-only chat.
+    await finalize('paused')
+  }, [finalize])
 
   const handleSaveAndExit = useCallback(async () => {
     await finalize('paused')
@@ -217,6 +221,13 @@ export function useGrillActions(opts: {
       } catch (error) {
         console.error('Failed to create planning conversation:', error)
       }
+    }
+
+    // Final handoff — strip transient grill state (Convert Directly keeps no plan).
+    try {
+      await window.api.grillComplete({ ideaId })
+    } catch (error) {
+      console.error('grillComplete failed:', error)
     }
     onComplete()
   }, [

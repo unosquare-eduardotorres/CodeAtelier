@@ -13,7 +13,16 @@
  */
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { ArrowRight, Pause, CheckCircle2, Loader2, SkipForward, RefreshCw, Circle, Minus } from 'lucide-react'
+import {
+  ArrowRight,
+  Pause,
+  CheckCircle2,
+  Loader2,
+  SkipForward,
+  RefreshCw,
+  Circle,
+  Minus
+} from 'lucide-react'
 import {
   useGrillStreamStore,
   getFlatContent,
@@ -443,22 +452,30 @@ export default function WizardGrillStep({
 
     const existingTrackScore = trackScores.find((ts) => ts.trackId === activeTrack)
 
-    window.api.grillEvaluate({
-      workspaceId: 'greenfield',
-      trackId: activeTrack,
-      ideaTitle: projectName,
-      ideaDescription: projectDescription,
-      previousScore: existingTrackScore?.score,
-      greenfield: true,
-      projectName,
-      iterationHistory
-    }).catch((error) => {
-      console.error('Re-evaluation failed:', error)
-      setPhase('answering')
-    })
+    window.api
+      .grillEvaluate({
+        workspaceId: 'greenfield',
+        trackId: activeTrack,
+        ideaTitle: projectName,
+        ideaDescription: projectDescription,
+        previousScore: existingTrackScore?.score,
+        greenfield: true,
+        projectName,
+        iterationHistory
+      })
+      .catch((error) => {
+        console.error('Re-evaluation failed:', error)
+        setPhase('answering')
+      })
   }, [
-    currentIteration, activeTrack, questionStates, grillDecisions,
-    onDecisionsChange, trackScores, projectName, projectDescription
+    currentIteration,
+    activeTrack,
+    questionStates,
+    grillDecisions,
+    onDecisionsChange,
+    trackScores,
+    projectName,
+    projectDescription
   ])
 
   // ── Render ──────────────────────────────────────────────────────────────

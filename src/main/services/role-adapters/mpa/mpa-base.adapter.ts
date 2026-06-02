@@ -61,9 +61,7 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
     this.refreshWorkspaceFeatureFlags(this.workspaceId)
 
     // Detect tech stack
-    this.detectedTechs = ctx.workspacePath
-      ? detectTechStack(ctx.workspacePath).detectedTechs
-      : []
+    this.detectedTechs = ctx.workspacePath ? detectTechStack(ctx.workspacePath).detectedTechs : []
 
     // Pattern 1: Centralized model resolution
     this.resolvedModel = this.resolveModel(ctx.workspacePath, this.getModelAction())
@@ -105,9 +103,7 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
         'Grep',
         'WebSearch',
         'WebFetch',
-        ...(this.repomapEnabled && ctx.workspaceId
-          ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES
-          : []),
+        ...(this.repomapEnabled && ctx.workspaceId ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES : []),
         ...(this.semanticSearchEnabled && ctx.workspaceId
           ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES
           : []),
@@ -131,9 +127,13 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
   }
 
   /** MPA phases don't emit conversational intents. */
-  override emitDetectedIntents(_ctx: AdapterIntentContext): void { /* no-op */ }
+  override emitDetectedIntents(_ctx: AdapterIntentContext): void {
+    /* no-op */
+  }
 
-  protected override persistMemory(): void { /* no-op */ }
+  protected override persistMemory(): void {
+    /* no-op */
+  }
 
   override onSessionStop(): void {
     this.systemPrompt = null

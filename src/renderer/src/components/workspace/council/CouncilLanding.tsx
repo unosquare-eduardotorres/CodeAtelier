@@ -9,7 +9,18 @@
  */
 
 import { useEffect, useMemo, useState, useCallback } from 'react'
-import { Landmark, Plus, FileText, Users, Award, ShieldAlert, Compass, TrendingUp, Eye, Wrench } from 'lucide-react'
+import {
+  Landmark,
+  Plus,
+  FileText,
+  Users,
+  Award,
+  ShieldAlert,
+  Compass,
+  TrendingUp,
+  Eye,
+  Wrench
+} from 'lucide-react'
 import { useCouncilStore } from '@renderer/store/council.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
 import { ConfirmDialog, Skeleton } from '@renderer/components/common'
@@ -37,8 +48,14 @@ function extractInputTitle(inputContent: string): string {
     if (typeof parsed.title === 'string' && parsed.title.trim()) {
       return parsed.title.trim()
     }
-  } catch { /* not JSON — use as plain text */ }
-  const firstLine = inputContent.split('\n').find((l) => l.trim())?.trim() ?? inputContent
+  } catch {
+    /* not JSON — use as plain text */
+  }
+  const firstLine =
+    inputContent
+      .split('\n')
+      .find((l) => l.trim())
+      ?.trim() ?? inputContent
   return firstLine.length > 100 ? firstLine.slice(0, 100) + '…' : firstLine
 }
 
@@ -147,7 +164,12 @@ export default function CouncilLanding({
         councilState.hydrateFromRecord({
           sessionId,
           workspaceId,
-          phase: session.status === 'completed' ? 'complete' : session.status === 'failed' ? 'failed' : 'cancelled',
+          phase:
+            session.status === 'completed'
+              ? 'complete'
+              : session.status === 'failed'
+                ? 'failed'
+                : 'cancelled',
           verdict: session.verdict,
           peerReviews: session.peerReviews ?? [],
           advisorReviews: session.advisorReviews ?? [],
@@ -161,7 +183,7 @@ export default function CouncilLanding({
   const handleDelete = useCallback(async (sessionId: string) => {
     try {
       await window.api.councilDeleteSession({ sessionId })
-      setHistory(prev => prev.filter(s => s.id !== sessionId))
+      setHistory((prev) => prev.filter((s) => s.id !== sessionId))
     } catch (err) {
       console.error('Failed to delete council session:', err)
     }
@@ -292,11 +314,36 @@ export default function CouncilLanding({
               </p>
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { icon: ShieldAlert, label: 'Contrarian', desc: 'Finds flaws', color: 'text-red-400' },
-                  { icon: Compass, label: 'First Principles', desc: 'Questions assumptions', color: 'text-blue-400' },
-                  { icon: TrendingUp, label: 'Expansionist', desc: 'Spots opportunities', color: 'text-green-400' },
-                  { icon: Eye, label: 'Outsider', desc: 'Catches blind spots', color: 'text-amber-400' },
-                  { icon: Wrench, label: 'Executor', desc: 'Validates feasibility', color: 'text-cyan-400' }
+                  {
+                    icon: ShieldAlert,
+                    label: 'Contrarian',
+                    desc: 'Finds flaws',
+                    color: 'text-red-400'
+                  },
+                  {
+                    icon: Compass,
+                    label: 'First Principles',
+                    desc: 'Questions assumptions',
+                    color: 'text-blue-400'
+                  },
+                  {
+                    icon: TrendingUp,
+                    label: 'Expansionist',
+                    desc: 'Spots opportunities',
+                    color: 'text-green-400'
+                  },
+                  {
+                    icon: Eye,
+                    label: 'Outsider',
+                    desc: 'Catches blind spots',
+                    color: 'text-amber-400'
+                  },
+                  {
+                    icon: Wrench,
+                    label: 'Executor',
+                    desc: 'Validates feasibility',
+                    color: 'text-cyan-400'
+                  }
                 ].map(({ icon: Icon, label, desc, color }) => (
                   <div key={label} className="flex items-center gap-2 text-xs">
                     <Icon size={12} className={`${color} flex-shrink-0`} />

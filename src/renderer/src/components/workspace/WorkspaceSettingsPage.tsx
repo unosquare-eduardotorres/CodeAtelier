@@ -65,6 +65,7 @@ export default function WorkspaceSettingsPage({
     ideaTitle: string
     ideaDescription?: string
     isNewSession?: boolean
+    reviewMode?: boolean
   } | null>(null)
   const { activeWorkspace } = useWorkspaceStore()
 
@@ -276,6 +277,7 @@ export default function WorkspaceSettingsPage({
                 ideaTitle={activeGrill.ideaTitle}
                 ideaDescription={activeGrill.ideaDescription}
                 isNewSession={activeGrill.isNewSession}
+                reviewMode={activeGrill.reviewMode}
                 onBack={() => setActiveGrill(null)}
                 onComplete={() => {
                   setActiveGrill(null)
@@ -299,14 +301,16 @@ export default function WorkspaceSettingsPage({
                     conversationId,
                     ideaTitle,
                     isNewSession,
-                    ideaDescription
+                    ideaDescription,
+                    reviewMode
                   ) =>
                     setActiveGrill({
                       ideaId,
                       conversationId,
                       ideaTitle,
                       ideaDescription,
-                      isNewSession
+                      isNewSession,
+                      reviewMode
                     })
                   }
                 />

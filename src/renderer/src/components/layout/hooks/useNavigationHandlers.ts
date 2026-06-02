@@ -23,13 +23,15 @@ export function useNavigationHandlers(
   setSidebarView: (view: 'chat' | 'settings') => void,
   setWorkspaceSettingsTab: (tab: string) => void,
   setShowNewChat: (show: boolean) => void,
-  setPendingGrill: (grill: {
-    ideaId: string
-    conversationId: string
-    ideaTitle: string
-    ideaDescription?: string
-    isNewSession?: boolean
-  } | null) => void
+  setPendingGrill: (
+    grill: {
+      ideaId: string
+      conversationId: string
+      ideaTitle: string
+      ideaDescription?: string
+      isNewSession?: boolean
+    } | null
+  ) => void
 ): NavigationHandlers {
   const clearActiveWorkspace = useWorkspaceStore((s) => s.clearActiveWorkspace)
   const { createIdea, startGrill } = useIdeaStore()
@@ -88,12 +90,23 @@ export function useNavigationHandlers(
     } catch (error) {
       console.error('[AppLayout] Failed to start grill from /grillme command:', error)
     }
-  }, [activeWorkspace, activeConversation, createIdea, startGrill, setWorkspaceSettingsTab, setSidebarView, setPendingGrill])
+  }, [
+    activeWorkspace,
+    activeConversation,
+    createIdea,
+    startGrill,
+    setWorkspaceSettingsTab,
+    setSidebarView,
+    setPendingGrill
+  ])
 
-  const handleNavigateToGrill = useCallback((_ideaId: string) => {
-    setWorkspaceSettingsTab('ideas')
-    setSidebarView('settings')
-  }, [setWorkspaceSettingsTab, setSidebarView])
+  const handleNavigateToGrill = useCallback(
+    (_ideaId: string) => {
+      setWorkspaceSettingsTab('ideas')
+      setSidebarView('settings')
+    },
+    [setWorkspaceSettingsTab, setSidebarView]
+  )
 
   // Route a generated plan (e.g. from a Health audit) into a fresh Grill session.
   const handleSendPlanToGrill = useCallback(
@@ -118,7 +131,14 @@ export function useNavigationHandlers(
         console.error('[AppLayout] Failed to send plan to grill:', error)
       }
     },
-    [activeWorkspace, createIdea, startGrill, setWorkspaceSettingsTab, setSidebarView, setPendingGrill]
+    [
+      activeWorkspace,
+      createIdea,
+      startGrill,
+      setWorkspaceSettingsTab,
+      setSidebarView,
+      setPendingGrill
+    ]
   )
 
   return {

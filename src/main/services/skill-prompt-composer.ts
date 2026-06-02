@@ -183,9 +183,10 @@ export class SkillPromptComposer {
       const filePath = join(this.getBaselineSkillsDir(), filename, 'SKILL.md')
       try {
         const content = this.readSkillFile(filePath)
-        const trimmed = content.length > baseBudget
-          ? content.substring(0, baseBudget) + '\n\n[... truncated]'
-          : content
+        const trimmed =
+          content.length > baseBudget
+            ? content.substring(0, baseBudget) + '\n\n[... truncated]'
+            : content
         sections.push(trimmed)
       } catch {
         log.warn(`Baseline skill not found: ${filePath}`)
@@ -288,6 +289,7 @@ export class SkillPromptComposer {
   /** Returns the .claude/skills/ directory path */
   private getBaselineSkillsDir(): string {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- defensive lazy load; electron may be unavailable in non-app contexts
       const { app } = require('electron')
       return app.isPackaged
         ? join(app.getPath('userData'), '.claude', 'skills')

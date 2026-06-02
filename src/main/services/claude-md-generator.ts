@@ -90,17 +90,27 @@ Generate a well-structured markdown document with the following sections:
     // and avoids hardcoding a specific model version.
     const resolvedModel = modelConfigService.getModel(undefined, 'activation')
 
-    const content = execFileSync('claude', [
-      '-p', prompt,
-      '--model', resolvedModel,
-      '--system-prompt', systemPrompt,
-      '--permission-mode', 'plan',
-      '--max-turns', '1',
-      '--output-format', 'text'
-    ], {
-      encoding: 'utf-8',
-      timeout: 60_000
-    })
+    const content = execFileSync(
+      'claude',
+      [
+        '-p',
+        prompt,
+        '--model',
+        resolvedModel,
+        '--system-prompt',
+        systemPrompt,
+        '--permission-mode',
+        'plan',
+        '--max-turns',
+        '1',
+        '--output-format',
+        'text'
+      ],
+      {
+        encoding: 'utf-8',
+        timeout: 60_000
+      }
+    )
 
     const trimmed = content.trim()
     if (trimmed.length < 50) {

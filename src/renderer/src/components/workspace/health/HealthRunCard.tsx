@@ -82,10 +82,7 @@ export default function HealthRunCard({
       {/* Details */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <ModeIcon
-            size={14}
-            className={run.mode === 'deep' ? 'text-info' : 'text-warning'}
-          />
+          <ModeIcon size={14} className={run.mode === 'deep' ? 'text-info' : 'text-warning'} />
           <span className="text-sm font-semibold text-text-primary">
             {run.mode === 'deep' ? 'Deep' : 'Light'} Audit
           </span>

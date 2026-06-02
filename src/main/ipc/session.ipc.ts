@@ -86,7 +86,10 @@ export function registerSessionIpc(): void {
     // Not yet implemented — requires CLI support or direct session file reader.
     // Return a typed error so the renderer can surface "Not yet available" to the user.
     sessionLog.warn(`[NOT_IMPLEMENTED] SESSION_GET_MESSAGES called for ${sessionId}`)
-    return { error: 'not_implemented', message: 'Session message inspection requires CLI implementation' }
+    return {
+      error: 'not_implemented',
+      message: 'Session message inspection requires CLI implementation'
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.SESSION_RENAME, async (event, args: unknown) => {
@@ -117,7 +120,11 @@ export function registerSessionIpc(): void {
     const _dir = optionalString(obj, 'dir', channel)
     // Not yet implemented — requires CLI support or direct session file modification.
     sessionLog.warn(`[NOT_IMPLEMENTED] SESSION_TAG called for ${_sessionId}`)
-    return { success: false, error: 'not_implemented', message: 'Session tagging not yet available' }
+    return {
+      success: false,
+      error: 'not_implemented',
+      message: 'Session tagging not yet available'
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.SESSION_FORK, async (event, args: unknown) => {

@@ -30,7 +30,9 @@ interface CodeChunkRow {
  */
 export class CodeChunkRepository extends BaseRepository<CodeChunkRow, CodeChunk> {
   protected readonly tableName = 'code_chunks'
-  protected mapRow(row: CodeChunkRow): CodeChunk { return mapRow(row) }
+  protected mapRow(row: CodeChunkRow): CodeChunk {
+    return mapRow(row)
+  }
 
   /**
    * Bulk upsert preprocessed chunks for a workspace.

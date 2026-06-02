@@ -80,7 +80,8 @@ export default function GoalRunDetail({
       {isResumable && onResume && (
         <div className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5">
           <p className="text-xs text-amber-400">
-            This run {run.status === 'failed' ? 'failed' : 'was cancelled'} — you can resume from the last completed phase.
+            This run {run.status === 'failed' ? 'failed' : 'was cancelled'} — you can resume from
+            the last completed phase.
           </p>
           <button
             type="button"
@@ -119,15 +120,15 @@ export default function GoalRunDetail({
               return (
                 <div key={phase.id} className="flex items-center gap-2 text-xs">
                   <span className={phaseStatus.color}>{phaseStatus.icon}</span>
-                  <span className="text-text-primary font-medium capitalize">{phase.phaseType}</span>
+                  <span className="text-text-primary font-medium capitalize">
+                    {phase.phaseType}
+                  </span>
                   {phase.iteration > 1 && (
                     <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-400">
                       iteration {phase.iteration}
                     </span>
                   )}
-                  <span className="text-text-muted">
-                    {phase.agentRole}
-                  </span>
+                  <span className="text-text-muted">{phase.agentRole}</span>
                 </div>
               )
             })}

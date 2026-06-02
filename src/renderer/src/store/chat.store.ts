@@ -475,8 +475,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if ((streamingContent || streamingSegments.length > 0) && activeConversation) {
       const { mergedContent, mergedTools } = mergeChatSegments(streamingSegments, streamingContent)
       const stoppedMessage = createStoppedMessage(
-        activeConversation.id, mergedContent, mergedTools,
-        streamingRole, streamingSpecialist, streamingSegments
+        activeConversation.id,
+        mergedContent,
+        mergedTools,
+        streamingRole,
+        streamingSpecialist,
+        streamingSegments
       )
 
       set((state) => ({
@@ -486,7 +490,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } else if (activeConversation) {
       // No partial content — still show a local indicator
       const stoppedMessage = createStoppedMessage(
-        activeConversation.id, '', [], 'da-vinci', null, []
+        activeConversation.id,
+        '',
+        [],
+        'da-vinci',
+        null,
+        []
       )
       set((state) => ({
         messages: [...state.messages, stoppedMessage],
@@ -586,7 +595,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string; id?: string }) => {
     internals.resetSafetyTimer()
-    internals.getOrCreateAccumulator()
+    internals
+      .getOrCreateAccumulator()
       .handleToolActivity(activity as Partial<ToolActivity> & { id: string; toolName: string })
   },
 

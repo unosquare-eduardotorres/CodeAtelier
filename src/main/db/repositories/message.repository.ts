@@ -24,14 +24,16 @@ function mapRow(row: MessageRow): Message {
     createdAt: row.created_at,
     parentMessageId: row.parent_message_id ?? undefined,
     toolActivities: row.tool_activities_json
-      ? JSON.parse(row.tool_activities_json) as ToolActivity[]
+      ? (JSON.parse(row.tool_activities_json) as ToolActivity[])
       : undefined
   }
 }
 
 export class MessageRepository extends BaseRepository<MessageRow, Message> {
   protected readonly tableName = 'messages'
-  protected mapRow(row: MessageRow): Message { return mapRow(row) }
+  protected mapRow(row: MessageRow): Message {
+    return mapRow(row)
+  }
 
   create(
     conversationId: string,
@@ -64,7 +66,6 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
     const rows = stmt.all(conversationId) as MessageRow[]
     return rows.map(mapRow)
   }
-
 
   /**
    * F5: Fetch only the most recent N messages for a conversation.

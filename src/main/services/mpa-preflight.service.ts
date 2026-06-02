@@ -122,10 +122,7 @@ export function classifyGoal(goal: string): MpaClassifyResult {
 
 function detectGoalType(lowerGoal: string): MpaGoalType {
   // Test-focused goals
-  const testScore = TEST_KEYWORDS.reduce(
-    (score, kw) => score + (lowerGoal.includes(kw) ? 1 : 0),
-    0
-  )
+  const testScore = TEST_KEYWORDS.reduce((score, kw) => score + (lowerGoal.includes(kw) ? 1 : 0), 0)
   // Only classify as tests if test keywords dominate
   if (testScore >= 2 || (testScore === 1 && lowerGoal.startsWith('add test'))) {
     return 'tests'

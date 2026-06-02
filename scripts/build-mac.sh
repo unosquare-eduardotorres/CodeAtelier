@@ -61,14 +61,6 @@ echo "▸ Step 2: Prune to production dependencies"
 npm prune --omit=dev
 PRUNED=true
 
-# After prune, @huggingface/transformers (devDep) and its transitive deps
-# (onnxruntime-node, gpt-tokenizer, sharp) should be gone. Verify and
-# fall back to manual removal if npm's resolver left anything behind.
-if [ -d "node_modules/onnxruntime-node" ]; then
-  echo "  ⚠️  onnxruntime-node still present after prune — removing manually"
-  rm -rf node_modules/onnxruntime-node
-fi
-
 echo "  node_modules after prune: $(du -sh node_modules | cut -f1) ($(find node_modules -type f | wc -l | tr -d ' ') files)"
 
 echo ""
@@ -89,18 +81,6 @@ echo "▸ Step 2c: Strip runtime-unnecessary files from node_modules"
 # electron/ — not needed in packaged app (Electron IS the runtime).
 # Survives prune because @electron-toolkit/* has it as a peerDependency.
 rm -rf node_modules/electron
-
-# onnxruntime-web — only WASM files + entry point needed at runtime.
-# JS/TS/maps/docs are bundled by Vite or unused. Runtime uses:
-#   require.resolve('onnxruntime-web') → dist/ort.node.min.js  (path only)
-#   readFileSync(path.join(dist, 'ort-wasm-simd-threaded.asyncify.wasm'))
-rm -rf node_modules/onnxruntime-web/node_modules
-rm -rf node_modules/onnxruntime-web/lib
-rm -rf node_modules/onnxruntime-web/docs
-find node_modules/onnxruntime-web/dist -type f \
-  ! -name 'ort.node.min.js' \
-  ! -name '*.wasm' \
-  -delete 2>/dev/null
 
 # Source maps — dev-only, never loaded at runtime
 find node_modules -name '*.map' -type f -delete

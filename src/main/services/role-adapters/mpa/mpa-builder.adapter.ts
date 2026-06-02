@@ -40,14 +40,16 @@ export class MpaBuilderAdapter extends MpaBaseAdapter {
     // Builder uses TOOL_PRIORITY_DIRECTIVE_BUILDER (write-mode variant).
     // Embedding it here means the base class's appendToolGuidance() skips
     // the generic directive (it checks for '## Tool Priority' already present).
-    return buildBuilderSystemPrompt({
-      goal: this.goal,
-      plan: this.plan,
-      workspaceName: this.workspaceName,
-      detectedTechs: this.detectedTechs,
-      verifierFeedback: this.verifierFeedback,
-      model: this.resolvedModel
-    }) + TOOL_PRIORITY_DIRECTIVE_BUILDER
+    return (
+      buildBuilderSystemPrompt({
+        goal: this.goal,
+        plan: this.plan,
+        workspaceName: this.workspaceName,
+        detectedTechs: this.detectedTechs,
+        verifierFeedback: this.verifierFeedback,
+        model: this.resolvedModel
+      }) + TOOL_PRIORITY_DIRECTIVE_BUILDER
+    )
   }
 
   protected getPhaseMessage(): string {
@@ -74,9 +76,7 @@ export class MpaBuilderAdapter extends MpaBaseAdapter {
         'WebFetch',
         'ListDir',
         // Code graph tools
-        ...(this.repomapEnabled && ctx.workspaceId
-          ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES
-          : []),
+        ...(this.repomapEnabled && ctx.workspaceId ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES : []),
         // Semantic search
         ...(this.semanticSearchEnabled && ctx.workspaceId
           ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES
@@ -86,12 +86,7 @@ export class MpaBuilderAdapter extends MpaBaseAdapter {
         // Code analysis
         ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
       ],
-      disallowedTools: [
-        'Agent',
-        'ToolSearch',
-        'AskUserQuestion',
-        'TodoWrite'
-      ]
+      disallowedTools: ['Agent', 'ToolSearch', 'AskUserQuestion', 'TodoWrite']
     }
   }
 }

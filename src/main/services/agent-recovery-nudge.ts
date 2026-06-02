@@ -81,7 +81,14 @@ export class RecoveryNudgeService {
         cwd: opts.workspacePath,
         permissionMode: opts.isBuildMode ? 'bypassPermissions' : 'plan',
         allowedTools: [], // No tools — text summary only
-        disallowedTools: ['Agent', 'Task', 'local_agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion'],
+        disallowedTools: [
+          'Agent',
+          'Task',
+          'local_agent',
+          'ToolSearch',
+          'ExitPlanMode',
+          'AskUserQuestion'
+        ],
         maxTurns: 1,
         resume: opts.sessionId,
         agentId: DA_VINCI_AGENT_ID,

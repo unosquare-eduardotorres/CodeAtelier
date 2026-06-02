@@ -35,11 +35,7 @@ import { AgentSessionService } from './agent-session.service'
 import { CouncilMemberRoleAdapter } from './role-adapters/council-member.adapter'
 import { CouncilChairmanRoleAdapter } from './role-adapters/council-chairman.adapter'
 import { COUNCIL_ADVISOR_ROLES } from '../../shared/constants'
-import {
-  parseCouncilReview,
-  parsePeerReview,
-  parseCouncilVerdict
-} from './council-parser'
+import { parseCouncilReview, parsePeerReview, parseCouncilVerdict } from './council-parser'
 import { councilSessionRepository } from '../db/repositories/council-session.repository'
 
 const councilLog = log.scope('council')
@@ -176,7 +172,9 @@ export class CouncilService extends EventEmitter {
           inputType: params.inputType,
           inputContent: params.planContent,
           grillSessionId: params.grillSessionId,
-          structuredPlanJson: params.structuredPlan ? JSON.stringify(params.structuredPlan) : undefined,
+          structuredPlanJson: params.structuredPlan
+            ? JSON.stringify(params.structuredPlan)
+            : undefined,
           conversationId: params.conversationId
         })
         entry.dbSessionId = dbSession.id
@@ -204,7 +202,8 @@ export class CouncilService extends EventEmitter {
       if (!entry.running) return // Cancelled
 
       // Persist peer reviews
-      if (entry.dbSessionId) councilSessionRepository.savePeerReviews(entry.dbSessionId, peerReviews)
+      if (entry.dbSessionId)
+        councilSessionRepository.savePeerReviews(entry.dbSessionId, peerReviews)
 
       // Step 4: Chairman synthesis
       this.setPhase(entry, 'synthesizing')
@@ -232,7 +231,11 @@ export class CouncilService extends EventEmitter {
       // Defensive cleanup — stop any sessions still held by advisors
       for (const advisor of entry.advisors.values()) {
         if (advisor.session) {
-          try { await advisor.session.stop() } catch { /* non-fatal */ }
+          try {
+            await advisor.session.stop()
+          } catch {
+            /* non-fatal */
+          }
         }
       }
       this.sessions.delete(params.workspaceId)
@@ -243,7 +246,9 @@ export class CouncilService extends EventEmitter {
 
   /** Cancel the running council for a specific workspace. */
   cancel(workspaceId?: string): void {
-    councilLog.info(`[council] Cancel requested${workspaceId ? ` for workspace ${workspaceId}` : ''}`)
+    councilLog.info(
+      `[council] Cancel requested${workspaceId ? ` for workspace ${workspaceId}` : ''}`
+    )
 
     if (workspaceId) {
       const entry = this.sessions.get(workspaceId)
@@ -335,8 +340,11 @@ export class CouncilService extends EventEmitter {
           councilLog.info(`[council:${role}] completed — score=${review.score}`)
           // Persist review incrementally
           if (entry.dbSessionId) {
-            try { councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review) }
-            catch (e) { councilLog.warn(`[council:${role}] DB persist failed (non-fatal):`, e) }
+            try {
+              councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review)
+            } catch (e) {
+              councilLog.warn(`[council:${role}] DB persist failed (non-fatal):`, e)
+            }
           }
         } else {
           advisor.status = 'completed'
@@ -360,7 +368,11 @@ export class CouncilService extends EventEmitter {
         })
         return null
       } finally {
-        try { if (session) await session.stop() } catch { /* non-fatal */ }
+        try {
+          if (session) await session.stop()
+        } catch {
+          /* non-fatal */
+        }
       }
     })
 
@@ -417,17 +429,27 @@ Respond ONLY with a JSON block:
 
     const peerPromises = COUNCIL_ADVISOR_ROLES.map(async (role) => {
       try {
-        const { stdout } = await execFileAsync('claude', [
-          '-p', `Review these advisor responses:\n\n${anonymizedText}`,
-          '--model', 'claude-haiku-4-5-20251001',
-          '--system-prompt', systemPrompt,
-          '--permission-mode', 'plan',
-          '--max-turns', '1',
-          '--output-format', 'text'
-        ], {
-          encoding: 'utf-8',
-          timeout: 120_000 // 2 min timeout
-        })
+        const { stdout } = await execFileAsync(
+          'claude',
+          [
+            '-p',
+            `Review these advisor responses:\n\n${anonymizedText}`,
+            '--model',
+            'claude-haiku-4-5-20251001',
+            '--system-prompt',
+            systemPrompt,
+            '--permission-mode',
+            'plan',
+            '--max-turns',
+            '1',
+            '--output-format',
+            'text'
+          ],
+          {
+            encoding: 'utf-8',
+            timeout: 120_000 // 2 min timeout
+          }
+        )
 
         const parsed = parsePeerReview(stdout, role)
         if (parsed) {
@@ -502,7 +524,11 @@ Respond ONLY with a JSON block:
       councilLog.error('[council:chairman] failed:', err)
       return null
     } finally {
-      try { if (session) await session.stop() } catch { /* non-fatal */ }
+      try {
+        if (session) await session.stop()
+      } catch {
+        /* non-fatal */
+      }
     }
   }
 
@@ -512,8 +538,16 @@ Respond ONLY with a JSON block:
     entry.running = false
     for (const advisor of entry.advisors.values()) {
       if (advisor.session) {
-        try { advisor.session.cancelCurrentQuery() } catch { /* non-fatal */ }
-        try { advisor.session.stop() } catch { /* non-fatal — stop() may be sync or already stopped */ }
+        try {
+          advisor.session.cancelCurrentQuery()
+        } catch {
+          /* non-fatal */
+        }
+        try {
+          advisor.session.stop()
+        } catch {
+          /* non-fatal — stop() may be sync or already stopped */
+        }
       }
     }
     this.setPhase(entry, 'cancelled')
@@ -544,7 +578,7 @@ Respond ONLY with a JSON block:
 
     // Reconstruct framed input from persisted data
     const structuredPlan = dbSession.structuredPlanJson
-      ? JSON.parse(dbSession.structuredPlanJson) as StructuredPlan
+      ? (JSON.parse(dbSession.structuredPlanJson) as StructuredPlan)
       : null
 
     const framedInput: CouncilFramedInput = {
@@ -562,7 +596,7 @@ Respond ONLY with a JSON block:
     const completedRoles = new Set(dbSession.completedAdvisors)
 
     for (const role of COUNCIL_ADVISOR_ROLES) {
-      const existingReview = existingReviews.find(r => r.advisorRole === role) ?? null
+      const existingReview = existingReviews.find((r) => r.advisorRole === role) ?? null
       advisors.set(role, {
         role,
         session: null,
@@ -611,7 +645,12 @@ Respond ONLY with a JSON block:
 
         case 'synthesizing':
           // Peer reviews exist — re-run chairman only
-          await this.runRemainingStages(entry, params.sessionId, existingReviews, dbSession.peerReviews)
+          await this.runRemainingStages(
+            entry,
+            params.sessionId,
+            existingReviews,
+            dbSession.peerReviews
+          )
           break
 
         case 'complete':
@@ -628,7 +667,11 @@ Respond ONLY with a JSON block:
       entry.running = false
       for (const advisor of entry.advisors.values()) {
         if (advisor.session) {
-          try { await advisor.session.stop() } catch { /* non-fatal */ }
+          try {
+            await advisor.session.stop()
+          } catch {
+            /* non-fatal */
+          }
         }
       }
       this.sessions.delete(params.workspaceId)
@@ -694,14 +737,16 @@ Respond ONLY with a JSON block:
     }
 
     // Only run advisors that don't have completed reviews
-    const pendingRoles = COUNCIL_ADVISOR_ROLES.filter(role => !reviewsMap.has(role))
+    const pendingRoles = COUNCIL_ADVISOR_ROLES.filter((role) => !reviewsMap.has(role))
 
     if (pendingRoles.length === 0) {
       councilLog.info('[council:resume] All advisors already completed')
       return existingReviews
     }
 
-    councilLog.info(`[council:resume] Running ${pendingRoles.length} pending advisor(s): ${pendingRoles.join(', ')}`)
+    councilLog.info(
+      `[council:resume] Running ${pendingRoles.length} pending advisor(s): ${pendingRoles.join(', ')}`
+    )
 
     const advisorPromises = pendingRoles.map(async (role) => {
       const advisor = entry.advisors.get(role)!
@@ -738,8 +783,11 @@ Respond ONLY with a JSON block:
           advisor.status = 'completed'
           reviewsMap.set(role, review)
           if (entry.dbSessionId) {
-            try { councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review) }
-            catch (e) { councilLog.warn(`[council:resume:${role}] DB persist failed:`, e) }
+            try {
+              councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review)
+            } catch (e) {
+              councilLog.warn(`[council:resume:${role}] DB persist failed:`, e)
+            }
           }
         } else {
           advisor.status = 'completed'
@@ -762,7 +810,11 @@ Respond ONLY with a JSON block:
         })
         return null
       } finally {
-        try { await advisor.session?.stop() } catch { /* non-fatal */ }
+        try {
+          await advisor.session?.stop()
+        } catch {
+          /* non-fatal */
+        }
       }
     })
 

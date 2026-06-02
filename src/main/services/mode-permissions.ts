@@ -31,12 +31,26 @@ export function buildModePermissions(mode: ConversationMode): ModePermissions {
     case 'build':
       return {
         baseAllowed: undefined, // all SDK built-ins allowed
-        disallowed: ['Agent', 'Task', 'local_agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion']
+        disallowed: [
+          'Agent',
+          'Task',
+          'local_agent',
+          'ToolSearch',
+          'ExitPlanMode',
+          'AskUserQuestion'
+        ]
       }
     case 'danger':
       return {
         baseAllowed: undefined, // all SDK built-ins allowed
-        disallowed: ['Agent', 'Task', 'local_agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion']
+        disallowed: [
+          'Agent',
+          'Task',
+          'local_agent',
+          'ToolSearch',
+          'ExitPlanMode',
+          'AskUserQuestion'
+        ]
       }
     case 'plan':
     default:
@@ -44,7 +58,16 @@ export function buildModePermissions(mode: ConversationMode): ModePermissions {
         // Bash added — CLI 'plan' permission mode gates what's safe
         // (read-only commands allowed, write commands still prompt)
         baseAllowed: ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch'],
-        disallowed: ['Write', 'Edit', 'Agent', 'Task', 'local_agent', 'ExitPlanMode', 'AskUserQuestion', 'ToolSearch']
+        disallowed: [
+          'Write',
+          'Edit',
+          'Agent',
+          'Task',
+          'local_agent',
+          'ExitPlanMode',
+          'AskUserQuestion',
+          'ToolSearch'
+        ]
       }
   }
 }

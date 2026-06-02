@@ -108,7 +108,10 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
     if (!selectedAgent || !hasEditorChanges) return
     setIsSaving(true)
     try {
-      await window.api.writeWorkspaceFile({ filePath: selectedAgent.filePath, content: editorContent })
+      await window.api.writeWorkspaceFile({
+        filePath: selectedAgent.filePath,
+        content: editorContent
+      })
       setInitialContent(editorContent)
       setHasEditorChanges(false)
       await loadAgents(workspacePath)

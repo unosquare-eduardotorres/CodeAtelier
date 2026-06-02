@@ -143,11 +143,15 @@ export class MpaOrchestrationService extends EventEmitter {
       })
 
       // Fire hook: goal achieved
-      hookEngine.executeHooks('mpa_goal_achieved', {
-        runId: run.id,
-        goal: params.goal.slice(0, 200),
-        workspaceId: params.workspaceId
-      }).catch(() => { /* non-blocking */ })
+      hookEngine
+        .executeHooks('mpa_goal_achieved', {
+          runId: run.id,
+          goal: params.goal.slice(0, 200),
+          workspaceId: params.workspaceId
+        })
+        .catch(() => {
+          /* non-blocking */
+        })
 
       this.emitComplete(run.id, 'completed', updatedRun?.totalTokens ?? 0)
     } catch (err) {
@@ -161,12 +165,16 @@ export class MpaOrchestrationService extends EventEmitter {
       })
 
       // Fire hook: goal failed
-      hookEngine.executeHooks('mpa_goal_failed', {
-        runId: run.id,
-        goal: params.goal.slice(0, 200),
-        error: (err as Error).message?.slice(0, 200) ?? 'unknown',
-        workspaceId: params.workspaceId
-      }).catch(() => { /* non-blocking */ })
+      hookEngine
+        .executeHooks('mpa_goal_failed', {
+          runId: run.id,
+          goal: params.goal.slice(0, 200),
+          error: (err as Error).message?.slice(0, 200) ?? 'unknown',
+          workspaceId: params.workspaceId
+        })
+        .catch(() => {
+          /* non-blocking */
+        })
 
       this.emitComplete(run.id, 'failed', 0)
     } finally {
@@ -261,16 +269,23 @@ export class MpaOrchestrationService extends EventEmitter {
           const result = await this.runPlanPhase(run, params, currentPlan, undefined)
           currentPlan = result.plan
 
-          hookEngine.executeHooks('mpa_plan_complete', {
-            runId: run.id,
-            goal: params.goal.slice(0, 200),
-            workspaceId: params.workspaceId
-          }).catch(() => { /* non-blocking */ })
+          hookEngine
+            .executeHooks('mpa_plan_complete', {
+              runId: run.id,
+              goal: params.goal.slice(0, 200),
+              workspaceId: params.workspaceId
+            })
+            .catch(() => {
+              /* non-blocking */
+            })
 
           if (currentPlan && result.artifact) {
             const gateResult = await this.runUserGate(run, currentPlan, result.artifact, params)
             if (!gateResult) {
-              mpaRunRepository.updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() })
+              mpaRunRepository.updateRun(run.id, {
+                status: 'cancelled',
+                completedAt: new Date().toISOString()
+              })
               this.emitComplete(run.id, 'cancelled', 0)
               return 'cancelled'
             }
@@ -284,17 +299,25 @@ export class MpaOrchestrationService extends EventEmitter {
             mpaLog.error('[phase-loop] Execute phase requires a plan')
             break
           }
-          hookEngine.executeHooks('mpa_build_start', {
-            runId: run.id,
-            workspaceId: params.workspaceId
-          }).catch(() => { /* non-blocking */ })
+          hookEngine
+            .executeHooks('mpa_build_start', {
+              runId: run.id,
+              workspaceId: params.workspaceId
+            })
+            .catch(() => {
+              /* non-blocking */
+            })
 
           await this.runExecutePhase(run, params, currentPlan)
 
-          hookEngine.executeHooks('mpa_build_complete', {
-            runId: run.id,
-            workspaceId: params.workspaceId
-          }).catch(() => { /* non-blocking */ })
+          hookEngine
+            .executeHooks('mpa_build_complete', {
+              runId: run.id,
+              workspaceId: params.workspaceId
+            })
+            .catch(() => {
+              /* non-blocking */
+            })
           break
         }
 
@@ -305,10 +328,14 @@ export class MpaOrchestrationService extends EventEmitter {
           }
           await this.runVerifyLoop(run, params, currentPlan)
 
-          hookEngine.executeHooks('mpa_verify_complete', {
-            runId: run.id,
-            workspaceId: params.workspaceId
-          }).catch(() => { /* non-blocking */ })
+          hookEngine
+            .executeHooks('mpa_verify_complete', {
+              runId: run.id,
+              workspaceId: params.workspaceId
+            })
+            .catch(() => {
+              /* non-blocking */
+            })
           break
         }
       }
@@ -412,15 +439,22 @@ export class MpaOrchestrationService extends EventEmitter {
     })
 
     const { phase, text } = await this.setupAndExecutePhase({
-      run, adapter, phaseType: 'plan', iteration,
+      run,
+      adapter,
+      phaseType: 'plan',
+      iteration,
       goalCondition: buildPlannerGoalCondition(params.goal),
       workspacePath: params.workspacePath
     })
 
     const plan = parsePlanArtifact(text)
     const artifact = this.persistPhaseResult({
-      runId: run.id, phaseId: phase.id, parsed: plan,
-      rawText: text, artifactType: 'plan', iteration
+      runId: run.id,
+      phaseId: phase.id,
+      parsed: plan,
+      rawText: text,
+      artifactType: 'plan',
+      iteration
     })
 
     return { plan, artifact }
@@ -442,7 +476,10 @@ export class MpaOrchestrationService extends EventEmitter {
     const iteration = verifierFeedback ? 2 : 1
 
     const { phase } = await this.setupAndExecutePhase({
-      run, adapter, phaseType: 'execute', iteration,
+      run,
+      adapter,
+      phaseType: 'execute',
+      iteration,
       goalCondition: buildBuilderGoalCondition(plan),
       workspacePath: params.workspacePath
     })
@@ -466,15 +503,22 @@ export class MpaOrchestrationService extends EventEmitter {
     })
 
     const { phase, text } = await this.setupAndExecutePhase({
-      run, adapter, phaseType: 'verify', iteration,
+      run,
+      adapter,
+      phaseType: 'verify',
+      iteration,
       goalCondition: buildVerifierGoalCondition(plan),
       workspacePath: params.workspacePath
     })
 
     const report = parseVerifyReport(text)
     this.persistPhaseResult({
-      runId: run.id, phaseId: phase.id, parsed: report,
-      rawText: text, artifactType: 'verify_report', iteration
+      runId: run.id,
+      phaseId: phase.id,
+      parsed: report,
+      rawText: text,
+      artifactType: 'verify_report',
+      iteration
     })
 
     return report
@@ -725,7 +769,7 @@ export class MpaOrchestrationService extends EventEmitter {
     // 3. Find completed phases and the plan artifact
     const phases = mpaRunRepository.findPhasesByRun(runId)
     const artifacts = mpaArtifactRepository.findByRun(runId)
-    const planArtifact = artifacts.find(a => a.artifactType === 'plan')
+    const planArtifact = artifacts.find((a) => a.artifactType === 'plan')
     const plan: MpaPlanArtifact | null = planArtifact
       ? (planArtifact.contentJson as unknown as MpaPlanArtifact)
       : null
@@ -740,18 +784,23 @@ export class MpaOrchestrationService extends EventEmitter {
     if (!workspacePath) throw new Error('Run config missing workspacePath — cannot resume')
 
     const completedPhaseTypes = new Set(
-      phases.filter(p => p.status === 'completed').map(p => p.phaseType)
+      phases.filter((p) => p.status === 'completed').map((p) => p.phaseType)
     )
-    const remainingPhases = config.phases.filter(p => !completedPhaseTypes.has(p))
+    const remainingPhases = config.phases.filter((p) => !completedPhaseTypes.has(p))
 
     if (remainingPhases.length === 0) {
       mpaLog.info('[resume] All phases already completed — marking as completed')
-      mpaRunRepository.updateRun(runId, { status: 'completed', completedAt: new Date().toISOString() })
+      mpaRunRepository.updateRun(runId, {
+        status: 'completed',
+        completedAt: new Date().toISOString()
+      })
       this.emitComplete(runId, 'completed', run.totalTokens)
       return
     }
 
-    mpaLog.info(`[resume] Resuming run ${runId} — ${remainingPhases.length} phase(s) remaining: ${remainingPhases.join(', ')}`)
+    mpaLog.info(
+      `[resume] Resuming run ${runId} — ${remainingPhases.length} phase(s) remaining: ${remainingPhases.join(', ')}`
+    )
 
     // 5. Reset run status and activate pipeline
     pipeline.running = true
@@ -768,14 +817,19 @@ export class MpaOrchestrationService extends EventEmitter {
       goalType: run.goalType,
       phases: remainingPhases,
       grillSessionId: run.grillSessionId ?? undefined,
-      grillDecisions: (config.grillDecisions as import('../../shared/mpa-types').GrillDecision[] | undefined)
+      grillDecisions: config.grillDecisions as
+        | import('../../shared/mpa-types').GrillDecision[]
+        | undefined
     }
 
     try {
       const loopResult = await this.executePhaseLoop(run, params, pipeline, remainingPhases, plan)
       if (loopResult === 'cancelled') return
 
-      mpaRunRepository.updateRun(runId, { status: 'completed', completedAt: new Date().toISOString() })
+      mpaRunRepository.updateRun(runId, {
+        status: 'completed',
+        completedAt: new Date().toISOString()
+      })
       this.emitComplete(runId, 'completed', 0)
     } catch (err) {
       if (pipeline.abortController?.signal.aborted) return

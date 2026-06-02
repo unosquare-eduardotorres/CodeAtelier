@@ -62,10 +62,7 @@ type EventHandler = (
 // ── Per-part-type sub-handlers for message.part.updated ──
 
 /** Handle text part — includes thinking→text turn boundary detection (F16). */
-function handleTextPart(
-  part: Record<string, unknown>,
-  state: NormalizerState
-): StreamChunk[] {
+function handleTextPart(part: Record<string, unknown>, state: NormalizerState): StreamChunk[] {
   const text = part.content as string | undefined
   if (!text) return []
 
@@ -152,10 +149,7 @@ function handleToolInvocationPart(
  * Handle thinking / reasoning part — both map to the 'thinking' chunk type.
  * 6C-1: 'reasoning' / 'reasoning-delta' treated identically to 'thinking'.
  */
-function handleThinkingPart(
-  part: Record<string, unknown>,
-  state: NormalizerState
-): StreamChunk[] {
+function handleThinkingPart(part: Record<string, unknown>, state: NormalizerState): StreamChunk[] {
   const content = part.content as string | undefined
   if (!content) return []
   state.lastPartType = 'thinking'
@@ -163,9 +157,7 @@ function handleThinkingPart(
 }
 
 /** GAP-9: Handle structured_output / structured-output part. */
-function handleStructuredOutputPart(
-  part: Record<string, unknown>
-): StreamChunk[] {
+function handleStructuredOutputPart(part: Record<string, unknown>): StreamChunk[] {
   const data = part.content ?? part.data ?? part.result
   if (!data) return []
   return [
